@@ -194,6 +194,94 @@ def test_round_to_tick_grid() -> None:
     assert str(WebullBrokerAdapter._round_to_tick(Decimal("0.54325"))) == "0.5433"
 
 
+@pytest.mark.asyncio
+async def test_buy_stop_limit_tick_collapse_widens_one_tick_and_marks(
+    fake_sdk, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Known bad: today's raw-valid YYGH/AIXI shape must not reach Webull as equal prices."""
+    client = _FakeClient({"place": {"order_id": "WB-TICK"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+
+    reports = await adapter.submit_order(
+        _order(
+            strategy_code="schwab_1m_v2",
+            metadata={
+                "order_type": "STOP_LIMIT",
+                "stop_price": "1.1576",
+                "limit_price": "1.1633",
+                "fanout_source": "rth_resting_mirror",
+            },
+            order_type="STOP_LIMIT",
+        )
+    )
+
+    assert reports[0].event_type == "accepted"
+    placed = client.last["place"].values
+    assert placed["order_type"] == "STOP_LOSS_LIMIT"
+    assert placed["stop_price"] == "1.16"
+    assert placed["limit_price"] == "1.17"
+    assert Decimal(str(placed["limit_price"])) > Decimal(str(placed["stop_price"]))
+    assert reports[0].metadata["webull_wire_stop_price"] == "1.16"
+    assert reports[0].metadata["webull_wire_limit_price"] == "1.17"
+    assert reports[0].metadata["webull_buy_stop_limit_tick_adjusted"] == "true"
+    assert "[WEBULL-BUY-STOP-LIMIT-TICK-ADJUSTED]" in caplog.text
+    assert "polarity=wire_limit_gt_wire_stop" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_buy_stop_limit_healthy_pair_is_unchanged_and_marker_stays_quiet(
+    fake_sdk, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Known good: representative of the 31 healthy rows; the guard must not adjust everything."""
+    client = _FakeClient({"place": {"order_id": "WB-HEALTHY"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+
+    reports = await adapter.submit_order(
+        _order(
+            strategy_code="schwab_1m_v2",
+            metadata={
+                "order_type": "STOP_LIMIT",
+                "stop_price": "1.1714",
+                "limit_price": "1.1773",
+                "fanout_source": "rth_resting_mirror",
+            },
+            order_type="STOP_LIMIT",
+        )
+    )
+
+    placed = client.last["place"].values
+    assert placed["stop_price"] == "1.17"
+    assert placed["limit_price"] == "1.18"
+    assert reports[0].metadata["webull_buy_stop_limit_tick_adjusted"] == "false"
+    assert "[WEBULL-BUY-STOP-LIMIT-TICK-ADJUSTED]" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_buy_stop_limit_raw_invalid_is_refused_before_any_sdk_request(fake_sdk) -> None:
+    """A genuinely invalid strategy pair is not laundered into a valid-looking broker order."""
+    client = _FakeClient({"place": {"order_id": "MUST-NOT-PLACE"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+
+    reports = await adapter.submit_order(
+        _order(
+            strategy_code="schwab_1m_v2",
+            metadata={
+                "order_type": "STOP_LIMIT",
+                "stop_price": "1.1700",
+                "limit_price": "1.1600",
+                "fanout_source": "rth_resting_mirror",
+            },
+            order_type="STOP_LIMIT",
+        )
+    )
+
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "client"
+    assert "raw limit_price > stop_price" in reports[0].reason
+    assert client.calls == {}
+    assert client.last == {}
+
+
 @pytest.mark.parametrize(
     "session,otype,expected",
     [
@@ -271,17 +359,23 @@ async def test_native_stop_map_on_maps_stop_to_stop_loss(fake_sdk) -> None:
 
 
 @pytest.mark.asyncio
-async def test_native_stop_map_on_maps_stop_limit_to_stop_loss_limit(fake_sdk) -> None:
+async def test_sell_stop_limit_opposite_relationship_is_unchanged_by_buy_tick_guard(
+    fake_sdk,
+) -> None:
+    """SELL limit < stop is valid and is the polarity control for the BUY-only invariant."""
     client = _FakeClient({"place": {"order_id": "WB-S"}})
     adapter = _adapter(client, _native_stop_map_enabled=True)
-    await adapter.submit_order(_stop_order(
-        metadata={"order_type": "STOP_LIMIT", "stop_price": "1.65", "limit_price": "1.64"},
-        order_type="STOP_LIMIT",
-    ))
+    reports = await adapter.submit_order(
+        _stop_order(
+            metadata={"order_type": "STOP_LIMIT", "stop_price": "1.65", "limit_price": "1.64"},
+            order_type="STOP_LIMIT",
+        )
+    )
     placed = client.last["place"].values
     assert placed["order_type"] == "STOP_LOSS_LIMIT"
     assert placed["stop_price"] == "1.65"
     assert placed["limit_price"] == "1.64"
+    assert "webull_buy_stop_limit_tick_adjusted" not in reports[0].metadata
 
 
 @pytest.mark.asyncio

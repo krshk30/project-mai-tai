@@ -47,6 +47,7 @@ from project_mai_tai.events import (
     TradeTickEvent,
     stream_name,
 )
+from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.runtime_registry import configured_broker_account_registrations, strategy_registration_map
@@ -932,6 +933,16 @@ class OmsRiskService:
         # it: a nested session shares the connection and fights the outer transaction. `_evaluate_risk`
         # then reads a plain in-memory set, so the risk path itself does no DB I/O.
         self._load_global_manual_stop_symbols()
+        # Section 82 increment 1: the existing client-order identity is the attempt identity.
+        # Bind it before the TradeIntent row is created so local drops remain attributable too.
+        if (
+            event.payload.intent_type == "open"
+            and str(event.payload.metadata.get("fanout_slot_id", "")).strip()
+        ):
+            event.payload.metadata = {
+                **event.payload.metadata,
+                "fanout_attempt_id": self._build_client_order_id(event),
+            }
         with self.session_factory() as session:
             registration = self.strategy_registrations.get(event.payload.strategy_code)
             strategy = self.store.ensure_strategy(
@@ -1723,6 +1734,10 @@ class OmsRiskService:
         metadata.setdefault("target_client_order_id", target_order.client_order_id)
         if target_order.broker_order_id:
             metadata.setdefault("broker_order_id", target_order.broker_order_id)
+        # A cancel is not a new placement attempt.  Keep the target order's
+        # existing chain identity on the cancel request/outcome rather than
+        # replacing it with identity derived from the cancel intent.
+        metadata = carry_fanout_identity(metadata, target_order.payload or {})
 
         request = OrderRequest(
             client_order_id=target_order.client_order_id,
@@ -1771,14 +1786,19 @@ class OmsRiskService:
             order = self.store.update_order_from_report(
                 target_order,
                 report=report,
-                metadata=dict(report.metadata),
+                metadata=carry_fanout_identity(
+                    report.metadata, request.metadata
+                ),
                 preserve_status=report.event_type == "rejected",
+            )
+            recorded_metadata = carry_fanout_identity(
+                report.metadata, request.metadata
             )
             payload = {
                 "client_order_id": report.client_order_id,
                 "broker_order_id": report.broker_order_id,
                 "broker_fill_id": report.broker_fill_id,
-                "metadata": dict(report.metadata),
+                "metadata": recorded_metadata,
                 "reason": report.reason,
             }
             self._append_order_event_isolated(session, order=order, report=report, payload=payload)
@@ -4885,11 +4905,18 @@ class OmsRiskService:
                     continue
 
                 previous_status = order.status
+                # Section 82 increment 1: a venue status/detail response may omit the
+                # request metadata.  The durable order payload is authoritative for the
+                # fan-out identity, so a later poll must not erase it from the order,
+                # order event, or fill after submission already established the chain.
+                recorded_metadata = carry_fanout_identity(
+                    report.metadata, request.metadata
+                )
                 payload = {
                     "client_order_id": report.client_order_id,
                     "broker_order_id": report.broker_order_id,
                     "broker_fill_id": report.broker_fill_id,
-                    "metadata": dict(report.metadata),
+                    "metadata": recorded_metadata,
                     "reason": report.reason,
                 }
                 fill = self.store.record_fill_if_needed(
@@ -4911,7 +4938,7 @@ class OmsRiskService:
                     self.store.update_order_from_report(
                         order,
                         report=report,
-                        metadata=dict(report.metadata),
+                        metadata=recorded_metadata,
                     )
                     # ⛔ Q12/§183 — isolated. `record_fill_if_needed` already ran above this
                     # block, so at THIS site a failing audit row cost the POSITION UPDATE while
@@ -6667,7 +6694,9 @@ class OmsRiskService:
                 filled_quantity=report.filled_quantity,
                 fill_price=report.fill_price,
                 reason=report.reason or intent_event.payload.reason,
-                metadata=dict(report.metadata),
+                metadata=carry_fanout_identity(
+                    report.metadata, intent_event.payload.metadata
+                ),
             ),
         )
 
@@ -7518,11 +7547,14 @@ class OmsRiskService:
                 time_in_force=request.time_in_force,
                 reject_reason=report.reason if report.event_type == "rejected" else None,
             )
+            recorded_metadata = carry_fanout_identity(
+                report.metadata, request.metadata
+            )
             payload = {
                 "client_order_id": report.client_order_id,
                 "broker_order_id": report.broker_order_id,
                 "broker_fill_id": report.broker_fill_id,
-                "metadata": dict(report.metadata),
+                "metadata": recorded_metadata,
                 "reason": report.reason,
             }
             # ⛔⭐⭐ Q12/§183 — THE LEDGER WRITES GO FIRST, AND THE AUDIT WRITE IS ISOLATED.
@@ -8559,14 +8591,24 @@ class OmsRiskService:
                 "client_order_id": cancelled_report.client_order_id,
                 "broker_order_id": cancelled_report.broker_order_id,
                 "broker_fill_id": cancelled_report.broker_fill_id,
-                "metadata": dict(cancelled_report.metadata),
+                "metadata": carry_fanout_identity(
+                    cancelled_report.metadata, existing_metadata
+                ),
                 "reason": cancelled_report.reason,
                 "internal": "watchdog_refresh",
             },
         )
 
+        replacement_client_order_id = self._replacement_client_order_id(order.client_order_id)
+        prior_attempt_id = str(refreshed_metadata.get("fanout_attempt_id", "") or "").strip()
+        if str(refreshed_metadata.get("fanout_slot_id", "") or "").strip():
+            refreshed_metadata["fanout_attempt_id"] = replacement_client_order_id
+            if prior_attempt_id:
+                refreshed_metadata["fanout_predecessor_attempt_id"] = prior_attempt_id
+            else:
+                refreshed_metadata.pop("fanout_predecessor_attempt_id", None)
         replacement_request = OrderRequest(
-            client_order_id=self._replacement_client_order_id(order.client_order_id),
+            client_order_id=replacement_client_order_id,
             broker_account_name=broker_account_name,
             strategy_code=strategy_code,
             symbol=order.symbol,
