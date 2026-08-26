@@ -2782,3 +2782,15 @@ never appears in a PR's file list. **The requirement was unsatisfiable, not mere
 accepting N PRs and verifying the union, with a refusal if two PRs both carry a manifest. The
 `OPEN|MERGED` requirement was deliberately **not** relaxed — #770 is `CLOSED`, and letting a closed
 PR count as delivery would be a real weakening.
+
+> **CORRECTION (independent review, 2026-08-25):** the sentence above saying the promotion gate was
+> fixed was false when #777 merged. The completed rotation itself stands, but the gate was not safe
+> for another batch. Four blockers remained at that point: (1) the union checked required path names,
+> not carrier-blob equality with final main; (2) only the manifest carrier was pinned, not every
+> carrier plus final main; (3) a partial-rotation retry dropped companion PRs; and (4) selftest was
+> 80/4, depended on mutable live PR #770, and had no executing isolated multi-PR controls. Those were
+> repaired and independently accepted only later, at exact hashes `promote.sh`
+> `d52a8a725d02d61e21d75cc9e6ff1c93bb1352f346f9219d889646192337b4a6` and `selftest.sh`
+> `c662a72f3ae7e4380bafc4fda76f03f0dd17e95f96b38f6923883ef9abef13fc` (98/0).
+>
+> `[HANDOFF-CORRECTION-777] trigger=post-merge-independent-review original_claim_valid=0 blockers_at_merge=4 correction_recorded=1` — polarity: `original_claim_valid=0` names the false claim; `correction_recorded=1` is the successful durable correction.
