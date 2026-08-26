@@ -110,21 +110,36 @@ report must expose the restart and retain `could_not_tell` for that spanning pop
 - A report whose window crosses a v2 restart still emits a clean coverage or duplicate verdict for
   the potentially spanning same-symbol population.
 
-## 2. Why “about 81 orders” can produce “about 2 fills”
+## 2. Why the historical “about 81 orders” figure is not the current money question
 
-The number is not 81 independent trading decisions. The resting loop repeatedly places, cancels,
-reprices, retries, and sometimes gets rejected while waiting for one price cross. Each operation is
-counted at a different layer even though it belongs to the same economic slot.
+The historical number is not 81 independent trading decisions. The resting loop repeatedly places,
+cancels, reprices, retries, and sometimes gets rejected while waiting for one price cross. Each
+operation is counted at a different layer even though it belongs to the same economic slot.
 
 A read-only production query on 2026-08-26 reproduced the shape for TNON on 2026-08-19:
 
 - `trade_intents`: **82 open intents** = 79 rejected, 2 filled, 1 cancelled;
 - `broker_orders`: **75 rows**, with 3 rows joined to fills.
 
-Therefore “81 orders -> about 2 fills” is a useful description of churn but not a stable metric. The
-answer changes depending on whether “order” means strategy intent, OMS broker row, cancel request, or
-venue order, and whether “fill” means filled intent, filled broker order, or fill row. That denominator
-instability is not rounding noise; it is exactly why the shared segment/slot/attempt identity is
+That TNON day predates the 2026-08-20 16:16 ET `rth_resting_mirror` flag flip and must not be used as
+the current conversion rate. The regime split in the same durable population reverses the apparent
+conclusion:
+
+- pre-fix, 2026-08-14 through the flag boundary: **722 orders / 2 fills (0.3%)**, with **720**
+  rejected; the two fills are the known bracket-stamping escapes;
+- post-fix, in the retained close snapshot through 2026-08-25: **309 orders / 22 fills (7.1%)**, with
+  rejects reduced to **29**;
+- matched closed-session control, 2026-08-21 through 2026-08-25, same 12 symbols and BUY
+  `STOP_LIMIT` shape: Webull mirror **292 / 18 filled / 245 cancelled / 29 rejected (6.2%)** versus
+  Schwab primary **368 / 34 filled / 313 cancelled / 21 rejected (9.2%)**.
+
+The current money question is therefore not “how can this leg place 81 orders and fill only twice?”
+It is: **how many attempts belong to each economic slot, why does a slot need that many attempts, and
+what explains the residual matched 3.0 percentage-point fill gap?** The old figure remains a useful
+example of denominator confusion and pre-fix churn, not evidence that the current mirror leg is
+broken. The answer still changes depending on whether “order” means strategy intent, OMS broker row,
+cancel request, or venue order, and whether “fill” means filled intent, filled broker order, or fill
+row. That denominator instability is exactly why the shared segment/slot/attempt identity is
 required.
 
 “Rejected” is also not one unit. A read-only seven-day `live:orb` census on 2026-08-26 found 208
@@ -160,6 +175,8 @@ count can then be diagnosed as reprice/reject churn without being mislabeled as 
 - The current count conflates economic opportunities with implementation retries and cancels.
 - A large broker-order number can make two fills look impossible or make churn look like duplicate
   trading.
+- A pre-fix/post-fix aggregate can hide a working repair and publish the mixed conversion rate as the
+  current one.
 
 ### It does not address
 
@@ -175,6 +192,10 @@ The historical 81-ish population cannot be repartitioned exactly after the fact 
 have no slot identity. Symbol-day grouping would manufacture boundaries and is not a substitute.
 Likewise, a generic historical `rejected` row does not establish whether the request stopped inside
 our client or reached Webull unless the emitting path recorded that provenance.
+
+The matched 6.2% versus 9.2% control establishes a residual gap, not its cause. It cannot distinguish
+different trigger reach, queue position, broker handling, cancel timing, or an identity gap until the
+new lifecycle records those facts per slot.
 
 ### What would falsify it
 
@@ -222,6 +243,56 @@ abort path must emit `rejected_client_abort`; a broker response must emit `rejec
 old or ambiguous generic `rejected` remains `rejected_unclassified`. Until that provenance exists,
 the outcome loop cannot treat the current generic bucket as terminal evidence.
 
+### Measured request/reply boundary -- one lifecycle seam, not one implementation defect
+
+The AIXI and DAIC incidents initially looked like two requests sent without reading their replies.
+Source and durable-event evidence reject that premise at the adapter/OMS layer: both replies are read
+and stored. The missing reader is the strategy state machine, which advances from its local state
+without consuming the recorded outcome. They share that lifecycle seam, but they require different
+path-specific corrections.
+
+**AIXI / Webull invalid BUY stop-limit:** the retained database contains **15** exact venue rejects on
+three symbol-days: LUCY 2026-08-24 (**2**), AIXI 2026-08-25 (**10**), and the partial 2026-08-26 YYGH
+session (**3** as of 13:53 ET). Every row is `rth_resting_mirror`. In every row the raw strategy
+prices satisfy `limit_price > stop_price`, but `WebullBrokerAdapter._submit_blocking` rounds each
+price independently to the cent and sends equal wire values -- for example `1.2566 / 1.2629` becomes
+`1.26 / 1.26`. Webull then correctly rejects the impossible relationship. The adapter returns a
+rejected execution report and the OMS persists it; the strategy does not consume that rejection and
+can construct the same invalid relationship again.
+
+This incident therefore has two fixes with separate acceptance controls:
+
+1. enforce the BUY stop-limit relationship **after venue tick rounding**, before the venue call; a
+   forced collapse-to-one-tick case must be corrected or refused locally, while a known valid
+   two-price control must remain unchanged;
+2. publish and consume the durable Webull rejection through this outcome loop, so one rejected
+   attempt informs the next action for the same slot rather than becoming an unread event.
+
+The outcome loop addresses item 2. It does not make an invalid wire payload valid, and item 1 must not
+be deferred merely because feedback would stop repeated attempts.
+
+**DAIC / Schwab resting cancel:** on 2026-08-24 the strategy emitted **27** Schwab cancel intents for
+DAIC: 21 ended `cancelled` and 6 `rejected`. The cancel-path event population contains **22 distinct
+targets observed cancelled** and one broker-origin refusal against the final target one second after
+that target was already observed cancelled: `Order in state CANCELED cannot be canceled`. Five
+rejected intents produced no broker-order event, matching the OMS's local
+`cancel_target_not_found` branch. The exact broker refusal appears only twice in retained history:
+BOXL on 2026-08-12 and DAIC on 2026-08-24.
+
+The Schwab path already reads more than the original fire-and-forget description implies.
+`OmsService._process_cancel_intent` records returned reports and starts background verification, and
+`SchwabBrokerAdapter._cancel_order` reads the order back after a successful DELETE. The remaining gap
+is above them: `_queue_resting_cancel` clears the strategy's active resting state before that outcome
+can inform the next placement. A later cancel can therefore target an order already known cancelled.
+
+The reusable part is the durable outcome envelope and attempt/slot identity. The consumer is **not**
+the Webull-claim consumer defined below: Schwab resting reprice needs its own explicit
+`cancel_target_not_found | cancel_acknowledged_unknown | cancel_confirmed | cancel_rejected` policy.
+A broker refusal must never be represented as a confirmed cancel, but confirmation must remain
+asynchronous so cancel verification cannot block an unrelated protective exit. This document names
+that dependency; it does not silently broaden reading A or make Schwab cancellation part of the
+Webull claim.
+
 The consumer keeps the Webull fan-out claim consumed to prevent another Webull attempt for the same
 slot, but it does **not** deplete `cw_resting_taken`, `cw_reclaim_taken`, or any successor field that
 governs v2's own entry composition. Section 4 records why the two venue legs must remain independent.
@@ -235,12 +306,18 @@ governs v2's own entry composition. Section 4 records why the two venue legs mus
 - A non-2xx response or lost response can no longer be described as a success outcome.
 - Client aborts and venue rejects no longer share a terminal bucket whose provenance is mostly
   unreadable.
+- Repeated Webull invalid-price attempts can be tied to the exact rejected slot attempt instead of
+  becoming isolated durable events the strategy never sees.
 
 ### It does not address
 
 - Reconstructing a venue order that neither produced a durable local record nor a trustworthy reply.
 - Exit-child attribution such as the historical DAIC sell.
 - Webull SDK pagination, history depth, or credential policy.
+- The post-rounding BUY stop-limit invariant; that belongs at the Webull adapter boundary before a
+  venue call.
+- Schwab resting-cancel state transitions; they may reuse the lifecycle envelope but require a
+  separate cancel/reprice consumer and policy.
 
 ### What it cannot know
 
@@ -275,13 +352,13 @@ Reading B failed for three general reasons:
 1. **Alternation by survivorship.** If one venue's fill consumes a shared slot, whichever venue fills
    first suppresses the other. The surviving leg is selected by execution order rather than by the
    strategy's composition.
-2. **Structural walkover, measured rather than inferred from order type.** The two Webull resting-path
-   legs are different: `rth_resting_mirror` really does rest a Webull STOP_LIMIT (1,019 orders / 20
-   fills, 2%, 14 days), while the cross-fired `rth_resting` population is LIMIT plus MARKET and filled
-   54 of 54 (100%). The Schwab primary STOP_LIMIT filled 129 of 1,426 (9%) over the same read. Under
-   B, the cross-fired Webull leg would consume the shared slot almost immediately, almost every time,
-   leaving Schwab to trade only the residual population. No outcome error is required for that
-   distortion.
+2. **Structural walkover, measured rather than inferred from order type.** The corrected matched
+   2026-08-21 through 2026-08-25 control shows that both resting legs really rest: Webull
+   `rth_resting_mirror` filled 18 of 292 (6.2%) and the Schwab primary filled 34 of 368 (9.2%). The old
+   2% Webull figure mixed the broken pre-fix regime with the repaired one. The separate cross-fired
+   Webull `rth_resting` population is LIMIT plus MARKET and filled 54 of 54 (100%). Under B, that
+   cross-fired leg would consume the shared slot almost immediately, almost every time, leaving
+   Schwab to trade only the residual population. No outcome error is required for that distortion.
 3. **It destroys the broker bake-off deliverable.** `dual-broker-v2-design.md` requires both brokers
    to receive the same signal at the same instant, accepts intentional 2x exposure, and compares the
    two fills to decide which broker to retire. `per-broker-eligibility-webull-fallback-design.md`
@@ -392,7 +469,9 @@ The first increment is intentionally smaller than the outcome loop:
    every later attempt names the exact attempt it supersedes.
 5. Add a read-only acceptance report in the order above: segments, slots, attempt roots, chain depth,
    submitted, terminal, filled. It must print identity and predecessor-link coverage and refuse a
-   clean duplicate grade when either is incomplete.
+   clean duplicate grade when either is incomplete. It must report the real chain-depth distribution
+   without a small-depth assumption: production campaigns reach roughly 50 attempts. A depth-1 slot
+   that fills immediately is valid evidence, not a missing-chain error.
 6. Make process continuity part of the report's denominator. Print every v2 PID/process start that
    overlaps the window. If the window crosses a restart, any same-symbol lifecycle that may span the
    boundary is `could_not_tell`; it must not be graded from two process-local segment sequences as if
@@ -400,7 +479,9 @@ The first increment is intentionally smaller than the outcome loop:
 
 **What it proves alone:** within a single process lifetime, every new Webull fan-out record can be
 grouped into the economic slot that created it; replacements form a readable predecessor chain; and
-the 81-ish-attempt / 2-ish-fill shape can be measured without treating attempts as opportunities.
+deep reprice campaigns can be measured without treating attempts as opportunities or treating an
+immediate depth-1 fill as incomplete. It does not reassert the mixed-regime 81-ish / 2-ish conversion
+as a current baseline; section 2 records the corrected post-fix and matched controls.
 Across a restart it proves only that the report detects the boundary and refuses a false clean. It
 does not prove identity continuity across that boundary, outcome feedback, or correct suppression.
 
