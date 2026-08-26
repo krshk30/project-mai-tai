@@ -38,6 +38,12 @@ class _JsonResp:
         return self._payload
 
 
+class _HttpResp(_JsonResp):
+    def __init__(self, status_code: int, payload: object) -> None:
+        super().__init__(payload)
+        self.status_code = status_code
+
+
 class _Req:
     """Generic setter-bag standing in for an SDK request object."""
 
@@ -491,8 +497,94 @@ async def test_cancel_intent(fake_sdk) -> None:
     client = _FakeClient({"cancel": {}})
     adapter = _adapter(client)
     reports = await adapter.submit_order(_order(intent_type="cancel", side="sell"))
-    assert reports[0].event_type == "cancelled"
+    assert reports[0].event_type == "accepted"
+    assert reports[0].metadata["cancel_outcome"] == "requested"
     assert client.last["cancel"].values["client_order_id"] == "orb-AAPL-open-1"
+
+
+@pytest.mark.asyncio
+async def test_cancel_pair_confirms_both_legs_from_order_detail(fake_sdk) -> None:
+    """Known-good control: a 2xx request is not success until both detail reads say CANCELED."""
+    body = {"items": [{"order_status": "CANCELED"}]}
+    client = _FakeClient({"cancel": {}, "detail": body})
+    adapter = _adapter(client, _CANCEL_CONFIRM_DELAY_SECONDS=0)
+
+    reports = await adapter.cancel_exit_pair(
+        broker_account_name="live:orb", symbol="AAPL", base_client_order_id="protect-base",
+    )
+
+    assert len(reports) == 2
+    assert [report.event_type for report in reports] == ["cancelled", "cancelled"]
+    assert all(report.metadata["cancel_outcome"] == "confirmed" for report in reports)
+    assert client.calls == {"cancel": 2, "detail": 2}
+
+
+@pytest.mark.asyncio
+async def test_cancel_pair_stays_unconfirmed_while_detail_is_working(fake_sdk) -> None:
+    """Quiet control: acknowledgements alone must never become the confirmed success polarity."""
+    client = _FakeClient({"cancel": {}, "detail": {"items": [{"order_status": "WORKING"}]}})
+    adapter = _adapter(client, _CANCEL_CONFIRM_DELAY_SECONDS=0)
+
+    reports = await adapter.cancel_exit_pair(
+        broker_account_name="live:orb", symbol="AAPL", base_client_order_id="protect-base",
+    )
+
+    assert [report.event_type for report in reports] == ["accepted", "accepted"]
+    assert all(report.metadata["cancel_outcome"] == "not_confirmed" for report in reports)
+
+
+@pytest.mark.asyncio
+async def test_cancel_HTTP_417_is_rejected_not_cancelled(fake_sdk) -> None:
+    """Known-bad response control: a returned non-2xx can never become cancel success."""
+    class _C(_FakeClient):
+        def get_response(self, req):
+            self.last[req._kind] = req
+            return _HttpResp(417, {"code": "ORDER_NOT_SUPPORT_REVERSE_OPTION"})
+
+    reports = await _adapter(_C({})).submit_order(
+        _order(intent_type="cancel", side="sell")
+    )
+    assert len(reports) == 1
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "broker"
+    assert "HTTP 417" in reports[0].reason
+
+
+@pytest.mark.asyncio
+async def test_cancel_pair_forced_417_never_reaches_confirmation(fake_sdk) -> None:
+    class _C(_FakeClient):
+        def get_response(self, req):
+            self.last[req._kind] = req
+            self.calls[req._kind] = self.calls.get(req._kind, 0) + 1
+            return _HttpResp(417, {"code": "ORDER_NOT_SUPPORT_REVERSE_OPTION"})
+
+    client = _C({})
+    reports = await _adapter(client, _CANCEL_CONFIRM_DELAY_SECONDS=0).cancel_exit_pair(
+        broker_account_name="live:orb", symbol="AAPL", base_client_order_id="protect-base",
+    )
+    assert [report.event_type for report in reports] == ["rejected", "rejected"]
+    assert client.calls == {"cancel": 2}
+
+
+@pytest.mark.asyncio
+async def test_cancel_raised_417_is_rejected_not_cancelled(fake_sdk) -> None:
+    client = _FakeClient({"cancel": {}})
+    client.raises["cancel"] = _ServerException(
+        "ORDER_NOT_SUPPORT_REVERSE_OPTION", "cannot cancel", 417
+    )
+    reports = await _adapter(client).submit_order(_order(intent_type="cancel", side="sell"))
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "broker"
+
+
+@pytest.mark.asyncio
+async def test_cancel_ORDER_NOT_FOUND_confirms_already_absent(fake_sdk) -> None:
+    """Known-good semantic control: absent cannot reserve shares, despite the 417 transport code."""
+    client = _FakeClient({"cancel": {}})
+    client.raises["cancel"] = _ServerException("ORDER_NOT_FOUND", "already gone", 417)
+    reports = await _adapter(client).submit_order(_order(intent_type="cancel", side="sell"))
+    assert reports[0].event_type == "cancelled"
+    assert reports[0].metadata["cancel_outcome"] == "already_absent"
 
 
 @pytest.mark.asyncio
