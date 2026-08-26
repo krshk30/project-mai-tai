@@ -3862,7 +3862,7 @@ def _seed_managed_row(session, acct="live:orb", symbol="BIYA"):
     return row
 
 
-def _seed_entry(session):
+def _seed_entry(session, *, payload=None):
     """A filled bracket ENTRY: strategy + account + intent + buy order."""
     from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, TradeIntent
     strategy = Strategy(code="schwab_1m_v2", name="V2", execution_mode="live")
@@ -3880,7 +3880,7 @@ def _seed_entry(session):
         intent_id=intent.id, strategy_id=strategy.id, broker_account_id=account.id,
         client_order_id="schwab_1m_v2-BIYA-open-abc", symbol="BIYA", side="buy",
         order_type="market", time_in_force="day", quantity=Decimal("1"),
-        status="filled", payload={"bracket": "true"},
+        status="filled", payload=payload or {"bracket": "true"},
     )
     session.add(order)
     session.commit()
@@ -3895,10 +3895,17 @@ _EXIT = {"symbol": "BIYA", "quantity": Decimal("1"), "price": Decimal("3.93"),
 def test_the_broker_exit_is_recorded_as_a_real_fill() -> None:
     """THE FIX: without this the entry has no exit to pair with and the trade never completes."""
     from project_mai_tai.db.models import Fill
+    lines = []
+
+    class _Log:
+        def info(self, message, *args):
+            lines.append(message % args)
+
     sf = build_test_session_factory()
     with sf() as session:
         entry = _seed_entry(session)
         svc = _oco_service(sf)
+        svc.logger = _Log()
         ok = svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, _EXIT)
         session.commit()
         assert ok is True
@@ -3907,6 +3914,12 @@ def test_the_broker_exit_is_recorded_as_a_real_fill() -> None:
         assert fills[0].side == "sell"
         assert fills[0].price == Decimal("3.93")
         assert fills[0].quantity == Decimal("1")
+        text = "\n".join(lines)
+        assert "[OMS-CHILD-EXIT-ATTRIBUTION]" in text
+        assert "evaluated=1 attributed=1 could_not_tell=0 outcome=recorded" in text
+        assert "[OMS-CHILD-EXIT-RECORDED]" in text
+        assert "trigger=filled_child_found evaluated=1 attributed=1 could_not_tell=0" in text
+        assert "child_order=WB-EXIT-1" in text
 
 
 def test_recording_the_same_exit_twice_books_one_fill() -> None:
@@ -3916,11 +3929,22 @@ def test_recording_the_same_exit_twice_books_one_fill() -> None:
     with sf() as session:
         entry = _seed_entry(session)
         svc = _oco_service(sf)
+        lines = []
+
+        class _Log:
+            def info(self, message, *args):
+                lines.append(message % args)
+
+        svc.logger = _Log()
         svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, _EXIT)
         session.commit()
         svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, _EXIT)
         session.commit()
         assert len(session.scalars(select(Fill)).all()) == 1
+        assert any(
+            "evaluated=1 attributed=1 could_not_tell=0 outcome=already_recorded" in line
+            for line in lines
+        )
 
 
 def test_a_zero_priced_exit_is_never_booked() -> None:
@@ -3931,10 +3955,164 @@ def test_a_zero_priced_exit_is_never_booked() -> None:
     with sf() as session:
         entry = _seed_entry(session)
         svc = _oco_service(sf)
+        success_lines = []
+
+        class _Log:
+            def info(self, message, *args):
+                success_lines.append(message % args)
+
+        svc.logger = _Log()
         bad = dict(_EXIT, price=Decimal("0"))
         assert svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, bad) is False
         session.commit()
         assert session.scalars(select(Fill)).all() == []
+        assert any(
+            "evaluated=1 attributed=0 could_not_tell=1 "
+            "outcome=invalid_quantity_or_price" in line
+            for line in success_lines
+        )
+        assert not any("[OMS-CHILD-EXIT-RECORDED]" in line for line in success_lines)
+
+
+@pytest.mark.parametrize(
+    ("missing", "outcome"),
+    [
+        ("session", "missing_session"),
+        ("entry", "missing_entry_order"),
+        ("detail", "missing_child_detail"),
+    ],
+)
+def test_every_refused_child_candidate_has_a_denominator(missing: str, outcome: str) -> None:
+    """Claude review control: no False return may make a candidate disappear silently."""
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session)
+        svc = _oco_service(sf)
+        lines = []
+
+        class _Log:
+            def info(self, message, *args):
+                lines.append(message % args)
+
+        svc.logger = _Log()
+        args = {
+            "session": None if missing == "session" else session,
+            "entry_order": None if missing == "entry" else entry,
+            "detail": None if missing == "detail" else _EXIT,
+        }
+
+        assert svc._persist_oco_exit_fill(
+            args["session"], "live:orb", "BIYA", args["entry_order"], args["detail"]
+        ) is False
+
+    assert len(lines) == 1
+    assert "[OMS-CHILD-EXIT-ATTRIBUTION]" in lines[0]
+    assert "evaluated=1 attributed=0 could_not_tell=1" in lines[0]
+    assert f"outcome={outcome}" in lines[0]
+    assert "[OMS-CHILD-EXIT-RECORDED]" not in lines[0]
+
+
+def test_missing_intent_candidate_has_a_denominator() -> None:
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session)
+        entry.intent_id = None
+        svc = _oco_service(sf)
+        lines = []
+
+        class _Log:
+            def info(self, message, *args):
+                lines.append(message % args)
+
+        svc.logger = _Log()
+        assert svc._persist_oco_exit_fill(
+            session, "live:orb", "BIYA", entry, _EXIT
+        ) is False
+
+    assert len(lines) == 1
+    assert "evaluated=1 attributed=0 could_not_tell=1 outcome=missing_trade_intent" in lines[0]
+    assert "[OMS-CHILD-EXIT-RECORDED]" not in lines[0]
+
+
+def test_bare_webull_exit_uses_the_persisted_attach_handle() -> None:
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session, payload={
+            "fanout_leg": "webull",
+            "native_oco_bracket": "false",
+            "webull_protect_base_client_order_id": "protect-base-DAIC",
+        })
+        svc = _oco_service(sf)
+        assert svc._oco_exit_base_for_entry(
+            entry, broker_account_name="live:orb", symbol="BIYA"
+        ) == "protect-base-DAIC"
+
+
+def test_bare_webull_exit_without_a_handle_refuses_to_guess_the_entry_coid() -> None:
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session, payload={
+            "fanout_leg": "webull", "native_oco_bracket": "false",
+        })
+        svc = _oco_service(sf)
+        assert svc._oco_exit_base_for_entry(
+            entry, broker_account_name="live:orb", symbol="BIYA"
+        ) == ""
+
+
+@pytest.mark.asyncio
+async def test_attach_handle_is_persisted_on_the_filled_entry_order() -> None:
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session, payload={
+            "fanout_leg": "webull", "native_oco_bracket": "false",
+        })
+        entry_id = entry.id
+    svc = _oco_service(sf)
+    assert await svc._persist_webull_protect_base(
+        "live:orb", "BIYA", "protect-base-BIYA"
+    ) is True
+    with sf() as session:
+        from project_mai_tai.db.models import BrokerOrder
+        saved = session.get(BrokerOrder, entry_id)
+        assert saved is not None
+        assert saved.payload["webull_protect_base_client_order_id"] == "protect-base-BIYA"
+
+
+@pytest.mark.asyncio
+async def test_attach_handle_targets_the_exact_fill_not_the_newest_symbol_row() -> None:
+    """The background attach may race the fill commit; an explicit coid prevents cross-trade writes."""
+    from project_mai_tai.db.models import BrokerOrder
+
+    sf = build_test_session_factory()
+    with sf() as session:
+        intended = _seed_entry(session, payload={
+            "fanout_leg": "webull", "native_oco_bracket": "false",
+        })
+        sibling = BrokerOrder(
+            intent_id=intended.intent_id,
+            strategy_id=intended.strategy_id,
+            broker_account_id=intended.broker_account_id,
+            client_order_id="schwab_1m_v2-BIYA-open-newer-but-wrong",
+            symbol="BIYA", side="buy", order_type="market", time_in_force="day",
+            quantity=Decimal("1"), status="filled",
+            payload={"fanout_leg": "webull", "native_oco_bracket": "false"},
+        )
+        session.add(sibling)
+        session.commit()
+        intended_id, sibling_id = intended.id, sibling.id
+
+    svc = _oco_service(sf)
+    assert await svc._persist_webull_protect_base(
+        "live:orb", "BIYA", "protect-base-exact",
+        entry_client_order_id="schwab_1m_v2-BIYA-open-abc",
+    ) is True
+
+    with sf() as session:
+        intended = session.get(BrokerOrder, intended_id)
+        sibling = session.get(BrokerOrder, sibling_id)
+        assert intended.payload["webull_protect_base_client_order_id"] == "protect-base-exact"
+        assert "webull_protect_base_client_order_id" not in sibling.payload
 
 
 @pytest.mark.asyncio
@@ -4023,10 +4201,12 @@ class _ExitAdapter:
     def __init__(self, detail=None):
         self.detail = detail
         self.calls = 0
+        self.bases = []
 
     async def fetch_oco_exit_fill(self, acct, symbol, base="", *, resolved_within_seconds=3600.0,
                                   entry_broker_order_id="", entry_filled_at=None, entry_quantity=None):
         self.calls += 1
+        self.bases.append(base)
         return self.detail
 
 
@@ -4056,6 +4236,96 @@ async def test_the_poll_records_the_exit_and_clears_the_row_without_waiting() ->
 
 
 @pytest.mark.asyncio
+async def test_bare_webull_poll_addresses_the_attached_pair_not_the_entry() -> None:
+    """DAIC control: the two ids differ; only the persisted protect base may reach Webull."""
+    sf = build_test_session_factory()
+    with sf() as session:
+        _seed_entry(session, payload={
+            "fanout_leg": "webull",
+            "native_oco_bracket": "false",
+            "webull_protect_base_client_order_id": "schwab_1m_v2-DAIC-protect-good",
+        })
+        _seed_managed_row(session)
+    svc = _poll_service(sf)
+    adapter = _ExitAdapter(None)
+    svc.broker_adapter = adapter
+
+    await svc._poll_native_oco_exits()
+
+    assert adapter.bases == ["schwab_1m_v2-DAIC-protect-good"]
+    assert "open-abc" not in adapter.bases[0]
+
+
+@pytest.mark.asyncio
+async def test_flat_reconcile_addresses_the_attached_pair_not_the_entry() -> None:
+    """DAIC's actual recovery path must use the durable attach handle too, not only the poll."""
+    from project_mai_tai.oms.service import _PositionRead
+
+    sf = build_test_session_factory()
+    with sf() as session:
+        _seed_entry(session, payload={
+            "fanout_leg": "webull",
+            "native_oco_bracket": "false",
+            "webull_protect_base_client_order_id": "schwab_1m_v2-DAIC-protect-good",
+        })
+        row = _seed_managed_row(session)
+        svc = _poll_service(sf)
+        bases = []
+
+        async def _state(*_args, **_kwargs):
+            return _PositionRead.FLAT_CONFIRMED
+
+        async def _flat(*_args, **_kwargs):
+            return True
+
+        async def _detail(_acct, _symbol, base, **_kwargs):
+            bases.append(base)
+            return None
+
+        svc._broker_symbol_position_state = _state
+        svc._broker_symbol_is_flat = _flat
+        svc._fetch_oco_exit_detail = _detail
+
+        for _ in range(svc._V2_EXIT_RECONCILE_AFTER_FAILURES):
+            result = await svc._v2_close_reconcile_flat(session, "live:orb", "BIYA", row)
+
+    assert result is True
+    assert bases == ["schwab_1m_v2-DAIC-protect-good"]
+    assert "open-abc" not in bases[0]
+
+
+@pytest.mark.asyncio
+async def test_bare_webull_poll_without_handle_says_unattributed_and_never_guesses() -> None:
+    sf = build_test_session_factory()
+    with sf() as session:
+        _seed_entry(session, payload={
+            "fanout_leg": "webull", "native_oco_bracket": "false",
+        })
+        _seed_managed_row(session)
+    svc = _poll_service(sf)
+    adapter = _ExitAdapter(_POLL_EXIT)
+    svc.broker_adapter = adapter
+    lines = []
+
+    class _Log:
+        def info(self, message, *args):
+            lines.append(message % args)
+
+        def warning(self, message, *args, **kwargs):
+            lines.append(message % args)
+
+    svc.logger = _Log()
+
+    await svc._poll_native_oco_exits()
+
+    assert adapter.calls == 0, "an unknown handle must not turn the entry coid into a guessed child"
+    text = "\n".join(lines)
+    assert "reason=missing_exit_pair_base" in text
+    assert "evaluated=1 attributed=0 could_not_tell=1" in text
+    assert "[OMS-CHILD-EXIT-RECORDED]" not in text
+
+
+@pytest.mark.asyncio
 async def test_no_exit_at_the_broker_leaves_the_position_alone() -> None:
     """⛔ THE DANGEROUS DIRECTION. A still-open position must NOT be closed just because the poll
     ran — that would abandon a live position's ladder."""
@@ -4067,12 +4337,28 @@ async def test_no_exit_at_the_broker_leaves_the_position_alone() -> None:
     svc = _poll_service(sf)
     svc.broker_adapter = _ExitAdapter(None)          # bracket still working
     svc._managed_v2_symbols.add(("live:orb", "BIYA"))
+    lines = []
+
+    class _Log:
+        def info(self, message, *args):
+            lines.append(message % args)
+
+        def warning(self, message, *args, **kwargs):
+            lines.append(message % args)
+
+    svc.logger = _Log()
 
     await svc._poll_native_oco_exits()
 
     with sf() as session:
         assert session.scalars(select(Fill)).all() == []
     assert ("live:orb", "BIYA") in svc._managed_v2_symbols
+    assert any(
+        "reason=broker_reported_no_filled_exit_leg" in line
+        and "evaluated=1 attributed=0 could_not_tell=0" in line
+        for line in lines
+    )
+    assert not any("[OMS-CHILD-EXIT-RECORDED]" in line for line in lines)
 
 
 @pytest.mark.asyncio

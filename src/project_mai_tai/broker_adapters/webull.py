@@ -95,6 +95,9 @@ def configured_webull_accounts(settings: Settings) -> dict[str, WebullAccountCon
 
 
 class WebullBrokerAdapter:
+    # Two cancel requests consume Webull's documented two-requests-per-two-seconds allowance. Wait
+    # before the two detail reads that turn "requested" into "confirmed". Tests set this to zero.
+    _CANCEL_CONFIRM_DELAY_SECONDS = 2.0
     def __init__(
         self,
         settings: Settings,
@@ -210,7 +213,7 @@ class WebullBrokerAdapter:
         account = self.accounts_by_name.get(broker_account_name)
         if account is None:
             return []
-        reports: list[ExecutionReport] = []
+        initial: list[tuple[OrderRequest, ExecutionReport]] = []
         for coid in self.exit_pair_leg_client_order_ids(base_client_order_id):
             request = OrderRequest(
                 client_order_id=coid,
@@ -225,8 +228,21 @@ class WebullBrokerAdapter:
                 order_type="market",
                 time_in_force="day",
             )
-            reports.extend(await self._cancel_order(account, request))
-        return reports
+            reports = await self._cancel_order(account, request)
+            if reports:
+                initial.append((request, reports[0]))
+        needs_confirmation = any(
+            report.metadata.get("cancel_outcome") == "requested" for _, report in initial
+        )
+        if needs_confirmation and self._CANCEL_CONFIRM_DELAY_SECONDS > 0:
+            await asyncio.sleep(self._CANCEL_CONFIRM_DELAY_SECONDS)
+        final: list[ExecutionReport] = []
+        for request, report in initial:
+            if report.metadata.get("cancel_outcome") != "requested":
+                final.append(report)
+                continue
+            final.append(await self._confirm_cancel_order(account, request))
+        return final
 
     def _submit_exit_pair_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
@@ -762,6 +778,24 @@ class WebullBrokerAdapter:
         try:
             return await asyncio.to_thread(self._cancel_blocking, account, request)
         except Exception as exc:  # noqa: BLE001
+            # ORDER_NOT_FOUND is the one 417 that proves the cancellation objective: the order is
+            # already absent, so it cannot reserve shares. Every other 4xx remains a refusal. Do
+            # not make HTTP 417 itself a success -- DAIC 2026-08-25 returned 417 for BOTH legs with
+            # another code, and the OMS falsely announced that the pair had been cancelled.
+            if self._is_order_not_found(exc):
+                return [
+                    ExecutionReport(
+                        event_type="cancelled",
+                        origin="broker",
+                        client_order_id=request.client_order_id,
+                        symbol=request.symbol,
+                        side=request.side,
+                        intent_type=request.intent_type,
+                        quantity=request.quantity,
+                        reason="cancel confirmed: order already absent at broker",
+                        metadata={**dict(request.metadata), "cancel_outcome": "already_absent"},
+                    )
+                ]
             return [self._reject(request, self._exc_reason(exc), origin=self._origin_from_exc(exc))]
 
     def _cancel_blocking(
@@ -773,19 +807,83 @@ class WebullBrokerAdapter:
         co = CancelOrderRequest()
         co.set_account_id(account.account_id)
         co.set_client_order_id(request.client_order_id)
-        self._body(client.get_response(co))
+        response = client.get_response(co)
+        status = self._response_status(response)
+        body = self._body(response)
+        if status < 200 or status >= 300:
+            return [
+                self._reject(
+                    request,
+                    f"Webull cancel rejected: HTTP {status}; body={body!r}",
+                    origin="broker",
+                )
+            ]
         return [
             ExecutionReport(
-                event_type="cancelled",
+                event_type="accepted",
+                origin="broker",
                 client_order_id=request.client_order_id,
                 symbol=request.symbol,
                 side=request.side,
                 intent_type=request.intent_type,
                 quantity=request.quantity,
-                reason=request.reason or "cancelled",
-                metadata=dict(request.metadata),
+                reason="cancel requested; awaiting order-detail confirmation",
+                metadata={**dict(request.metadata), "cancel_outcome": "requested"},
             )
         ]
+
+    async def _confirm_cancel_order(
+        self, account: WebullAccountConfig, request: OrderRequest
+    ) -> ExecutionReport:
+        try:
+            return await asyncio.to_thread(self._confirm_cancel_blocking, account, request)
+        except Exception as exc:  # noqa: BLE001
+            if self._is_order_not_found(exc):
+                return ExecutionReport(
+                    event_type="cancelled", origin="broker",
+                    client_order_id=request.client_order_id, symbol=request.symbol,
+                    side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+                    reason="cancel confirmed: order absent at broker",
+                    metadata={**dict(request.metadata), "cancel_outcome": "already_absent"},
+                )
+            return ExecutionReport(
+                event_type="accepted", origin="unknown",
+                client_order_id=request.client_order_id, symbol=request.symbol,
+                side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+                reason=f"cancel requested but confirmation could not be read: {self._exc_reason(exc)}",
+                metadata={**dict(request.metadata), "cancel_outcome": "could_not_tell"},
+            )
+
+    def _confirm_cancel_blocking(
+        self, account: WebullAccountConfig, request: OrderRequest
+    ) -> ExecutionReport:
+        try:
+            from webull.trade.request.get_order_detail_request import OrderDetailRequest
+        except ImportError:  # pragma: no cover - SDK layout fallback
+            from webull.trade.request.v2.get_order_detail_request import OrderDetailRequest
+
+        detail = OrderDetailRequest()
+        detail.set_account_id(account.account_id)
+        detail.set_client_order_id(request.client_order_id)
+        body = self._body(self._get_client().get_response(detail))
+        items = body.get("items") if isinstance(body, dict) else None
+        item = items[0] if isinstance(items, list) and items and isinstance(items[0], dict) else {}
+        status = self._map_status(item) if item else "unknown"
+        if status == "cancelled":
+            return ExecutionReport(
+                event_type="cancelled", origin="broker",
+                client_order_id=request.client_order_id, symbol=request.symbol,
+                side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+                reason="cancel confirmed by broker order detail",
+                metadata={**dict(request.metadata), "cancel_outcome": "confirmed"},
+            )
+        return ExecutionReport(
+            event_type="accepted", origin="broker" if item else "unknown",
+            client_order_id=request.client_order_id, symbol=request.symbol,
+            side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+            reason=f"cancel requested but not confirmed; broker status={status}",
+            metadata={**dict(request.metadata), "cancel_outcome": "not_confirmed"},
+        )
 
     # ------------------------------------------------------------------ client / instrument
     def _get_client(self) -> object:

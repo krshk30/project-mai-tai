@@ -52,15 +52,19 @@ def test_no_base_id_means_NOTHING_is_cancelled() -> None:
 class _Adapter:
     """Records what the OMS asked the broker to do."""
 
-    def __init__(self, *, has_capability: bool = True) -> None:
+    def __init__(self, *, has_capability: bool = True, reports=None) -> None:
         self.cancelled: list[tuple[str, str]] = []
+        self.reports = reports or [
+            SimpleNamespace(event_type="cancelled", reason="confirmed"),
+            SimpleNamespace(event_type="cancelled", reason="confirmed"),
+        ]
         if not has_capability:
             # Schwab / simulated: no addressable resting legs.
             self.cancel_exit_pair = None  # type: ignore[assignment]
 
     async def cancel_exit_pair(self, *, broker_account_name, symbol, base_client_order_id):
         self.cancelled.append((symbol, base_client_order_id))
-        return [SimpleNamespace(event_type="cancelled"), SimpleNamespace(event_type="cancelled")]
+        return self.reports
 
 
 def _svc(adapter, *, base: str = "protect-base") -> svc.OmsRiskService:
@@ -79,10 +83,46 @@ def _release(s, symbol: str = "XHG") -> bool:
         session=object(), broker_account_name="live:orb", symbol=symbol))
 
 
-def test_it_CANCELS_the_resting_pair_before_the_close() -> None:
+def test_it_CANCELS_the_resting_pair_before_the_close(caplog) -> None:
+    """Known-good control: two confirmed legs fire the success marker and stay quiet on failure."""
+    caplog.set_level(logging.INFO)
     a = _Adapter()
     assert _release(_svc(a)) is True
     assert a.cancelled == [("XHG", "protect-base")]
+    text = caplog.text
+    assert "[OMS-CANCEL-PAIR-REQUEST]" in text
+    assert "requested=2 confirmed=0 release_confirmed=0" in text
+    assert "[OMS-EXIT-RELEASE]" in text
+    assert "requested=2 confirmed=2 release_confirmed=1" in text
+    assert "[OMS-CANCEL-PAIR-UNCERTAIN]" not in text
+
+
+def test_forced_HTTP_417_never_emits_the_success_marker(caplog) -> None:
+    """Known-bad control: the exact DAIC shape, two broker refusals returned as reports."""
+    caplog.set_level(logging.INFO)
+    rejected = [
+        SimpleNamespace(event_type="rejected", reason="Webull rejected (http 417)"),
+        SimpleNamespace(event_type="rejected", reason="Webull rejected (http 417)"),
+    ]
+    s = _svc(_Adapter(reports=rejected))
+    assert _release(s) is False
+    assert ("live:orb", "XHG") not in s._exit_reservation_released
+    text = caplog.text
+    assert "[OMS-CANCEL-PAIR-UNCERTAIN]" in text
+    assert "requested=2 reports=2 confirmed=0 refused=2 release_confirmed=0" in text
+    assert "[OMS-EXIT-RELEASE]" not in text
+
+
+def test_one_confirmed_and_one_refused_is_NOT_a_release(caplog) -> None:
+    """A half-clear pair can still reserve the shares; 1/2 must keep success quiet."""
+    caplog.set_level(logging.INFO)
+    reports = [
+        SimpleNamespace(event_type="cancelled", reason="confirmed"),
+        SimpleNamespace(event_type="rejected", reason="http 417"),
+    ]
+    assert _release(_svc(_Adapter(reports=reports))) is False
+    assert "confirmed=1 refused=1 release_confirmed=0" in caplog.text
+    assert "[OMS-EXIT-RELEASE]" not in caplog.text
 
 
 def test_it_cancels_ONCE_PER_EPISODE_not_once_per_quote_tick() -> None:

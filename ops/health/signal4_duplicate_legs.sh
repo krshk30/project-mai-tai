@@ -15,7 +15,8 @@
 #
 # ── THE DEFINITION (states what it EXCLUDES as well as what it counts) ───────────────
 # COUNTS  : orders on `live:orb` that are FILLED **BUYS**, carry `fanout_source`, and carry a
-#           NON-ZERO `cw_arm_bar_ts`. Segment = (symbol, cw_arm_bar_ts).
+#           NON-ZERO segment identity. New rows use `fanout_segment_id`; historical rows fall back
+#           to `cw_arm_bar_ts`. Segment = (symbol, segment identity).
 #           A segment is a DUPLICATE when any one `cw_entry_n` inside it holds >1 leg.
 #           extra legs = (legs in a duplicate segment) - 1.
 # EXCLUDES: ⛔⭐⭐ SELLS — added §262, 2026-08-24, BEFORE #766 could reach this population.
@@ -38,9 +39,13 @@
 #           recording) scores the control window at **119|20|23 WITHOUT this filter** and
 #           **119|19|22 WITH it**. One exit row manufactures one duplicate segment and one
 #           extra leg. The mutant is killed by the filter and by nothing else.
-# EXCLUDES: `rth_resting_mirror` legs — the born-broken mirror (720 orders / 0 fills in
-#           the baseline window). They are not a second execution and counting them as
-#           duplicates would inflate the numerator ~3x (measured: 64 dup groups, not 19).
+# INCLUDES: `rth_resting_mirror` once it FILLS. The old exclusion claimed a measured
+#           720 orders / 0 fills and called the mirror "not a second execution." Direct DB control
+#           disproves that premise: ONFO (08-14) and TNON (08-19) filled before the §82 cutoff,
+#           then 6 more filled on 08-25. A filled mirror is an execution and can duplicate another
+#           fan-out leg, so excluding it would hide exactly the new population. The historical
+#           duplicate result remains 119|19|22 because those two old fills carried no identity;
+#           the attribution denominator correctly exposes them instead of silently excluding them.
 # EXCLUDES: unfilled emissions. ⭐ This is the load-bearing choice and it is NOT cosmetic:
 #           on emissions the same window scores 24 dup segments / 26 extra legs; on FILLS
 #           it scores 19 / 22. §82's own cost sentence — "all 22 filled worse than the
@@ -48,13 +53,10 @@
 #           that matches the published number. Measure the executions, not the attempts.
 #
 # ── ⛔ WHAT THIS CANNOT SEE — declared next to the number, not in a runbook ──────────
-# Legs whose `cw_arm_bar_ts` is 0 are INVISIBLE here: with no segment id they cannot be
-# grouped into a segment at all. In the baseline window that is 536 legs (450 mirror,
-# 59 rth_resting, 27 eh_resting). The resting path writes 0 because the order is PLACED
-# before the flip arms the segment. ⇒ THIS SIGNAL MEASURES DUPLICATES AMONG LEGS THAT
-# CARRY A SEGMENT ID, AND IS BLIND TO DUPLICATE RESTING LEGS THAT DO NOT. A clean read
-# here is not a clean read of the whole fan-out. Closing that gap needs log-derived
-# segment identity ([V2-CW-ARM] -> [V2-CW-DISARM]), which is a separate build.
+# Historical legs whose both identity fields are 0 remain INVISIBLE: with no segment id they
+# cannot be grouped at all. New drafts bind `fanout_segment_id` before emission, including resting
+# legs that precede the BUY arm. ⇒ ANY unattributed filled leg in the requested window makes the
+# duplicate result UNEXERCISED; a zero over only the attributable subset is never printed as clean.
 #
 # ⭐ THE NUMERATOR IS ROBUST, THE DENOMINATOR IS WINDOW-SENSITIVE. Measured across three
 # plausible end-cuts the numerator held at 19/22 while the denominator moved 116/119/120.
@@ -68,10 +70,10 @@ Q() { sudo -u postgres psql -d project_mai_tai -X -q -tA -c "$1"; }
 # stdout and every downstream count reads empty -> which `${x:-0}` would helpfully turn
 # into a clean 0. "The query broke" and "there was no population" must never render the
 # same. Sentinel checked FIRST, before any arithmetic touches the value.
-ok_shape() { case "$1" in *'|'*'|'*) return 0 ;; *) return 1 ;; esac; }
+ok_shape() { [[ "$1" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+$ ]]; }
 
 # ── the one query, parameterised by window ──────────────────────────────────────────
-measure() {  # measure <from> <to> -> "segments|dup_segments|extra_legs"
+measure() {  # -> "segments|dup_segments|extra_legs|all_legs|attributed|unattributed"
   Q "WITH l AS (
        SELECT bo.symbol, bo.payload::jsonb AS p
          FROM broker_orders bo JOIN broker_accounts ba ON ba.id = bo.broker_account_id
@@ -79,15 +81,26 @@ measure() {  # measure <from> <to> -> "segments|dup_segments|extra_legs"
           AND bo.status = 'filled'
           AND bo.side = 'buy'
           AND bo.payload::jsonb ? 'fanout_source'
-          AND bo.payload::jsonb->>'fanout_source' <> 'rth_resting_mirror'
-          AND coalesce(bo.payload::jsonb->>'cw_arm_bar_ts','0') <> '0'
           AND bo.submitted_at >= timestamptz '$1' AND bo.submitted_at < timestamptz '$2'),
-     g AS (SELECT symbol, p->>'cw_arm_bar_ts' AS seg, p->>'cw_entry_n' AS n, count(*) AS legs
-             FROM l GROUP BY 1,2,3),
+     a AS (SELECT *, coalesce(nullif(p->>'fanout_segment_id',''),
+                             nullif(p->>'cw_arm_bar_ts',''), '0') AS seg FROM l),
+     g AS (SELECT symbol, seg, p->>'cw_entry_n' AS n, count(*) AS legs
+             FROM a WHERE seg <> '0' GROUP BY 1,2,3),
      s AS (SELECT symbol, seg, sum(legs) AS sl, max(legs) AS mx FROM g GROUP BY 1,2)
+     SELECT (SELECT count(*) FROM s) || '|'
+            || (SELECT count(*) FROM s WHERE mx > 1) || '|'
+            || coalesce((SELECT sum(sl - 1) FROM s WHERE mx > 1), 0) || '|'
+            || (SELECT count(*) FROM a) || '|'
+            || (SELECT count(*) FROM a WHERE seg <> '0') || '|'
+            || (SELECT count(*) FROM a WHERE seg = '0');"
+}
+
+quiet_control() {
+  Q "WITH a(symbol,seg,n) AS (VALUES ('A','1','1'),('B','2','1')),
+          g AS (SELECT symbol,seg,n,count(*) legs FROM a GROUP BY 1,2,3),
+          s AS (SELECT symbol,seg,sum(legs) sl,max(legs) mx FROM g GROUP BY 1,2)
      SELECT count(*) || '|' || count(*) FILTER (WHERE mx > 1) || '|'
-            || coalesce(sum(sl - 1) FILTER (WHERE mx > 1), 0)
-       FROM s;"
+            || coalesce(sum(sl - 1) FILTER (WHERE mx > 1),0) FROM s;"
 }
 
 # ── ⛔ THE CONTROL RUNS FIRST AND CAN VOID THE WHOLE RUN ─────────────────────────────
@@ -98,8 +111,8 @@ CTL_FROM='2026-08-01 00:00:00+00'
 CTL_TO='2026-08-19 17:19:55+00'   # the instant PR #739 was opened, i.e. what §82 could see
 CTL=$(measure "$CTL_FROM" "$CTL_TO")
 echo "### CONTROL — §82 baseline window ($CTL_FROM .. $CTL_TO)"
-echo "    expected 119|19|22    got ${CTL:-<empty: query produced nothing>}"
-if ! ok_shape "$CTL" || [ "$CTL" != "119|19|22" ]; then
+echo "    expected 119|19|22|225|141|84    got ${CTL:-<empty: query produced nothing>}"
+if ! ok_shape "$CTL" || [ "$CTL" != "119|19|22|225|141|84" ]; then
   echo "⛔⛔ CONTROL FAILED — the query no longer reproduces the §82 baseline."
   echo "    EVERY NUMBER BELOW IS VOID. Do not read this run as a pass or a fail."
   echo "    (A schema change, a payload-key rename, or data ageing out of retention all land here.)"
@@ -107,6 +120,14 @@ if ! ok_shape "$CTL" || [ "$CTL" != "119|19|22" ]; then
 fi
 echo "    ✅ control reproduced — the instrument measures what §82 measured."
 echo "    the 19 are: UPC YXT×2 INLF×2 WYHG CLRO AZI STKH×2 JWEL×2 PLAG WXM×3 DOGZ AKAN SLE"
+QUIET=$(quiet_control)
+echo "    quiet control expected 2|0|0    got ${QUIET:-<empty>}"
+if [ "$QUIET" != "2|0|0" ]; then
+  echo "⛔⛔ QUIET CONTROL FAILED — the instrument cannot prove it stays quiet on clean input."
+  echo "    EVERY NUMBER BELOW IS VOID."
+  exit 2
+fi
+echo "    ✅ quiet control reproduced — a non-zero population with no duplicate stays quiet."
 echo
 
 # ── the measurement ─────────────────────────────────────────────────────────────────
@@ -123,11 +144,17 @@ if ! ok_shape "$R"; then
   echo "       This is NOT zero duplicates. Check the window arguments and the DB."
   exit 2
 fi
-SEG=${R%%|*}; REST=${R#*|}; DUP=${REST%%|*}; EX=${REST#*|}
+IFS='|' read -r SEG DUP EX TOTAL ATTR UNATTR <<<"$R"
 echo "    segments carrying a segment id : ${SEG}"
 echo "    duplicate segments             : ${DUP}"
 echo "    extra legs                     : ${EX}"
-if [ "${SEG}" -eq 0 ] 2>/dev/null; then
+echo "    filled fan-out attribution     : total=${TOTAL} attributed=${ATTR} unattributed=${UNATTR} — trigger=filled buy with fanout_source; polarity: unattributed=0 is REQUIRED to grade"
+if [ "${TOTAL}" -eq 0 ] 2>/dev/null; then
+  echo "    ⇒ ⛔ UNEXERCISED — denominator is 0. No filled fan-out leg reached this window."
+elif [ "${UNATTR}" -ne 0 ] 2>/dev/null; then
+  echo "    ⇒ ⛔ UNEXERCISED — ${UNATTR} of ${TOTAL} filled legs cannot be assigned to a segment."
+  echo "         The duplicate zero above covers only ${ATTR} attributable legs and is NOT a grade."
+elif [ "${SEG}" -eq 0 ] 2>/dev/null; then
   echo "    ⇒ ⛔ UNMEASURED — denominator is 0. No segment carried a segment id in this window,"
   echo "         so 0 duplicates is a NON-RESULT, not a pass. Never report this as 'not worse'."
 else
@@ -140,12 +167,3 @@ else
     echo "    ⇒ not worse than baseline."
   fi
 fi
-echo
-echo "### ⛔ BLIND SPOT, restated with today's numbers"
-Z=$(Q "SELECT count(*) FROM broker_orders bo JOIN broker_accounts ba ON ba.id=bo.broker_account_id
-        WHERE ba.name='live:orb' AND bo.status='filled' AND bo.side='buy'
-          AND bo.payload::jsonb ? 'fanout_source'
-          AND coalesce(bo.payload::jsonb->>'cw_arm_bar_ts','0') = '0'
-          AND bo.submitted_at >= timestamptz '$FROM' AND bo.submitted_at < timestamptz '$TO';")
-echo "    filled fan-out legs with NO segment id in this window: ${Z:-?}"
-echo "    those legs cannot be grouped and are not represented in any number above."
