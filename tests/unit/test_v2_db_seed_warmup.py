@@ -55,7 +55,11 @@ def _dt(ms: int) -> datetime:
 
 
 def _bot(factory) -> SchwabV2BotService:
-    return SchwabV2BotService(settings=Settings(), session_factory=factory)
+    bot = SchwabV2BotService(settings=Settings(), session_factory=factory)
+    # This file grades DB-seed warmup, not the independent 16:00 boundary. Pin the entry-window
+    # precondition so the same fixture means the same thing before and after market close.
+    bot.strategy._entry_window_closed_for_session = lambda now=None: False
+    return bot
 
 
 # --------------------------------------------------------------------------- (1)

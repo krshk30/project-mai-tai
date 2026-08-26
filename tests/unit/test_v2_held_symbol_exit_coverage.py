@@ -240,6 +240,12 @@ def test_broker_flat_but_internally_held_stays_covered() -> None:
         def _roll_stale_session_state(self, *a, **k) -> None:
             pass
 
+        def _release_entry_state_at_window_close(self) -> None:
+            pass
+
+        async def _drain_direct_strategy_intents(self) -> None:
+            pass
+
     h = _PollHarness()
     asyncio.run(SchwabV2BotService._position_poll_pass(h))
 

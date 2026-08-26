@@ -32,6 +32,8 @@ def _drive_real_v2_signal() -> tuple[object, ChartBar]:
     cross) then a fresh green volume-spike bar that crosses MACD above signal and
     passes every gate. Returns the strategy's REAL TradeIntentDraft."""
     strat = SchwabV2Strategy(Settings())
+    # The subject is reference-price propagation, not the independent 16:00 lifecycle gate.
+    strat._entry_window_closed_for_session = lambda now=None: False
     now_ms = int(datetime.now(UTC).timestamp() * 1000)
     n_flat = 135
     for i in range(n_flat):

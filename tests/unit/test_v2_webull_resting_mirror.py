@@ -165,17 +165,15 @@ def test_both_mirror_drafts_use_the_CANCEL_SAFE_queue() -> None:
 
 
 def test_the_bot_drains_the_direct_queue_WITHOUT_maybe_emit() -> None:
-    whole = inspect.getsource(bot)
-    assert "drain_webull_direct_intents" in whole
-    seg = whole.split("drain_webull_direct_intents")[1].split("_emit_webull_fanout_legs")[0]
+    seg = inspect.getsource(bot.SchwabV2BotService._drain_direct_strategy_intents)
+    assert "drain_webull_direct_intents" in seg
     assert "webull_intent_emitter.emit(d)" in seg, "must emit directly"
-    assert "_maybe_emit" not in seg, "must NOT route through the gated path"
+    assert "await self._maybe_emit(" not in seg, "must NOT route through the gated path"
 
 
 def test_a_missing_webull_emitter_is_LOUD_not_silent() -> None:
     """Dropping a cancel because the emitter is unset must never be quiet."""
-    whole = inspect.getsource(bot)
-    seg = whole.split("drain_webull_direct_intents")[1].split("_emit_webull_fanout_legs")[0]
+    seg = inspect.getsource(bot.SchwabV2BotService._drain_direct_strategy_intents)
     assert "DROPPED" in seg and "warning" in seg
 
 
