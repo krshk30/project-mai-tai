@@ -3915,8 +3915,10 @@ def test_the_broker_exit_is_recorded_as_a_real_fill() -> None:
         assert fills[0].price == Decimal("3.93")
         assert fills[0].quantity == Decimal("1")
         text = "\n".join(lines)
+        assert "[OMS-CHILD-EXIT-ATTRIBUTION]" in text
+        assert "evaluated=1 attributed=1 could_not_tell=0 outcome=recorded" in text
         assert "[OMS-CHILD-EXIT-RECORDED]" in text
-        assert "trigger=filled_child_found attributed=1" in text
+        assert "trigger=filled_child_found evaluated=1 attributed=1 could_not_tell=0" in text
         assert "child_order=WB-EXIT-1" in text
 
 
@@ -3927,11 +3929,22 @@ def test_recording_the_same_exit_twice_books_one_fill() -> None:
     with sf() as session:
         entry = _seed_entry(session)
         svc = _oco_service(sf)
+        lines = []
+
+        class _Log:
+            def info(self, message, *args):
+                lines.append(message % args)
+
+        svc.logger = _Log()
         svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, _EXIT)
         session.commit()
         svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, _EXIT)
         session.commit()
         assert len(session.scalars(select(Fill)).all()) == 1
+        assert any(
+            "evaluated=1 attributed=1 could_not_tell=0 outcome=already_recorded" in line
+            for line in lines
+        )
 
 
 def test_a_zero_priced_exit_is_never_booked() -> None:
@@ -3953,7 +3966,72 @@ def test_a_zero_priced_exit_is_never_booked() -> None:
         assert svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, bad) is False
         session.commit()
         assert session.scalars(select(Fill)).all() == []
+        assert any(
+            "evaluated=1 attributed=0 could_not_tell=1 "
+            "outcome=invalid_quantity_or_price" in line
+            for line in success_lines
+        )
         assert not any("[OMS-CHILD-EXIT-RECORDED]" in line for line in success_lines)
+
+
+@pytest.mark.parametrize(
+    ("missing", "outcome"),
+    [
+        ("session", "missing_session"),
+        ("entry", "missing_entry_order"),
+        ("detail", "missing_child_detail"),
+    ],
+)
+def test_every_refused_child_candidate_has_a_denominator(missing: str, outcome: str) -> None:
+    """Claude review control: no False return may make a candidate disappear silently."""
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session)
+        svc = _oco_service(sf)
+        lines = []
+
+        class _Log:
+            def info(self, message, *args):
+                lines.append(message % args)
+
+        svc.logger = _Log()
+        args = {
+            "session": None if missing == "session" else session,
+            "entry_order": None if missing == "entry" else entry,
+            "detail": None if missing == "detail" else _EXIT,
+        }
+
+        assert svc._persist_oco_exit_fill(
+            args["session"], "live:orb", "BIYA", args["entry_order"], args["detail"]
+        ) is False
+
+    assert len(lines) == 1
+    assert "[OMS-CHILD-EXIT-ATTRIBUTION]" in lines[0]
+    assert "evaluated=1 attributed=0 could_not_tell=1" in lines[0]
+    assert f"outcome={outcome}" in lines[0]
+    assert "[OMS-CHILD-EXIT-RECORDED]" not in lines[0]
+
+
+def test_missing_intent_candidate_has_a_denominator() -> None:
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session)
+        entry.intent_id = None
+        svc = _oco_service(sf)
+        lines = []
+
+        class _Log:
+            def info(self, message, *args):
+                lines.append(message % args)
+
+        svc.logger = _Log()
+        assert svc._persist_oco_exit_fill(
+            session, "live:orb", "BIYA", entry, _EXIT
+        ) is False
+
+    assert len(lines) == 1
+    assert "evaluated=1 attributed=0 could_not_tell=1 outcome=missing_trade_intent" in lines[0]
+    assert "[OMS-CHILD-EXIT-RECORDED]" not in lines[0]
 
 
 def test_bare_webull_exit_uses_the_persisted_attach_handle() -> None:
@@ -4243,7 +4321,7 @@ async def test_bare_webull_poll_without_handle_says_unattributed_and_never_guess
     assert adapter.calls == 0, "an unknown handle must not turn the entry coid into a guessed child"
     text = "\n".join(lines)
     assert "reason=missing_exit_pair_base" in text
-    assert "attributed=0" in text
+    assert "evaluated=1 attributed=0 could_not_tell=1" in text
     assert "[OMS-CHILD-EXIT-RECORDED]" not in text
 
 
@@ -4259,12 +4337,28 @@ async def test_no_exit_at_the_broker_leaves_the_position_alone() -> None:
     svc = _poll_service(sf)
     svc.broker_adapter = _ExitAdapter(None)          # bracket still working
     svc._managed_v2_symbols.add(("live:orb", "BIYA"))
+    lines = []
+
+    class _Log:
+        def info(self, message, *args):
+            lines.append(message % args)
+
+        def warning(self, message, *args, **kwargs):
+            lines.append(message % args)
+
+    svc.logger = _Log()
 
     await svc._poll_native_oco_exits()
 
     with sf() as session:
         assert session.scalars(select(Fill)).all() == []
     assert ("live:orb", "BIYA") in svc._managed_v2_symbols
+    assert any(
+        "reason=broker_reported_no_filled_exit_leg" in line
+        and "evaluated=1 attributed=0 could_not_tell=0" in line
+        for line in lines
+    )
+    assert not any("[OMS-CHILD-EXIT-RECORDED]" in line for line in lines)
 
 
 @pytest.mark.asyncio

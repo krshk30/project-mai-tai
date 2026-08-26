@@ -3585,15 +3585,44 @@ class OmsRiskService:
         the entry row. Idempotent twice over: `get_or_create_order` keys on a deterministic
         client_order_id, and `record_fill_if_needed` refuses a duplicate `broker_fill_id`.
         """
-        if session is None or entry_order is None or not detail:
+        # One terminal attribution line per candidate. `evaluated=1` is the denominator: without
+        # it, zero RECORDED markers cannot distinguish "nothing was evaluated" from "a candidate
+        # reached this function but could not be made durable". The dedicated RECORDED marker below
+        # remains success-only; this outcome line makes every refused branch visible as the other
+        # polarity.
+        def _outcome(*, attributed: int, could_not_tell: int, outcome: str, child_id: str = "") -> None:
+            self.logger.info(
+                "[OMS-CHILD-EXIT-ATTRIBUTION] %s %s trigger=filled_child_candidate evaluated=1 "
+                "attributed=%d could_not_tell=%d outcome=%s child_order=%s — polarity: "
+                "attributed=1 means the child/time/price already has a durable fill; "
+                "could_not_tell=1 means the candidate was not safely attributable",
+                acct, symbol, attributed, could_not_tell, outcome, child_id or "-",
+            )
+
+        if session is None:
+            _outcome(attributed=0, could_not_tell=1, outcome="missing_session")
+            return False
+        if entry_order is None:
+            _outcome(attributed=0, could_not_tell=1, outcome="missing_entry_order")
+            return False
+        if not detail:
+            _outcome(attributed=0, could_not_tell=1, outcome="missing_child_detail")
             return False
         qty = detail.get("quantity")
         price = detail.get("price")
         if not qty or not price or Decimal(str(qty)) <= 0 or Decimal(str(price)) <= 0:
+            _outcome(
+                attributed=0, could_not_tell=1, outcome="invalid_quantity_or_price",
+                child_id=str(detail.get("broker_order_id") or ""),
+            )
             return False   # the $0 cancelled-sibling artefact must never become a -100% trade
         child_id = str(detail.get("broker_order_id") or "")
         intent = session.get(TradeIntent, entry_order.intent_id) if entry_order.intent_id else None
         if intent is None:
+            _outcome(
+                attributed=0, could_not_tell=1, outcome="missing_trade_intent",
+                child_id=child_id,
+            )
             return False
         exit_order = self.store.get_or_create_order(
             session,
@@ -3633,9 +3662,20 @@ class OmsRiskService:
             payload={"source": "native_oco_child_leg", "broker_order_id": child_id},
         )
         if fill is None:
+            # All invalid-report cases were rejected above. Here `record_fill_if_needed` can only
+            # mean the deterministic broker fill is already present / has no incremental quantity,
+            # so attribution is durable even though this invocation created no second row.
+            _outcome(
+                attributed=1, could_not_tell=0, outcome="already_recorded",
+                child_id=child_id,
+            )
             return False
+        _outcome(
+            attributed=1, could_not_tell=0, outcome="recorded", child_id=child_id,
+        )
         self.logger.info(
-            "[OMS-CHILD-EXIT-RECORDED] %s %s trigger=filled_child_found attributed=1 qty=%s "
+            "[OMS-CHILD-EXIT-RECORDED] %s %s trigger=filled_child_found evaluated=1 "
+            "attributed=1 could_not_tell=0 qty=%s "
             "price=%s filled_at=%s child_order=%s — polarity: attributed=1 means child, time, "
             "price and fill are durably recorded; completed trade can now pair",
             acct, symbol, qty, price, detail.get("filled_at"), child_id or "?",
@@ -4025,12 +4065,15 @@ class OmsRiskService:
             except Exception:  # noqa: BLE001
                 pass
 
+            could_not_tell = int(reason != "broker_reported_no_filled_exit_leg")
             self.logger.info(
                 "[OMS-OCO-EXIT-MISS] %s %s reason=%s entry_coid=%s entry_order_id=%s entry_qty=%s "
-                "managed_row_age=%s attributed=0 — polarity: attributed=0 means no child/time/price "
-                "was recorded; managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD "
-                "row is the 07-31 AXTU/AXTX defect.",
+                "managed_row_age=%s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 "
+                "could_not_tell=%d — polarity: attributed=0 means no child/time/price was recorded; "
+                "could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN "
+                "(blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect.",
                 acct, symbol, reason, base_coid or "-", entry_oid or "-", entry_qty, row_age,
+                could_not_tell,
             )
         except asyncio.CancelledError:
             raise
