@@ -5,18 +5,13 @@
 **Written:** 2026-08-26, after #790 made new fan-out legs attributable but before the strategy
 could consume a Webull outcome.
 
-## The lifecycle in one sentence -- with one policy decision still open
+## The lifecycle in one sentence -- policy recorded
 
 A Webull fan-out trade needs one durable **segment**, two named candidate **slots** (`resting` and
 `reclaim`), and a linked chain of broker **attempts**. Explicit OMS outcomes close the evidence loop,
-but the operator must still decide whether a Webull-only fill consumes the v2 composition slot or is
-accounted as a separate mirror. Venue-side reconciliation remains an undecided dependency for
-outcomes our process did not observe.
-
-The document recommends cross-venue slot consumption (reading B in section 4), but that is a
-recommendation, not an authorization. The #644 rule proves the composition of v2's own entries; it
-does not reach the later Webull-only case. The outcome facts in section 3 are useful under either
-reading, while the consumer action is blocked on the operator's answer.
+and a Webull-only fill consumes the Webull fan-out claim only -- never v2's own resting/reclaim
+composition. The paired broker legs are the intentional 2x measurement, not drift to reconcile.
+Venue-side reconciliation remains an undecided dependency for outcomes our process did not observe.
 
 This is one lifecycle, not five independent proposals:
 
@@ -27,7 +22,8 @@ segment identity
         -> attempt 2 -> submitted -> working -> cancelled
         -> attempt 3 -> submitted -> partially_filled -> filled
             -> outcome recorded
-            -> consume the v2 slot only under operator reading B
+            -> Webull fan-out claim consumed
+            -> v2 resting/reclaim composition unchanged
 ```
 
 ## 1. Three identities and the missing replacement edge
@@ -198,8 +194,8 @@ and a boolean latch, so it infers outcomes from “still flat.” That inference
 and silent suppression.
 
 Every fan-out claim follows one monotonic evidence loop keyed by `fanout_slot_id` and
-`fanout_attempt_id`. Recording the facts is policy-neutral; whether those facts consume a v2
-composition slot is the unresolved section 4 decision.
+`fanout_attempt_id`. Recording the facts is policy-neutral. The recorded consumer policy is reading
+A: those facts update the Webull fan-out claim and never consume v2's own composition.
 
 | phase | outcomes | fan-out claim effect |
 |---|---|---|
@@ -210,7 +206,7 @@ composition slot is the unresolved section 4 decision.
 | broker observation | `working`, `partially_filled` | keep reserved |
 | venue terminal no-fill | `rejected_venue`, `cancelled`, `expired` | release only when terminal venue evidence is confirmed |
 | unclassified rejection | `rejected_unclassified` | `could_not_tell`; keep reserved until provenance is established |
-| terminal fill | `filled` | consume the fan-out claim; v2-slot consumption depends on reading A or B |
+| terminal fill | `filled` | consume the Webull fan-out claim only; never consume the v2 slot |
 | evidence failure | `could_not_tell` | keep reserved and make the uncertainty loud |
 
 `still_working` is an observation, not a terminal result. A `filled` outcome wins over a later stale
@@ -226,14 +222,9 @@ abort path must emit `rejected_client_abort`; a broker response must emit `rejec
 old or ambiguous generic `rejected` remains `rejected_unclassified`. Until that provenance exists,
 the outcome loop cannot treat the current generic bucket as terminal evidence.
 
-Section 4 changes only what consumes the recorded fact:
-
-- under **reading A**, `filled` keeps the Webull mirror claim consumed to prevent a duplicate
-  fan-out, but does **not** deplete v2's own resting/reclaim composition;
-- under **reading B** (recommended, not authorized), the same `filled` fact also consumes the
-  corresponding cross-venue composition slot.
-
-Building the outcome recorder does not choose between them. Building its decision consumer would.
+The consumer keeps the Webull fan-out claim consumed to prevent another Webull attempt for the same
+slot, but it does **not** deplete `cw_resting_taken`, `cw_reclaim_taken`, or any successor field that
+governs v2's own entry composition. Section 4 records why the two venue legs must remain independent.
 
 ### Known cause this addresses
 
@@ -267,64 +258,81 @@ local or venue-side.
 - A stale or duplicate event changes `filled` back to free.
 - A process restart loses a locally committed terminal outcome.
 
-## 4. Does a Webull-only fill consume a v2 slot? Operator decision required
+## 4. Webull and v2 composition are separate -- operator decision: reading A
 
-The recorded #644 composition is one resting entry plus one reclaim per ATR segment for v2's own
-entries. It did not decide the later cross-venue case. Today the slots are fed by a Schwab-scoped
-query, so a Webull-only fill consumes no v2 slot.
+**Recorded 2026-08-26:** a Webull-only fill consumes the Webull fan-out claim and does **not**
+deplete v2's own resting/reclaim composition. Reading B is rejected.
 
-Two internally consistent readings remain:
+The A/B table is retained because it shows why the same consumer has opposite meanings:
 
-| reading | slots govern | effect of a Webull-only fill | verdict on an outcome consumer that depletes the v2 slot |
+| reading | slots govern | effect of a Webull-only fill | verdict |
 |---|---|---|---|
-| **A -- separate mirror accounting** | v2's own exposure at its own broker | consume only the Webull fan-out claim; do not consume v2 composition | **regression**: it silently removes an authorized v2 entry |
-| **B -- cross-venue composition** | the economic cross across both venues | consume both the Webull claim and the matching v2 slot | **fix**: it prevents another fill in an already-consumed economic slot |
+| **A -- selected: separate broker accounting** | v2's own exposure at its own broker; Webull's fan-out claim at Webull | consume only the Webull claim; leave v2 composition unchanged | preserves the intended paired broker sample |
+| **B -- rejected: cross-venue composition** | one shared entitlement across both venues | consume the Webull claim and matching v2 slot | suppresses one leg of the experiment by construction |
 
-**Recommendation, pending operator confirmation: reading B.** The fan-out leg is emitted from the
-same resting/reclaim opportunity, and the duplicate-fill defect is an exposure defect rather than a
-database-count defect. But that is design reasoning, not evidence that #644 authorized it. The
-implementation must not choose by accident.
+Reading B failed for three general reasons:
 
-Properties shared by both readings can proceed as evidence design:
+1. **Alternation by survivorship.** If one venue's fill consumes a shared slot, whichever venue fills
+   first suppresses the other. The surviving leg is selected by execution order rather than by the
+   strategy's composition.
+2. **Structural walkover, not a latency race.** The Webull resting-path leg is MARKET-at-cross while
+   the Schwab leg remains a resting STOP_LIMIT. Webull is structurally expected to fill first. Under
+   B, the system silently becomes Webull-primary with Schwab trading only leftovers, and no outcome
+   error is required for that distortion.
+3. **It destroys the broker bake-off deliverable.** `dual-broker-v2-design.md` requires both brokers
+   to receive the same signal at the same instant, accepts intentional 2x exposure, and compares the
+   two fills to decide which broker to retire. `per-broker-eligibility-webull-fallback-design.md`
+   repeats “trade the same stock on BOTH brokers” and makes the legs independent. Under B, the
+   surviving dataset is conditioned on the other broker being slower; a report would measure that
+   selection rule and mislabel it execution quality.
 
-- every attempt belongs to one named `resting` or `reclaim` fan-out claim;
+The shared error behind B was treating one cross as one unit of total exposure. In the locked
+dual-broker design, one cross intentionally creates **two broker legs**. Their difference is the
+measurement. It is not drift for this lifecycle to reconcile.
+
+The consumer contract is therefore explicit:
+
+- every attempt belongs to one named `resting` or `reclaim` Webull fan-out claim;
 - a retry/reprice keeps the same slot id and names its predecessor attempt;
-- a fill consumes the Webull fan-out claim and cannot be released merely because a position later
-  reads flat;
-- the outcome is recorded before any consumer acts.
+- a confirmed Webull fill consumes that Webull claim and cannot be released merely because a later
+  Schwab-scoped position read is flat;
+- the consumer never mutates v2's own resting/reclaim taken state;
+- the outcome is recorded before the Webull claim consumer acts.
 
-The disputed behavior -- whether that fill also depletes v2 composition -- is deliberately absent
-from the first increment and blocked until the operator records A or B.
+**Duplicate-exposure alarms are venue-scoped.** The identity may pair Schwab and Webull legs for the
+comparison report, but a duplicate alarm keys at least on `(broker_account, symbol, segment, slot)`.
+One Schwab fill plus one Webull fill for the same cross is the expected 2x pair, not a duplicate. An
+alarm that collapses the venue dimension would fire on the intended experiment and call it a defect.
 
-### Known cause the recommended reading B would address
+### Known cause this addresses
 
-- Same-slot duplicate cross-venue fills such as the §82 chase population.
-- Releasing a consumed economic slot merely because the Schwab-scoped position later reads flat.
-- A Webull mirror fill not counting against any cross-level composition today.
-
-Reading A still addresses duplicate Webull fan-out by keeping the mirror claim consumed; it does not
-address cross-venue composition.
+- Repeated Webull fills for one Webull fan-out claim after the claim was released from a
+  Schwab-scoped flat read.
+- False duplicate alarms that mistake the intentional Schwab/Webull pair for same-venue repetition.
+- Silent loss of the slower broker leg through cross-venue slot depletion.
 
 ### It does not address
 
-- Which reading the operator actually intends; that is the decision this section exposes.
-- Broker-side exits or cross-account position reconciliation.
-- Whether Webull should receive any fan-out leg at all as a product/risk choice.
+- The deliberate 2x cross-venue exposure. That remains accepted experiment design, not an open gap.
+- Broker-side exits, cross-account netting, or capital sizing.
+- Which broker executes better; preserving the paired sample makes that measurable but does not
+  answer it.
 
 ### What it cannot know
 
-Data can show the consequences and frequency of each reading, but it cannot infer the operator's
-risk allocation across brokers. Historical rows without slot identity also cannot prove whether a
-particular reactive-after-resting pair was the same economic slot or a legitimate reclaim.
+Identity and venue-scoped suppression cannot establish execution quality, protection quality, or the
+venue truth missing from local records. Historical rows without slot identity also cannot prove
+which Webull attempts were same-claim duplicates.
 
-### What would falsify the recommendation
+### What would falsify implementation compliance
 
-- The operator chooses reading A: the Webull leg is a separately accounted mirror and must never
-  deplete v2's own composition.
-- A valid strategy case requires two cross-venue fills in one named slot.
-- New identity evidence shows `reactive` is not consistently the reclaim slot.
+- A Webull fill changes v2's resting/reclaim consumed state.
+- The intended Schwab leg is suppressed only because its paired Webull leg filled first.
+- A duplicate alarm fires solely because one expected fill exists at each venue.
+- A second Webull fill in the same `(broker_account, symbol, segment, slot)` is permitted after the
+  first confirmed fill.
 
-Any of those stops reading B. They do not invalidate the identity or outcome evidence layers.
+Those are implementation defects under reading A; they do not reopen reading B.
 
 ## 5. Venue reconciliation is an undecided dependency
 
@@ -406,5 +414,6 @@ showing distinct attempt ids is not an acceptance condition; production already 
 If this cannot be shipped and proved in one attended v2 window, the increment is too broad.
 
 Only after that increment is independently accepted should the OMS outcome publication be built.
-The consumer action is later still: it requires the operator's section 4 A/B decision, then known-bad
-and known-good controls against a population whose identity and outcomes are already readable.
+The later consumer is now specified by section 4: consume the Webull claim and never v2's own slot.
+It still requires known-bad and known-good controls against a population whose identity and outcomes
+are already readable.
