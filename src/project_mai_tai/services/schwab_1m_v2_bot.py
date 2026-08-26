@@ -80,6 +80,7 @@ from project_mai_tai.strategy_core.order_routing import (
 )
 from project_mai_tai.strategy_core import entry_gate
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
+    PostCloseEntryRelease,
     SERVICE_NAME,
     STRATEGY_CODE,
     SchwabV2IntentEmitter,
@@ -840,12 +841,24 @@ class SchwabV2BotService:
     async def _position_poll_pass(self) -> None:
         maps = await asyncio.to_thread(self._fetch_position_maps)
         if maps is None:
+            # A DB read failure is not permission to leave entry state alive after the close.
+            # Releasing entry permission is safe without a position answer: held positions keep
+            # their independent EXIT state and subscription coverage. Any resting BUY cancellation
+            # queued here must still be emitted rather than waiting for another bar.
+            self._release_entry_state_at_window_close()
+            await self._drain_direct_strategy_intents()
+            logger.warning(
+                "[V2-POSITION-READ-UNKNOWN] result=COULD_NOT_TELL entry_permission=BLOCKED "
+                "known_position_state=RETAINED — polarity: this is not broker-flat evidence"
+            )
             return
         positions, held = maps
         tracked = set(self._watchlist) | set(self.strategy._symbol_states.keys())
         for symbol in tracked:
             qty = positions.get(symbol, 0)
             self.strategy.update_position(symbol, qty, held_qty=held.get(symbol, 0))
+        self._release_entry_state_at_window_close()
+        await self._drain_direct_strategy_intents()
         self._roll_stale_session_state(positions, held)
         # Refresh EXIT COVERAGE on the same pass (one extra read, already off-loop).
         managed = await asyncio.to_thread(self._fetch_managed_symbols)
@@ -938,37 +951,44 @@ class SchwabV2BotService:
         """
         return set(self._watchlist) | set(self._exit_coverage)
 
-    def _release_arms_at_entry_window_close(self, is_protected) -> None:
-        """B20 — at 16:00 ET, an arm on a flat symbol can no longer lead anywhere. Release it.
+    def _release_entry_state_at_window_close(
+        self, now: datetime | None = None
+    ) -> PostCloseEntryRelease | None:
+        """B20 — make the 16:00 boundary exit-only while continuing to listen.
 
-        Fires ONCE per crossing of the 16:00 ET boundary, tracked like the session roll's anchor so
-        the 5s poll cannot re-run it every tick. Arming is bar-driven and bars flow to 20:00, so
-        arms KEEP APPEARING after 16:00 — this is not a one-shot sweep, it is a boundary event, and
-        an arm created at 16:30 is left alone until the next day's boundary. That is correct: it
-        misreports nothing, because by then the entry window has been shut all along.
-
-        ⛔ SAFETY, VERIFIED BEFORE BUILDING: nothing after-hours reads `cw_armed`. The software exit
-        ladder arms off `OmsService._cw_floor_armed`; `_maybe_cw_flip_close` — the bar-close ATR
-        exit with no RTH gate, i.e. the one thing genuinely live past 16:00 — gates on
-        `_cw_enabled`/`position_qty`/`flip == "SELL"` and never on `cw_armed`. Every other reader is
-        entry-side. See the strategy-side docstring for the full list.
+        Fires once per ET day. Every entry arm and claim is released, including symbols we hold;
+        held symbols remain exit-managed and subscribed through position/coverage state, not an
+        entry arm. A working resting BUY gets a cancellation request before its identity is cleared.
+        The per-bar strategy guard prevents a later after-hours BUY flip from rebuilding the state.
         """
-        et = datetime.now(UTC).astimezone(EASTERN_TZ)
-        past_close = (et.hour * 60 + et.minute) >= 16 * 60
-        day_key = et.strftime("%Y-%m-%d")
-        if not past_close:
+        et = (now or datetime.now(UTC)).astimezone(EASTERN_TZ)
+        if not self.strategy._entry_window_closed_for_session(et):
             return
+        # 00:00-03:59 belongs to the PREVIOUS 04:00-anchored trading session. Using the calendar
+        # date here would consume today's key at 00:01 and suppress today's real 16:00 sweep.
+        minutes = et.hour * 60 + et.minute
+        close_session_et = et - timedelta(days=1) if minutes < 4 * 60 else et
+        day_key = close_session_et.strftime("%Y-%m-%d")
         if self._entry_window_arm_release_day == day_key:
             return
         self._entry_window_arm_release_day = day_key
-        released = self.strategy.release_arms_at_entry_window_close(is_protected=is_protected)
-        # ⭐ LOG ZERO. "released nothing" and "never ran" must not read the same on the tape.
+        census = self.strategy.release_entry_state_at_window_close()
+        armed_after_close = len(self.strategy.cw_armed_segments())
+        # ⭐ LOG ZERO AND THE DENOMINATOR. "released nothing" and "never ran" must not read the
+        # same, and a zero without evaluated cannot distinguish a clean boundary from no symbols.
         logger.info(
-            "[V2-ENTRY-WINDOW-ARM-RELEASE] released=%d symbols=%s (16:00 ET boundary; held, "
-            "resting-active, operator-protected and mid-warmup symbols keep their arm)",
-            len(released),
-            ",".join(released[:20]) or "-",
+            "[V2-ENTRY-WINDOW-EXIT-ONLY] evaluated=%d released=%d arms_released=%d "
+            "cancel_requested=%d held_positions=%d armed_after_close=%d symbols=%s — polarity: "
+            "armed_after_close must be 0; held positions stay exit-managed and subscribed",
+            census.evaluated,
+            len(census.released),
+            len(census.arms_released),
+            len(census.cancel_requested),
+            len(census.held_positions),
+            armed_after_close,
+            ",".join(census.released[:20]) or "-",
         )
+        return census
 
     def _roll_stale_session_state(
         self, positions: dict[str, int], held: dict[str, int]
@@ -1008,12 +1028,6 @@ class SchwabV2BotService:
                 return True
             # mid-warmup: the bar-driven path owns this symbol right now
             return symbol in self._watchlist and symbol not in self._rest_warmup_done
-
-        # B20 — release arms at the 16:00 ET entry-window close for symbols we do not hold.
-        # ⭐ Placed HERE, sharing `_skip`, deliberately: the carve-outs an arm release must respect
-        # (operator-protected, held, working resting order, mid-warmup) are exactly the ones this
-        # predicate already encodes and has been corrected twice for. A second copy would drift.
-        self._release_arms_at_entry_window_close(_skip)
 
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         anchor = session_start_ts_ms(now_ms)
@@ -1211,9 +1225,18 @@ class SchwabV2BotService:
         for the v2 broker account, keyed by symbol. Quantity is the max
         across sources (a conservative "do we own this" signal).
         """
-        return self._fetch_position_maps()[0]
+        maps = self._fetch_position_maps()
+        if maps is not None:
+            return maps[0]
+        # The scanner/watchlist path needs a set even when the DB read fails. Preserve the last
+        # known held/in-flight state rather than translating COULD_NOT_TELL to flat.
+        return {
+            symbol: int(state.position_qty)
+            for symbol, state in self.strategy._symbol_states.items()
+            if int(state.position_qty) > 0
+        }
 
-    def _fetch_position_maps(self) -> tuple[dict[str, int], dict[str, int]]:
+    def _fetch_position_maps(self) -> tuple[dict[str, int], dict[str, int]] | None:
         """Returns (union, held).
 
         `union` is the historical conservative signal -- virtual_positions ∪ in-flight open intents
@@ -1271,6 +1294,7 @@ class SchwabV2BotService:
                             positions[symbol] = max(positions.get(symbol, 0), qty)
         except Exception:
             logger.exception("schwab_1m_v2 _fetch_open_positions failed")
+            return None
         return positions, held
 
     async def _scanner_consumer_loop(self) -> None:
@@ -2243,6 +2267,17 @@ class SchwabV2BotService:
             logger.exception("schwab_1m_v2 on_bar failed for %s", symbol)
             return
         await self._maybe_emit(draft)
+        await self._drain_direct_strategy_intents()
+        # Dual-broker fan-out: emit any Webull legs the strategy queued this bar (no-op if off).
+        await self._emit_webull_fanout_legs()
+
+    async def _drain_direct_strategy_intents(self) -> None:
+        """Emit strategy-owned resting place/cancel queues without an entry-window gate.
+
+        The close-boundary sweep runs from the 5-second position poll, not necessarily from a bar.
+        Keeping this drain shared with `_handle_bar` makes its cancel requests leave the process
+        immediately. It deliberately does not drain fan-out entry legs; those remain bar-owned.
+        """
         # Drain the RESTING flip-entry place/cancel drafts the strategy queued this bar. Emit them
         # DIRECTLY (bypassing _maybe_emit's reactive-only EH/entry-window gates): the resting manager
         # already gates a place to RTH + short + in-window, and a cancel must NEVER be gated. No-op
@@ -2277,8 +2312,6 @@ class SchwabV2BotService:
                         "schwab_1m_v2 webull direct emit failed for %s (%s)",
                         getattr(d, "symbol", "?"), getattr(d, "intent_type", "?"),
                     )
-        # Dual-broker fan-out: emit any Webull legs the strategy queued this bar (no-op if off).
-        await self._emit_webull_fanout_legs()
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
         now = datetime.now(UTC)

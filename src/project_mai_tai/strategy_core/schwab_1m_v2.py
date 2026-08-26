@@ -44,6 +44,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import fanout_slot_for_source, fanout_slot_id
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
+from project_mai_tai.strategy_core.entry_gate import resolve_entry_window
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +297,22 @@ class TradeIntentDraft:
     quantity: Decimal
     reason: str
     metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PostCloseEntryRelease:
+    """One close-boundary census over entry-side state.
+
+    ``held_positions`` is evidence that exposure remains exit-managed; it is never an exception
+    that keeps an entry arm alive. ``cancel_requested`` names resting BUYs whose cancellation was
+    queued before their segment identity was cleared.
+    """
+
+    evaluated: int
+    released: tuple[str, ...]
+    arms_released: tuple[str, ...]
+    cancel_requested: tuple[str, ...]
+    held_positions: tuple[str, ...]
 
 
 @dataclass
@@ -664,6 +681,63 @@ class SchwabV2Strategy:
         state.cw_reclaim_taken = False
         return True
 
+    def _entry_window_closed_for_session(self, now: datetime | None = None) -> bool:
+        """True from the configured entry close through the next 04:00-ET session anchor.
+
+        This is deliberately NOT ``within_entry_window``. Bars between 04:00 and the 07:00 entry
+        open may build the next session's setup, but bars at/after the 16:00 close must never build
+        entry state that the final emit gate will only throw away. ``_now_ms`` keeps replay/tests on
+        their injected clock instead of today's wall clock.
+        """
+        current = now or datetime.fromtimestamp(self._now_ms() / 1000.0, UTC)
+        et = current.astimezone(EASTERN_TZ)
+        minutes = et.hour * 60 + et.minute
+        _, _, end_hour, end_minute = resolve_entry_window(self.settings)
+        return minutes >= end_hour * 60 + end_minute or minutes < VWAP_SESSION_HOUR_ET * 60
+
+    def _release_post_close_entry_state(
+        self, state: SymbolState, *, reason: str
+    ) -> tuple[bool, bool, bool]:
+        """Release one symbol's ENTRY state without touching its position or EXIT state.
+
+        A live resting BUY is cancelled first. That ordering is load-bearing: the Webull mirror
+        cancel carries the segment/slot identity, so clearing the arm first would manufacture a new
+        identity for the cancellation. The cancel path retains ``last_resting_placed_slot`` for a
+        late fill race; position and OMS exit state are intentionally untouched.
+        """
+        had_entry_state = bool(
+            state.cw_armed
+            or state.resting_active
+            or state.webull_resting_active
+            or state.cw_v2_emit_claimed
+            or state.fanout_webull_claimed
+            or state.resting_flip_ms
+            or state.cw_resting_taken
+            or state.cw_reclaim_taken
+            or state.fanout_segment_id
+        )
+        cancel_requested = bool(
+            (state.resting_active and state.resting_is_broker_order)
+            or state.webull_resting_active
+        )
+        if state.resting_active or state.webull_resting_active:
+            self._queue_resting_cancel(state, reason=reason)
+        arm_released = self._release_arm(state, reason)
+
+        # Some claims can outlive the arm (for example an emitted-but-not-filled leg). The entry
+        # window ending releases those too; none is an exit input.
+        state.cw_arm_bar_ts = 0
+        state.fanout_segment_id = 0
+        state.cw_entries_this_flip = 0
+        state.cw_resting_taken = False
+        state.cw_reclaim_taken = False
+        state.cw_v2_emit_claimed = False
+        state.cw_v2_emit_ms = 0
+        state.fanout_webull_claimed = False
+        state.fanout_claim_ms = 0
+        state.resting_flip_ms = 0
+        return had_entry_state, arm_released, cancel_requested
+
     def release_and_drop_symbol(self, symbol: str, *, reason: str = "watchlist-removed") -> bool:
         """B19 — leaving the watchlist DISARMS the symbol; it does not freeze it.
 
@@ -685,14 +759,10 @@ class SchwabV2Strategy:
         self._symbol_states.pop(symbol, None)
         return released
 
-    def release_arms_at_entry_window_close(
-        self, *, is_protected=None, reason: str = "entry-window-close"
-    ) -> list[str]:
-        """B20 — at the 16:00 entry-window close, release arms on symbols we do NOT hold.
-
-        Arming is bar-driven and bars flow to 20:00 ET, so a symbol arming after 16:00 is NORMAL —
-        it is simply an arm that can no longer lead anywhere, because the entry window that gives it
-        meaning has shut. Carrying it overnight only misreports.
+    def release_entry_state_at_window_close(
+        self, *, reason: str = "entry-window-close"
+    ) -> PostCloseEntryRelease:
+        """B20 — at 16:00, release every ENTRY arm/claim while preserving EXIT management.
 
         ⛔⭐⭐ SAFE ONLY BECAUSE NOTHING AFTER-HOURS READS THIS FLAG. Verified before building, not
         assumed:
@@ -706,21 +776,34 @@ class SchwabV2Strategy:
         ⇒ Releasing the arm cannot disarm an exit. If a future exit path starts reading `cw_armed`,
         this becomes unsafe and the test below is what should fail first.
 
-        `is_protected` is the SAME predicate the session roll uses, passed in rather than
-        re-derived: a held position, a working resting order, or a mid-warmup symbol keeps its arm.
-        Re-implementing those rules here would be a second copy that drifts.
+        A held position is not an exception: it remains subscribed and exit-managed through the
+        broker/OMS position state above, while ``cw_armed`` (permission to enter) becomes false.
+        Working resting BUYs are cancellation requests, not reasons to retain an arm. Mid-warmup and
+        operator-protected symbols likewise remain listened to without retaining entry permission.
         """
         released: list[str] = []
+        arms_released: list[str] = []
+        cancel_requested: list[str] = []
+        held_positions: list[str] = []
         for sym, st in self._symbol_states.items():
-            if not st.cw_armed:
-                continue
-            if max(int(st.position_qty), int(st.position_qty_held)) > 0:
-                continue  # we hold it (union OR fills) — conservative on purpose
-            if is_protected is not None and is_protected(sym, st):
-                continue
-            if self._release_arm(st, reason):
+            if int(st.position_qty_held) > 0:
+                held_positions.append(sym)
+            changed, arm_released, cancel_queued = self._release_post_close_entry_state(
+                st, reason=reason
+            )
+            if changed:
                 released.append(sym)
-        return released
+            if arm_released:
+                arms_released.append(sym)
+            if cancel_queued:
+                cancel_requested.append(sym)
+        return PostCloseEntryRelease(
+            evaluated=len(self._symbol_states),
+            released=tuple(sorted(released)),
+            arms_released=tuple(sorted(arms_released)),
+            cancel_requested=tuple(sorted(cancel_requested)),
+            held_positions=tuple(sorted(held_positions)),
+        )
 
     def update_position(self, symbol: str, qty: int, *, held_qty: int | None = None) -> None:
         """Called by the engine each position-poll cycle. On a True→False
@@ -2157,6 +2240,7 @@ class SchwabV2Strategy:
         was_level = state.resting_level
         was_broker_order = state.resting_is_broker_order
         was_webull_resting = state.webull_resting_active
+        webull_reason = reason
         state.webull_resting_active = False
         was_slot = state.resting_slot
         state.resting_active = False
@@ -2192,16 +2276,16 @@ class SchwabV2Strategy:
                 reason = "flip_no_fill_soft_rest"
             logger.info("[V2-RESTING-EH-DISARM] %s slot=%s reason=%s level=%.4f",
                         state.symbol, was_slot, reason, was_level)
-            return
-        logger.info("[V2-RESTING-CANCEL] %s slot=%s reason=%s level=%.4f",
-                    state.symbol, was_slot, reason, was_level)
-        self._pending_intents.append(TradeIntentDraft(
-            symbol=state.symbol, side="buy", intent_type="cancel",
-            quantity=Decimal(str(self._atr_qty)),
-            reason="schwab_1m_v2 resting-entry cancel",
-            metadata={"resting_entry_cancel": "true", "reason": reason,
-                      "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
-        ))
+        else:
+            logger.info("[V2-RESTING-CANCEL] %s slot=%s reason=%s level=%.4f",
+                        state.symbol, was_slot, reason, was_level)
+            self._pending_intents.append(TradeIntentDraft(
+                symbol=state.symbol, side="buy", intent_type="cancel",
+                quantity=Decimal(str(self._atr_qty)),
+                reason="schwab_1m_v2 resting-entry cancel",
+                metadata={"resting_entry_cancel": "true", "reason": reason,
+                          "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
+            ))
         # ⛔⭐⭐ CANCEL THE WEBULL MIRROR TOO. An un-cancelled mirrored rest is a live order nobody
         # owns -- the FRTT 2026-08-11 shape (136 minutes working and unowned), on the broker whose
         # book we cannot reliably read back. The cancel goes on the DIRECT queue so it bypasses
@@ -2214,7 +2298,7 @@ class SchwabV2Strategy:
                 symbol=state.symbol, side="buy", intent_type="cancel",
                 quantity=Decimal(str(self._webull_fanout_qty)),
                 reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
-                metadata={"resting_entry_cancel": "true", "reason": reason,
+                metadata={"resting_entry_cancel": "true", "reason": webull_reason,
                           "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
                           "fanout_segment_id": str(segment_id),
                           **self._fanout_slot_metadata(
@@ -2902,6 +2986,31 @@ class SchwabV2Strategy:
         # touch/flip signal is consumed in the emit region below, and only when
         # the enable flag is on. Returns the per-bar signal (or None).
         atr_signal = self._update_atr_state(state, state.bars[-1])
+
+        # ⛔ POST-CLOSE IS EXIT-ONLY, NOT "ENTRY STATE THAT HAPPENS NOT TO EMIT".
+        #
+        # Bars continue until 20:00 ET. Before this guard, a BUY flip after 16:00 re-armed the
+        # symbol; `_maybe_emit` later rejected the actual order, but the arm survived and made the
+        # restart gate report a live entry opportunity that policy had already ended. Keep the ATR
+        # update above (the held-position SELL exit needs it), release any leftover entry state,
+        # evaluate that exit, and stop before every entry state machine below.
+        if self._entry_window_closed_for_session():
+            changed, arm_released, cancel_requested = self._release_post_close_entry_state(
+                state, reason="post-close-entry-disabled"
+            )
+            if atr_signal is not None and atr_signal.get("flip") == "BUY":
+                logger.info(
+                    "[V2-POST-CLOSE-ENTRY-BLOCKED] %s evaluated=1 blocked=1 "
+                    "held_qty=%d entry_state_released=%s arm_released=%s "
+                    "cancel_requested=%s — polarity: blocked=1 means a late BUY flip was "
+                    "observed and refused; no line means no late BUY flip was evaluated",
+                    state.symbol,
+                    int(state.position_qty_held),
+                    changed,
+                    arm_released,
+                    cancel_requested,
+                )
+            return self._maybe_cw_flip_close(state, atr_signal)
 
         # CW-v2: advance the intrabar-entry state machine (arm / flip+2 trigger / flip-level /
         # forming-bar-low reset) on every new bar, independent of flat/cooldown/warmup. No-op
