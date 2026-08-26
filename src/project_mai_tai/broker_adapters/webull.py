@@ -495,6 +495,18 @@ class WebullBrokerAdapter:
     def _submit_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
     ) -> list[ExecutionReport]:
+        order_type = self._order_type(request)
+        limit_price = self._meta_price(request, "limit_price", "reference_price")
+        stop_price = self._meta_price(request, "stop_price")
+        wire_limit, wire_stop, report_metadata, refusal = self._prepare_single_leg_prices(
+            request=request,
+            order_type=order_type,
+            limit_price=limit_price,
+            stop_price=stop_price,
+        )
+        if refusal:
+            return [self._reject(request, refusal, origin="client")]
+
         client = self._get_client()
         instrument_id = self._resolve_instrument_id(client, request.symbol)
         if not instrument_id:
@@ -507,7 +519,6 @@ class WebullBrokerAdapter:
         po.set_client_order_id(request.client_order_id)
         po.set_instrument_id(instrument_id)
         po.set_side("BUY" if request.side == "buy" else "SELL")
-        order_type = self._order_type(request)
         po.set_order_type(order_type)
         po.set_qty(str(int(request.quantity)) if request.quantity == request.quantity.to_integral_value() else str(request.quantity))
         po.set_tif(self._tif(request))
@@ -516,12 +527,21 @@ class WebullBrokerAdapter:
         # Price gates include BOTH the broker-neutral tokens (flag-off path) and Webull's
         # mapped enums (flag-on path), so set_stop_price/set_limit_price stay consistent
         # with whatever _order_type() returned.
-        limit_price = self._meta_price(request, "limit_price", "reference_price")
-        if order_type in {"LIMIT", "STOP_LIMIT", "STOP_LOSS_LIMIT", "ENHANCED_LIMIT", "AT_AUCTION_LIMIT"} and limit_price is not None:
-            po.set_limit_price(str(self._round_to_tick(limit_price)))
-        stop_price = self._meta_price(request, "stop_price")
-        if order_type in {"STOP", "STOP_LIMIT", "STOP_LOSS", "STOP_LOSS_LIMIT"} and stop_price is not None:
-            po.set_stop_price(str(self._round_to_tick(stop_price)))
+        if order_type in {"LIMIT", "STOP_LIMIT", "STOP_LOSS_LIMIT", "ENHANCED_LIMIT", "AT_AUCTION_LIMIT"} and wire_limit is not None:
+            po.set_limit_price(str(wire_limit))
+        if order_type in {"STOP", "STOP_LIMIT", "STOP_LOSS", "STOP_LOSS_LIMIT"} and wire_stop is not None:
+            po.set_stop_price(str(wire_stop))
+        if report_metadata.get("webull_buy_stop_limit_tick_adjusted") == "true":
+            logger.warning(
+                "[WEBULL-BUY-STOP-LIMIT-TICK-ADJUSTED] %s raw_stop=%s raw_limit=%s "
+                "wire_stop=%s wire_limit=%s trigger=raw_valid_wire_collapsed "
+                "polarity=wire_limit_gt_wire_stop",
+                request.symbol,
+                stop_price,
+                limit_price,
+                wire_stop,
+                wire_limit,
+            )
         # extended_hours_trading is REQUIRED by the API (null -> ILLEGAL_PARAMETER 417); always
         # set it. Pre- AND post-market are supported for LIMIT-family orders; a MARKET/STOP_LOSS
         # in an EH session is downgraded to RTH-only with a warning (it can't fill EH).
@@ -551,7 +571,7 @@ class WebullBrokerAdapter:
                 intent_type=request.intent_type,
                 quantity=request.quantity,
                 reason=request.reason,
-                metadata=dict(request.metadata),
+                metadata=report_metadata,
             )
         ]
 
@@ -1022,13 +1042,69 @@ class WebullBrokerAdapter:
                     continue
         return None
 
+    @classmethod
+    def _prepare_single_leg_prices(
+        cls,
+        *,
+        request: OrderRequest,
+        order_type: str,
+        limit_price: Decimal | None,
+        stop_price: Decimal | None,
+    ) -> tuple[Decimal | None, Decimal | None, dict[str, str], str | None]:
+        """Round single-leg prices and preserve a valid Webull BUY stop-limit relationship.
+
+        Webull requires ``limit_price > stop_price`` for a BUY STOP_LOSS_LIMIT.  The strategy's
+        raw four-decimal prices can satisfy that relationship while independent cent rounding
+        collapses both wire prices to equality.  That exact defect produced 15 broker refusals on
+        LUCY/AIXI/YYGH through 2026-08-26.
+
+        A raw-invalid pair is refused before even instrument lookup.  A raw-valid pair that only
+        collapses on the venue tick grid is widened to exactly one tick.  SELL stop-limits are
+        deliberately untouched: their valid relationship is the opposite and is already covered
+        by the native-stop tests.
+        """
+        wire_limit = cls._round_to_tick(limit_price) if limit_price is not None else None
+        wire_stop = cls._round_to_tick(stop_price) if stop_price is not None else None
+        metadata = dict(request.metadata)
+        is_buy_stop_limit = (
+            request.side == "buy"
+            and order_type in {"STOP_LIMIT", "STOP_LOSS_LIMIT"}
+            and limit_price is not None
+            and stop_price is not None
+        )
+        if not is_buy_stop_limit:
+            return wire_limit, wire_stop, metadata, None
+
+        if limit_price <= stop_price:
+            return (
+                wire_limit,
+                wire_stop,
+                metadata,
+                "LOCAL refusal (no broker request): Webull BUY stop-limit requires "
+                f"raw limit_price > stop_price; got limit={limit_price} stop={stop_price}",
+            )
+
+        assert wire_limit is not None and wire_stop is not None
+        adjusted = wire_limit <= wire_stop
+        if adjusted:
+            wire_limit = wire_stop + cls._tick_size(wire_stop)
+
+        metadata["webull_wire_stop_price"] = str(wire_stop)
+        metadata["webull_wire_limit_price"] = str(wire_limit)
+        metadata["webull_buy_stop_limit_tick_adjusted"] = str(adjusted).lower()
+        return wire_limit, wire_stop, metadata, None
+
+    @staticmethod
+    def _tick_size(price: Decimal) -> Decimal:
+        return Decimal("0.01") if price >= Decimal("1") else Decimal("0.0001")
+
     @staticmethod
     def _round_to_tick(price: Decimal) -> Decimal:
         """Snap a price to Webull's tick grid. Webull rejects off-grid prices with
         ILLEGAL_PARAMETER (http 417): tick is $0.01 for px >= $1, and $0.0001 below $1.
         Strategies (e.g. ORB) emit 4-decimal prices (f"{px:.4f}"), which are illegal for
         any stock >= $1 — round here so the broker always accepts the order."""
-        tick = Decimal("0.01") if price >= Decimal("1") else Decimal("0.0001")
+        tick = WebullBrokerAdapter._tick_size(price)
         return price.quantize(tick, rounding=ROUND_HALF_UP)
 
     # ------------------------------------------------------ native OCO combo bracket (write side)
