@@ -14,6 +14,7 @@ on:
           - oms
           - market-data
           - schwab-1m-v2
+          - sync-only
       allow_live_restart:
         description: "Allow strategy/OMS/market-data deploy during ET market hours"
         required: false
@@ -38,7 +39,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     concurrency:
-      group: project-mai-tai-service-deploy-${{ inputs.service }}
+      # The checkout is shared by every production service. A sync-only pull must
+      # never overlap a restart deploy, and two restart deploys must not race the
+      # same git worktree either.
+      group: project-mai-tai-production-deploy
       cancel-in-progress: false
     steps:
       - name: Require main ref
@@ -53,8 +57,19 @@ jobs:
       - name: Validate workflow inputs
         env:
           SERVICE: ${{ inputs.service }}
+          ALLOW_LIVE_RESTART: ${{ inputs.allow_live_restart || false }}
+          RUN_MIGRATIONS: ${{ inputs.run_migrations || false }}
           HOLD_STRATEGY: ${{ inputs.hold_strategy || false }}
         run: |
+          if [ "$SERVICE" = "sync-only" ] && {
+            [ "$ALLOW_LIVE_RESTART" = "true" ] ||
+            [ "$RUN_MIGRATIONS" = "true" ] ||
+            [ "$HOLD_STRATEGY" = "true" ];
+          }; then
+            echo "sync-only refuses restart, migration, and hold-strategy inputs."
+            exit 1
+          fi
+
           if [ "$HOLD_STRATEGY" = "true" ] && [ "$SERVICE" != "oms" ] && [ "$SERVICE" != "market-data" ]; then
             echo "hold_strategy is only valid for oms or market-data deploys."
             exit 1
@@ -93,7 +108,33 @@ jobs:
           ssh-keygen -y -f ~/.ssh/project_mai_tai_vps >/dev/null
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
+      - name: Check out sync-only verifier
+        if: ${{ inputs.service == 'sync-only' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Sync checkout without restart
+        if: ${{ inputs.service == 'sync-only' }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          EXPECTED_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          REMOTE_SCRIPT="/tmp/project-mai-tai-sync-only-${RUN_ID}.sh"
+          scp -i ~/.ssh/project_mai_tai_vps \
+            ops/systemd/sync_checkout_only.sh \
+            "${VPS_USER}@${VPS_HOST}:${REMOTE_SCRIPT}"
+          ssh -i ~/.ssh/project_mai_tai_vps "${VPS_USER}@${VPS_HOST}" \
+            "set -euo pipefail; \
+            trap 'rm -f ${REMOTE_SCRIPT}' EXIT; \
+            chmod 700 '${REMOTE_SCRIPT}'; \
+            bash '${REMOTE_SCRIPT}' /home/trader/project-mai-tai main '${EXPECTED_SHA}'"
+
       - name: Deploy selected service to VPS
+        if: ${{ inputs.service != 'sync-only' }}
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
