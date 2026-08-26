@@ -38,6 +38,17 @@ ATR_PERIOD = 5
 ATR_FACTOR = 3.5
 
 
+def _entry_window_strategy(settings: Settings | None = None) -> SchwabV2Strategy:
+    """These tests grade indicator/emit mechanics, not the wall-clock entry boundary.
+
+    Pin that independent precondition explicitly so running the suite after 16:00 does not silently
+    change their subject. The close-boundary polarities are exercised in test_v2_arm_lifecycle.py.
+    """
+    strategy = SchwabV2Strategy(settings or Settings())
+    strategy._entry_window_closed_for_session = lambda now=None: False
+    return strategy
+
+
 # ====================== FROZEN ORACLE (verbatim analysis/atr_flip.py) ==========
 # Trail kept UNROUNDED (the analysis _row rounded only for display; the internal
 # cur_trail it ratchets on is unrounded — we mirror the unrounded internal math
@@ -179,7 +190,7 @@ def test_atr_indicator_parity_vs_oracle() -> None:
     rows = _oracle_compute_atr_trail(obars)
     oracle_b = _oracle_b_signals(obars, rows)
 
-    strat = SchwabV2Strategy(Settings())
+    strat = _entry_window_strategy()
     state = SymbolState(symbol="TEST")
     touches: list[tuple[int, float]] = []
     for idx, r in enumerate(raw):
@@ -242,7 +253,7 @@ def _build_short_then_fresh_touch(strat: SchwabV2Strategy, *, final_vol: int):
 
 @pytest.mark.asyncio
 async def test_atr_real_emit_path_fills_at_trail() -> None:
-    strat = SchwabV2Strategy(Settings())
+    strat = _entry_window_strategy()
     strat._atr_enabled = True           # flag ON (default OFF ships dormant)
     strat._atr_variant = "B"
     chart, T = _build_short_then_fresh_touch(strat, final_vol=100_000)
@@ -282,7 +293,7 @@ async def test_atr_real_emit_path_fills_at_trail() -> None:
 def test_atr_dormant_when_flag_off() -> None:
     """Flag OFF (default): the SAME fresh touch emits nothing — the indicator
     state is computed but no intent fires."""
-    strat = SchwabV2Strategy(Settings())
+    strat = _entry_window_strategy()
     assert strat._atr_enabled is False           # default ships dormant
     chart, _T = _build_short_then_fresh_touch(strat, final_vol=100_000)
     drafts = [strat.on_bar("TEST", cb) for cb in chart]
@@ -297,7 +308,7 @@ def test_atr_on_does_not_perturb_paths_1_2() -> None:
     now_ms = int(datetime.now(UTC).timestamp() * 1000)   # shared so bar_time_ms matches
 
     def drive(atr_on: bool):
-        strat = SchwabV2Strategy(Settings())
+        strat = _entry_window_strategy()
         strat._atr_enabled = atr_on
         n_flat = 135
         for i in range(n_flat):
@@ -326,7 +337,7 @@ def test_atr_only_mode_hard_disables_paths_1_2() -> None:
         # ATR enabled in both arms (go-live has ATR on); only the P1/P2 disable toggles.
         object.__setattr__(s, "strategy_schwab_1m_v2_atr_flip_enabled", True)
         object.__setattr__(s, "strategy_schwab_1m_v2_atr_only_mode", atr_only)
-        strat = SchwabV2Strategy(s)
+        strat = _entry_window_strategy(s)
         n_flat = 135
         for i in range(n_flat):
             ts = now_ms - (n_flat - i + 1) * 60_000
@@ -354,12 +365,12 @@ def test_atr_liquidity_floor_is_the_only_filter() -> None:
     Reads the floor from Settings rather than hard-coding it: the default moved 5000 -> 10000 on
     2026-07-28 to match what production had been running via env override all along."""
     floor = Settings().strategy_schwab_1m_v2_atr_flip_vol_floor
-    strat_lo = SchwabV2Strategy(Settings())
+    strat_lo = _entry_window_strategy()
     strat_lo._atr_enabled = True
     chart_lo, _ = _build_short_then_fresh_touch(strat_lo, final_vol=floor)      # == floor
     assert [strat_lo.on_bar("TEST", cb) for cb in chart_lo][-1] is None
 
-    strat_hi = SchwabV2Strategy(Settings())
+    strat_hi = _entry_window_strategy()
     strat_hi._atr_enabled = True
     chart_hi, _ = _build_short_then_fresh_touch(strat_hi, final_vol=floor + 1)  # > floor
     assert [strat_hi.on_bar("TEST", cb) for cb in chart_hi][-1] is not None
@@ -411,7 +422,7 @@ async def test_atr_fires_under_warmed_below_min_bars() -> None:
     """THE fix: with only ~41 bars (< MIN_BARS=135), a fresh ATR-Flip touch now
     EMITS (the ATR trail is warm after its own ~2*period warmup). This is the QTEX
     scenario — pre-fix the line-676 guard bailed and returned None."""
-    strat = SchwabV2Strategy(Settings())
+    strat = _entry_window_strategy()
     strat._atr_enabled = True
     chart, T = _build_short_then_fresh_touch_n(strat, n_warm=40, final_vol=100_000)
     assert len(chart) < MIN_BARS, "fixture must be under-warmed for the test to matter"
@@ -431,7 +442,7 @@ def test_atr_under_warmed_respects_the_flat_gate() -> None:
     ⛔ The cooldown half of this test was REMOVED 2026-07-28 with the cooldown itself. Re-entry is
     bounded by the per-segment entry cap (one resting + one reclaim), not by a bar counter.
     """
-    strat = SchwabV2Strategy(Settings())
+    strat = _entry_window_strategy()
     strat._atr_enabled = True
     chart, _ = _build_short_then_fresh_touch_n(strat, n_warm=40, final_vol=100_000)
     for cb in chart[:-1]:
@@ -443,7 +454,7 @@ def test_atr_under_warmed_respects_the_flat_gate() -> None:
 def test_atr_under_warmed_no_emit_on_stale_bar() -> None:
     """Replayed/stale history must NOT emit even under-warmed (the bar_is_fresh
     gate still applies) — only a FRESH under-warmed touch fires."""
-    strat = SchwabV2Strategy(Settings())
+    strat = _entry_window_strategy()
     strat._atr_enabled = True
     chart, _ = _build_short_then_fresh_touch_n(strat, n_warm=40, final_vol=100_000)
     # Rewrite the final bar's timestamp far in the past → stale (not fresh).
@@ -463,7 +474,7 @@ def test_macd_vwap_still_silent_under_warmed() -> None:
     bars. ATR is disabled here so it can't mask the result — isolating the MACD/
     VWAP gate (the flat 10.0 bars otherwise drive a degenerate ATR oscillation)."""
     now_ms = int(datetime.now(UTC).timestamp() * 1000)
-    strat = SchwabV2Strategy(Settings())
+    strat = _entry_window_strategy()
     strat._atr_enabled = False                             # isolate MACD/VWAP
     n_flat = 40                                            # < MIN_BARS
     for i in range(n_flat):
@@ -480,7 +491,7 @@ def test_macd_vwap_still_silent_under_warmed() -> None:
 
 def test_atr_fresh_flip_gate_off_is_parity() -> None:
     """Gate OFF (default) → ATR fires exactly as today (behavior-neutral)."""
-    strat = SchwabV2Strategy(Settings())
+    strat = _entry_window_strategy()
     strat._atr_enabled = True
     assert strat._atr_use_max_state_age is False          # default off
     chart, _T = _build_short_then_fresh_touch(strat, final_vol=100_000)
@@ -493,7 +504,7 @@ def test_atr_fresh_flip_screens_late_keeps_below_ceiling() -> None:
     touch fires when the ceiling sits above its age (the fresh-keeps boundary)."""
     # Capture the fixture touch's state_age (gate off). The 150-bar decline makes a
     # long short segment → a high-age "dead-cat" touch.
-    s0 = SchwabV2Strategy(Settings())
+    s0 = _entry_window_strategy()
     s0._atr_enabled = True
     chart, _T = _build_short_then_fresh_touch(s0, final_vol=100_000)
     d0 = [s0.on_bar("TEST", cb) for cb in chart][-1]
@@ -502,7 +513,7 @@ def test_atr_fresh_flip_screens_late_keeps_below_ceiling() -> None:
     assert age >= 5, "fixture should be a LATE (high-age) touch"
 
     # Gate ON at the default ceiling 5 → the late touch is SCREENED.
-    s1 = SchwabV2Strategy(Settings())
+    s1 = _entry_window_strategy()
     s1._atr_enabled = True
     s1._atr_use_max_state_age = True
     s1._atr_max_state_age = 5
@@ -510,7 +521,7 @@ def test_atr_fresh_flip_screens_late_keeps_below_ceiling() -> None:
     assert [s1.on_bar("TEST", cb) for cb in chart1][-1] is None
 
     # Gate ON with the ceiling ABOVE the age → kept (fires).
-    s2 = SchwabV2Strategy(Settings())
+    s2 = _entry_window_strategy()
     s2._atr_enabled = True
     s2._atr_use_max_state_age = True
     s2._atr_max_state_age = age + 1
@@ -524,7 +535,7 @@ def test_atr_fresh_flip_does_not_touch_p1_p2() -> None:
     now_ms = int(datetime.now(UTC).timestamp() * 1000)
 
     def drive(gate_on: bool):
-        strat = SchwabV2Strategy(Settings())
+        strat = _entry_window_strategy()
         strat._atr_enabled = True
         strat._atr_use_max_state_age = gate_on
         strat._atr_max_state_age = 5
@@ -548,7 +559,7 @@ def test_atr_fresh_flip_does_not_touch_p1_p2() -> None:
 
 
 def _rearm_strat(on: bool) -> SchwabV2Strategy:
-    s = SchwabV2Strategy(Settings())
+    s = _entry_window_strategy()
     s._atr_enabled = True                 # ATR path live (default ships dormant)
     s._atr_variant = "B"
     s._atr_rearm_enabled = on
