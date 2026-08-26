@@ -123,3 +123,43 @@ def test_segment_end_clears_identity_for_the_next_segment() -> None:
 
     assert strategy._release_arm(state, "control") is True
     assert state.fanout_segment_id == 0
+
+
+def test_session_anchor_reset_clears_identity_before_the_next_segment() -> None:
+    """04:00 ET reset must not attribute the new session to yesterday's segment."""
+    strategy = _strategy()
+    state = strategy.watchlist_state("DAIC")
+    state.fanout_segment_id = RTH_MS
+    next_session_ms = RTH_MS + 24 * 60 * 60 * 1000
+
+    strategy._apply_session_anchor_reset(state, next_session_ms)
+
+    assert state.fanout_segment_id == 0
+    strategy._now_ms = lambda: next_session_ms
+    draft = strategy._build_webull_fanout_draft(
+        state, entry_px=3.20, session_is_eh=True, source="eh_resting", entry_n=1,
+    )
+    assert draft.metadata["fanout_segment_id"] == str(next_session_ms)
+    assert draft.metadata["fanout_segment_id"] != str(RTH_MS)
+
+
+def test_sell_flip_clears_identity_before_the_next_segment() -> None:
+    """The ordinary flip-close path must end the segment, not leak its id forward."""
+    strategy = _strategy()
+    state = strategy.watchlist_state("DAIC")
+    state.cw_armed = True
+    state.cw_arm_bar_ts = RTH_MS
+    state.fanout_segment_id = RTH_MS
+    state.bars.append(_bar(RTH_MS + 60_000, 10.0))
+
+    strategy._cw_v2_track(state, _signal(flip="SELL"))
+
+    assert state.fanout_segment_id == 0
+    next_segment_ms = RTH_MS + 120_000
+    state.bars.append(_bar(next_segment_ms, 10.25))
+    strategy._now_ms = lambda: next_segment_ms
+    draft = strategy._build_webull_fanout_draft(
+        state, entry_px=3.20, session_is_eh=True, source="eh_resting", entry_n=1,
+    )
+    assert draft.metadata["fanout_segment_id"] == str(next_segment_ms)
+    assert draft.metadata["fanout_segment_id"] != str(RTH_MS)
