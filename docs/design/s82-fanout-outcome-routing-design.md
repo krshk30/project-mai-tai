@@ -391,6 +391,21 @@ prints the observed terminal-time distribution and count beyond 10 seconds. If v
 delay changes, that exceedance turns the bound into a measured re-calibration item; it never frees
 the slot or permits a replacement merely because 10 seconds elapsed.
 
+The first live reading has two separate denominators and neither can be graded from a quiet total:
+
+- **terminal-time timeout:** 0 of 1,092 measured intents exceeded 10 seconds. This path is
+  `UNEXERCISED` for a genuinely stuck outcome until one occurs; zero pages does not prove it works;
+- **terminal but `could_not_tell`:** six DAIC cancel intents on 2026-08-24 resolved in under a second
+  with no order/event attributable through the intent. Under this contract they retain ownership
+  and reach the 10-second page path. A comparable bad symbol-day can therefore produce roughly six
+  raw `could_not_tell` evaluations, while a clean day can produce zero. Notification count may be
+  lower only if the implementation explicitly coalesces by durable slot/episode; the report must
+  print both raw evaluations and delivered notifications so coalescing cannot look like silence.
+
+Those six expected alerts are the consumer exposing an existing evidence gap, not a consumer
+failure. Conversely, a quiet day is `UNEXERCISED` for that polarity unless the report also shows a
+nonzero terminal-success control population.
+
 ### Consumer transport -- explicit, durable, and separate from the position poll
 
 The strategy core has no order-event consumer, and the isolated v2 bot currently subscribes to
