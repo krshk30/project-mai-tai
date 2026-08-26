@@ -359,17 +359,23 @@ async def test_native_stop_map_on_maps_stop_to_stop_loss(fake_sdk) -> None:
 
 
 @pytest.mark.asyncio
-async def test_native_stop_map_on_maps_stop_limit_to_stop_loss_limit(fake_sdk) -> None:
+async def test_sell_stop_limit_opposite_relationship_is_unchanged_by_buy_tick_guard(
+    fake_sdk,
+) -> None:
+    """SELL limit < stop is valid and is the polarity control for the BUY-only invariant."""
     client = _FakeClient({"place": {"order_id": "WB-S"}})
     adapter = _adapter(client, _native_stop_map_enabled=True)
-    await adapter.submit_order(_stop_order(
-        metadata={"order_type": "STOP_LIMIT", "stop_price": "1.65", "limit_price": "1.64"},
-        order_type="STOP_LIMIT",
-    ))
+    reports = await adapter.submit_order(
+        _stop_order(
+            metadata={"order_type": "STOP_LIMIT", "stop_price": "1.65", "limit_price": "1.64"},
+            order_type="STOP_LIMIT",
+        )
+    )
     placed = client.last["place"].values
     assert placed["order_type"] == "STOP_LOSS_LIMIT"
     assert placed["stop_price"] == "1.65"
     assert placed["limit_price"] == "1.64"
+    assert "webull_buy_stop_limit_tick_adjusted" not in reports[0].metadata
 
 
 @pytest.mark.asyncio

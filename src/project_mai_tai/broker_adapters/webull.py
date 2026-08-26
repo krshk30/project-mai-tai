@@ -1062,6 +1062,10 @@ class WebullBrokerAdapter:
         collapses on the venue tick grid is widened to exactly one tick.  SELL stop-limits are
         deliberately untouched: their valid relationship is the opposite and is already covered
         by the native-stop tests.
+
+        No live single-leg stop-limit carried a price-cap metadata key in the measured population
+        (0 of 372 since 2026-08-21).  If a cap is introduced, the one-tick widening must check it
+        explicitly rather than assume that a valid tick relationship is also within the cap.
         """
         wire_limit = cls._round_to_tick(limit_price) if limit_price is not None else None
         wire_stop = cls._round_to_tick(stop_price) if stop_price is not None else None
