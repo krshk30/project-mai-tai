@@ -251,14 +251,20 @@ and stored. The missing reader is the strategy state machine, which advances fro
 without consuming the recorded outcome. They share that lifecycle seam, but they require different
 path-specific corrections.
 
-**AIXI / Webull invalid BUY stop-limit:** the retained database contains **15** exact venue rejects on
+**AIXI / Webull invalid BUY stop-limit -- live defect:** the retained database contains **15** exact venue rejects on
 three symbol-days: LUCY 2026-08-24 (**2**), AIXI 2026-08-25 (**10**), and the partial 2026-08-26 YYGH
 session (**3** as of 13:53 ET). Every row is `rth_resting_mirror`. In every row the raw strategy
 prices satisfy `limit_price > stop_price`, but `WebullBrokerAdapter._submit_blocking` rounds each
 price independently to the cent and sends equal wire values -- for example `1.2566 / 1.2629` becomes
 `1.26 / 1.26`. Webull then correctly rejects the impossible relationship. The adapter returns a
 rejected execution report and the OMS persists it; the strategy does not consume that rejection and
-can construct the same invalid relationship again.
+can construct the same invalid relationship again. This was still firing in the active 2026-08-26
+session; it is not only a historical AIXI post-mortem.
+
+The matched healthy control separates perfectly on the stated mechanism: among **31** non-rejected
+mirror BUY stop-limits since 2026-08-21, all 31 retained `wire_limit > wire_stop` after rounding and
+zero collapsed to equality. The known-bad and known-good populations therefore exercise opposite
+polarities of the same relationship rather than merely correlating the reject text with a symbol.
 
 This incident therefore has two fixes with separate acceptance controls:
 
@@ -275,9 +281,19 @@ be deferred merely because feedback would stop repeated attempts.
 DAIC: 21 ended `cancelled` and 6 `rejected`. The cancel-path event population contains **22 distinct
 targets observed cancelled** and one broker-origin refusal against the final target one second after
 that target was already observed cancelled: `Order in state CANCELED cannot be canceled`. Five
-rejected intents produced no broker-order event, matching the OMS's local
-`cancel_target_not_found` branch. The exact broker refusal appears only twice in retained history:
-BOXL on 2026-08-12 and DAIC on 2026-08-24.
+rejected intents produced no broker-order event when the sixth rejection is attributed through its
+target order to the broker refusal, matching the OMS's local `cancel_target_not_found` branch. A join
+only through each cancel intent's own id instead reports **6 of 6** rejected intents with zero orders
+and zero events, because cancel outcomes are stored on the target order rather than on a new order
+owned by the cancel intent. Both counts are valid only with their join stated. The exact broker
+refusal appears only twice in retained history: BOXL on 2026-08-12 and DAIC on 2026-08-24.
+
+The exact-string census is not the whole terminal family. `Order in state FILLED cannot be canceled`
+appears **63 times across 5 orders**; 62 events belong to retired bots and the last was seen in June,
+while v2 contributes 3 events across the combined already-terminal family. The roughly 13 repeats
+per affected order prove that adding a reader without a per-attempt retry bound can still create a
+storm. A cancel/reprice consumer must cap repeated action for one terminal target and report the
+attempt denominator.
 
 The Schwab path already reads more than the original fire-and-forget description implies.
 `OmsService._process_cancel_intent` records returned reports and starts background verification, and
@@ -292,6 +308,27 @@ A broker refusal must never be represented as a confirmed cancel, but confirmati
 asynchronous so cancel verification cannot block an unrelated protective exit. This document names
 that dependency; it does not silently broaden reading A or make Schwab cancellation part of the
 Webull claim.
+
+### Consumer transport -- explicit, durable, and separate from the position poll
+
+The strategy core has no order-event consumer, and the isolated v2 bot currently subscribes to
+scanner state, heartbeats, and market-data subscriptions -- not OMS outcomes. Its only broker
+feedback is `_fetch_position_maps`, an account-scoped position poll. That poll cannot be reused as an
+attempt outcome: it fails stale, cannot distinguish rejected from never-submitted, and is the source
+of the existing “Webull filled while Schwab account still reads flat” blind spot.
+
+Both new consumers use the committed database evidence as authority, keyed by slot/attempt or cancel
+target identity. The existing Redis `order-events` stream may be a wake-up hint, but never the sole
+record: a trimmed/missed stream entry or process restart must be replayable from the database. The v2
+bot polls a durable cursor off the hot path, applies outcomes idempotently, and advances the cursor
+only after the strategy state transition succeeds. A database read failure, cursor gap, or identity
+mismatch is `could_not_tell`: keep the Webull claim reserved and keep the Schwab cancel target
+unconfirmed; never infer success from the account position poll.
+
+The transport is shared; the consumers are not. Webull terminal outcomes apply the claim policy in
+the table above. Schwab cancel outcomes apply the bounded cancel/reprice policy and never mutate the
+Webull claim. Replayed rows are harmless, and the retry key/bound is per target attempt so the
+63-event already-filled family cannot become an unbounded action loop.
 
 The consumer keeps the Webull fan-out claim consumed to prevent another Webull attempt for the same
 slot, but it does **not** deplete `cw_resting_taken`, `cw_reclaim_taken`, or any successor field that
