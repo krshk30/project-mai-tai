@@ -10,6 +10,7 @@ from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, Fill, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.fanout_identity import fanout_slot_for_source, fanout_slot_id
+from project_mai_tai.oms import service as oms_service
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
@@ -25,6 +26,8 @@ from test_oms_risk_service import (  # noqa: E402 - same-directory fixture modul
 SEGMENT = 1_777_000_000_000
 RESTING_SLOT_ID = "0a4d2cdf-adbd-597f-9253-1fdc4cab9f5a"
 RECLAIM_SLOT_ID = "cd9aeb05-0207-5dba-a112-ad0992bcf6c2"
+FILLABLE_SESSION_NOW = datetime(2026, 8, 26, 16, 0, tzinfo=UTC)
+AFTER_HOURS_NOW = datetime(2026, 8, 27, 0, 30, tzinfo=UTC)
 
 
 def _strategy() -> SchwabV2Strategy:
@@ -357,7 +360,12 @@ async def test_cancel_outcome_keeps_target_attempt_identity_instead_of_minting_o
 
 
 @pytest.mark.asyncio
-async def test_watchdog_replacement_keeps_slot_and_names_exact_prior_attempt() -> None:
+async def test_watchdog_replacement_keeps_slot_and_names_exact_prior_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pin the production clock inside a known fillable session (Wednesday noon ET).
+    # This test must prove identity chaining, not inherit its verdict from the CI hour.
+    monkeypatch.setattr(oms_service, "utcnow", lambda: FILLABLE_SESSION_NOW)
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter()
@@ -377,7 +385,7 @@ async def test_watchdog_replacement_keeps_slot_and_names_exact_prior_attempt() -
     with session_factory() as session:
         root = session.scalar(select(BrokerOrder))
         assert root is not None
-        root.updated_at = datetime.now(UTC) - timedelta(seconds=10)
+        root.updated_at = FILLABLE_SESSION_NOW - timedelta(seconds=10)
         root.submitted_at = root.updated_at
         session.commit()
 
@@ -392,3 +400,43 @@ async def test_watchdog_replacement_keeps_slot_and_names_exact_prior_attempt() -
         assert replacement.payload["fanout_slot_id"] == root.payload["fanout_slot_id"]
         assert replacement.payload["fanout_attempt_id"] == replacement.client_order_id
         assert replacement.payload["fanout_predecessor_attempt_id"] == root.client_order_id
+
+
+@pytest.mark.asyncio
+async def test_watchdog_replacement_stays_blocked_after_fillable_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Opposite-polarity control: the same stale order is deliberately parked after
+    # 20:00 ET. Pinning both cases proves the clock fixture can fire and stay quiet.
+    monkeypatch.setattr(oms_service, "utcnow", lambda: AFTER_HOURS_NOW)
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_working_order_refresh_seconds=5,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+    await service.process_trade_intent(_event("EXYN"))
+
+    with session_factory() as session:
+        root = session.scalar(select(BrokerOrder))
+        assert root is not None
+        root.updated_at = AFTER_HOURS_NOW - timedelta(seconds=10)
+        root.submitted_at = root.updated_at
+        session.commit()
+
+    await service.sync_broker_orders(account_names=["paper:s82-webull"])
+
+    with session_factory() as session:
+        orders = session.scalars(select(BrokerOrder).where(BrokerOrder.symbol == "EXYN")).all()
+        assert len(orders) == 1
+        assert orders[0].status == "cancelled"
+        assert orders[0].payload["abandon_reason_code"] == "MARKET_CLOSED"
+    assert [request.intent_type for request in adapter.submit_requests] == ["open", "cancel"]
