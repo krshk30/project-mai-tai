@@ -30,7 +30,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Callable, Deque, Iterable, Mapping
+from typing import Callable, Deque, Iterable, Literal, Mapping
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -483,7 +483,13 @@ class SchwabV2Strategy:
         self._atr_vol_floor = int(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_vol_floor", 5000)
         )
-        self._atr_gap_logged: set[str] = set()   # one [V2-ATR-BAR-GAP] per symbol
+        # Observability only: every detected gap emits. Replay and live populations are separate,
+        # and the per-phase evaluated-pair denominator rides each marker. Warmup replay must never
+        # consume the only marker a later live gap would otherwise have had.
+        self._atr_gap_pairs_evaluated: dict[str, int] = {"replay": 0, "live": 0}
+        self._atr_gaps_observed: dict[str, int] = {"replay": 0, "live": 0}
+        self._atr_symbol_gaps_observed: dict[tuple[str, str], int] = {}
+        self._bar_observation_phase: Literal["replay", "live"] = "live"
         self._atr_period = max(
             1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_period", 5))
         )
@@ -1071,6 +1077,22 @@ class SchwabV2Strategy:
                 logger.info("[V2-REARM] %s PROVISIONAL emit timed out after %.0fs, no fill -> re-armed "
                             "UNCLAIMED", state.symbol, self._atr_rearm_timeout_secs)
 
+    def on_observed_bar(
+        self,
+        symbol: str,
+        bar: ChartBar,
+        *,
+        observation_phase: Literal["replay", "live"],
+    ) -> TradeIntentDraft | None:
+        """Evaluate one explicitly classified service bar without changing ``on_bar``'s contract."""
+
+        previous_phase = self._bar_observation_phase
+        self._bar_observation_phase = observation_phase
+        try:
+            return self.on_bar(symbol, bar)
+        finally:
+            self._bar_observation_phase = previous_phase
+
     def on_bar(self, symbol: str, bar: ChartBar) -> TradeIntentDraft | None:
         state = self.watchlist_state(symbol)
         ohlcv = OHLCVBar(
@@ -1431,7 +1453,13 @@ class SchwabV2Strategy:
             rolled.append(symbol)
         return rolled
 
-    def _update_atr_state(self, state: SymbolState, cur: OHLCVBar) -> dict | None:
+    def _update_atr_state(
+        self,
+        state: SymbolState,
+        cur: OHLCVBar,
+        *,
+        observation_phase: Literal["replay", "live"] | None = None,
+    ) -> dict | None:
         """Advance the ATR-trailing-stop flip state by one bar; return this
         bar's signal {touch, touch_price, flip, trail, loss, state, state_age}
         or None until the trail is defined.
@@ -1443,6 +1471,7 @@ class SchwabV2Strategy:
         as an oracle by the determinism test. Only mutates atr_* fields (write-
         disjoint from Paths 1/2; see docs/schwab-1m-v2-atr-flip-entry-design.md).
         """
+        phase = observation_phase or self._bar_observation_phase
         period = self._atr_period
         factor = self._atr_factor
 
@@ -1457,6 +1486,7 @@ class SchwabV2Strategy:
         prev = state.atr_prev_bar
         tr: float | None = None
         if len(state.atr_hl) == period and prev is not None:
+            self._atr_gap_pairs_evaluated[phase] += 1
             s = sum(state.atr_hl) / period
             hilo = min(hl_cur, 1.5 * s)
             # ⛔⭐ NEVER COMPUTE TRUE RANGE ACROSS A BAR GAP.
@@ -1482,15 +1512,27 @@ class SchwabV2Strategy:
             gap_ms = int(cur.timestamp_ms) - int(prev.timestamp_ms)
             if gap_ms > _ATR_MAX_BAR_GAP_MS:
                 tr = hilo
-                if state.symbol not in self._atr_gap_logged:
-                    self._atr_gap_logged.add(state.symbol)
-                    logger.warning(
-                        "[V2-ATR-BAR-GAP] %s true range NOT spanned across a %.1f-min bar gap "
-                        "(prev_bar_ts=%d cur_bar_ts=%d) — using this bar's own range %.4f. "
-                        "Spanning it would inflate ATR and push every resting order too high.",
-                        state.symbol, gap_ms / 60000.0,
-                        int(prev.timestamp_ms), int(cur.timestamp_ms), hilo,
-                    )
+                self._atr_gaps_observed[phase] += 1
+                symbol_phase = (state.symbol, phase)
+                self._atr_symbol_gaps_observed[symbol_phase] = (
+                    self._atr_symbol_gaps_observed.get(symbol_phase, 0) + 1
+                )
+                logger.warning(
+                    "[V2-ATR-BAR-GAP] %s phase=%s observed_gaps_phase=%d "
+                    "evaluated_pairs_phase=%d symbol_observed_gaps_phase=%d marker_cap=none "
+                    "true range NOT spanned across a %.1f-min bar gap "
+                    "(prev_bar_ts=%d cur_bar_ts=%d) — using this bar's own range %.4f. "
+                    "Spanning it would inflate ATR and push every resting order too high.",
+                    state.symbol,
+                    phase,
+                    self._atr_gaps_observed[phase],
+                    self._atr_gap_pairs_evaluated[phase],
+                    self._atr_symbol_gaps_observed[symbol_phase],
+                    gap_ms / 60000.0,
+                    int(prev.timestamp_ms),
+                    int(cur.timestamp_ms),
+                    hilo,
+                )
             else:
                 href = (
                     (cur.high - prev.close)
@@ -3161,7 +3203,10 @@ class SchwabV2Strategy:
     # ------------------------------------------------------------- evaluate
 
     def _evaluate_completed_bar(
-        self, state: SymbolState, *, is_new_bar: bool
+        self,
+        state: SymbolState,
+        *,
+        is_new_bar: bool,
     ) -> TradeIntentDraft | None:
         # Only re-evaluate when a NEW minute lands; bar revisions of the
         # same timestamp are a noop for signaling (the cross-detection

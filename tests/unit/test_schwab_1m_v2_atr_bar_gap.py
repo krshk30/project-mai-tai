@@ -10,6 +10,10 @@ The parameters were never wrong. The DATA was discontinuous.
 """
 from __future__ import annotations
 
+import logging
+
+import pytest
+
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     _ATR_MAX_BAR_GAP_MS,
@@ -108,3 +112,45 @@ def test_one_bar_late_is_NOT_treated_as_a_gap() -> None:
     strat._update_atr_state(st, late)
     assert baseline is not None and st.atr_wilders is not None
     assert st.atr_wilders > baseline, "a 90s-late bar is still the next bar, not a gap"
+
+
+def test_replay_gap_does_not_exhaust_live_markers_and_every_marker_has_a_denominator(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A warmup gap and two later live gaps on one symbol must emit three distinct markers.
+
+    The old one-per-symbol set emitted only the replay marker, leaving both live gaps invisible.
+    """
+
+    strat = _strat()
+    state = strat.watchlist_state("AAA")
+    caplog.set_level(logging.WARNING)
+
+    for bar in _calm(5):
+        state.bars.append(bar)
+        strat._update_atr_state(state, bar, observation_phase="replay")
+
+    replay_gap = _bar(10, 4.25, 4.15, 4.20)
+    state.bars.append(replay_gap)
+    strat._update_atr_state(state, replay_gap, observation_phase="replay")
+
+    live_contiguous = _bar(11, 4.25, 4.15, 4.20)
+    state.bars.append(live_contiguous)
+    strat._update_atr_state(state, live_contiguous, observation_phase="live")
+    for minute in (20, 30):
+        live_gap = _bar(minute, 4.25, 4.15, 4.20)
+        state.bars.append(live_gap)
+        strat._update_atr_state(state, live_gap, observation_phase="live")
+
+    markers = [
+        record.getMessage()
+        for record in caplog.records
+        if "[V2-ATR-BAR-GAP]" in record.getMessage()
+    ]
+    assert len(markers) == 3
+    assert "phase=replay observed_gaps_phase=1 evaluated_pairs_phase=2" in markers[0]
+    assert "symbol_observed_gaps_phase=1 marker_cap=none" in markers[0]
+    assert "phase=live observed_gaps_phase=1 evaluated_pairs_phase=2" in markers[1]
+    assert "symbol_observed_gaps_phase=1 marker_cap=none" in markers[1]
+    assert "phase=live observed_gaps_phase=2 evaluated_pairs_phase=3" in markers[2]
+    assert "symbol_observed_gaps_phase=2 marker_cap=none" in markers[2]
