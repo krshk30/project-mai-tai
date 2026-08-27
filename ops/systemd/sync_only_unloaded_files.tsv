@@ -1,0 +1,8 @@
+# Exact repo-relative path<TAB>reviewed reason the file is safe to hot-sync.
+#
+# This is the authority; directory prefixes never grant permission. A live
+# crontab/systemd reference can veto an entry at sync time, but silence from
+# that refuter never adds a file. Adding a line is therefore a reviewed safety
+# decision, not an inferred import-graph result.
+ops/health/fanout_identity_acceptance.py	Manual read-only acceptance report; not imported by a managed service and not invoked by cron or systemd.
+ops/health/field_acceptance.py	Manual read-only field report reached only by an operator-run evidence command; not imported by a managed service or invoked by cron/systemd.

@@ -127,6 +127,7 @@ def parse_counts(raw: str) -> Counts:
 def query_counts(spec: CheckSpec, since: datetime, until: datetime) -> Counts:
     """Execute one immutable query in a read-only PostgreSQL transaction."""
 
+    # psql performs :variable interpolation for files/stdin, not for a -c string.
     command = [
         "sudo",
         "-n",
@@ -143,11 +144,18 @@ def query_counts(spec: CheckSpec, since: datetime, until: datetime) -> Counts:
         f"window_until={until.isoformat()}",
         "-d",
         "project_mai_tai",
-        "-c",
-        spec.sql,
+        "-f",
+        "-",
     ]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+        result = subprocess.run(
+            command,
+            input=spec.sql,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         raise QueryFailure(f"could not execute the read-only psql query: {exc}") from exc
     if result.returncode != 0:

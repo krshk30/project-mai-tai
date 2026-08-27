@@ -106,9 +106,11 @@ def test_window_requires_timezone_and_positive_width() -> None:
 
 def test_query_is_immutable_read_only_and_uses_psql_variables(monkeypatch) -> None:
     captured: list[str] = []
+    captured_kwargs: dict[str, object] = {}
 
-    def successful_run(command, **_kwargs):
+    def successful_run(command, **kwargs):
         captured.extend(command)
+        captured_kwargs.update(kwargs)
         return subprocess.CompletedProcess(
             command,
             0,
@@ -120,13 +122,37 @@ def test_query_is_immutable_read_only_and_uses_psql_variables(monkeypatch) -> No
     counts = tool.query_counts(CHECK, SINCE, UNTIL)
 
     assert counts.matched == 1
-    sql = captured[captured.index("-c") + 1]
+    assert captured[captured.index("-f") + 1] == "-"
+    assert "-c" not in captured
+    sql = captured_kwargs["input"]
+    assert isinstance(sql, str)
     assert "BEGIN READ ONLY" in sql
     assert "FROM broker_order_events" in sql
     assert ":'window_since'" in sql and ":'window_until'" in sql
     assert "project_mai_tai" in captured
     assert any(item.startswith("window_since=") for item in captured)
     assert any(item.startswith("window_until=") for item in captured)
+
+
+def test_cli_refuses_malformed_window_before_query(monkeypatch, capsys) -> None:
+    def query_must_not_run(*_args, **_kwargs):
+        raise AssertionError("database query ran for a malformed window")
+
+    monkeypatch.setattr(tool, "query_counts", query_must_not_run)
+
+    code = tool.main(
+        [
+            "--check",
+            CHECK.name,
+            "--since",
+            "not-an-instant",
+            "--until",
+            "2026-08-27T20:00:00Z",
+        ]
+    )
+
+    assert code == tool.VOID
+    assert "VOID_COULD_NOT_TELL" in capsys.readouterr().out
 
 
 def test_cli_refuses_unknown_check_without_exposing_sql(capsys) -> None:

@@ -2898,3 +2898,93 @@ gate.
 Every marker shipped tonight reads **zero**, which is correct before a session and is recorded as a
 baseline. `[BROKER-SYNC-OK]` has still never been emitted in the system's history. Signal 4 remains
 UNEXERCISED with 8 unattributable legs. **Zero is not a pass; it is a denominator waiting for one.**
+
+---
+
+## 2026-08-26 (Wed) — six PRs, three restarts, and the day the tooling caught up
+
+**Integrator: `claude-1`. Reviewer: `codex-2`.** Written at the close; every number carries its
+population.
+
+### What shipped
+
+`#796` §82 lifecycle design · `#798` reply-loop evidence correction · **`#800`** fan-out identity +
+Webull tick spread (deployed, OMS+strategy 20:10Z) · **`#802`** v2 post-close exit-only (deployed,
+v2 22:25Z) · `#801` C3/C2 bounds and C4/C5 evidence · `#803` fail-closed checkout sync.
+
+⛔ `#797` and `#799` are **CLOSED, not merged** — their content is inside `#800`. An audit keyed on
+their own PR state returns the wrong answer.
+
+### ⭐⭐ The day's best result: a rate quoted across its own fix
+
+The Webull `rth_resting_mirror` leg was on the board as **"720 dead attempts, 0 fills"** and, more
+recently, as **20 of 1,019 = 2%**. Split at the 2026-08-20 16:16 ET flag flip:
+
+| regime | orders | fills | | rejects |
+|---|---:|---:|---|---:|
+| pre-fix | 722 | 2 | **0.3%** | **720** |
+| post-fix | 309 | 22 | **7.1%** | **29** |
+
+**#735 worked.** The aggregate said the opposite. A matched control — same shape, window and 12
+symbols — puts the mirror at **6.2%** against the Schwab primary's **9.2%**, i.e. roughly at parity.
+
+⇒ **A rate quoted over a window containing the fix describes neither regime.** Operator's words,
+and the correction landed on a claim that had been put in front of them twice.
+
+### The §82 workstream, consolidated
+
+Three board entries — *"Webull outcomes never reach the strategy"*, *"duplicate legs"*, and *C4 slot
+blindness* — were one gap seen three ways, and produced the same measurement twice in one day. Now
+one item: **a Schwab-shaped position guess where a Webull order lifecycle should be.**
+
+⛔ **`#800` did not close it.** It gave the **Webull** side a durable identity (segment → slot →
+attempt → predecessor), but every stamp site is on a Webull draft; the Schwab primary carries none.
+The cross-venue join still rests on `cw_arm_bar_ts` + symbol — 16 of 53 buy fills usable,
+**37 `could_not_tell`**, **≥9** fan-out-only fills proven.
+
+Operator decision recorded: **reading A** — a Webull-only fill consumes its venue-local claim and
+**not** v2's composition slot. Both agents had recommended B. B was rejected because it recreates
+alternation-by-survivorship, is a structural walkover rather than a latency race (the cross-fired
+Webull leg converts **54 of 54**; the Schwab resting stop-limit **129 of 1,426**), and it destroys
+the bake-off the fan-out exists to run.
+
+### #802 exercised itself within three seconds
+
+**16** `[V2-POST-CLOSE-ENTRY-BLOCKED]` at 22:25:07, plus one census
+(`evaluated=6 armed_after_close=0`) — and **27 cumulatively as of 23:30:02Z, still rising** while
+bars flowed to 20:00 ET. ⛔ The first version of this entry reported the running total as the
+three-second burst; a cumulative marker count is meaningless without its as-of time.
+⭐ **The `[V2-CW-STATE-PROBE]` line stopped entirely** —
+that line is emitted only by the entry state machine, so its silence is the guard working. It also
+fixed a latent bug: `_fetch_position_maps` used to fall through its `except` and return
+partially-built dicts that read as **flat**; a failed read can no longer become broker-flat.
+
+### The tooling caught up
+
+`#803` added `sync-only`: a fail-closed checkout sync that refuses any behaviour-bearing change,
+proves no restart by comparing all six `MainPID` values before and after, and reports
+`restarted_units=0 migrations=0 runtime_install=0`. It closed `#801` and itself with **zero
+restarts** — after a v2 restart earlier that night had cost a **permanent WSHP bar hole at 22:25**.
+
+⭐ Worth recording so it is not mis-learned: **AST comparison failed for `#772` and succeeds here**,
+because the questions differ. `#772` asked *"will this program ever write at runtime?"* —
+undecidable. `#803` asks *"are these two files the same program?"* — decidable and exact.
+
+### Six corrections, and where they came from
+
+1. `broker_orders` queried for a figure that lives in `trade_intents` — reported irreproducible.
+2. "The Webull leg is MARKET-at-cross" — two legs on that path; one rests.
+3. A merge reported byte-identical by comparing `HEAD` to a SHA that **was** `HEAD`.
+4. A leg-divergence "defect" that the design document already described as intended.
+5. A read-only credential aimed at Postgres when the probe talks to **Webull**.
+6. `tail -1` on a state probe returning a **pre-deploy** line, read as current state.
+
+⇒ Every one is the same shape: **the question was right and the operand was unpinned.**
+
+### What is still true at the close
+
+Both ledgers flat, `fills` nets zero on every symbol, main and box both `4a206181`, and **one open
+PR — this handoff (#804) itself**; zero others.
+⛔ `ops/health/fanout_identity_acceptance.py` remains broken — psql does not interpolate `:'var'`
+in a `-c` string — so `#800`'s identity report cannot produce a reading, and it is **not**
+sync-only eligible.

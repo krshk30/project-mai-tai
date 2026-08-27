@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 
 from project_mai_tai.fanout_identity import fanout_slot_id
@@ -318,3 +319,39 @@ def test_database_query_is_fixed_and_read_only() -> None:
     assert "fills" in tool.SQL and "broker_order_events" in tool.SQL
     assert "last_at" in tool.SQL and "max(e.event_at)" in tool.SQL
     assert ":'window_since'" in tool.SQL and ":'window_until'" in tool.SQL
+
+
+def test_database_query_sends_sql_via_psql_file_stdin(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def successful_run(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(tool.subprocess, "run", successful_run)
+    monkeypatch.setattr(tool, "parse_database_rows", lambda _raw: ([], []))
+
+    assert tool.query_database(SINCE, UNTIL) == ([], [])
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[command.index("-f") + 1] == "-"
+    assert "-c" not in command
+    assert captured["input"] == tool.SQL
+    assert any(item.startswith("window_since=") for item in command)
+    assert any(item.startswith("window_until=") for item in command)
+
+
+def test_cli_refuses_malformed_window_before_query(monkeypatch, capsys) -> None:
+    def query_must_not_run(*_args, **_kwargs):
+        raise AssertionError("database query ran for a malformed window")
+
+    monkeypatch.setattr(tool, "query_database", query_must_not_run)
+
+    code = tool.main(
+        ["--since", "not-an-instant", "--until", "2026-08-27T20:00:00Z"]
+    )
+
+    assert code == tool.COULD_NOT_TELL
+    assert "COULD_NOT_TELL" in capsys.readouterr().out
