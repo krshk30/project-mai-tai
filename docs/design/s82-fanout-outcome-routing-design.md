@@ -653,6 +653,20 @@ a two-PID same-symbol fixture with no durable cross-restart link must return `co
 showing distinct attempt ids is not an acceptance condition; production already has that property.
 If this cannot be shipped and proved in one attended v2 window, the increment is too broad.
 
+### Cross-venue shared-key extension
+
+The next observation-only slice mints or preserves the segment identity at the ARM boundary and
+copies the same `fanout_segment_id`, `fanout_slot`, and deterministic `fanout_slot_id` onto the
+Schwab primary and Webull leg. A resting draft may bind the segment immediately before the BUY arm;
+the arm must preserve that key rather than minting a second opportunity at bar close.
+
+Grade this slice alone as **N of M queued Webull legs with a same-symbol Schwab primary carrying the
+exact shared identity**. The historical comparison is 16 usable arm joins among 53 filled Webull
+legs, not a pass threshold for the new report. A zero denominator is `UNEXERCISED`. This grade says
+nothing about duplicates, fill outcomes, or whether either venue-local slot was consumed. No
+consumer reads the new primary-leg metadata to release a latch, suppress an entry, choose a venue,
+or change quantity.
+
 Only after that increment is independently accepted should the OMS outcome publication be built.
 The later consumer is now specified by section 4: consume the Webull claim and never v2's own slot.
 It still requires known-bad and known-good controls against a population whose identity and outcomes

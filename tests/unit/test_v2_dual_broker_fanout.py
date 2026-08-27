@@ -34,6 +34,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strateg
 _ET = ZoneInfo("America/New_York")
 RTH_MS = int(datetime(2026, 7, 10, 11, 0, tzinfo=_ET).timestamp() * 1000)   # 11:00 ET (RTH, non-ORB)
 EH_MS = int(datetime(2026, 7, 10, 8, 0, tzinfo=_ET).timestamp() * 1000)     # 08:00 ET (pre-market)
+SHARED_IDENTITY_KEYS = ("fanout_segment_id", "fanout_slot", "fanout_slot_id")
 
 
 # ============================================================ strategy-side helpers
@@ -85,6 +86,7 @@ def test_reactive_cross_queues_webull_market_leg():
     assert leg.metadata["entry_price"] == "12.5000"      # OCO anchors off the cross px
     assert leg.metadata["fanout_source"] == "reactive"
     assert "ATR Flip" in leg.reason                       # keeps the ATR-only belt
+    assert all(primary.metadata[key] == leg.metadata[key] for key in SHARED_IDENTITY_KEYS)
 
 
 def test_reactive_cross_no_webull_leg_when_fanout_off():
@@ -93,7 +95,47 @@ def test_reactive_cross_no_webull_leg_when_fanout_off():
     _arm_to_watch(strat, st)
     primary = strat._cw_v2_quote(st, _quote(12.5))
     assert primary is not None                            # the Schwab leg is byte-identical
+    assert all(key not in primary.metadata for key in SHARED_IDENTITY_KEYS)
     assert strat.drain_webull_fanout_intents() == []      # nothing queued -> no second leg
+
+
+def test_buy_arm_mints_the_shared_segment_before_either_reactive_leg_emits():
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    st.bars.append(_bar(12.0, ts=RTH_MS))
+
+    strat._cw_v2_track(st, _sig(flip="BUY", flip_level=9.5))
+
+    assert st.cw_armed is True
+    assert st.fanout_segment_id == RTH_MS
+    assert strat.drain_webull_fanout_intents() == []
+
+
+def test_buy_arm_preserves_an_identity_bound_by_the_earlier_resting_arm():
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    strat._resting_session_is_eh = lambda now=None: False
+    strat._now_ms = lambda: RTH_MS - 60_000
+    st = strat.watchlist_state("TEST")
+    st.bars.append(_bar(11.0, ts=RTH_MS - 60_000))
+    strat._queue_resting_place(st, 9.5, slot="first")
+    resting_identity = st.fanout_segment_id
+
+    st.bars.append(_bar(12.0, ts=RTH_MS))
+    strat._cw_v2_track(st, _sig(flip="BUY", flip_level=9.5))
+
+    assert resting_identity == RTH_MS - 60_000
+    assert st.fanout_segment_id == resting_identity
+
+
+def test_buy_arm_does_not_mint_fanout_identity_when_the_feature_is_off():
+    strat = _strat(fanout=False)
+    st = strat.watchlist_state("TEST")
+    st.bars.append(_bar(12.0, ts=RTH_MS))
+
+    strat._cw_v2_track(st, _sig(flip="BUY", flip_level=9.5))
+
+    assert st.cw_armed is True
+    assert st.fanout_segment_id == 0
 
 
 def test_reactive_leg_fires_once_per_flip():
@@ -132,6 +174,21 @@ def test_rth_resting_cross_queues_webull_market_leg():
     assert strat.drain_webull_fanout_intents() == []
 
 
+def test_rth_resting_primary_and_cross_fired_webull_leg_share_identity():
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    strat._resting_session_is_eh = lambda now=None: False
+    strat._now_ms = lambda: RTH_MS
+    st = strat.watchlist_state("TEST")
+    st.bars.append(_bar(10.0, ts=RTH_MS))
+
+    strat._queue_resting_place(st, 9.5, slot="first")
+    primary = strat.drain_pending_intents()[0]
+    strat._fanout_rth_resting_cross(st, _quote(9.51))
+    webull = strat.drain_webull_fanout_intents()[0]
+
+    assert all(primary.metadata[key] == webull.metadata[key] for key in SHARED_IDENTITY_KEYS)
+
+
 def test_rth_resting_no_leg_below_level_or_when_held():
     strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
     st = _resting_state(strat, level=9.5)
@@ -168,6 +225,7 @@ def test_eh_resting_cross_queues_webull_limit_leg():
     assert len(legs) == 1
     assert legs[0].metadata["order_type"] == "limit"       # EH -> marketable EH-LIMIT (no OCO)
     assert legs[0].metadata["fanout_source"] == "eh_resting"
+    assert all(primary.metadata[key] == legs[0].metadata[key] for key in SHARED_IDENTITY_KEYS)
 
 
 # ============================================================ claim resets + qty
