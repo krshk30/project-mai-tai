@@ -124,14 +124,19 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           REMOTE_SCRIPT="/tmp/project-mai-tai-sync-only-${RUN_ID}.sh"
+          REMOTE_DECLARATIONS="/tmp/project-mai-tai-sync-only-${RUN_ID}.tsv"
           scp -i ~/.ssh/project_mai_tai_vps \
             ops/systemd/sync_checkout_only.sh \
             "${VPS_USER}@${VPS_HOST}:${REMOTE_SCRIPT}"
+          scp -i ~/.ssh/project_mai_tai_vps \
+            ops/systemd/sync_only_unloaded_files.tsv \
+            "${VPS_USER}@${VPS_HOST}:${REMOTE_DECLARATIONS}"
           ssh -i ~/.ssh/project_mai_tai_vps "${VPS_USER}@${VPS_HOST}" \
             "set -euo pipefail; \
-            trap 'rm -f ${REMOTE_SCRIPT}' EXIT; \
+            trap 'rm -f ${REMOTE_SCRIPT} ${REMOTE_DECLARATIONS}' EXIT; \
             chmod 700 '${REMOTE_SCRIPT}'; \
-            bash '${REMOTE_SCRIPT}' /home/trader/project-mai-tai main '${EXPECTED_SHA}'"
+            chmod 600 '${REMOTE_DECLARATIONS}'; \
+            bash '${REMOTE_SCRIPT}' /home/trader/project-mai-tai main '${EXPECTED_SHA}' '${REMOTE_DECLARATIONS}'"
 
       - name: Deploy selected service to VPS
         if: ${{ inputs.service != 'sync-only' }}
