@@ -655,17 +655,25 @@ If this cannot be shipped and proved in one attended v2 window, the increment is
 
 ### Cross-venue shared-key extension
 
-The next observation-only slice mints or preserves the segment identity at the ARM boundary and
-copies the same `fanout_segment_id`, `fanout_slot`, and deterministic `fanout_slot_id` onto the
-Schwab primary and Webull leg. A resting draft may bind the segment immediately before the BUY arm;
-the arm must preserve that key rather than minting a second opportunity at bar close.
+The next observation-only slice mints or preserves the segment identity at the ARM boundary and,
+before either broker draft is emitted, appends the active binding to the existing durable snapshot
+table. It copies the same `fanout_segment_id`, `fanout_slot`, and deterministic `fanout_slot_id` onto
+the Schwab primary and Webull leg. Every replacement retains those segment/slot fields through the
+already-shipped predecessor chain. A resting draft may bind the segment immediately before the BUY
+arm; the arm must preserve that key rather than minting a second opportunity at bar close. A v2
+restart restores the current-session active binding before evaluating new drafts; segment end,
+watchlist removal, 16:00 release, and the 04:00 roll append a release observation. A persistence
+failure is loud `could_not_tell` evidence and does not suppress an entry: this identity is never a
+trading gate.
 
 Grade this slice alone as **N of M queued Webull legs with a same-symbol Schwab primary carrying the
-exact shared identity**. The historical comparison is 16 usable arm joins among 53 filled Webull
-legs, not a pass threshold for the new report. A zero denominator is `UNEXERCISED`. This grade says
-nothing about duplicates, fill outcomes, or whether either venue-local slot was consumed. No
-consumer reads the new primary-leg metadata to release a latch, suppress an entry, choose a venue,
-or change quantity.
+exact shared identity backed by a durable pre-emit binding**. The historical comparison is 16 usable
+arm joins among 53 filled Webull legs, with the other 37 stated as `could_not_tell`; it is not a pass
+threshold for the new report. A zero denominator is `UNEXERCISED`. This grade says nothing about
+duplicates, slot consumption, fills, protection, or whether either venue-local slot was consumed. If
+any of those measures move, something outside this slice changed. No consumer reads the durable
+record or new primary-leg metadata to release a latch, suppress an entry, choose a venue, or change
+quantity.
 
 Only after that increment is independently accepted should the OMS outcome publication be built.
 The later consumer is now specified by section 4: consume the Webull claim and never v2's own slot.

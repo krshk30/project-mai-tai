@@ -101,6 +101,12 @@ def test_reactive_cross_no_webull_leg_when_fanout_off():
 
 def test_buy_arm_mints_the_shared_segment_before_either_reactive_leg_emits():
     strat = _strat()
+    transitions: list[tuple[str, int, bool, str]] = []
+    strat.configure_fanout_identity_persistence(
+        lambda symbol, segment_id, active, reason: transitions.append(
+            (symbol, segment_id, active, reason)
+        )
+    )
     st = strat.watchlist_state("TEST")
     st.bars.append(_bar(12.0, ts=RTH_MS))
 
@@ -108,7 +114,57 @@ def test_buy_arm_mints_the_shared_segment_before_either_reactive_leg_emits():
 
     assert st.cw_armed is True
     assert st.fanout_segment_id == RTH_MS
+    assert transitions == [("TEST", RTH_MS, True, "segment_bind")]
     assert strat.drain_webull_fanout_intents() == []
+
+
+def test_restart_restores_shared_identity_before_both_reactive_legs_emit():
+    first = _strat()
+    first_state = first.watchlist_state("TEST")
+    first_state.bars.append(_bar(12.0, ts=RTH_MS))
+    first._cw_v2_track(first_state, _sig(flip="BUY", flip_level=9.5))
+    durable_id = first_state.fanout_segment_id
+
+    restarted = _strat()
+    restarted.configure_fanout_identity_persistence(None, {"TEST": durable_id})
+    state = restarted.watchlist_state("TEST")
+    assert state.fanout_segment_id == durable_id
+    state.cw_armed = True
+    state.cw_bars_waited = 2
+    state.cw_trigger = 12.0
+    state.cw_segment_high = 12.0
+    state.cw_flip_level = 9.5
+    state.bars.append(_bar(11.0, ts=RTH_MS + 60_000))
+
+    primary = restarted._cw_v2_quote(state, _quote(12.5, ts=RTH_MS + 60_000))
+    webull = restarted.drain_webull_fanout_intents()[0]
+
+    assert primary is not None
+    assert primary.metadata["fanout_segment_id"] == str(durable_id)
+    assert webull.metadata["fanout_segment_id"] == str(durable_id)
+    assert all(primary.metadata[key] == webull.metadata[key] for key in SHARED_IDENTITY_KEYS)
+
+
+def test_identity_persistence_failure_is_loud_but_does_not_gate_the_entry(caplog):
+    strat = _strat()
+
+    def fail_persist(_symbol, _segment_id, _active, _reason):
+        raise RuntimeError("forced durable-store failure")
+
+    strat.configure_fanout_identity_persistence(fail_persist)
+    st = strat.watchlist_state("TEST")
+    st.bars.append(_bar(12.0, ts=RTH_MS))
+
+    with caplog.at_level("ERROR"):
+        strat._cw_v2_track(st, _sig(flip="BUY", flip_level=9.5))
+
+    assert st.cw_armed is True
+    assert st.fanout_segment_id == RTH_MS
+    assert any(
+        "[V2-FANOUT-IDENTITY-PERSIST-FAILED]" in record.getMessage()
+        and "could_not_tell=1" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_buy_arm_preserves_an_identity_bound_by_the_earlier_resting_arm():
@@ -186,6 +242,30 @@ def test_rth_resting_primary_and_cross_fired_webull_leg_share_identity():
     strat._fanout_rth_resting_cross(st, _quote(9.51))
     webull = strat.drain_webull_fanout_intents()[0]
 
+    assert all(primary.metadata[key] == webull.metadata[key] for key in SHARED_IDENTITY_KEYS)
+
+
+def test_resting_identity_is_persisted_before_either_broker_draft_is_queued():
+    strat = _strat(
+        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True,
+        strategy_schwab_1m_v2_webull_resting_mirror_enabled=True,
+    )
+    observed_queue_sizes: list[tuple[int, int]] = []
+    strat.configure_fanout_identity_persistence(
+        lambda *_args: observed_queue_sizes.append(
+            (len(strat._pending_intents), len(strat._pending_webull_direct_intents))
+        )
+    )
+    strat._resting_session_is_eh = lambda now=None: False
+    strat._now_ms = lambda: RTH_MS
+    state = strat.watchlist_state("TEST")
+    state.bars.append(_bar(10.0, ts=RTH_MS))
+
+    strat._queue_resting_place(state, 9.5, slot="first")
+
+    primary = strat.drain_pending_intents()[0]
+    webull = strat.drain_webull_direct_intents()[0]
+    assert observed_queue_sizes == [(0, 0)]
     assert all(primary.metadata[key] == webull.metadata[key] for key in SHARED_IDENTITY_KEYS)
 
 

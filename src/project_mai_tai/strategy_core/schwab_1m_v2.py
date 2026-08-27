@@ -30,7 +30,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Callable, Deque, Iterable
+from typing import Callable, Deque, Iterable, Mapping
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -615,6 +615,11 @@ class SchwabV2Strategy:
         self._dual_broker_fanout_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)
         )
+        # Observation-only durable identity seam. The bot configures this after its DB session
+        # factory exists, before any market-data loop starts. Strategy-only tests leave it unset.
+        # A persistence failure is logged and never changes whether an order is allowed.
+        self._fanout_identity_persist: Callable[[str, int, bool, str], None] | None = None
+        self._restored_fanout_segment_ids: dict[str, int] = {}
         # Webull-leg per-order qty: 0 => match the Schwab leg (_atr_qty).
         self._webull_fanout_qty = int(
             getattr(self.settings, "strategy_schwab_1m_v2_webull_fanout_quantity", 0) or 0
@@ -654,8 +659,88 @@ class SchwabV2Strategy:
         state = self._symbol_states.get(symbol)
         if state is None:
             state = SymbolState(symbol=symbol)
+            restored = int(self._restored_fanout_segment_ids.pop(symbol.upper(), 0) or 0)
+            if restored > 0:
+                state.fanout_segment_id = restored
+                logger.info(
+                    "[V2-FANOUT-IDENTITY-RESTORED] %s segment_id=%d restored=1",
+                    symbol,
+                    restored,
+                )
             self._symbol_states[symbol] = state
         return state
+
+    def configure_fanout_identity_persistence(
+        self,
+        persist: Callable[[str, int, bool, str], None] | None,
+        restored: Mapping[str, int] | None = None,
+    ) -> None:
+        """Install the bot-owned durable store without making it a trading-policy input."""
+
+        self._fanout_identity_persist = persist
+        self._restored_fanout_segment_ids = {
+            str(symbol).upper(): int(segment_id)
+            for symbol, segment_id in (restored or {}).items()
+            if int(segment_id) > 0
+        }
+        for symbol, state in self._symbol_states.items():
+            if int(state.fanout_segment_id or 0) > 0:
+                self._restored_fanout_segment_ids.pop(symbol.upper(), None)
+                continue
+            restored_id = int(self._restored_fanout_segment_ids.pop(symbol.upper(), 0) or 0)
+            if restored_id > 0:
+                state.fanout_segment_id = restored_id
+                logger.info(
+                    "[V2-FANOUT-IDENTITY-RESTORED] %s segment_id=%d restored=1",
+                    symbol,
+                    restored_id,
+                )
+
+    def _persist_fanout_identity_transition(
+        self,
+        state: SymbolState,
+        *,
+        segment_id: int,
+        active: bool,
+        reason: str,
+    ) -> None:
+        persist = getattr(self, "_fanout_identity_persist", None)
+        if persist is None:
+            return
+        try:
+            persist(state.symbol, segment_id, active, reason)
+        except Exception:  # noqa: BLE001 - observation must never become a trading gate
+            logger.exception(
+                "[V2-FANOUT-IDENTITY-PERSIST-FAILED] %s segment_id=%d active=%d "
+                "reason=%s could_not_tell=1",
+                state.symbol,
+                segment_id,
+                int(active),
+                reason,
+            )
+            return
+        logger.info(
+            "[V2-FANOUT-IDENTITY-PERSISTED] %s segment_id=%d active=%d reason=%s "
+            "persisted=1 could_not_tell=0",
+            state.symbol,
+            segment_id,
+            int(active),
+            reason,
+        )
+
+    def _clear_fanout_segment_id(self, state: SymbolState, *, reason: str) -> None:
+        segment_id = int(state.fanout_segment_id or 0)
+        state.fanout_segment_id = 0
+        restored = getattr(self, "_restored_fanout_segment_ids", None)
+        if isinstance(restored, dict):
+            restored.pop(state.symbol.upper(), None)
+        if segment_id > 0:
+            self._persist_fanout_identity_transition(
+                state,
+                segment_id=segment_id,
+                active=False,
+                reason=reason,
+            )
 
     def _release_arm(self, state: SymbolState, reason: str) -> bool:
         """Walk an armed segment OUT of the state machine. Returns True if it WAS armed.
@@ -675,7 +760,7 @@ class SchwabV2Strategy:
         logger.info("[V2-CW-DISARM] %s reason=%s", state.symbol, reason)
         state.cw_armed = False
         state.cw_arm_bar_ts = 0
-        state.fanout_segment_id = 0
+        self._clear_fanout_segment_id(state, reason=reason)
         state.cw_entries_this_flip = 0
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
@@ -727,7 +812,7 @@ class SchwabV2Strategy:
         # Some claims can outlive the arm (for example an emitted-but-not-filled leg). The entry
         # window ending releases those too; none is an exit input.
         state.cw_arm_bar_ts = 0
-        state.fanout_segment_id = 0
+        self._clear_fanout_segment_id(state, reason=reason)
         state.cw_entries_this_flip = 0
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
@@ -756,6 +841,7 @@ class SchwabV2Strategy:
         if state is None:
             return False
         released = self._release_arm(state, reason)
+        self._clear_fanout_segment_id(state, reason=reason)
         self._symbol_states.pop(symbol, None)
         return released
 
@@ -1285,7 +1371,7 @@ class SchwabV2Strategy:
         state.cw_v2_emit_ms = 0
         state.fanout_webull_claimed = False  # fan-out RTH-resting once-per-flip latch
         state.fanout_claim_ms = 0
-        state.fanout_segment_id = 0
+        self._clear_fanout_segment_id(state, reason="session_anchor_reset")
         # Resting flip-entry: a live resting order is already cancelled at 16:00 (out-of-window),
         # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
         state.resting_active = False
@@ -1793,7 +1879,7 @@ class SchwabV2Strategy:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
             state.cw_arm_bar_ts = 0
-            state.fanout_segment_id = 0
+            self._clear_fanout_segment_id(state, reason="flip")
             # A cross ENDS here, so this is where its slots are released. Moved from the arm block
             # (2026-08-03): entries belong to the cross that was live when they filled, or to the
             # cross that confirms while the position is still held.
@@ -2746,6 +2832,24 @@ class SchwabV2Strategy:
         segment_id = int(getattr(state, "fanout_segment_id", 0) or 0)
         if segment_id > 0:
             return segment_id
+        restored = getattr(self, "_restored_fanout_segment_ids", None)
+        restored_id = int(
+            restored.pop(state.symbol.upper(), 0) if isinstance(restored, dict) else 0
+        )
+        if restored_id > 0:
+            self._persist_fanout_identity_transition(
+                state,
+                segment_id=restored_id,
+                active=True,
+                reason="restart_restore",
+            )
+            state.fanout_segment_id = restored_id
+            logger.info(
+                "[V2-FANOUT-IDENTITY-RESTORED] %s segment_id=%d restored=1",
+                state.symbol,
+                restored_id,
+            )
+            return restored_id
         segment_id = int(state.cw_arm_bar_ts or 0)
         if segment_id <= 0 and state.bars:
             segment_id = int(state.bars[-1].timestamp_ms or 0)
@@ -2755,6 +2859,14 @@ class SchwabV2Strategy:
                 1,
                 int(clock() if callable(clock) else datetime.now(UTC).timestamp() * 1000),
             )
+        # The durable bind precedes the in-memory assignment and every draft construction. Its
+        # failure is visible but observation-only: it never suppresses or reroutes live money.
+        self._persist_fanout_identity_transition(
+            state,
+            segment_id=segment_id,
+            active=True,
+            reason="segment_bind",
+        )
         state.fanout_segment_id = segment_id
         return segment_id
 

@@ -40,6 +40,7 @@ class PairRecord:
     slot: str
     slot_id: str
     matching_primary_intents: int
+    durable_bindings: int
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,8 @@ WITH candidates AS (
         coalesce(ti.payload::jsonb->'metadata'->>'fanout_leg', '') AS fanout_leg,
         coalesce(ti.payload::jsonb->'metadata'->>'fanout_segment_id', '') AS segment_id,
         coalesce(ti.payload::jsonb->'metadata'->>'fanout_slot', '') AS slot,
-        coalesce(ti.payload::jsonb->'metadata'->>'fanout_slot_id', '') AS slot_id
+        coalesce(ti.payload::jsonb->'metadata'->>'fanout_slot_id', '') AS slot_id,
+        ti.created_at
     FROM trade_intents ti
     JOIN strategies s ON s.id = ti.strategy_id
     JOIN broker_accounts ba ON ba.id = ti.broker_account_id
@@ -97,7 +99,16 @@ SELECT
           AND p.slot = w.slot
           AND p.slot_id <> ''
           AND p.slot_id = w.slot_id
-    ) AS matching_primary_intents
+    ) AS matching_primary_intents,
+    (
+        SELECT count(*)
+        FROM dashboard_snapshots ds
+        WHERE ds.snapshot_type = 'v2_fanout_segment_identity'
+          AND ds.created_at <= w.created_at
+          AND upper(coalesce(ds.payload::jsonb->>'symbol', '')) = w.symbol
+          AND coalesce(ds.payload::jsonb->>'fanout_segment_id', '') = w.segment_id
+          AND coalesce(ds.payload::jsonb->>'active', 'false') = 'true'
+    ) AS durable_bindings
 FROM webull w
 ORDER BY w.symbol, w.intent_id
 ) TO STDOUT WITH (FORMAT CSV, HEADER TRUE);
@@ -124,6 +135,7 @@ def parse_rows(raw: str) -> list[PairRecord]:
         "slot",
         "slot_id",
         "matching_primary_intents",
+        "durable_bindings",
     }
     if reader.fieldnames is None or set(reader.fieldnames) != required:
         raise EvidenceFailure("database output header does not match the pairing schema")
@@ -131,12 +143,11 @@ def parse_rows(raw: str) -> list[PairRecord]:
     for row in reader:
         try:
             primary_count = int(row["matching_primary_intents"])
+            durable_bindings = int(row["durable_bindings"])
         except ValueError as exc:
-            raise EvidenceFailure(
-                f"matching_primary_intents is not an integer: {row['matching_primary_intents']!r}"
-            ) from exc
-        if primary_count < 0:
-            raise EvidenceFailure("matching_primary_intents is negative")
+            raise EvidenceFailure("database count is not an integer") from exc
+        if primary_count < 0 or durable_bindings < 0:
+            raise EvidenceFailure("database count is negative")
         records.append(
             PairRecord(
                 intent_id=row["intent_id"],
@@ -145,6 +156,7 @@ def parse_rows(raw: str) -> list[PairRecord]:
                 slot=row["slot"],
                 slot_id=row["slot_id"],
                 matching_primary_intents=primary_count,
+                durable_bindings=durable_bindings,
             )
         )
     return records
@@ -202,6 +214,8 @@ def _identity_error(record: PairRecord) -> str | None:
         return "slot id does not match (strategy, symbol, segment, slot)"
     if record.matching_primary_intents == 0:
         return "no Schwab primary intent carries the same identity"
+    if record.durable_bindings == 0:
+        return "no durable pre-emit segment binding carries the same identity"
     return None
 
 
@@ -216,7 +230,7 @@ def evaluate(
         "one deterministic identity with a Schwab primary",
         "    scope=identity pairing only; no duplicate, slot-consumption, or fill verdict",
         "    historical_comparison=16 of 53 filled Webull legs had a usable arm join "
-        "before this increment; comparison only, not a pass threshold",
+        "before this increment, with 37 could_not_tell; comparison only, not a pass threshold",
     ]
     if since >= until:
         lines.append("    => COULD_NOT_TELL. window start is not before end")

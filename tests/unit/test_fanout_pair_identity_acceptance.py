@@ -28,7 +28,7 @@ UNTIL = datetime(2026, 8, 27, 20, 0, tzinfo=UTC)
 SEGMENT = "1787830200000"
 
 
-def _record(*, matches: int = 1, slot_id: str | None = None):
+def _record(*, matches: int = 1, durable: int = 1, slot_id: str | None = None):
     expected = fanout_slot_id(
         strategy_code="schwab_1m_v2",
         symbol="YYGH",
@@ -42,6 +42,7 @@ def _record(*, matches: int = 1, slot_id: str | None = None):
         slot="resting",
         slot_id=slot_id if slot_id is not None else expected,
         matching_primary_intents=matches,
+        durable_bindings=durable,
     )
 
 
@@ -58,6 +59,7 @@ def test_complete_shared_identity_passes_and_names_scope() -> None:
     ("record", "message"),
     [
         (_record(matches=0), "no Schwab primary intent"),
+        (_record(durable=0), "no durable pre-emit segment binding"),
         (_record(slot_id="wrong"), "slot id does not match"),
     ],
 )
@@ -89,7 +91,7 @@ def test_malformed_window_refuses_before_a_clean_grade() -> None:
 
 def test_query_uses_stdin_so_psql_interpolates_the_real_window(monkeypatch) -> None:
     expected_header = (
-        "intent_id,symbol,segment_id,slot,slot_id,matching_primary_intents\n"
+        "intent_id,symbol,segment_id,slot,slot_id,matching_primary_intents,durable_bindings\n"
     )
     captured: dict[str, object] = {}
 
