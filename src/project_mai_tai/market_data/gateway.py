@@ -7,6 +7,12 @@ import socket
 from collections.abc import Iterable, Mapping
 
 from redis.asyncio import Redis
+from redis.exceptions import (
+    BusyLoadingError,
+    ConnectionError as RedisConnectionError,
+    RedisError,
+    TimeoutError as RedisTimeoutError,
+)
 
 from project_mai_tai.events import MarketDataSubscriptionEvent, stream_name
 from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider, MassiveTradeStream
@@ -27,6 +33,19 @@ logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "market-data-gateway"
 WARMUP_INTERVALS = (30, 60)
+# Mirror the reconciler's measured Redis-reload margin: five total attempts
+# spanning 7.5 seconds. Persistent failures still escape and let systemd make
+# the loss of the heartbeat task visible.
+HEARTBEAT_RELOAD_RETRY_DELAYS_SECONDS = (0.5, 1.0, 2.0, 4.0)
+
+
+def _is_transient_redis_reload_error(exc: RedisError) -> bool:
+    """Recognize only restart-shaped Redis failures, never all Redis errors."""
+
+    return (
+        isinstance(exc, (BusyLoadingError, RedisTimeoutError))
+        or type(exc) is RedisConnectionError
+    )
 
 
 class MarketDataGatewayService:
@@ -87,10 +106,9 @@ class MarketDataGatewayService:
         _install_signal_handlers(stop_event)
 
         await self._ensure_reference_data()
-        await self.publisher.publish_heartbeat(
-            instance_name=self.instance_name,
-            status="starting",
-            details={"reference_tickers": str(self.reference_cache.ticker_count())},
+        await self._publish_heartbeat(
+            "starting",
+            {"reference_tickers": str(self.reference_cache.ticker_count())},
         )
         await self._restore_subscription_state()
 
@@ -106,11 +124,15 @@ class MarketDataGatewayService:
         )
         await self.trade_stream.sync_subscriptions(self._active_symbols)
 
+        heartbeat_task = asyncio.create_task(
+            self._heartbeat_loop(stop_event),
+            name="market-data-heartbeat",
+        )
         tasks = [
             asyncio.create_task(self._snapshot_loop(stop_event)),
             asyncio.create_task(self._subscription_loop(stop_event)),
             asyncio.create_task(self._stream_publish_loop(stop_event)),
-            asyncio.create_task(self._heartbeat_loop(stop_event)),
+            heartbeat_task,
             asyncio.create_task(self._reference_refresh_loop(stop_event)),
         ]
         if self._active_symbols and self.settings.market_data_warmup_enabled:
@@ -121,18 +143,113 @@ class MarketDataGatewayService:
             )
 
         try:
-            await stop_event.wait()
+            await self._wait_for_stop_or_heartbeat_failure(stop_event, heartbeat_task)
         finally:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self.trade_stream.stop()
-            await self.publisher.publish_heartbeat(
-                instance_name=self.instance_name,
-                status="stopping",
-                details={"active_symbols": str(len(self._active_symbols))},
+            await self._publish_heartbeat(
+                "stopping",
+                {"active_symbols": str(len(self._active_symbols))},
             )
             await self.redis.aclose()
+
+    async def _wait_for_stop_or_heartbeat_failure(
+        self,
+        stop_event: asyncio.Event,
+        heartbeat_task: asyncio.Task[None],
+    ) -> None:
+        """Return on shutdown; otherwise make heartbeat-task death process-fatal.
+
+        A completed heartbeat task can never be treated as a healthy live
+        process. systemd's restart counter is the durable external signal.
+        """
+
+        stop_waiter = asyncio.create_task(stop_event.wait(), name="market-data-stop-waiter")
+        try:
+            done, _pending = await asyncio.wait(
+                {stop_waiter, heartbeat_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if heartbeat_task not in done:
+                return
+            if heartbeat_task.cancelled():
+                self.logger.critical(
+                    "[MARKET-DATA-HEARTBEAT-TASK-DIED] outcome=process_exit "
+                    "reason=unexpected_cancel"
+                )
+                raise RuntimeError("market-data heartbeat task cancelled unexpectedly")
+            failure = heartbeat_task.exception()
+            if failure is not None:
+                self.logger.critical(
+                    "[MARKET-DATA-HEARTBEAT-TASK-DIED] outcome=process_exit "
+                    "reason=exception error=%s",
+                    type(failure).__name__,
+                )
+                raise failure
+            if not stop_event.is_set():
+                self.logger.critical(
+                    "[MARKET-DATA-HEARTBEAT-TASK-DIED] outcome=process_exit "
+                    "reason=unexpected_return"
+                )
+                raise RuntimeError("market-data heartbeat task returned before shutdown")
+        finally:
+            stop_waiter.cancel()
+            await asyncio.gather(stop_waiter, return_exceptions=True)
+
+    async def _publish_heartbeat(self, status: str, details: dict[str, str]) -> None:
+        max_attempts = len(HEARTBEAT_RELOAD_RETRY_DELAYS_SECONDS) + 1
+        transient_failures = 0
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await self.publisher.publish_heartbeat(
+                    instance_name=self.instance_name,
+                    status=status,
+                    details=details,
+                )
+            except RedisError as exc:
+                if not _is_transient_redis_reload_error(exc):
+                    self.logger.error(
+                        "[MARKET-DATA-HEARTBEAT-FAILED] attempt=%s/%s "
+                        "outcome=non_transient_propagated error=%s",
+                        attempt,
+                        max_attempts,
+                        type(exc).__name__,
+                    )
+                    raise
+                transient_failures += 1
+                if attempt == max_attempts:
+                    self.logger.error(
+                        "[MARKET-DATA-HEARTBEAT-FAILED] attempt=%s/%s "
+                        "transient_failures=%s outcome=transient_exhausted error=%s",
+                        attempt,
+                        max_attempts,
+                        transient_failures,
+                        type(exc).__name__,
+                    )
+                    raise
+                delay_seconds = HEARTBEAT_RELOAD_RETRY_DELAYS_SECONDS[attempt - 1]
+                self.logger.warning(
+                    "[MARKET-DATA-HEARTBEAT-RETRY] attempt=%s/%s "
+                    "transient_failures=%s outcome=retrying delay_seconds=%.1f error=%s",
+                    attempt,
+                    max_attempts,
+                    transient_failures,
+                    delay_seconds,
+                    type(exc).__name__,
+                )
+                await asyncio.sleep(delay_seconds)
+                continue
+            if transient_failures:
+                self.logger.info(
+                    "[MARKET-DATA-HEARTBEAT-RECOVERED] attempt=%s/%s "
+                    "transient_failures=%s outcome=published",
+                    attempt,
+                    max_attempts,
+                    transient_failures,
+                )
+            return
 
     async def publish_snapshot_batch_once(self, snapshots: Iterable[SnapshotRecord]) -> int:
         snapshot_list = list(snapshots)
@@ -354,10 +471,9 @@ class MarketDataGatewayService:
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=interval)
             except TimeoutError:
-                await self.publisher.publish_heartbeat(
-                    instance_name=self.instance_name,
-                    status="healthy",
-                    details={
+                await self._publish_heartbeat(
+                    "healthy",
+                    {
                         "reference_tickers": str(self.reference_cache.ticker_count()),
                         "active_symbols": str(len(self._active_symbols)),
                         # DFNS/LGHL incident: a climbing value here means the scanner is blind to

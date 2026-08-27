@@ -163,7 +163,7 @@ def test_the_cap_runs_AFTER_the_bar_feed_and_the_streamer_drain() -> None:
 
     src = inspect.getsource(botmod.SchwabV2BotService._handle_bar_from_rest)
     cap = src.index('_cap_reconstructed_segment(symbol, stage="rest-warmup")')
-    feed = src.index("await self._handle_bar(symbol, bar)")
+    feed = src.index("await self._handle_bar(")
     drain = src.index("await self._drain_streamer_pending(symbol)")
     assert cap > feed, "the cap must run after the final warmup bar is fed"
     assert cap > drain, "the cap must run after the streamer drain, which can also arm"
@@ -175,7 +175,7 @@ def test_the_cap_is_not_called_from_inside_the_just_warmed_log_block() -> None:
 
     src = inspect.getsource(botmod.SchwabV2BotService._handle_bar_from_rest)
     warmed_log = src.index("[V2-REST-WARMED]")
-    feed = src.index("await self._handle_bar(symbol, bar)")
+    feed = src.index("await self._handle_bar(")
     between = src[warmed_log:feed]
     assert "_cap_reconstructed_segment" not in between, (
         "the cap must not run between the warmup-complete log and the bar feed"
