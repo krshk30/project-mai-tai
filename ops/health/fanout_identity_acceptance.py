@@ -256,15 +256,23 @@ def parse_database_rows(raw: str) -> tuple[list[IntentRecord], list[AttemptRecor
 
 
 def query_database(since: datetime, until: datetime) -> tuple[list[IntentRecord], list[AttemptRecord]]:
+    # psql performs :variable interpolation for files/stdin, not for a -c string.
     command = [
         "sudo", "-n", "-u", "postgres", "psql", "-X", "-qAt",
         "-v", "ON_ERROR_STOP=1",
         "-v", f"window_since={since.isoformat()}",
         "-v", f"window_until={until.isoformat()}",
-        "-d", "project_mai_tai", "-c", SQL,
+        "-d", "project_mai_tai", "-f", "-",
     ]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=45, check=False)
+        result = subprocess.run(
+            command,
+            input=SQL,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvidenceFailure(f"could not execute the read-only database query: {exc}") from exc
     if result.returncode != 0:
