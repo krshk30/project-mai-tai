@@ -355,6 +355,27 @@ def test_streamer_bar_after_warmup_is_fed_directly_no_buffer() -> None:
     assert state.bars[-1].timestamp_ms == bar.timestamp_ms
 
 
+def test_bar_routing_labels_warmup_replay_separately_from_live_streamer() -> None:
+    """The service, not wall-clock inference, owns the ATR gap-marker population label."""
+
+    bot = _bot()
+    observed_phases: list[str] = []
+    original_on_observed_bar = bot.strategy.on_observed_bar
+
+    def record_phase(symbol: str, bar: ChartBar, *, observation_phase: str):
+        observed_phases.append(observation_phase)
+        return original_on_observed_bar(symbol, bar, observation_phase=observation_phase)
+
+    bot.strategy.on_observed_bar = record_phase  # type: ignore[method-assign]
+    t_base = _now_ms_at_age(60.0)
+    buffered = _bar(ts_ms=t_base + 60_000)
+    asyncio.run(bot._handle_bar_from_streamer("AAA", buffered))
+    asyncio.run(bot._handle_bar_from_rest("AAA", _bar(ts_ms=t_base)))
+    asyncio.run(bot._handle_bar_from_streamer("AAA", _bar(ts_ms=t_base + 120_000)))
+
+    assert observed_phases == ["replay", "replay", "live"]
+
+
 def test_warmup_completion_drains_buffer_in_timestamp_order() -> None:
     bot = _bot()
 
