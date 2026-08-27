@@ -1,0 +1,9 @@
+{
+  "pr_number": 822,
+  "range_base": "01400cf83918f41bea27622e7331551f792a0218",
+  "range_head": "8650824730d34729d25826f9d67c4e2fe6fcac7e",
+  "reviewed_at": "2026-08-27T20:46:21Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after a clean REBASE onto 01400cf8 (the earlier Update-branch head e489c989 was ungradeable: GitHub's server-side merge commit carried no agent marker, review_pin_gate.py:107). Re-verified, not re-stamped: range is ONE marked commit, the diff against the new base is BYTE-IDENTICAL to the diff reviewed at f6ccf274, and old and new patch-ids agree under both --stable and --unstable. Substance unchanged: D6 unified fan-out outcome acceptance, ops/health only, no service imports it. Four independent metrics each with its own denominator and compiled known-bad baseline (paired 16/53 usable with 37 CTT; fill_rate mirror 18/292=6.2 pct vs Schwab 34/368=9.2 pct; duplicate 22/22 worse median 4.58 pct; refused exits 49/25/37). Reads durable broker rows ONLY - broker_orders.payload fanout_segment_id/fanout_slot/fanout_slot_id joined to fills - and declares on its own header that consumer markers are NOT acceptance, so it cannot conflate the D2 consumer with the 812 stamper. Zero denominators are named UNEXERCISED; a failing known-bad control voids the run to COULD_NOT_TELL rather than passing it."
+}
