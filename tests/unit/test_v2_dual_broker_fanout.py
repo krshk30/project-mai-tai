@@ -184,6 +184,29 @@ def test_next_session_retires_an_unconsumed_restart_identity_but_replay_does_not
     assert strat._restored_fanout_segment_ids == {}
 
 
+def test_fresh_sell_retires_an_unconsumed_restart_identity_but_historical_sell_does_not():
+    strat = _strat()
+    strat._now_ms = lambda: RTH_MS
+    transitions: list[tuple[str, int, bool, str]] = []
+    durable_id = RTH_MS - 60_000
+    strat.configure_fanout_identity_persistence(
+        lambda symbol, segment_id, active, reason: transitions.append(
+            (symbol, segment_id, active, reason)
+        ),
+        {"TEST": durable_id},
+    )
+    state = strat.watchlist_state("TEST")
+    state.bars.append(_bar(10.0, ts=RTH_MS - 86_400_000))
+    strat._cw_v2_track(state, _sig(flip="SELL", flip_level=9.5))
+    assert transitions == []
+    assert strat._restored_fanout_segment_ids == {"TEST": durable_id}
+
+    state.bars.append(_bar(10.0, ts=RTH_MS))
+    strat._cw_v2_track(state, _sig(flip="SELL", flip_level=9.5))
+    assert transitions == [("TEST", durable_id, False, "flip")]
+    assert strat._restored_fanout_segment_ids == {}
+
+
 def test_identity_persistence_failure_is_loud_but_does_not_gate_the_entry(caplog):
     strat = _strat()
     strat._now_ms = lambda: RTH_MS

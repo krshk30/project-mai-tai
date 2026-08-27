@@ -1832,6 +1832,13 @@ class SchwabV2Strategy:
         minutes = et.hour * 60 + et.minute
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
+    def _fanout_identity_bar_is_live(self, state: SymbolState) -> bool:
+        """Whether the current bar may consume or retire a restart-restored identity."""
+
+        bar_ms = int(state.bars[-1].timestamp_ms or 0) if state.bars else 0
+        bar_age_ms = int(self._now_ms()) - bar_ms if bar_ms > 0 else -1
+        return 0 <= bar_age_ms <= int(MAX_BAR_AGE_SECONDS_FOR_EMIT * 1000)
+
     def _cw_v2_track(self, state: SymbolState, atr_signal: dict | None) -> None:
         """CW-v2 bar-path state machine (no-op unless the sub-flag is on). Maintains the arm /
         3-bar trigger (flip bar + next 2 bars) / flip-level on EVERY new bar independent of
@@ -1880,11 +1887,9 @@ class SchwabV2Strategy:
                     "[V2-CW-ARM] %s armed bar_ts=%d trig=%.4f flip_level=%.4f",
                     state.symbol, state.cw_arm_bar_ts, state.cw_trigger, state.cw_flip_level,
                 )
-            bar_ms = int(state.bars[-1].timestamp_ms or 0) if state.bars else 0
-            bar_age_ms = int(self._now_ms()) - bar_ms if bar_ms > 0 else -1
             if (
                 self._dual_broker_fanout_enabled
-                and 0 <= bar_age_ms <= int(MAX_BAR_AGE_SECONDS_FOR_EMIT * 1000)
+                and self._fanout_identity_bar_is_live(state)
             ):
                 # Mint the cross-venue identity at the arm boundary. A resting draft may have
                 # bound it moments earlier; in that case _ensure preserves the same segment key
@@ -1898,7 +1903,13 @@ class SchwabV2Strategy:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
             state.cw_arm_bar_ts = 0
-            self._clear_fanout_segment_id(state, reason="flip")
+            self._clear_fanout_segment_id(
+                state,
+                reason="flip",
+                # Historical SELLs are warmup reconstruction; the first fresh SELL is a real
+                # transition and must retire a durable key restored from the pre-restart process.
+                include_unconsumed_restore=self._fanout_identity_bar_is_live(state),
+            )
             # A cross ENDS here, so this is where its slots are released. Moved from the arm block
             # (2026-08-03): entries belong to the cross that was live when they filled, or to the
             # cross that confirms while the position is still held.
