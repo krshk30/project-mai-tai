@@ -81,11 +81,22 @@ the deploy landed after the close with nothing left to cancel.
    any reading until this is fixed.** ⛔ It is in `ops/**`, so it is **NOT sync-only eligible**.
 3. **#802's first full 16:00 boundary** — read `cancel_requested=N` as an **UNVERIFIED count**, not
    a cancellation; #802 requests cancels and does not consume the outcome.
+   ⛔⭐⭐ **AND THERE ARE TWO AFTER-HOURS BOUNDARIES, FOUR HOURS APART.** Treating "after hours" as
+   one thing is what made a watchdog test read as flaky rather than as policy:
+   • **16:00 ET — v2 (#802):** exit-only. Cancels unfilled BUY entries, releases entry arms, refuses
+     late BUY flips. **Held-position exits and protective SELLs keep running**; the symbol stays
+     subscribed.
+   • **20:00 ET — OMS:** stops **replacing** non-protective orders because the venue is no longer
+     fillable. Cancels and records `abandon_reason_code=MARKET_CLOSED`; **managed exit ownership is
+     retained** for reopening. ⛔ **Native protective stops are EXEMPT.**
 4. **#800's markers stay UNEXERCISED** until a fan-out opportunity occurs *and* item 2 is fixed.
    ⛔ #799's **refusal** path has zero live population by construction — all 15 historical rejects
    were raw-VALID collapsed by rounding, so only the **widening** path can exercise.
-5. **WSHP 22:25 is a permanent bar hole** (restart minute; raw ticks existed). ⛔ XPON's gaps in
-   that window were never checked against ticks — `COULD_NOT_TELL`, not continuous.
+5. **Bar holes are measured, and the earlier line here was wrong.** ⛔ **XPON is REFUTED** — its
+   gaps *preceded* its restart, so they are not restart-caused; the previous version of this line
+   called them unchecked and implied a second loss. The tick-confirmed census across five restarts
+   is **3 of 16**: **WSHP** (Aug 26 18:25 ET) and **EXYN + WVVIP** (Aug 25 18:49 ET — a *different*
+   restart). Two of the five restarts had a **zero denominator** and are `UNEXERCISED`, not clean.
 
 ---
 
@@ -168,6 +179,14 @@ refresh landed at **+28m32s**, inside the +35 deadline, with the refresh token u
 ---
 
 # OPERATIONAL RULES CONFIRMED TODAY
+
+0. ⛔⭐⭐ **A CORRECTION IS NOT APPLIED UNTIL IT IS APPLIED EVERYWHERE THE CLAIM APPEARS.** On the
+   08-26 handoff three false claims sat in **four** places — this state doc, the append-only log,
+   the commit body and the PR body — and the first pass corrected **one**. The reviewer sent it
+   back. ⇒ **For a handoff those four surfaces are the checklist**; for code it is the
+   implementation, its tests, its docstring, and any document quoting the number. ⭐ The
+   append-only log is the worst place to leave a stale claim, because nothing downstream
+   re-derives it.
 
 1. **A rate quoted over a window containing the fix describes neither regime.** The mirror read
    2% across the 08-20 flag flip; split, it is **0.3% → 7.1%** with rejects **720 → 29**. #735
