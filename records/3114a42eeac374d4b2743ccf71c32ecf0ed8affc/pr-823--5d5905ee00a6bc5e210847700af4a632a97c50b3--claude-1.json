@@ -1,0 +1,9 @@
+{
+  "pr_number": 823,
+  "range_base": "5d5905ee00a6bc5e210847700af4a632a97c50b3",
+  "range_head": "3114a42eeac374d4b2743ccf71c32ecf0ed8affc",
+  "reviewed_at": "2026-08-27T20:13:55Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "D2 outcome consumer: all three safety constraints verified. Positive evidence only - evidence holds beyond grace, absence releases in the visible-duplicate direction, and the source states the timeout is not evidence the venue order is absent. fills ranked over virtual_positions, pinned by a test asserting it never reads the table carrying the VIRTUAL-CLEAR false zero. Per-venue reading A via broker_account_name in both consumer and grader. Restart replay with a durable cursor. Plus cross-slot isolation both directions, idempotent evidence, cancel-intent not misclassified, incomplete identity never journaled, and poll off-thread with application on the strategy thread."
+}
