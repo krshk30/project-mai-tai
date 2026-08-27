@@ -332,6 +332,32 @@ def test_resting_identity_is_persisted_before_either_broker_draft_is_queued():
     assert all(primary.metadata[key] == webull.metadata[key] for key in SHARED_IDENTITY_KEYS)
 
 
+def test_resting_replacement_keeps_the_same_identity_on_both_broker_legs():
+    strat = _strat(
+        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True,
+        strategy_schwab_1m_v2_webull_resting_mirror_enabled=True,
+    )
+    strat._resting_session_is_eh = lambda now=None: False
+    strat._now_ms = lambda: RTH_MS
+    state = strat.watchlist_state("TEST")
+    state.bars.append(_bar(10.0, ts=RTH_MS))
+
+    strat._queue_resting_place(state, 9.5, slot="first")
+    first_primary = strat.drain_pending_intents()[0]
+    first_webull = strat.drain_webull_direct_intents()[0]
+    strat._queue_resting_cancel(state, reason="reprice")
+    strat.drain_pending_intents()
+    strat.drain_webull_direct_intents()
+    strat._queue_resting_place(state, 9.6, slot="first")
+    replacement_primary = strat.drain_pending_intents()[0]
+    replacement_webull = strat.drain_webull_direct_intents()[0]
+
+    for key in SHARED_IDENTITY_KEYS:
+        assert first_primary.metadata[key] == first_webull.metadata[key]
+        assert replacement_primary.metadata[key] == replacement_webull.metadata[key]
+        assert replacement_primary.metadata[key] == first_primary.metadata[key]
+
+
 def test_rth_resting_no_leg_below_level_or_when_held():
     strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
     st = _resting_state(strat, level=9.5)
