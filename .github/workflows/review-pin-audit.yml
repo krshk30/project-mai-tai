@@ -1,0 +1,47 @@
+name: Merged Review Pin Audit
+
+on:
+  schedule:
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review-pin-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted audit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out committed review ledger
+        uses: actions/checkout@v4
+        with:
+          ref: review-pins
+          path: review-pin-ledger
+          fetch-depth: 0
+
+      - name: List merged pull requests without covering pins
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          set +e
+          python scripts/audit_review_pins.py \
+            --repo . \
+            --ledger review-pin-ledger \
+            --repository "${{ github.repository }}" \
+            --policy .github/review-pins/audit-policy.json \
+            | tee review-pin-audit.txt
+          audit_status="${PIPESTATUS[0]}"
+          set -e
+          {
+            echo '```text'
+            cat review-pin-audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$audit_status"
