@@ -11,6 +11,12 @@ from typing import Any
 from uuid import UUID
 
 from redis.asyncio import Redis
+from redis.exceptions import (
+    BusyLoadingError,
+    ConnectionError as RedisConnectionError,
+    RedisError,
+    TimeoutError as RedisTimeoutError,
+)
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -37,10 +43,29 @@ SERVICE_NAME = "reconciler"
 ACTIVE_INCIDENT_STATUSES = {"open", "acknowledged"}
 ACTIVE_ORDER_STATUSES = {"pending", "submitted", "accepted", "partially_filled"}
 ACTIVE_INTENT_STATUSES = {"pending", "submitted", "accepted"}
+# The 2026-08-27 live Redis restart loaded its RDB in 2.375s. These bounded
+# delays provide 7.5s of reload margin (five total attempts) without turning a
+# persistent Redis failure into an indefinitely healthy-looking heartbeat loop.
+HEARTBEAT_RELOAD_RETRY_DELAYS_SECONDS = (0.5, 1.0, 2.0, 4.0)
 
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _is_transient_redis_reload_error(exc: RedisError) -> bool:
+    """Return true only for errors Redis emits while restarting/reloading.
+
+    ``AuthenticationError`` subclasses redis-py's ``ConnectionError``, so an
+    ``isinstance(exc, RedisConnectionError)`` check would wrongly retry bad
+    credentials. Exact ``ConnectionError`` covers a dropped/refused socket;
+    ``BusyLoadingError`` and ``TimeoutError`` cover the bounded reload window.
+    """
+
+    return (
+        isinstance(exc, (BusyLoadingError, RedisTimeoutError))
+        or type(exc) is RedisConnectionError
+    )
 
 
 @dataclass(frozen=True)
@@ -147,12 +172,61 @@ class ReconciliationService:
                 details=details,
             ),
         )
-        await self.redis.xadd(
-            stream_name(self.settings.redis_stream_prefix, "heartbeats"),
-            {"data": event.model_dump_json()},
-            maxlen=self.settings.redis_heartbeat_stream_maxlen,
-            approximate=True,
-        )
+        max_attempts = len(HEARTBEAT_RELOAD_RETRY_DELAYS_SECONDS) + 1
+        transient_failures = 0
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await self.redis.xadd(
+                    stream_name(self.settings.redis_stream_prefix, "heartbeats"),
+                    {"data": event.model_dump_json()},
+                    maxlen=self.settings.redis_heartbeat_stream_maxlen,
+                    approximate=True,
+                )
+            except RedisError as exc:
+                if not _is_transient_redis_reload_error(exc):
+                    self.logger.error(
+                        "[RECONCILER-HEARTBEAT-FAILED] attempt=%s/%s "
+                        "outcome=non_transient_propagated error=%s",
+                        attempt,
+                        max_attempts,
+                        type(exc).__name__,
+                    )
+                    raise
+
+                transient_failures += 1
+                if attempt == max_attempts:
+                    self.logger.error(
+                        "[RECONCILER-HEARTBEAT-FAILED] attempt=%s/%s "
+                        "transient_failures=%s outcome=transient_exhausted error=%s",
+                        attempt,
+                        max_attempts,
+                        transient_failures,
+                        type(exc).__name__,
+                    )
+                    raise
+
+                delay_seconds = HEARTBEAT_RELOAD_RETRY_DELAYS_SECONDS[attempt - 1]
+                self.logger.warning(
+                    "[RECONCILER-HEARTBEAT-RETRY] attempt=%s/%s "
+                    "transient_failures=%s outcome=retrying delay_seconds=%.1f error=%s",
+                    attempt,
+                    max_attempts,
+                    transient_failures,
+                    delay_seconds,
+                    type(exc).__name__,
+                )
+                await asyncio.sleep(delay_seconds)
+                continue
+
+            if transient_failures:
+                self.logger.info(
+                    "[RECONCILER-HEARTBEAT-RECOVERED] attempt=%s/%s "
+                    "transient_failures=%s outcome=published",
+                    attempt,
+                    max_attempts,
+                    transient_failures,
+                )
+            return
 
     def _collect_findings(self, session: Session) -> list[FindingSpec]:
         findings: list[FindingSpec] = []
