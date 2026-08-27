@@ -47,6 +47,7 @@ from project_mai_tai.db.models import (
     VirtualPosition,
 )
 from project_mai_tai.db.session import build_timed_session_factory
+from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.events import (
     HeartbeatEvent,
@@ -223,6 +224,7 @@ class SchwabV2BotService:
         # the fan-out flag is on AND the Webull account is set). None => no fan-out (byte-identical).
         self.webull_intent_emitter: SchwabV2IntentEmitter | None = None
         self.session_factory: sessionmaker[Session] | None = session_factory
+        self.fanout_identity_store: FanoutSegmentIdentityStore | None = None
         self._stop_event = asyncio.Event()
         self._strategy_state_stream = stream_name(
             self.settings.redis_stream_prefix, "strategy-state"
@@ -356,6 +358,33 @@ class SchwabV2BotService:
     def enabled(self) -> bool:
         return bool(getattr(self.settings, "strategy_schwab_1m_v2_enabled", False))
 
+    def _configure_fanout_identity_store(self) -> None:
+        """Restore the current segment before any market-data task can emit a draft."""
+
+        if self.session_factory is None:
+            logger.error(
+                "[V2-FANOUT-IDENTITY-RESTORE-FAILED] restored=0 could_not_tell=1 "
+                "reason=no_session_factory"
+            )
+            return
+        self.fanout_identity_store = FanoutSegmentIdentityStore(self.session_factory)
+        try:
+            restored_segments = self.fanout_identity_store.restore_active()
+        except Exception:  # noqa: BLE001 - identity is observational, never an entry gate
+            restored_segments = {}
+            logger.exception(
+                "[V2-FANOUT-IDENTITY-RESTORE-FAILED] restored=0 could_not_tell=1"
+            )
+        else:
+            logger.info(
+                "[V2-FANOUT-IDENTITY-RESTORE] restored=%d could_not_tell=0",
+                len(restored_segments),
+            )
+        self.strategy.configure_fanout_identity_persistence(
+            self.fanout_identity_store.record,
+            restored_segments,
+        )
+
     @property
     def streamer_enabled(self) -> bool:
         """Streamer subsumes the REST bar-poll path for live bars. REST keeps
@@ -391,6 +420,7 @@ class SchwabV2BotService:
                     "disabled: %s",
                     exc,
                 )
+        self._configure_fanout_identity_store()
         self.intent_emitter = SchwabV2IntentEmitter(
             self.settings,
             self.redis,

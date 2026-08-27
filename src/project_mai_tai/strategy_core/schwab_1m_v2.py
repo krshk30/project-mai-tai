@@ -30,7 +30,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Callable, Deque, Iterable
+from typing import Callable, Deque, Iterable, Mapping
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -615,6 +615,11 @@ class SchwabV2Strategy:
         self._dual_broker_fanout_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)
         )
+        # Observation-only durable identity seam. The bot configures this after its DB session
+        # factory exists, before any market-data loop starts. Strategy-only tests leave it unset.
+        # A persistence failure is logged and never changes whether an order is allowed.
+        self._fanout_identity_persist: Callable[[str, int, bool, str], None] | None = None
+        self._restored_fanout_segment_ids: dict[str, int] = {}
         # Webull-leg per-order qty: 0 => match the Schwab leg (_atr_qty).
         self._webull_fanout_qty = int(
             getattr(self.settings, "strategy_schwab_1m_v2_webull_fanout_quantity", 0) or 0
@@ -657,6 +662,82 @@ class SchwabV2Strategy:
             self._symbol_states[symbol] = state
         return state
 
+    def configure_fanout_identity_persistence(
+        self,
+        persist: Callable[[str, int, bool, str], None] | None,
+        restored: Mapping[str, int] | None = None,
+    ) -> None:
+        """Install the bot-owned durable store without making it a trading-policy input."""
+
+        self._fanout_identity_persist = persist
+        self._restored_fanout_segment_ids = {
+            str(symbol).upper(): int(segment_id)
+            for symbol, segment_id in (restored or {}).items()
+            if int(segment_id) > 0
+        }
+        self._restored_fanout_session_anchor_ms = (
+            session_start_ts_ms(self._now_ms())
+            if self._restored_fanout_segment_ids
+            else 0
+        )
+        for symbol, state in self._symbol_states.items():
+            if int(state.fanout_segment_id or 0) > 0:
+                self._restored_fanout_segment_ids.pop(symbol.upper(), None)
+
+    def _persist_fanout_identity_transition(
+        self,
+        state: SymbolState,
+        *,
+        segment_id: int,
+        active: bool,
+        reason: str,
+    ) -> None:
+        persist = getattr(self, "_fanout_identity_persist", None)
+        if persist is None:
+            return
+        try:
+            persist(state.symbol, segment_id, active, reason)
+        except Exception:  # noqa: BLE001 - observation must never become a trading gate
+            logger.exception(
+                "[V2-FANOUT-IDENTITY-PERSIST-FAILED] %s segment_id=%d active=%d "
+                "reason=%s could_not_tell=1",
+                state.symbol,
+                segment_id,
+                int(active),
+                reason,
+            )
+            return
+        logger.info(
+            "[V2-FANOUT-IDENTITY-PERSISTED] %s segment_id=%d active=%d reason=%s "
+            "persisted=1 could_not_tell=0",
+            state.symbol,
+            segment_id,
+            int(active),
+            reason,
+        )
+
+    def _clear_fanout_segment_id(
+        self,
+        state: SymbolState,
+        *,
+        reason: str,
+        include_unconsumed_restore: bool = False,
+    ) -> None:
+        segment_id = int(state.fanout_segment_id or 0)
+        state.fanout_segment_id = 0
+        restored = getattr(self, "_restored_fanout_segment_ids", None)
+        if include_unconsumed_restore and isinstance(restored, dict):
+            restored_id = int(restored.pop(state.symbol.upper(), 0) or 0)
+            if segment_id <= 0:
+                segment_id = restored_id
+        if segment_id > 0:
+            self._persist_fanout_identity_transition(
+                state,
+                segment_id=segment_id,
+                active=False,
+                reason=reason,
+            )
+
     def _release_arm(self, state: SymbolState, reason: str) -> bool:
         """Walk an armed segment OUT of the state machine. Returns True if it WAS armed.
 
@@ -675,7 +756,7 @@ class SchwabV2Strategy:
         logger.info("[V2-CW-DISARM] %s reason=%s", state.symbol, reason)
         state.cw_armed = False
         state.cw_arm_bar_ts = 0
-        state.fanout_segment_id = 0
+        self._clear_fanout_segment_id(state, reason=reason)
         state.cw_entries_this_flip = 0
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
@@ -727,7 +808,11 @@ class SchwabV2Strategy:
         # Some claims can outlive the arm (for example an emitted-but-not-filled leg). The entry
         # window ending releases those too; none is an exit input.
         state.cw_arm_bar_ts = 0
-        state.fanout_segment_id = 0
+        self._clear_fanout_segment_id(
+            state,
+            reason=reason,
+            include_unconsumed_restore=True,
+        )
         state.cw_entries_this_flip = 0
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
@@ -756,6 +841,11 @@ class SchwabV2Strategy:
         if state is None:
             return False
         released = self._release_arm(state, reason)
+        self._clear_fanout_segment_id(
+            state,
+            reason=reason,
+            include_unconsumed_restore=True,
+        )
         self._symbol_states.pop(symbol, None)
         return released
 
@@ -1285,7 +1375,15 @@ class SchwabV2Strategy:
         state.cw_v2_emit_ms = 0
         state.fanout_webull_claimed = False  # fan-out RTH-resting once-per-flip latch
         state.fanout_claim_ms = 0
-        state.fanout_segment_id = 0
+        restored_anchor = int(getattr(self, "_restored_fanout_session_anchor_ms", 0) or 0)
+        self._clear_fanout_segment_id(
+            state,
+            reason="session_anchor_reset",
+            # DB-seed replay legitimately walks older session anchors. A current-session durable
+            # key must survive that replay and bind only when the first live draft/arm appears.
+            # The next real 04:00 boundary is strictly newer and retires an unused restore.
+            include_unconsumed_restore=bool(restored_anchor and anchor > restored_anchor),
+        )
         # Resting flip-entry: a live resting order is already cancelled at 16:00 (out-of-window),
         # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
         state.resting_active = False
@@ -1734,6 +1832,13 @@ class SchwabV2Strategy:
         minutes = et.hour * 60 + et.minute
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
+    def _fanout_identity_bar_is_live(self, state: SymbolState) -> bool:
+        """Whether the current bar may consume or retire a restart-restored identity."""
+
+        bar_ms = int(state.bars[-1].timestamp_ms or 0) if state.bars else 0
+        bar_age_ms = int(self._now_ms()) - bar_ms if bar_ms > 0 else -1
+        return 0 <= bar_age_ms <= int(MAX_BAR_AGE_SECONDS_FOR_EMIT * 1000)
+
     def _cw_v2_track(self, state: SymbolState, atr_signal: dict | None) -> None:
         """CW-v2 bar-path state machine (no-op unless the sub-flag is on). Maintains the arm /
         3-bar trigger (flip bar + next 2 bars) / flip-level on EVERY new bar independent of
@@ -1782,13 +1887,29 @@ class SchwabV2Strategy:
                     "[V2-CW-ARM] %s armed bar_ts=%d trig=%.4f flip_level=%.4f",
                     state.symbol, state.cw_arm_bar_ts, state.cw_trigger, state.cw_flip_level,
                 )
+            if (
+                self._dual_broker_fanout_enabled
+                and self._fanout_identity_bar_is_live(state)
+            ):
+                # Mint the cross-venue identity at the arm boundary. A resting draft may have
+                # bound it moments earlier; in that case _ensure preserves the same segment key
+                # instead of manufacturing a second opportunity at bar close. Reconstructed DB
+                # bars deliberately do not consume a durable restart key: the first LIVE arm or
+                # draft does, after warmup has finished replaying historical BUY/SELL flips.
+                self._ensure_fanout_segment_id(state)
             return
         if flip == "SELL":
             if self._cw_armed_segment_safety_enabled and state.cw_armed:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
             state.cw_arm_bar_ts = 0
-            state.fanout_segment_id = 0
+            self._clear_fanout_segment_id(
+                state,
+                reason="flip",
+                # Historical SELLs are warmup reconstruction; the first fresh SELL is a real
+                # transition and must retire a durable key restored from the pre-restart process.
+                include_unconsumed_restore=self._fanout_identity_bar_is_live(state),
+            )
             # A cross ENDS here, so this is where its slots are released. Moved from the arm block
             # (2026-08-03): entries belong to the cross that was live when they filled, or to the
             # cross that confirms while the position is still held.
@@ -2000,6 +2121,12 @@ class SchwabV2Strategy:
             "[V2-CW] %s v2 INTRABAR ENTER px=%.4f trig=%.4f flip_level=%.4f low_sf=%.4f n=%d",
             state.symbol, px, trig, fl, state.cw_bar_low_so_far, state.cw_entries_this_flip,
         )
+        shared_fanout_identity: dict[str, str] = {}
+        if self._dual_broker_fanout_enabled:
+            shared_fanout_identity = self._fanout_identity_metadata(
+                state,
+                source="reactive",
+            )
         # Dual-broker fan-out: co-queue the parallel Webull MARKET leg at the same reactive cross
         # (once, on the same claim that produced this primary). No-op unless fan-out is on.
         # ⛔⭐⭐ §82 — THE REACTIVE PATH MUST HONOUR THE SAME LATCH THE RESTING PATHS USE.
@@ -2060,6 +2187,7 @@ class SchwabV2Strategy:
                         source="reactive",
                         # ALREADY incremented just above -- the counter reflects THIS entry.
                         entry_n=state.cw_entries_this_flip,
+                        shared_identity=shared_fanout_identity,
                     )
                 )
             else:
@@ -2100,6 +2228,7 @@ class SchwabV2Strategy:
                 "cw_entry_n": str(state.cw_entries_this_flip),
                 "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                 "bar_low_so_far": f"{state.cw_bar_low_so_far:.4f}",
+                **shared_fanout_identity,
                 "source": "schwab_1m_v2",
                 "strategy_version": STRATEGY_VERSION,
             },
@@ -2164,6 +2293,16 @@ class SchwabV2Strategy:
             "[V2-RESTING-PLACE] %s slot=%s stop=%.4f limit=%.4f (band %.2f%%)",
             state.symbol, slot, line, limit, self._resting_entry_band_pct,
         )
+        shared_fanout_identity: dict[str, str] = {}
+        if self._dual_broker_fanout_enabled:
+            shared_fanout_identity = self._fanout_identity_metadata(
+                state,
+                source=(
+                    "rth_resting_mirror"
+                    if self._webull_resting_mirror_enabled
+                    else "rth_resting"
+                ),
+            )
         self._pending_intents.append(TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="open",
             quantity=Decimal(str(self._atr_qty)),
@@ -2181,6 +2320,7 @@ class SchwabV2Strategy:
                 # merges distinct flips. `cw_arm_bar_ts` IS per-segment; pair it with cw_entry_n.
                 "cw_entry_n": str(state.cw_entries_this_flip + 1),
                 "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
+                **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
             },
         ))
@@ -2201,7 +2341,7 @@ class SchwabV2Strategy:
         if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled:
             state.webull_resting_active = True
             entry_n = state.cw_entries_this_flip + 1
-            segment_id = self._ensure_fanout_segment_id(state)
+            segment_id = int(shared_fanout_identity["fanout_segment_id"])
             logger.info(
                 "[V2-FANOUT-SEGMENT-BOUND] %s source=rth_resting_mirror "
                 "trigger=fanout_draft attributed=1 segment_id=%d entry_n=%d — polarity: "
@@ -2228,10 +2368,7 @@ class SchwabV2Strategy:
                     "resting_entry": "true",
                     "cw_entry_n": str(entry_n),
                     "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
-                    "fanout_segment_id": str(segment_id),
-                    **self._fanout_slot_metadata(
-                        state, source="rth_resting_mirror", segment_id=segment_id
-                    ),
+                    **shared_fanout_identity,
                     # ⛔ NO bracket_* keys on purpose -- see the note above.
                     "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
                 },
@@ -2671,6 +2808,12 @@ class SchwabV2Strategy:
             "[V2-RESTING-EH-CROSS] %s px=%.4f >= level=%.4f -> marketable EH-LIMIT buy (cap=%.4f band=%.2f%%)",
             state.symbol, px, level, cap, self._resting_entry_band_pct,
         )
+        shared_fanout_identity: dict[str, str] = {}
+        if self._dual_broker_fanout_enabled:
+            shared_fanout_identity = self._fanout_identity_metadata(
+                state,
+                source="eh_resting",
+            )
         # Dual-broker fan-out: co-queue the parallel Webull EH-LIMIT leg at the same EH cross (once,
         # guarded by resting_flip_ms set above). No-op unless fan-out is on.
         if self._dual_broker_fanout_enabled:
@@ -2679,6 +2822,7 @@ class SchwabV2Strategy:
                     state, entry_px=level, session_is_eh=True, source="eh_resting",
                     # NOT yet incremented on this path -- this leg is the NEXT entry.
                     entry_n=state.cw_entries_this_flip + 1,
+                    shared_identity=shared_fanout_identity,
                 )
             )
         return TradeIntentDraft(
@@ -2693,6 +2837,7 @@ class SchwabV2Strategy:
                 "resting_band_pct": f"{self._resting_entry_band_pct}",
                 "cw_flip_level": f"{level:.4f}",
                 "resting_entry": "true", "eh_resting": "true",
+                **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
             },
         )
@@ -2717,6 +2862,24 @@ class SchwabV2Strategy:
         segment_id = int(getattr(state, "fanout_segment_id", 0) or 0)
         if segment_id > 0:
             return segment_id
+        restored = getattr(self, "_restored_fanout_segment_ids", None)
+        restored_id = int(
+            restored.pop(state.symbol.upper(), 0) if isinstance(restored, dict) else 0
+        )
+        if restored_id > 0:
+            self._persist_fanout_identity_transition(
+                state,
+                segment_id=restored_id,
+                active=True,
+                reason="restart_restore",
+            )
+            state.fanout_segment_id = restored_id
+            logger.info(
+                "[V2-FANOUT-IDENTITY-RESTORED] %s segment_id=%d restored=1",
+                state.symbol,
+                restored_id,
+            )
+            return restored_id
         segment_id = int(state.cw_arm_bar_ts or 0)
         if segment_id <= 0 and state.bars:
             segment_id = int(state.bars[-1].timestamp_ms or 0)
@@ -2726,6 +2889,14 @@ class SchwabV2Strategy:
                 1,
                 int(clock() if callable(clock) else datetime.now(UTC).timestamp() * 1000),
             )
+        # The durable bind precedes the in-memory assignment and every draft construction. Its
+        # failure is visible but observation-only: it never suppresses or reroutes live money.
+        self._persist_fanout_identity_transition(
+            state,
+            segment_id=segment_id,
+            active=True,
+            reason="segment_bind",
+        )
         state.fanout_segment_id = segment_id
         return segment_id
 
@@ -2757,19 +2928,40 @@ class SchwabV2Strategy:
         )
         return {"fanout_slot": slot, "fanout_slot_id": slot_id}
 
+    def _fanout_identity_metadata(
+        self,
+        state: SymbolState,
+        *,
+        source: str,
+        segment_id: int | None = None,
+    ) -> dict[str, str]:
+        """Bind the one shared segment/slot key copied to both broker legs.
+
+        This is observation-only metadata. No consumer reads it to release a
+        latch, suppress an entry, change quantity, or choose a venue.
+        """
+
+        segment = segment_id or self._ensure_fanout_segment_id(state)
+        return {
+            "fanout_segment_id": str(segment),
+            **self._fanout_slot_metadata(state, source=source, segment_id=segment),
+        }
+
     def _build_webull_fanout_draft(
         self, state: SymbolState, *, entry_px: float, session_is_eh: bool, source: str,
         entry_n: int, band_anchor: float | None = None,
+        shared_identity: dict[str, str] | None = None,
     ) -> TradeIntentDraft:
         """Build the parallel Webull FAN-OUT leg draft (account-agnostic; the bot routes it to the
         Webull emitter). ALWAYS a MARKET-at-cross in RTH (the OMS `_apply_v2_oco_bracket_entry`
         anchors the native OCO off `entry_price` exactly like the Schwab primary); in EXTENDED HOURS
         a plain LIMIT that the bot's EH-routing + the OMS reactive-EH builder re-price to a marketable,
         band-capped EH-LIMIT off the OMS's own fresh ask (a MARKET/OCO 417s in EH on Webull)."""
-        segment_id = self._ensure_fanout_segment_id(state)
-        slot_metadata = self._fanout_slot_metadata(
-            state, source=source, segment_id=segment_id
+        identity = dict(
+            shared_identity
+            or self._fanout_identity_metadata(state, source=source)
         )
+        segment_id = int(identity["fanout_segment_id"])
         # Success marker and denominator. It fires once per emitted fan-out draft. No draft (for
         # example flag-off) stays quiet. attributed=1 is the GOOD polarity; any filled leg without
         # this key makes signal 4 UNEXERCISED rather than manufacturing a clean zero.
@@ -2797,8 +2989,7 @@ class SchwabV2Strategy:
             # reclaims use -- so any first-vs-reclaim split built on it was wrong.
             "cw_entry_n": str(entry_n),
             "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
-            "fanout_segment_id": str(segment_id),
-            **slot_metadata,
+            **identity,
             "order_type": "limit" if session_is_eh else "market",
             "source": "schwab_1m_v2",
             "strategy_version": STRATEGY_VERSION,

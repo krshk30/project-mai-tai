@@ -11,7 +11,8 @@ A Webull fan-out trade needs one durable **segment**, two named candidate **slot
 `reclaim`), and a linked chain of broker **attempts**. Explicit OMS outcomes close the evidence loop,
 and a Webull-only fill consumes the Webull fan-out claim only -- never v2's own resting/reclaim
 composition. The paired broker legs are the intentional 2x measurement, not drift to reconcile.
-Venue-side reconciliation remains an undecided dependency for outcomes our process did not observe.
+Venue truth that never became a durable attributable record is unobtainable under the available
+Webull capabilities. Absence of a venue record is therefore never evidence.
 
 This is one lifecycle, not five independent proposals:
 
@@ -570,47 +571,63 @@ which Webull attempts were same-claim duplicates.
 
 Those are implementation defects under reading A; they do not reopen reading B.
 
-## 5. Venue reconciliation is an undecided dependency
+## 5. Venue truth is closed by capability, not pending a probe
 
-The lifecycle has one boundary it cannot close internally: a request may leave our process while its
-reply, later status, or combo children do not become a durable local event. Resolving that state may
-require venue reconciliation.
+The lifecycle has one boundary it cannot close: a request may leave our process while its reply,
+later status, or combo children never become a durable attributable record. The 2026-08-26 operator
+capability decision closes all safe investigation routes. Webull exposes no read-only credential
+scope, no sandbox account exists, and no additional account can be created. Production credentials
+are not an acceptable boundary for an exploratory sweep. **Venue reconciliation is therefore CLOSED
+BY CAPABILITY**, not blocked on a date-floor measurement or another probe.
 
-This document does **not** choose or design that reconciliation. Before it can be a dependency, a
-separate decision must establish whether the Webull capability can provide:
+`get_order_history` is not a reconciliation source. A returned, attributable record may be positive
+evidence for that record, but the endpoint cannot prove complete history, complete pagination,
+parent/child coverage, or the distinction between a genuinely absent order and an unavailable or
+incomplete response. An empty page or a missing id proves nothing about venue state.
 
-- history reaching the required date floor;
-- every page with a provable terminal page;
-- parent and combo-child visibility;
-- partial-fill representation;
-- order detail for every listing miss;
-- a distinction between confirmed absence and an unavailable/incomplete response;
-- a read-only credential or sandbox boundary acceptable for production investigation.
+Every consumer must be **evidence-positive**: it may release or consume ownership only because a
+durable attributable record exists and establishes the transition. It must never release a claim
+because an expected local row, venue-history row, reply, detail, parent, or child is missing. With no
+positive terminal evidence, the honest state remains `could_not_tell`; the claim stays reserved and
+loud.
 
-Until that decision is made, the outcome loop's honest terminal state is `could_not_tell`, and a slot
-in that state stays reserved and loud. “Not found in one listing response” is never `cancelled` or
-`absent`.
+This makes two historical limits permanent under this design. The DAIC ledger gap cannot establish
+which exit child filled, when it filled, or at what price. Historical exit-child attribution with the
+same missing-record shape is also permanently `could_not_tell`. A future empty history response does
+not refine either answer.
 
-### Known cause this could address
+### Known cause this addresses
 
-- Lost submit responses, orphan broker orders, unrecorded combo children, and restart recovery.
+- Repeatedly reopening a credential, sandbox, date-floor, or history probe as though a missing venue
+  record could eventually become evidence of absence.
+- Consumers releasing ownership from an empty listing or a missing local/venue record.
 
 ### It does not address
 
-- Internal drops before a broker request; those are already knowable from our own lifecycle.
+- Internal drops before a broker request; those remain knowable from our own durable lifecycle.
+- Lost submit responses, orphan venue orders, unrecorded combo children, or restart recovery when no
+  positive attributable record survived.
 - Whether the slot policy is correct.
 
 ### What it cannot know
 
-Whether the SDK/account can meet the contract above. That is the undecided dependency, not an
-assumption hidden inside this architecture.
+- Whether an order absent from local records existed at Webull.
+- Whether a missing history row means absent, expired from the accessible window, omitted from a
+  page, hidden under a parent/child representation, or unavailable because the response was
+  incomplete.
+- The DAIC exit child, time, or price that was never durably attributed.
 
-### What would falsify the dependency
+Those are permanent unknowns for this design, not measurements waiting to be scheduled.
 
-If every ambiguous state can be resolved from a complete durable local event before any broker call
-can escape, venue reconciliation is unnecessary for this lifecycle. Conversely, if Webull cannot
-provide complete/read-only evidence, the system must retain `could_not_tell` rather than design
-around a capability it does not have.
+### What would falsify implementation compliance
+
+- A consumer releases or consumes a claim because a record is missing rather than because a positive
+  durable record establishes the transition.
+- A report labels an empty or incomplete `get_order_history` result as `absent`, `cancelled`, or
+  broker-flat.
+- A new task treats the history date floor, production-credential sweep, sandbox account, or second
+  account as an open dependency without a new reviewed operator capability decision superseding this
+  one.
 
 ## First increment — identity only, one attended v2 window
 
@@ -652,6 +669,28 @@ slot ids. The report needs both polarity controls: a complete single-PID fixture
 a two-PID same-symbol fixture with no durable cross-restart link must return `could_not_tell`. Merely
 showing distinct attempt ids is not an acceptance condition; production already has that property.
 If this cannot be shipped and proved in one attended v2 window, the increment is too broad.
+
+### Cross-venue shared-key extension
+
+The next observation-only slice mints or preserves the segment identity at the ARM boundary and,
+before either broker draft is emitted, appends the active binding to the existing durable snapshot
+table. It copies the same `fanout_segment_id`, `fanout_slot`, and deterministic `fanout_slot_id` onto
+the Schwab primary and Webull leg. Every replacement retains those segment/slot fields through the
+already-shipped predecessor chain. A resting draft may bind the segment immediately before the BUY
+arm; the arm must preserve that key rather than minting a second opportunity at bar close. A v2
+restart restores the current-session active binding before evaluating new drafts; segment end,
+watchlist removal, 16:00 release, and the 04:00 roll append a release observation. A persistence
+failure is loud `could_not_tell` evidence and does not suppress an entry: this identity is never a
+trading gate.
+
+Grade this slice alone as **N of M queued Webull legs with a same-symbol Schwab primary carrying the
+exact shared identity backed by a durable pre-emit binding**. The historical comparison is 16 usable
+arm joins among 53 filled Webull legs, with the other 37 stated as `could_not_tell`; it is not a pass
+threshold for the new report. A zero denominator is `UNEXERCISED`. This grade says nothing about
+duplicates, slot consumption, fills, protection, or whether either venue-local slot was consumed. If
+any of those measures move, something outside this slice changed. No consumer reads the durable
+record or new primary-leg metadata to release a latch, suppress an entry, choose a venue, or change
+quantity.
 
 Only after that increment is independently accepted should the OMS outcome publication be built.
 The later consumer is now specified by section 4: consume the Webull claim and never v2's own slot.
