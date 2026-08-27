@@ -24,6 +24,7 @@ from project_mai_tai.db.models import (
     WebullIneligibleToday,
 )
 from project_mai_tai.events import TradeIntentEvent
+from project_mai_tai.fanout_outcome_consumer import append_outcome_isolated, broker_outcome
 
 
 def utcnow() -> datetime:
@@ -264,6 +265,22 @@ class OmsStore:
         )
         session.add(intent)
         session.flush()
+        if (
+            broker_account.provider == "webull"
+            and event.payload.intent_type in {"open", "scale"}
+            and str(event.payload.side).lower() == "buy"
+        ):
+            append_outcome_isolated(
+                session,
+                metadata=event.payload.metadata,
+                symbol=event.payload.symbol,
+                outcome="queued",
+                evidence_id=f"intent:{intent.id}:queued",
+                attempt_id=str(event.payload.metadata.get("fanout_attempt_id", "")),
+                reason="oms_intent_committed",
+                event_source="client",
+                broker_account_name=broker_account.name,
+            )
         return intent
 
     def record_risk_check(
@@ -287,7 +304,48 @@ class OmsStore:
         )
         session.add(check)
         session.flush()
+        if (
+            outcome == "reject"
+            and intent.intent_type in {"open", "scale"}
+            and str(intent.side).lower() == "buy"
+        ):
+            payload_metadata = (intent.payload or {}).get("metadata", {})
+            append_outcome_isolated(
+                session,
+                metadata=payload_metadata if isinstance(payload_metadata, dict) else {},
+                symbol=intent.symbol,
+                outcome="dropped_risk",
+                evidence_id=f"risk:{check.id}",
+                reason=reason,
+                event_source="client",
+            )
         return check
+
+    def record_fanout_pre_submit_outcome(
+        self,
+        session: Session,
+        *,
+        intent: TradeIntent,
+        outcome: str,
+        reason: str,
+        broker_account_name: str,
+    ) -> bool:
+        """Persist one explicit terminal no-submit result before the transaction commits."""
+
+        payload_metadata = (intent.payload or {}).get("metadata", {})
+        if intent.intent_type not in {"open", "scale"} or str(intent.side).lower() != "buy":
+            return False
+        row = append_outcome_isolated(
+            session,
+            metadata=payload_metadata if isinstance(payload_metadata, dict) else {},
+            symbol=intent.symbol,
+            outcome=outcome,
+            evidence_id=f"intent:{intent.id}:{outcome}:{reason}",
+            reason=reason,
+            event_source="client",
+            broker_account_name=broker_account_name,
+        )
+        return row is not None
 
     def get_or_create_order(
         self,
@@ -430,6 +488,36 @@ class OmsStore:
         )
         session.add(event)
         session.flush()
+        metadata = payload.get("metadata", {})
+        recorded_metadata = dict(getattr(order, "payload", {}) or {})
+        if isinstance(metadata, dict):
+            recorded_metadata.update(metadata)
+        # Non-fan-out events are the overwhelming population.  Return before resolving the account;
+        # this keeps D2 additive and prevents its evidence lookup from becoming a dependency of the
+        # existing order-event write.
+        if not str(recorded_metadata.get("fanout_slot_id", "")).strip():
+            return event
+        broker_account = session.get(BrokerAccount, order.broker_account_id)
+        if (
+            broker_account is not None
+            and broker_account.provider == "webull"
+            and str(recorded_metadata.get("fanout_slot_id", "")).strip()
+        ):
+            # #812 deliberately puts the shared key on BOTH broker legs. Provider identity, not the
+            # optional fanout_leg label echoed by an SDK report, is what keeps this consumer
+            # venue-scoped under Reading A.
+            recorded_metadata["fanout_leg"] = "webull"
+        append_outcome_isolated(
+            session,
+            metadata=recorded_metadata,
+            symbol=order.symbol,
+            outcome=broker_outcome(report.event_type, getattr(report, "origin", "unknown")),
+            evidence_id=f"order_event:{event.id}",
+            attempt_id=str(recorded_metadata.get("fanout_attempt_id", "")),
+            reason=report.reason or "",
+            event_source=getattr(report, "origin", "unknown") or "unknown",
+            broker_account_name=broker_account.name if broker_account is not None else "",
+        )
         return event
 
     def get_schwab_ineligible_entry(

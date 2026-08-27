@@ -48,6 +48,10 @@ from project_mai_tai.db.models import (
     VirtualPosition,
 )
 from project_mai_tai.db.session import build_timed_session_factory
+from project_mai_tai.fanout_outcome_consumer import (
+    FanoutOutcomeJournal,
+    identity_from_metadata,
+)
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.events import (
@@ -118,6 +122,7 @@ DB_SEED_BAR_LIMIT = 250
 # Insufficient history means NO SIGNAL, NOT OLD SIGNAL -- the same shape as "an empty list from a
 # failed call is not a flat account".
 DB_SEED_MAX_MISSED_SESSIONS = 0
+FANOUT_OUTCOME_POLL_INTERVAL_SECONDS = 5.0
 # Gaps below this never need a session lookup (>99.9% of all gaps), so the calendar query is rare.
 _DB_SEED_GAP_PROBE_MIN = timedelta(hours=2)
 STATE_PUBLISH_INTERVAL_SECONDS = 5
@@ -226,6 +231,8 @@ class SchwabV2BotService:
         self.webull_intent_emitter: SchwabV2IntentEmitter | None = None
         self.session_factory: sessionmaker[Session] | None = session_factory
         self.fanout_identity_store: FanoutSegmentIdentityStore | None = None
+        self.fanout_outcome_journal: FanoutOutcomeJournal | None = None
+        self._fanout_outcome_evaluations = 0
         self._stop_event = asyncio.Event()
         self._strategy_state_stream = stream_name(
             self.settings.redis_stream_prefix, "strategy-state"
@@ -359,7 +366,7 @@ class SchwabV2BotService:
     def enabled(self) -> bool:
         return bool(getattr(self.settings, "strategy_schwab_1m_v2_enabled", False))
 
-    def _configure_fanout_identity_store(self) -> None:
+    def _configure_fanout_identity_store(self) -> dict[str, int]:
         """Restore the current segment before any market-data task can emit a draft."""
 
         if self.session_factory is None:
@@ -367,7 +374,7 @@ class SchwabV2BotService:
                 "[V2-FANOUT-IDENTITY-RESTORE-FAILED] restored=0 could_not_tell=1 "
                 "reason=no_session_factory"
             )
-            return
+            return {}
         self.fanout_identity_store = FanoutSegmentIdentityStore(self.session_factory)
         try:
             restored_segments = self.fanout_identity_store.restore_active()
@@ -384,6 +391,51 @@ class SchwabV2BotService:
         self.strategy.configure_fanout_identity_persistence(
             self.fanout_identity_store.record,
             restored_segments,
+        )
+        return restored_segments
+
+    def _configure_fanout_outcome_journal(self, active_segments: dict[str, int]) -> None:
+        """Replay durable outcomes before any market-data task can emit a new leg."""
+
+        if self.session_factory is None:
+            logger.error(
+                "[V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=1 "
+                "reason=no_session_factory"
+            )
+            return
+        self.fanout_outcome_journal = FanoutOutcomeJournal(self.session_factory)
+
+        def persist(metadata, symbol: str, outcome: str, reason: str) -> None:  # type: ignore[no-untyped-def]
+            journal = self.fanout_outcome_journal
+            if journal is None:
+                raise RuntimeError("fan-out outcome journal is not configured")
+            journal.record(
+                metadata=metadata,
+                symbol=symbol,
+                outcome=outcome,
+                evidence_id=f"strategy:{uuid4()}",
+                reason=reason,
+                event_source="client",
+                broker_account_name=str(
+                    getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+                ),
+            )
+
+        self.strategy.configure_fanout_outcome_persistence(persist)
+        try:
+            applied = self.fanout_outcome_journal.bootstrap(
+                self.strategy.apply_fanout_outcome,
+                active_segments=active_segments,
+            )
+        except Exception:  # noqa: BLE001 - startup stays in visible-release direction
+            logger.exception(
+                "[V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=1"
+            )
+            return
+        logger.info(
+            "[V2-FANOUT-OUTCOME-RESTORE] evaluated=%d applied=%d could_not_tell=0",
+            applied,
+            applied,
         )
 
     @property
@@ -421,7 +473,8 @@ class SchwabV2BotService:
                     "disabled: %s",
                     exc,
                 )
-        self._configure_fanout_identity_store()
+        active_segments = self._configure_fanout_identity_store()
+        self._configure_fanout_outcome_journal(active_segments)
         self.intent_emitter = SchwabV2IntentEmitter(
             self.settings,
             self.redis,
@@ -498,6 +551,10 @@ class SchwabV2BotService:
             self._tasks["rest_client"] = asyncio.create_task(self.rest_client.run())
             self._tasks["scanner"] = asyncio.create_task(self._scanner_consumer_loop())
             self._tasks["position_poll"] = asyncio.create_task(self._position_poll_loop())
+            if self.fanout_outcome_journal is not None:
+                self._tasks["fanout_outcomes"] = asyncio.create_task(
+                    self._fanout_outcome_loop()
+                )
             if self.streamer_enabled:
                 self._tasks["streamer"] = asyncio.create_task(self.streamer.run())
                 logger.info(
@@ -701,6 +758,7 @@ class SchwabV2BotService:
             "bars_processed": str(sum(self._bar_counts.values())),
             "rest_bars_gated_total": str(self._rest_bars_gated),
             "rest_bars_gap_fill_total": str(self._rest_bars_gap_fill),
+            "fanout_outcome_evaluations": str(self._fanout_outcome_evaluations),
             "tick_capture": str(self.tick_writer is not None).lower(),
             **(
                 {
@@ -868,6 +926,41 @@ class SchwabV2BotService:
             logger=logger,
             idle=lambda: sleep_or_stop(self._stop_event, POSITION_POLL_INTERVAL_SECONDS),
         )
+
+    async def _fanout_outcome_loop(self) -> None:
+        """Poll committed outcome evidence; Redis is deliberately not an authority."""
+
+        await run_resilient_loop(
+            stop_event=self._stop_event,
+            tracker=self._loop_health,
+            name="fanout_outcomes",
+            iteration=self._fanout_outcome_pass,
+            backoff_secs=self._loop_backoff_secs,
+            logger=logger,
+            idle=lambda: sleep_or_stop(
+                self._stop_event,
+                FANOUT_OUTCOME_POLL_INTERVAL_SECONDS,
+            ),
+        )
+
+    async def _fanout_outcome_pass(self) -> None:
+        journal = self.fanout_outcome_journal
+        if journal is None:
+            return
+        rows = await asyncio.to_thread(journal.read_pending)
+        # Strategy state is event-loop-owned.  Never call ``apply_fanout_outcome`` from the DB
+        # worker thread: quote/bar callbacks mutate the same SymbolState objects.
+        for row in rows:
+            self.strategy.apply_fanout_outcome(row)
+        evaluated = await asyncio.to_thread(journal.advance, rows)
+        self._fanout_outcome_evaluations += evaluated
+        if evaluated:
+            logger.info(
+                "[V2-FANOUT-OUTCOME-CENSUS] trigger=durable_poll evaluated=%d "
+                "evaluated_since_boot=%d — polarity: evaluated=0 is UNEXERCISED, not clean",
+                evaluated,
+                self._fanout_outcome_evaluations,
+            )
 
     async def _position_poll_pass(self) -> None:
         maps = await asyncio.to_thread(self._fetch_position_maps)
@@ -2365,6 +2458,15 @@ class SchwabV2BotService:
                         "schwab_1m_v2 webull direct intent DROPPED for %s (%s) — no webull emitter",
                         getattr(d, "symbol", "?"), getattr(d, "intent_type", "?"),
                     )
+                    await self._record_local_fanout_outcome(
+                        d,
+                        outcome=(
+                            "could_not_tell"
+                            if getattr(d, "intent_type", "") == "cancel"
+                            else "dropped_no_emitter"
+                        ),
+                        reason="webull_direct_emitter_not_initialized",
+                    )
                     continue
                 try:
                     await self.webull_intent_emitter.emit(d)
@@ -2372,6 +2474,11 @@ class SchwabV2BotService:
                     logger.exception(
                         "schwab_1m_v2 webull direct emit failed for %s (%s)",
                         getattr(d, "symbol", "?"), getattr(d, "intent_type", "?"),
+                    )
+                    await self._record_local_fanout_outcome(
+                        d,
+                        outcome="could_not_tell",
+                        reason="webull_direct_redis_emit_failed",
                     )
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
@@ -2473,12 +2580,61 @@ class SchwabV2BotService:
         implementation."""
         return entry_gate.within_entry_window(now, self.settings)
 
-    async def _maybe_emit(self, draft, emitter=None) -> None:  # type: ignore[no-untyped-def]
+    async def _record_local_fanout_outcome(
+        self,
+        draft,
+        *,
+        outcome: str,
+        reason: str,
+    ) -> None:  # type: ignore[no-untyped-def]
+        metadata = getattr(draft, "metadata", {}) or {}
+        if identity_from_metadata(metadata) is None:
+            return
+        journal = self.fanout_outcome_journal
+        if journal is None:
+            logger.error(
+                "[V2-FANOUT-LOCAL-OUTCOME] %s outcome=%s durable=0 could_not_tell=1 "
+                "reason=no_journal",
+                getattr(draft, "symbol", "?"),
+                outcome,
+            )
+            return
+        attempt_id = journal.local_attempt_id(metadata)
+        try:
+            await asyncio.to_thread(
+                journal.record,
+                metadata=metadata,
+                symbol=str(getattr(draft, "symbol", "")),
+                outcome=outcome,
+                evidence_id=f"local:{uuid4()}",
+                attempt_id=attempt_id,
+                reason=reason,
+                event_source="client",
+                broker_account_name=str(
+                    getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+                ),
+            )
+        except Exception:  # noqa: BLE001 - a failed observation cannot break the bar/quote loop
+            logger.exception(
+                "[V2-FANOUT-LOCAL-OUTCOME] %s outcome=%s durable=0 could_not_tell=1 "
+                "failure_direction=release_after_grace",
+                getattr(draft, "symbol", "?"),
+                outcome,
+            )
+            return
+        logger.info(
+            "[V2-FANOUT-LOCAL-OUTCOME] %s outcome=%s durable=1 reason=%s",
+            getattr(draft, "symbol", "?"),
+            outcome,
+            reason,
+        )
+
+    async def _maybe_emit(self, draft, emitter=None) -> str:  # type: ignore[no-untyped-def]
         """Emit a draft through the entry-window gate + ATR-only belt + EH-routing chokepoint.
         `emitter` defaults to the primary (Schwab) emitter; the dual-broker fan-out passes the
         Webull emitter so its parallel leg runs the SAME gates/routing, just to the other account."""
         if draft is None:
-            return
+            return "not_applicable"
         target_emitter = emitter if emitter is not None else self.intent_emitter
         # Confirmed-window (variant CW) bar-close flip: the strategy expresses the trend
         # exit as a CLOSE draft tagged cw_flip. Publish it as a lightweight `v2_cw_flip`
@@ -2491,14 +2647,14 @@ class SchwabV2BotService:
         ):
             if self.intent_emitter is None:
                 logger.warning("schwab_1m_v2 cw_flip dropped — emitter not initialized")
-                return
+                return "dropped_no_emitter"
             try:
                 await self.intent_emitter.emit_cw_flip(
                     draft.symbol, str(draft.metadata.get("bar_time_ms", ""))
                 )
             except Exception:
                 logger.exception("schwab_1m_v2 cw_flip emit failed for %s", draft.symbol)
-            return
+            return "queued" if self.intent_emitter is not None else "could_not_tell"
         # ⛔⭐⭐ EXIT-ONLY CHOKEPOINT (2026-08-11). Held-symbol coverage keeps a de-listed symbol
         # SUBSCRIBED so its exits keep working — which means bars and quotes now arrive for a name
         # the scanner has dropped, and the strategy will happily evaluate it for ENTRY. Block that
@@ -2528,7 +2684,16 @@ class SchwabV2BotService:
                 _sym,
                 getattr(draft, "reason", ""),
             )
-            return
+            # Recording is additive evidence.  The exit-only refusal must still hold in a
+            # minimal harness (and in production if the optional journal wiring is absent).
+            _record_local = getattr(self, "_record_local_fanout_outcome", None)
+            if _record_local is not None:
+                await _record_local(
+                    draft,
+                    outcome="dropped_routing",
+                    reason="off_watchlist_exit_coverage",
+                )
+            return "dropped_routing"
         # Trading-window gate: v2 only ENTERS inside the operator's window
         # (default 7:00 AM–4:30 PM ET, weekdays, non-holiday). Outside it, an
         # "open" intent is dropped at the chokepoint so v2 never opens a position
@@ -2551,7 +2716,12 @@ class SchwabV2BotService:
                 self._entry_window_end_minute_et(),
                 _format_eastern(datetime.now(UTC)),
             )
-            return
+            await self._record_local_fanout_outcome(
+                draft,
+                outcome="dropped_routing",
+                reason="outside_entry_window",
+            )
+            return "dropped_routing"
         # ATR-ONLY belt-and-suspenders: even if some path computed a non-ATR open,
         # refuse to emit it at the chokepoint. Paths 1/2 are the 7wk losers and
         # must never reach the broker under live credentials. Defense-in-depth on
@@ -2565,16 +2735,38 @@ class SchwabV2BotService:
                     getattr(draft, "symbol", "?"),
                     reason,
                 )
-                return
+                await self._record_local_fanout_outcome(
+                    draft,
+                    outcome="dropped_routing",
+                    reason="atr_only_guard",
+                )
+                return "dropped_routing"
         if target_emitter is None:
             logger.warning("schwab_1m_v2 intent dropped — emitter not initialized")
-            return
+            await self._record_local_fanout_outcome(
+                draft,
+                outcome="dropped_no_emitter",
+                reason="emitter_not_initialized",
+            )
+            return "dropped_no_emitter"
         if not self._apply_extended_hours_routing(draft, datetime.now(UTC)):
-            return
+            await self._record_local_fanout_outcome(
+                draft,
+                outcome="dropped_routing",
+                reason="extended_hours_routing_refused",
+            )
+            return "dropped_routing"
         try:
             await target_emitter.emit(draft)
         except Exception:
             logger.exception("schwab_1m_v2 emit failed")
+            await self._record_local_fanout_outcome(
+                draft,
+                outcome="could_not_tell",
+                reason="redis_emit_failed",
+            )
+            return "could_not_tell"
+        return "queued"
 
     async def _emit_webull_fanout_legs(self) -> None:
         """Dual-broker fan-out: drain the strategy's queued Webull leg drafts and emit each through
@@ -2585,13 +2777,26 @@ class SchwabV2BotService:
         if not callable(drain):
             return
         legs = drain()
-        if not legs or self.webull_intent_emitter is None:
+        if not legs:
+            return
+        if self.webull_intent_emitter is None:
+            for leg in legs:
+                await self._record_local_fanout_outcome(
+                    leg,
+                    outcome="dropped_no_emitter",
+                    reason="webull_emitter_not_initialized",
+                )
             return
         webull_ineligible = self._webull_ineligible_symbols()
         for d in legs:
             sym = str(getattr(d, "symbol", "")).upper()
             if sym in webull_ineligible:
                 logger.info("[V2-FANOUT] skip Webull leg %s — webull-ineligible today", sym)
+                await self._record_local_fanout_outcome(
+                    d,
+                    outcome="dropped_ineligible",
+                    reason="webull_ineligible_today",
+                )
                 continue
             try:
                 await self._maybe_emit(d, emitter=self.webull_intent_emitter)

@@ -59,8 +59,8 @@ def test_the_reactive_fanout_also_STAMPS_the_claim() -> None:
     """Without the stamp this leg would be invisible to the shared expiry — claimed forever."""
     src = _reactive_src()
     gate = src.split("_pending_webull_fanout_intents.append")[0]
-    assert "state.fanout_webull_claimed = True" in gate
-    assert "state.fanout_claim_ms = self._now_ms()" in gate
+    assert "_claim_fanout_webull(" in gate
+    assert "identity=shared_fanout_identity" in gate
 
 
 def test_the_reactive_path_keeps_its_OWN_dedup_too() -> None:
@@ -79,12 +79,12 @@ def test_the_resting_paths_still_claim() -> None:
         else inspect.getsource(strat)
     )
     cross = inspect.getsource(strat.SchwabV2Strategy._fanout_rth_resting_cross)
-    assert "state.fanout_webull_claimed = True" in cross
+    assert "_claim_fanout_webull(" in cross
     assert "fanout_webull_claimed" in on_fill
 
 
-def test_the_expiry_cause_is_NOT_addressed_here() -> None:
-    """⛔⭐⭐ THE SECOND CAUSE IS STILL LIVE. DO NOT READ THIS FILE AS CLOSING §82.
+def test_the_expiry_requires_absent_positive_outcome_evidence() -> None:
+    """D2 closes the second cause without turning a local drop into silent suppression.
 
     The claim expiry re-opens the latch when `position_qty == 0`, and a Webull fill does NOT raise
     that counter. Live STKH 2026-08-14, one segment, three legs in 63 seconds:
@@ -94,14 +94,11 @@ def test_the_expiry_cause_is_NOT_addressed_here() -> None:
         14:31:34  [V2-FANOUT-CLAIM-EXPIRED] "claim taken 31.4s ago never became a position"
         14:31:34  [V2-FANOUT-RTH-RESTING] leg
 
-    ⛔ It cannot be fixed by capping emissions. A counter that never releases would reintroduce the
-    FGI 2026-08-13 failure this expiry exists to prevent — a leg blocked by our OWN band cap burning
-    the whole flip, Schwab receiving 57 orders and Webull ZERO. The strategy cannot distinguish
-    "blocked, never placed" from "placed and filled" because the Webull outcome never reaches it.
-    ⇒ The real fix routes the Webull leg's outcome back to the strategy. Design item, not a patch.
+    A durable fill/working outcome holds; queued or could_not_tell remains provisional and releases
+    after the grace. This preserves FGI's visible-duplicate failure direction without recreating
+    STKH's post-fill duplicate.
     """
     src = inspect.getsource(strat.SchwabV2Strategy._fanout_rth_resting_cross)
-    assert "[V2-FANOUT-CLAIM-EXPIRED]" in src, "the expiry is still present and still unfixed"
-    assert "state.position_qty == 0" in src, (
-        "the expiry still keys on position_qty, which a Webull fill does not raise"
-    )
+    assert "[V2-FANOUT-CLAIM-EXPIRED]" in src
+    assert 'state.fanout_claim_outcome in {"queued", "could_not_tell"}' in src
+    assert "apply_fanout_outcome" in inspect.getsource(strat.SchwabV2Strategy)

@@ -42,6 +42,12 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.fanout_identity import fanout_slot_for_source, fanout_slot_id
+from project_mai_tai.fanout_outcome_consumer import (
+    POSITIVE_HOLD_OUTCOMES,
+    PROVISIONAL_OUTCOMES,
+    TERMINAL_RELEASE_OUTCOMES,
+    FanoutOutcome,
+)
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.entry_gate import resolve_entry_window
@@ -283,6 +289,15 @@ class SymbolState:
     # broker errors -- the silence looked like the broker refusing us when we had simply stopped
     # asking. This timestamp lets the claim expire when no fill confirms it.
     fanout_claim_ms: int = 0
+    # Section 82 D2: the boolean alone cannot say WHICH durable economic claim an outcome belongs
+    # to. A terminal result may release only this exact slot; a stale result for another slot can
+    # never free the current one. ``fanout_claim_outcome`` is deliberately not inferred from the
+    # Schwab-scoped position poll.
+    fanout_claim_slot_id: str = ""
+    fanout_claim_slot: str = ""
+    fanout_claim_attempt_id: str = ""
+    fanout_claim_outcome: str = "released"
+    fanout_outcome_evidence_ids: set[str] = field(default_factory=set)
     # ⛔⭐ TRUE while a MIRRORED Webull resting stop-limit is live at the broker. Tracked so the
     # cancel can be mirrored too -- an un-cancelled Webull rest is the 136-minute FRTT orphan
     # shape, on the broker whose order book we cannot even read reliably.
@@ -636,6 +651,9 @@ class SchwabV2Strategy:
         # correct for an ENTRY, fatal for a CANCEL, which must never be gated. Schwab already has
         # this split (`_pending_intents` -> emitted directly); this is its Webull mirror.
         self._pending_webull_direct_intents: list[TradeIntentDraft] = []
+        self._fanout_outcome_persist: (
+            Callable[[Mapping[str, object], str, str, str], None] | None
+        ) = None
         # P1.3 + P1.4 armed-segment safety — ONE flag gates BOTH the boot-mark (P1.3) and the
         # boot-hold (they are one change; splitting them creates a cell where the hold reads every
         # reconstructed segment as dangerous and holds forever). OFF => byte-identical.
@@ -689,6 +707,258 @@ class SchwabV2Strategy:
         for symbol, state in self._symbol_states.items():
             if int(state.fanout_segment_id or 0) > 0:
                 self._restored_fanout_segment_ids.pop(symbol.upper(), None)
+
+    def configure_fanout_outcome_persistence(
+        self,
+        persist: Callable[[Mapping[str, object], str, str, str], None] | None,
+    ) -> None:
+        """Install the bot-owned append-only outcome journal."""
+
+        self._fanout_outcome_persist = persist
+
+    def _persist_fanout_claim_transition(
+        self,
+        state: SymbolState,
+        *,
+        outcome: str,
+        reason: str,
+    ) -> None:
+        # The outcome journal is an observation dependency, never a prerequisite for the
+        # strategy transition.  A few deliberately minimal safety harnesses construct the
+        # strategy without ``__init__``; treating that as "no journal configured" also pins
+        # the production failure direction if wiring is ever incomplete.
+        persist = getattr(self, "_fanout_outcome_persist", None)
+        if persist is None or not state.fanout_claim_slot_id:
+            return
+        metadata: dict[str, object] = {
+            "fanout_leg": "webull",
+            "fanout_segment_id": str(int(state.fanout_segment_id or 0)),
+            "fanout_slot": state.fanout_claim_slot,
+            "fanout_slot_id": state.fanout_claim_slot_id,
+        }
+        try:
+            persist(metadata, state.symbol, outcome, reason)
+        except Exception:  # noqa: BLE001 - failure stays in the visible duplicate direction
+            logger.exception(
+                "[V2-FANOUT-OUTCOME-PERSIST-FAILED] %s slot_id=%s outcome=%s "
+                "could_not_tell=1 failure_direction=release_after_grace",
+                state.symbol,
+                state.fanout_claim_slot_id,
+                outcome,
+            )
+
+    def _claim_fanout_webull(
+        self,
+        state: SymbolState,
+        *,
+        identity: Mapping[str, object],
+        reason: str,
+    ) -> None:
+        slot_id = str(identity.get("fanout_slot_id", "")).strip()
+        if not slot_id:
+            raise ValueError("fan-out claim requires fanout_slot_id")
+        state.fanout_webull_claimed = True
+        state.fanout_claim_ms = self._now_ms()
+        state.fanout_claim_slot_id = slot_id
+        state.fanout_claim_slot = str(identity.get("fanout_slot", "")).strip().lower()
+        state.fanout_claim_attempt_id = str(identity.get("fanout_attempt_id", "")).strip()
+        state.fanout_claim_outcome = "queued"
+        logger.info(
+            "[V2-FANOUT-CLAIM] %s slot_id=%s outcome=queued held=1 evidence=provisional "
+            "reason=%s — positive OMS evidence must arrive before grace expiry",
+            state.symbol,
+            slot_id,
+            reason,
+        )
+        self._persist_fanout_claim_transition(state, outcome="queued", reason=reason)
+
+    def _release_fanout_webull_claim(
+        self,
+        state: SymbolState,
+        *,
+        reason: str,
+        persist: bool = True,
+    ) -> bool:
+        was_claimed = bool(state.fanout_webull_claimed)
+        if persist and state.fanout_claim_slot_id:
+            self._persist_fanout_claim_transition(
+                state,
+                outcome="strategy_release",
+                reason=reason,
+            )
+        state.fanout_webull_claimed = False
+        state.fanout_claim_ms = 0
+        state.fanout_claim_slot_id = ""
+        state.fanout_claim_slot = ""
+        state.fanout_claim_attempt_id = ""
+        state.fanout_claim_outcome = "released"
+        return was_claimed
+
+    def apply_fanout_outcome(self, record: FanoutOutcome) -> str:
+        """Apply one durable Webull outcome to its exact current claim.
+
+        Positive fill/order evidence may hold. Terminal evidence may release only the matching slot.
+        A missing or unclassified result stays provisional and therefore releases through the
+        existing grace backstop -- the operator-selected visible-duplicate failure direction.
+        """
+
+        state = self.watchlist_state(record.symbol)
+        active_segment = int(state.fanout_segment_id or 0)
+        if active_segment <= 0:
+            restored = getattr(self, "_restored_fanout_segment_ids", {})
+            active_segment = int(restored.get(record.symbol.upper(), 0) or 0)
+        if record.segment_id != active_segment:
+            logger.info(
+                "[V2-FANOUT-OUTCOME] %s outcome=%s applied=0 segment_match=0 "
+                "record_segment=%d active_segment=%d — stale evidence cannot mutate a new segment",
+                record.symbol,
+                record.outcome,
+                record.segment_id,
+                active_segment,
+            )
+            return "stale_segment"
+        evidence_key = record.evidence_id or str(record.record_id)
+        if evidence_key in state.fanout_outcome_evidence_ids:
+            return "duplicate"
+        state.fanout_outcome_evidence_ids.add(evidence_key)
+
+        exact = record.slot_id == state.fanout_claim_slot_id
+        exact_attempt = bool(
+            not state.fanout_claim_attempt_id
+            or not record.attempt_id
+            or record.attempt_id == state.fanout_claim_attempt_id
+        )
+        if record.outcome == "filled":
+            # A durable fill outranks virtual_positions and every stale cancel/reject, but it still
+            # belongs to one economic slot. A late fill from another slot must not consume/hold the
+            # current claim merely because both share a segment.
+            if state.fanout_claim_slot_id and not exact:
+                logger.info(
+                    "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=filled applied=0 "
+                    "reason=wrong_slot active_slot_id=%s",
+                    record.symbol,
+                    record.slot_id,
+                    state.fanout_claim_slot_id,
+                )
+                return "wrong_slot"
+            if not state.fanout_claim_slot_id:
+                state.fanout_claim_slot_id = record.slot_id
+                state.fanout_claim_slot = record.slot
+                state.fanout_claim_attempt_id = record.attempt_id
+            elif exact and record.attempt_id and not state.fanout_claim_attempt_id:
+                state.fanout_claim_attempt_id = record.attempt_id
+            state.fanout_webull_claimed = True
+            state.fanout_claim_outcome = "filled"
+            state.fanout_claim_ms = self._now_ms()
+            logger.info(
+                "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=filled held=1 "
+                "evidence=positive fill_rank=authoritative — v2 composition unchanged",
+                record.symbol,
+                record.slot_id,
+            )
+            return "consumed"
+
+        if record.outcome in POSITIVE_HOLD_OUTCOMES:
+            if state.fanout_claim_outcome == "filled":
+                logger.info(
+                    "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s applied=0 "
+                    "reason=filled_is_monotonic",
+                    record.symbol,
+                    record.slot_id,
+                    record.outcome,
+                )
+                return "filled_wins"
+            if state.fanout_claim_slot_id and not exact:
+                logger.info(
+                    "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s applied=0 "
+                    "reason=wrong_slot active_slot_id=%s",
+                    record.symbol,
+                    record.slot_id,
+                    record.outcome,
+                    state.fanout_claim_slot_id,
+                )
+                return "wrong_slot"
+            if not state.fanout_claim_slot_id:
+                state.fanout_claim_slot_id = record.slot_id
+                state.fanout_claim_slot = record.slot
+                state.fanout_claim_attempt_id = record.attempt_id
+            elif exact and record.attempt_id and not state.fanout_claim_attempt_id:
+                state.fanout_claim_attempt_id = record.attempt_id
+            state.fanout_webull_claimed = True
+            state.fanout_claim_outcome = "held"
+            state.fanout_claim_ms = self._now_ms()
+            logger.info(
+                "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s held=1 evidence=positive "
+                "exact_slot=%d — every held latch names its evidence",
+                record.symbol,
+                record.slot_id,
+                record.outcome,
+                int(exact),
+            )
+            return "held"
+
+        if record.outcome in TERMINAL_RELEASE_OUTCOMES:
+            if state.fanout_claim_outcome == "filled":
+                logger.info(
+                    "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s applied=0 "
+                    "reason=filled_is_monotonic",
+                    record.symbol,
+                    record.slot_id,
+                    record.outcome,
+                )
+                return "filled_wins"
+            if exact and exact_attempt:
+                self._release_fanout_webull_claim(
+                    state,
+                    reason=f"durable_{record.outcome}",
+                    persist=False,
+                )
+                logger.info(
+                    "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s held=0 released=1 "
+                    "evidence=positive exact_slot=1 exact_attempt=1",
+                    record.symbol,
+                    record.slot_id,
+                    record.outcome,
+                )
+                return "released"
+            logger.info(
+                "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s applied=0 exact_slot=0 — "
+                "a terminal result cannot release another claim/attempt",
+                record.symbol,
+                record.slot_id,
+                record.outcome,
+            )
+            return "wrong_slot"
+
+        if record.outcome in PROVISIONAL_OUTCOMES:
+            if state.fanout_claim_outcome == "filled":
+                return "filled_wins"
+            if exact:
+                state.fanout_claim_outcome = (
+                    "queued" if record.outcome == "queued" else "could_not_tell"
+                )
+                if record.attempt_id:
+                    state.fanout_claim_attempt_id = record.attempt_id
+                state.fanout_webull_claimed = True
+                state.fanout_claim_ms = self._now_ms()
+            logger.warning(
+                "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s held=%d evidence_positive=0 "
+                "could_not_tell=1 — provisional grace preserves the visible-duplicate direction",
+                record.symbol,
+                record.slot_id,
+                record.outcome,
+                int(state.fanout_webull_claimed),
+            )
+            return "could_not_tell"
+        logger.warning(
+            "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s held=%d "
+            "could_not_tell=1 reason=unknown_outcome",
+            record.symbol,
+            record.slot_id,
+            record.outcome,
+            int(state.fanout_webull_claimed),
+        )
+        return "could_not_tell"
 
     def _persist_fanout_identity_transition(
         self,
@@ -762,6 +1032,7 @@ class SchwabV2Strategy:
         logger.info("[V2-CW-DISARM] %s reason=%s", state.symbol, reason)
         state.cw_armed = False
         state.cw_arm_bar_ts = 0
+        self._release_fanout_webull_claim(state, reason=reason)
         self._clear_fanout_segment_id(state, reason=reason)
         state.cw_entries_this_flip = 0
         state.cw_resting_taken = False
@@ -809,6 +1080,7 @@ class SchwabV2Strategy:
         )
         if state.resting_active or state.webull_resting_active:
             self._queue_resting_cancel(state, reason=reason)
+        self._release_fanout_webull_claim(state, reason=reason)
         arm_released = self._release_arm(state, reason)
 
         # Some claims can outlive the arm (for example an emitted-but-not-filled leg). The entry
@@ -824,8 +1096,6 @@ class SchwabV2Strategy:
         state.cw_reclaim_taken = False
         state.cw_v2_emit_claimed = False
         state.cw_v2_emit_ms = 0
-        state.fanout_webull_claimed = False
-        state.fanout_claim_ms = 0
         state.resting_flip_ms = 0
         return had_entry_state, arm_released, cancel_requested
 
@@ -846,6 +1116,7 @@ class SchwabV2Strategy:
         state = self._symbol_states.get(symbol)
         if state is None:
             return False
+        self._release_fanout_webull_claim(state, reason=reason)
         released = self._release_arm(state, reason)
         self._clear_fanout_segment_id(
             state,
@@ -981,8 +1252,15 @@ class SchwabV2Strategy:
             and bool(state.last_resting_placed_slot)   # a RESTING entry placed this order
             and not self._resting_session_is_eh()      # EH has its own soft-rest cross path
         ):
-            state.fanout_webull_claimed = True
-            state.fanout_claim_ms = self._now_ms()
+            shared_identity = self._fanout_identity_metadata(
+                state,
+                source="rth_resting",
+            )
+            self._claim_fanout_webull(
+                state,
+                identity=shared_identity,
+                reason="schwab_resting_fill",
+            )
             logger.info(
                 "[V2-FANOUT-ON-FILL] %s schwab resting entry FILLED at level=%.4f -> parallel "
                 "Webull leg queued immediately (no cross re-detection, no race)",
@@ -998,6 +1276,7 @@ class SchwabV2Strategy:
                     source="rth_resting",
                     entry_n=state.cw_entries_this_flip + 1,
                     band_anchor=state.resting_level,
+                    shared_identity=shared_identity,
                 )
             )
         if prev > 0 and state.position_qty == 0:
@@ -1043,8 +1322,10 @@ class SchwabV2Strategy:
             if self._cw_v2_enabled:
                 state.cw_v2_emit_claimed = False
                 state.cw_v2_bars_since_exit = 0  # reclaim gap: start counting new bars from the exit
-                state.fanout_webull_claimed = False  # fan-out: allow a fresh Webull leg on the reclaim
-                state.fanout_claim_ms = 0
+                self._release_fanout_webull_claim(
+                    state,
+                    reason="schwab_position_closed_reclaim_available",
+                )
         if self._atr_rearm_enabled:
             self._poll_atr_guard(state, prev)
 
@@ -1395,8 +1676,7 @@ class SchwabV2Strategy:
         state.cw_segment_high = 0.0
         state.cw_v2_emit_claimed = False
         state.cw_v2_emit_ms = 0
-        state.fanout_webull_claimed = False  # fan-out RTH-resting once-per-flip latch
-        state.fanout_claim_ms = 0
+        self._release_fanout_webull_claim(state, reason="session_anchor_reset")
         restored_anchor = int(getattr(self, "_restored_fanout_session_anchor_ms", 0) or 0)
         self._clear_fanout_segment_id(
             state,
@@ -1919,8 +2199,10 @@ class SchwabV2Strategy:
             # FUSE x1; gaps of 21s, 41s, 169s and 706s between fill and arm).
             # The slots are reset at DISARM instead, so whatever arrives here already carries the
             # entries attributable to the cross being confirmed.
-            state.fanout_webull_claimed = False  # fresh flip -> re-allow the fan-out Webull leg
-            state.fanout_claim_ms = 0
+            # D2: the Webull claim follows that same rule. A positive working/fill outcome from the
+            # pre-bar cross survives this confirmation; releasing it here would recreate the
+            # rth_resting -> reactive duplicate through the consumer itself. Explicit terminal
+            # evidence, provisional grace, position close, or segment end owns the release.
             if self._cw_armed_segment_safety_enabled:
                 # Stamp the arm with the FLIP BAR's ts (not wall-clock): a reconstructed arm carries
                 # a persisted historical ts (< boot); a live flip carries the current bar ts (>= boot).
@@ -1945,6 +2227,7 @@ class SchwabV2Strategy:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
             state.cw_arm_bar_ts = 0
+            self._release_fanout_webull_claim(state, reason="flip")
             self._clear_fanout_segment_id(
                 state,
                 reason="flip",
@@ -2202,8 +2485,11 @@ class SchwabV2Strategy:
         # missing one it replaces.
         if self._dual_broker_fanout_enabled:
             if not state.fanout_webull_claimed:
-                state.fanout_webull_claimed = True
-                state.fanout_claim_ms = self._now_ms()
+                self._claim_fanout_webull(
+                    state,
+                    identity=shared_fanout_identity,
+                    reason="reactive_draft_queued",
+                )
                 # ⛔⭐ THE DENOMINATOR, and it must be emitted even though nothing is wrong.
                 # SUPPRESSED=0 is ambiguous alone: either no duplicate was attempted (a clean day)
                 # or this site never executed (UNMEASURED). Only LATCHED separates those two, the
@@ -2381,6 +2667,11 @@ class SchwabV2Strategy:
         # ⛔ Goes on the DIRECT queue, not the fan-out queue: the fan-out queue is drained through
         # `_maybe_emit`, and the matching CANCEL must never be gated.
         if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled:
+            self._claim_fanout_webull(
+                state,
+                identity=shared_fanout_identity,
+                reason="resting_mirror_draft_queued",
+            )
             state.webull_resting_active = True
             entry_n = state.cw_entries_this_flip + 1
             segment_id = int(shared_fanout_identity["fanout_segment_id"])
@@ -3084,15 +3375,20 @@ class SchwabV2Strategy:
             and state.fanout_claim_ms
             and state.position_qty == 0
             and self._fanout_claim_grace_ms > 0
+            and state.fanout_claim_outcome in {"queued", "could_not_tell"}
             and (self._now_ms() - state.fanout_claim_ms) > self._fanout_claim_grace_ms
         ):
             logger.info(
-                "[V2-FANOUT-CLAIM-EXPIRED] %s claim taken %.1fs ago never became a position "
-                "-> re-allowing the Webull leg for this flip",
-                state.symbol, (self._now_ms() - state.fanout_claim_ms) / 1000.0,
+                "[V2-FANOUT-CLAIM-EXPIRED] %s claim taken %.1fs ago has no positive held/fill "
+                "evidence outcome=%s -> releasing in the visible-duplicate failure direction",
+                state.symbol,
+                (self._now_ms() - state.fanout_claim_ms) / 1000.0,
+                state.fanout_claim_outcome,
             )
-            state.fanout_webull_claimed = False
-            state.fanout_claim_ms = 0
+            self._release_fanout_webull_claim(
+                state,
+                reason="provisional_without_positive_evidence",
+            )
         if state.position_qty != 0 or state.fanout_webull_claimed:
             return
         # LIVE-BAR guard (#528 mirror): only fire off a live feed, never a warmup-replayed / stale bar.
@@ -3111,8 +3407,12 @@ class SchwabV2Strategy:
             # it is a real independent buy decision and needs its own floor -- it is not covered by
             # gating the Schwab primary. Live CNET fired here at px=1.4300 on a thin tape.
             return
-        state.fanout_webull_claimed = True
-        state.fanout_claim_ms = self._now_ms()   # so an unfilled claim can expire (see the guard above)
+        shared_identity = self._fanout_identity_metadata(state, source="rth_resting")
+        self._claim_fanout_webull(
+            state,
+            identity=shared_identity,
+            reason="rth_resting_cross_draft_queued",
+        )
         logger.info(
             "[V2-FANOUT-RTH-RESTING] %s px=%.4f >= resting_level=%.4f -> parallel Webull MARKET leg",
             state.symbol, px, state.resting_level,
@@ -3122,6 +3422,7 @@ class SchwabV2Strategy:
                 state, entry_px=px, session_is_eh=False, source="rth_resting",
                 # NOT yet incremented on this path -- this leg is the NEXT entry.
                 entry_n=state.cw_entries_this_flip + 1,
+                shared_identity=shared_identity,
                 # ⛔⭐ THE BAND MUST MEASURE FROM THE LEVEL WE DECIDED TO BUY AT, NOT FROM WHERE WE
                 # NOTICED (2026-08-13). `entry_px` here is the price at which SOFTWARE detected the
                 # cross, which on a fast move is far above `resting_level` -- live FGI 08-13: level
