@@ -1,0 +1,9 @@
+{
+  "pr_number": 823,
+  "range_base": "3301ac4f11fe45ae95e78fc899cfd611453a207e",
+  "range_head": "d4b338a7b3388838414e81127a2f856fcfdd6f47",
+  "reviewed_at": "2026-08-27T20:53:17Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after a clean rebase onto 3301ac4f (main after #822). Re-verified, not re-stamped: range is ONE marked commit, base is the current main tip, and the diff against the new base is BYTE-IDENTICAL to the diff reviewed at 3114a42e with matching patch-ids. Substance unchanged: D2 durable Webull fan-out outcome consumer. Writes DashboardSnapshot rows via append_outcome_isolated - NO MIGRATION, the table already exists. Scoped by broker PROVIDER rather than the optional fanout_leg label an SDK report may echo, which is what keeps it venue-local under Reading A; and it returns early when fanout_slot_id is absent so the overwhelming non-fanout population never makes the D2 evidence lookup a dependency of the existing order-event write. Graded externally by #822/D6, which reads durable broker rows only and declares that consumer markers are not acceptance - so this consumer cannot grade itself. UNEXERCISED until tomorrow's fan-out population; a quiet post-close log is not evidence for it."
+}
