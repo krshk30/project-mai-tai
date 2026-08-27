@@ -5,12 +5,21 @@
 # documentation/tests plus comments in Python loaded by a running service. A generic
 # "git pull without restart" would recreate disk-vs-process ambiguity for behavioral
 # code, so the delta is inspected before the checkout moves.
+#
+# A reviewed per-file declaration, not a computed import graph, is authoritative for
+# behavior-bearing files that are deliberately unloaded. Runtime non-reachability is
+# not decidable in general (#772 proved that boundary). The live cron/systemd scan is
+# only a refuter: a hit vetoes a declaration; silence never grants one.
 set -euo pipefail
 
 REPO_DIR="${1:-/home/trader/project-mai-tai}"
 BRANCH="${2:-main}"
 EXPECTED_SHA="${3:-}"
+DECLARATIONS_FILE="${4:-$REPO_DIR/ops/systemd/sync_only_unloaded_files.tsv}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+CRONTAB_BIN="${CRONTAB_BIN:-crontab}"
+SUDO_BIN="${SUDO_BIN:-sudo}"
+SYSTEMD_UNIT_DIRS="${SYSTEMD_UNIT_DIRS:-/etc/systemd/system:/run/systemd/system:/usr/local/lib/systemd/system:/usr/lib/systemd/system:/lib/systemd/system}"
 
 readonly -a MANAGED_UNITS=(
   project-mai-tai-control.service
@@ -38,6 +47,61 @@ fi
 if [[ ! -d "$REPO_DIR/.git" ]]; then
   could_not_tell "missing git repository: $REPO_DIR"
 fi
+[[ -r "$DECLARATIONS_FILE" ]] \
+  || could_not_tell "reviewed per-file declaration is unreadable: $DECLARATIONS_FILE"
+
+LIVE_REFS="$(mktemp)" || could_not_tell "cannot create live-reference snapshot"
+LIVE_REFS_ERR="$(mktemp)" || {
+  rm -f "$LIVE_REFS"
+  could_not_tell "cannot create live-reference error log"
+}
+UNIT_FILES="$(mktemp)" || {
+  rm -f "$LIVE_REFS" "$LIVE_REFS_ERR"
+  could_not_tell "cannot create systemd-unit inventory"
+}
+cleanup() {
+  rm -f "$LIVE_REFS" "$LIVE_REFS_ERR" "$UNIT_FILES"
+}
+trap cleanup EXIT
+
+snapshot_crontab() {
+  local label="$1"
+  shift
+  : > "$LIVE_REFS_ERR"
+  if "$@" >> "$LIVE_REFS" 2> "$LIVE_REFS_ERR"; then
+    return 0
+  fi
+  if grep -qi 'no crontab' "$LIVE_REFS_ERR"; then
+    printf '# %s: no crontab\n' "$label" >> "$LIVE_REFS"
+    return 0
+  fi
+  could_not_tell "cannot read $label crontab"
+}
+
+snapshot_live_references() {
+  local raw_dirs dir unit_count=0
+  printf '# current-user crontab\n' > "$LIVE_REFS"
+  snapshot_crontab "current-user" "$CRONTAB_BIN" -l
+  printf '# root crontab\n' >> "$LIVE_REFS"
+  snapshot_crontab "root" "$SUDO_BIN" -n "$CRONTAB_BIN" -u root -l
+
+  : > "$UNIT_FILES"
+  IFS=':' read -r -a raw_dirs <<< "$SYSTEMD_UNIT_DIRS"
+  for dir in "${raw_dirs[@]}"; do
+    [[ -n "$dir" ]] || continue
+    [[ -d "$dir" ]] || continue
+    find "$dir" -type f -print0 >> "$UNIT_FILES" \
+      || could_not_tell "cannot enumerate systemd unit files under $dir"
+  done
+  while IFS= read -r -d '' unit_file; do
+    [[ -r "$unit_file" ]] || could_not_tell "systemd unit file is unreadable: $unit_file"
+    printf '\n# systemd unit: %s\n' "$unit_file" >> "$LIVE_REFS"
+    cat -- "$unit_file" >> "$LIVE_REFS" \
+      || could_not_tell "cannot read systemd unit file: $unit_file"
+    unit_count=$((unit_count + 1))
+  done < "$UNIT_FILES"
+  [[ "$unit_count" -gt 0 ]] || could_not_tell "no readable systemd unit files were found"
+}
 
 snapshot_units() {
   local unit pid started active sub restarts
@@ -72,6 +136,7 @@ CURRENT_BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" \
   || could_not_tell "local $BRANCH does not identify the checked-out commit"
 
 BEFORE_UNITS="$(snapshot_units)"
+snapshot_live_references
 
 git fetch origin "$BRANCH" || could_not_tell "git fetch origin $BRANCH failed"
 REMOTE_SHA="$(git rev-parse "refs/remotes/origin/$BRANCH" 2>/dev/null)" \
@@ -84,12 +149,14 @@ git merge-base --is-ancestor "$CURRENT_SHA" "$EXPECTED_SHA" \
 
 # The verifier prints one parseable census line and exits non-zero on any path
 # outside the allowlist or on any behavior-bearing Python AST change.
-DELTA_CENSUS="$(python3 - "$CURRENT_SHA" "$EXPECTED_SHA" <<'PY'
+DELTA_CENSUS="$(python3 - "$CURRENT_SHA" "$EXPECTED_SHA" "$DECLARATIONS_FILE" "$LIVE_REFS" <<'PY'
 import ast
+from pathlib import PurePosixPath
+from pathlib import Path
 import subprocess
 import sys
 
-old, new = sys.argv[1:]
+old, new, declarations_file, live_refs_file = sys.argv[1:]
 
 
 def git(*args: str) -> bytes:
@@ -101,11 +168,104 @@ paths = [
     for item in git("diff", "--name-only", "-z", old, new).split(b"\0")
     if item
 ]
-docs = tests = python_equal = controls = 0
+docs = tests = python_equal = controls = declared_unloaded = 0
 allowed_controls = {
     ".github/workflows/deploy-service.yml",
     "ops/systemd/sync_checkout_only.sh",
+    "ops/systemd/sync_only_unloaded_files.tsv",
 }
+
+
+def declarations() -> dict[str, str]:
+    found: dict[str, str] = {}
+    try:
+        provided = Path(declarations_file).read_bytes()
+    except (OSError, UnicodeError) as exc:
+        print(
+            f"SYNC-ONLY: COULD_NOT_TELL — cannot read per-file declarations: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
+    try:
+        expected = git("show", f"{new}:ops/systemd/sync_only_unloaded_files.tsv")
+    except subprocess.CalledProcessError:
+        print(
+            "SYNC-ONLY: COULD_NOT_TELL — target has no per-file declaration artifact",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
+    if provided != expected:
+        print(
+            "SYNC-ONLY: COULD_NOT_TELL — provided declarations do not match the target commit",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
+    try:
+        lines = provided.decode("utf-8").splitlines()
+    except UnicodeError as exc:
+        print(
+            f"SYNC-ONLY: COULD_NOT_TELL — declarations are not UTF-8: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
+    for number, raw in enumerate(lines, 1):
+        if not raw or raw.startswith("#"):
+            continue
+        try:
+            path, reason = raw.split("\t", 1)
+        except ValueError:
+            print(
+                f"SYNC-ONLY: COULD_NOT_TELL — malformed declaration line {number}",
+                file=sys.stderr,
+            )
+            raise SystemExit(3)
+        normalized = PurePosixPath(path).as_posix()
+        if (
+            normalized != path
+            or path.startswith("/")
+            or ".." in PurePosixPath(path).parts
+            or not path.endswith(".py")
+            or not reason.strip()
+        ):
+            print(
+                f"SYNC-ONLY: COULD_NOT_TELL — unusable declaration line {number}",
+                file=sys.stderr,
+            )
+            raise SystemExit(3)
+        if path in found:
+            print(
+                f"SYNC-ONLY: COULD_NOT_TELL — duplicate declaration for {path}",
+                file=sys.stderr,
+            )
+            raise SystemExit(3)
+        try:
+            git("cat-file", "-e", f"{new}:{path}")
+        except subprocess.CalledProcessError:
+            print(
+                f"SYNC-ONLY: COULD_NOT_TELL — declared file is absent from target: {path}",
+                file=sys.stderr,
+            )
+            raise SystemExit(3)
+        found[path] = reason.strip()
+    return found
+
+
+declared = declarations()
+try:
+    live_refs = open(live_refs_file, encoding="utf-8", errors="replace").read()
+except OSError as exc:
+    print(f"SYNC-ONLY: COULD_NOT_TELL — cannot read live references: {exc}", file=sys.stderr)
+    raise SystemExit(3)
+
+
+def refuter_hit(path: str) -> str | None:
+    pure = PurePosixPath(path)
+    module = path[:-3].replace("/", ".")
+    stem = pure.stem
+    tokens = (path, pure.name, module, stem, stem.replace("_", "-"))
+    return next((token for token in tokens if token and token in live_refs), None)
+
+
 for path in paths:
     if path.startswith("docs/"):
         docs += 1
@@ -115,6 +275,21 @@ for path in paths:
         continue
     if path in allowed_controls:
         controls += 1
+        continue
+    if path in declared:
+        hit = refuter_hit(path)
+        if hit is not None:
+            print(
+                f"SYNC-ONLY: REFUSED — live cron/systemd reference {hit!r} vetoes {path}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        declared_unloaded += 1
+        print(
+            f"SYNC-ONLY: ALLOW declared-unloaded file={path} "
+            f"authority=reviewed-declaration refuter=quiet reason={declared[path]}",
+            file=sys.stderr,
+        )
         continue
     if path.startswith("src/") and path.endswith(".py"):
         try:
@@ -135,7 +310,8 @@ for path in paths:
 
 print(
     f"changed_files={len(paths)} docs={docs} tests={tests} "
-    f"python_ast_equal={python_equal} control_files={controls} runtime_ast_changed=0"
+    f"python_ast_equal={python_equal} control_files={controls} "
+    f"declared_unloaded={declared_unloaded} runtime_ast_changed=0"
 )
 PY
 )" || exit $?

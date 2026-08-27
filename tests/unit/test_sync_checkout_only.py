@@ -11,6 +11,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "ops" / "systemd" / "sync_checkout_only.sh"
+DECLARATIONS = ROOT / "ops" / "systemd" / "sync_only_unloaded_files.tsv"
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-service.yml"
 
 
@@ -19,6 +20,9 @@ class FakeSystemctl:
     path: Path
     call_log: Path
     counter: Path
+    current_crontab: Path
+    root_crontab: Path
+    systemd_unit: Path
 
 
 def _run(
@@ -62,6 +66,12 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
     _git(author, "config", "user.name", "Sync Test")
     _write(author / "src" / "demo" / "runtime.py", "VALUE = 1\n")
     _write(author / "docs" / "base.md", "base\n")
+    _write(author / "ops" / "health" / "fanout_identity_acceptance.py", "VALUE = 1\n")
+    _write(author / "ops" / "health" / "field_acceptance.py", "VALUE = 1\n")
+    _write(
+        author / "ops" / "systemd" / "sync_only_unloaded_files.tsv",
+        DECLARATIONS.read_text(encoding="utf-8"),
+    )
     base = _commit(author, "base")
     _git(author, "remote", "add", "origin", str(origin))
     _git(author, "push", "-u", "origin", "main")
@@ -73,9 +83,17 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
 
 def _stable_systemctl(tmp_path: Path) -> FakeSystemctl:
     fake = tmp_path / "systemctl"
+    fake_crontab = tmp_path / "crontab"
+    fake_sudo = tmp_path / "sudo"
     counter = tmp_path / "systemctl-count"
     log = tmp_path / "systemctl-calls"
+    current_crontab = tmp_path / "current-crontab"
+    root_crontab = tmp_path / "root-crontab"
+    unit = tmp_path / "systemd" / "project-mai-tai-test.service"
     counter.write_text("0\n", encoding="utf-8")
+    current_crontab.write_text("# no candidate references\n", encoding="utf-8")
+    root_crontab.write_text("# no candidate references\n", encoding="utf-8")
+    _write(unit, "[Service]\nExecStart=/usr/bin/true\n")
     _write(
         fake,
         """#!/usr/bin/env bash
@@ -109,7 +127,38 @@ esac
 """,
     )
     fake.chmod(0o755)
-    return FakeSystemctl(path=fake, call_log=log, counter=counter)
+    _write(
+        fake_crontab,
+        """#!/usr/bin/env bash
+set -eu
+if [ "$*" = "-l" ]; then
+  cat "$SYNC_TEST_CURRENT_CRONTAB"
+elif [ "$*" = "-u root -l" ]; then
+  cat "$SYNC_TEST_ROOT_CRONTAB"
+else
+  echo "unexpected crontab arguments: $*" >&2
+  exit 96
+fi
+""",
+    )
+    fake_crontab.chmod(0o755)
+    _write(
+        fake_sudo,
+        """#!/usr/bin/env bash
+set -eu
+[ "${1:-}" = "-n" ] && shift
+exec "$@"
+""",
+    )
+    fake_sudo.chmod(0o755)
+    return FakeSystemctl(
+        path=fake,
+        call_log=log,
+        counter=counter,
+        current_crontab=current_crontab,
+        root_crontab=root_crontab,
+        systemd_unit=unit,
+    )
 
 
 def _env(fake: FakeSystemctl, *, move_after_snapshot: bool = False) -> dict[str, str]:
@@ -117,12 +166,21 @@ def _env(fake: FakeSystemctl, *, move_after_snapshot: bool = False) -> dict[str,
     env.update(
         {
             "SYSTEMCTL_BIN": str(fake.path),
+            "CRONTAB_BIN": str(fake.current_crontab.parent / "crontab"),
+            "SUDO_BIN": str(fake.current_crontab.parent / "sudo"),
+            "SYSTEMD_UNIT_DIRS": str(fake.systemd_unit.parent),
             "SYNC_TEST_CALL_LOG": str(fake.call_log),
             "SYNC_TEST_COUNTER": str(fake.counter),
             "SYNC_TEST_MOVE_AFTER": "1" if move_after_snapshot else "0",
+            "SYNC_TEST_CURRENT_CRONTAB": str(fake.current_crontab),
+            "SYNC_TEST_ROOT_CRONTAB": str(fake.root_crontab),
         }
     )
     return env
+
+
+def _sync_args(box: Path, target: str, declarations: Path = DECLARATIONS) -> tuple[object, ...]:
+    return "bash", SCRIPT, box, "main", target, declarations
 
 
 @pytest.mark.skipif(os.name == "nt", reason="exercises the production bash path in Linux CI")
@@ -137,7 +195,7 @@ def test_sync_only_fast_forwards_safe_delta_without_mutating_services(tmp_path: 
     _git(author, "push", "origin", "main")
     fake = _stable_systemctl(tmp_path)
 
-    result = _run("bash", SCRIPT, box, "main", target, cwd=box, env=_env(fake))
+    result = _run(*_sync_args(box, target), cwd=box, env=_env(fake))
 
     assert _git(box, "rev-parse", "HEAD") == target
     assert "[SYNC-ONLY-OK]" in result.stdout
@@ -159,7 +217,7 @@ def test_sync_only_refuses_behavioral_python_change_before_checkout_moves(tmp_pa
     fake = _stable_systemctl(tmp_path)
 
     result = _run(
-        "bash", SCRIPT, box, "main", target, cwd=box, env=_env(fake), check=False
+        *_sync_args(box, target), cwd=box, env=_env(fake), check=False
     )
 
     assert result.returncode == 1
@@ -170,17 +228,95 @@ def test_sync_only_refuses_behavioral_python_change_before_checkout_moves(tmp_pa
 @pytest.mark.skipif(os.name == "nt", reason="exercises the production bash path in Linux CI")
 def test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves(tmp_path: Path) -> None:
     _origin, author, box, base = _fixture(tmp_path)
-    _write(author / "ops" / "health" / "scheduled.sh", "echo changed\n")
+    _write(author / "ops" / "health" / "scheduled.py", "VALUE = 1\n")
     target = _commit(author, "scheduled runtime change")
     _git(author, "push", "origin", "main")
     fake = _stable_systemctl(tmp_path)
 
     result = _run(
-        "bash", SCRIPT, box, "main", target, cwd=box, env=_env(fake), check=False
+        *_sync_args(box, target), cwd=box, env=_env(fake), check=False
     )
 
     assert result.returncode == 1
     assert "path is not sync-only-safe" in result.stderr
+    assert _git(box, "rev-parse", "HEAD") == base
+
+
+@pytest.mark.skipif(os.name == "nt", reason="exercises the production bash path in Linux CI")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "ops/health/fanout_identity_acceptance.py",
+        "ops/health/field_acceptance.py",
+    ],
+)
+def test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet(
+    tmp_path: Path, path: str
+) -> None:
+    _origin, author, box, _base = _fixture(tmp_path)
+    _write(author / path, "VALUE = 2\n")
+    target = _commit(author, "declared unloaded report change")
+    _git(author, "push", "origin", "main")
+    fake = _stable_systemctl(tmp_path)
+
+    result = _run(*_sync_args(box, target), cwd=box, env=_env(fake))
+
+    assert _git(box, "rev-parse", "HEAD") == target
+    assert "declared_unloaded=1" in result.stdout
+    assert f"ALLOW declared-unloaded file={path}" in result.stderr
+    assert "authority=reviewed-declaration refuter=quiet" in result.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="exercises the production bash path in Linux CI")
+@pytest.mark.parametrize("referrer", ["current-crontab", "root-crontab", "systemd"])
+def test_live_reference_vetoes_a_declared_file_before_checkout_moves(
+    tmp_path: Path, referrer: str
+) -> None:
+    _origin, author, box, base = _fixture(tmp_path)
+    path = "ops/health/fanout_identity_acceptance.py"
+    _write(author / path, "VALUE = 2\n")
+    target = _commit(author, "referenced report change")
+    _git(author, "push", "origin", "main")
+    fake = _stable_systemctl(tmp_path)
+    reference = "/home/trader/project-mai-tai/ops/health/fanout_identity_acceptance.py\n"
+    if referrer == "current-crontab":
+        fake.current_crontab.write_text(reference, encoding="utf-8")
+    elif referrer == "root-crontab":
+        fake.root_crontab.write_text(reference, encoding="utf-8")
+    else:
+        fake.systemd_unit.write_text(f"[Service]\nExecStart={reference}", encoding="utf-8")
+
+    result = _run(
+        *_sync_args(box, target), cwd=box, env=_env(fake), check=False
+    )
+
+    assert result.returncode == 1
+    assert "live cron/systemd reference" in result.stderr
+    assert "vetoes ops/health/fanout_identity_acceptance.py" in result.stderr
+    assert _git(box, "rev-parse", "HEAD") == base
+
+
+@pytest.mark.skipif(os.name == "nt", reason="exercises the production bash path in Linux CI")
+def test_unpinned_declaration_copy_cannot_grant_a_new_file(tmp_path: Path) -> None:
+    _origin, author, box, base = _fixture(tmp_path)
+    path = "ops/health/unreviewed_report.py"
+    _write(author / path, "VALUE = 1\n")
+    target = _commit(author, "unreviewed report")
+    _git(author, "push", "origin", "main")
+    fake = _stable_systemctl(tmp_path)
+    forged = tmp_path / "forged.tsv"
+    forged.write_text(
+        DECLARATIONS.read_text(encoding="utf-8")
+        + f"{path}\tforged local permission that is absent from the target commit\n",
+        encoding="utf-8",
+    )
+
+    result = _run(
+        *_sync_args(box, target, forged), cwd=box, env=_env(fake), check=False
+    )
+
+    assert result.returncode == 3
+    assert "provided declarations do not match the target commit" in result.stderr
     assert _git(box, "rev-parse", "HEAD") == base
 
 
@@ -196,7 +332,7 @@ def test_sync_only_refuses_if_origin_moves_past_pinned_target(tmp_path: Path) ->
     fake = _stable_systemctl(tmp_path)
 
     result = _run(
-        "bash", SCRIPT, box, "main", expected, cwd=box, env=_env(fake), check=False
+        *_sync_args(box, expected), cwd=box, env=_env(fake), check=False
     )
 
     assert result.returncode == 3
@@ -214,7 +350,7 @@ def test_sync_only_refuses_a_checkout_on_the_wrong_branch(tmp_path: Path) -> Non
     fake = _stable_systemctl(tmp_path)
 
     result = _run(
-        "bash", SCRIPT, box, "main", target, cwd=box, env=_env(fake), check=False
+        *_sync_args(box, target), cwd=box, env=_env(fake), check=False
     )
 
     assert result.returncode == 1
@@ -231,11 +367,7 @@ def test_sync_only_refuses_success_if_any_process_identity_moves(tmp_path: Path)
     fake = _stable_systemctl(tmp_path)
 
     result = _run(
-        "bash",
-        SCRIPT,
-        box,
-        "main",
-        target,
+        *_sync_args(box, target),
         cwd=box,
         env=_env(fake, move_after_snapshot=True),
         check=False,
@@ -261,6 +393,8 @@ def test_workflow_routes_sync_only_away_from_deploy_script() -> None:
     assert "persist-credentials: false" in checkout_step
     assert "EXPECTED_SHA: ${{ github.sha }}" in sync_step
     assert "sync_checkout_only.sh" in sync_step
+    assert "sync_only_unloaded_files.tsv" in sync_step
+    assert "REMOTE_DECLARATIONS" in sync_step
     assert "deploy_service.sh" not in sync_step
     assert "08_install_runtime.sh" not in sync_step
     assert "systemctl" not in sync_step
@@ -285,6 +419,8 @@ def test_sync_script_has_no_service_mutation_or_runtime_install_path() -> None:
     assert "restarted_units=0 migrations=0 runtime_install=0" in text
     assert 'REMOTE_SHA" != "$EXPECTED_SHA' in text
     assert 'AFTER_UNITS" != "$BEFORE_UNITS' in text
+    assert "authority=reviewed-declaration refuter=quiet" in text
+    assert "live cron/systemd reference" in text
 
 
 def test_sync_only_rejects_contradictory_workflow_inputs() -> None:
