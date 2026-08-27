@@ -28,6 +28,7 @@ import time
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as time_cls  # `time` the module is already imported above
 from decimal import Decimal
+from typing import Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -1702,6 +1703,7 @@ class SchwabV2BotService:
                 "(MAI_TAI_STRATEGY_SCHWAB_1M_V2_LOOP_FAULT_INJECTION_COUNT) — "
                 "SPOF Workstream A v2 controlled survival test"
             )
+        was_warmed = symbol in self._rest_warmup_done
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         bar_age_secs = (now_ms - bar.timestamp_ms) / 1000.0
         just_warmed = False
@@ -1726,7 +1728,11 @@ class SchwabV2BotService:
             # — disconnect, missed bucket, or symbol not yet warmed).
             if self.streamer is not None and self.streamer.connected:
                 self._rest_bars_gap_fill += 1
-            await self._handle_bar(symbol, bar)
+            await self._handle_bar(
+                symbol,
+                bar,
+                observation_phase="live" if was_warmed else "replay",
+            )
 
         # Drain buffered streamer bars AFTER the current REST bar is
         # fed, so the deque tail reflects the latest REST bar before
@@ -1774,7 +1780,7 @@ class SchwabV2BotService:
                 pending.pop(0)
             pending.append(bar)
             return
-        await self._handle_bar(symbol, bar)
+        await self._handle_bar(symbol, bar, observation_phase="live")
 
     async def _drain_streamer_pending(self, symbol: str) -> None:
         """Replay buffered streamer bars for `symbol` after REST warmup
@@ -1810,7 +1816,7 @@ class SchwabV2BotService:
                 latest_ts,
             )
         for buffered in fresh:
-            await self._handle_bar(symbol, buffered)
+            await self._handle_bar(symbol, buffered, observation_phase="replay")
         if fresh:
             logger.info(
                 "[V2-STREAMER-DRAIN] replayed %d buffered bars for %s "
@@ -2210,7 +2216,7 @@ class SchwabV2BotService:
             if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
                 bt = bt.replace(tzinfo=UTC)
             ts_ms = int(bt.timestamp() * 1000)
-            self.strategy.on_bar(
+            self._strategy_on_bar(
                 symbol,
                 ChartBar(
                     symbol,
@@ -2221,6 +2227,7 @@ class SchwabV2BotService:
                     int(row.volume),
                     ts_ms,
                 ),
+                observation_phase="replay",
             )
         st = self.strategy.watchlist_state(symbol)
         st.pending_path_macd = False
@@ -2266,7 +2273,13 @@ class SchwabV2BotService:
             return False
         return bar.timestamp_ms <= streamer_last_ts
 
-    async def _handle_bar(self, symbol: str, bar: ChartBar) -> None:
+    async def _handle_bar(
+        self,
+        symbol: str,
+        bar: ChartBar,
+        *,
+        observation_phase: Literal["replay", "live"],
+    ) -> None:
         now_et = _format_eastern(datetime.now(UTC))
         self._last_tick_at[symbol] = now_et
         self._last_bar_at[symbol] = now_et
@@ -2292,7 +2305,11 @@ class SchwabV2BotService:
             await asyncio.to_thread(self._persist_bar, symbol, bar)
 
         try:
-            draft = self.strategy.on_bar(symbol, bar)
+            draft = self._strategy_on_bar(
+                symbol,
+                bar,
+                observation_phase=observation_phase,
+            )
         except Exception:
             logger.exception("schwab_1m_v2 on_bar failed for %s", symbol)
             return
@@ -2300,6 +2317,20 @@ class SchwabV2BotService:
         await self._drain_direct_strategy_intents()
         # Dual-broker fan-out: emit any Webull legs the strategy queued this bar (no-op if off).
         await self._emit_webull_fanout_legs()
+
+    def _strategy_on_bar(
+        self,
+        symbol: str,
+        bar: ChartBar,
+        *,
+        observation_phase: Literal["replay", "live"],
+    ):
+        """Classify real strategy bars while preserving lightweight test-double compatibility."""
+
+        observed = getattr(self.strategy, "on_observed_bar", None)
+        if callable(observed):
+            return observed(symbol, bar, observation_phase=observation_phase)
+        return self.strategy.on_bar(symbol, bar)
 
     async def _drain_direct_strategy_intents(self) -> None:
         """Emit strategy-owned resting place/cancel queues without an entry-window gate.
