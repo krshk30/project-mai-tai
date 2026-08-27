@@ -1,0 +1,14 @@
+// Runtime libraries used by the live fleet must not be replaced underneath
+// running processes.  These packages require an attended maintenance window.
+Unattended-Upgrade::Package-Blacklist {
+    "^postgresql$";
+    "^postgresql-.*$";
+    "^postgresql-client-.*$";
+    "^postgresql-common$";
+    "^postgresql-client-common$";
+    "^libpq[0-9]+$";
+    "^libpq-dev$";
+    "^openssl$";
+    "^libssl[0-9].*$";
+    "^libssl-dev$";
+};
