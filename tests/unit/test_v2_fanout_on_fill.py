@@ -48,7 +48,7 @@ def test_the_claim_is_taken_BEFORE_the_draft_is_queued() -> None:
     lands in this same transition. The claim must already be set when that second fill arrives, or
     one signal produces two Webull orders."""
     s = _src()
-    claim = s.index("state.fanout_webull_claimed = True")
+    claim = s.index("_claim_fanout_webull(")
     queue = s.index("_pending_webull_fanout_intents.append")
     assert claim < queue, "claim must be taken before the draft is queued"
 

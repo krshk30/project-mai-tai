@@ -1084,6 +1084,13 @@ class OmsRiskService:
                 )
             ):
                 self.store.mark_intent_status(intent, "rejected")
+                self.store.record_fanout_pre_submit_outcome(
+                    session,
+                    intent=intent,
+                    outcome="dropped_ineligible",
+                    reason="webull_ineligible_cached",
+                    broker_account_name=broker_account.name,
+                )
                 order_event = self._build_rejected_event(
                     event,
                     intent.id,
@@ -1125,6 +1132,13 @@ class OmsRiskService:
                 )
                 if collision:
                     self.store.mark_intent_status(intent, "rejected")
+                    self.store.record_fanout_pre_submit_outcome(
+                        session,
+                        intent=intent,
+                        outcome="dropped_collision",
+                        reason=collision,
+                        broker_account_name=broker_account.name,
+                    )
                     order_event = self._build_rejected_event(event, intent.id, reason=collision)
                     session.commit()
                     self.logger.info(
@@ -1140,6 +1154,13 @@ class OmsRiskService:
             )
             if blocked_reason and event.payload.intent_type in {"open", "scale"}:
                 self.store.mark_intent_status(intent, "rejected")
+                self.store.record_fanout_pre_submit_outcome(
+                    session,
+                    intent=intent,
+                    outcome="dropped_risk",
+                    reason=blocked_reason,
+                    broker_account_name=broker_account.name,
+                )
                 order_event = self._build_rejected_event(
                     event,
                     intent.id,
@@ -1292,6 +1313,13 @@ class OmsRiskService:
                     self._resting_entry_already_open(
                         session, event.payload.broker_account_name, event.payload.symbol):
                 self.store.mark_intent_status(intent, "rejected")
+                self.store.record_fanout_pre_submit_outcome(
+                    session,
+                    intent=intent,
+                    outcome="dropped_dedup",
+                    reason="resting entry already open (restart dedup)",
+                    broker_account_name=broker_account.name,
+                )
                 order_event = self._build_rejected_event(
                     event, intent.id, reason="resting entry already open (restart dedup)"
                 )
@@ -1320,6 +1348,13 @@ class OmsRiskService:
                 session=session, event=event, intent=intent
             )
             if eh_abandon_event is not None:
+                self.store.record_fanout_pre_submit_outcome(
+                    session,
+                    intent=intent,
+                    outcome="rejected_client_abort",
+                    reason=str(eh_abandon_event.payload.reason or "eh_reactive_abandon"),
+                    broker_account_name=broker_account.name,
+                )
                 session.commit()
                 for prior_event in pre_submit_events:
                     await self._publish_order_event(prior_event)
@@ -1335,6 +1370,13 @@ class OmsRiskService:
                 session=session, event=event, intent=intent
             )
             if resting_eh_abandon_event is not None:
+                self.store.record_fanout_pre_submit_outcome(
+                    session,
+                    intent=intent,
+                    outcome="rejected_client_abort",
+                    reason=str(resting_eh_abandon_event.payload.reason or "eh_resting_abandon"),
+                    broker_account_name=broker_account.name,
+                )
                 session.commit()
                 for prior_event in pre_submit_events:
                     await self._publish_order_event(prior_event)
@@ -1360,6 +1402,13 @@ class OmsRiskService:
                     event=event, intent=intent
                 )
             if rth_reactive_abandon_event is not None:
+                self.store.record_fanout_pre_submit_outcome(
+                    session,
+                    intent=intent,
+                    outcome="rejected_client_abort",
+                    reason=str(rth_reactive_abandon_event.payload.reason or "rth_fanout_abandon"),
+                    broker_account_name=broker_account.name,
+                )
                 session.commit()
                 for prior_event in pre_submit_events:
                     await self._publish_order_event(prior_event)
