@@ -1,0 +1,9 @@
+{
+  "pr_number": 820,
+  "range_base": "5d5905ee00a6bc5e210847700af4a632a97c50b3",
+  "range_head": "2656642d6d08342ba25b2fb67f243f293f16b710",
+  "reviewed_at": "2026-08-27T20:16:47Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Scheduled bypass audit, the detection half of item 33. Reuses review_pin_gate.verify rather than reimplementing coverage, so the audit and the required gate cannot drift apart. Controls: admin merge without a pin is listed and fails; a self-review pin still counts as missing coverage; malformed pin is COULD_NOT_TELL; zero merged PRs is named UNEXERCISED not clean; the policy file's schema and timezone are validated. Correctly documented as the compensating control for enforce_admins=false."
+}
