@@ -1,0 +1,9 @@
+{
+  "pr_number": 821,
+  "range_base": "e67a8ea62691ddfbf11b4eb8dd3184dac44a3c0e",
+  "range_head": "1d69f9900ff5fbf6ac88ba23db4923529a949409",
+  "reviewed_at": "2026-08-27T20:59:48Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after the REAL conflict rebase onto e67a8ea6 (main after #823). Unlike #822/#823 this was a genuine resolution, so I re-reviewed the resolution itself rather than only re-verifying identity. Findings: the ADDED lines are byte-identical to those reviewed at 06e3b8a6; the changed hunks differ only in CONTEXT, and the new context is exactly #823's shared_identity= arguments correctly retained at the two rth_resting call sites; all FOUR _build_webull_fanout_draft call sites (1270, 2512, 3161, 3436) pass entry_slot explicitly; and #823 introduced NO new stamping site that this patch misses - every metadata dict carrying cw_entry_n carries cw_entry_slot beside it (2558/2561, 2654/2655, 2708/2709, 3335/3338), with 3181 correctly having neither, matching the reviewed version. Substance unchanged: cw_entry_slot is an explicit economic slot on BOTH broker legs, and order style is deliberately not used because a reclaim can itself be a resting STOP_LIMIT - the root cause of the false composition=BREACH, named at the site. Historical limit stands as a measurement: cw_entry_slot coverage is 0 of 239 Schwab and 0 of 301 Webull BUY fills 2026-08-04 to 08-27, so every composition verdict this watch has emitted was ungradeable, including the two 08-14 breaches carried in memory as real."
+}

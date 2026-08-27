@@ -1,9 +1,0 @@
-{
-  "pr_number": 821,
-  "range_base": "5d5905ee00a6bc5e210847700af4a632a97c50b3",
-  "range_head": "06e3b8a67d085bca2dd3640bdc5ebacd91f15b66",
-  "reviewed_at": "2026-08-27T20:16:59Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "Fixes the S5 detector that produced the false composition=BREACH I escalated. cw_entry_slot is an explicit economic slot stamped on BOTH broker legs, and order style is deliberately not used because a reclaim can itself be a resting STOP_LIMIT - the exact root cause, named at the site. Controls: a rested reclaim is reclaim on both legs despite resting style; one first plus one reclaim is LEGAL even when both orders rest (the false positive, now pinned as legal); two first slots remain a known breach; missing or invalid slot fails closed; a known breach is not downgraded by an unattributed fill; no Schwab fill is UNEXERCISED not clean. And it states the historical limit as a measurement: cw_entry_slot coverage is 0 of 239 Schwab and 0 of 301 Webull BUY fills from 2026-08-04 to 2026-08-27, so every composition verdict this watch has ever emitted was ungradeable - including the two 08-14 breaches I carried as real."
-}
