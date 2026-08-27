@@ -107,10 +107,14 @@ def test_resting_mirror_is_inside_the_attributed_population(caplog) -> None:
     with caplog.at_level(logging.INFO):
         strategy._queue_resting_place(state, 3.20, slot="first")
 
+    primary = strategy.drain_pending_intents()
     mirror = strategy.drain_webull_direct_intents()
+    assert len(primary) == 1
     assert len(mirror) == 1
     assert mirror[0].metadata["fanout_source"] == "rth_resting_mirror"
     assert mirror[0].metadata["fanout_segment_id"] == str(RTH_MS)
+    for key in ("fanout_segment_id", "fanout_slot", "fanout_slot_id"):
+        assert primary[0].metadata[key] == mirror[0].metadata[key]
     assert any(MARKER in r.getMessage() for r in caplog.records)
 
 
