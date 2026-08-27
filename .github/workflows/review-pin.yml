@@ -1,0 +1,59 @@
+name: Independent Review Pin
+
+on:
+  pull_request_target:
+    # A committed pin does not move the PR head, so it cannot emit synchronize.
+    # Adding/toggling the review-pinned label is a retrigger only; the label is
+    # never evidence and cannot make the gate pass without a ledger record.
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-pin-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  independent-review-pin:
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request_target deliberately runs the trusted gate from main. The
+      # untrusted PR is fetched only as Git data and is never executed.
+      - name: Check out trusted gate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Fetch exact pull-request head as data
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags origin "pull/${PR_NUMBER}/head:refs/review-pin/pr-head"
+          actual="$(git rev-parse refs/review-pin/pr-head)"
+          test "$actual" = "$EXPECTED_HEAD" || {
+            echo "COULD_NOT_TELL: fetched head $actual differs from event head $EXPECTED_HEAD" >&2
+            exit 3
+          }
+
+      - name: Check out committed review ledger
+        uses: actions/checkout@v4
+        with:
+          ref: review-pins
+          path: review-pin-ledger
+          fetch-depth: 0
+
+      - name: Require complete independent review coverage
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python scripts/review_pin_gate.py verify \
+            --repo . \
+            --ledger review-pin-ledger \
+            --pr "$PR_NUMBER" \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA"
