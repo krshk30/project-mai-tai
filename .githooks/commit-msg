@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+message_file=${1:?commit message path is required}
+agent=$(git config --worktree --get mai-tai.agentMarker 2>/dev/null || true)
+
+case "$agent" in
+  codex)
+    expected='OpenAI Codex <noreply@openai.com>'
+    ;;
+  claude)
+    expected='Claude <noreply@anthropic.com>'
+    ;;
+  *)
+    echo "REFUSED: set this worktree's agent marker first:" >&2
+    echo "  scripts/install_commit_agent_marker_hook.sh codex|claude" >&2
+    exit 2
+    ;;
+esac
+
+trailers=$(git interpret-trailers --parse "$message_file")
+codex_count=$(printf '%s\n' "$trailers" | grep -Fic 'Co-authored-by: OpenAI Codex <noreply@openai.com>' || true)
+claude_count=$(printf '%s\n' "$trailers" | grep -Eic 'Co-authored-by: Claude.*<noreply@anthropic\.com>' || true)
+recognized_count=$((codex_count + claude_count))
+
+if (( recognized_count > 1 )); then
+  echo "REFUSED: commit message has more than one recognised agent marker" >&2
+  exit 2
+fi
+
+if (( recognized_count == 1 )); then
+  if [[ "$agent" == codex && "$codex_count" == 1 ]] || \
+     [[ "$agent" == claude && "$claude_count" == 1 ]]; then
+    exit 0
+  fi
+  echo "REFUSED: commit marker belongs to a different agent than this worktree" >&2
+  exit 2
+fi
+
+git interpret-trailers \
+  --in-place \
+  --if-exists addIfDifferent \
+  --if-missing add \
+  --trailer "Co-Authored-By: $expected" \
+  "$message_file"
