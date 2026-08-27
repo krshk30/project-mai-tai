@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
@@ -25,9 +25,11 @@ from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.session import build_oms_session_factory
 from project_mai_tai.db.models import (
+    AccountPosition,
     BrokerAccount,
     BrokerOrder,
     DashboardSnapshot,
+    Fill,
     Strategy,
     StrategyBarHistory,
     TradeIntent,
@@ -289,6 +291,31 @@ class _V2ManagedSnapshot:
     scales_done: list
     scale_pnl: float
     dedup_active: bool
+    # C3: the latest durable fill in this managed-position episode and the broker-position
+    # snapshot that may (or may not) have caught up with it. Plain values only: the ORM rows stay
+    # inside `_read_v2_managed_snapshot`'s worker-thread Session.
+    latest_fill_side: str | None
+    latest_fill_at: datetime | None
+    account_position_quantity: float | None
+    account_position_source_updated_at: datetime | None
+    broker_provider: str | None
+
+
+@dataclass
+class _PostExitStaleHeldEpisode:
+    """In-memory C3 observation state for one durable post-exit sell fill.
+
+    The durable fill and broker-position timestamps are the authorities. This object only keeps
+    the per-snapshot retry latch and readable denominators; losing it on restart may repeat one
+    observation, but cannot manufacture the sell-fill evidence that activates C3.
+    """
+
+    exit_fill_at: datetime
+    last_retry_snapshot_at: datetime | None = None
+    evaluated: int = 0
+    retries_emitted: int = 0
+    last_report_key: tuple[str, datetime | None] | None = None
+    timeout_reported: bool = False
 
 
 @dataclass(frozen=True)
@@ -388,6 +415,11 @@ class OmsRiskService:
     # running and closes the row when the broker shows the OCO resolved (which is what recovered
     # AMIX on 07-29).
     _V2_EXIT_ABANDON_AFTER_FAILURES = 8
+    # C3 default for instances constructed via __new__ in focused tests. Production reads the
+    # configurable setting. Derived from the measured 11-episode maximum (237.1s) + one complete
+    # 5s broker-position sync interval = 242.1s, rounded UP to the next whole sync interval = 245s.
+    # ⛔ Age is only a STOP/PAGE boundary. It never becomes permission to emit another sell.
+    _POST_EXIT_STALE_HELD_MAX_AGE_SECONDS = 245.0
     # ---- A2 ----
     # Slow the ladder from its 1-2s cadence to a probe. NOT suppression: the block can clear at any
     # second (median 271s, but 30s at the low end), so we must keep testing or we would trade the
@@ -526,6 +558,12 @@ class OmsRiskService:
         # (acct, symbol) whose close-retry loop has been STOOD DOWN — see
         # `_V2_EXIT_ABANDON_AFTER_FAILURES`. Protection is untouched; only the retry stops.
         self._v2_exit_stood_down: set[tuple[str, str]] = set()
+        # C3: (account, symbol) -> the latest durable SELL-fill episode. A retry is permitted only
+        # once for each newer broker-position snapshot generation; stale/timestamp-less evidence
+        # emits zero sells. The managed row remains owned when the measured age bound expires.
+        self._post_exit_stale_held_episodes: dict[
+            tuple[str, str], _PostExitStaleHeldEpisode
+        ] = {}
         # Base coid of the resting Webull exit pair, and the once-per-episode release latch. See
         # `_release_exit_reservation_before_close`. Per-instance so tests cannot leak into each other.
         self._webull_protect_base: dict[tuple[str, str], str] = {}
@@ -3232,6 +3270,18 @@ class OmsRiskService:
                 self._managed_v2_symbols.discard((acct, symbol))  # dict mutation stays on-loop
                 self._cw_flip_pending.discard((acct, symbol))  # no open row -> drop any stale flip
                 self._cw_floor_armed.discard((acct, symbol))  # no open row -> drop any armed floor
+                self._post_exit_stale_held_clear(acct, symbol)
+                return
+
+            # C3 — the broker has already sold, but its position view can remain HELD for minutes.
+            # A durable SELL fill plus an older position snapshot is positive evidence of that
+            # settlement window; quote cadence is not. Suppress until a NEW snapshot arrives,
+            # allow at most one attempt per fresh HELD generation, and close on fresh FLAT.
+            c3_action = self._post_exit_stale_held_action(acct, symbol, snapshot)
+            if c3_action == "fresh_flat":
+                await self._close_post_exit_stale_held_row(acct, symbol)
+                return
+            if c3_action not in ("not_applicable", "fresh_held_retry"):
                 return
 
             # Phase 2 — DECIDE (on-loop, pure): hydrate + ratchet off the snapshot.
@@ -3346,6 +3396,196 @@ class OmsRiskService:
             self.logger.warning("v2 managed-exit eval failed for %s: %s", symbol, exc)
             return
 
+    def _post_exit_stale_held_clear(self, acct: str, symbol: str) -> None:
+        self.__dict__.setdefault("_post_exit_stale_held_episodes", {}).pop(
+            (acct, symbol), None
+        )
+
+    def _post_exit_stale_held_report(
+        self,
+        *,
+        acct: str,
+        symbol: str,
+        episode: _PostExitStaleHeldEpisode,
+        outcome: str,
+        snapshot_at: datetime | None,
+        age_seconds: float,
+        level: int = logging.INFO,
+    ) -> None:
+        """Edge-triggered C3 marker with its observation and retry denominators on the line."""
+        report_key = (outcome, snapshot_at)
+        if episode.last_report_key == report_key:
+            return
+        episode.last_report_key = report_key
+        self.logger.log(
+            level,
+            "[OMS-POST-EXIT-STALE-HELD] sym=%s acct=%s outcome=%s "
+            "exit_fill_at=%s position_snapshot_at=%s stale_age_seconds=%.1f "
+            "evaluated=%d retry_emitted=%d max_age_seconds=%.1f — "
+            "trigger=latest durable fill in this managed episode is SELL; polarity: stale, "
+            "missing, or reused position evidence emits 0 sells; only a newer HELD snapshot "
+            "permits 1 bounded attempt; a newer FLAT snapshot closes without a sell",
+            symbol,
+            acct,
+            outcome,
+            episode.exit_fill_at.isoformat(),
+            snapshot_at.isoformat() if snapshot_at is not None else "MISSING",
+            age_seconds,
+            episode.evaluated,
+            episode.retries_emitted,
+            self._post_exit_stale_held_max_age_seconds(),
+        )
+
+    def _post_exit_stale_held_max_age_seconds(self) -> float:
+        settings = getattr(self, "settings", None)
+        return float(
+            getattr(
+                settings,
+                "oms_post_exit_stale_held_max_age_seconds",
+                self._POST_EXIT_STALE_HELD_MAX_AGE_SECONDS,
+            )
+        )
+
+    def _post_exit_stale_held_action(
+        self,
+        acct: str,
+        symbol: str,
+        snapshot: _V2ManagedSnapshot,
+        *,
+        now: datetime | None = None,
+    ) -> str:
+        """Return the C3 action for a managed position without performing broker I/O.
+
+        `not_applicable` is the important negative polarity: absent a latest SELL fill, C3 has no
+        authority to call a no-position refusal settlement lag and the existing exit path runs.
+        Once a SELL fill is the latest durable fill in this position episode, elapsed time may
+        stop/page but can never grant another sell. Only broker-position evidence newer than that
+        fill can do so, once per snapshot generation.
+        """
+        key = (acct, symbol)
+        exit_fill_at = _as_utc(snapshot.latest_fill_at)
+        # The measured class and venue reason are Webull-specific. Do not silently broaden a
+        # live-money exit change to Schwab merely because both venues persist the same fields.
+        if (
+            str(snapshot.broker_provider or "").lower() != "webull"
+            or snapshot.latest_fill_side != "sell"
+            or exit_fill_at is None
+        ):
+            self._post_exit_stale_held_clear(acct, symbol)
+            return "not_applicable"
+
+        episodes = self.__dict__.setdefault("_post_exit_stale_held_episodes", {})
+        episode = episodes.get(key)
+        if episode is None or episode.exit_fill_at != exit_fill_at:
+            episode = _PostExitStaleHeldEpisode(exit_fill_at=exit_fill_at)
+            episodes[key] = episode
+        episode.evaluated += 1
+
+        observed_at = _as_utc(now) or utcnow()
+        age_seconds = max(0.0, (observed_at - exit_fill_at).total_seconds())
+        snapshot_at = _as_utc(snapshot.account_position_source_updated_at)
+        quantity = snapshot.account_position_quantity
+
+        # Fresh FLAT is positive resolution evidence and remains useful even if it arrives after
+        # the observation bound. The durable row closes without placing another order.
+        if snapshot_at is not None and snapshot_at > exit_fill_at and quantity is not None:
+            if quantity <= 0:
+                self._post_exit_stale_held_report(
+                    acct=acct,
+                    symbol=symbol,
+                    episode=episode,
+                    outcome="fresh_flat_close",
+                    snapshot_at=snapshot_at,
+                    age_seconds=age_seconds,
+                )
+                return "fresh_flat"
+
+        max_age_seconds = self._post_exit_stale_held_max_age_seconds()
+        if age_seconds > max_age_seconds:
+            if not episode.timeout_reported:
+                episode.timeout_reported = True
+                self._post_exit_stale_held_report(
+                    acct=acct,
+                    symbol=symbol,
+                    episode=episode,
+                    outcome="bound_exceeded_stop_and_report",
+                    snapshot_at=snapshot_at,
+                    age_seconds=age_seconds,
+                    level=logging.ERROR,
+                )
+            return "bound_exceeded"
+
+        if snapshot_at is None or quantity is None:
+            self._post_exit_stale_held_report(
+                acct=acct,
+                symbol=symbol,
+                episode=episode,
+                outcome="could_not_tell",
+                snapshot_at=snapshot_at,
+                age_seconds=age_seconds,
+                level=logging.WARNING,
+            )
+            return "could_not_tell"
+
+        if snapshot_at <= exit_fill_at:
+            self._post_exit_stale_held_report(
+                acct=acct,
+                symbol=symbol,
+                episode=episode,
+                outcome="waiting_for_fresh_position_evidence",
+                snapshot_at=snapshot_at,
+                age_seconds=age_seconds,
+            )
+            return "waiting_for_fresh_position_evidence"
+
+        # Fresh and still HELD. One snapshot generation can fund exactly one retry, regardless of
+        # quote volume; a later generation is required for another attempt.
+        if (
+            episode.last_retry_snapshot_at is not None
+            and snapshot_at <= episode.last_retry_snapshot_at
+        ):
+            self._post_exit_stale_held_report(
+                acct=acct,
+                symbol=symbol,
+                episode=episode,
+                outcome="fresh_held_already_retried",
+                snapshot_at=snapshot_at,
+                age_seconds=age_seconds,
+            )
+            return "fresh_held_already_retried"
+        episode.last_retry_snapshot_at = snapshot_at
+        episode.retries_emitted += 1
+        self._post_exit_stale_held_report(
+            acct=acct,
+            symbol=symbol,
+            episode=episode,
+            outcome="fresh_held_retry",
+            snapshot_at=snapshot_at,
+            age_seconds=age_seconds,
+        )
+        return "fresh_held_retry"
+
+    async def _close_post_exit_stale_held_row(self, acct: str, symbol: str) -> None:
+        """Close only on durable SELL fill + a newer broker-position snapshot that says FLAT."""
+
+        def _close(session: Session) -> None:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is not None:
+                self.store.close_managed_position(session, row)
+
+        await self._run_db(_close, commit=True)
+        key = (acct, symbol)
+        self._managed_v2_symbols.discard(key)
+        self._cw_flip_pending.discard(key)
+        self._cw_floor_armed.discard(key)
+        self._v2_exit_close_failures.pop(key, None)
+        self._v2_exit_stood_down.discard(key)
+        self._clear_exit_reservation_release(acct, symbol)
+        self._a2_clear(acct, symbol)
+        self._post_exit_stale_held_clear(acct, symbol)
+
     def _read_v2_managed_snapshot(
         self, session: Session, acct: str, symbol: str, close_on_fill: bool
     ) -> _V2ManagedSnapshot | None:
@@ -3358,10 +3598,52 @@ class OmsRiskService:
         if row is None:
             return None
         dedup_active = False
+        latest_fill_side: str | None = None
+        latest_fill_at: datetime | None = None
+        account_position_quantity: float | None = None
+        account_position_source_updated_at: datetime | None = None
+        broker_provider: str | None = None
+        broker_account = session.scalar(
+            select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
+        )
+        if broker_account is not None:
+            broker_provider = str(broker_account.provider or "").lower()
+            # C3 is measured on Webull only. Keep the extra durable-evidence reads off every
+            # Schwab quote path; widening a live-money control and its DB cost would both be
+            # unsupported. A SCALE fill is deliberately excluded: it reduces a held position but
+            # does not establish that the venue has already sold the whole exit. Full software
+            # CLOSEs and broker-created native OCO children are the two authoritative shapes.
+            if broker_provider == "webull":
+                latest_fill = session.execute(
+                    select(Fill.side, Fill.filled_at)
+                    .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
+                    .outerjoin(TradeIntent, TradeIntent.id == BrokerOrder.intent_id)
+                    .where(
+                        Fill.broker_account_id == broker_account.id,
+                        Fill.symbol == symbol,
+                        Fill.side == "sell",
+                        Fill.filled_at >= row.entry_time,
+                        or_(
+                            BrokerOrder.order_type == "oco_exit",
+                            TradeIntent.intent_type == "close",
+                        ),
+                    )
+                    .order_by(desc(Fill.filled_at))
+                    .limit(1)
+                ).first()
+                if latest_fill is not None:
+                    latest_fill_side = str(latest_fill.side or "").lower()
+                    latest_fill_at = latest_fill.filled_at
+                account_position = session.scalar(
+                    select(AccountPosition).where(
+                        AccountPosition.broker_account_id == broker_account.id,
+                        AccountPosition.symbol == symbol,
+                    )
+                )
+                if account_position is not None:
+                    account_position_quantity = float(account_position.quantity)
+                    account_position_source_updated_at = account_position.source_updated_at
         if close_on_fill:
-            broker_account = session.scalar(
-                select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
-            )
             if broker_account is not None and self.store.get_open_exit_reserved_quantity(
                 session,
                 broker_account_id=broker_account.id,
@@ -3382,6 +3664,11 @@ class OmsRiskService:
             scales_done=list(row.scales_done or []),
             scale_pnl=float(row.scale_pnl or 0.0),
             dedup_active=dedup_active,
+            latest_fill_side=latest_fill_side,
+            latest_fill_at=latest_fill_at,
+            account_position_quantity=account_position_quantity,
+            account_position_source_updated_at=account_position_source_updated_at,
+            broker_provider=broker_provider,
         )
 
     def _persist_v2_price_state(
