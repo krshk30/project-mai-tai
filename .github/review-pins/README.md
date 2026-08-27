@@ -74,3 +74,15 @@ This is mechanical separation of authorship, not proof of review diligence.
 - Claude and Codex use the same GitHub identity. The ledger commit trailer and
   target commit trailers let the check prove the declared agents differ, but
   cannot prove which human or process actually performed the review.
+
+## Scheduled bypass audit
+
+`Merged Review Pin Audit` runs daily and may also be dispatched manually. It
+lists every PR merged after the timestamp in `audit-policy.json`, fetches that
+PR's immutable head, and applies this same coverage verifier to the committed
+ledger. A missing or self-review-only pin fails with `MISSING_PIN`; malformed or
+unverifiable evidence fails separately as `COULD_NOT_TELL`.
+
+This is detection, not prevention. In particular, it is the compensating
+control for `enforce_admins: false`: an administrator can bypass the required
+check, but the resulting merge remains visible in the next audit.
