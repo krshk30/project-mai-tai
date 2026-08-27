@@ -1,9 +1,0 @@
-{
-  "pr_number": 822,
-  "range_base": "5d5905ee00a6bc5e210847700af4a632a97c50b3",
-  "range_head": "f6ccf2740bf4e86630d20278819142f1bd2371f4",
-  "reviewed_at": "2026-08-27T20:13:45Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "Self-calibrating acceptance: reproduces the measured known-bad baseline before reading the window and voids the whole run as COULD_NOT_TELL if a schema/join/retention change moves it. Grades outcomes not D2 markers; the gap not the rate; reading A enforced in the grader; zero denominators are UNEXERCISED; psql stdin interpolation; malformed windows refuse before querying."
-}
