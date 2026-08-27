@@ -822,6 +822,13 @@ class Settings(BaseSettings):
     webull_positions_backoff_base_secs: float = 5.0
     webull_positions_backoff_max_secs: float = 60.0
     oms_broker_sync_interval_seconds: int = 5
+    # C3 post-exit stale-held observation bound. Derived, not selected: the 11 measured Webull
+    # episodes had max 237.1s from confirmed SELL fill to last refusal; add one complete 5s broker
+    # position-sync interval (242.1s), then round UP to the next whole interval = 245s.
+    # Exceeding it stops/pages while retaining ownership; elapsed time never authorizes a sell.
+    # Recalibrate from a newly measured episode distribution whenever the observed max or sync
+    # cadence changes — do not special-case the old ~2.4-minute symptom.
+    oms_post_exit_stale_held_max_age_seconds: float = 245.0
     oms_working_order_refresh_seconds: int = 5
     # RESTING TRIGGER refresh policy. A resting buy STOP/STOP_LIMIT entry (the CW-v2 resting
     # flip-entry and the fan-out Schwab leg) is DESIGNED to sit at the ATR line until price crosses

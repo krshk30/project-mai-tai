@@ -350,6 +350,32 @@ sell, while a newer confirmed-held snapshot must permit exactly one bounded reco
 fresh flat snapshot must close the row without a sell. The existing default-off A2 backoff is not
 acceptance for C3: it is time-based, and its 90-second escalation predates a live p90 of 128.9 seconds.
 
+#### C3 increment built from that measurement
+
+The shipped observation bound is **245 seconds**, and its derivation is part of the contract:
+`237.1 s observed maximum + one complete 5 s broker-position sync = 242.1 s`, rounded **up** to the
+next whole sync interval. It is configured as `oms_post_exit_stale_held_max_age_seconds`, not hidden
+as a Webull "2.4 minute" exception. If either the measured episode maximum or the configured sync
+cadence changes, this number becomes a named re-calibration item. The code must not silently stretch
+it, and exceeding it stops/reports while retaining the managed row; elapsed time never authorizes a
+sell.
+
+The runtime gate is Webull-scoped because that is the measured population. It activates only when
+the latest durable **full-close** fill after the managed row's entry is a SELL (an OMS `close` or a
+recorded native-OCO child; a partial `scale` is excluded). An older, missing, or reused
+`account_positions.source_updated_at` emits zero sells. A newer still-held generation funds one
+attempt; a newer flat generation closes the managed row without another order. A later BUY fill
+ends the classification, so a genuine no-position refusal with no preceding SELL fill stays on the
+ordinary exit path rather than being mislabeled settlement lag. The
+`[OMS-POST-EXIT-STALE-HELD]` line carries the fill time, snapshot time, age, evaluated denominator,
+retry count, bound, trigger, and polarity.
+
+Grade the durable population with
+`ops/health/post_exit_stale_held_acceptance.py --since <ISO> --until <ISO>`. It reports refused sells
+per ET day beside the 2026-08-24 through 08-27 baseline (`37 / 25 / 49 / 2`) and states the distinct
+post-exit episode denominator. `0 refused_sells / 0 post_exit_episodes` is `UNEXERCISED`, never proof
+that the retry bound fixed anything.
+
 ### C2 measurement -- cancellation is read below the strategy, but not consumed above it
 
 The normal resting campaign, not DAIC alone, is the sizing input. Closed-session cancel-intent counts
