@@ -221,23 +221,26 @@ A: those facts update the Webull fan-out claim and never consume v2's own compos
 
 | phase | outcomes | fan-out claim effect |
 |---|---|---|
-| strategy handoff | `queued` | reserve the slot provisionally |
+| strategy handoff | `queued` | reserve provisionally for the 30-second evidence grace; release if no positive evidence arrives |
 | before broker submit | `dropped_no_emitter`, `dropped_ineligible`, `dropped_routing`, `dropped_risk`, `dropped_collision`, `dropped_dedup` | release only after this explicit terminal no-submit outcome |
 | client terminal before submit | `rejected_client_abort` | release only when the local abort is durably classified at its emitting path |
 | broker submit | `submitted` | keep reserved |
 | broker observation | `working`, `partially_filled` | keep reserved |
 | venue terminal no-fill | `rejected_venue`, `cancelled`, `expired` | release only when terminal venue evidence is confirmed |
-| unclassified rejection | `rejected_unclassified` | `could_not_tell`; keep reserved until provenance is established |
+| unclassified rejection | `rejected_unclassified` | `could_not_tell`; it is not terminal evidence and cannot hold beyond the provisional grace |
 | terminal fill | `filled` | consume the Webull fan-out claim only; never consume the v2 slot |
-| evidence failure | `could_not_tell` | keep reserved and make the uncertainty loud |
+| evidence failure | `could_not_tell` | make the uncertainty loud, then release after the provisional grace in the visible-duplicate failure direction |
 
 `still_working` is an observation, not a terminal result. A `filled` outcome wins over a later stale
 cancel/reject observation. Duplicate events are idempotent by `(slot_id, attempt_id, outcome,
 broker_event_id)`; ordering cannot turn a consumed slot back into a free one.
 
 The OMS publishes the outcome only after the corresponding durable local record commits. The strategy
-consumes the outcome keyed by slot id. The present grace timeout remains a backstop for observability,
-but it must not turn `could_not_tell` into “free”; uncertainty is the state, not permission to trade.
+consumes the outcome keyed by slot id. **Only positive `submitted`/`working`/`partially_filled`/`filled`
+evidence may hold the latch.** `queued`, an unclassified result, a missing record, or a read failure is
+provisional and releases after the existing 30-second grace. That timeout does not assert that a venue
+order is absent; it chooses the operator-approved, visible and costed duplicate failure direction over
+the silent-no-order direction. Every positive hold logs the record that justified it.
 
 The rejected split is a required input contract, not an inference inside the consumer. The local
 abort path must emit `rejected_client_abort`; a broker response must emit `rejected_venue`; and an
@@ -446,8 +449,9 @@ target identity. The existing Redis `order-events` stream may be a wake-up hint,
 record: a trimmed/missed stream entry or process restart must be replayable from the database. The v2
 bot polls a durable cursor off the hot path, applies outcomes idempotently, and advances the cursor
 only after the strategy state transition succeeds. A database read failure, cursor gap, or identity
-mismatch is `could_not_tell`: keep the Webull claim reserved and keep the Schwab cancel target
-unconfirmed; never infer success from the account position poll.
+mismatch is `could_not_tell`: the Webull claim remains provisional and releases after its evidence
+grace, while the separate Schwab cancel target remains unconfirmed under its own contract. Neither
+consumer may infer success from the account position poll.
 
 The transport is shared; the consumers are not. Webull terminal outcomes apply the claim policy in
 the table above. Schwab cancel outcomes apply the bounded cancel/reprice policy and never mutate the
@@ -611,11 +615,13 @@ evidence for that record, but the endpoint cannot prove complete history, comple
 parent/child coverage, or the distinction between a genuinely absent order and an unavailable or
 incomplete response. An empty page or a missing id proves nothing about venue state.
 
-Every consumer must be **evidence-positive**: it may release or consume ownership only because a
-durable attributable record exists and establishes the transition. It must never release a claim
-because an expected local row, venue-history row, reply, detail, parent, or child is missing. With no
-positive terminal evidence, the honest state remains `could_not_tell`; the claim stays reserved and
-loud.
+Every consumer must be **evidence-positive about venue state**: it may hold or consume ownership only
+because a durable attributable record establishes the transition. It must never describe an expected
+local row, venue-history row, reply, detail, parent, or child as absent merely because it is missing.
+For the Webull fan-out latch, no positive record means `could_not_tell` and a loud, provisional hold;
+after 30 seconds the local latch releases in the deliberately visible duplicate direction. That
+release is a safety-policy timeout, not evidence that the venue order is absent. Other consumers keep
+their own recorded contracts; the Schwab cancel target, for example, remains reserved and pages.
 
 This makes two historical limits permanent under this design. The DAIC ledger gap cannot establish
 which exit child filled, when it filled, or at what price. Historical exit-child attribution with the
@@ -647,8 +653,8 @@ Those are permanent unknowns for this design, not measurements waiting to be sch
 
 ### What would falsify implementation compliance
 
-- A consumer releases or consumes a claim because a record is missing rather than because a positive
-  durable record establishes the transition.
+- A consumer labels an empty listing or missing local/venue record as positive terminal evidence, or
+  holds the Webull latch beyond its provisional grace without a positive order/fill record.
 - A report labels an empty or incomplete `get_order_history` result as `absent`, `cancelled`, or
   broker-flat.
 - A new task treats the history date floor, production-credential sweep, sandbox account, or second
@@ -718,7 +724,10 @@ any of those measures move, something outside this slice changed. No consumer re
 record or new primary-leg metadata to release a latch, suppress an entry, choose a venue, or change
 quantity.
 
-Only after that increment is independently accepted should the OMS outcome publication be built.
-The later consumer is now specified by section 4: consume the Webull claim and never v2's own slot.
-It still requires known-bad and known-good controls against a population whose identity and outcomes
-are already readable.
+The cross-venue identity increment shipped before the outcome consumer. D2 then lands the whole
+Webull outcome path as one lifecycle: OMS/local publication, durable database cursor, restart replay,
+and exact strategy-claim application. Former D3/D4/D5 slices are not separate builds; they were three
+views of the same missing consumer. Section 4 remains load-bearing: consume the Webull claim and never
+v2's own slot. D6 is the external acceptance: paired legs, venue-local fill rates, per-venue duplicate
+legs, and refused exits must move on real denominators. D2's own markers prove that the consumer ran;
+they do not prove that it mattered.
