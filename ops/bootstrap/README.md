@@ -14,6 +14,7 @@ Recommended first-run order on the VPS:
 8. `08_install_runtime.sh`
 9. `09_install_systemd_units.sh`
 10. `10_enable_services.sh`
+11. `11_install_unattended_upgrade_policy.sh`
 
 Notes:
 - Run these only on the new `project-mai-tai` VPS target, not inside the
@@ -36,3 +37,18 @@ Notes:
   so migrations work with the root-owned env file.
 - `10_enable_services.sh` enables the concrete service units, then starts the
   `project-mai-tai.target` stack.
+- `11_install_unattended_upgrade_policy.sh` prevents unattended replacement of
+  Postgres/OpenSSL server and client-library packages, reports package changes
+  and failures to the existing ntfy channel, and installs explicit DST-safe
+  timers. Downloads run at 01:30 ET and installs at 02:30 ET. Both timers set
+  `Persistent=false`, so a missed overnight run is not caught up during the
+  04:00-20:00 ET operating window. The download-only timer is moved too: it
+  does not install packages, but its default 12-hour random delay was observed
+  scheduling network/disk work during the market session.
+  `Unattended-Upgrade::Mail` is deliberately not set: the host has neither a
+  mail transport nor a `mailx` provider. Instead, a service drop-in snapshots
+  installed package versions before and after the vendor unattended-upgrade
+  command. A changed package set or failed command is sent to the already
+  monitored ntfy topic; a no-change run is recorded locally and stays quiet.
+  Notification delivery uses bounded retries and fails the systemd unit if the
+  page cannot be delivered, rather than recording a false success.

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ACTION=${1:-}
+SERVICE_RESULT=${2:-unknown}
+EXIT_CODE=${3:-unknown}
+EXIT_STATUS=${4:-unknown}
+STATE_DIR=${MAI_TAI_UNATTENDED_STATE_DIR:-/run/project-mai-tai-unattended-upgrade}
+LOG_FILE=${MAI_TAI_UNATTENDED_LOG_FILE:-/var/log/project-mai-tai/unattended-upgrade-notify.log}
+NTFY_URL=${MAI_TAI_NTFY_URL:-https://ntfy.sh/mai-tai-preopen-28806a5a97b7}
+DPKG_QUERY_BIN=${MAI_TAI_DPKG_QUERY_BIN:-dpkg-query}
+CURL_BIN=${MAI_TAI_CURL_BIN:-curl}
+SORT_BIN=${MAI_TAI_SORT_BIN:-sort}
+UNATTENDED_LOG=${MAI_TAI_UNATTENDED_UPGRADE_LOG:-/var/log/unattended-upgrades/unattended-upgrades.log}
+
+snapshot_packages() {
+  "$DPKG_QUERY_BIN" -W -f='${binary:Package}\t${Version}\n' | "$SORT_BIN"
+}
+
+log_line() {
+  mkdir -p "$(dirname "$LOG_FILE")"
+  printf '%s %s\n' "$(date --utc '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$LOG_FILE"
+}
+
+send_notification() {
+  local title=$1
+  local priority=$2
+  local tags=$3
+  local body=$4
+  log_line "NOTIFY title=$title priority=$priority body=$body"
+  "$CURL_BIN" --fail --silent --show-error --retry 3 --max-time 20 \
+    -H "Title: $title" \
+    -H "Priority: $priority" \
+    -H "Tags: $tags" \
+    -d "$body" \
+    "$NTFY_URL"
+}
+
+case "$ACTION" in
+  begin)
+    install -d -m 0700 "$STATE_DIR"
+    snapshot_packages > "$STATE_DIR/packages.before"
+    date --utc '+%Y-%m-%dT%H:%M:%SZ' > "$STATE_DIR/started_at"
+    if [[ -f "$UNATTENDED_LOG" ]]; then
+      wc -c < "$UNATTENDED_LOG" > "$STATE_DIR/log_offset"
+    else
+      printf '0\n' > "$STATE_DIR/log_offset"
+    fi
+    log_line "BEGIN package_snapshot=$(wc -l < "$STATE_DIR/packages.before")"
+    ;;
+  finish)
+    if [[ ! -s "$STATE_DIR/packages.before" || ! -s "$STATE_DIR/started_at" || ! -s "$STATE_DIR/log_offset" ]]; then
+      send_notification \
+        "RED mai-tai unattended upgrade evidence missing" \
+        urgent \
+        rotating_light \
+        "Could not compare package state; service_result=$SERVICE_RESULT exit_code=$EXIT_CODE exit_status=$EXIT_STATUS"
+      exit 1
+    fi
+
+    snapshot_packages > "$STATE_DIR/packages.after"
+    changed=$(
+      diff --new-line-format='+ %L' --old-line-format='- %L' \
+        --unchanged-line-format='' \
+        "$STATE_DIR/packages.before" "$STATE_DIR/packages.after" || true
+    )
+    started_at=$(<"$STATE_DIR/started_at")
+    finished_at=$(date --utc '+%Y-%m-%dT%H:%M:%SZ')
+    log_offset=$(<"$STATE_DIR/log_offset")
+    log_error=''
+    if [[ -f "$UNATTENDED_LOG" ]]; then
+      log_size=$(wc -c < "$UNATTENDED_LOG")
+      if (( log_size < log_offset )); then
+        log_error='unattended-upgrade log rotated during the run; result is could_not_tell'
+      elif (( log_size > log_offset )); then
+        log_error=$(tail -c "+$((log_offset + 1))" "$UNATTENDED_LOG" \
+          | grep -E ' ERROR |Traceback|Exception:' | tail -n 3 || true)
+      fi
+    elif (( log_offset > 0 )); then
+      log_error='unattended-upgrade log disappeared during the run; result is could_not_tell'
+    fi
+
+    if [[ "$SERVICE_RESULT" != "success" || -n "$log_error" ]]; then
+      body="Unattended upgrade failed; started_at=$started_at finished_at=$finished_at service_result=$SERVICE_RESULT exit_code=$EXIT_CODE exit_status=$EXIT_STATUS"
+      [[ -z "$log_error" ]] || body="$body; log_error=$(printf '%s' "$log_error" | tr '\n' ';' | cut -c1-500)"
+      [[ -z "$changed" ]] || body="$body; package_delta=$(printf '%s' "$changed" | tr '\n' ';' | cut -c1-700)"
+      send_notification "RED mai-tai unattended upgrade failed" urgent rotating_light "$body"
+      exit 1
+    fi
+
+    if [[ -n "$changed" ]]; then
+      body="Unattended upgrade changed packages; started_at=$started_at finished_at=$finished_at; package_delta=$(printf '%s' "$changed" | tr '\n' ';' | cut -c1-700)"
+      send_notification "INFO mai-tai unattended upgrade changed packages" default package "$body"
+    else
+      log_line "NO_CHANGE started_at=$started_at finished_at=$finished_at"
+    fi
+    rm -f \
+      "$STATE_DIR/packages.before" \
+      "$STATE_DIR/packages.after" \
+      "$STATE_DIR/started_at" \
+      "$STATE_DIR/log_offset"
+    rmdir "$STATE_DIR"
+    ;;
+  *)
+    echo "usage: $0 begin|finish [service-result exit-code exit-status]" >&2
+    exit 2
+    ;;
+esac
