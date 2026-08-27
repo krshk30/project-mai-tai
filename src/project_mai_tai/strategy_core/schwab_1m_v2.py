@@ -997,6 +997,7 @@ class SchwabV2Strategy:
                     session_is_eh=False,
                     source="rth_resting",
                     entry_n=state.cw_entries_this_flip + 1,
+                    entry_slot=state.last_resting_placed_slot,
                     band_anchor=state.resting_level,
                 )
             )
@@ -2229,6 +2230,7 @@ class SchwabV2Strategy:
                         source="reactive",
                         # ALREADY incremented just above -- the counter reflects THIS entry.
                         entry_n=state.cw_entries_this_flip,
+                        entry_slot="reclaim",
                         shared_identity=shared_fanout_identity,
                     )
                 )
@@ -2268,6 +2270,9 @@ class SchwabV2Strategy:
                 "cw_trigger": f"{trig:.4f}",
                 "cw_flip_level": f"{fl:.4f}",
                 "cw_entry_n": str(state.cw_entries_this_flip),
+                # Economic composition slot, not execution style. A reclaim may itself be a
+                # resting STOP_LIMIT, so `resting_entry=true` cannot distinguish the #644 slots.
+                "cw_entry_slot": "reclaim",
                 "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                 "bar_low_so_far": f"{state.cw_bar_low_so_far:.4f}",
                 **shared_fanout_identity,
@@ -2361,6 +2366,7 @@ class SchwabV2Strategy:
                 # separate round trips 2 min apart at an identical level), so grouping on it silently
                 # merges distinct flips. `cw_arm_bar_ts` IS per-segment; pair it with cw_entry_n.
                 "cw_entry_n": str(state.cw_entries_this_flip + 1),
+                "cw_entry_slot": slot,
                 "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
@@ -2409,6 +2415,7 @@ class SchwabV2Strategy:
                     "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
                     "resting_entry": "true",
                     "cw_entry_n": str(entry_n),
+                    "cw_entry_slot": slot,
                     "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                     **shared_fanout_identity,
                     # ⛔ NO bracket_* keys on purpose -- see the note above.
@@ -2864,6 +2871,7 @@ class SchwabV2Strategy:
                     state, entry_px=level, session_is_eh=True, source="eh_resting",
                     # NOT yet incremented on this path -- this leg is the NEXT entry.
                     entry_n=state.cw_entries_this_flip + 1,
+                    entry_slot=state.last_resting_placed_slot,
                     shared_identity=shared_fanout_identity,
                 )
             )
@@ -2879,6 +2887,7 @@ class SchwabV2Strategy:
                 "resting_band_pct": f"{self._resting_entry_band_pct}",
                 "cw_flip_level": f"{level:.4f}",
                 "resting_entry": "true", "eh_resting": "true",
+                "cw_entry_slot": state.last_resting_placed_slot,
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
             },
@@ -2991,7 +3000,7 @@ class SchwabV2Strategy:
 
     def _build_webull_fanout_draft(
         self, state: SymbolState, *, entry_px: float, session_is_eh: bool, source: str,
-        entry_n: int, band_anchor: float | None = None,
+        entry_n: int, entry_slot: str | None = None, band_anchor: float | None = None,
         shared_identity: dict[str, str] | None = None,
     ) -> TradeIntentDraft:
         """Build the parallel Webull FAN-OUT leg draft (account-agnostic; the bot routes it to the
@@ -3013,6 +3022,9 @@ class SchwabV2Strategy:
             "unattributed filled legs make the duplicate grade UNEXERCISED",
             state.symbol, source, segment_id, entry_n,
         )
+        resolved_entry_slot = entry_slot or (
+            "reclaim" if source == "reactive" else state.last_resting_placed_slot
+        )
         md = {
             "path": "ATR Flip",
             "atr_variant": "CW-v2-fanout",
@@ -3030,6 +3042,9 @@ class SchwabV2Strategy:
             # (shipped in #570), which silently mislabels first-entry as reclaim on exactly the path
             # reclaims use -- so any first-vs-reclaim split built on it was wrong.
             "cw_entry_n": str(entry_n),
+            # Economic composition slot, deliberately separate from order style. The reclaim
+            # implementation can rest at the broker and therefore also carries resting_entry=true.
+            "cw_entry_slot": resolved_entry_slot,
             "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
             **identity,
             "order_type": "limit" if session_is_eh else "market",
@@ -3122,6 +3137,7 @@ class SchwabV2Strategy:
                 state, entry_px=px, session_is_eh=False, source="rth_resting",
                 # NOT yet incremented on this path -- this leg is the NEXT entry.
                 entry_n=state.cw_entries_this_flip + 1,
+                entry_slot=state.last_resting_placed_slot,
                 # ⛔⭐ THE BAND MUST MEASURE FROM THE LEVEL WE DECIDED TO BUY AT, NOT FROM WHERE WE
                 # NOTICED (2026-08-13). `entry_px` here is the price at which SOFTWARE detected the
                 # cross, which on a fast move is far above `resting_level` -- live FGI 08-13: level
