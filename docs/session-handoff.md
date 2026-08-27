@@ -3,155 +3,184 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-08-25 21:30 ET**, read-only against production. Every number below
-carries its as-of time. Awaiting independent review by `codex-2` before merge.
-
-**Corrected by `claude-1`, 2026-08-26 07:55 ET**, after `codex-2`'s review of #794 returned BLOCKED
-on five findings: the obsolete carry-note block was removed from `selftest.sh` (110/0 → **105/0**,
-five false passes gone), the backfill "trend" claim was reduced to what is proven, the
-"nothing was broken code" claim was scoped to the eight reporting failures, the split-delivery
-claim in the commit body was corrected, and the gate section below now names the current hashes
-instead of the superseded pin. Production was not touched.
+**Written by `claude-1`, 2026-08-26 19:15 ET**, read-only against production. Integrator for this
+close-out. Needs `codex-2`'s review before merge — the author never reviews.
 
 ---
 
-# PRODUCTION — main and box are IN SYNC
+# PRODUCTION — main and box IN SYNC
 
 | | |
 |---|---|
-| main / box | **`2bbe5ccc4419ed895be8a806d6e14616d33dbc58`** |
-| open PRs | **0** |
-| flat | ✅ both ledgers, `assert_fleet_flat` exit 0 |
-| account_positions / virtual_positions / open orders | 0 / 0 / 0 |
+| main / box | **`4a206181307885b8e8cb28b51a24171aaafbb20a`** |
+| checkout | clean |
+| open PRs | **1 — this handoff PR (#804) itself.** Zero others |
+| ledgers at close | flat — `account_positions` 0, `virtual_positions` 0, open managed rows 0, working orders 0 |
+| ⭐ `fills` (the independent ledger) | every symbol netted to 0 on 08-26 |
 
-**PIDs as of 21:25 ET (01:25 UTC 08-26):**
+**PIDs as of 19:10 ET. `NRestarts=0` on every unit.**
 
-| service | pid | since (UTC) |
-|---|---|---|
-| oms | 1521794 | 2026-08-26 01:15:00 |
-| strategy | 1521806 | 2026-08-26 01:15:00 |
-| schwab-1m-v2 | 1522331 | 2026-08-26 01:18:51 |
-| reconciler | 1514317 | 2026-08-25 23:51:35 |
-| **control** | **44840** | **2026-07-14 12:18:04** ← never restarted |
-| market-data | 1528374 | 2026-07-27 17:35:52 |
+| service | pid | since (UTC) | moved today? |
+|---|---|---|---|
+| control | 1570337 | 08-26 12:16:13 | ✅ restarted (token window) |
+| oms | 1642844 | 08-26 20:10:05 | ✅ restarted (#800) |
+| strategy | 1642854 | 08-26 20:10:05 | ✅ side-effect of #800 |
+| schwab-1m-v2 | 1662275 | 08-26 22:25:05 | ✅ restarted (#802) |
+| market-data | 1528374 | 07-27 17:35:52 | — |
+| reconciler | 1514317 | 08-25 23:51:35 | — |
 
-`NRestarts=0` on every unit. Fleet `/health` healthy.
-
----
-
-# ⛔⭐⭐ EVERY MARKER SHIPPED TONIGHT READS ZERO — THAT IS THE CORRECT STATE
-
-Counted on the box at **21:25 ET**, before any session has run against them:
-
-```
-[OMS-CANCEL-PAIR-REQUEST]       0     [V2-RECLAIM-SLOT-CHECKED]       0
-[OMS-EXIT-RELEASE]              0     [V2-RECLAIM-UNION-ONLY-PASSED]  0
-[OMS-CHILD-EXIT-ATTRIBUTION]    0     [BROKER-SYNC-OK]                0
-```
-
-**This is UNEXERCISED, not passed.** It is recorded deliberately so tomorrow's reading has a real
-baseline instead of an assumed one. A zero tomorrow means nothing without its denominator.
+**Three restarts all day. The last two merges landed with ZERO** — see `sync-only` below.
 
 ---
 
-# 🔴 GRADE AFTER THE CLOSE — NEVER MIDDAY
+# ⭐⭐ WHAT SHIPPED, AND WHAT IS ACTUALLY EXERCISED
 
-⛔ Today proved it: **signal 6 read 0 at 12:58 ET and 1 by 16:34 ET.** A must-be-zero signal cannot
-be graded mid-window; mid-window is *not yet failed*, never *passed*.
+| PR | merged | what | deployed | exercised? |
+|---|---|---|---|---|
+| #796 | 14:13Z | §82 fan-out lifecycle design | docs | — |
+| #798 | 18:59Z | §82 reply-loop evidence correction | docs | — |
+| **#800** | 20:08Z | fan-out identity + Webull tick spread | ✅ OMS+strategy 20:10Z | ⛔ **UNEXERCISED, zero denominators** |
+| **#802** | 22:24Z | v2 post-close lifecycle exit-only | ✅ v2 22:25Z | ✅ **YES — see below** |
+| #801 | 22:37Z | C3/C2 bounds, C4/C5 evidence, C4 comment fix | sync-only, **no restart** | — |
+| #803 | 23:01Z | fail-closed checkout sync without restart | sync-only, **no restart** | ✅ ran, 6/6 PIDs unchanged |
 
-| # | check | how to read it |
-|---|---|---|
-| 1 | **Signal 6** (#781) — `session-calendar lookup failed` must be **0** | state the denominator: `[V2-DB-SEED-GAP]` line count **and** the census `truncations=N of M` |
-| 2 | **#780** reclaim markers | read `[V2-RECLAIM-SLOT-CHECKED]` (denominator) **before** `[V2-RECLAIM-UNION-ONLY-PASSED]` (result) |
-| 3 | **#791 C1** cancel confirmation | a real `[OMS-CANCEL-PAIR-REQUEST] requested=N`, and **no `[OMS-EXIT-RELEASE]` without `release_confirmed=1`** |
-| 4 | **#791 C2** child attribution | read `[OMS-CHILD-EXIT-ATTRIBUTION] evaluated=1` **before** `attributed` |
-| 5 | **#790** signal 4 | tonight 10 total / 2 attributed / **8 unattributed** = UNEXERCISED. Does `attributed` RISE? |
-| 6 | **#783** refresh-count watch | first run **06:15 UTC** |
-| 7 | **#785** phantom-row counter | every 5 min, weekdays — data by morning |
-| 8 | **#787** retention | ⛔ the 22:30 UTC run must print **"already matches the normalized source; no replacement needed"**. A *second successful install* means the drift check is broken. Success looks like a no-op. |
-| 9 | **#788** health gate | proved itself twice tonight; watch on the next restart |
-| 10 | **#759** recovery split | `[BROKER-SYNC-OK]` has **still never been emitted**; `rotate 30` now gives a 30-day window instead of 7 |
+⛔ **#797 and #799 are CLOSED, not merged.** Their content is inside #800. Auditing "was #799
+deployed?" by its own PR state returns the wrong answer.
 
----
+## ✅ #802 IS EXERCISED — and the proof is a silence
 
-# PROMOTION GATE — CORRECTED, SUBMITTED, NOT YET PINNED
+**Within 3 seconds** of the 22:25:05Z deploy:
+- `[V2-ENTRY-WINDOW-EXIT-ONLY]` census ran once: `evaluated=6 released=0 arms_released=0
+  cancel_requested=0 held_positions=0 armed_after_close=0`
+- `[V2-POST-CLOSE-ENTRY-BLOCKED]` fired **16 times** (22:25:07)
 
-| file | sha256 | state |
-|---|---|---|
-| `promote.sh` | `421d49f868c89284a699dca898c4ceec74b6038e294d435e98ffd9fdea15993a` | submitted for review |
-| `selftest.sh` | `793f9403b3f8cca40ab0b34c4b36a6f0338bd4dfe12c117d3d99f69f08b67baf` | **105 passed / 0 failed**, `MAI_TAI_REPO` set |
+**Cumulatively through the evening: 27 as of 23:30:02Z, and still rising** while bars flow to
+20:00 ET — XPON 22:43, WSHP 22:44, YYGH 22:49 are from this later set, not the 3-second one.
+⛔ A cumulative marker count is meaningless without its as-of time; the first version of this
+section reported the running total as if it were the 3-second burst.
+- ⭐ **`[V2-CW-STATE-PROBE]` STOPS ENTIRELY after 22:25:05.** That line is emitted only by the
+  entry state machine. Pre-deploy it printed every minute post-close (WSHP 22:21, XPON 22:22/22:23,
+  all `armed=True`). Its silence is the guard working.
 
-These supersede `promote.sh d52a8a72…` / `selftest.sh c662a72f…` (98/0), which were pinned before
-the carry-note defect was found. Both hashes were re-read unchanged after the full run.
+⛔ **A `tail -1` on that probe returns a PRE-deploy line and reads as "still armed."** That
+mistake was made and caught tonight. Filter by timestamp or you will report a false alarm.
 
-⛔ **`checksums.sh verify` is RED and must stay RED until `codex-2` re-pins it.** I authored these
-files; an author re-pinning their own gate turns the gate into a rubber stamp. RED here is the gate
-failing closed and is the correct reading, not a fault to silence.
-
-⛔ `selftest.sh` ran **105/0, not 110/0.** The difference is not a regression: an obsolete five-case
-carry-note block was removed on 2026-08-26. It rebuilt the production `printf` by hand instead of
-executing it, so it passed even with the claim path deleted — five passes that proved nothing. 105
-is the reconciled expectation.
-
-⛔ `promote.sh` does **not** read the checksum file (0 references), so a RED verify does not
-mechanically block `./promote.sh`. The block is a decision, not a mechanism.
+⇒ **Tomorrow's 16:00 boundary is the first FULL exercise** — the first crossing with live positions
+and working resting orders, where `cancel_requested` can be non-zero. Tonight's zeros are correct:
+the deploy landed after the close with nothing left to cancel.
 
 ---
 
-# OPEN ITEMS — no owner yet
+# 🔴 WATCH TOMORROW — in priority order
 
-**(a) HTTP 417 false-success — FIXED but UNPROVEN.** #791 closes it; 0 evaluated tonight. Needs a
-real software-close episode.
-
-**(b) DAIC ledger gap.** Historical child/time/price remains **COULD_NOT_TELL by design** — #791 is
-future-protection only. Evidence preserved at `/home/trader/daic-phantom-2026-08-25.txt`.
-
-**(c) ⚠ v2 restart backfill burst is RECURRING, not one-time.** Tonight 9,707 lines in 33s across 4
-symbols; bars ~7.5 days stale, correctly dropped, zero errors after. Prior days: 8297 / 3235 / 4887
-/ 209 / 3905 / 867. **What is proven is RECURRENCE, and that tonight is the largest instance — not
-a trend.** The sequence is volatile (it falls to 209 and back), and 7 points with no denominator
-(restart count, symbol count, staleness depth) cannot carry a direction. ⛔ The 08-26 01:26Z journal
-entry calls it "TRENDING UP"; that phrasing is superseded by this line. Matters because 9,707 lines can
-mask a one-line signal — today's signal-6 failure *was* one line in this same log — and because it
-sits in the seed path #781 just rewrote.
-
-**(d) Control service — pid 44840 since 2026-07-14.** 1.7 GB RSS after six weeks, 10 newer
-startup-required files. **Verified NOT a token risk.** Tonight's OMS deploy deliberately left it
-alone. When restarted: after hours, straight after an observed refresh, then prove new PID ·
-refresher enabled/healthy · token-store metadata intact · **a new `[SCHWAB-TOKEN-REFRESHED]` within
-+35 min** (UNMEASURED before that; refreshes run ~every 29 min, 48–50/day).
-
-**(e) 📌 Capacity — MEMORY-bound, deferred by the operator.** Basic 4 vCPU / 8 GB / 120 GB.
-7.1G of 7.8G used, **zero swap**, disk only 25% used (**do not grow the volume — irreversible**).
-⭐ Two free fixes before buying RAM: control's 1.7 GB after six weeks (a resize would restart it and
-*silently reclaim* the memory, masking the cause), and `shared_buffers=160 MB` with an **80.69%**
-cache hit ratio against a 15 GB DB — very likely the real cause of today's signal-6 timeout
-(`COUNT(DISTINCT)` over a 1001 MB table, 1603 ms warm vs a 5 s `statement_timeout`).
-
-**(f) Signal 4 blind spot** — 8 filled fan-out legs still carry no segment id.
-
-**(g) Stale remote branches** — many refs ahead of main with no PR, one at +50. Cosmetic.
+1. **DAIC at 07:00** — confirm the 04:00 roll cleared its arm. #802 now also prevents a post-close
+   restart from rebuilding one, but the roll itself is still unverified in anger.
+2. **`ops/health/fanout_identity_acceptance.py` is BROKEN and unfixed.** psql does **not**
+   interpolate `:'var'` in a `-c` string, so its window placeholders never substitute. It fails
+   **closed** to `COULD_NOT_TELL` — no wrong verdict — but **#800's identity report cannot produce
+   any reading until this is fixed.** ⛔ It is in `ops/**`, so it is **NOT sync-only eligible**.
+3. **#802's first full 16:00 boundary** — read `cancel_requested=N` as an **UNVERIFIED count**, not
+   a cancellation; #802 requests cancels and does not consume the outcome.
+4. **#800's markers stay UNEXERCISED** until a fan-out opportunity occurs *and* item 2 is fixed.
+   ⛔ #799's **refusal** path has zero live population by construction — all 15 historical rejects
+   were raw-VALID collapsed by rounding, so only the **widening** path can exercise.
+5. **WSHP 22:25 is a permanent bar hole** (restart minute; raw ticks existed). ⛔ XPON's gaps in
+   that window were never checked against ticks — `COULD_NOT_TELL`, not continuous.
 
 ---
 
-# ⛔ DISASTER RECOVERY — GitHub restores the machine, NOT the data
+# ✅ DISK-vs-PROCESS GAP — MEASURED, AND IT IS CLEAN
 
-`ops/bootstrap/01…10` plus 11 systemd units rebuild a droplet from empty. **Not in git and with
-no backup:** the **14 GB** database (18,652 fills · 79,169 broker_orders · **1,229,033 bars**),
-`/etc/project-mai-tai/project-mai-tai.env` (12 KB of credentials), the Schwab token store, and 46 MB
-of logs. **Zero `pg_dump` backups exist**, and there is no backup/restore tooling anywhere in the
-repo. Operator is enabling droplet backups. ⚠ Take a manual snapshot *before* any resize — periodic
-backups give no restore point until the first one runs.
+Asked at the close because `#801` merged at 22:37Z, **after** the 20:10Z OMS restart, and landed via
+sync-only. *Is there running code on disk but not in a process?* Measured per service:
+
+| process | running | disk | behavioural gap |
+|---|---|---|---|
+| schwab-1m-v2 | `10ca1a7d` | `4a206181` | **0 non-comment lines** |
+| oms + strategy | `3b2e9656` | `4a206181` | 227 lines — **all `#802` v2 code, in files these processes never import** |
+
+⛔ **`#801` contains no runtime code at all.** Its only source change is the C4 comment. Verified for
+OMS: **zero** imports of any `schwab_1m_v2` module — the two mentions at `oms/service.py:156` and
+`:319` are **comments**, and OMS does not import `entry_gate`.
+
+`strategy_core.schwab_1m_v2` is imported by exactly two files: **`services/schwab_1m_v2_bot.py`**
+(the v2 bot — which is precisely the process that restarted at 22:25:05Z to load it) and
+`backtest/replay.py`. ⛔ An earlier version of this line claimed *only* `backtest/replay.py`,
+because the grep that produced it **excluded `schwab_1m_v2_bot.py`** to filter self-references and
+filtered out the real importer. The conclusion is unchanged — OMS and strategy-engine import
+neither file — but the evidence for it was stated wrongly.
+
+Consistent with sync-only's own census: `python_ast_equal=1 runtime_ast_changed=0`.
+
+## ⛔⭐⭐ BUT THE SHARPER RISK IS REAL, AND IT IS THE OPPOSITE SHAPE
+
+The danger is **not** that `#801`'s bound is unloaded. It is that **the C2 10-second page threshold
+and the C3 bounds are DESIGN NUMBERS IN MARKDOWN — no such code runs anywhere.** The consumers are
+explicitly not built.
+
+⇒ **A quiet C2 reading tomorrow must never be read as "the 10-second bound is working."** There is
+no bound to work. That is the same `UNEXERCISED`-reads-as-`PASS` trap, one level further out: not a
+zero from an unexercised feature, but a zero from a feature that does not exist yet.
 
 ---
 
-# WORKING RULES THAT COST US TIME TODAY
+# OPEN ITEMS
 
-- ⛔ **A number that does not reconcile is the tell.** A test total that did not move after adding
-  seven tests meant they were never executing.
-- ⛔ **An empty result for an identifier you guessed is not an absence** — it is an unasked question.
-  Two false negatives today came from an invented branch name and an invented unit name.
-- ⛔ **Verify the artifact, not a copy of it.** A `/tmp` harness passed 7/7 while the suite ran none.
-- ⛔ **`--squash` destroys ancestry.** Verify content on main and the resulting commit, never the PR
-  record or an error alone. A 502 can follow a completed merge.
-- ⛔ **Disjoint files are not independent** — check for interaction explicitly.
+**(a) ⭐⭐ CONSOLIDATED — "a Schwab-shaped position guess where a Webull order lifecycle should be."**
+Replaces three board entries that were one gap seen three ways. `_fetch_position_maps` is scoped to
+the Schwab account; a Webull-only fill moves neither counter. Costs: 22 duplicate legs (median
+**4.58%** worse), the phantom re-arm, and slot blindness (**≥9** fan-out-only fills proven — 16 of
+53 buy fills 08-21→08-26 carried a usable arm id, **37 are `could_not_tell`**).
+⛔ **#800 did NOT close this.** Every identity stamp site is on a **Webull** draft; the Schwab
+primary carries none. The cross-venue join still rests on `cw_arm_bar_ts` + symbol.
+⇒ **First increment is a shared key stamped on BOTH legs at the arm — not the consumer.**
+
+**(b) Read-only credential route — UNDECIDED, and it blocks the Webull history probe.**
+⛔ Correction on record: this is a **venue** credential question, not a Postgres one. The adapter
+uses a single `app_key`/`app_secret` with no scope concept in our code.
+⭐ `scripts/webull_sandbox_probe.py` already exists — **the open question is whether the sandbox can
+answer the history date-floor question.** If it can, no new credential is needed.
+
+**(c) C2 cancel consumer** — contract specified in #801, not built. Page threshold **10 s**, derived
+from 1,092 outcomes (median 0.167 s, max 3.256 s, **0 beyond 10 s**). ⛔ Expect **~6 pages on a bad
+symbol-day, 0 on a clean one** — six is the consumer exposing a real gap, not failing.
+
+**(d) C3 post-exit stale-held refusals** — still firing: **48 on 08-26**, 49 total that day, all 49
+preceded by a confirmed Webull sell fill. Bounded change, best test of the shared fix.
+
+**(e) C5 EH protection** — capability matrix complete (#801). No native EH stop on either venue;
+the in-process software ladder is the protection.
+
+**(f) `sync-only` scope** — closes drift for **docs + tests + comment-only `src`**. ⛔ **NOT** for
+`ops/**`, even for files no service loads. "We have sync-only" does not mean "drift is solved."
+
+**(g) Gate checksums** — `checksums.sh verify` state unchanged from this morning's re-pin.
+
+---
+
+# ⛔ SCHWAB TOKEN
+
+`refresh_token_expires_at` = **Mon 2026-08-31 16:02 ET** (weekday derived, not labelled). That is
+the one needing a human. `expires_at` is the short-lived access token the refresher rotates itself
+and is a ready-made false alarm. Control restarted today at 12:16:13Z and the first post-PID
+refresh landed at **+28m32s**, inside the +35 deadline, with the refresh token unchanged.
+
+---
+
+# OPERATIONAL RULES CONFIRMED TODAY
+
+1. **A rate quoted over a window containing the fix describes neither regime.** The mirror read
+   2% across the 08-20 flag flip; split, it is **0.3% → 7.1%** with rejects **720 → 29**. #735
+   worked. Matched control: mirror **6.2%** vs Schwab primary **9.2%**.
+2. **Name both sides of a comparison.** `HEAD:path` against a SHA that *was* `HEAD` proves nothing;
+   so does a hardcoded stale base. Both happened today.
+3. **Check what is already written before forming a hypothesis** — twice in two days the design doc
+   held the answer being re-derived.
+4. `merged`, `deployed`, and `proven healthy` are separate claims. So is `synced`.
+5. A `could_not_tell` must never decay into a pass, and a zero needs its denominator on the line.
+
+## Memory pointers
+
+`[[project-mai-tai-context]]` · `[[project-mai-tai-fleet-roster]]` ·
+`[[project-mai-tai-architecture]]` · `[[feedback_verify_before_concluding]]` ·
+`[[feedback_aggregation_masked_the_event]]` · `[[project_mai_tai_entry_composition_cap]]`
