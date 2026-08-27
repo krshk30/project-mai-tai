@@ -53,7 +53,7 @@ def test_previous_session_identity_is_not_restored() -> None:
     assert store.restore_active(now=NOW + timedelta(days=1)) == {}
 
 
-def test_bot_startup_path_restores_identity_into_the_real_strategy() -> None:
+def test_bot_startup_path_holds_restore_until_the_real_strategy_needs_it() -> None:
     factory = _session_factory()
     store = FanoutSegmentIdentityStore(factory)
     store.record("YYGH", 1787830200000, True, "segment_bind")
@@ -64,4 +64,9 @@ def test_bot_startup_path_restores_identity_into_the_real_strategy() -> None:
 
     bot._configure_fanout_identity_store()
 
-    assert bot.strategy.watchlist_state("YYGH").fanout_segment_id == 1787830200000
+    state = bot.strategy.watchlist_state("YYGH")
+    assert state.fanout_segment_id == 0
+    assert bot.strategy._restored_fanout_segment_ids == {"YYGH": 1787830200000}
+    assert bot.strategy._ensure_fanout_segment_id(state) == 1787830200000
+    assert state.fanout_segment_id == 1787830200000
+    assert bot.strategy._restored_fanout_segment_ids == {}

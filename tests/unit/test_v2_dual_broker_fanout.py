@@ -101,6 +101,7 @@ def test_reactive_cross_no_webull_leg_when_fanout_off():
 
 def test_buy_arm_mints_the_shared_segment_before_either_reactive_leg_emits():
     strat = _strat()
+    strat._now_ms = lambda: RTH_MS
     transitions: list[tuple[str, int, bool, str]] = []
     strat.configure_fanout_identity_persistence(
         lambda symbol, segment_id, active, reason: transitions.append(
@@ -120,15 +121,27 @@ def test_buy_arm_mints_the_shared_segment_before_either_reactive_leg_emits():
 
 def test_restart_restores_shared_identity_before_both_reactive_legs_emit():
     first = _strat()
+    first._now_ms = lambda: RTH_MS
     first_state = first.watchlist_state("TEST")
     first_state.bars.append(_bar(12.0, ts=RTH_MS))
     first._cw_v2_track(first_state, _sig(flip="BUY", flip_level=9.5))
     durable_id = first_state.fanout_segment_id
 
     restarted = _strat()
+    restarted._now_ms = lambda: RTH_MS + 60_000
     restarted.configure_fanout_identity_persistence(None, {"TEST": durable_id})
     state = restarted.watchlist_state("TEST")
-    assert state.fanout_segment_id == durable_id
+    assert state.fanout_segment_id == 0
+    # A restart replays older sessions before it reaches the live bar. Those historical resets and
+    # flips must neither consume nor retire the current-session durable key.
+    current_session_anchor = restarted._restored_fanout_session_anchor_ms
+    restarted._apply_session_anchor_reset(state, current_session_anchor - 86_400_000)
+    state.bars.append(_bar(10.0, ts=RTH_MS - 86_340_000))
+    restarted._cw_v2_track(state, _sig(flip="BUY", flip_level=9.5))
+    restarted._cw_v2_track(state, _sig(flip="SELL", flip_level=9.5))
+    restarted._apply_session_anchor_reset(state, current_session_anchor)
+    assert state.fanout_segment_id == 0
+    assert restarted._restored_fanout_segment_ids == {"TEST": durable_id}
     state.cw_armed = True
     state.cw_bars_waited = 2
     state.cw_trigger = 12.0
@@ -140,13 +153,40 @@ def test_restart_restores_shared_identity_before_both_reactive_legs_emit():
     webull = restarted.drain_webull_fanout_intents()[0]
 
     assert primary is not None
+    assert restarted._restored_fanout_segment_ids == {}
     assert primary.metadata["fanout_segment_id"] == str(durable_id)
     assert webull.metadata["fanout_segment_id"] == str(durable_id)
     assert all(primary.metadata[key] == webull.metadata[key] for key in SHARED_IDENTITY_KEYS)
 
 
+def test_next_session_retires_an_unconsumed_restart_identity_but_replay_does_not():
+    strat = _strat()
+    strat._now_ms = lambda: RTH_MS
+    transitions: list[tuple[str, int, bool, str]] = []
+    strat.configure_fanout_identity_persistence(
+        lambda symbol, segment_id, active, reason: transitions.append(
+            (symbol, segment_id, active, reason)
+        ),
+        {"TEST": RTH_MS - 60_000},
+    )
+    state = strat.watchlist_state("TEST")
+    current_anchor = strat._restored_fanout_session_anchor_ms
+
+    strat._apply_session_anchor_reset(state, current_anchor - 86_400_000)
+    strat._apply_session_anchor_reset(state, current_anchor)
+    assert transitions == []
+    assert strat._restored_fanout_segment_ids == {"TEST": RTH_MS - 60_000}
+
+    strat._apply_session_anchor_reset(state, current_anchor + 86_400_000)
+    assert transitions == [
+        ("TEST", RTH_MS - 60_000, False, "session_anchor_reset")
+    ]
+    assert strat._restored_fanout_segment_ids == {}
+
+
 def test_identity_persistence_failure_is_loud_but_does_not_gate_the_entry(caplog):
     strat = _strat()
+    strat._now_ms = lambda: RTH_MS
 
     def fail_persist(_symbol, _segment_id, _active, _reason):
         raise RuntimeError("forced durable-store failure")

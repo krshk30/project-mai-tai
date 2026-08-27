@@ -659,14 +659,6 @@ class SchwabV2Strategy:
         state = self._symbol_states.get(symbol)
         if state is None:
             state = SymbolState(symbol=symbol)
-            restored = int(self._restored_fanout_segment_ids.pop(symbol.upper(), 0) or 0)
-            if restored > 0:
-                state.fanout_segment_id = restored
-                logger.info(
-                    "[V2-FANOUT-IDENTITY-RESTORED] %s segment_id=%d restored=1",
-                    symbol,
-                    restored,
-                )
             self._symbol_states[symbol] = state
         return state
 
@@ -683,18 +675,14 @@ class SchwabV2Strategy:
             for symbol, segment_id in (restored or {}).items()
             if int(segment_id) > 0
         }
+        self._restored_fanout_session_anchor_ms = (
+            session_start_ts_ms(self._now_ms())
+            if self._restored_fanout_segment_ids
+            else 0
+        )
         for symbol, state in self._symbol_states.items():
             if int(state.fanout_segment_id or 0) > 0:
                 self._restored_fanout_segment_ids.pop(symbol.upper(), None)
-                continue
-            restored_id = int(self._restored_fanout_segment_ids.pop(symbol.upper(), 0) or 0)
-            if restored_id > 0:
-                state.fanout_segment_id = restored_id
-                logger.info(
-                    "[V2-FANOUT-IDENTITY-RESTORED] %s segment_id=%d restored=1",
-                    symbol,
-                    restored_id,
-                )
 
     def _persist_fanout_identity_transition(
         self,
@@ -728,12 +716,20 @@ class SchwabV2Strategy:
             reason,
         )
 
-    def _clear_fanout_segment_id(self, state: SymbolState, *, reason: str) -> None:
+    def _clear_fanout_segment_id(
+        self,
+        state: SymbolState,
+        *,
+        reason: str,
+        include_unconsumed_restore: bool = False,
+    ) -> None:
         segment_id = int(state.fanout_segment_id or 0)
         state.fanout_segment_id = 0
         restored = getattr(self, "_restored_fanout_segment_ids", None)
-        if isinstance(restored, dict):
-            restored.pop(state.symbol.upper(), None)
+        if include_unconsumed_restore and isinstance(restored, dict):
+            restored_id = int(restored.pop(state.symbol.upper(), 0) or 0)
+            if segment_id <= 0:
+                segment_id = restored_id
         if segment_id > 0:
             self._persist_fanout_identity_transition(
                 state,
@@ -812,7 +808,11 @@ class SchwabV2Strategy:
         # Some claims can outlive the arm (for example an emitted-but-not-filled leg). The entry
         # window ending releases those too; none is an exit input.
         state.cw_arm_bar_ts = 0
-        self._clear_fanout_segment_id(state, reason=reason)
+        self._clear_fanout_segment_id(
+            state,
+            reason=reason,
+            include_unconsumed_restore=True,
+        )
         state.cw_entries_this_flip = 0
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
@@ -841,7 +841,11 @@ class SchwabV2Strategy:
         if state is None:
             return False
         released = self._release_arm(state, reason)
-        self._clear_fanout_segment_id(state, reason=reason)
+        self._clear_fanout_segment_id(
+            state,
+            reason=reason,
+            include_unconsumed_restore=True,
+        )
         self._symbol_states.pop(symbol, None)
         return released
 
@@ -1371,7 +1375,15 @@ class SchwabV2Strategy:
         state.cw_v2_emit_ms = 0
         state.fanout_webull_claimed = False  # fan-out RTH-resting once-per-flip latch
         state.fanout_claim_ms = 0
-        self._clear_fanout_segment_id(state, reason="session_anchor_reset")
+        restored_anchor = int(getattr(self, "_restored_fanout_session_anchor_ms", 0) or 0)
+        self._clear_fanout_segment_id(
+            state,
+            reason="session_anchor_reset",
+            # DB-seed replay legitimately walks older session anchors. A current-session durable
+            # key must survive that replay and bind only when the first live draft/arm appears.
+            # The next real 04:00 boundary is strictly newer and retires an unused restore.
+            include_unconsumed_restore=bool(restored_anchor and anchor > restored_anchor),
+        )
         # Resting flip-entry: a live resting order is already cancelled at 16:00 (out-of-window),
         # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
         state.resting_active = False
@@ -1868,10 +1880,17 @@ class SchwabV2Strategy:
                     "[V2-CW-ARM] %s armed bar_ts=%d trig=%.4f flip_level=%.4f",
                     state.symbol, state.cw_arm_bar_ts, state.cw_trigger, state.cw_flip_level,
                 )
-            if self._dual_broker_fanout_enabled:
+            bar_ms = int(state.bars[-1].timestamp_ms or 0) if state.bars else 0
+            bar_age_ms = int(self._now_ms()) - bar_ms if bar_ms > 0 else -1
+            if (
+                self._dual_broker_fanout_enabled
+                and 0 <= bar_age_ms <= int(MAX_BAR_AGE_SECONDS_FOR_EMIT * 1000)
+            ):
                 # Mint the cross-venue identity at the arm boundary. A resting draft may have
                 # bound it moments earlier; in that case _ensure preserves the same segment key
-                # instead of manufacturing a second opportunity at bar close.
+                # instead of manufacturing a second opportunity at bar close. Reconstructed DB
+                # bars deliberately do not consume a durable restart key: the first LIVE arm or
+                # draft does, after warmup has finished replaying historical BUY/SELL flips.
                 self._ensure_fanout_segment_id(state)
             return
         if flip == "SELL":
