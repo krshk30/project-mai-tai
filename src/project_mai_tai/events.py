@@ -191,6 +191,7 @@ class StrategyBotStatePayload(BaseModel):
     # signal the armed_segments_check cron pages on.
     cw_armed_segments: list[dict[str, Any]] = Field(default_factory=list)
     entries_held: bool = False
+    restoration_complete: bool = False
 
 
 class StrategyStateSnapshotPayload(BaseModel):

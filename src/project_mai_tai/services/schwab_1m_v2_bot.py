@@ -126,6 +126,7 @@ FANOUT_OUTCOME_POLL_INTERVAL_SECONDS = 5.0
 # Gaps below this never need a session lookup (>99.9% of all gaps), so the calendar query is rare.
 _DB_SEED_GAP_PROBE_MIN = timedelta(hours=2)
 STATE_PUBLISH_INTERVAL_SECONDS = 5
+BOOT_RESTORE_HOLD_LOG_INTERVAL_SECONDS = 60.0
 POSITION_POLL_INTERVAL_SECONDS = 5
 # Max bar age (seconds) for DB-persistence. Older bars are warmup feeds
 # that prior service instances already persisted; redoing them on every
@@ -249,6 +250,8 @@ class SchwabV2BotService:
         # population is restored. Once True it is a one-way boot latch: later scanner refreshes
         # must not suppress every symbol mid-session by turning boot incomplete again.
         self._boot_state_restoration_complete = False
+        self._boot_scanner_population_observed = False
+        self._boot_restore_last_hold_log_at: float | None = None
         # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
         # every symbol that was already being watched.
@@ -869,13 +872,22 @@ class SchwabV2BotService:
         if not self._boot_state_restoration_complete:
             if not strat._entries_held:
                 strat._entries_held = True
-            logger.warning(
-                "[V2-BOOT-HOLD] HELD — restoration_complete=0 armed_segments_observed=%d "
-                "dangerous_observed=%d; absence before initial state restoration is not safety",
-                len(segments),
-                len(dangerous),
-            )
+            now = time.monotonic()
+            if (
+                self._boot_restore_last_hold_log_at is None
+                or now - self._boot_restore_last_hold_log_at
+                >= BOOT_RESTORE_HOLD_LOG_INTERVAL_SECONDS
+            ):
+                self._boot_restore_last_hold_log_at = now
+                logger.warning(
+                    "[V2-BOOT-HOLD] HELD — restoration_complete=0 "
+                    "armed_segments_observed=%d dangerous_observed=%d; absence before initial "
+                    "state restoration is not safety",
+                    len(segments),
+                    len(dangerous),
+                )
             return
+        self._boot_restore_last_hold_log_at = None
         if not dangerous:
             if strat._entries_held:
                 strat._entries_held = False
@@ -919,6 +931,7 @@ class SchwabV2BotService:
             last_tick_at=dict(self._last_tick_at),
             cw_armed_segments=self.strategy.cw_armed_segments(),
             entries_held=bool(getattr(self.strategy, "_entries_held", False)),
+            restoration_complete=self._boot_state_restoration_complete,
         )
         event = IsolatedBotStateEvent(source_service=SERVICE_NAME, payload=payload)
         await self.redis.xadd(
@@ -1565,6 +1578,8 @@ class SchwabV2BotService:
             )
             return
         symbols = self._extract_confirmed_symbols(event)
+        if symbols:
+            self._boot_scanner_population_observed = True
         protected = self._protected_symbols()
         selected = set(symbols[:max_watchlist]) | protected
         # HARD-EXCLUDE operator-protected symbols (e.g. CYN) from v2's watchlist so
@@ -1650,25 +1665,35 @@ class SchwabV2BotService:
     def _try_complete_boot_state_restoration(
         self, selected: set[str], *, new_symbols: set[str]
     ) -> None:
-        """Latch boot restoration complete from one non-vacuous current watchlist read.
+        """Latch boot restoration after scanner, DB seed and REST replay are all observable.
 
-        ``all([])`` is True in Python, but a current snapshot selecting zero symbols is the exact
-        pre-restoration production state that caused the early release. It is not evidence that
-        there were zero dangerous restored segments. Require at least one selected symbol and a
-        confirmed persisted-state read for every selected symbol. Once latched, later watchlist or
-        DB refreshes cannot turn this boot-only gate back on across the whole fleet.
+        The raw scanner population is the non-vacuous denominator; held-position protection can
+        make ``selected`` non-empty while the scanner snapshot itself is empty. DB seed alone is
+        insufficient because REST warmup can arm another reconstructed segment afterwards. Once
+        latched, later additions remain per-symbol REST-gated but cannot re-arm the fleet-wide boot
+        hold; their seed result is logged explicitly rather than silently changing the boot fact.
         """
         if self._boot_state_restoration_complete:
-            # The boot latch is already open. Preserve ordinary watchlist hydration for later
-            # additions without reconsidering the fleet-wide boot decision.
-            for sym in sorted(new_symbols):
-                self._seed_strategy_bars_from_db(sym)
+            results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
+            if new_symbols:
+                confirmed = sum(result is True for result in results)
+                log = logger.info if confirmed == len(new_symbols) else logger.warning
+                log(
+                    "[V2-BOOT-RESTORE] restoration_complete=1 post_latch_additions=%d "
+                    "seed_confirmed=%d could_not_tell=%d fleet_latch_unchanged=1 "
+                    "symbol_ingestion_rest_warmup_gated=1",
+                    len(new_symbols),
+                    confirmed,
+                    len(new_symbols) - confirmed,
+                )
             return
         evaluated = len(selected)
-        if evaluated == 0:
+        if not self._boot_scanner_population_observed:
             logger.warning(
-                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 confirmed=0 "
-                "reason=empty_current_watchlist; zero restored states is not safety"
+                "[V2-BOOT-RESTORE] restoration_complete=0 scanner_population_observed=0 "
+                "evaluated=%d confirmed=0 rest_warmed=0 "
+                "reason=empty_scanner_snapshot; protected symbols are not scanner evidence",
+                evaluated,
             )
             return
         results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)]
@@ -1682,12 +1707,24 @@ class SchwabV2BotService:
                 evaluated - confirmed,
             )
             return
+        rest_warmed = len(selected & self._rest_warmup_done)
+        if rest_warmed != evaluated:
+            logger.warning(
+                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
+                "rest_warmed=%d warmup_pending=%d; REST replay may still arm reconstructed state",
+                evaluated,
+                confirmed,
+                rest_warmed,
+                evaluated - rest_warmed,
+            )
+            return
         self._boot_state_restoration_complete = True
         logger.info(
-            "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=%d confirmed=%d "
+            "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=%d confirmed=%d rest_warmed=%d "
             "could_not_tell=0",
             evaluated,
             confirmed,
+            rest_warmed,
         )
 
     def _push_desired_symbols(self) -> None:
@@ -1917,6 +1954,7 @@ class SchwabV2BotService:
             # ⛔ The invariant is in the method's own docstring: "MUST run after EVERY replay that
             # can arm a segment." Both the final bar feed and the drain are such replays.
             self._cap_reconstructed_segment(symbol, stage="rest-warmup")
+            self._try_complete_boot_state_restoration(self._watchlist, new_symbols=set())
 
     async def _handle_bar_from_streamer(self, symbol: str, bar: ChartBar) -> None:
         """Streamer callback.
@@ -2335,7 +2373,6 @@ class SchwabV2BotService:
             return True
         if self.session_factory is None:
             return False
-        self._db_seeded.add(symbol)
         try:
             with self.session_factory() as session:
                 rows = (
@@ -2378,50 +2415,51 @@ class SchwabV2BotService:
             )
             return False
         if not rows:
+            self._db_seeded.add(symbol)
             return True
-        for row in reversed(rows):  # ascending (oldest first)
-            bt = row.bar_time
-            if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
-                bt = bt.replace(tzinfo=UTC)
-            ts_ms = int(bt.timestamp() * 1000)
-            self._strategy_on_bar(
-                symbol,
-                ChartBar(
+        try:
+            for row in reversed(rows):  # ascending (oldest first)
+                bt = row.bar_time
+                if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
+                    bt = bt.replace(tzinfo=UTC)
+                ts_ms = int(bt.timestamp() * 1000)
+                self._strategy_on_bar(
                     symbol,
-                    float(row.open_price),
-                    float(row.high_price),
-                    float(row.low_price),
-                    float(row.close_price),
-                    int(row.volume),
-                    ts_ms,
-                ),
-                observation_phase="replay",
+                    ChartBar(
+                        symbol,
+                        float(row.open_price),
+                        float(row.high_price),
+                        float(row.low_price),
+                        float(row.close_price),
+                        int(row.volume),
+                        ts_ms,
+                    ),
+                    observation_phase="replay",
+                )
+            st = self.strategy.watchlist_state(symbol)
+            st.pending_path_macd = False
+            st.pending_path_vwap = False
+            st.pending_cross_bar_ts_ms = 0
+            # P1.3: a CW-v2 segment reconstructed by this replay carries a historical arm_bar_ts
+            # (< boot). Mark it USED so v2 can only enter on flips AFTER boot. The entire replay,
+            # state cleanup and cap are one restoration unit: any failure leaves `_db_seeded`
+            # absent so the next current scanner snapshot retries instead of blessing half-state.
+            self._cap_reconstructed_segment(symbol, stage="db-seed")
+            logger.info(
+                "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",
+                symbol,
+                len(rows),
+                len(st.bars),
             )
-        st = self.strategy.watchlist_state(symbol)
-        st.pending_path_macd = False
-        st.pending_path_vwap = False
-        st.pending_cross_bar_ts_ms = 0
-        # P1.3: a CW-v2 segment reconstructed by this replay carries a historical arm_bar_ts (< boot).
-        # Mark it USED so v2 can only enter on flips AFTER boot — a restart can never re-issue the
-        # per-segment cap (the CPHI class). Flag-gated; costs one legit first-entry on a pre-restart
-        # segment (fail-closed). The boot-hold self-verify catches this failing (segment stays
-        # dangerous => held + paged).
-        # ⛔⭐⭐ NOT LOAD-BEARING — DO NOT TRUST THIS THE WAY THE LAST READER DID (2026-08-18).
-        # It runs HERE, after the replay loop above, so every arm inside `on_bar` has already fired
-        # and stamped. It has failed twice in production:
-        #   * 2026-07-30 REST-warmup path — ran 50ms BEFORE the arm and saw nothing (#619);
-        #   * 2026-08-18 CAST — never ran at all; one [V2-CW-SEED-CAP] all day (WFF), zero
-        #     [V2-BOOT-HOLD], and CAST armed uncapped off a 06-18 bar at flip_level 7.99 vs a
-        #     live price of 1.21.
-        # The gap truncation above is what actually prevents that now, by removing the bad input.
-        # Repair or delete this once the truncation has proven out; until then it is decoration.
-        self._cap_reconstructed_segment(symbol, stage="db-seed")
-        logger.info(
-            "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",
-            symbol,
-            len(rows),
-            len(st.bars),
-        )
+        except Exception:  # noqa: BLE001
+            self._db_seeded.discard(symbol)
+            logger.warning(
+                "schwab_1m_v2 db-seed replay failed for %s; partial replay is not restoration",
+                symbol,
+                exc_info=True,
+            )
+            return False
+        self._db_seeded.add(symbol)
         return True
 
     def _should_skip_rest_strategy_feed(self, symbol: str, bar: ChartBar) -> bool:

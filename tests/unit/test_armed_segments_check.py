@@ -32,7 +32,18 @@ def asc(monkeypatch):
     monkeypatch.setattr(mod, "unit_active", lambda: True)
     monkeypatch.setattr(mod, "safety_flag_on", lambda: True)
     monkeypatch.setattr(mod, "uptime_secs", lambda: 86_400.0)
-    monkeypatch.setattr(mod, "latest_v2_snapshot", lambda: ({"cw_armed_segments": [], "entries_held": False}, 3.0))
+    monkeypatch.setattr(
+        mod,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
     monkeypatch.setattr(mod.sys, "argv", ["armed_segments_check.py"])
     mod._pages = pages
     return mod
@@ -97,10 +108,42 @@ def test_pages_when_boot_hold_outlives_grace(asc, monkeypatch):
     Uptime is ABSOLUTE (1h), not grace-relative: a grace-relative uptime makes this test pass for
     any grace, including one large enough to disable the check.
     """
-    monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": [], "entries_held": True}, 3.0))
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": True,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
     monkeypatch.setattr(asc, "uptime_secs", lambda: 3600.0)
     assert asc.main() == 2
     assert "BOOT-HOLD NEVER RELEASED" in asc._pages[0][0]
+
+
+def test_pages_with_the_real_reason_when_restoration_never_completes(asc, monkeypatch):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": True,
+                "restoration_complete": False,
+            },
+            3.0,
+        ),
+    )
+    monkeypatch.setattr(asc, "uptime_secs", lambda: 3600.0)
+
+    assert asc.main() == 2
+    title, body = asc._pages[0]
+    assert "STATE RESTORATION INCOMPLETE" in title
+    assert "restoration_complete=false" in body
 
 
 def test_boot_hold_within_grace_is_quiet(asc, monkeypatch):

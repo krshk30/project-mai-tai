@@ -156,6 +156,7 @@ def main() -> int:
 
     segments = payload.get("cw_armed_segments") or []
     entries_held = bool(payload.get("entries_held"))
+    restoration_complete = bool(payload.get("restoration_complete"))
     dangerous = [s for s in segments if s.get("dangerous")]
 
     # (1) dangerous: a reconstructed segment survived P1.3's seed-cap. This is the CPHI shape.
@@ -179,10 +180,20 @@ def main() -> int:
                  "the hold cannot be aged. v2 may be silently entry-less. Verify BY HAND.")
             return 2
         if up > BOOT_HOLD_GRACE_SECS:
-            page("🔴 v2 BOOT-HOLD NEVER RELEASED",
-                 f"[armed-segments] entries_held=true {up/60:.1f}min after boot (grace "
-                 f"{BOOT_HOLD_GRACE_SECS/60:.0f}min) with 0 dangerous segments. v2 is taking NO entries "
-                 f"and cannot page about itself. Check [V2-BOOT-HOLD] in the v2 log.")
+            if not restoration_complete:
+                page(
+                    "🔴 v2 STATE RESTORATION INCOMPLETE",
+                    f"[armed-segments] entries_held=true {up/60:.1f}min after boot (grace "
+                    f"{BOOT_HOLD_GRACE_SECS/60:.0f}min), restoration_complete=false, and 0 "
+                    "dangerous segments. The bot has not proved scanner + DB seed + REST warmup "
+                    "complete; absence is not safety. Check [V2-BOOT-RESTORE] by hand.",
+                )
+            else:
+                page("🔴 v2 BOOT-HOLD NEVER RELEASED",
+                     f"[armed-segments] entries_held=true {up/60:.1f}min after boot (grace "
+                     f"{BOOT_HOLD_GRACE_SECS/60:.0f}min) with restoration_complete=true and 0 "
+                     "dangerous segments. v2 is taking NO entries and cannot page about itself. "
+                     "Check [V2-BOOT-HOLD] in the v2 log.")
             return 2
         print(f"OK: entries_held=true but only {up:.0f}s since boot (within {BOOT_HOLD_GRACE_SECS}s grace)")
         return 0

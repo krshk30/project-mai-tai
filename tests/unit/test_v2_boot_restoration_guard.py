@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
+from decimal import Decimal
+from types import SimpleNamespace
 
 from project_mai_tai.events import (
     StrategyStateSnapshotEvent,
@@ -20,7 +23,14 @@ def _bot() -> SchwabV2BotService:
     )
 
 
-def _apply_snapshot(bot: SchwabV2BotService, watchlist: list[str]) -> None:
+def _apply_snapshot(
+    bot: SchwabV2BotService,
+    watchlist: list[str],
+    *,
+    rest_warmed: bool = True,
+) -> None:
+    if rest_warmed:
+        bot._rest_warmup_done.update(watchlist)
     event = StrategyStateSnapshotEvent(
         source_service="strategy-engine",
         payload=StrategyStateSnapshotPayload(watchlist=watchlist),
@@ -97,6 +107,7 @@ def test_current_snapshot_marks_restoration_complete_only_after_seed_replay(
 
 def test_unreadable_restoration_source_cannot_release_empty_state(monkeypatch) -> None:
     bot = _bot()
+    bot.strategy._entries_held = False
     monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: False)
     _apply_snapshot(bot, ["DAIC"])
     bot._cw_boot_hold_check()
@@ -114,6 +125,7 @@ def test_empty_current_watchlist_cannot_vacuously_complete_restoration(
     but that population contains nothing whose restoration was checked.
     """
     bot = _bot()
+    bot.strategy._entries_held = False
     monkeypatch.setattr(bot.strategy, "cw_armed_segments", lambda: [])
 
     with caplog.at_level(logging.DEBUG):
@@ -122,7 +134,26 @@ def test_empty_current_watchlist_cannot_vacuously_complete_restoration(
 
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
-    assert "restoration_complete=0 evaluated=0 confirmed=0" in caplog.text
+    assert "restoration_complete=0 scanner_population_observed=0" in caplog.text
+
+
+def test_empty_scanner_with_held_symbol_is_not_a_nonempty_restoration_population(
+    monkeypatch,
+) -> None:
+    """B1: protected/held union must not launder a live scanner count=0 snapshot."""
+    bot = _bot()
+    bot.strategy._entries_held = False
+    monkeypatch.setattr(bot, "_protected_symbols", lambda: {"CYN2"})
+    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
+    bot._rest_warmup_done.add("CYN2")
+
+    _apply_snapshot(bot, [])
+    bot._cw_boot_hold_check()
+
+    assert bot._watchlist == {"CYN2"}
+    assert bot._boot_scanner_population_observed is False
+    assert bot._boot_state_restoration_complete is False
+    assert bot.strategy._entries_held is True
 
 
 def test_completed_restoration_is_a_one_way_latch_across_empty_refresh(
@@ -145,6 +176,25 @@ def test_completed_restoration_is_a_one_way_latch_across_empty_refresh(
     assert bot.strategy._entries_held is False
 
 
+def test_completed_restoration_is_one_way_across_nonempty_failed_addition(
+    monkeypatch,
+) -> None:
+    """B2/M13: a later non-empty seed failure cannot reassign the completed boot fact."""
+    bot = _bot()
+    results = iter([True, False])
+    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: next(results))
+    monkeypatch.setattr(bot.strategy, "cw_armed_segments", lambda: [])
+
+    _apply_snapshot(bot, ["DAIC"])
+    assert bot._boot_state_restoration_complete is True
+
+    _apply_snapshot(bot, ["YYGH"])
+    bot._cw_boot_hold_check()
+
+    assert bot._boot_state_restoration_complete is True
+    assert bot.strategy._entries_held is False
+
+
 def test_same_watchlist_retries_unreadable_restoration_until_confirmed(
     monkeypatch,
 ) -> None:
@@ -157,3 +207,106 @@ def test_same_watchlist_retries_unreadable_restoration_until_confirmed(
 
     _apply_snapshot(bot, ["DAIC"])
     assert bot._boot_state_restoration_complete is True
+
+
+def test_db_seed_is_not_enough_until_rest_warmup_finishes(monkeypatch) -> None:
+    """B3: REST replay can arm after DB seed; it is part of the release precondition."""
+    bot = _bot()
+    bot.strategy._entries_held = False
+    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
+
+    _apply_snapshot(bot, ["DAIC"], rest_warmed=False)
+    bot._cw_boot_hold_check()
+    assert bot._boot_state_restoration_complete is False
+    assert bot.strategy._entries_held is True
+
+    bot._rest_warmup_done.add("DAIC")
+    bot._try_complete_boot_state_restoration(bot._watchlist, new_symbols=set())
+    bot._cw_boot_hold_check()
+    assert bot._boot_state_restoration_complete is True
+    assert bot.strategy._entries_held is False
+
+
+def test_pre_restoration_hold_warning_is_rate_limited(monkeypatch, caplog) -> None:
+    bot = _bot()
+    bot.strategy._entries_held = False
+    moments = iter([100.0, 105.0, 161.0])
+    monkeypatch.setattr(
+        "project_mai_tai.services.schwab_1m_v2_bot.time.monotonic",
+        lambda: next(moments),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        bot._cw_boot_hold_check()
+        bot._cw_boot_hold_check()
+        bot._cw_boot_hold_check()
+
+    held = [record for record in caplog.records if "[V2-BOOT-HOLD] HELD" in record.message]
+    assert len(held) == 2
+    assert bot.strategy._entries_held is True
+
+
+class _SeedSession:
+    def __init__(self, rows, *, fail_query: bool = False) -> None:
+        self.rows = rows
+        self.fail_query = fail_query
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, *_args, **_kwargs):
+        if self.fail_query:
+            raise RuntimeError("db unavailable")
+        return SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: list(self.rows))
+        )
+
+
+def _seed_row() -> SimpleNamespace:
+    return SimpleNamespace(
+        bar_time=datetime(2026, 8, 27, 14, 0, tzinfo=UTC),
+        open_price=Decimal("1"),
+        high_price=Decimal("1"),
+        low_price=Decimal("1"),
+        close_price=Decimal("1"),
+        volume=100,
+    )
+
+
+def test_real_seed_path_confirmed_empty_is_success() -> None:
+    bot = _bot()
+    bot.session_factory = lambda: _SeedSession([])
+
+    assert bot._seed_strategy_bars_from_db("EMPTY") is True
+    assert "EMPTY" in bot._db_seeded
+
+
+def test_real_seed_path_missing_session_and_query_failure_are_not_success() -> None:
+    bot = _bot()
+    bot.session_factory = None
+    assert bot._seed_strategy_bars_from_db("NONE") is False
+    assert "NONE" not in bot._db_seeded
+
+    bot.session_factory = lambda: _SeedSession([], fail_query=True)
+    assert bot._seed_strategy_bars_from_db("FAIL") is False
+    assert "FAIL" not in bot._db_seeded
+
+
+def test_real_seed_path_replay_failure_is_retryable_not_half_restored(monkeypatch) -> None:
+    bot = _bot()
+    rows = [_seed_row()]
+    bot.session_factory = lambda: _SeedSession(rows)
+    monkeypatch.setattr(bot, "_truncate_seed_rows_at_gap", lambda _session, _symbol, got: got)
+    monkeypatch.setattr(bot, "_strategy_on_bar", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("replay failed")
+    ))
+
+    assert bot._seed_strategy_bars_from_db("HALF") is False
+    assert "HALF" not in bot._db_seeded
+
+    monkeypatch.setattr(bot, "_strategy_on_bar", lambda *_args, **_kwargs: None)
+    assert bot._seed_strategy_bars_from_db("HALF") is True
+    assert "HALF" in bot._db_seeded
