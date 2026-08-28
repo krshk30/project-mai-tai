@@ -35,7 +35,7 @@ close-out.** No freeze, no manifest, no promote. The day is still running.
 
 ---
 
-# ⭐⭐ WHAT SHIPPED TODAY — 11 PRs MERGED, and NONE of the live-money work is proven
+# ⭐⭐ WHAT SHIPPED TODAY — 11 MERGED AND DEPLOYED (as of 18:55 ET), none of it proven
 
 | PR | what | exercised? |
 |---|---|---|
@@ -49,11 +49,15 @@ close-out.** No freeze, no manifest, no promote. The day is still running.
 | #826 | EOD slot reporting: COULD_NOT_TELL instead of a false `0.0%` | ✅ installed, hashes `113b86ec` |
 | #831 | EOD cron wrapper adopted byte-for-byte then hardened | ✅ **installer ran 17:11 ET**, root-owned, executable, in root cron |
 
-⛔ **The count is MERGED PRs, not reviewed ones.** 11 merged: #824 #825 #826 #829 #830 #831
-#832 #833 #834 #835 #836. Separately, **#827 and #828 were reviewed and BLOCKED** (7 and 6
-rounds), and **#838** was reviewed and pinned but not merged. ⚠ An earlier draft of this file
-said "13 shipped" by conflating review work with shipped work; `codex-2` caught it against
-main. **State which population a count is over.**
+⛔ **The count is MERGED-AND-DEPLOYED PRs, not reviewed ones.** The 11 above are on the box.
+**#838 is a 12th merge** (`a44c894a`) but is **tests and CI only — nothing to deploy**, which is
+why it sits outside this table. **#827 and #828 were reviewed and BLOCKED** (7 and 6 rounds).
+⇒ **12 merged today, 11 deployed, 2 blocked.**
+
+⚠ **This line has now been wrong twice.** First it said "13 shipped", conflating review work with
+shipped work — `codex-2` caught it against main. Then the correction itself went stale ninety
+minutes later when #838 merged. ⭐ **A count is only true as of a timestamp; write the population
+AND the as-of, or it rots.**
 
 ⛔ **Say `UNEXERCISED`, never a bare zero.** A quiet log tomorrow is not evidence for any of these.
 
