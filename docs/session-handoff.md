@@ -33,7 +33,7 @@ close-out.** No freeze, no manifest, no promote. The day is still running.
 
 ---
 
-# ⭐⭐ WHAT SHIPPED TODAY — 13 PRs, and NONE of the live-money work is proven
+# ⭐⭐ WHAT SHIPPED TODAY — 11 PRs MERGED, and NONE of the live-money work is proven
 
 | PR | what | exercised? |
 |---|---|---|
@@ -46,6 +46,12 @@ close-out.** No freeze, no manifest, no promote. The day is still running.
 | #834 + #836 | monotonic snapshot ordering + its composite index | ✅ active immediately |
 | #826 | EOD slot reporting: COULD_NOT_TELL instead of a false `0.0%` | ✅ installed, hashes `113b86ec` |
 | #831 | EOD cron wrapper adopted byte-for-byte then hardened | ⚠ **installer NOT yet run** |
+
+⛔ **The count is MERGED PRs, not reviewed ones.** 11 merged: #824 #825 #826 #829 #830 #831
+#832 #833 #834 #835 #836. Separately, **#827 and #828 were reviewed and BLOCKED** (7 and 6
+rounds), and **#838** was reviewed and pinned but not merged. ⚠ An earlier draft of this file
+said "13 shipped" by conflating review work with shipped work; `codex-2` caught it against
+main. **State which population a count is over.**
 
 ⛔ **Say `UNEXERCISED`, never a bare zero.** A quiet log tomorrow is not evidence for any of these.
 
@@ -144,7 +150,7 @@ provisions no Postgres. Three leaks pass 2,671 tests today by moving *above* the
 
 # 🔴 WATCH TOMORROW
 
-1. **`review-pin-audit` 06:15 UTC must be GREEN** — 13 pins were recorded today.
+1. **`review-pin-audit` 06:15 UTC must be GREEN** — 12 pins were recorded today (the 11 merged plus #838).
 2. **`cw_entry_slot` coverage as a fraction.** Today's denominator: **0 of 239 Schwab, 0 of 301
    Webull** BUY fills. Any non-zero numerator is the first gradeable composition reading ever.
 3. **`[VIRTUAL-CLEAR-DEFERRED] deferred=N of unbacked_positive=M`** — the deferred-then-restored vs
