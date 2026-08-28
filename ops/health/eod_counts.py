@@ -26,6 +26,7 @@ zero and not a historical composition grade.
 Read-only. Touches no order path.
 """
 import argparse
+import gzip
 import statistics
 import sys
 from datetime import datetime, timedelta, timezone
@@ -55,7 +56,7 @@ _FILLED_INTENTS_CTE = """
         JOIN broker_accounts ba ON ba.id=ti.broker_account_id
         JOIN broker_orders bo ON bo.intent_id=ti.id
         JOIN fills f ON f.order_id=bo.id AND f.side='buy'
-        WHERE s.code='schwab_1m_v2' AND ti.intent_type='open' AND ti.status='filled'
+        WHERE s.code='schwab_1m_v2' AND ti.intent_type='open'
           AND ba.name=%s AND f.filled_at>=%s AND f.filled_at<%s
         GROUP BY ti.id,
                  LOWER(BTRIM(COALESCE(ti.payload->'metadata'->>'cw_entry_slot',''))),
@@ -70,6 +71,55 @@ def pct(a, b):
 
 def median(xs):
     return statistics.median(xs) if xs else None
+
+
+def _historical_log_verdict(start_utc, end_utc):
+    """Grade whether retained service logs can support the live-arm denominator."""
+    injected = getattr(parse_segments, "historical_log_verdict", None)
+    if injected is not None:
+        return str(injected)
+    source_globals = getattr(parse_segments, "__globals__", {})
+    resolver = source_globals.get("logs_in_window")
+    pattern = source_globals.get("V2_LOG_GLOB")
+    if not callable(resolver) or not isinstance(pattern, str):
+        return "COULD_NOT_TELL"
+    try:
+        paths = list(resolver(pattern, start_utc))
+    except Exception:  # noqa: BLE001 - evidence failure downgrades the report
+        return "UNREADABLE"
+    if not paths:
+        return "MISSING_OR_ROTATED"
+    readable = 0
+    unreadable = 0
+    window_lines = 0
+    arm_markers = 0
+    for path in paths:
+        opener = gzip.open if str(path).endswith(".gz") else open
+        try:
+            with opener(path, "rt", encoding="utf-8", errors="replace") as handle:
+                readable += 1
+                for line in handle:
+                    try:
+                        observed = datetime.strptime(line[:19], "%Y-%m-%d %H:%M:%S").replace(
+                            tzinfo=timezone.utc
+                        )
+                    except ValueError:
+                        continue
+                    if start_utc <= observed < end_utc:
+                        window_lines += 1
+                        if "[V2-CW-ARM]" in line:
+                            arm_markers += 1
+        except (OSError, UnicodeError):
+            unreadable += 1
+    if readable == 0:
+        return "UNREADABLE"
+    if unreadable:
+        return "PARTIAL_UNREADABLE"
+    if window_lines == 0:
+        return "MISSING_OR_ROTATED"
+    if arm_markers == 0:
+        return "AVAILABLE_NO_MARKERS"
+    return "AVAILABLE"
 
 
 def _emit_verdict(line: str) -> None:
@@ -118,6 +168,7 @@ def format_first_slot_rate(
     attributed: int,
     total: int,
     reconciled_total: int | None = None,
+    historical_log_verdict: str = "AVAILABLE",
 ) -> str:
     """Render a numeric zero only when both its denominator and slot evidence are gradeable."""
     coverage = format_slot_coverage(
@@ -133,6 +184,11 @@ def format_first_slot_rate(
         )
     if live_arms == 0:
         return f"{prefix} -- COULD_NOT_TELL (denominator=0; rate is not zero)"
+    if historical_log_verdict not in {"AVAILABLE", "AVAILABLE_NO_MARKERS"}:
+        return (
+            f"{prefix} -- COULD_NOT_TELL "
+            f"(historical_log_verdict={historical_log_verdict}; numeric rate withheld)"
+        )
     if (
         total == 0
         or attributed != total
@@ -182,17 +238,24 @@ def main():
 
     # ---------- crosses: LIVE arms only ----------
     segs = parse_segments(s_utc, e_utc)
+    historical_log_verdict = _historical_log_verdict(s_utc, e_utc)
+    historical_log_gradeable = historical_log_verdict in {
+        "AVAILABLE",
+        "AVAILABLE_NO_MARKERS",
+    }
     replay_raw = getattr(parse_segments, "replay_skipped", None)
     replay = int(replay_raw) if isinstance(replay_raw, int) and replay_raw >= 0 else None
     replay_label = str(replay) if replay is not None else "COULD_NOT_TELL"
     enterable = [s for s in segs if s["enterable"]]
     print("\n-- CROSSES (denominator = LIVE arms; warmup replay excluded) --")
     print(
-        "   live arms=%d   warmup-replay arms excluded=%s   in entry window=%d"
+        "   live arms=%d   warmup-replay arms excluded=%s   in entry window=%d "
+        "historical_log_verdict=%s"
         % (
             len(segs),
             replay if replay is not None else "COULD_NOT_TELL (counter absent)",
             len(enterable),
+            historical_log_verdict,
         )
     )
 
@@ -237,9 +300,9 @@ def main():
         if intent_id is not None:
             fill_intent_ids.add(intent_id)
     detailed_entries = len(fill_intent_ids)
-    populations_reconcile = detailed_entries == total_entries
+    populations_consistent = detailed_entries == total_entries
     slot_gradeable = (
-        populations_reconcile
+        populations_consistent
         and total_entries > 0
         and attributed_n == total_entries
     )
@@ -251,14 +314,11 @@ def main():
         total_entries,
         reconciled_total=detailed_entries,
     ))
-    print(
-        "   filled-intent population slot_counts=%d detail_rows=%d verdict=%s"
-        % (
-            total_entries,
-            detailed_entries,
-            "RECONCILED" if populations_reconcile else "COULD_NOT_TELL",
+    if not populations_consistent:
+        print(
+            "   two-read population changed slot_counts=%d detail_rows=%d -- COULD_NOT_TELL"
+            % (total_entries, detailed_entries)
         )
-    )
 
     # ---------- the corrected first-slot rate ----------
     print("\n-- FIRST-SLOT FILL RATE, PER LIVE ARM (not per placement) --")
@@ -268,13 +328,19 @@ def main():
         attributed=attributed_n,
         total=total_entries,
         reconciled_total=detailed_entries,
+        historical_log_verdict=historical_log_verdict,
     ))
 
     # ---------- no-entry crosses ----------
     no_entry = [s for s in enterable
                 if not any(s["start"] - timedelta(minutes=15) <= t < s["end"]
                            for t in fills_by_sym.get(s["sym"], []))]
-    no_entry_gradeable = bool(enterable) and replay is not None
+    no_entry_gradeable = (
+        bool(enterable)
+        and replay is not None
+        and historical_log_gradeable
+        and slot_gradeable
+    )
     print("\n-- NO-ENTRY CROSSES (live, in-window) --")
     if no_entry_gradeable:
         print(
@@ -284,8 +350,8 @@ def main():
     elif enterable:
         print(
             "   %d of %d apparent live in-window crosses -- COULD_NOT_TELL "
-            "(warmup-replay exclusion counter absent)"
-            % (len(no_entry), len(enterable))
+            "(slot/log/replay evidence incomplete; historical_log_verdict=%s)"
+            % (len(no_entry), len(enterable), historical_log_verdict)
         )
     else:
         print(
@@ -334,7 +400,7 @@ def main():
         account_trips = [(sym, value) for acct, sym, value in trips if acct == account]
         ambiguous = ambiguous_by_account.get(account, 0)
         invalid_price = invalid_by_account.get(account, 0)
-        if invalid_price or (not account_trips and ambiguous):
+        if invalid_price or ambiguous:
             account_verdict = "COULD_NOT_TELL"
         elif account_trips:
             account_verdict = "GRADEABLE"
@@ -373,22 +439,28 @@ def main():
         slot_gradeable
         and bool(enterable)
         and replay is not None
+        and historical_log_gradeable
         and first_n <= len(enterable)
     )
+    ambiguous_total = sum(ambiguous_by_account.values())
+    invalid_price_total = sum(invalid_by_account.values())
 
     print("\n" + "=" * 78)
     _emit_verdict("VERDICT eod day=%s entry_close_et=%s entry_close_source=%s "
-          "live_arms=%d replay_excluded=%s entries=%d "
+          "live_arms=%d historical_log_verdict=%s replay_excluded=%s entries=%d "
           "(first=%d reclaim=%d unattributed=%d) slot_coverage=%d/%d "
           "slot_population=%d/%d slot_verdict=%s first_rate_verdict=%s "
-          "no_entry=%d no_entry_verdict=%s trips=%d trips_verdict=%s"
-        % (a.day, entry_close_label, ENTRY_CLOSE_SOURCE, len(segs), replay_label,
+          "no_entry=%d no_entry_verdict=%s trips=%d ambiguous=%d invalid_price=%d "
+          "trips_verdict=%s"
+        % (a.day, entry_close_label, ENTRY_CLOSE_SOURCE, len(segs), historical_log_verdict,
+             replay_label,
              total_entries, first_n, reclaim_n, unattributed_n,
              attributed_n, total_entries,
              total_entries, detailed_entries,
              "GRADEABLE" if slot_gradeable else "COULD_NOT_TELL",
              "GRADEABLE" if first_rate_gradeable else "COULD_NOT_TELL",
-             len(no_entry), no_entry_verdict, len(trips), trips_verdict))
+             len(no_entry), no_entry_verdict, len(trips), ambiguous_total,
+             invalid_price_total, trips_verdict))
     return 0
 
 

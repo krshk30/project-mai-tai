@@ -14,7 +14,14 @@ import pytest
 SCRIPT = Path(__file__).parents[2] / "ops" / "health" / "eod_counts.py"
 
 
-def _load_script(monkeypatch, *, segments: list[dict], query, replay_skipped: int | None = 0):
+def _load_script(
+    monkeypatch,
+    *,
+    segments: list[dict],
+    query,
+    replay_skipped: int | None = 0,
+    historical_log_verdict: str = "AVAILABLE",
+):
     check = ModuleType("check")
     check.ET = ZoneInfo("America/New_York")
     check.LIVE_ARM_MAX_AGE_SECS = 600
@@ -28,6 +35,7 @@ def _load_script(monkeypatch, *, segments: list[dict], query, replay_skipped: in
         return list(segments)
 
     check.parse_segments = parse_segments
+    parse_segments.historical_log_verdict = historical_log_verdict
     check.q = query
     monkeypatch.setitem(sys.modules, "check", check)
 
@@ -83,8 +91,8 @@ def test_entry_split_reads_explicit_economic_slot_not_order_style(
     assert "= 200.0%" not in output
     assert "entries=4 (first=2 reclaim=1 unattributed=1)" in output
     assert "slot_coverage=3/4 slot_population=4/4 slot_verdict=COULD_NOT_TELL" in output
-    assert "no_entry=0 no_entry_verdict=GRADEABLE" in output
-    assert "trips=0 trips_verdict=UNEXERCISED" in output
+    assert "no_entry=0 no_entry_verdict=COULD_NOT_TELL" in output
+    assert "trips=0 ambiguous=0 invalid_price=0 trips_verdict=UNEXERCISED" in output
     assert "resting=" not in output
     assert "reactive=" not in output
 
@@ -111,7 +119,7 @@ def test_zero_entries_names_the_zero_denominator(monkeypatch, capsys) -> None:
     assert "entries=0 (first=0 reclaim=0 unattributed=0)" in output
     assert "slot_coverage=0/0 slot_population=0/0 slot_verdict=COULD_NOT_TELL" in output
     assert "no_entry=0 no_entry_verdict=COULD_NOT_TELL" in output
-    assert "trips=0 trips_verdict=UNEXERCISED" in output
+    assert "trips=0 ambiguous=0 invalid_price=0 trips_verdict=UNEXERCISED" in output
 
 
 def test_zero_slot_coverage_with_filled_population_is_could_not_tell(
@@ -292,10 +300,50 @@ def test_slot_and_detail_queries_share_the_exact_filled_intent_population(
         "bo.intent_id=ti.id",
         "f.order_id=bo.id AND f.side='buy'",
         "ti.intent_type='open'",
-        "ti.status='filled'",
         "f.filled_at>=%s AND f.filled_at<%s",
     ):
         assert predicate in slot_cte
+    assert "ti.status='filled'" not in slot_cte
+
+
+def test_partial_fill_then_cancelled_intent_remains_in_the_filled_population(
+    monkeypatch, capsys
+) -> None:
+    start = datetime(2026, 8, 27, 14, 0, tzinfo=timezone.utc)
+    segments = [
+        {
+            "sym": symbol,
+            "start": start + timedelta(minutes=index * 10),
+            "end": start + timedelta(minutes=(index + 1) * 10),
+            "trig": 3.0,
+            "flip": 2.9,
+            "enterable": True,
+        }
+        for index, symbol in enumerate(("AAA", "BBB", "CCC", "DDD"))
+    ]
+
+    def query(sql, _params):
+        if "/* eod:slot-counts */" in sql:
+            assert "ti.status='filled'" not in sql
+            return [("first", 3), ("reclaim", 1)]
+        if "/* eod:filled-intents */" in sql:
+            assert "ti.status='filled'" not in sql
+            return [
+                (segment["sym"], segment["start"] + timedelta(minutes=1), f"intent-{i}")
+                for i, segment in enumerate(segments)
+            ]
+        if "SELECT ba.name, f.symbol" in sql:
+            return []
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    module = _load_script(monkeypatch, segments=segments, query=query)
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--day", "2026-08-27"])
+
+    assert module.main() == 0
+    output = capsys.readouterr().out
+    assert "first=3  reclaim=1  unattributed=0  total=4" in output
+    assert "3 attributed first-slot fills / 4 live in-window arms = 75.0%" in output
+    assert "no_entry=0 no_entry_verdict=GRADEABLE" in output
 
 
 def test_even_population_uses_arithmetic_median(monkeypatch) -> None:
@@ -355,7 +403,7 @@ def test_zero_enterable_crosses_names_denominator(monkeypatch, capsys) -> None:
     assert "no_entry=0 no_entry_verdict=COULD_NOT_TELL" in output
 
 
-def test_entry_and_fill_population_disagreement_degrades_only_slot_section(
+def test_entry_and_fill_population_disagreement_degrades_dependent_no_entry_section(
     monkeypatch, capsys
 ) -> None:
     start = datetime(2026, 8, 27, 14, 0, tzinfo=timezone.utc)
@@ -386,13 +434,13 @@ def test_entry_and_fill_population_disagreement_degrades_only_slot_section(
     output = capsys.readouterr().out
 
     assert "filled-intent populations disagree: slot_counts=6 detail_rows=0" in output
-    assert "filled-intent population slot_counts=6 detail_rows=0 verdict=COULD_NOT_TELL" in output
+    assert "two-read population changed slot_counts=6 detail_rows=0 -- COULD_NOT_TELL" in output
     assert "slot_population=6/0 slot_verdict=COULD_NOT_TELL" in output
     assert "-- NO-ENTRY CROSSES" in output
-    assert "1 of 1 live in-window crosses produced no Schwab entry" in output
-    assert "no_entry=1 no_entry_verdict=GRADEABLE" in output
+    assert "1 of 1 apparent live in-window crosses -- COULD_NOT_TELL" in output
+    assert "no_entry=1 no_entry_verdict=COULD_NOT_TELL" in output
     assert "-- CLOSED ROUND TRIPS" in output
-    assert "trips=0 trips_verdict=UNEXERCISED" in output
+    assert "trips=0 ambiguous=0 invalid_price=0 trips_verdict=UNEXERCISED" in output
 
 
 def test_terminal_verdict_prints_even_when_a_late_section_raises(
@@ -468,7 +516,99 @@ def test_round_trip_medians_are_split_by_broker_account(monkeypatch, capsys) -> 
     assert "account=live:orb n=1" in output
     assert "MEDIAN -20.00%" in output
     assert "MEDIAN -5.00%" not in output
-    assert "trips=2 trips_verdict=GRADEABLE" in output
+    assert "trips=2 ambiguous=0 invalid_price=0 trips_verdict=GRADEABLE" in output
+
+
+def test_any_ambiguous_round_trip_downgrades_even_with_a_valid_pair(
+    monkeypatch, capsys
+) -> None:
+    def query(sql, _params):
+        if "/* eod:slot-counts */" in sql or "/* eod:filled-intents */" in sql:
+            return []
+        if "SELECT ba.name, f.symbol" in sql:
+            return [
+                ("live:orb", "VALID", "buy", 1, 10.0, None),
+                ("live:orb", "VALID", "sell", 1, 11.0, None),
+                ("live:orb", "AMBIG", "buy", 2, 10.0, None),
+                ("live:orb", "AMBIG", "sell", 1, 11.0, None),
+            ]
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    module = _load_script(monkeypatch, segments=[], query=query)
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--day", "2026-08-27"])
+
+    assert module.main() == 0
+    output = capsys.readouterr().out
+    assert "account=live:orb n=1 ambiguous=1 invalid_price=0 verdict=COULD_NOT_TELL" in output
+    assert "trips=1 ambiguous=1 invalid_price=0 trips_verdict=COULD_NOT_TELL" in output
+
+
+def test_missing_or_rotated_log_downgrades_live_arm_dependent_verdicts(
+    monkeypatch, capsys
+) -> None:
+    start = datetime(2026, 8, 27, 14, 0, tzinfo=timezone.utc)
+    segments = [
+        {
+            "sym": "CELU",
+            "start": start,
+            "end": start + timedelta(minutes=30),
+            "trig": 3.0,
+            "flip": 2.9,
+            "enterable": True,
+        }
+    ]
+
+    def query(sql, _params):
+        if "/* eod:slot-counts */" in sql:
+            return [("first", 1)]
+        if "/* eod:filled-intents */" in sql:
+            return [("CELU", start + timedelta(minutes=5), "intent-1")]
+        if "SELECT ba.name, f.symbol" in sql:
+            return []
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    module = _load_script(
+        monkeypatch,
+        segments=segments,
+        query=query,
+        historical_log_verdict="MISSING_OR_ROTATED",
+    )
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--day", "2026-08-27"])
+
+    assert module.main() == 0
+    output = capsys.readouterr().out
+    assert "historical_log_verdict=MISSING_OR_ROTATED" in output
+    assert "numeric rate withheld" in output
+    assert "1 attributed first-slot fills / 1 live in-window arms = 100.0%" not in output
+    assert "first_rate_verdict=COULD_NOT_TELL" in output
+    assert "no_entry=0 no_entry_verdict=COULD_NOT_TELL" in output
+
+
+def test_historical_log_verdict_distinguishes_missing_from_readable_no_markers(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_script(monkeypatch, segments=[], query=lambda _sql, _params: [])
+    delattr(module.parse_segments, "historical_log_verdict")
+    start = datetime(2026, 8, 27, 0, 0, tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
+    source_globals = module.parse_segments.__globals__
+    monkeypatch.setitem(source_globals, "V2_LOG_GLOB", str(tmp_path / "v2.log*"))
+    monkeypatch.setitem(source_globals, "logs_in_window", lambda _pattern, _start: [])
+
+    assert module._historical_log_verdict(start, end) == "MISSING_OR_ROTATED"
+
+    log_path = tmp_path / "v2.log"
+    log_path.write_text(
+        "2026-08-27 12:00:00,000 INFO heartbeat without an arm marker\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(
+        source_globals,
+        "logs_in_window",
+        lambda _pattern, _start: [str(log_path)],
+    )
+
+    assert module._historical_log_verdict(start, end) == "AVAILABLE_NO_MARKERS"
 
 
 def test_settings_failure_is_inside_terminal_verdict_protection(
