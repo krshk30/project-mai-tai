@@ -3,19 +3,21 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-08-28 17:14 ET.** ⚠ **This is a MID-SESSION INSURANCE SNAPSHOT, not a
+**Written by `claude-1`, 2026-08-28 17:14 ET; corrected 18:55 ET.** ⚠ **This is a MID-SESSION INSURANCE SNAPSHOT, not a
 close-out.** No freeze, no manifest, no promote. The day is still running.
 
 ---
 
-# PRODUCTION — main and box IN SYNC
+# PRODUCTION — main is AHEAD of box by one test-only PR
 
 | | |
 |---|---|
-| main / box | **`69d622783e56030b8075169cc2100c8f721a0dbd`** |
+| main | **`a44c894a5b4ad531c5d008e9f309397bf1d62506`** |
+| box | **`69d622783e56030b8075169cc2100c8f721a0dbd`** |
+| the gap | ⭐ **#838 only — `tests/integration/` + `validate.yml`. Nothing to deploy.** ⛔ Do not read this as a pending release |
 | checkout | clean |
 | alembic head | **`20260828_0016`** — first migration in weeks; `ix_dashboard_snapshots_type_created_id_desc` confirmed present |
-| open PRs | **2 — #827 and #828, both BLOCKED.** Everything else merged |
+| open PRs | **3 — #827 and #828 BLOCKED, #837 (this doc) behind.** Everything else merged |
 
 **PIDs as of 17:14 ET. `NRestarts=0` on every unit.**
 
@@ -45,7 +47,7 @@ close-out.** No freeze, no manifest, no promote. The day is still running.
 | #833 + #835 | Schwab reports carry `origin=broker`; per-site controls | partial — see the reach limit below |
 | #834 + #836 | monotonic snapshot ordering + its composite index | ✅ active immediately |
 | #826 | EOD slot reporting: COULD_NOT_TELL instead of a false `0.0%` | ✅ installed, hashes `113b86ec` |
-| #831 | EOD cron wrapper adopted byte-for-byte then hardened | ⚠ **installer NOT yet run** |
+| #831 | EOD cron wrapper adopted byte-for-byte then hardened | ✅ **installer ran 17:11 ET**, root-owned, executable, in root cron |
 
 ⛔ **The count is MERGED PRs, not reviewed ones.** 11 merged: #824 #825 #826 #829 #830 #831
 #832 #833 #834 #835 #836. Separately, **#827 and #828 were reviewed and BLOCKED** (7 and 6
@@ -87,10 +89,18 @@ a sticky once-ever flag → the pager. Round 7 killed 12 of 12 requested mutants
 ## #828 — D6 scheduler (round 6)
 
 Six rounds of fixing named mutants; each time a one-token variation survived.
-⭐⭐ **Root cause: the SQL is never executed against a database anywhere in this project.** CI
-provisions no Postgres. Three leaks pass 2,671 tests today by moving *above* the anchored tail.
+⭐⭐ **The root cause is now FIXED, and not in this PR.** It was that *the SQL was never executed
+against a database anywhere in this project* — so a text check was the only proof available, and a
+text check is always one edit behind. **PR #838 merged that gap shut** (`a44c894a`): CI now runs a
+real PostgreSQL 16, and the three known leaks plus three novel spellings die on a **runtime
+row-count assertion**, not a string anchor.
 
-**⇒ OPERATOR DECISION 2026-08-28: option A — build a differential SQL test harness.**
+⇒ **#828 is rebased onto the harness at `1df67270`. Its window argument is over.**
+⛔ **Its OTHER blockers stand and are untouched by the harness:** five installer guard lines tested
+only at `:44` (`:18`, `:42`, `:43`, `:61`, `:87` all survive `|| true` at the call site, and `:42`
+survives outright deletion); `install_…sh:9 target_dir` unpinned for a third round; and the
+`_denominator_contract` needles unexercised — emptying the `refused_exits` tuple leaves the suite
+green while a report with no `post_exit_episodes=` denominator is accepted as `denominators=present`.
 
 ---
 
@@ -99,6 +109,12 @@ provisions no Postgres. Three leaks pass 2,671 tests today by moving *above* the
 > A syntactic check must enumerate every phrasing of a mistake; a differential test asks the
 > database **once**. **Six rounds of text-checking a leak is the tell, not the cost.**
 > Same lesson as `-c` versus `-f -`, and as #772: **you cannot statically prove a runtime property.**
+
+✅ **DELIVERED — PR #838, merged `a44c894a`.** Verified by execution against a real PostgreSQL
+16.4. Three known leaks and three *novel* spellings all die at runtime.
+⛔ **But the green is NARROWER than it looks:** `target_refused`, `target_mirror_symbols`,
+`target_matched_orders` and identity's `order_rows` read populations that are **empty in the seed**
+— they are **UNEXERCISED, not passing**, and that is stated in `tests/integration/README.md`.
 
 **Scope, operator-set:**
 
@@ -111,7 +127,7 @@ provisions no Postgres. Three leaks pass 2,671 tests today by moving *above* the
   **differ**. A test where both rows return the same thing proves nothing — the fixture trap.
 - ⛔ **Import the module's real `SQL`**, never a copy. A copied query drifts, and then the test
   proves a string nobody runs.
-- CI has no `services:` block today. `tests/integration/` already exists — put it there.
+- CI had no `services:` block. `tests/integration/` already existed — it went there. ✅ done
 
 ---
 
@@ -141,7 +157,7 @@ provisions no Postgres. Three leaks pass 2,671 tests today by moving *above* the
   visibly holding, where a cross-venue position map would not have helped.
 - **A2 slot-scope count: ≥2 extra entries over 10 sessions** — ⛔ a **floor, not an estimate**;
   replay stops at the first fill per symbol-day, so the ceiling is unknown.
-- ⛔ **If #828 ever lands, its installer must run in the SAME window** — `fleet_health_cron.sh` runs
+- ⛔ **When #828 lands, its installer must run in the SAME window** — `fleet_health_cron.sh` runs
   the checker straight from the checkout, so the D6 freshness check arms on repo sync and pages RED.
 - **No watchdog exists for "cron never fired."** A dead cron and a weekend are indistinguishable.
 - **S0: the DB credential exposed in a task transcript on 08-26 is still unrotated.** Owner: operator.
