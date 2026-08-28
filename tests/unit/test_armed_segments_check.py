@@ -61,7 +61,18 @@ def test_green_on_live_healthy_state(asc, monkeypatch):
     """Reproduces the real 2026-07-17 snapshot: 4 armed, 3 capped, none reconstructed."""
     segs = [_seg("IQST", entries=1, capped=True), _seg("DXST", entries=1, capped=True),
             _seg("LBGJ"), _seg("ASTN", entries=1, capped=True)]
-    monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": segs, "entries_held": False}, 3.0))
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": segs,
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
     assert asc.main() == 0
     assert asc._pages == []
 
@@ -80,7 +91,18 @@ def test_pages_on_dangerous_segment(asc, monkeypatch):
 def test_reconstructed_but_capped_is_not_dangerous(asc, monkeypatch):
     """P1.3 doing its job is not a fault. Only reconstructed AND uncapped pages."""
     segs = [_seg("CPHI", entries=1, capped=True, reconstructed=True, dangerous=False)]
-    monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": segs, "entries_held": False}, 3.0))
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": segs,
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
     assert asc.main() == 0
     assert asc._pages == []
 
@@ -144,6 +166,26 @@ def test_pages_with_the_real_reason_when_restoration_never_completes(asc, monkey
     title, body = asc._pages[0]
     assert "STATE RESTORATION INCOMPLETE" in title
     assert "restoration_complete=false" in body
+
+
+def test_pages_when_entries_are_released_before_restoration_completes(asc, monkeypatch):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": False,
+                "restoration_complete": False,
+            },
+            3.0,
+        ),
+    )
+
+    assert asc.main() == 2
+    title, body = asc._pages[0]
+    assert "RELEASED BEFORE STATE RESTORATION" in title
+    assert "entries_held=false" in body
 
 
 def test_boot_hold_within_grace_is_quiet(asc, monkeypatch):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -11,6 +12,7 @@ from project_mai_tai.events import (
     StrategyStateSnapshotEvent,
     StrategyStateSnapshotPayload,
 )
+from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 
@@ -87,8 +89,7 @@ def test_restoration_complete_with_one_dangerous_segment_stays_held(
     assert bot.strategy._entries_held is True
     held = [record for record in caplog.records if "[V2-BOOT-HOLD] HELD" in record.message]
     assert len(held) == 1
-    assert held[0].levelno == logging.WARNING
-    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert held[0].levelno == logging.ERROR
 
 
 def test_current_snapshot_marks_restoration_complete_only_after_seed_replay(
@@ -138,7 +139,7 @@ def test_empty_current_watchlist_cannot_vacuously_complete_restoration(
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
     assert "restoration_complete=0 evaluated=0 confirmed=0" in caplog.text
-    assert "scanner_population_observed=0" in caplog.text
+    assert "scanner_evaluated=0" in caplog.text
 
 
 def test_nonempty_scanner_reduced_to_zero_selected_cannot_complete(
@@ -158,12 +159,12 @@ def test_nonempty_scanner_reduced_to_zero_selected_cannot_complete(
         _apply_snapshot(bot, ["CYN"])
         bot._cw_boot_hold_check()
 
-    assert bot._boot_scanner_population_observed is True
+    assert bot._boot_scanner_selected == set()
     assert bot._watchlist == set()
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
     assert "restoration_complete=0 evaluated=0 confirmed=0 rest_warmed=0" in caplog.text
-    assert "scanner_population_observed=1" in caplog.text
+    assert "scanner_evaluated=0" in caplog.text
 
 
 def test_empty_scanner_with_held_symbol_is_not_a_nonempty_restoration_population(
@@ -180,7 +181,30 @@ def test_empty_scanner_with_held_symbol_is_not_a_nonempty_restoration_population
     bot._cw_boot_hold_check()
 
     assert bot._watchlist == {"CYN2"}
-    assert bot._boot_scanner_population_observed is False
+    assert bot._boot_scanner_selected == set()
+    assert bot._boot_state_restoration_complete is False
+    assert bot.strategy._entries_held is True
+
+
+def test_prior_excluded_snapshot_cannot_launder_later_held_only_population(
+    monkeypatch,
+) -> None:
+    """D1 exploit: identical held-only end state cannot depend on an earlier snapshot."""
+    bot = _bot(protected_symbols="CYN")
+    bot.strategy._entries_held = False
+    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
+
+    _apply_snapshot(bot, ["CYN"])
+    assert bot._boot_scanner_selected == set()
+    assert bot._boot_state_restoration_complete is False
+
+    monkeypatch.setattr(bot, "_protected_symbols", lambda: {"HELD1"})
+    bot._rest_warmup_done.add("HELD1")
+    _apply_snapshot(bot, [])
+    bot._cw_boot_hold_check()
+
+    assert bot._watchlist == {"HELD1"}
+    assert bot._boot_scanner_selected == set()
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
 
@@ -222,6 +246,36 @@ def test_completed_restoration_is_one_way_across_nonempty_failed_addition(
 
     assert bot._boot_state_restoration_complete is True
     assert bot.strategy._entries_held is False
+
+
+def test_post_latch_seed_failed_symbol_stays_streamer_gated_until_rest_warmup(
+    monkeypatch,
+) -> None:
+    """A later symbol cannot enter by riding the fleet latch past its REST gate."""
+    bot = _bot()
+    seed_results = iter([True, False])
+    monkeypatch.setattr(
+        bot,
+        "_seed_strategy_bars_from_db",
+        lambda _symbol: next(seed_results),
+    )
+    fed: list[str] = []
+
+    async def record(symbol: str, _bar: ChartBar, *, observation_phase: str) -> None:
+        fed.append(f"{symbol}:{observation_phase}")
+
+    monkeypatch.setattr(bot, "_handle_bar", record)
+
+    _apply_snapshot(bot, ["DAIC"])
+    assert bot._boot_state_restoration_complete is True
+
+    _apply_snapshot(bot, ["DAIC", "YYGH"], rest_warmed=False)
+    assert "YYGH" not in bot._rest_warmup_done
+    bar = ChartBar("YYGH", 1.0, 1.0, 1.0, 1.0, 100, 1_788_000_000_000)
+    asyncio.run(bot._handle_bar_from_streamer("YYGH", bar))
+
+    assert fed == []
+    assert bot._streamer_pending["YYGH"] == [bar]
 
 
 def test_same_watchlist_retries_unreadable_restoration_until_confirmed(

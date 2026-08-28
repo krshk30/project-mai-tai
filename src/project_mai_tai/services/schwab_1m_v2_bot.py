@@ -246,11 +246,12 @@ class SchwabV2BotService:
         # P1 boot ordering: `_state_publish_loop` and `_scanner_consumer_loop` start together.
         # Until the scanner has applied one current snapshot (including its synchronous DB-seed
         # replays), an empty `cw_armed_segments()` means "nothing loaded yet", not "restoration
-        # found nothing dangerous". The boot hold may release only after a NON-EMPTY selected
-        # population is restored. Once True it is a one-way boot latch: later scanner refreshes
+        # found nothing dangerous". The boot hold may release only after a NON-EMPTY tradeable
+        # scanner population from the current snapshot is restored. Held-position coverage cannot
+        # supply that denominator. Once True it is a one-way boot latch: later scanner refreshes
         # must not suppress every symbol mid-session by turning boot incomplete again.
         self._boot_state_restoration_complete = False
-        self._boot_scanner_population_observed = False
+        self._boot_scanner_selected: set[str] = set()
         self._boot_restore_last_hold_log_at: float | None = None
         # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
@@ -859,12 +860,11 @@ class SchwabV2BotService:
         RELEASES entries only after the scanner's initial current snapshot has been fully applied
         AND there are zero reconstructed-uncapped (``dangerous``) segments. Before restoration is
         complete, an empty segment list is absence of data, never evidence of safety. Re-holds and
-        warns if a dangerous segment ever appears (a P1.3 miss). Never releases on a timeout: if
-        restoration has not completed or dangerous persists, entries stay held. WARNING is
-        deliberate: HELD is the guard working, while the external ``armed_segments_check`` owns
-        paging when the protective state persists. Logging every expected hold as ERROR produced
-        25/25 false-error lines and trained the level to be ignored. The bar-ts discriminator keeps
-        the continuous check safe: a live post-boot flip is never counted dangerous.
+        reports ERROR if a dangerous segment ever appears (a P1.3 miss). Never releases on a
+        timeout: if restoration has not completed or dangerous persists, entries stay held. The
+        expected pre-restoration hold is WARNING; a reconstructed-uncapped segment after completed
+        restoration is a real defect and remains ERROR. The bar-ts discriminator keeps the
+        continuous check safe: a live post-boot flip is never counted dangerous.
         """
         strat = self.strategy
         if not getattr(strat, "_cw_armed_segment_safety_enabled", False):
@@ -904,7 +904,7 @@ class SchwabV2BotService:
             return
         if not strat._entries_held:
             strat._entries_held = True
-        logger.warning(
+        logger.error(
             "[V2-BOOT-HOLD] HELD — restoration_complete=1 reconstructed-uncapped "
             "segment(s) survived P1.3: %s "
             "(CW-v2 entries suppressed; armed_segments_check will page)",
@@ -1584,10 +1584,9 @@ class SchwabV2BotService:
             )
             return
         symbols = self._extract_confirmed_symbols(event)
-        if symbols:
-            self._boot_scanner_population_observed = True
         protected = self._protected_symbols()
-        selected = set(symbols[:max_watchlist]) | protected
+        scanner_selected = set(symbols[:max_watchlist])
+        selected = scanner_selected | protected
         # HARD-EXCLUDE operator-protected symbols (e.g. CYN) from v2's watchlist so
         # v2 never evaluates, subscribes, or signals on them — defense-in-depth on
         # top of the OMS protected-symbol order reject. CYN is the operator's
@@ -1597,6 +1596,7 @@ class SchwabV2BotService:
         protected_exclude = set(self.settings.protected_symbol_set)
         if protected_exclude:
             selected -= protected_exclude
+            scanner_selected -= protected_exclude
         # Stop EMITTING for symbols Schwab already refused to OPEN today
         # ("must be placed with a broker" — foreign/manual-handling names). The
         # OMS also blocks re-submission per account, but the isolated bot would
@@ -1611,6 +1611,11 @@ class SchwabV2BotService:
             ineligible_exclude = ineligible_exclude & self._webull_ineligible_symbols()
         if ineligible_exclude:
             selected -= ineligible_exclude
+            scanner_selected -= ineligible_exclude
+        # The authority is this snapshot's post-exclusion scanner population, not a once-ever
+        # flag. A prior fully-excluded snapshot must not let held-position coverage launder a
+        # later empty scanner pass into completed boot restoration.
+        self._boot_scanner_selected = scanner_selected
         if selected == self._watchlist:
             self._try_complete_boot_state_restoration(selected, new_symbols=set())
             return
@@ -1673,13 +1678,12 @@ class SchwabV2BotService:
     ) -> None:
         """Latch boot restoration after scanner, DB seed and REST replay are all observable.
 
-        Both populations are load-bearing: the raw scanner population must exist (held-position
-        protection cannot launder an empty scanner snapshot), and the actual post-exclusion
-        ``selected`` population must be non-empty (a raw name removed by protection/ineligibility
-        is not an evaluated restoration). DB seed alone is insufficient because REST warmup can
-        arm another reconstructed segment afterwards. Once latched, later additions remain
-        per-symbol REST-gated but cannot re-arm the fleet-wide boot hold; their seed result is
-        logged explicitly rather than silently changing the boot fact.
+        Both populations are load-bearing: the current snapshot must contain a non-empty tradeable
+        scanner population after exclusions (held-position protection cannot launder an empty
+        scanner snapshot), and the actual ``selected`` population must be non-empty. DB seed alone
+        is insufficient because REST warmup can arm another reconstructed segment afterwards.
+        Once latched, later additions remain per-symbol REST-gated but cannot re-arm the fleet-wide
+        boot hold; their seed result is logged explicitly rather than silently changing the fact.
 
         Fail-closed residuals are explicit. ``session_factory is None`` makes every seed read
         unreadable; ``run`` does not reconstruct it later, so the hold is unbounded until a service
@@ -1702,20 +1706,21 @@ class SchwabV2BotService:
                 )
             return
         evaluated = len(selected)
+        scanner_evaluated = len(self._boot_scanner_selected)
         if evaluated == 0:
             logger.warning(
                 "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 confirmed=0 "
-                "rest_warmed=0 scanner_population_observed=%d "
+                "rest_warmed=0 scanner_evaluated=%d "
                 "reason=empty_evaluated_population_after_exclusions; "
                 "zero evaluated states is not safety",
-                int(self._boot_scanner_population_observed),
+                scanner_evaluated,
             )
             return
-        if not self._boot_scanner_population_observed:
+        if scanner_evaluated == 0:
             logger.warning(
-                "[V2-BOOT-RESTORE] restoration_complete=0 scanner_population_observed=0 "
+                "[V2-BOOT-RESTORE] restoration_complete=0 scanner_evaluated=0 "
                 "evaluated=%d confirmed=0 rest_warmed=0 "
-                "reason=empty_scanner_snapshot; protected symbols are not scanner evidence",
+                "reason=empty_tradeable_scanner_population; held symbols are not scanner evidence",
                 evaluated,
             )
             return

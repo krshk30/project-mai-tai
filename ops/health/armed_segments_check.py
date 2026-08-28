@@ -171,6 +171,18 @@ def main() -> int:
              f"shape that manufactured the CPHI loss. Investigate before v2 can enter again.")
         return 2
 
+    # A released guard with incomplete restoration is the exact boot-ordering failure this check
+    # exists to expose. It must not hide behind the entries_held branch and fall through GREEN.
+    if not entries_held and not restoration_complete:
+        page(
+            "🔴 v2 RELEASED BEFORE STATE RESTORATION",
+            "[armed-segments] entries_held=false while restoration_complete=false and 0 "
+            "dangerous segments. The bot released before scanner + DB seed + REST warmup were "
+            "proven complete; absence is not safety. Check [V2-BOOT-RESTORE] and "
+            "[V2-BOOT-HOLD] by hand.",
+        )
+        return 2
+
     # (2) entries_held past the grace: held is normal AT boot; outliving the grace is not.
     up = uptime_secs()
     if entries_held:
