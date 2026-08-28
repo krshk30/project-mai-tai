@@ -248,13 +248,15 @@ def run_once(
     ):
         # Restore the already-completed result after recording this duplicate invocation. A prior
         # NONPASS is never skipped: the next scheduled attempt reruns and can notify again.
+        skipped = (
+            f"[D6-OUTCOME-ACCEPTANCE-SKIPPED] session={window.session_date} "
+            "reason=already_reported denominator=one completed ET calendar-day session"
+        )
         _atomic_write(status_path, prior_status)
+        _append_history(out_dir / "history.log", now=now, contents=skipped + "\n")
         return ScheduledResult(
             PASS,
-            (
-                f"[D6-OUTCOME-ACCEPTANCE-SKIPPED] session={window.session_date} "
-                "reason=already_reported denominator=one completed ET calendar-day session",
-            ),
+            (skipped,),
         )
 
     # Clear any prior PASS before loading or running the acceptance module.  If import, query, or

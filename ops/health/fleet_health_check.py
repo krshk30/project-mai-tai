@@ -211,7 +211,7 @@ def check_d6_status_freshness() -> tuple[str, str, str]:
     expected = _last_completed_session_day(datetime.now(_EASTERN_TZ).date())
     try:
         contents = _D6_STATUS_PATH.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         contents = None
     level, detail = classify_d6_status(contents, expected_session=expected)
     return (level, "d6-outcome-acceptance", detail)

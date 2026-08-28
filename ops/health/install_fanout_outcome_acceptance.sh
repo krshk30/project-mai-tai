@@ -30,7 +30,7 @@ compile(path.read_text(encoding="utf-8"), str(path), "exec")
 PY
 done
 source_check_sha256=$(sha256sum "$source_check" | awk '{print $1}')
-cron_line="17 4,5,6 * * 2-6 $python_bin $target_cron --acceptance $target_check --acceptance-sha256 $source_check_sha256 >> $target_dir/cron.log 2>&1"
+cron_line="17 4,5,6 * * 2-6 $python_bin $target_cron --acceptance $target_check --acceptance-sha256 $source_check_sha256 --out-dir $target_dir >> $target_dir/cron.log 2>&1"
 
 install -d -o trader -g trader -m 0755 "$target_dir"
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -44,7 +44,7 @@ install -o root -g root -m 0755 "$source_check" "$target_check"
 install -o root -g root -m 0755 "$source_cron" "$target_cron"
 cmp "$source_check" "$target_check"
 cmp "$source_cron" "$target_cron"
-verify_d6_runtime "$python_bin" "$target_cron" "$target_check" "$source_check_sha256"
+verify_d6_runtime "$python_bin" "$target_cron" "$target_check" "$source_check_sha256" "$target_dir"
 
 current_cron=$(mktemp)
 next_cron=$(mktemp)
@@ -78,8 +78,9 @@ awk -v begin="$begin_marker" -v end="$end_marker" '
 ' "$current_cron" >"$next_cron"
 {
   printf '\n%s\n' "$begin_marker"
-  # The box cron is UTC. 04:17/05:17 UTC cover 00:17 ET in EDT/EST; 06:17 gives either timezone
-  # one retry if notification failed. cron.py deduplicates every completed result.
+  # The box cron is UTC. In EDT, 04:17 is the first attempt and 05:17/06:17 are retries. In EST,
+  # 04:17 is 23:17 on the prior ET day and deduplicates its already-graded session; 05:17 is the
+  # first attempt and 06:17 the one retry. cron.py deduplicates every completed result.
   printf '%s\n' "$cron_line"
   printf '%s\n' "$end_marker"
 } >>"$next_cron"

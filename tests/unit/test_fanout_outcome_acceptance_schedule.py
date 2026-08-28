@@ -30,6 +30,7 @@ def _load(name: str, path: Path):
 
 cron = _load("fanout_outcome_acceptance_cron", OPS / "fanout_outcome_acceptance_cron.py")
 acceptance = _load("scheduled_fanout_outcome_acceptance", OPS / "fanout_outcome_acceptance.py")
+fleet_health = _load("scheduled_fleet_health_check", OPS / "fleet_health_check.py")
 
 
 def _pass_report():
@@ -110,40 +111,38 @@ def _all_target_ctes_window_bound(sql: str) -> bool:
         "target_buy_legs": (
             "target_mirror_symbols",
             "CROSS JOIN target_bounds b",
-            "fbo.first_fill_at >= b.since_at",
-            "fbo.first_fill_at < b.until_at",
+            "AND fbo.first_fill_at >= b.since_at AND fbo.first_fill_at < b.until_at",
         ),
         "target_mirror_symbols": (
             "target_matched_orders",
             "CROSS JOIN target_bounds b",
-            "bo.submitted_at >= b.since_at",
-            "bo.submitted_at < b.until_at",
+            "AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
         ),
         "target_matched_orders": (
             "target_refused",
             "CROSS JOIN target_bounds b",
-            "bo.submitted_at >= b.since_at",
-            "bo.submitted_at < b.until_at",
+            "AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
         ),
         "target_refused": (
             "target_refused_classified",
             "CROSS JOIN target_bounds b",
-            "e.event_at >= b.since_at",
-            "e.event_at < b.until_at",
+            "AND e.event_at >= b.since_at AND e.event_at < b.until_at",
         ),
         "target_exit_episodes": (
             "rows",
             "CROSS JOIN target_bounds b",
-            "sfbo.first_fill_at >= b.since_at",
-            "sfbo.first_fill_at < b.until_at",
+            "AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at",
         ),
     }
-    for name, (following, *needles) in direct.items():
+    for name, (following, *required_lines) in direct.items():
         body = _cte(sql, name, following)
-        if any(needle not in body for needle in needles):
+        lines = {line.strip() for line in body.splitlines()}
+        # Exact complete lines are intentional: substring checks accept an appended OR TRUE or
+        # interval widening while still claiming the CTE is bounded.
+        if any(required not in lines for required in required_lines):
             return False
     classified = _cte(sql, "target_refused_classified", "target_exit_episodes")
-    return "FROM target_refused r" in classified
+    return "FROM target_refused r" in {line.strip() for line in classified.splitlines()}
 
 
 def test_installed_loader_executes_the_real_acceptance_module() -> None:
@@ -386,35 +385,67 @@ def test_every_target_cte_is_semantically_bound_to_the_requested_window() -> Non
     assert _all_target_ctes_window_bound(acceptance.SQL)
 
 
-def test_outside_window_pair_stays_zero_and_unexercised_through_fake_psql(
+def test_bounded_and_widened_sql_select_different_control_legs_and_verdicts(
     monkeypatch,
 ) -> None:
-    captured = {}
+    outputs = iter(
+        [
+            _csv_output(include_outside_window_population=False),
+            _csv_output(include_outside_window_population=True),
+        ]
+    )
+    submitted_sql: list[str] = []
 
     def fake_psql(command, **kwargs):
-        sql = kwargs["input"]
-        bounded = _all_target_ctes_window_bound(sql)
-        captured["bounded"] = bounded
+        submitted_sql.append(kwargs["input"])
         return subprocess.CompletedProcess(
             command,
             0,
-            stdout=_csv_output(include_outside_window_population=not bounded),
+            stdout=next(outputs),
             stderr="",
         )
 
     monkeypatch.setattr(acceptance.subprocess, "run", fake_psql)
-    report = acceptance.run_report(
+    bounded_sql = acceptance.SQL
+    bounded_report = acceptance.run_report(
+        since=datetime(2026, 8, 28, 0, 0, tzinfo=EASTERN_TZ),
+        until=datetime(2026, 8, 29, 0, 0, tzinfo=EASTERN_TZ),
+    )
+    widened_sql = bounded_sql.replace(
+        "AND fbo.first_fill_at >= b.since_at AND fbo.first_fill_at < b.until_at",
+        "AND fbo.first_fill_at >= b.since_at AND fbo.first_fill_at < b.until_at "
+        "+ interval '3650 days'",
+    ).replace(
+        "AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
+        "AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at OR TRUE",
+    ).replace(
+        "AND e.event_at >= b.since_at AND e.event_at < b.until_at",
+        "AND e.event_at >= b.since_at AND e.event_at < b.until_at OR TRUE",
+    ).replace(
+        "AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at",
+        "AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at "
+        "+ interval '3650 days'",
+    )
+    monkeypatch.setattr(acceptance, "SQL", widened_sql)
+    widened_report = acceptance.run_report(
         since=datetime(2026, 8, 28, 0, 0, tzinfo=EASTERN_TZ),
         until=datetime(2026, 8, 29, 0, 0, tzinfo=EASTERN_TZ),
     )
 
-    assert captured["bounded"] is True
-    assert report.exit_code == acceptance.UNEXERCISED
-    output = "\n".join(report.lines)
+    assert _all_target_ctes_window_bound(bounded_sql) is True
+    assert _all_target_ctes_window_bound(widened_sql) is False
+    assert submitted_sql == [bounded_sql, widened_sql]
+    assert bounded_report.exit_code == acceptance.UNEXERCISED
+    output = "\n".join(bounded_report.lines)
     assert "paired_legs=0 usable=0 of 0" in output
     assert "mirror=0/0 schwab=0/0" in output
     assert "duplicate_legs=0 of 0" in output
     assert "refused_exits=0 post_exit_episodes=0" in output
+    assert widened_report.exit_code == acceptance.PASS
+    widened_output = "\n".join(widened_report.lines)
+    assert "paired_legs=1 usable=1 of 1" in widened_output
+    assert "metric=fill_rate verdict=PASS" in widened_output
+    assert "refused_exits=0 post_exit_episodes=1" in widened_output
 
 
 def test_pass_writes_success_marker_with_all_denominators_and_deduplicates(tmp_path) -> None:
@@ -445,6 +476,8 @@ def test_pass_writes_success_marker_with_all_denominators_and_deduplicates(tmp_p
     assert "post_exit_episodes=1" in status
     assert notifications == []
     assert "reason=already_reported denominator=one completed ET calendar-day session" in second.lines[0]
+    history = (tmp_path / "history.log").read_text(encoding="utf-8")
+    assert "[D6-OUTCOME-ACCEPTANCE-SKIPPED] session=2026-08-28" in history
 
 
 def test_nonpass_notifies_and_never_emits_the_success_marker(tmp_path) -> None:
@@ -565,9 +598,11 @@ def test_installer_is_root_only_and_manages_one_repo_owned_cron_block() -> None:
     assert 'source_cron="$repo_root/ops/health/fanout_outcome_acceptance_cron.py"' in installer
     assert 'cron_line="17 4,5,6 * * 2-6 ' in installer
     assert "--acceptance-sha256 $source_check_sha256" in installer
+    assert "--out-dir $target_dir" in installer
     assert "malformed existing D6 cron block" in installer
     assert "MAI_TAI_INSTALLER_LIB_ONLY" not in installer
-    assert 'verify_d6_runtime "$python_bin" "$target_cron"' in installer
+    assert 'verify_d6_runtime "$python_bin" "$target_cron" "$target_check" ' in installer
+    assert cron.DEFAULT_OUT_DIR / "STATUS.txt" == fleet_health._D6_STATUS_PATH
 
 
 def test_installer_executes_help_with_the_selected_runtime(tmp_path) -> None:
@@ -589,7 +624,7 @@ def test_installer_executes_help_with_the_selected_runtime(tmp_path) -> None:
     command = (
         f"source '{installer_lib}'; "
         f"verify_d6_runtime '{fake_python.as_posix()}' '{fake_cron.as_posix()}' "
-        f"'{fake_check.as_posix()}' '{'a' * 64}'"
+        f"'{fake_check.as_posix()}' '{'a' * 64}' '{tmp_path.as_posix()}'"
     )
 
     result = subprocess.run([bash, "-lc", command], capture_output=True, text=True, check=False)
@@ -597,7 +632,8 @@ def test_installer_executes_help_with_the_selected_runtime(tmp_path) -> None:
     assert result.returncode == 0, result.stderr
     assert calls.read_text(encoding="utf-8").strip() == (
         f"{fake_cron.as_posix()} --acceptance {fake_check.as_posix()} "
-        f"--acceptance-sha256 {'a' * 64} --verify-artifact-only"
+        f"--acceptance-sha256 {'a' * 64} --out-dir {tmp_path.as_posix()} "
+        "--verify-artifact-only"
     )
 
 
@@ -616,12 +652,50 @@ def test_installer_runtime_probe_failure_refuses(monkeypatch, tmp_path) -> None:
     command = (
         f"source '{installer_lib}'; "
         f"verify_d6_runtime '{fake_python.as_posix()}' '{fake_cron.as_posix()}' "
-        f"'{fake_check.as_posix()}' '{'a' * 64}'"
+        f"'{fake_check.as_posix()}' '{'a' * 64}' '{tmp_path.as_posix()}'"
     )
 
     result = subprocess.run([bash, "-lc", command], capture_output=True, text=True, check=False)
 
     assert result.returncode == 9
+
+
+def test_installer_call_site_cannot_swallow_a_failed_runtime_probe(tmp_path) -> None:
+    """Execute the installer's real call line; adding ``|| true`` must make this fail."""
+    git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+    bash = str(git_bash) if git_bash.exists() else shutil.which("bash")
+    assert bash is not None
+    installer = (OPS / "install_fanout_outcome_acceptance.sh").read_text(encoding="utf-8")
+    call_site = next(
+        line for line in installer.splitlines() if line.startswith("verify_d6_runtime ")
+    )
+    installer_lib = (OPS / "fanout_outcome_acceptance_install_lib.sh").as_posix()
+    fake_python = tmp_path / "python"
+    fake_cron = tmp_path / "cron.py"
+    fake_check = tmp_path / "check.py"
+    survived = tmp_path / "survived"
+    fake_python.write_text("#!/usr/bin/env bash\nexit 9\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+    fake_cron.write_text("# target\n", encoding="utf-8")
+    fake_check.write_text("# check\n", encoding="utf-8")
+    harness = tmp_path / "harness.sh"
+    harness.write_text(
+        "set -euo pipefail\n"
+        f"source '{installer_lib}'\n"
+        f"python_bin='{fake_python.as_posix()}'\n"
+        f"target_cron='{fake_cron.as_posix()}'\n"
+        f"target_check='{fake_check.as_posix()}'\n"
+        f"source_check_sha256='{'a' * 64}'\n"
+        f"target_dir='{tmp_path.as_posix()}'\n"
+        f"{call_site}\n"
+        f"touch '{survived.as_posix()}'\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run([bash, str(harness)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 9
+    assert not survived.exists()
 
 
 def test_artifact_only_probe_accepts_exact_bytes_and_refuses_mismatch(tmp_path) -> None:

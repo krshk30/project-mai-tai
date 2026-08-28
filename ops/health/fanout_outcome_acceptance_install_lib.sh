@@ -7,6 +7,7 @@ verify_d6_runtime() {
   local runtime_cron=$2
   local runtime_check=$3
   local expected_check_sha256=$4
+  local runtime_out_dir=$5
   if [[ ! -x "$runtime_python" ]]; then
     echo "REFUSED: production Python is not executable: $runtime_python" >&2
     return 1
@@ -14,5 +15,6 @@ verify_d6_runtime() {
   "$runtime_python" "$runtime_cron" \
     --acceptance "$runtime_check" \
     --acceptance-sha256 "$expected_check_sha256" \
+    --out-dir "$runtime_out_dir" \
     --verify-artifact-only >/dev/null
 }

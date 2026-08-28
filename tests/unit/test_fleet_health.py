@@ -108,6 +108,25 @@ def test_d6_malformed_session_is_red_not_an_amber_check_exception() -> None:
     assert "malformed" in detail
 
 
+def test_d6_binary_status_is_red_not_an_amber_check_exception(
+    monkeypatch, tmp_path
+) -> None:
+    status = tmp_path / "STATUS.txt"
+    status.write_bytes(b"\xff\xfe\x00\x80")
+    monkeypatch.setattr(fhc, "_D6_STATUS_PATH", status)
+    monkeypatch.setattr(
+        fhc,
+        "_last_completed_session_day",
+        lambda _today: date(2026, 8, 28),
+    )
+
+    level, name, detail = fhc.check_d6_status_freshness()
+
+    assert level == "RED"
+    assert name == "d6-outcome-acceptance"
+    assert "missing" in detail
+
+
 def test_d6_freshness_check_is_registered_in_the_executed_check_list() -> None:
     assert fhc.check_d6_status_freshness in fhc.CHECKS
 
