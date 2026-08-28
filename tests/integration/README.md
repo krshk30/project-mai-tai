@@ -8,9 +8,11 @@ that database. The test fails rather than skips when either dependency is
 missing, because a silently absent database would make the runtime window proof
 vacuous.
 
-Scope limit: the current seed proves the exercised target denominator and identity-intent
-windows only. D6's `target_refused`, `target_mirror_symbols`, and `target_matched_orders`
-populations are empty; the seed has no `broker_order_events`, and the identity seed has no
-`broker_orders`, so identity's `order_rows` is also empty. Those paths are UNEXERCISED, not
-passing: removing their window predicates can still leave this suite green until dedicated rows
-are added.
+The fixture now exercises both sides of each report's acceptance signal rather than relying on
+empty joins: D6 has real `broker_order_events` and preceding sell fills for the refused-exit
+numerator/episode denominator, and identity has linked `broker_orders` for `order_rows`. The D6
+fixture also reproduces every compiled `base_*` control from relational rows; tests pass the SQL's
+actual `CONTROL_*` output into `evaluate`, so a moved control makes the report
+`COULD_NOT_TELL`. Both modules carry rows exactly at `since` and `until`, pinning the declared
+half-open interval (`since` included, `until` excluded). This remains a window/control harness,
+not an exhaustive test of every grading branch or production population shape.

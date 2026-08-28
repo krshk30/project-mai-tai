@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import groupby
 from pathlib import Path
 import subprocess
 from types import ModuleType
@@ -75,8 +76,15 @@ class PostgresAcceptanceHarness:
             connection.execute(
                 text("TRUNCATE TABLE " + ", ".join(self._RESET_TABLES) + " CASCADE")
             )
-            for row in seed_rows:
-                connection.execute(insert(row.table).values(**row.values))
+            for _, grouped in groupby(
+                seed_rows,
+                key=lambda row: (row.table.name, tuple(row.values)),
+            ):
+                batch = tuple(grouped)
+                connection.execute(
+                    insert(batch[0].table),
+                    [row.values for row in batch],
+                )
 
     def execute(self, case: AcceptanceSqlCase, *, sql: str | None = None) -> str:
         self.reset_and_seed(case.seed_rows)
@@ -103,7 +111,7 @@ class PostgresAcceptanceHarness:
                 command,
                 input=emitted_sql,
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
                 timeout=90,
                 check=False,
             )
