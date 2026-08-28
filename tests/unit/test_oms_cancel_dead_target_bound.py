@@ -183,6 +183,26 @@ async def test_lase_48_request_episode_trips_after_one_terminal_broker_reply(mon
 
 
 @pytest.mark.asyncio
+async def test_control_removing_the_bound_replays_all_48_broker_requests(monkeypatch) -> None:
+    """Mutation control: disable the evidence read and the historical storm returns in full."""
+
+    adapter = _LaseDeadTargetAdapter()
+    service, _ = _service(adapter)
+    monkeypatch.setattr(
+        service.store,
+        "count_terminal_cancel_refusals",
+        lambda session, *, order_id: 0,
+    )
+    opened = await service.process_trade_intent(_intent("LASE", "open"))
+    target = opened[0].payload.client_order_id
+
+    for _ in range(48):
+        await service.process_trade_intent(_intent("LASE", "cancel", target=target))
+
+    assert len([request for request in adapter.requests if request.intent_type == "cancel"]) == 48
+
+
+@pytest.mark.asyncio
 async def test_new_target_order_id_resets_the_one_report_budget() -> None:
     """The reset is a different target id, never time, HELD, or position state."""
 
