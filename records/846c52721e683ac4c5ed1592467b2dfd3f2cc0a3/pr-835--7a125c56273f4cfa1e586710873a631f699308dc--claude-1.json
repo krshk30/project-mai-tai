@@ -1,0 +1,9 @@
+{
+  "pr_number": 835,
+  "range_base": "7a125c56273f4cfa1e586710873a631f699308dc",
+  "range_head": "846c52721e683ac4c5ed1592467b2dfd3f2cc0a3",
+  "reviewed_at": "2026-08-28T18:13:16Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "ACCEPT. Closes the surviving mutant from #833 - flipping the client-abort site at schwab.py:405 to origin='broker' previously survived 633 tests because the only guard asserted that both words appeared SOMEWHERE in the file. TESTS ONLY, zero source change, so it cannot regress behaviour. The four new controls EXECUTE the real adapter paths rather than grepping source, and each asserts BOTH origin=='client' AND origin!='broker' on a path where no request can have reached Schwab: missing account hash, submit RuntimeError, cancel with a missing broker_order_id, cancel RuntimeError. \u2b50 That is the correct polarity to pin - the danger in this workstream was never a missing label, it was a FALSE 'broker' manufacturing fake venue rejects, which is strictly worse than 'unknown'. Also pins that a local refusal does not wear the broker's name, that the status poll does not substitute our own intent text on a refusal, and that origin_from_exc labels broker only on venue evidence. Reach unchanged and must still be stated wherever #833 is cited: Schwab only - live:orb (857 unknown) and paper:polygon_30s (476 unknown) are untouched, so 1333 of 1428 unknown rejects remain unclassified, and no event_source='broker' filter is safe anywhere yet."
+}
