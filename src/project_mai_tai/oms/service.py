@@ -340,6 +340,7 @@ class _DriftCancelCandidate:
     limit_price: str
     intent_created_at: datetime | None
     drift: float
+    terminal_cancel_reports: int
 
 
 # A trade intent is DONE at these statuses; anything else keeps it in the reconciler's
@@ -1910,6 +1911,7 @@ class OmsRiskService:
                 account_name=event.payload.broker_account_name,
                 client_order_id=target_order.client_order_id,
                 broker_order_id=target_order.broker_order_id,
+                target_order_id=target_order.id,
             )
 
         for report in reports:
@@ -1979,6 +1981,7 @@ class OmsRiskService:
         account_name: str,
         client_order_id: str,
         broker_order_id: str | None,
+        target_order_id: UUID | None = None,
     ) -> "asyncio.Task[str | None]":
         """Run `_verify_cancel_landed` OFF the intent path.
 
@@ -1998,6 +2001,7 @@ class OmsRiskService:
                 account_name=account_name,
                 client_order_id=client_order_id,
                 broker_order_id=broker_order_id,
+                target_order_id=target_order_id,
             )
         )
         tasks = getattr(self, "_cancel_verify_tasks", None)
@@ -2016,6 +2020,7 @@ class OmsRiskService:
         account_name: str,
         client_order_id: str,
         broker_order_id: str | None,
+        target_order_id: UUID | None = None,
     ) -> str | None:
         """Read the cancel TARGET back until it is settled; re-submit the cancel if it is not.
 
@@ -2068,6 +2073,29 @@ class OmsRiskService:
                     )
                     return observed
             if submit_round < resubmits:
+                if target_order_id is not None:
+                    bound_reached = await self._run_db(
+                        lambda session: (
+                            (order := session.get(BrokerOrder, target_order_id)) is not None
+                            and self._direct_cancel_dead_target_bound_reached(
+                                session,
+                                order=order,
+                                path="verify_cancel_landed",
+                            )
+                        ),
+                        commit=False,
+                    )
+                    if bound_reached:
+                        self._log_cancel_unconfirmed(
+                            symbol=symbol,
+                            account_name=account_name,
+                            client_order_id=client_order_id,
+                            broker_order_id=broker_order_id,
+                            observed=observed,
+                            reads_failed=reads_failed,
+                            bounded_by_dead_target=True,
+                        )
+                        return observed
                 self.logger.warning(
                     "[OMS-CANCEL-RESUBMIT] %s %s coid=%s still reads %s after %d reads — re-sending "
                     "the cancel (round %d of %d)",
@@ -2075,7 +2103,16 @@ class OmsRiskService:
                     attempts, submit_round + 1, resubmits,
                 )
                 try:
-                    await self.broker_adapter.submit_order(request)
+                    reports = await self.broker_adapter.submit_order(request)
+                    if target_order_id is not None and reports:
+                        await self._run_db(
+                            lambda session: self._record_cancel_verify_reports(
+                                session,
+                                target_order_id=target_order_id,
+                                reports=reports,
+                            ),
+                            commit=True,
+                        )
                 except Exception:
                     self.logger.warning(
                         "[OMS-CANCEL-RESUBMIT-RAISED] %s %s coid=%s — re-sent cancel raised; "
@@ -2083,14 +2120,61 @@ class OmsRiskService:
                         symbol, account_name, client_order_id, exc_info=True,
                     )
 
-        self.logger.warning(
-            "[OMS-CANCEL-UNCONFIRMED] %s %s coid=%s broker_id=%s last_status=%s reads_failed=%d — "
-            "THE CANCEL WAS NOT CONFIRMED. The order may still be WORKING and unowned at the broker. "
-            "This is the FRTT 2026-08-11 shape (136 min live). Check it by hand.",
-            symbol, account_name, client_order_id, broker_order_id,
-            observed or "UNREADABLE", reads_failed,
+        self._log_cancel_unconfirmed(
+            symbol=symbol,
+            account_name=account_name,
+            client_order_id=client_order_id,
+            broker_order_id=broker_order_id,
+            observed=observed,
+            reads_failed=reads_failed,
+            bounded_by_dead_target=False,
         )
         return observed
+
+    def _log_cancel_unconfirmed(
+        self,
+        *,
+        symbol: str,
+        account_name: str,
+        client_order_id: str,
+        broker_order_id: str | None,
+        observed: str | None,
+        reads_failed: int,
+        bounded_by_dead_target: bool,
+    ) -> None:
+        """Keep every verifier exit loud even when a durable budget suppresses resubmission."""
+        self.logger.warning(
+            "[OMS-CANCEL-UNCONFIRMED] %s %s coid=%s broker_id=%s last_status=%s reads_failed=%d "
+            "dead_target_bound=%d — THE CANCEL WAS NOT CONFIRMED. The order may still be WORKING "
+            "and unowned at the broker. This is the FRTT 2026-08-11 shape (136 min live). "
+            "Check it by hand.",
+            symbol,
+            account_name,
+            client_order_id,
+            broker_order_id,
+            observed or "UNREADABLE",
+            reads_failed,
+            int(bounded_by_dead_target),
+        )
+
+    def _record_cancel_verify_reports(
+        self,
+        session: Session,
+        *,
+        target_order_id: UUID,
+        reports: list[ExecutionReport],
+    ) -> None:
+        """Make verifier re-submit replies part of the target order's durable budget."""
+        order = session.get(BrokerOrder, target_order_id)
+        if order is None:
+            return
+        self._record_direct_cancel_reports(
+            session,
+            order=order,
+            reports=reports,
+            existing_metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
+            internal="CANCEL_VERIFY_RESUBMIT",
+        )
 
     # ------------------------------------------------ webull attach-after-fill (2026-08-13)
     def _check_bracket_born_triggered(
@@ -8241,6 +8325,119 @@ class OmsRiskService:
             return limit_price - float(bid)
         return None
 
+    def _log_direct_cancel_dead_target_bound(
+        self,
+        *,
+        symbol: str,
+        broker_account_name: str,
+        target_order_id: UUID,
+        client_order_id: str,
+        terminal_cancel_reports: int,
+        path: str,
+    ) -> None:
+        """Log one edge per (target, path, process) when a direct path reaches its budget.
+
+        Unlike #829's strategy-intent marker, this edge is deduplicated and cannot be counted
+        against that marker's per-refusal emissions. The common field names only make either
+        population independently queryable.
+        """
+        key = (target_order_id, path)
+        logged = self.__dict__.setdefault("_direct_cancel_dead_target_bound_logged", set())
+        if key in logged:
+            return
+        logged.add(key)
+        self.logger.warning(
+            "[OMS-DIRECT-CANCEL-DEAD-TARGET-BOUND] symbol=%s acct=%s target_order_id=%s "
+            "target_client_order_id=%s terminal_reports=%d bound=%d reset=new_target_order_id "
+            "scope=strategy_internal_direct_cancel path=%s outcome=refused "
+            "emission=once_per_target_path_per_process",
+            symbol,
+            broker_account_name,
+            target_order_id,
+            client_order_id,
+            terminal_cancel_reports,
+            self._CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND,
+            path,
+        )
+
+    def _direct_cancel_dead_target_bound_reached(
+        self,
+        session: Session,
+        *,
+        order: BrokerOrder,
+        path: str,
+    ) -> bool:
+        terminal_cancel_reports = self.store.count_terminal_cancel_refusals(
+            session,
+            order_id=order.id,
+        )
+        if not self._direct_cancel_dead_target_bound_reached_count(terminal_cancel_reports):
+            return False
+        account = session.get(BrokerAccount, order.broker_account_id)
+        self._log_direct_cancel_dead_target_bound(
+            symbol=order.symbol,
+            broker_account_name=(
+                account.name if account is not None else str(order.broker_account_id)
+            ),
+            target_order_id=order.id,
+            client_order_id=order.client_order_id,
+            terminal_cancel_reports=terminal_cancel_reports,
+            path=path,
+        )
+        return True
+
+    def _direct_cancel_dead_target_bound_reached_count(self, count: int) -> bool:
+        """Pure threshold shared by every covered strategy-internal direct CANCEL path."""
+        return count >= self._CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND
+
+    def _record_direct_cancel_reports(
+        self,
+        session: Session,
+        *,
+        order: BrokerOrder,
+        reports: list[ExecutionReport],
+        existing_metadata: dict[str, str],
+        internal: str,
+        extra_metadata: dict[str, str] | None = None,
+    ) -> ExecutionReport | None:
+        """Persist direct-path CANCEL outcomes so the next attempt can read its target budget.
+
+        A rejection does not change the working order's status: it says the CANCEL request failed,
+        not that the target ceased to exist. A confirmed cancellation still updates the target as
+        before. Other intermediate reports retain their existing behavior and are not invented as
+        terminal evidence.
+        """
+        cancelled_report: ExecutionReport | None = None
+        for report in reports:
+            if report.event_type not in {"cancelled", "rejected"}:
+                continue
+            metadata = carry_fanout_identity({
+                **existing_metadata,
+                **{str(k): str(v) for k, v in report.metadata.items()},
+                **(extra_metadata or {}),
+            }, existing_metadata)
+            if report.event_type == "cancelled":
+                cancelled_report = report
+                self.store.update_order_from_report(
+                    order,
+                    report=report,
+                    metadata=metadata,
+                )
+            self._append_order_event_isolated(
+                session,
+                order=order,
+                report=report,
+                payload={
+                    "client_order_id": report.client_order_id,
+                    "broker_order_id": report.broker_order_id,
+                    "broker_fill_id": report.broker_fill_id,
+                    "metadata": metadata,
+                    "reason": report.reason,
+                    "internal": internal,
+                },
+            )
+        return cancelled_report
+
     async def _cancel_working_order_and_abandon_intent(
         self,
         *,
@@ -8273,35 +8470,22 @@ class OmsRiskService:
             order_type=order.order_type,
             time_in_force=order.time_in_force,
         )
-        cancel_reports = await self.broker_adapter.submit_order(cancel_request)
-        cancelled_report = next(
-            (item for item in cancel_reports if item.event_type == "cancelled"),
-            None,
-        )
-        if cancelled_report is not None:
-            cancel_metadata = {
-                **existing_metadata,
-                **{str(k): str(v) for k, v in cancelled_report.metadata.items()},
-                "abandon_intent": "true",
-                "abandon_reason_code": reason_code,
-                "abandon_reason_detail": reason_detail,
-            }
-            self.store.update_order_from_report(
-                order,
-                report=cancelled_report,
-                metadata=cancel_metadata,
-            )
-            self._append_order_event_isolated(
+        if not self._direct_cancel_dead_target_bound_reached(
+            session,
+            order=order,
+            path="cancel_working_order_and_abandon_intent",
+        ):
+            cancel_reports = await self.broker_adapter.submit_order(cancel_request)
+            self._record_direct_cancel_reports(
                 session,
                 order=order,
-                report=cancelled_report,
-                payload={
-                    "client_order_id": cancelled_report.client_order_id,
-                    "broker_order_id": cancelled_report.broker_order_id,
-                    "broker_fill_id": cancelled_report.broker_fill_id,
-                    "metadata": dict(cancelled_report.metadata),
-                    "reason": cancelled_report.reason,
-                    "internal": reason_code,
+                reports=cancel_reports,
+                existing_metadata=existing_metadata,
+                internal=reason_code,
+                extra_metadata={
+                    "abandon_intent": "true",
+                    "abandon_reason_code": reason_code,
+                    "abandon_reason_detail": reason_detail,
                 },
             )
         self.store.mark_intent_status(intent, "cancelled")
@@ -8352,7 +8536,7 @@ class OmsRiskService:
         if not candidates:
             return
         # Phase 2 — BROKER (on-loop): submit each cancel, collect the reports.
-        results: list[tuple[_DriftCancelCandidate, ExecutionReport | None, str]] = []
+        results: list[tuple[_DriftCancelCandidate, list[ExecutionReport], str]] = []
         for candidate in candidates:
             reason_detail = (
                 f"quote drift {candidate.drift * 100:.1f}c past limit "
@@ -8378,17 +8562,27 @@ class OmsRiskService:
                 order_type=candidate.order_type,
                 time_in_force=candidate.time_in_force,
             )
+            if self._direct_cancel_dead_target_bound_reached_count(
+                candidate.terminal_cancel_reports
+            ):
+                self._log_direct_cancel_dead_target_bound(
+                    symbol=candidate.symbol,
+                    broker_account_name=candidate.broker_account_name,
+                    target_order_id=candidate.order_id,
+                    client_order_id=candidate.client_order_id,
+                    terminal_cancel_reports=candidate.terminal_cancel_reports,
+                    path="run_drift_cancel",
+                )
+                results.append((candidate, [], reason_detail))
+                continue
             cancel_reports = await self.broker_adapter.submit_order(cancel_request)
-            cancelled_report = next(
-                (item for item in cancel_reports if item.event_type == "cancelled"), None
-            )
-            results.append((candidate, cancelled_report, reason_detail))
+            results.append((candidate, cancel_reports, reason_detail))
         # Phase 3 — WRITE-BACK (off-loop): record cancels + always abandon the intents.
         await self._run_db(
             lambda session: self._apply_drift_cancel_writes(session, results), commit=True
         )
         # Logging on-loop — parity with the prior [OMS-ABANDON-INTENT] line (always emitted).
-        for candidate, _report, reason_detail in results:
+        for candidate, _reports, reason_detail in results:
             self.logger.info(
                 "[OMS-ABANDON-INTENT] code=%s symbol=%s strategy=%s side=%s "
                 "intent_age_s=%.1f limit=%s reason=%s",
@@ -8454,6 +8648,10 @@ class OmsRiskService:
                     limit_price=str((order.payload or {}).get("limit_price", "")),
                     intent_created_at=intent.created_at,
                     drift=drift,
+                    terminal_cancel_reports=self.store.count_terminal_cancel_refusals(
+                        session,
+                        order_id=order.id,
+                    ),
                 )
             )
         return candidates
@@ -8461,39 +8659,28 @@ class OmsRiskService:
     def _apply_drift_cancel_writes(
         self,
         session: Session,
-        results: list[tuple[_DriftCancelCandidate, ExecutionReport | None, str]],
+        results: list[tuple[_DriftCancelCandidate, list[ExecutionReport], str]],
     ) -> None:
         """Off-loop WRITE unit: for each drift-cancel candidate, record the broker cancel
         report (when one was returned) and ALWAYS abandon the intent — byte-for-byte the
         DB writes the prior ``_cancel_working_order_and_abandon_intent`` performed, minus
         its (now on-loop) broker await and logging. Re-fetches order/intent by id."""
-        for candidate, cancelled_report, reason_detail in results:
+        for candidate, reports, reason_detail in results:
             order = session.get(BrokerOrder, candidate.order_id)
             intent = session.get(TradeIntent, candidate.intent_id)
             if intent is None:
                 continue
-            if cancelled_report is not None and order is not None:
-                cancel_metadata = {
-                    **candidate.existing_metadata,
-                    **{str(k): str(v) for k, v in cancelled_report.metadata.items()},
-                    "abandon_intent": "true",
-                    "abandon_reason_code": "QUOTE_DRIFT_CANCEL",
-                    "abandon_reason_detail": reason_detail,
-                }
-                self.store.update_order_from_report(
-                    order, report=cancelled_report, metadata=cancel_metadata
-                )
-                self._append_order_event_isolated(
+            if order is not None:
+                self._record_direct_cancel_reports(
                     session,
                     order=order,
-                    report=cancelled_report,
-                    payload={
-                        "client_order_id": cancelled_report.client_order_id,
-                        "broker_order_id": cancelled_report.broker_order_id,
-                        "broker_fill_id": cancelled_report.broker_fill_id,
-                        "metadata": dict(cancelled_report.metadata),
-                        "reason": cancelled_report.reason,
-                        "internal": "QUOTE_DRIFT_CANCEL",
+                    reports=reports,
+                    existing_metadata=candidate.existing_metadata,
+                    internal="QUOTE_DRIFT_CANCEL",
+                    extra_metadata={
+                        "abandon_intent": "true",
+                        "abandon_reason_code": "QUOTE_DRIFT_CANCEL",
+                        "abandon_reason_detail": reason_detail,
                     },
                 )
             self.store.mark_intent_status(intent, "cancelled")
@@ -8982,36 +9169,23 @@ class OmsRiskService:
             order_type=order.order_type,
             time_in_force=order.time_in_force,
         )
-        cancel_reports = await self.broker_adapter.submit_order(cancel_request)
-        cancelled_report = next((item for item in cancel_reports if item.event_type == "cancelled"), None)
-        if cancelled_report is None:
-            return {"orders": 0, "terminal_orders": 0, "published_events": []}
-
-        cancel_metadata = {
-            **existing_metadata,
-            **{str(k): str(v) for k, v in cancelled_report.metadata.items()},
-            "watchdog_refresh": "true",
-        }
-        self.store.update_order_from_report(
-            order,
-            report=cancelled_report,
-            metadata=cancel_metadata,
-        )
-        self._append_order_event_isolated(
+        if self._direct_cancel_dead_target_bound_reached(
             session,
             order=order,
-            report=cancelled_report,
-            payload={
-                "client_order_id": cancelled_report.client_order_id,
-                "broker_order_id": cancelled_report.broker_order_id,
-                "broker_fill_id": cancelled_report.broker_fill_id,
-                "metadata": carry_fanout_identity(
-                    cancelled_report.metadata, existing_metadata
-                ),
-                "reason": cancelled_report.reason,
-                "internal": "watchdog_refresh",
-            },
+            path="refresh_working_order",
+        ):
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
+        cancel_reports = await self.broker_adapter.submit_order(cancel_request)
+        cancelled_report = self._record_direct_cancel_reports(
+            session,
+            order=order,
+            reports=cancel_reports,
+            existing_metadata=existing_metadata,
+            internal="watchdog_refresh",
+            extra_metadata={"watchdog_refresh": "true"},
         )
+        if cancelled_report is None:
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
 
         replacement_client_order_id = self._replacement_client_order_id(order.client_order_id)
         prior_attempt_id = str(refreshed_metadata.get("fanout_attempt_id", "") or "").strip()
