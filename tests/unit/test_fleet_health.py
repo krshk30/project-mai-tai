@@ -98,6 +98,20 @@ def test_d6_current_nonpass_and_missing_status_are_red() -> None:
     assert fhc.classify_d6_status(None, expected_session=expected)[0] == "RED"
 
 
+def test_d6_malformed_session_is_red_not_an_amber_check_exception() -> None:
+    level, detail = fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-99-99 verdict=PASS\n",
+        expected_session=date(2026, 8, 28),
+    )
+
+    assert level == "RED"
+    assert "malformed" in detail
+
+
+def test_d6_freshness_check_is_registered_in_the_executed_check_list() -> None:
+    assert fhc.check_d6_status_freshness in fhc.CHECKS
+
+
 def test_d6_expected_session_skips_weekend_and_full_closure() -> None:
     assert fhc._last_completed_session_day(date(2026, 9, 8)) == date(2026, 9, 4)
 

@@ -32,6 +32,7 @@ SESSION_SLICE_START = time(0, 0)
 EASTERN_TZ = ZoneInfo("America/New_York")
 DEFAULT_OUT_DIR = Path("/home/trader/fanout_outcome_acceptance")
 DEFAULT_NTFY_URL = "https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
+HISTORY_MAX_BYTES = 5_000_000
 
 
 @dataclass(frozen=True)
@@ -104,8 +105,51 @@ def _atomic_write(path: Path, contents: str) -> None:
             os.close(parent_fd)
 
 
+def _begin_status(path: Path, contents: str) -> str:
+    """Detach any old result before publishing IN_PROGRESS, then read it off the live path.
+
+    The rename comes before both the read and the replacement write.  A read failure therefore
+    leaves current IN_PROGRESS in place; a write failure leaves the canonical STATUS absent.  In
+    neither case can an old SUCCESS survive at the path read by the independent monitor.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prior = path.with_name(f".{path.name}.prior-{os.getpid()}")
+    detached = False
+    try:
+        os.replace(path, prior)
+        detached = True
+    except FileNotFoundError:
+        pass
+    _atomic_write(path, contents)
+    if not detached:
+        return ""
+    try:
+        return prior.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ""
+    finally:
+        try:
+            prior.unlink()
+        except OSError:
+            pass
+
+
+def _rotate_history(path: Path, *, max_bytes: int | None = None) -> None:
+    if max_bytes is None:
+        max_bytes = HISTORY_MAX_BYTES
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return
+    if size < max_bytes:
+        return
+    os.replace(path, path.with_name(f"{path.name}.1"))
+
+
 def _append_history(path: Path, *, now: datetime, contents: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    _rotate_history(path)
     with path.open("a", encoding="utf-8") as history:
         history.write(f"===== {now.astimezone(EASTERN_TZ).isoformat()} =====\n{contents}")
         history.flush()
@@ -117,6 +161,22 @@ def _is_success_for_session(contents: str, session_date: str) -> bool:
         "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" in contents
         and f"session={session_date}" in contents
     )
+
+
+def _verify_acceptance_artifact(path: Path, expected_sha256: str) -> str:
+    normalized = expected_sha256.strip().lower()
+    try:
+        valid_hex = len(normalized) == 64 and len(bytes.fromhex(normalized)) == 32
+    except ValueError:
+        valid_hex = False
+    if not valid_hex:
+        raise ValueError("acceptance SHA-256 must be exactly 64 hexadecimal characters")
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != normalized:
+        raise RuntimeError(
+            f"installed acceptance artifact SHA-256 mismatch: expected={normalized} actual={actual}"
+        )
+    return actual
 
 
 def _denominator_contract(lines: Sequence[str]) -> tuple[bool, str]:
@@ -166,9 +226,9 @@ def run_once(
     out_dir: Path,
     notify: Callable[[str, str], bool],
     acceptance_path: Path | None = None,
+    acceptance_sha256: str | None = None,
 ) -> ScheduledResult:
     status_path = out_dir / "STATUS.txt"
-    prior_status = status_path.read_text(encoding="utf-8") if status_path.exists() else ""
     bootstrap = (
         "[D6-OUTCOME-ACCEPTANCE-STARTED] session=pending_calendar "
         "verdict=IN_PROGRESS success_marker=absent "
@@ -176,7 +236,7 @@ def run_once(
     )
     # This precedes the lazy application-calendar import in completed_session_window(). A stale
     # venv can fail after this point, but it cannot leave yesterday's SUCCESS looking current.
-    _atomic_write(status_path, bootstrap)
+    prior_status = _begin_status(status_path, bootstrap)
     _append_history(out_dir / "history.log", now=now, contents=bootstrap)
 
     window = completed_session_window(now)
@@ -211,6 +271,9 @@ def run_once(
     if acceptance is None:
         if acceptance_path is None:
             raise ValueError("acceptance_path is required when acceptance is not supplied")
+        if acceptance_sha256 is None:
+            raise ValueError("acceptance_sha256 is required when acceptance is not supplied")
+        _verify_acceptance_artifact(acceptance_path, acceptance_sha256)
         acceptance = _load_acceptance(acceptance_path)
 
     report = acceptance.run_report(since=window.since, until=window.until)
@@ -243,7 +306,9 @@ def run_once(
         body = f"{marker}\nreport_sha256={report_hash}\n{rendered}"
         if not notify("D6 outcome acceptance NONPASS", body):
             failed_lines = (*output_lines, "notification=FAILED session_not_marked=1")
-            _atomic_write(out_dir / "STATUS.txt", "\n".join(failed_lines) + "\n")
+            failed_rendered = "\n".join(failed_lines) + "\n"
+            _atomic_write(out_dir / "STATUS.txt", failed_rendered)
+            _append_history(out_dir / "history.log", now=now, contents=failed_rendered)
             return ScheduledResult(
                 COULD_NOT_TELL,
                 failed_lines,
@@ -257,13 +322,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--acceptance", type=Path, default=_default_acceptance_path())
+    parser.add_argument("--acceptance-sha256", required=True)
+    parser.add_argument("--verify-artifact-only", action="store_true")
     args = parser.parse_args(argv)
+    if args.verify_artifact_only:
+        actual = _verify_acceptance_artifact(args.acceptance, args.acceptance_sha256)
+        print(f"[D6-INSTALL-ARTIFACT-VERIFIED] acceptance_sha256={actual}")
+        return PASS
     result = run_once(
         now=datetime.now(EASTERN_TZ),
         acceptance=None,
         out_dir=args.out_dir,
         notify=lambda title, body: send_notification(title, body),
         acceptance_path=args.acceptance,
+        acceptance_sha256=args.acceptance_sha256,
     )
     print("\n".join(result.lines))
     return result.exit_code

@@ -5,31 +5,15 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 source_check="$repo_root/ops/health/fanout_outcome_acceptance.py"
 source_cron="$repo_root/ops/health/fanout_outcome_acceptance_cron.py"
+source_lib="$repo_root/ops/health/fanout_outcome_acceptance_install_lib.sh"
 target_dir=/home/trader/fanout_outcome_acceptance
 target_check="$target_dir/check.py"
 target_cron="$target_dir/cron.py"
 python_bin=/home/trader/project-mai-tai/.venv/bin/python
-cron_line="17 4,5,6 * * 2-6 $python_bin $target_cron >> $target_dir/cron.log 2>&1"
 begin_marker="# BEGIN project-mai-tai D6 outcome acceptance"
 end_marker="# END project-mai-tai D6 outcome acceptance"
 
-verify_runtime() {
-  local runtime_python=$1
-  local runtime_cron=$2
-  if [[ ! -x "$runtime_python" ]]; then
-    echo "REFUSED: production Python is not executable: $runtime_python" >&2
-    return 1
-  fi
-  # Execute the installed runner with the exact interpreter cron will use. compile() under the
-  # system python cannot expose a stale production venv or an import that fails before STATUS.
-  "$runtime_python" "$runtime_cron" --help >/dev/null
-}
-
-# Unit tests source the real helper and execute it with a discriminating fake interpreter. The
-# normal installer never sets this and continues through the root-only mutation below.
-if [[ ${MAI_TAI_INSTALLER_LIB_ONLY:-0} -eq 1 ]]; then
-  return 0 2>/dev/null || exit 0
-fi
+source "$source_lib"
 
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   echo "REFUSED: run as root" >&2
@@ -45,6 +29,8 @@ path = Path(sys.argv[1])
 compile(path.read_text(encoding="utf-8"), str(path), "exec")
 PY
 done
+source_check_sha256=$(sha256sum "$source_check" | awk '{print $1}')
+cron_line="17 4,5,6 * * 2-6 $python_bin $target_cron --acceptance $target_check --acceptance-sha256 $source_check_sha256 >> $target_dir/cron.log 2>&1"
 
 install -d -o trader -g trader -m 0755 "$target_dir"
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -58,7 +44,7 @@ install -o root -g root -m 0755 "$source_check" "$target_check"
 install -o root -g root -m 0755 "$source_cron" "$target_cron"
 cmp "$source_check" "$target_check"
 cmp "$source_cron" "$target_cron"
-verify_runtime "$python_bin" "$target_cron"
+verify_d6_runtime "$python_bin" "$target_cron" "$target_check" "$source_check_sha256"
 
 current_cron=$(mktemp)
 next_cron=$(mktemp)

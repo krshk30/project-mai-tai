@@ -181,7 +181,14 @@ def classify_d6_status(contents: str | None, *, expected_session: date) -> tuple
     match = _SESSION_RE.search(contents)
     if match is None:
         return ("RED", f"D6 STATUS has no readable session; expected={expected_session.isoformat()}")
-    observed = date.fromisoformat(match.group(1))
+    try:
+        observed = date.fromisoformat(match.group(1))
+    except ValueError:
+        return (
+            "RED",
+            f"D6 STATUS has malformed session={match.group(1)!r}; "
+            f"expected={expected_session.isoformat()}",
+        )
     if observed < expected_session:
         return (
             "RED",
@@ -198,6 +205,9 @@ def classify_d6_status(contents: str | None, *, expected_session: date) -> tuple
 
 
 def check_d6_status_freshness() -> tuple[str, str, str]:
+    # D6 runs at ~00:17 ET; the independent fleet-health cron first runs at 09:35 ET. Therefore a
+    # dead scheduler is independently paged about 9h18m later, not in real time. The scheduler's
+    # own fail-closed STATUS is the evidence during that interval.
     expected = _last_completed_session_day(datetime.now(_EASTERN_TZ).date())
     try:
         contents = _D6_STATUS_PATH.read_text(encoding="utf-8")
@@ -413,7 +423,7 @@ CHECKS = [
     check_oms_order_lifecycle,      # #2 alive-but-not-executing detector
     check_stops_armed,              # #3 every OMS-owned open position has an armed stop
     check_bar_continuity,           # #4 v2 bar holes -> ATR spans them -> orders mispriced
-    check_d6_status_freshness,       # #5 independently detect a dead/stale D6 scheduler
+    check_d6_status_freshness,      # #5 independently detect a dead/stale D6 scheduler
 ]
 
 _RANK = {"GREEN": 0, "AMBER": 1, "RED": 2}
