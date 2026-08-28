@@ -20,6 +20,17 @@ def _bot() -> SchwabV2BotService:
     )
 
 
+def _apply_snapshot(bot: SchwabV2BotService, watchlist: list[str]) -> None:
+    event = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        payload=StrategyStateSnapshotPayload(watchlist=watchlist),
+    )
+    bot._apply_strategy_state_event(
+        {"data": event.model_dump_json()},
+        max_watchlist=25,
+    )
+
+
 def test_zero_segments_hold_until_restoration_then_release(monkeypatch) -> None:
     """The live 10.181s case: one completion bit makes both outcomes reachable.
 
@@ -78,15 +89,7 @@ def test_current_snapshot_marks_restoration_complete_only_after_seed_replay(
         return True
 
     monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", seed)
-    event = StrategyStateSnapshotEvent(
-        source_service="strategy-engine",
-        payload=StrategyStateSnapshotPayload(watchlist=["DAIC"]),
-    )
-
-    bot._apply_strategy_state_event(
-        {"data": event.model_dump_json()},
-        max_watchlist=25,
-    )
+    _apply_snapshot(bot, ["DAIC"])
 
     assert observed_during_seed == [False]
     assert bot._boot_state_restoration_complete is True
@@ -95,16 +98,62 @@ def test_current_snapshot_marks_restoration_complete_only_after_seed_replay(
 def test_unreadable_restoration_source_cannot_release_empty_state(monkeypatch) -> None:
     bot = _bot()
     monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: False)
-    event = StrategyStateSnapshotEvent(
-        source_service="strategy-engine",
-        payload=StrategyStateSnapshotPayload(watchlist=["DAIC"]),
-    )
-
-    bot._apply_strategy_state_event(
-        {"data": event.model_dump_json()},
-        max_watchlist=25,
-    )
+    _apply_snapshot(bot, ["DAIC"])
     bot._cw_boot_hold_check()
 
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
+
+
+def test_empty_current_watchlist_cannot_vacuously_complete_restoration(
+    monkeypatch, caplog
+) -> None:
+    """Mutant A: deleting the non-empty denominator guard must fail this control.
+
+    Production emitted ``watchlist updated count=0`` on 2026-08-27. Python's ``all([])`` is True,
+    but that population contains nothing whose restoration was checked.
+    """
+    bot = _bot()
+    monkeypatch.setattr(bot.strategy, "cw_armed_segments", lambda: [])
+
+    with caplog.at_level(logging.DEBUG):
+        _apply_snapshot(bot, [])
+        bot._cw_boot_hold_check()
+
+    assert bot._boot_state_restoration_complete is False
+    assert bot.strategy._entries_held is True
+    assert "restoration_complete=0 evaluated=0 confirmed=0" in caplog.text
+
+
+def test_completed_restoration_is_a_one_way_latch_across_empty_refresh(
+    monkeypatch,
+) -> None:
+    """Mutant B: assigning the completion result on every refresh must fail this control."""
+    bot = _bot()
+    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
+    monkeypatch.setattr(bot.strategy, "cw_armed_segments", lambda: [])
+
+    _apply_snapshot(bot, ["DAIC"])
+    assert bot._boot_state_restoration_complete is True
+
+    # A later valid empty snapshot is ordinary watchlist turnover, not a second boot. It must not
+    # re-arm the fleet-wide boot gate mid-session.
+    _apply_snapshot(bot, [])
+    bot._cw_boot_hold_check()
+
+    assert bot._boot_state_restoration_complete is True
+    assert bot.strategy._entries_held is False
+
+
+def test_same_watchlist_retries_unreadable_restoration_until_confirmed(
+    monkeypatch,
+) -> None:
+    bot = _bot()
+    results = iter([False, True])
+    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: next(results))
+
+    _apply_snapshot(bot, ["DAIC"])
+    assert bot._boot_state_restoration_complete is False
+
+    _apply_snapshot(bot, ["DAIC"])
+    assert bot._boot_state_restoration_complete is True

@@ -245,7 +245,9 @@ class SchwabV2BotService:
         # P1 boot ordering: `_state_publish_loop` and `_scanner_consumer_loop` start together.
         # Until the scanner has applied one current snapshot (including its synchronous DB-seed
         # replays), an empty `cw_armed_segments()` means "nothing loaded yet", not "restoration
-        # found nothing dangerous". The boot hold may release only after this flips to True.
+        # found nothing dangerous". The boot hold may release only after a NON-EMPTY selected
+        # population is restored. Once True it is a one-way boot latch: later scanner refreshes
+        # must not suppress every symbol mid-session by turning boot incomplete again.
         self._boot_state_restoration_complete = False
         # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
@@ -1589,13 +1591,7 @@ class SchwabV2BotService:
         if ineligible_exclude:
             selected -= ineligible_exclude
         if selected == self._watchlist:
-            # A current, successfully parsed snapshot with no watchlist delta is still a
-            # restoration opportunity. Retry any prior DB-read failure; an empty SELECT is a
-            # confirmed result, while an unavailable/failed SELECT keeps the hold closed.
-            restoration_results = [
-                self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)
-            ]
-            self._boot_state_restoration_complete = all(restoration_results)
+            self._try_complete_boot_state_restoration(selected, new_symbols=set())
             return
         new_symbols = selected - self._watchlist
         # ⛔ Captured HERE, before `self._watchlist` is reassigned below — computing it after the
@@ -1643,18 +1639,55 @@ class SchwabV2BotService:
         # persisted history so MACD/VWAP/ATR clear their warmup at once instead
         # of waiting ~135 live bars. Runs once per symbol; replayed bars carry
         # historical timestamps (not fresh) so no entry fires on the seed.
-        restoration_results = [
-            self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)
-        ]
-        # `_seed_strategy_bars_from_db` is synchronous and returns False on an unreadable source.
-        # Set this only after EVERY selected symbol produced a confirmed query result, never merely
-        # because the pre-replay state happened to contain zero armed segments.
-        self._boot_state_restoration_complete = all(restoration_results)
+        self._try_complete_boot_state_restoration(selected, new_symbols=new_symbols)
         logger.info(
             "schwab_1m_v2 watchlist updated count=%d sample=%s warmed=%d",
             len(selected),
             ",".join(sorted(selected)[:5]),
             len(self._rest_warmup_done),
+        )
+
+    def _try_complete_boot_state_restoration(
+        self, selected: set[str], *, new_symbols: set[str]
+    ) -> None:
+        """Latch boot restoration complete from one non-vacuous current watchlist read.
+
+        ``all([])`` is True in Python, but a current snapshot selecting zero symbols is the exact
+        pre-restoration production state that caused the early release. It is not evidence that
+        there were zero dangerous restored segments. Require at least one selected symbol and a
+        confirmed persisted-state read for every selected symbol. Once latched, later watchlist or
+        DB refreshes cannot turn this boot-only gate back on across the whole fleet.
+        """
+        if self._boot_state_restoration_complete:
+            # The boot latch is already open. Preserve ordinary watchlist hydration for later
+            # additions without reconsidering the fleet-wide boot decision.
+            for sym in sorted(new_symbols):
+                self._seed_strategy_bars_from_db(sym)
+            return
+        evaluated = len(selected)
+        if evaluated == 0:
+            logger.warning(
+                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 confirmed=0 "
+                "reason=empty_current_watchlist; zero restored states is not safety"
+            )
+            return
+        results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)]
+        confirmed = sum(result is True for result in results)
+        if confirmed != evaluated:
+            logger.warning(
+                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
+                "could_not_tell=%d; boot hold remains closed",
+                evaluated,
+                confirmed,
+                evaluated - confirmed,
+            )
+            return
+        self._boot_state_restoration_complete = True
+        logger.info(
+            "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=%d confirmed=%d "
+            "could_not_tell=0",
+            evaluated,
+            confirmed,
         )
 
     def _push_desired_symbols(self) -> None:
