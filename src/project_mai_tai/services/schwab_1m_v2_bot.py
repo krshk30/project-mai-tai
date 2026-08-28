@@ -242,6 +242,11 @@ class SchwabV2BotService:
         )
         self._strategy_state_last_id = "$"
         self._watchlist: set[str] = set()
+        # P1 boot ordering: `_state_publish_loop` and `_scanner_consumer_loop` start together.
+        # Until the scanner has applied one current snapshot (including its synchronous DB-seed
+        # replays), an empty `cw_armed_segments()` means "nothing loaded yet", not "restoration
+        # found nothing dangerous". The boot hold may release only after this flips to True.
+        self._boot_state_restoration_complete = False
         # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
         # every symbol that was already being watched.
@@ -844,28 +849,44 @@ class SchwabV2BotService:
                 self._loop_health.mark_task_died(name, exc=exc)
 
     def _cw_boot_hold_check(self) -> None:
-        """Boot-hold self-verify (P1.3+P1.4). Runs each state-publish cycle. RELEASES entries once
-        there are zero reconstructed-uncapped ('dangerous') segments; RE-HOLDS + logs at error if a
-        dangerous segment ever appears (a P1.3 miss — this is what "the self-check catches P1.3
-        failing" means). Never releases on a timeout: if dangerous persists it stays held. The
-        external `armed_segments_check` cron does the paging off the published snapshot (dangerous
-        present, entries_held too long, or snapshot stale). The bar-ts discriminator makes this safe
-        to run continuously — a live post-boot flip is never counted dangerous."""
+        """Boot-hold self-verify (P1.3+P1.4). Runs each state-publish cycle.
+
+        RELEASES entries only after the scanner's initial current snapshot has been fully applied
+        AND there are zero reconstructed-uncapped (``dangerous``) segments. Before restoration is
+        complete, an empty segment list is absence of data, never evidence of safety. Re-holds and
+        warns if a dangerous segment ever appears (a P1.3 miss). Never releases on a timeout: if
+        restoration has not completed or dangerous persists, entries stay held. The external
+        ``armed_segments_check`` cron pages off the published snapshot. The bar-ts discriminator
+        keeps the continuous check safe: a live post-boot flip is never counted dangerous.
+        """
         strat = self.strategy
         if not getattr(strat, "_cw_armed_segment_safety_enabled", False):
             return
-        dangerous = [s for s in strat.cw_armed_segments() if s["dangerous"]]
+        segments = strat.cw_armed_segments()
+        dangerous = [s for s in segments if s["dangerous"]]
+        if not self._boot_state_restoration_complete:
+            if not strat._entries_held:
+                strat._entries_held = True
+            logger.warning(
+                "[V2-BOOT-HOLD] HELD — restoration_complete=0 armed_segments_observed=%d "
+                "dangerous_observed=%d; absence before initial state restoration is not safety",
+                len(segments),
+                len(dangerous),
+            )
+            return
         if not dangerous:
             if strat._entries_held:
                 strat._entries_held = False
                 logger.info(
-                    "[V2-BOOT-HOLD] released — 0 reconstructed-uncapped segments; CW-v2 entries open"
+                    "[V2-BOOT-HOLD] released — restoration_complete=1 "
+                    "reconstructed_uncapped=0; CW-v2 entries open"
                 )
             return
         if not strat._entries_held:
             strat._entries_held = True
-        logger.error(
-            "[V2-BOOT-HOLD] HELD — reconstructed-uncapped segment(s) survived P1.3: %s "
+        logger.warning(
+            "[V2-BOOT-HOLD] HELD — restoration_complete=1 reconstructed-uncapped "
+            "segment(s) survived P1.3: %s "
             "(CW-v2 entries suppressed; armed_segments_check will page)",
             ",".join(
                 f"{s['symbol']}(n={s['entries_this_flip']}/{s['max_entries']})" for s in dangerous
@@ -1568,6 +1589,13 @@ class SchwabV2BotService:
         if ineligible_exclude:
             selected -= ineligible_exclude
         if selected == self._watchlist:
+            # A current, successfully parsed snapshot with no watchlist delta is still a
+            # restoration opportunity. Retry any prior DB-read failure; an empty SELECT is a
+            # confirmed result, while an unavailable/failed SELECT keeps the hold closed.
+            restoration_results = [
+                self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)
+            ]
+            self._boot_state_restoration_complete = all(restoration_results)
             return
         new_symbols = selected - self._watchlist
         # ⛔ Captured HERE, before `self._watchlist` is reassigned below — computing it after the
@@ -1615,8 +1643,13 @@ class SchwabV2BotService:
         # persisted history so MACD/VWAP/ATR clear their warmup at once instead
         # of waiting ~135 live bars. Runs once per symbol; replayed bars carry
         # historical timestamps (not fresh) so no entry fires on the seed.
-        for sym in sorted(new_symbols):
-            self._seed_strategy_bars_from_db(sym)
+        restoration_results = [
+            self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)
+        ]
+        # `_seed_strategy_bars_from_db` is synchronous and returns False on an unreadable source.
+        # Set this only after EVERY selected symbol produced a confirmed query result, never merely
+        # because the pre-replay state happened to contain zero armed segments.
+        self._boot_state_restoration_complete = all(restoration_results)
         logger.info(
             "schwab_1m_v2 watchlist updated count=%d sample=%s warmed=%d",
             len(selected),
@@ -2244,7 +2277,7 @@ class SchwabV2BotService:
             self._db_seed_gap_truncations += 1
         return kept
 
-    def _seed_strategy_bars_from_db(self, symbol: str) -> None:
+    def _seed_strategy_bars_from_db(self, symbol: str) -> bool:
         """Fix (b): hydrate `state.bars` from `strategy_bar_history` on cold-start.
 
         Replays the last DB_SEED_BAR_LIMIT persisted 60s bars (ascending) through
@@ -2260,10 +2293,15 @@ class SchwabV2BotService:
         consumed by the first live bar (gap <= pending_cross_max_gap_secs) and fire
         a PHANTOM entry from replayed history — worse than the blackout. The prev_*
         memos are KEPT (that's the point — live crosses then detect correctly).
-        Runs once per symbol (`_db_seeded`, pruned with the watchlist).
+        Runs once per symbol (`_db_seeded`, pruned with the watchlist). Returns True only when the
+        persisted-state source was successfully read (including a confirmed empty result). A
+        missing session or failed query returns False and remains retryable, so the boot hold can
+        never turn "could not read restoration state" into "restored zero dangerous states".
         """
-        if self.session_factory is None or symbol in self._db_seeded:
-            return
+        if symbol in self._db_seeded:
+            return True
+        if self.session_factory is None:
+            return False
         self._db_seeded.add(symbol)
         try:
             with self.session_factory() as session:
@@ -2295,15 +2333,19 @@ class SchwabV2BotService:
                 if rows:
                     rows = self._truncate_seed_rows_at_gap(session, symbol, rows)
         except Exception:  # noqa: BLE001
+            # Keep the query retryable on the next current scanner snapshot. Before this method's
+            # return value became a boot-release prerequisite, leaving the symbol in `_db_seeded`
+            # after failure would have made a transient DB miss indistinguishable from success.
+            self._db_seeded.discard(symbol)
             logger.warning(
                 "schwab_1m_v2 db-seed query failed for %s; falling back to "
                 "live-only warmup",
                 symbol,
                 exc_info=True,
             )
-            return
+            return False
         if not rows:
-            return
+            return True
         for row in reversed(rows):  # ascending (oldest first)
             bt = row.bar_time
             if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
@@ -2347,6 +2389,7 @@ class SchwabV2BotService:
             len(rows),
             len(st.bars),
         )
+        return True
 
     def _should_skip_rest_strategy_feed(self, symbol: str, bar: ChartBar) -> bool:
         """C3 gating: when streamer is connected and has already
