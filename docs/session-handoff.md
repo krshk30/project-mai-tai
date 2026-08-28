@@ -3,7 +3,10 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-08-28 17:14 ET; corrected 18:55 ET.** ⚠ **This is a MID-SESSION INSURANCE SNAPSHOT, not a
+**Written by `claude-1`, 2026-08-28 17:14 ET; corrected 18:55 and 19:2x ET.**
+⚠ **This file has now been wrong three times** — a conflated count, an asserted unknown, and two
+stale lines. ⭐ **A state document decays faster than the code it describes.** Prefer regenerating
+it at close-out over patching it. ⚠ **This is a MID-SESSION INSURANCE SNAPSHOT, not a
 close-out.** No freeze, no manifest, no promote. The day is still running.
 
 ---
@@ -17,7 +20,7 @@ close-out.** No freeze, no manifest, no promote. The day is still running.
 | the gap | ⭐ **#838 only — `tests/integration/` + `validate.yml`. Nothing to deploy.** ⛔ Do not read this as a pending release |
 | checkout | clean |
 | alembic head | **`20260828_0016`** — first migration in weeks; `ix_dashboard_snapshots_type_created_id_desc` confirmed present |
-| open PRs | **3 — #827 and #828 BLOCKED, #837 (this doc) behind.** Everything else merged |
+| open PRs | **5 — #827, #828 (both re-submitted, under review), #837 (this doc), #839, #840.** Everything else merged |
 
 **PIDs as of 17:14 ET. `NRestarts=0` on every unit.**
 
