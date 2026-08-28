@@ -5039,9 +5039,10 @@ class OmsRiskService:
         #
         # An account whose read RAISED is EXCLUDED from `fetched` entirely, so neither
         # `sync_account_positions` (which zeroes every symbol absent from a snapshot) nor
-        # `clear_virtual_positions_without_account_backing` (a ONE-WAY erasure) ever sees it. A
-        # genuinely flat account still arrives as an empty LIST and still zeroes — that distinction
-        # is the whole point and it only exists because the adapter now raises (L1).
+        # `clear_virtual_positions_without_account_backing` ever sees it. #714 can later restore
+        # an owned managed row, but consumers can act on the intervening zero before that repair.
+        # A genuinely flat account still arrives as an empty LIST and still zeroes — that
+        # distinction is the whole point and it only exists because the adapter now raises (L1).
         #
         # ⛔ PER-ACCOUNT, not per-sync. Previously this call was bare: one raising account aborted
         # the sync for EVERY account. Webull has raised since 2026-07-24, so a Webull 429 with no
@@ -5119,8 +5120,8 @@ class OmsRiskService:
         # virtuals, committed inside the worker thread (the flush that froze the
         # loop now cannot).
         # ⛔ SCOPED TO ACCOUNTS WE ACTUALLY READ, not to every configured account. Using `accounts`
-        # here would let the one-way clear run against an account whose read just failed — the very
-        # thing L2 exists to prevent.
+        # here would let the destructive clear run against an account whose read just failed — the
+        # very thing L2 exists to prevent.
         account_ids = [account_id for account_id, _ in fetched]
 
         def _persist(session) -> int:
@@ -5131,14 +5132,45 @@ class OmsRiskService:
                     broker_account_id=account_id,
                     snapshots=snapshots,
                 )
-            # ⛔⭐ A ONE-WAY ERASURE OF OUR OWN HOLDINGS LEDGER — never let it be silent.
-            # This ran ~1×/30s and discarded its count, so the DSY 08-07 false zero (open item 12)
-            # could only be diagnosed by elimination. `virtual_positions` feeds v2's duplicate-open
-            # gate and the bot cards; a wrong clear here is invisible everywhere downstream.
+            # ⛔⭐ N3 — NEVER PUBLISH A FRESH FALSE ZERO. #714 made an erased row restorable, but
+            # measured restores took 6.648s--19.119s while downstream consumers act inside 10s.
+            # Restoration is therefore recovery, never permission to erase early. The measured
+            # minimum age holds a fresh fill through the settlement window; a genuinely stale
+            # unbacked row is still cleared once the bound expires.
+            deferred: list[tuple[UUID, str, Decimal, float]] = []
+            clear_min_age_seconds = max(
+                0.0,
+                float(
+                    getattr(
+                        self.settings,
+                        "oms_virtual_position_clear_min_age_seconds",
+                        24.119,
+                    )
+                    or 0.0
+                ),
+            )
             cleared = self.store.clear_virtual_positions_without_account_backing(
                 session,
                 broker_account_ids=account_ids,
+                minimum_age_seconds=clear_min_age_seconds,
+                observed_at=utcnow(),
+                deferred_out=deferred,
             )
+            if deferred:
+                account_names = {account_id: name for account_id, name in accounts}
+                detail = ", ".join(
+                    f"{account_names.get(account_id, account_id)}:{symbol}={quantity} "
+                    f"age={age_seconds:.3f}s"
+                    for account_id, symbol, quantity, age_seconds in deferred
+                )
+                self.logger.info(
+                    "[VIRTUAL-CLEAR-DEFERRED] deferred=%d of unbacked_positive=%d "
+                    "clear_allowed=0 min_age_seconds=%.3f: %s",
+                    len(deferred),
+                    len(deferred) + len(cleared),
+                    clear_min_age_seconds,
+                    detail,
+                )
             if cleared:
                 account_names = {account_id: name for account_id, name in accounts}
                 detail = ", ".join(
@@ -5146,8 +5178,11 @@ class OmsRiskService:
                     for account_id, symbol, quantity in cleared
                 )
                 self.logger.warning(
-                    "[VIRTUAL-CLEAR] zeroed %d virtual position(s) with no broker backing: %s",
+                    "[VIRTUAL-CLEAR] zeroed %d virtual position(s) with no broker backing "
+                    "clear_allowed=1 evaluated_unbacked=%d min_age_seconds=%.3f: %s",
                     len(cleared),
+                    len(deferred) + len(cleared),
+                    clear_min_age_seconds,
                     detail,
                 )
             # ⛔⭐⭐ L3 — THE ERASURE IS NO LONGER ONE-WAY. L1+L2 stop NEW wrongful clears; neither

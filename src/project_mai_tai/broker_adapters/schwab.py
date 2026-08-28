@@ -78,8 +78,9 @@ class SchwabPositionsUnavailable(Exception):
     ⛔⭐⭐ SAFETY, and it is not theoretical. An empty list from a failed call is not a flat
     account. `store.sync_account_positions` zeroes every symbol ABSENT from a snapshot, and
     `clear_virtual_positions_without_account_backing` then erases the matching `virtual_positions`
-    rows **one-way** — its own docstring: *"Nothing re-derives `virtual_positions` from account
-    backing … a row zeroed here stays zeroed even once the broker reports the position again."*
+    rows. #714 can restore an owned managed row once broker backing reappears, but measured restores
+    took 6.648s--19.119s while consumers act inside 10s. A later restoration cannot make the
+    already-consumed false zero safe.
 
     Measured 2026-08-17: 2 of 2 failures that landed while we held a position erased the ledger row
     (CRWU 08-12, VWAV 08-14), each from an ISOLATED SINGLE failure.
@@ -505,8 +506,9 @@ class SchwabBrokerAdapter:
         """Live positions for one Schwab account.
 
         ⛔⭐⭐ A FAILED READ RAISES; IT NEVER RETURNS `[]`. An empty list from a failed call is not
-        a flat account, and treating it as one erases the holdings ledger — PERMANENTLY, because
-        nothing re-derives `virtual_positions` from account backing.
+        a flat account, and treating it as one erases the holdings ledger. #714 can restore an
+        owned managed row after broker backing returns, but the measured 6.648s--19.119s delay is
+        slower than consumers; restoration is recovery, not permission to publish a false zero.
 
         PROVEN HARM (2026-08-17 forensics, `live:schwab_1m_v2`): 324 read failures in the retained
         logs, 109 windows in which we held a position, and **2 failures landed during a hold — 2 of

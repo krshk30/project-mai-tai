@@ -1125,6 +1125,13 @@ class Settings(BaseSettings):
     # (a broker positions endpoint can lag a fresh fill -- ERNA's stop triggered 61s after the
     # fill and the read said flat while we held 2 shares). 0 disables the grace.
     oms_reconcile_fresh_fill_grace_secs: int = 120
+    # N3 transient false-zero guard.  A fresh virtual position must not be erased merely because
+    # the broker position mirror is still flat during settlement.  Measured 2026-08-19..27:
+    # three matched [VIRTUAL-CLEAR] -> [VIRTUAL-RESTORE] episodes took 6.648s, 10.644s and
+    # 19.119s.  The bound is the observed max plus one complete 5s v2 position-poll interval.
+    # Changing it is a re-measurement item, not a tuning preference.  0 restores immediate-clear
+    # semantics for rollback.
+    oms_virtual_position_clear_min_age_seconds: float = 24.119
     # P0.2 settlement probe: read-only, rides the existing 5s position poll (no extra broker
     # calls). Measures, PER BROKER, how long after our own fill the positions endpoint shows
     # it, and the SHAPE of each read until then. This is what turns the 120s grace above from
