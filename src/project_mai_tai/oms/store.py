@@ -928,10 +928,16 @@ class OmsStore:
             updated_at = virtual_position.updated_at
             if updated_at is not None and updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=UTC)
+            age_unknown = updated_at is None
+            # A caller that enables an age policy reads unknown recency as the youngest possible
+            # value and defers. A caller that explicitly disables the policy with min_age=0 still
+            # performs the requested maintenance reset; unknown recency must not make a stale
+            # positive immortal. Keep -1.0 as the diagnostic sentinel so unknown does not look
+            # identical to a measured brand-new or clock-skew-floored row.
             age_seconds = (
                 max(0.0, (now - updated_at).total_seconds())
                 if updated_at is not None
-                else min_age
+                else 0.0
             )
             if min_age > 0.0 and age_seconds < min_age:
                 if deferred_out is not None:
@@ -940,7 +946,7 @@ class OmsStore:
                             virtual_position.broker_account_id,
                             str(virtual_position.symbol or ""),
                             virtual_position.quantity,
-                            age_seconds,
+                            -1.0 if age_unknown else age_seconds,
                         )
                     )
                 continue
