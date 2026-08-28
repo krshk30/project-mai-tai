@@ -15,11 +15,13 @@ from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 
 
-def _bot() -> SchwabV2BotService:
+def _bot(**overrides) -> SchwabV2BotService:
+    settings = {
+        "strategy_schwab_1m_v2_cw_armed_segment_safety_enabled": True,
+    }
+    settings.update(overrides)
     return SchwabV2BotService(
-        settings=Settings(
-            strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=True,
-        )
+        settings=Settings(**settings)
     )
 
 
@@ -48,6 +50,7 @@ def test_zero_segments_hold_until_restoration_then_release(monkeypatch) -> None:
     must remain HELD. After the same zero result is backed by completed restoration, it releases.
     """
     bot = _bot()
+    bot.strategy._entries_held = False
     monkeypatch.setattr(bot.strategy, "cw_armed_segments", lambda: [])
 
     assert bot._boot_state_restoration_complete is False
@@ -134,7 +137,33 @@ def test_empty_current_watchlist_cannot_vacuously_complete_restoration(
 
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
-    assert "restoration_complete=0 scanner_population_observed=0" in caplog.text
+    assert "restoration_complete=0 evaluated=0 confirmed=0" in caplog.text
+    assert "scanner_population_observed=0" in caplog.text
+
+
+def test_nonempty_scanner_reduced_to_zero_selected_cannot_complete(
+    monkeypatch, caplog
+) -> None:
+    """D1: gate the actual evaluated population after exclusions, not the raw snapshot."""
+    bot = _bot(protected_symbols="CYN")
+    bot.strategy._entries_held = False
+    monkeypatch.setattr(bot.strategy, "cw_armed_segments", lambda: [])
+    monkeypatch.setattr(
+        bot,
+        "_seed_strategy_bars_from_db",
+        lambda _symbol: (_ for _ in ()).throw(AssertionError("zero symbols must be seeded")),
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        _apply_snapshot(bot, ["CYN"])
+        bot._cw_boot_hold_check()
+
+    assert bot._boot_scanner_population_observed is True
+    assert bot._watchlist == set()
+    assert bot._boot_state_restoration_complete is False
+    assert bot.strategy._entries_held is True
+    assert "restoration_complete=0 evaluated=0 confirmed=0 rest_warmed=0" in caplog.text
+    assert "scanner_population_observed=1" in caplog.text
 
 
 def test_empty_scanner_with_held_symbol_is_not_a_nonempty_restoration_population(
@@ -244,6 +273,35 @@ def test_pre_restoration_hold_warning_is_rate_limited(monkeypatch, caplog) -> No
     held = [record for record in caplog.records if "[V2-BOOT-HOLD] HELD" in record.message]
     assert len(held) == 2
     assert bot.strategy._entries_held is True
+
+
+def test_pre_restoration_hold_names_dangerous_symbols(monkeypatch, caplog) -> None:
+    bot = _bot()
+    bot.strategy._entries_held = False
+    monkeypatch.setattr(
+        bot.strategy,
+        "cw_armed_segments",
+        lambda: [
+            {
+                "symbol": "DAIC",
+                "dangerous": True,
+                "entries_this_flip": 0,
+                "max_entries": 2,
+            },
+            {
+                "symbol": "YYGH",
+                "dangerous": True,
+                "entries_this_flip": 0,
+                "max_entries": 2,
+            },
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        bot._cw_boot_hold_check()
+
+    assert bot.strategy._entries_held is True
+    assert "dangerous_observed=2 dangerous_symbols=DAIC,YYGH" in caplog.text
 
 
 class _SeedSession:

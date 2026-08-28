@@ -860,15 +860,20 @@ class SchwabV2BotService:
         AND there are zero reconstructed-uncapped (``dangerous``) segments. Before restoration is
         complete, an empty segment list is absence of data, never evidence of safety. Re-holds and
         warns if a dangerous segment ever appears (a P1.3 miss). Never releases on a timeout: if
-        restoration has not completed or dangerous persists, entries stay held. The external
-        ``armed_segments_check`` cron pages off the published snapshot. The bar-ts discriminator
-        keeps the continuous check safe: a live post-boot flip is never counted dangerous.
+        restoration has not completed or dangerous persists, entries stay held. WARNING is
+        deliberate: HELD is the guard working, while the external ``armed_segments_check`` owns
+        paging when the protective state persists. Logging every expected hold as ERROR produced
+        25/25 false-error lines and trained the level to be ignored. The bar-ts discriminator keeps
+        the continuous check safe: a live post-boot flip is never counted dangerous.
         """
         strat = self.strategy
         if not getattr(strat, "_cw_armed_segment_safety_enabled", False):
             return
         segments = strat.cw_armed_segments()
         dangerous = [s for s in segments if s["dangerous"]]
+        dangerous_symbols = ",".join(
+            sorted(str(s.get("symbol") or "?") for s in dangerous)
+        ) or "-"
         if not self._boot_state_restoration_complete:
             if not strat._entries_held:
                 strat._entries_held = True
@@ -881,10 +886,11 @@ class SchwabV2BotService:
                 self._boot_restore_last_hold_log_at = now
                 logger.warning(
                     "[V2-BOOT-HOLD] HELD — restoration_complete=0 "
-                    "armed_segments_observed=%d dangerous_observed=%d; absence before initial "
-                    "state restoration is not safety",
+                    "armed_segments_observed=%d dangerous_observed=%d dangerous_symbols=%s; "
+                    "absence before initial state restoration is not safety",
                     len(segments),
                     len(dangerous),
+                    dangerous_symbols,
                 )
             return
         self._boot_restore_last_hold_log_at = None
@@ -1667,11 +1673,19 @@ class SchwabV2BotService:
     ) -> None:
         """Latch boot restoration after scanner, DB seed and REST replay are all observable.
 
-        The raw scanner population is the non-vacuous denominator; held-position protection can
-        make ``selected`` non-empty while the scanner snapshot itself is empty. DB seed alone is
-        insufficient because REST warmup can arm another reconstructed segment afterwards. Once
-        latched, later additions remain per-symbol REST-gated but cannot re-arm the fleet-wide boot
-        hold; their seed result is logged explicitly rather than silently changing the boot fact.
+        Both populations are load-bearing: the raw scanner population must exist (held-position
+        protection cannot launder an empty scanner snapshot), and the actual post-exclusion
+        ``selected`` population must be non-empty (a raw name removed by protection/ineligibility
+        is not an evaluated restoration). DB seed alone is insufficient because REST warmup can
+        arm another reconstructed segment afterwards. Once latched, later additions remain
+        per-symbol REST-gated but cannot re-arm the fleet-wide boot hold; their seed result is
+        logged explicitly rather than silently changing the boot fact.
+
+        Fail-closed residuals are explicit. ``session_factory is None`` makes every seed read
+        unreadable; ``run`` does not reconstruct it later, so the hold is unbounded until a service
+        restart. REST-warmup completion is wired into this gate, but remains live-UNPROVEN for thin
+        names that may not receive a fresh REST bar: those names also hold without a timeout rather
+        than treating missing input as safety.
         """
         if self._boot_state_restoration_complete:
             results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
@@ -1688,6 +1702,15 @@ class SchwabV2BotService:
                 )
             return
         evaluated = len(selected)
+        if evaluated == 0:
+            logger.warning(
+                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 confirmed=0 "
+                "rest_warmed=0 scanner_population_observed=%d "
+                "reason=empty_evaluated_population_after_exclusions; "
+                "zero evaluated states is not safety",
+                int(self._boot_scanner_population_observed),
+            )
+            return
         if not self._boot_scanner_population_observed:
             logger.warning(
                 "[V2-BOOT-RESTORE] restoration_complete=0 scanner_population_observed=0 "
@@ -2403,10 +2426,8 @@ class SchwabV2BotService:
                 if rows:
                     rows = self._truncate_seed_rows_at_gap(session, symbol, rows)
         except Exception:  # noqa: BLE001
-            # Keep the query retryable on the next current scanner snapshot. Before this method's
-            # return value became a boot-release prerequisite, leaving the symbol in `_db_seeded`
-            # after failure would have made a transient DB miss indistinguishable from success.
-            self._db_seeded.discard(symbol)
+            # The symbol is added to `_db_seeded` only after a complete successful read/replay, so
+            # no cleanup is needed here and the next current scanner snapshot can retry.
             logger.warning(
                 "schwab_1m_v2 db-seed query failed for %s; falling back to "
                 "live-only warmup",
@@ -2442,8 +2463,8 @@ class SchwabV2BotService:
             st.pending_cross_bar_ts_ms = 0
             # P1.3: a CW-v2 segment reconstructed by this replay carries a historical arm_bar_ts
             # (< boot). Mark it USED so v2 can only enter on flips AFTER boot. The entire replay,
-            # state cleanup and cap are one restoration unit: any failure leaves `_db_seeded`
-            # absent so the next current scanner snapshot retries instead of blessing half-state.
+            # state cleanup and cap are one restoration unit. `_db_seeded` is committed only after
+            # this block completes, so failure remains retryable instead of blessing half-state.
             self._cap_reconstructed_segment(symbol, stage="db-seed")
             logger.info(
                 "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",
@@ -2452,7 +2473,6 @@ class SchwabV2BotService:
                 len(st.bars),
             )
         except Exception:  # noqa: BLE001
-            self._db_seeded.discard(symbol)
             logger.warning(
                 "schwab_1m_v2 db-seed replay failed for %s; partial replay is not restoration",
                 symbol,
