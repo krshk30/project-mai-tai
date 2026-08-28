@@ -926,13 +926,22 @@ class OmsStore:
                 continue
 
             updated_at = virtual_position.updated_at
+            if updated_at is None:
+                # Missing recency is not proof that the row is old enough to erase. Treat the
+                # unknown age as the youngest possible value and retain the position.
+                if deferred_out is not None:
+                    deferred_out.append(
+                        (
+                            virtual_position.broker_account_id,
+                            str(virtual_position.symbol or ""),
+                            virtual_position.quantity,
+                            0.0,
+                        )
+                    )
+                continue
             if updated_at is not None and updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=UTC)
-            age_seconds = (
-                max(0.0, (now - updated_at).total_seconds())
-                if updated_at is not None
-                else min_age
-            )
+            age_seconds = max(0.0, (now - updated_at).total_seconds())
             if min_age > 0.0 and age_seconds < min_age:
                 if deferred_out is not None:
                     deferred_out.append(
