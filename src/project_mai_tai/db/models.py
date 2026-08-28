@@ -424,6 +424,14 @@ class SystemIncident(Base):
 
 class DashboardSnapshot(Base):
     __tablename__ = "dashboard_snapshots"
+    __table_args__ = (
+        Index(
+            "ix_dashboard_snapshots_type_created_id_desc",
+            "snapshot_type",
+            text("created_at DESC"),
+            text("id DESC"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
     snapshot_type: Mapped[str] = mapped_column(String(64), index=True)
