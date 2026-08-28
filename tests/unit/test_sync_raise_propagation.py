@@ -29,6 +29,7 @@ class _Store:
     def __init__(self) -> None:
         self.synced: list[tuple] = []
         self.cleared_scope: list | None = None
+        self.clear_min_age_seconds: float | None = None
         self.restored_scope: list | None = None
 
     def list_active_broker_accounts(self, session):
@@ -41,8 +42,18 @@ class _Store:
         self.synced.append((broker_account_id, list(snapshots)))
         return len(snapshots)
 
-    def clear_virtual_positions_without_account_backing(self, session, *, broker_account_ids=None):
+    def clear_virtual_positions_without_account_backing(
+        self,
+        session,
+        *,
+        broker_account_ids=None,
+        minimum_age_seconds=0.0,
+        observed_at=None,
+        deferred_out=None,
+    ):
+        del observed_at, deferred_out
         self.cleared_scope = list(broker_account_ids or [])
+        self.clear_min_age_seconds = float(minimum_age_seconds)
         return []
 
     def restore_virtual_positions_from_managed(self, session, *, broker_account_ids=None):
@@ -112,6 +123,7 @@ def test_the_one_way_CLEAR_is_scoped_to_the_readable_account_only() -> None:
     assert store.cleared_scope == [B_ID], (
         f"the one-way clear was scoped to {store.cleared_scope}, must be [B_ID] only"
     )
+    assert store.clear_min_age_seconds == 24.119
 
 
 def test_the_L3_RESTORE_is_scoped_the_same_way() -> None:

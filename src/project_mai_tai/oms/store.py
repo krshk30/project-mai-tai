@@ -848,24 +848,32 @@ class OmsStore:
         session: Session,
         *,
         broker_account_ids: list[UUID] | None = None,
+        minimum_age_seconds: float = 0.0,
+        observed_at: datetime | None = None,
+        deferred_out: list[tuple[UUID, str, Decimal, float]] | None = None,
     ) -> list[tuple[UUID, str, Decimal]]:
-        """Zero every virtual position the broker snapshot does not back.
+        """Zero aged virtual positions that a successful broker snapshot does not back.
 
         Returns `(broker_account_id, symbol, quantity_before)` per row cleared, so the caller can
-        LOG WHAT IT ERASED.
+        LOG WHAT IT ERASED.  When ``deferred_out`` is supplied, fresh unbacked rows are appended as
+        `(broker_account_id, symbol, quantity, age_seconds)`.
 
-        ⛔⭐ THIS IS A ONE-WAY ERASURE. Nothing re-derives `virtual_positions` from account backing
-        (grep: three `quantity = Decimal("0")` writes in this module, zero repairs), so a row zeroed
-        here stays zeroed even once the broker reports the position again. It is one of exactly two
-        candidate causes of the DSY 2026-08-07 false zero — a position we held, with an open managed
-        row, reading `virtual_quantity = 0` (open item 12).
+        ⛔⭐ N3 ORDERING. A BUY fill writes this row before the broker position endpoint necessarily
+        shows the shares. Before #714 the clear was one-way; #714 added a managed-row restoration
+        path, but the measured restore took 6.648s--19.119s while consumers act inside 10s. A later
+        repair cannot make an already-consumed zero safe. The production caller therefore supplies
+        a measured minimum age (observed max + one complete poll interval) and this method refuses
+        to publish a younger zero.
 
-        ⛔ The other candidate is "the buy fill never reached `apply_fill_to_positions`", and the two
-        are INDISTINGUISHABLE after the fact: the sell branch of `_apply_position_fill` writes the
-        same `0 / 0 / NULL` this does. Diagnosing DSY needed an elimination argument that only
-        worked because the broker still held the shares. Hence the detail: the NEXT occurrence must
-        name itself.
+        This does not delay a normal SELL fill: `_apply_position_fill` writes the virtual row to
+        zero in the fill transaction. It only delays this reconciliation override. At the exact
+        bound the override remains reachable, so an unbounded stale-positive ledger cannot replace
+        the transient false-zero defect.
         """
+        min_age = max(0.0, float(minimum_age_seconds or 0.0))
+        now = observed_at or utcnow()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
         query = select(VirtualPosition).where(VirtualPosition.quantity > 0)
         if broker_account_ids:
             query = query.where(VirtualPosition.broker_account_id.in_(broker_account_ids))
@@ -880,6 +888,26 @@ class OmsStore:
             )
             account_quantity = account_position.quantity if account_position is not None else Decimal("0")
             if account_quantity > 0:
+                continue
+
+            updated_at = virtual_position.updated_at
+            if updated_at is not None and updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=UTC)
+            age_seconds = (
+                max(0.0, (now - updated_at).total_seconds())
+                if updated_at is not None
+                else min_age
+            )
+            if min_age > 0.0 and age_seconds < min_age:
+                if deferred_out is not None:
+                    deferred_out.append(
+                        (
+                            virtual_position.broker_account_id,
+                            str(virtual_position.symbol or ""),
+                            virtual_position.quantity,
+                            age_seconds,
+                        )
+                    )
                 continue
 
             cleared.append(
@@ -906,12 +934,15 @@ class OmsStore:
 
         Returns `(broker_account_id, symbol, restored_quantity)` per row repaired.
 
-        ⛔⭐⭐ WHY THIS EXISTS. `clear_virtual_positions_without_account_backing` is a ONE-WAY
-        erasure — nothing re-derived these rows, so a single failed broker read permanently
-        corrupted the holdings ledger. Measured 2026-08-17: 2 of 2 read failures that landed while
-        we held a position erased the row (CRWU 08-12, VWAV 08-14), each from an isolated single
-        failure. L1 (adapter raises) and L2 (sync refuses to zero) stop NEW erasures; only this
-        repairs an existing one, and it is what bounds the fix's own failure direction.
+        ⛔⭐⭐ WHY THIS EXISTS. Before #714,
+        `clear_virtual_positions_without_account_backing` was a one-way erasure, so a single failed
+        broker read permanently corrupted the holdings ledger. Measured 2026-08-17: 2 of 2 read
+        failures that landed while we held a position erased the row (CRWU 08-12, VWAV 08-14),
+        each from an isolated single failure. L1 (adapter raises) and L2 (sync refuses to zero)
+        stop NEW erasures; this method repairs an existing one once broker backing reappears.
+
+        ⛔ N3 LIMIT. Measured repairs took 6.648s--19.119s while consumers act inside 10s. This
+        recovery path cannot make the intervening zero safe; the producer must defer a fresh clear.
 
         ⛔⭐ SOURCE IS `oms_managed_positions`, **NOT** `account_positions`. The account book is
         SHARED with the operator — on 2026-08-17 he held 5000 IVF on the same account we trade 2 on.

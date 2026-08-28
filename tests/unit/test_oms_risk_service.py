@@ -1306,7 +1306,11 @@ async def test_oms_service_sync_clears_virtual_positions_without_broker_backing(
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     service = OmsRiskService(
-        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_virtual_position_clear_min_age_seconds=0,
+        ),
         redis_client=redis,
         session_factory=session_factory,
     )
@@ -4493,9 +4497,17 @@ def _capture_service_log(service, name: str) -> _RecordingHandler:
     return handler
 
 
-def _seed_virtual(session, *, symbol: str, virtual_qty: str, account_qty: str | None):
+def _seed_virtual(
+    session,
+    *,
+    symbol: str,
+    virtual_qty: str,
+    account_qty: str | None,
+    account_name: str = "live:orb",
+    updated_at: datetime | None = None,
+):
     strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live", metadata_json={})
-    account = BrokerAccount(name="live:orb", provider="schwab", environment="production")
+    account = BrokerAccount(name=account_name, provider="schwab", environment="production")
     session.add_all([strategy, account])
     session.flush()
     session.add(
@@ -4506,6 +4518,7 @@ def _seed_virtual(session, *, symbol: str, virtual_qty: str, account_qty: str | 
             quantity=Decimal(virtual_qty),
             average_price=Decimal("1.00"),
             realized_pnl=Decimal("0"),
+            updated_at=updated_at or datetime.now(UTC),
         )
     )
     if account_qty is not None:
@@ -4555,6 +4568,136 @@ def test_virtual_clear_never_touches_a_BROKER_BACKED_position() -> None:
         assert position is not None and position.quantity == Decimal("1")
 
 
+def test_fresh_fill_clear_is_deferred_and_real_v2_consumer_still_reads_held() -> None:
+    """N3 ordering: fill -> broker-flat clear attempt -> consumer read.
+
+    The measured clear-to-restore maximum is 19.119s, while v2 polls positions every 5s. At
+    +24.118s the producer must still refuse to publish zero. This drives the real v2 DB consumer;
+    an assertion that a row merely exists would not prove the decision input stayed positive.
+    """
+    from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+
+    session_factory = build_test_session_factory()
+    filled_at = datetime(2026, 8, 26, 17, 24, 51, 920000, tzinfo=UTC)
+    with session_factory() as session:
+        strategy = Strategy(
+            code="schwab_1m_v2",
+            name="v2",
+            execution_mode="live",
+            metadata_json={},
+        )
+        account = BrokerAccount(
+            name="live:schwab_1m_v2",
+            provider="schwab",
+            environment="production",
+        )
+        session.add_all([strategy, account])
+        session.flush()
+        store = OmsStore()
+        store.apply_fill_to_positions(
+            session,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="YYGH",
+            side="buy",
+            quantity=Decimal("2"),
+            price=Decimal("1.00"),
+            reported_at=filled_at,
+        )
+        # Drive the same successful-but-still-flat broker snapshot that precedes
+        # clear_virtual_positions_without_account_backing in the production sync.
+        store.sync_account_positions(session, broker_account_id=account.id, snapshots=[])
+        virtual = session.scalar(select(VirtualPosition).where(VirtualPosition.symbol == "YYGH"))
+        assert virtual is not None
+        virtual.updated_at = filled_at
+        session.commit()
+
+    deferred: list[tuple] = []
+    with session_factory() as session:
+        cleared = OmsStore().clear_virtual_positions_without_account_backing(
+            session,
+            minimum_age_seconds=24.119,
+            observed_at=filled_at + timedelta(seconds=24.118),
+            deferred_out=deferred,
+        )
+        session.commit()
+
+    assert cleared == []
+    assert len(deferred) == 1
+    assert deferred[0][1] == "YYGH"
+    assert deferred[0][3] == pytest.approx(24.118)
+
+    bot = SchwabV2BotService(
+        settings=Settings(strategy_schwab_1m_v2_account_name="live:schwab_1m_v2"),
+        session_factory=session_factory,
+    )
+    assert bot._fetch_position_maps() == ({"YYGH": 2}, {"YYGH": 2})
+
+
+def test_fresh_fill_clear_bound_has_both_reachable_polarities() -> None:
+    """One elapsed-time variable: +24.118s defers; +24.119s clears.
+
+    An unbounded hold would pass the first assertion while stranding a genuinely stale ledger row.
+    """
+    session_factory = build_test_session_factory()
+    filled_at = datetime(2026, 8, 26, 17, 24, 51, 920000, tzinfo=UTC)
+    with session_factory() as session:
+        _seed_virtual(
+            session,
+            symbol="YYGH",
+            virtual_qty="1",
+            account_qty="0",
+            updated_at=filled_at,
+        )
+        session.commit()
+
+    with session_factory() as session:
+        assert OmsStore().clear_virtual_positions_without_account_backing(
+            session,
+            minimum_age_seconds=24.119,
+            observed_at=filled_at + timedelta(seconds=24.118),
+        ) == []
+        cleared = OmsStore().clear_virtual_positions_without_account_backing(
+            session,
+            minimum_age_seconds=24.119,
+            observed_at=filled_at + timedelta(seconds=24.119),
+        )
+        session.commit()
+
+    assert [(symbol, quantity) for _account, symbol, quantity in cleared] == [
+        ("YYGH", Decimal("1"))
+    ]
+
+
+def test_normal_sell_fill_still_zeroes_immediately_without_waiting_for_clear_bound() -> None:
+    """The guard delays reconciliation only; a normal SELL close remains immediate."""
+    session_factory = build_test_session_factory()
+    closed_at = datetime(2026, 8, 26, 17, 30, tzinfo=UTC)
+    with session_factory() as session:
+        account_id = _seed_virtual(
+            session,
+            symbol="YYGH",
+            virtual_qty="1",
+            account_qty="1",
+        )
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
+        OmsStore().apply_fill_to_positions(
+            session,
+            strategy_id=strategy.id,
+            broker_account_id=account_id,
+            symbol="YYGH",
+            side="sell",
+            quantity=Decimal("1"),
+            price=Decimal("1.10"),
+            reported_at=closed_at,
+        )
+        session.commit()
+
+    with session_factory() as session:
+        position = session.scalar(select(VirtualPosition).where(VirtualPosition.symbol == "YYGH"))
+        assert position is not None and position.quantity == Decimal("0")
+
+
 @pytest.mark.asyncio
 async def test_sync_broker_state_LOGS_the_symbols_it_zeroed() -> None:
     """⭐ The production call site, not a re-implementation of its format string.
@@ -4570,7 +4713,11 @@ async def test_sync_broker_state_LOGS_the_symbols_it_zeroed() -> None:
         session.commit()
 
     service = OmsRiskService(
-        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_virtual_position_clear_min_age_seconds=0,
+        ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
@@ -4588,6 +4735,53 @@ async def test_sync_broker_state_LOGS_the_symbols_it_zeroed() -> None:
     assert "DSY" in lines[0]
     assert "live:orb" in lines[0], "the account is load-bearing: v2 and the fan-out leg differ"
     assert "=1" in lines[0], "the quantity erased must be in the line"
+    assert "clear_allowed=1" in lines[0]
+    assert "evaluated_unbacked=1" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_sync_broker_state_defers_fresh_false_zero_with_named_denominator() -> None:
+    """The production call site carries both the bound and its exercised denominator.
+
+    Before the fix this same pass emitted [VIRTUAL-CLEAR] and committed quantity=0. Afterward it
+    emits one INFO decision line and leaves the shared producer row positive for every consumer.
+    """
+    from types import SimpleNamespace
+
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        _seed_virtual(session, symbol="YYGH", virtual_qty="1", account_qty="0")
+        session.commit()
+
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_virtual_position_clear_min_age_seconds=24.119,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    async def _no_positions(_name):
+        return []
+
+    service.broker_adapter = SimpleNamespace(list_account_positions=_no_positions)
+    handler = _capture_service_log(service, "test-virtual-clear-deferred")
+
+    await service.sync_broker_state()
+
+    decisions = [m for m in handler.messages if "[VIRTUAL-CLEAR-DEFERRED]" in m]
+    assert len(decisions) == 1
+    assert "deferred=1 of unbacked_positive=1" in decisions[0]
+    assert "clear_allowed=0" in decisions[0]
+    assert "min_age_seconds=24.119" in decisions[0]
+    assert "YYGH=1" in decisions[0]
+    assert not [m for m in handler.messages if "[VIRTUAL-CLEAR] zeroed" in m]
+
+    with session_factory() as session:
+        position = session.scalar(select(VirtualPosition).where(VirtualPosition.symbol == "YYGH"))
+        assert position is not None and position.quantity == Decimal("1")
 
 
 @pytest.mark.asyncio
