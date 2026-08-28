@@ -10188,10 +10188,24 @@ class StrategyEngineService:
         safe_payload = json.loads(json.dumps(payload, default=str))
         try:
             with self.session_factory() as session:
+                created_at = utcnow()
+                prior_created_at = session.scalar(
+                    select(DashboardSnapshot.created_at)
+                    .where(DashboardSnapshot.snapshot_type == snapshot_type)
+                    .order_by(desc(DashboardSnapshot.created_at), desc(DashboardSnapshot.id))
+                    .limit(1)
+                )
+                if prior_created_at is not None:
+                    if prior_created_at.tzinfo is None:
+                        prior_created_at = prior_created_at.replace(tzinfo=UTC)
+                    # Windows and SQLite can expose clocks at coarser than microsecond resolution.
+                    # Keep append order monotonic even when the wall clock repeats exactly.
+                    created_at = max(created_at, prior_created_at + timedelta(microseconds=1))
                 session.add(
                     DashboardSnapshot(
                         snapshot_type=snapshot_type,
                         payload=safe_payload,
+                        created_at=created_at,
                     )
                 )
                 session.flush()
