@@ -23,13 +23,31 @@ So "strategy bars are stale" is RED only when the upstream feed is SIMULTANEOUSL
 """
 from __future__ import annotations
 
-import glob
+from datetime import date, datetime, timedelta
+from pathlib import Path
+import re
 import subprocess
 import sys
+from zoneinfo import ZoneInfo
 
 # --- ground-truth access (independent: subprocess, no app import) ------------- #
 
 _DSN_CACHE: list[str | None] = []
+_EASTERN_TZ = ZoneInfo("America/New_York")
+_D6_STATUS_PATH = Path("/home/trader/fanout_outcome_acceptance/STATUS.txt")
+_SESSION_RE = re.compile(r"\bsession=(\d{4}-\d{2}-\d{2})\b")
+# This check deliberately imports no application code. Keep these full closures in step with the
+# equally explicit fleet_health_cron.sh list; both are versioned and carry the same roll-forward
+# obligation rather than inheriting the health of the application they monitor.
+_FULL_CLOSURES = frozenset(
+    {
+        date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16), date(2026, 4, 3),
+        date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7),
+        date(2026, 11, 26), date(2026, 12, 25), date(2027, 1, 1), date(2027, 1, 18),
+        date(2027, 2, 15), date(2027, 3, 26), date(2027, 5, 31), date(2027, 6, 18),
+        date(2027, 7, 5), date(2027, 9, 6), date(2027, 11, 25), date(2027, 12, 24),
+    }
+)
 
 
 def _dsn() -> str | None:
@@ -147,6 +165,46 @@ def classify_order_lifecycle(
         f"{stuck_count} intent(s) CONSUMED but stuck non-terminal with NO order "
         f"(oldest {age}) — OMS alive-but-not-executing / terminalize not running",
     )
+
+
+def _last_completed_session_day(today: date) -> date:
+    candidate = today - timedelta(days=1)
+    while candidate.weekday() >= 5 or candidate in _FULL_CLOSURES:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def classify_d6_status(contents: str | None, *, expected_session: date) -> tuple[str, str]:
+    """The D6 cron cannot observe its own death; this independent monitor watches its output."""
+    if not contents:
+        return ("RED", f"D6 STATUS missing; expected session={expected_session.isoformat()}")
+    match = _SESSION_RE.search(contents)
+    if match is None:
+        return ("RED", f"D6 STATUS has no readable session; expected={expected_session.isoformat()}")
+    observed = date.fromisoformat(match.group(1))
+    if observed < expected_session:
+        return (
+            "RED",
+            f"D6 STATUS stale session={observed.isoformat()} expected={expected_session.isoformat()}",
+        )
+    if observed > expected_session:
+        return (
+            "RED",
+            f"D6 STATUS future session={observed.isoformat()} expected={expected_session.isoformat()}",
+        )
+    if "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" not in contents:
+        return ("RED", f"D6 session={observed.isoformat()} completed without SUCCESS")
+    return ("GREEN", f"D6 SUCCESS current for session={observed.isoformat()}")
+
+
+def check_d6_status_freshness() -> tuple[str, str, str]:
+    expected = _last_completed_session_day(datetime.now(_EASTERN_TZ).date())
+    try:
+        contents = _D6_STATUS_PATH.read_text(encoding="utf-8")
+    except OSError:
+        contents = None
+    level, detail = classify_d6_status(contents, expected_session=expected)
+    return (level, "d6-outcome-acceptance", detail)
 
 
 # ⛔⭐ REAL-MONEY SCOPE — the allowlist that keeps a SIM trade out of a real-money pager.
@@ -355,6 +413,7 @@ CHECKS = [
     check_oms_order_lifecycle,      # #2 alive-but-not-executing detector
     check_stops_armed,              # #3 every OMS-owned open position has an armed stop
     check_bar_continuity,           # #4 v2 bar holes -> ATR spans them -> orders mispriced
+    check_d6_status_freshness,       # #5 independently detect a dead/stale D6 scheduler
 ]
 
 _RANK = {"GREEN": 0, "AMBER": 1, "RED": 2}

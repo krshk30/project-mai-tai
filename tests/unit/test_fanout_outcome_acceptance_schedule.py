@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import importlib.util
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -47,6 +48,17 @@ def test_installed_loader_executes_the_real_acceptance_module() -> None:
 
     assert loaded.SQL == acceptance.SQL
     assert callable(loaded.run_report)
+
+
+def test_runner_help_starts_without_the_application_package_on_sys_path() -> None:
+    result = subprocess.run(
+        [sys.executable, "-I", str(OPS / "fanout_outcome_acceptance_cron.py"), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_completed_window_matches_the_controls_calendar_day_not_the_old_entry_slice() -> None:
@@ -102,6 +114,46 @@ def test_new_window_clears_yesterdays_success_before_acceptance_import(tmp_path)
     assert "[D6-OUTCOME-ACCEPTANCE-STARTED] session=2026-08-28" in status
     assert "verdict=IN_PROGRESS success_marker=absent" in status
     assert "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" not in status
+    history = (tmp_path / "history.log").read_text(encoding="utf-8")
+    assert "session=pending_calendar" in history
+    assert "[D6-OUTCOME-ACCEPTANCE-STARTED] session=2026-08-28" in history
+
+
+def test_calendar_import_failure_cannot_leave_yesterdays_success(monkeypatch, tmp_path) -> None:
+    status_path = tmp_path / "STATUS.txt"
+    status_path.write_text(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-27 verdict=PASS\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cron,
+        "completed_session_window",
+        lambda _now: (_ for _ in ()).throw(ImportError("stale production venv")),
+    )
+
+    with pytest.raises(ImportError, match="stale production venv"):
+        cron.run_once(
+            now=datetime(2026, 8, 29, 0, 17, tzinfo=EASTERN_TZ),
+            acceptance=None,
+            acceptance_path=tmp_path / "check.py",
+            out_dir=tmp_path,
+            notify=lambda _title, _body: True,
+        )
+
+    status = status_path.read_text(encoding="utf-8")
+    assert "session=pending_calendar" in status
+    assert "verdict=IN_PROGRESS success_marker=absent" in status
+    assert "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" not in status
+
+
+def test_atomic_status_write_flushes_contents_before_replace(monkeypatch, tmp_path) -> None:
+    flushed = []
+    monkeypatch.setattr(cron.os, "fsync", lambda fd: flushed.append(fd))
+
+    cron._atomic_write(tmp_path / "STATUS.txt", "durable\n")
+
+    assert flushed
+    assert (tmp_path / "STATUS.txt").read_text(encoding="utf-8") == "durable\n"
 
 
 def test_notification_treats_http_429_as_failure(monkeypatch) -> None:
@@ -150,6 +202,12 @@ def test_selected_session_dates_reach_the_real_sql_over_psql_stdin(
     assert "window_until=2026-08-29T00:00:00-04:00" in command
     assert command[-2:] == ["-f", "-"]
     assert captured["input"] == acceptance.SQL
+    sql = captured["input"]
+    assert ":'window_since'" in sql and ":'window_until'" in sql
+    exit_episode_sql = sql.split("target_exit_episodes AS (", 1)[1].split("),\nrows AS (", 1)[0]
+    assert "CROSS JOIN target_bounds" in exit_episode_sql
+    assert "sfbo.first_fill_at >= b.since_at" in exit_episode_sql
+    assert "sfbo.first_fill_at < b.until_at" in exit_episode_sql
     assert notifications and "verdict=COULD_NOT_TELL" in notifications[0][1]
 
 
@@ -203,6 +261,32 @@ def test_nonpass_notifies_and_never_emits_the_success_marker(tmp_path) -> None:
     assert "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" not in status
 
 
+def test_prior_nonpass_is_rerun_instead_of_skipped_as_success(tmp_path) -> None:
+    now = datetime(2026, 8, 29, 0, 17, tzinfo=EASTERN_TZ)
+    failed = _pass_report()
+    failed = SimpleNamespace(exit_code=1, verdict="FAIL", lines=failed.lines[:-1] + ("verdict=FAIL",))
+    first = cron.run_once(
+        now=now,
+        acceptance=SimpleNamespace(run_report=lambda **_kwargs: failed),
+        out_dir=tmp_path,
+        notify=lambda _title, _body: True,
+    )
+    calls = []
+    second = cron.run_once(
+        now=now,
+        acceptance=SimpleNamespace(run_report=lambda **_kwargs: calls.append(1) or _pass_report()),
+        out_dir=tmp_path,
+        notify=lambda _title, _body: True,
+    )
+
+    assert first.exit_code == 1
+    assert calls == [1]
+    assert second.exit_code == 0
+    assert "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" in (
+        tmp_path / "STATUS.txt"
+    ).read_text(encoding="utf-8")
+
+
 def test_a_pass_missing_a_denominator_fails_closed_and_notifies(tmp_path) -> None:
     report = _pass_report()
     bad_lines = tuple(line for line in report.lines if not line.startswith("metric=refused_exits "))
@@ -254,3 +338,29 @@ def test_installer_is_root_only_and_manages_one_repo_owned_cron_block() -> None:
     assert 'source_cron="$repo_root/ops/health/fanout_outcome_acceptance_cron.py"' in installer
     assert 'cron_line="17 4,5,6 * * 2-6 ' in installer
     assert "malformed existing D6 cron block" in installer
+    assert 'verify_runtime "$python_bin" "$target_cron"' in installer
+
+
+def test_installer_executes_help_with_the_selected_runtime(tmp_path) -> None:
+    git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+    bash = str(git_bash) if git_bash.exists() else shutil.which("bash")
+    assert bash is not None
+    installer = (OPS / "install_fanout_outcome_acceptance.sh").as_posix()
+    fake_python = tmp_path / "python"
+    fake_cron = tmp_path / "cron.py"
+    calls = tmp_path / "calls.txt"
+    fake_cron.write_text("# target\n", encoding="utf-8")
+    fake_python.write_text(
+        f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" > '{calls.as_posix()}'\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    command = (
+        f"MAI_TAI_INSTALLER_LIB_ONLY=1 source '{installer}'; "
+        f"verify_runtime '{fake_python.as_posix()}' '{fake_cron.as_posix()}'"
+    )
+
+    result = subprocess.run([bash, "-lc", command], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text(encoding="utf-8").strip() == f"{fake_cron.as_posix()} --help"

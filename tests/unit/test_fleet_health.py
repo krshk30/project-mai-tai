@@ -7,6 +7,7 @@ live (a frozen loop) — never on a quiet market / feed outage."""
 from __future__ import annotations
 
 import importlib.util
+from datetime import date
 from pathlib import Path
 
 _MOD_PATH = Path(__file__).resolve().parents[2] / "ops" / "health" / "fleet_health_check.py"
@@ -65,6 +66,40 @@ def test_stuck_intents_is_red_alive_but_not_executing():
 
 def test_unreadable_intents_is_amber_not_red():
     assert fhc.classify_order_lifecycle(None, None)[0] == "AMBER"
+
+
+# --- check #5: independently watch the D6 scheduler's durable success marker ------------------ #
+
+
+def test_d6_current_success_is_green() -> None:
+    level, detail = fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-28 verdict=PASS\n",
+        expected_session=date(2026, 8, 28),
+    )
+    assert level == "GREEN"
+    assert "session=2026-08-28" in detail
+
+
+def test_d6_yesterdays_success_is_red_when_a_new_session_is_due() -> None:
+    level, detail = fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-27 verdict=PASS\n",
+        expected_session=date(2026, 8, 28),
+    )
+    assert level == "RED"
+    assert "stale" in detail
+
+
+def test_d6_current_nonpass_and_missing_status_are_red() -> None:
+    expected = date(2026, 8, 28)
+    assert fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-NONPASS] session=2026-08-28 verdict=FAIL\n",
+        expected_session=expected,
+    )[0] == "RED"
+    assert fhc.classify_d6_status(None, expected_session=expected)[0] == "RED"
+
+
+def test_d6_expected_session_skips_weekend_and_full_closure() -> None:
+    assert fhc._last_completed_session_day(date(2026, 9, 8)) == date(2026, 9, 4)
 
 
 # --- check #3: stops-armed (every OMS-owned open position has an armed stop) --- #

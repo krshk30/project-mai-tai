@@ -23,13 +23,13 @@ import subprocess
 import sys
 from types import ModuleType
 from typing import Callable, Sequence
-
-from project_mai_tai.strategy_core.time_utils import EASTERN_TZ, US_MARKET_HOLIDAYS
+from zoneinfo import ZoneInfo
 
 
 PASS = 0
 COULD_NOT_TELL = 2
 SESSION_SLICE_START = time(0, 0)
+EASTERN_TZ = ZoneInfo("America/New_York")
 DEFAULT_OUT_DIR = Path("/home/trader/fanout_outcome_acceptance")
 DEFAULT_NTFY_URL = "https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
 
@@ -48,6 +48,10 @@ class ScheduledResult:
 
 
 def _is_session_day(candidate) -> bool:  # type: ignore[no-untyped-def]
+    # Lazy by design. A stale production venv must still be able to start this runner and replace
+    # yesterday's SUCCESS with a durable IN_PROGRESS record before an application import can fail.
+    from project_mai_tai.strategy_core.time_utils import US_MARKET_HOLIDAYS
+
     return candidate.weekday() < 5 and candidate not in US_MARKET_HOLIDAYS
 
 
@@ -87,8 +91,32 @@ def _default_acceptance_path() -> Path:
 def _atomic_write(path: Path, contents: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    temporary.write_text(contents, encoding="utf-8")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(contents)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, path)
+    if os.name != "nt":
+        parent_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+
+
+def _append_history(path: Path, *, now: datetime, contents: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as history:
+        history.write(f"===== {now.astimezone(EASTERN_TZ).isoformat()} =====\n{contents}")
+        history.flush()
+        os.fsync(history.fileno())
+
+
+def _is_success_for_session(contents: str, session_date: str) -> bool:
+    return (
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" in contents
+        and f"session={session_date}" in contents
+    )
 
 
 def _denominator_contract(lines: Sequence[str]) -> tuple[bool, str]:
@@ -139,9 +167,28 @@ def run_once(
     notify: Callable[[str, str], bool],
     acceptance_path: Path | None = None,
 ) -> ScheduledResult:
+    status_path = out_dir / "STATUS.txt"
+    prior_status = status_path.read_text(encoding="utf-8") if status_path.exists() else ""
+    bootstrap = (
+        "[D6-OUTCOME-ACCEPTANCE-STARTED] session=pending_calendar "
+        "verdict=IN_PROGRESS success_marker=absent "
+        "denominator=pending completed ET calendar-day session\n"
+    )
+    # This precedes the lazy application-calendar import in completed_session_window(). A stale
+    # venv can fail after this point, but it cannot leave yesterday's SUCCESS looking current.
+    _atomic_write(status_path, bootstrap)
+    _append_history(out_dir / "history.log", now=now, contents=bootstrap)
+
     window = completed_session_window(now)
     attempted_path = out_dir / "last_attempted_session.txt"
-    if attempted_path.exists() and attempted_path.read_text(encoding="utf-8").strip() == window.session_date:
+    if (
+        attempted_path.exists()
+        and attempted_path.read_text(encoding="utf-8").strip() == window.session_date
+        and _is_success_for_session(prior_status, window.session_date)
+    ):
+        # Restore the already-completed result after recording this duplicate invocation. A prior
+        # NONPASS is never skipped: the next scheduled attempt reruns and can notify again.
+        _atomic_write(status_path, prior_status)
         return ScheduledResult(
             PASS,
             (
@@ -159,7 +206,8 @@ def run_once(
         "verdict=IN_PROGRESS success_marker=absent "
         "denominator=one completed ET calendar-day session\n"
     )
-    _atomic_write(out_dir / "STATUS.txt", started)
+    _atomic_write(status_path, started)
+    _append_history(out_dir / "history.log", now=now, contents=started)
     if acceptance is None:
         if acceptance_path is None:
             raise ValueError("acceptance_path is required when acceptance is not supplied")
@@ -187,9 +235,8 @@ def run_once(
     rendered = "\n".join(output_lines) + "\n"
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    _atomic_write(out_dir / "STATUS.txt", rendered)
-    with (out_dir / "history.log").open("a", encoding="utf-8") as history:
-        history.write(f"===== {now.astimezone(EASTERN_TZ).isoformat()} =====\n{rendered}")
+    _atomic_write(status_path, rendered)
+    _append_history(out_dir / "history.log", now=now, contents=rendered)
 
     if effective_code != PASS:
         report_hash = hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:16]
