@@ -133,6 +133,25 @@ def resolve_entry_slot(row, slot_index: dict[tuple[str, str, str], str]) -> tupl
     return "unattributed", True
 
 
+def format_slot_coverage(attributed: int, total: int) -> str:
+    """Refuse a numeric coverage result when the population is empty or partly unknown."""
+    if attributed < 0 or total < 0 or attributed > total:
+        raise ValueError("slot coverage counts must satisfy 0 <= attributed <= total")
+    if total == 0:
+        return (
+            "cw_entry_slot coverage=0/0 -- COULD_NOT_TELL "
+            "(denominator=0; no price-comparable BUY fills)"
+        )
+    unknown = total - attributed
+    if unknown:
+        return (
+            f"cw_entry_slot coverage={attributed}/{total} -- COULD_NOT_TELL "
+            f"({unknown} fill{' has' if unknown == 1 else 's have'} unknown classification; "
+            "percentage withheld)"
+        )
+    return f"cw_entry_slot coverage={attributed}/{total} = 100.0% -- GRADEABLE"
+
+
 def summarise(label: str, rows: list[tuple[str, float]]) -> None:
     """⛔ MEDIAN-FIRST, with a DROP-ONE by NAME. Never a bare total."""
     if not rows:
@@ -214,6 +233,12 @@ def main() -> int:
     print("\nPER-FILL (ET)")
     print("\n".join(detail) if detail else "  (none)")
 
+    slot_population = sum(len(values) for values in buckets.values())
+    attributed = slot_population - unattributed
+    slot_gradeable = slot_population > 0 and attributed == slot_population
+    print("\nSLOT ATTRIBUTION COVERAGE — denominator = price-comparable BUY fills")
+    print("  " + format_slot_coverage(attributed, slot_population))
+
     print("\nBY SLOT — ⭐ #676's acceptance is the `reclaim` row")
     for slot in sorted(buckets):
         summarise(slot, buckets[slot])
@@ -231,6 +256,10 @@ def main() -> int:
     print("  - It cannot say whether the DECIDED level was a good level. Price only, by design —")
     print("    the strategy is parked; this measures execution, never edge.")
     print("  - A median over a handful of fills from ONE symbol is not a population. Read n first.")
+    print(
+        f"\nVERDICT slot_attribution={'GRADEABLE' if slot_gradeable else 'COULD_NOT_TELL'} "
+        f"cw_entry_slot_coverage={attributed}/{slot_population}"
+    )
     return 0
 
 

@@ -36,6 +36,42 @@ def median(xs):
     return xs[len(xs) // 2] if xs else None
 
 
+def format_slot_coverage(attributed: int, total: int) -> str:
+    """Name whether economic-slot classification is usable, never defaulting unknown to zero."""
+    if attributed < 0 or total < 0 or attributed > total:
+        raise ValueError("slot coverage counts must satisfy 0 <= attributed <= total")
+    if total == 0:
+        return (
+            "cw_entry_slot coverage=0/0 -- COULD_NOT_TELL "
+            "(denominator=0; no filled-entry population)"
+        )
+    unknown = total - attributed
+    if unknown:
+        return (
+            f"cw_entry_slot coverage={attributed}/{total} -- COULD_NOT_TELL "
+            f"({unknown} filled entr{'y has' if unknown == 1 else 'ies have'} unknown "
+            "classification; percentage withheld)"
+        )
+    return f"cw_entry_slot coverage={attributed}/{total} = 100.0% -- GRADEABLE"
+
+
+def format_first_slot_rate(
+    first: int,
+    live_arms: int,
+    *,
+    attributed: int,
+    total: int,
+) -> str:
+    """Render a numeric zero only when both its denominator and slot evidence are gradeable."""
+    coverage = format_slot_coverage(attributed, total)
+    prefix = f"{first} attributed first-slot fills / {live_arms} live in-window arms"
+    if live_arms == 0:
+        return f"{prefix} -- COULD_NOT_TELL (denominator=0; rate is not zero)"
+    if total == 0 or attributed != total:
+        return f"{prefix} -- COULD_NOT_TELL ({coverage}; numeric rate withheld)"
+    return f"{prefix} = {100.0 * first / live_arms:.1f}%"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--day", default=datetime.now(ET).strftime("%Y-%m-%d"))
@@ -71,18 +107,22 @@ def main():
     by_slot = {str(r[0]).strip().lower(): int(r[1]) for r in rows}
     first_n, reclaim_n = by_slot.get("first", 0), by_slot.get("reclaim", 0)
     unattributed_n = sum(n for slot, n in by_slot.items() if slot not in {"first", "reclaim"})
+    attributed_n = first_n + reclaim_n
     total_entries = first_n + reclaim_n + unattributed_n
+    slot_gradeable = total_entries > 0 and attributed_n == total_entries
     print("\n-- SCHWAB ENTRIES BY ECONOMIC SLOT --")
     print("   first=%d  reclaim=%d  unattributed=%d  total=%d"
           % (first_n, reclaim_n, unattributed_n, total_entries))
+    print("   " + format_slot_coverage(attributed_n, total_entries))
 
     # ---------- the corrected first-slot rate ----------
     print("\n-- FIRST-SLOT FILL RATE, PER LIVE ARM (not per placement) --")
-    if enterable:
-        print("   %d attributed first-slot fills / %d live in-window arms = %.1f%%"
-              % (first_n, len(enterable), 100.0 * first_n / len(enterable)))
-    else:
-        print("   no live in-window arms -- rate undefined (NOT zero)")
+    print("   " + format_first_slot_rate(
+        first_n,
+        len(enterable),
+        attributed=attributed_n,
+        total=total_entries,
+    ))
 
     # ---------- no-entry crosses ----------
     fills_by_sym = {}
@@ -141,8 +181,12 @@ def main():
 
     print("\n" + "=" * 78)
     print("VERDICT eod day=%s live_arms=%d replay_excluded=%d entries=%d "
-          "(first=%d reclaim=%d unattributed=%d) no_entry=%d trips=%d"
+          "(first=%d reclaim=%d unattributed=%d) slot_coverage=%d/%d "
+          "slot_verdict=%s first_rate_verdict=%s no_entry=%d trips=%d"
           % (a.day, len(segs), replay, total_entries, first_n, reclaim_n, unattributed_n,
+             attributed_n, total_entries,
+             "GRADEABLE" if slot_gradeable else "COULD_NOT_TELL",
+             "GRADEABLE" if slot_gradeable and enterable else "COULD_NOT_TELL",
              len(no_entry), len(trips)))
     return 0
 
