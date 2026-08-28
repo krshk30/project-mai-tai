@@ -1618,8 +1618,21 @@ class SchwabV2BotService:
         # accepts it, so evict ONLY names BOTH brokers rejected (schwab ∩ webull). Flag-OFF keeps the
         # schwab-only eviction (byte-identical — `_webull_ineligible_symbols` returns empty when off).
         ineligible_exclude = self._schwab_ineligible_symbols()
+        if ineligible_exclude is None:
+            logger.error(
+                "[V2-BOOT-RESTORE] restoration_complete=0 reason=schwab_ineligible_unreadable "
+                "snapshot_not_applied=1; an unreadable exclusion list is not an empty list"
+            )
+            return
         if bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
-            ineligible_exclude = ineligible_exclude & self._webull_ineligible_symbols()
+            webull_ineligible = self._webull_ineligible_symbols()
+            if webull_ineligible is None:
+                logger.error(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 reason=webull_ineligible_unreadable "
+                    "snapshot_not_applied=1; an unreadable exclusion list is not an empty list"
+                )
+                return
+            ineligible_exclude = ineligible_exclude & webull_ineligible
         if ineligible_exclude:
             selected -= ineligible_exclude
             scanner_selected -= ineligible_exclude
@@ -1796,7 +1809,7 @@ class SchwabV2BotService:
             # 2026-05-23 entry for the race analysis.
             self.streamer.set_desired_symbols(desired)
 
-    def _schwab_ineligible_symbols(self) -> set[str]:
+    def _schwab_ineligible_symbols(self) -> set[str] | None:
         """Symbols Schwab refused to OPEN today ("must be placed with a broker").
 
         v2 must stop putting these on its watchlist so it stops EMITTING intents for
@@ -1833,12 +1846,12 @@ class SchwabV2BotService:
                     blocked = by_account.get(account_id, set())
         except Exception:  # noqa: BLE001
             logger.exception("schwab_1m_v2 failed loading Schwab ineligible symbols")
-            return self._schwab_ineligible_cache
+            return None
         self._schwab_ineligible_cache = blocked
         self._schwab_ineligible_loaded_monotonic = now_m
         return blocked
 
-    def _webull_ineligible_symbols(self) -> set[str]:
+    def _webull_ineligible_symbols(self) -> set[str] | None:
         """Dual-broker fan-out: symbols Webull refused to OPEN today (symmetric to
         `_schwab_ineligible_symbols`, scoped to the Webull account). Used to skip the Webull leg and
         — intersected with the Schwab set — to evict a name only when BOTH brokers reject it. Cached
@@ -1874,7 +1887,7 @@ class SchwabV2BotService:
                     blocked = by_account.get(account_id, set())
         except Exception:  # noqa: BLE001
             logger.exception("schwab_1m_v2 failed loading Webull ineligible symbols")
-            return self._webull_ineligible_cache
+            return None
         self._webull_ineligible_cache = blocked
         self._webull_ineligible_loaded_monotonic = now_m
         return blocked
@@ -2953,6 +2966,19 @@ class SchwabV2BotService:
                 )
             return
         webull_ineligible = self._webull_ineligible_symbols()
+        if webull_ineligible is None:
+            logger.error(
+                "[V2-FANOUT] Webull ineligible-symbol read failed; refusing %d queued leg(s) "
+                "because unreadable is not empty",
+                len(legs),
+            )
+            for leg in legs:
+                await self._record_local_fanout_outcome(
+                    leg,
+                    outcome="could_not_tell",
+                    reason="webull_ineligible_unreadable",
+                )
+            return
         for d in legs:
             sym = str(getattr(d, "symbol", "")).upper()
             if sym in webull_ineligible:

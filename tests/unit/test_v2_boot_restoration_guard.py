@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from project_mai_tai.events import (
     StrategyStateSnapshotEvent,
     StrategyStateSnapshotPayload,
@@ -202,12 +204,20 @@ def test_prior_excluded_snapshot_cannot_launder_later_held_only_population(
     monkeypatch,
 ) -> None:
     """D1 exploit: identical held-only end state cannot depend on an earlier snapshot."""
-    bot = _bot(protected_symbols="CYN")
+    bot = _bot()
     bot.strategy._entries_held = False
-    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
+    seed_results = iter([False, True])
+    monkeypatch.setattr(
+        bot,
+        "_seed_strategy_bars_from_db",
+        lambda _symbol: next(seed_results),
+    )
 
-    _apply_snapshot(bot, ["CYN"])
-    assert bot._boot_scanner_selected == set()
+    # Pass 1 is deliberately non-empty and unreadable. If the current-snapshot assignment below
+    # is mutated back to a once-ever union (``|=``), DAIC survives into pass 2 and launders the
+    # held-only population into a completed restoration.
+    _apply_snapshot(bot, ["DAIC"])
+    assert bot._boot_scanner_selected == {"DAIC"}
     assert bot._boot_state_restoration_complete is False
 
     monkeypatch.setattr(bot, "_protected_symbols", lambda: {"HELD1"})
@@ -219,6 +229,55 @@ def test_prior_excluded_snapshot_cannot_launder_later_held_only_population(
     assert bot._boot_scanner_selected == set()
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
+
+
+@pytest.mark.parametrize(
+    ("schwab_result", "webull_result", "unreadable_reason"),
+    [
+        ({"DAIC"}, {"DAIC"}, None),
+        (None, {"DAIC"}, "schwab_ineligible_unreadable"),
+        ({"DAIC"}, None, "webull_ineligible_unreadable"),
+    ],
+)
+def test_ineligible_population_must_be_readable_before_boot_release(
+    monkeypatch,
+    caplog,
+    schwab_result,
+    webull_result,
+    unreadable_reason,
+) -> None:
+    """Readable exclusions and unreadable exclusions both keep the zero-population boot held."""
+    bot = _bot(
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    bot.strategy._entries_held = False
+    monkeypatch.setattr(bot, "_schwab_ineligible_symbols", lambda: schwab_result)
+    monkeypatch.setattr(bot, "_webull_ineligible_symbols", lambda: webull_result)
+    monkeypatch.setattr(bot.strategy, "cw_armed_segments", lambda: [])
+
+    with caplog.at_level(logging.ERROR):
+        _apply_snapshot(bot, ["DAIC"])
+        bot._cw_boot_hold_check()
+
+    assert bot._watchlist == set()
+    assert bot._boot_scanner_selected == set()
+    assert bot._boot_state_restoration_complete is False
+    assert bot.strategy._entries_held is True
+    if unreadable_reason is not None:
+        assert unreadable_reason in caplog.text
+
+
+def test_ineligible_loader_query_failure_is_not_cached_empty() -> None:
+    bot = _bot()
+    bot._schwab_ineligible_cache = set()
+
+    def fail_factory():
+        raise RuntimeError("db unavailable")
+
+    bot.session_factory = fail_factory
+
+    assert bot._schwab_ineligible_symbols() is None
 
 
 def test_completed_restoration_is_a_one_way_latch_across_empty_refresh(

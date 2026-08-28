@@ -201,6 +201,26 @@ def test_missing_restoration_field_is_unknown_not_a_defect(asc, monkeypatch, cap
     assert "COULD_NOT_TELL: restoration_complete is absent" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("invalid", ["false", 0])
+def test_non_boolean_restoration_state_is_unknown_not_green(asc, monkeypatch, invalid):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": False,
+                "restoration_complete": invalid,
+            },
+            3.0,
+        ),
+    )
+
+    assert asc.main() == 2
+    assert len(asc._pages) == 1
+    assert "RESTORATION STATE UNKNOWN" in asc._pages[0][0]
+
+
 def test_boot_hold_within_grace_is_quiet(asc, monkeypatch):
     """entries_held is TRUE at boot BY DESIGN — paging on it would fire on every restart."""
     monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": [], "entries_held": True}, 3.0))
@@ -267,6 +287,39 @@ def test_absent_flag_uses_the_shipped_off_default(monkeypatch):
 
     monkeypatch.setattr(mod, "sh", fake_sh)
     assert mod.safety_flag_on() is False
+
+
+def test_sh_failure_is_unknown_not_an_empty_success(monkeypatch):
+    mod = _load()
+    monkeypatch.setattr(
+        mod.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("unreadable")),
+    )
+
+    assert mod.sh(["sudo", "tr", "\\0", "\\n", "/proc/1234/environ"]) is None
+
+
+def test_pages_when_live_flag_environ_read_fails(monkeypatch):
+    """The live flag can be ON while MainPID -> /proc races; unreadable must never mean OFF."""
+    mod = _load()
+    pages: list[tuple[str, str]] = []
+
+    def fake_sh(command: list[str]) -> str | None:
+        if command[:3] == ["systemctl", "show", mod.UNIT]:
+            return "1234"
+        if command[:2] == ["sudo", "tr"]:
+            return None
+        raise AssertionError(command)
+
+    monkeypatch.setattr(mod, "unit_active", lambda: True)
+    monkeypatch.setattr(mod, "sh", fake_sh)
+    monkeypatch.setattr(mod, "page", lambda title, body, **_kw: pages.append((title, body)))
+    monkeypatch.setattr(mod.sys, "argv", ["armed_segments_check.py"])
+
+    assert mod.main() == 2
+    assert len(pages) == 1
+    assert "SAFETY FLAG UNKNOWN" in pages[0][0]
 
 
 # --------------------------------------------------------------- precedence

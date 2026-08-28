@@ -554,6 +554,25 @@ async def test_emit_webull_fanout_legs_skips_ineligible():
 
 
 @pytest.mark.asyncio
+async def test_emit_webull_fanout_legs_refuses_unreadable_ineligible_list():
+    bot = _bot()
+    bot.strategy._pending_webull_fanout_intents.append(_draft("UNKNOWN"))
+    bot.webull_intent_emitter = AsyncMock()
+    bot._webull_ineligible_symbols = lambda: None
+    bot._record_local_fanout_outcome = AsyncMock()
+
+    await bot._emit_webull_fanout_legs()
+
+    bot.webull_intent_emitter.emit.assert_not_awaited()
+    bot._record_local_fanout_outcome.assert_awaited_once()
+    assert bot._record_local_fanout_outcome.await_args.kwargs == {
+        "outcome": "could_not_tell",
+        "reason": "webull_ineligible_unreadable",
+    }
+    assert bot.strategy._pending_webull_fanout_intents == []
+
+
+@pytest.mark.asyncio
 async def test_emit_webull_fanout_legs_drains_when_emitter_unset():
     bot = _bot(strategy_schwab_1m_v2_webull_account_name="")   # no webull account -> emitter stays None
     bot.strategy._pending_webull_fanout_intents.append(_draft("TEST"))

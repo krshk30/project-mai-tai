@@ -54,11 +54,11 @@ SCAN_COUNT = 40                  # the stream interleaves ORB + v2; scan back fa
 DRY_RUN = "--dry-run" in sys.argv
 
 
-def sh(cmd: list[str]) -> str:
+def sh(cmd: list[str]) -> str | None:
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout.strip()
     except Exception:
-        return ""
+        return None
 
 
 def page(title: str, body: str, priority: str = "urgent", tags: str = "rotating_light") -> None:
@@ -72,8 +72,11 @@ def page(title: str, body: str, priority: str = "urgent", tags: str = "rotating_
     )
 
 
-def unit_active() -> bool:
-    return sh(["systemctl", "show", UNIT, "-p", "ActiveState", "--value"]) == "active"
+def unit_active() -> bool | None:
+    raw = sh(["systemctl", "show", UNIT, "-p", "ActiveState", "--value"])
+    if raw is None or not raw:
+        return None
+    return raw == "active"
 
 
 def uptime_secs() -> float | None:
@@ -81,20 +84,29 @@ def uptime_secs() -> float | None:
     BY DESIGN, so it is only a fault once it has outlived the grace."""
     raw = sh(["systemctl", "show", UNIT, "-p", "ActiveEnterTimestampMonotonic", "--value"])
     now = sh(["cat", "/proc/uptime"])
+    if raw is None or now is None:
+        return None
     try:
         return float(now.split()[0]) - (int(raw) / 1_000_000)
     except Exception:
         return None
 
 
-def safety_flag_on() -> bool:
+def safety_flag_on() -> bool | None:
     pid = sh(["systemctl", "show", UNIT, "-p", "MainPID", "--value"])
-    if not pid or pid == "0":
-        return False
+    if pid is None or not pid or pid == "0":
+        return None
     env = sh(["sudo", "tr", "\\0", "\\n", f"/proc/{pid}/environ"])
+    if env is None:
+        return None
     for line in env.splitlines():
         if line.startswith("MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED="):
-            return line.split("=", 1)[1].strip().lower() == "true"
+            value = line.split("=", 1)[1].strip().lower()
+            if value == "true":
+                return True
+            if value == "false":
+                return False
+            return None
     # settings.py ships this feature OFF. An absent env var is therefore OFF, not permission to
     # reinterpret an old-bot payload as a restoration failure.
     return False
@@ -103,6 +115,8 @@ def safety_flag_on() -> bool:
 def latest_v2_snapshot() -> tuple[dict | None, float | None]:
     """Newest v2 snapshot + its age. ORB shares this stream — filter or you page on the wrong bot."""
     raw = sh(["redis-cli", "--raw", "XREVRANGE", STREAM, "+", "-", "COUNT", str(SCAN_COUNT)])
+    if raw is None:
+        return None, None
     for line in raw.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -133,13 +147,29 @@ def main() -> int:
         return 0
 
     # v2 down => armed segments cannot exist (in-memory only, die with the process). NOT a fault.
-    if not unit_active():
+    active = unit_active()
+    if active is False:
         print("SKIP: v2 inactive — armed segments die with the process, nothing to check")
         return 0
+    if active is None:
+        page(
+            "🔴 armed-segments UNIT STATE UNKNOWN",
+            "[armed-segments] the v2 unit state could not be read. The check cannot prove that "
+            "armed state is absent; inspect systemd and the check host by hand.",
+        )
+        return 2
 
-    if not safety_flag_on():
+    flag_on = safety_flag_on()
+    if flag_on is False:
         print("SKIP: cw_armed_segment_safety flag OFF — P1.3 inactive, 'dangerous' is meaningless")
         return 0
+    if flag_on is None:
+        page(
+            "🔴 armed-segments SAFETY FLAG UNKNOWN",
+            "[armed-segments] the live v2 process environment or safety-flag value could not be "
+            "read. UNKNOWN must not be treated as flag OFF; inspect MainPID and /proc by hand.",
+        )
+        return 2
 
     payload, age = latest_v2_snapshot()
 
@@ -161,6 +191,15 @@ def main() -> int:
     restoration_raw = payload.get("restoration_complete")
     restoration_complete = restoration_raw is True
     dangerous = [s for s in segments if s.get("dangerous")]
+
+    if restoration_raw is not True and restoration_raw is not False and restoration_raw is not None:
+        page(
+            "🔴 v2 RESTORATION STATE UNKNOWN",
+            "[armed-segments] restoration_complete has an invalid non-boolean value "
+            f"({restoration_raw!r}, type={type(restoration_raw).__name__}). The check cannot "
+            "interpret it as restored or unrestored and will not print GREEN.",
+        )
+        return 2
 
     # (1) dangerous: a reconstructed segment survived P1.3's seed-cap. This is the CPHI shape.
     if dangerous:
