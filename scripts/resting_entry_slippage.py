@@ -15,15 +15,15 @@ table to the database. It was wrong.)
 
 HOW SLOT IS ATTRIBUTED — and why not by time
 --------------------------------------------
-⛔ `slot` is **LOG-ONLY**: it appears in `[V2-RESTING-PLACE] SYM slot=first|reclaim stop=S limit=L`
-and is stored in NEITHER `broker_orders.payload` NOR `trade_intents.metadata`. So the tape must be
-joined to the DB.
+⭐ #821 made `trade_intents.metadata.cw_entry_slot=first|reclaim` the durable authority. Order style
+(`resting_entry`) is not economic slot: a reclaim can itself rest. Pre-#821 fills lack the durable
+field, so only that historical population falls back to `[V2-RESTING-PLACE]` logs.
 
-We join on **(symbol, stop_price, limit_price)** — an EXACT match against the placement line — not
-on "nearest preceding placement". A resting order reprices every few minutes, so a time-nearest join
-would silently mis-attribute a fill to the wrong placement, and the two slots rest at levels that
-move in OPPOSITE directions (first tracks the ATR trail down, reclaim tracks the segment high up).
-Getting that backwards would invert the very comparison this script exists to make.
+For the historical fallback, we join on **(symbol, stop_price, limit_price)** — an EXACT match
+against the placement line — not on "nearest preceding placement". A resting order reprices every
+few minutes, so a time-nearest join would silently mis-attribute a fill to the wrong placement, and
+the two slots rest at levels that move in OPPOSITE directions (first tracks the ATR trail down,
+reclaim tracks the segment high up). Getting that backwards would invert the comparison.
 
 Usage (read-only; safe any time):
   python scripts/resting_entry_slippage.py --days 11
@@ -49,6 +49,7 @@ PLACE_RE = re.compile(
     r"\[V2-RESTING-PLACE\]\s+(?P<sym>[A-Z.]+)\s+slot=(?P<slot>\w+)\s+"
     r"stop=(?P<stop>[0-9.]+)\s+limit=(?P<limit>[0-9.]+)"
 )
+VALID_ENTRY_SLOTS = {"first", "reclaim"}
 
 
 def load_slot_index() -> dict[tuple[str, str, str], str]:
@@ -114,6 +115,24 @@ def bps(fill: Decimal, ref: Decimal) -> float:
     return float((fill - ref) / ref * Decimal("10000"))
 
 
+def resolve_entry_slot(row, slot_index: dict[tuple[str, str, str], str]) -> tuple[str, bool]:
+    """Return (slot, unattributed), preferring the durable #821 field.
+
+    The log join is historical fallback only. `resting_entry` is deliberately absent: using order
+    style as a slot proxy is the defect this report must not reintroduce.
+    """
+    durable = str(row.get("entry_slot") or "").strip().lower()
+    if durable in VALID_ENTRY_SLOTS:
+        return durable, False
+    for stop_key, limit_key in _keys(row.get("stop_price"), row.get("limit_price")):
+        historical = str(
+            slot_index.get((str(row.get("symbol") or ""), stop_key, limit_key), "")
+        ).strip().lower()
+        if historical in VALID_ENTRY_SLOTS:
+            return historical, False
+    return "unattributed", True
+
+
 def summarise(label: str, rows: list[tuple[str, float]]) -> None:
     """⛔ MEDIAN-FIRST, with a DROP-ONE by NAME. Never a bare total."""
     if not rows:
@@ -160,13 +179,13 @@ def main() -> int:
                    bo.payload->>'reference_price'        AS ref_price,
                    bo.payload->>'stop_price'             AS stop_price,
                    bo.payload->>'limit_price'            AS limit_price,
-                   bo.order_type                         AS order_type,
-                   bo.payload->>'resting_entry'          AS resting,
+                   COALESCE(ti.payload->'metadata'->>'cw_entry_slot','') AS entry_slot,
                    to_char(f.filled_at AT TIME ZONE 'America/New_York',
                            'MM-DD HH24:MI:SS')           AS et
             FROM fills f
             JOIN broker_orders bo   ON bo.id = f.order_id
             JOIN broker_accounts ba ON ba.id = f.broker_account_id
+            LEFT JOIN trade_intents ti ON ti.id = bo.intent_id
             WHERE ba.name = :acct AND f.side = 'buy'
               AND f.filled_at >= now() - (:days || ' days')::interval
             ORDER BY f.filled_at
@@ -186,15 +205,8 @@ def main() -> int:
             no_ref += 1
             continue
         b = bps(Decimal(str(r["fill_price"])), Decimal(str(r["ref_price"])))
-        slot = None
-        for sk, lk in _keys(r["stop_price"], r["limit_price"]):
-            slot = slot_index.get((r["symbol"], sk, lk))
-            if slot:
-                break
-        if slot is None:
-            slot = "resting(slot?)" if r["resting"] == "true" else str(r["order_type"] or "?")
-            if r["resting"] == "true":
-                unattributed += 1
+        slot, is_unattributed = resolve_entry_slot(r, slot_index)
+        unattributed += int(is_unattributed)
         buckets[slot].append((r["symbol"], b))
         detail.append(f"  {r['et']}  {r['symbol']:<6} {slot:<14} "
                       f"fill={r['fill_price']!s:<12} decided={r['ref_price']:<9} {b:+8.1f}bps")
@@ -213,11 +225,9 @@ def main() -> int:
     print("\n=== WHAT THIS CANNOT SEE ===")
     print(f"  - {no_ref} fill(s) had NO decided reference_price and are excluded (sell/exit legs")
     print("    carry none, so EXIT slippage is not computable this way at all).")
-    print(f"  - {unattributed} resting fill(s) could not be slot-attributed: logs rotate 20:00 ET")
-    print("    and keep ~7 days, so older fills lose their slot. Reported, never silently dropped.")
-    print("  - slot is LOG-ONLY (absent from broker_orders.payload AND trade_intents.metadata),")
-    print("    so this join is only as good as the retained tape. Storing slot on the order would")
-    print("    remove the dependency entirely.")
+    print(f"  - {unattributed} fill(s) had neither durable cw_entry_slot nor a retained historical")
+    print("    placement-log match. They are reported as unattributed, never inferred from order style.")
+    print("  - pre-#821 history still depends on logs, which rotate at 20:00 ET and keep ~7 days.")
     print("  - It cannot say whether the DECIDED level was a good level. Price only, by design —")
     print("    the strategy is parked; this measures execution, never edge.")
     print("  - A median over a handful of fills from ONE symbol is not a population. Read n first.")

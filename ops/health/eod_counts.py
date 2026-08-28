@@ -8,8 +8,10 @@ reported. Everything here is taken AFTER the entry window shuts at 18:00 ET.
 
 ⛔ DENOMINATORS ARE THE POINT. Five separate defects this week came from reusing a signal that was
 authoritative for one job as the source of truth for another:
-  - resting fill rate is per LIVE ARM, never per placement intent (one cross = many placements on
-    the 1-2 min reprice cadence, and #625 changed that very cadence)
+  - economic entry slot is explicit `cw_entry_slot=first|reclaim`; `resting_entry` is order style,
+    and a reclaim can itself rest (#821)
+  - first-slot fill rate is per LIVE ARM, never per placement intent (one cross = many placements
+    on the 1-2 min reprice cadence, and #625 changed that very cadence)
   - crosses are LIVE arms only -- warmup replay emits one ARM per HISTORICAL flip and inflated the
     count ~14x (98 -> 7 on 08-04)
   - round trips are pairs, never fill counts
@@ -18,14 +20,11 @@ authoritative for one job as the source of truth for another:
 Read-only. Touches no order path.
 """
 import argparse
-import re
-import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 sys.path.insert(0, "/home/trader/entry_fix_watch")
-from check import (ET, LIVE_ARM_MAX_AGE_SECS, CAP_ACCT, parse_segments, q)  # noqa: E402
+from check import ET, CAP_ACCT, parse_segments, q  # noqa: E402
 
 
 def pct(a, b):
@@ -60,26 +59,28 @@ def main():
     print("   live arms=%d   warmup-replay arms excluded=%d   in entry window=%d"
           % (len(segs), replay, len(enterable)))
 
-    # ---------- entries by slot ----------
+    # ---------- entries by explicit economic slot ----------
     rows = q("""
-        SELECT COALESCE(ti.payload->'metadata'->>'resting_entry','false') AS resting, COUNT(*)
+        SELECT COALESCE(ti.payload->'metadata'->>'cw_entry_slot','') AS entry_slot, COUNT(*)
         FROM trade_intents ti JOIN strategies s ON s.id=ti.strategy_id
         JOIN broker_accounts ba ON ba.id=ti.broker_account_id
         WHERE s.code='schwab_1m_v2' AND ti.intent_type='open' AND ti.status='filled'
           AND ba.name=%s AND ti.created_at>=%s AND ti.created_at<%s
         GROUP BY 1
     """, (CAP_ACCT, s_utc, e_utc))
-    by_slot = {str(r[0]).lower(): int(r[1]) for r in rows}
-    resting_n, reactive_n = by_slot.get("true", 0), by_slot.get("false", 0)
-    total_entries = resting_n + reactive_n
-    print("\n-- SCHWAB ENTRIES BY SLOT --")
-    print("   resting=%d  reactive=%d  total=%d" % (resting_n, reactive_n, total_entries))
+    by_slot = {str(r[0]).strip().lower(): int(r[1]) for r in rows}
+    first_n, reclaim_n = by_slot.get("first", 0), by_slot.get("reclaim", 0)
+    unattributed_n = sum(n for slot, n in by_slot.items() if slot not in {"first", "reclaim"})
+    total_entries = first_n + reclaim_n + unattributed_n
+    print("\n-- SCHWAB ENTRIES BY ECONOMIC SLOT --")
+    print("   first=%d  reclaim=%d  unattributed=%d  total=%d"
+          % (first_n, reclaim_n, unattributed_n, total_entries))
 
-    # ---------- the corrected resting rate ----------
-    print("\n-- RESTING FILL RATE, PER LIVE ARM (not per placement) --")
+    # ---------- the corrected first-slot rate ----------
+    print("\n-- FIRST-SLOT FILL RATE, PER LIVE ARM (not per placement) --")
     if enterable:
-        print("   %d resting fills / %d live in-window arms = %.1f%%"
-              % (resting_n, len(enterable), 100.0 * resting_n / len(enterable)))
+        print("   %d attributed first-slot fills / %d live in-window arms = %.1f%%"
+              % (first_n, len(enterable), 100.0 * first_n / len(enterable)))
     else:
         print("   no live in-window arms -- rate undefined (NOT zero)")
 
@@ -139,9 +140,10 @@ def main():
         print("   no unambiguous round trips (%d ambiguous)" % ambiguous)
 
     print("\n" + "=" * 78)
-    print("VERDICT eod day=%s live_arms=%d replay_excluded=%d entries=%d (resting=%d reactive=%d) "
-          "no_entry=%d trips=%d" % (a.day, len(segs), replay, total_entries, resting_n, reactive_n,
-                                    len(no_entry), len(trips)))
+    print("VERDICT eod day=%s live_arms=%d replay_excluded=%d entries=%d "
+          "(first=%d reclaim=%d unattributed=%d) no_entry=%d trips=%d"
+          % (a.day, len(segs), replay, total_entries, first_n, reclaim_n, unattributed_n,
+             len(no_entry), len(trips)))
     return 0
 
 
