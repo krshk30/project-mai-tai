@@ -940,9 +940,20 @@ class SchwabV2BotService:
             restoration_complete=self._boot_state_restoration_complete,
         )
         event = IsolatedBotStateEvent(source_service=SERVICE_NAME, payload=payload)
+        safety_enabled = bool(
+            getattr(self.strategy, "_cw_armed_segment_safety_enabled", False)
+        )
         await self.redis.xadd(
             self._isolated_state_stream,
-            {"data": event.model_dump_json()},
+            {
+                "data": event.model_dump_json(
+                    exclude=(
+                        None
+                        if safety_enabled
+                        else {"payload": {"restoration_complete"}}
+                    )
+                )
+            },
             maxlen=self.settings.redis_strategy_state_isolated_stream_maxlen,
             approximate=True,
         )
@@ -1691,6 +1702,12 @@ class SchwabV2BotService:
         names that may not receive a fresh REST bar: those names also hold without a timeout rather
         than treating missing input as safety.
         """
+        if not getattr(self.strategy, "_cw_armed_segment_safety_enabled", False):
+            # Flag-OFF is the shipped compatibility mode. Preserve the pre-change DB seed for new
+            # symbols, but add no boot latch, hold, restoration field, or fleet-wide decision.
+            for symbol in sorted(new_symbols):
+                self._seed_strategy_bars_from_db(symbol)
+            return
         if self._boot_state_restoration_complete:
             results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
             if new_symbols:
@@ -2467,9 +2484,18 @@ class SchwabV2BotService:
             st.pending_path_vwap = False
             st.pending_cross_bar_ts_ms = 0
             # P1.3: a CW-v2 segment reconstructed by this replay carries a historical arm_bar_ts
-            # (< boot). Mark it USED so v2 can only enter on flips AFTER boot. The entire replay,
-            # state cleanup and cap are one restoration unit. `_db_seeded` is committed only after
-            # this block completes, so failure remains retryable instead of blessing half-state.
+            # (< boot). Mark it USED so v2 can only enter on flips AFTER boot.
+            # ⛔⭐⭐ NOT LOAD-BEARING — DO NOT TRUST THIS THE WAY THE LAST READER DID (2026-08-18).
+            # It runs HERE, after the replay loop above, so every arm inside `on_bar` has already
+            # fired and stamped. It has failed twice in production:
+            #   * 2026-07-30 REST-warmup path — ran 50ms BEFORE the arm and saw nothing (#619);
+            #   * 2026-08-18 CAST — never ran at all; one [V2-CW-SEED-CAP] all day (WFF), zero
+            #     [V2-BOOT-HOLD], and CAST armed uncapped off a 06-18 bar at flip_level 7.99 vs a
+            #     live price of 1.21.
+            # The gap truncation above is what actually prevents that now, by removing bad input.
+            # Repair or delete this once truncation has proven out; until then it is decoration.
+            # `_db_seeded` is committed only after this block completes, so a failed replay remains
+            # retryable; that ordering does not promote this post-hoc cap into trusted evidence.
             self._cap_reconstructed_segment(symbol, stage="db-seed")
             logger.info(
                 "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",

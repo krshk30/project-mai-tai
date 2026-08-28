@@ -95,7 +95,9 @@ def safety_flag_on() -> bool:
     for line in env.splitlines():
         if line.startswith("MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED="):
             return line.split("=", 1)[1].strip().lower() == "true"
-    return True  # absent => settings.py default (True); fail toward checking, not toward silence
+    # settings.py ships this feature OFF. An absent env var is therefore OFF, not permission to
+    # reinterpret an old-bot payload as a restoration failure.
+    return False
 
 
 def latest_v2_snapshot() -> tuple[dict | None, float | None]:
@@ -156,7 +158,8 @@ def main() -> int:
 
     segments = payload.get("cw_armed_segments") or []
     entries_held = bool(payload.get("entries_held"))
-    restoration_complete = bool(payload.get("restoration_complete"))
+    restoration_raw = payload.get("restoration_complete")
+    restoration_complete = restoration_raw is True
     dangerous = [s for s in segments if s.get("dangerous")]
 
     # (1) dangerous: a reconstructed segment survived P1.3's seed-cap. This is the CPHI shape.
@@ -173,7 +176,7 @@ def main() -> int:
 
     # A released guard with incomplete restoration is the exact boot-ordering failure this check
     # exists to expose. It must not hide behind the entries_held branch and fall through GREEN.
-    if not entries_held and not restoration_complete:
+    if not entries_held and restoration_raw is False:
         page(
             "🔴 v2 RELEASED BEFORE STATE RESTORATION",
             "[armed-segments] entries_held=false while restoration_complete=false and 0 "
@@ -192,7 +195,7 @@ def main() -> int:
                  "the hold cannot be aged. v2 may be silently entry-less. Verify BY HAND.")
             return 2
         if up > BOOT_HOLD_GRACE_SECS:
-            if not restoration_complete:
+            if restoration_raw is False:
                 page(
                     "🔴 v2 STATE RESTORATION INCOMPLETE",
                     f"[armed-segments] entries_held=true {up/60:.1f}min after boot (grace "
@@ -200,14 +203,27 @@ def main() -> int:
                     "dangerous segments. The bot has not proved scanner + DB seed + REST warmup "
                     "complete; absence is not safety. Check [V2-BOOT-RESTORE] by hand.",
                 )
-            else:
+            elif restoration_complete:
                 page("🔴 v2 BOOT-HOLD NEVER RELEASED",
                      f"[armed-segments] entries_held=true {up/60:.1f}min after boot (grace "
                      f"{BOOT_HOLD_GRACE_SECS/60:.0f}min) with restoration_complete=true and 0 "
                      "dangerous segments. v2 is taking NO entries and cannot page about itself. "
                      "Check [V2-BOOT-HOLD] in the v2 log.")
+            else:
+                print(
+                    "COULD_NOT_TELL: entries_held=true but restoration_complete is absent; "
+                    "this snapshot predates the restoration field"
+                )
+                return 0
             return 2
         print(f"OK: entries_held=true but only {up:.0f}s since boot (within {BOOT_HOLD_GRACE_SECS}s grace)")
+        return 0
+
+    if restoration_raw is None:
+        print(
+            "COULD_NOT_TELL: restoration_complete is absent; armed-segment state was checked, "
+            "but boot-restoration precedence cannot be graded from this snapshot"
+        )
         return 0
 
     armed = len(segments)

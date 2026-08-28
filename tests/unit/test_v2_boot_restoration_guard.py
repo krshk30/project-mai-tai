@@ -167,6 +167,18 @@ def test_nonempty_scanner_reduced_to_zero_selected_cannot_complete(
     assert "scanner_evaluated=0" in caplog.text
 
 
+def test_schwab_ineligible_exclusion_removes_the_scanner_denominator(monkeypatch) -> None:
+    """The population used for restoration must be the same post-exclusion population selected."""
+    bot = _bot()
+    monkeypatch.setattr(bot, "_schwab_ineligible_symbols", lambda: {"DAIC"})
+
+    _apply_snapshot(bot, ["DAIC"])
+
+    assert bot._watchlist == set()
+    assert bot._boot_scanner_selected == set()
+    assert bot._boot_state_restoration_complete is False
+
+
 def test_empty_scanner_with_held_symbol_is_not_a_nonempty_restoration_population(
     monkeypatch,
 ) -> None:
@@ -248,7 +260,7 @@ def test_completed_restoration_is_one_way_across_nonempty_failed_addition(
     assert bot.strategy._entries_held is False
 
 
-def test_post_latch_seed_failed_symbol_stays_streamer_gated_until_rest_warmup(
+def test_post_latch_new_symbol_stays_streamer_gated_until_rest_warmup(
     monkeypatch,
 ) -> None:
     """A later symbol cannot enter by riding the fleet latch past its REST gate."""
@@ -276,6 +288,12 @@ def test_post_latch_seed_failed_symbol_stays_streamer_gated_until_rest_warmup(
 
     assert fed == []
     assert bot._streamer_pending["YYGH"] == [bar]
+
+    # The same symbol becomes reachable after the one variable this gate owns changes: REST
+    # warmup. The failed seed is reported but does not invent a separate silent gate.
+    bot._rest_warmup_done.add("YYGH")
+    asyncio.run(bot._handle_bar_from_streamer("YYGH", bar))
+    assert fed == ["YYGH:live"]
 
 
 def test_same_watchlist_retries_unreadable_restoration_until_confirmed(
@@ -310,6 +328,67 @@ def test_db_seed_is_not_enough_until_rest_warmup_finishes(monkeypatch) -> None:
     assert bot.strategy._entries_held is False
 
 
+def test_real_rest_warmup_callback_completes_the_latch(monkeypatch) -> None:
+    """Pin the production ordering: DB seed first, then the fresh REST callback opens the latch."""
+    bot = _bot()
+    bot._watchlist = {"DAIC"}
+    bot._boot_scanner_selected = {"DAIC"}
+    bot._db_seeded = {"DAIC"}
+    bot.strategy._entries_held = True
+
+    async def no_feed(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(bot, "_handle_bar", no_feed)
+    monkeypatch.setattr(bot, "_drain_streamer_pending", no_feed)
+    monkeypatch.setattr(bot, "_cap_reconstructed_segment", lambda *_args, **_kwargs: None)
+    fresh = ChartBar(
+        "DAIC",
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        100,
+        int(datetime.now(UTC).timestamp() * 1000),
+    )
+
+    asyncio.run(bot._handle_bar_from_rest("DAIC", fresh))
+    bot._cw_boot_hold_check()
+
+    assert bot._rest_warmup_done == {"DAIC"}
+    assert bot._boot_state_restoration_complete is True
+    assert bot.strategy._entries_held is False
+
+
+def test_flag_off_preserves_seed_without_hold_or_restoration_snapshot(monkeypatch) -> None:
+    bot = _bot(strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=False)
+    seeded: list[str] = []
+    monkeypatch.setattr(
+        bot,
+        "_seed_strategy_bars_from_db",
+        lambda symbol: seeded.append(symbol) or True,
+    )
+
+    _apply_snapshot(bot, ["DAIC"])
+    bot.strategy._entries_held = False
+    bot._cw_boot_hold_check()
+
+    assert seeded == ["DAIC"]
+    assert bot._boot_state_restoration_complete is False
+    assert bot.strategy._entries_held is False
+
+    written: list[dict] = []
+
+    class _Redis:
+        async def xadd(self, _stream, fields, **_kwargs):
+            written.append(fields)
+
+    bot.redis = _Redis()
+    asyncio.run(bot._publish_bot_state())
+    payload = __import__("json").loads(written[0]["data"])["payload"]
+    assert "restoration_complete" not in payload
+
+
 def test_pre_restoration_hold_warning_is_rate_limited(monkeypatch, caplog) -> None:
     bot = _bot()
     bot.strategy._entries_held = False
@@ -326,6 +405,7 @@ def test_pre_restoration_hold_warning_is_rate_limited(monkeypatch, caplog) -> No
 
     held = [record for record in caplog.records if "[V2-BOOT-HOLD] HELD" in record.message]
     assert len(held) == 2
+    assert {record.levelno for record in held} == {logging.WARNING}
     assert bot.strategy._entries_held is True
 
 

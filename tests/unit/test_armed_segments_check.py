@@ -188,6 +188,19 @@ def test_pages_when_entries_are_released_before_restoration_completes(asc, monke
     assert "entries_held=false" in body
 
 
+def test_missing_restoration_field_is_unknown_not_a_defect(asc, monkeypatch, capsys):
+    """An old/flag-off bot cannot prove restoration precedence, but it also did not violate it."""
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: ({"cw_armed_segments": [], "entries_held": False}, 3.0),
+    )
+
+    assert asc.main() == 0
+    assert asc._pages == []
+    assert "COULD_NOT_TELL: restoration_complete is absent" in capsys.readouterr().out
+
+
 def test_boot_hold_within_grace_is_quiet(asc, monkeypatch):
     """entries_held is TRUE at boot BY DESIGN — paging on it would fire on every restart."""
     monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": [], "entries_held": True}, 3.0))
@@ -240,6 +253,20 @@ def test_safety_flag_off_is_not_a_fault(asc, monkeypatch):
     monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": segs, "entries_held": True}, 3.0))
     assert asc.main() == 0
     assert asc._pages == []
+
+
+def test_absent_flag_uses_the_shipped_off_default(monkeypatch):
+    mod = _load()
+
+    def fake_sh(command: list[str]) -> str:
+        if command[:3] == ["systemctl", "show", mod.UNIT]:
+            return "1234"
+        if command[:2] == ["sudo", "tr"]:
+            return "SOME_OTHER_FLAG=true\n"
+        raise AssertionError(command)
+
+    monkeypatch.setattr(mod, "sh", fake_sh)
+    assert mod.safety_flag_on() is False
 
 
 # --------------------------------------------------------------- precedence
