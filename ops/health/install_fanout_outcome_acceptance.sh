@@ -15,10 +15,7 @@ end_marker="# END project-mai-tai D6 outcome acceptance"
 
 source "$source_lib"
 
-if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-  echo "REFUSED: run as root" >&2
-  exit 1
-fi
+require_root "${EUID:-$(id -u)}"
 
 for source in "$source_check" "$source_cron"; do
   python3 - "$source" <<'PY'
@@ -43,7 +40,7 @@ fi
 install -o root -g root -m 0755 "$source_check" "$target_check"
 install -o root -g root -m 0755 "$source_cron" "$target_cron"
 cmp "$source_check" "$target_check"
-cmp "$source_cron" "$target_cron"
+verify_d6_installed_copy "$source_cron" "$target_cron"
 verify_d6_runtime "$python_bin" "$target_cron" "$target_check" "$source_check_sha256" "$target_dir"
 
 current_cron=$(mktemp)
@@ -87,10 +84,7 @@ awk -v begin="$begin_marker" -v end="$end_marker" '
 crontab "$next_cron"
 
 installed_cron=$(crontab -l)
-if [[ $(grep -Fxc "$cron_line" <<<"$installed_cron" || true) -ne 1 ]]; then
-  echo "REFUSED: installed root crontab does not contain exactly one D6 schedule" >&2
-  exit 1
-fi
+verify_exactly_one_d6_schedule "$cron_line" "$installed_cron"
 
 printf 'installed check_sha256=%s cron_sha256=%s schedule="%s" restart_required=0\n' \
   "$(sha256sum "$target_check" | awk '{print $1}')" \

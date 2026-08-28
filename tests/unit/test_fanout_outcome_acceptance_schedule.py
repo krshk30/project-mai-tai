@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from project_mai_tai.strategy_core.time_utils import EASTERN_TZ
+from project_mai_tai.strategy_core.time_utils import EASTERN_TZ, US_MARKET_HOLIDAYS
 
 
 OPS = Path(__file__).resolve().parents[2] / "ops" / "health"
@@ -107,39 +107,89 @@ def _cte(sql: str, name: str, following: str) -> str:
 
 
 def _all_target_ctes_window_bound(sql: str) -> bool:
+    target_bounds = [
+        line.strip()
+        for line in _cte(sql, "target_bounds", "fill_by_order").splitlines()
+        if line.strip()
+    ]
+    if target_bounds != [
+        "SELECT :'window_since'::timestamptz AS since_at,",
+        ":'window_until'::timestamptz AS until_at",
+    ]:
+        return False
+
+    # These are exact CTE tails rather than a subset of required lines.  An added ``OR TRUE`` on
+    # the next line is just as widening as editing the predicate itself, so either must invalidate
+    # the proof.  The SELECT projections above the tails may evolve without weakening the bound.
     direct = {
         "target_buy_legs": (
             "target_mirror_symbols",
-            "CROSS JOIN target_bounds b",
-            "AND fbo.first_fill_at >= b.since_at AND fbo.first_fill_at < b.until_at",
+            [
+                "CROSS JOIN target_bounds b",
+                "WHERE bo.side = 'buy'",
+                "AND ba.name IN ('live:orb', 'live:schwab_1m_v2')",
+                "AND fbo.first_fill_at >= b.since_at AND fbo.first_fill_at < b.until_at",
+                "AND (",
+                "(ba.name = 'live:orb' AND bo.payload::jsonb ? 'fanout_source')",
+                "OR nullif(bo.payload::jsonb->>'fanout_segment_id', '') IS NOT NULL",
+                ")",
+            ],
         ),
         "target_mirror_symbols": (
             "target_matched_orders",
-            "CROSS JOIN target_bounds b",
-            "AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
+            [
+                "CROSS JOIN target_bounds b",
+                "WHERE ba.name = 'live:orb'",
+                "AND bo.side = 'buy'",
+                "AND upper(bo.order_type::text) = 'STOP_LIMIT'",
+                "AND bo.payload::jsonb->>'fanout_source' = 'rth_resting_mirror'",
+                "AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
+            ],
         ),
         "target_matched_orders": (
             "target_refused",
-            "CROSS JOIN target_bounds b",
-            "AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
+            [
+                "CROSS JOIN target_bounds b",
+                "WHERE bo.side = 'buy'",
+                "AND upper(bo.order_type::text) = 'STOP_LIMIT'",
+                "AND bo.symbol IN (SELECT symbol FROM target_mirror_symbols)",
+                "AND ba.name IN ('live:orb', 'live:schwab_1m_v2')",
+                "AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
+            ],
         ),
         "target_refused": (
             "target_refused_classified",
-            "CROSS JOIN target_bounds b",
-            "AND e.event_at >= b.since_at AND e.event_at < b.until_at",
+            [
+                "CROSS JOIN target_bounds b",
+                "WHERE ba.provider = 'webull'",
+                "AND bo.side = 'sell'",
+                "AND e.event_type = 'rejected'",
+                "AND upper(coalesce(e.payload::jsonb->>'reason', '')) LIKE",
+                "'%NEW_NO_POSITION%CAN_NOT_SELL_SHORT%'",
+                "AND e.event_at >= b.since_at AND e.event_at < b.until_at",
+            ],
         ),
         "target_exit_episodes": (
             "rows",
-            "CROSS JOIN target_bounds b",
-            "AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at",
+            [
+                "CROSS JOIN target_bounds b",
+                "WHERE ba.name = 'live:orb'",
+                "AND bo.side = 'sell'",
+                "AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at",
+            ],
         ),
     }
-    for name, (following, *required_lines) in direct.items():
-        body = _cte(sql, name, following)
-        lines = {line.strip() for line in body.splitlines()}
-        # Exact complete lines are intentional: substring checks accept an appended OR TRUE or
-        # interval widening while still claiming the CTE is bounded.
-        if any(required not in lines for required in required_lines):
+    for name, (following, expected_tail) in direct.items():
+        lines = [
+            line.strip()
+            for line in _cte(sql, name, following).splitlines()
+            if line.strip()
+        ]
+        try:
+            tail_start = lines.index("CROSS JOIN target_bounds b")
+        except ValueError:
+            return False
+        if lines[tail_start:] != expected_tail:
             return False
     classified = _cte(sql, "target_refused_classified", "target_exit_episodes")
     return "FROM target_refused r" in {line.strip() for line in classified.splitlines()}
@@ -189,6 +239,12 @@ def test_completed_window_skips_weekend_and_full_closure_holiday() -> None:
 
     assert tuesday_after_midnight.session_date == "2026-08-31"
     assert labor_day_after_close.session_date == "2026-09-04"
+
+
+def test_independent_monitor_closure_calendar_matches_application_for_2026_2027() -> None:
+    assert fleet_health._FULL_CLOSURES == {
+        closure for closure in US_MARKET_HOLIDAYS if closure.year in (2026, 2027)
+    }
 
 
 def test_naive_clock_is_refused_instead_of_selecting_an_implicit_timezone() -> None:
@@ -383,6 +439,23 @@ def test_selected_session_dates_reach_the_real_sql_over_psql_stdin(
 
 def test_every_target_cte_is_semantically_bound_to_the_requested_window() -> None:
     assert _all_target_ctes_window_bound(acceptance.SQL)
+
+
+def test_window_proof_rejects_adjacent_or_true_and_a_widened_bounds_source() -> None:
+    adjacent_predicate = acceptance.SQL.replace(
+        "AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at",
+        "AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at\n"
+        "      OR TRUE",
+        1,
+    )
+    widened_source = acceptance.SQL.replace(
+        ":'window_until'::timestamptz AS until_at",
+        ":'window_until'::timestamptz + interval '3650 days' AS until_at",
+        1,
+    )
+
+    assert _all_target_ctes_window_bound(adjacent_predicate) is False
+    assert _all_target_ctes_window_bound(widened_source) is False
 
 
 def test_bounded_and_widened_sql_select_different_control_legs_and_verdicts(
@@ -592,8 +665,11 @@ def test_runtime_refuses_a_stale_acceptance_artifact_before_import(tmp_path) -> 
 
 def test_installer_is_root_only_and_manages_one_repo_owned_cron_block() -> None:
     installer = (OPS / "install_fanout_outcome_acceptance.sh").read_text(encoding="utf-8")
+    installer_lib = (OPS / "fanout_outcome_acceptance_install_lib.sh").read_text(
+        encoding="utf-8"
+    )
 
-    assert 'echo "REFUSED: run as root"' in installer
+    assert 'echo "REFUSED: run as root"' in installer_lib
     assert 'source_check="$repo_root/ops/health/fanout_outcome_acceptance.py"' in installer
     assert 'source_cron="$repo_root/ops/health/fanout_outcome_acceptance_cron.py"' in installer
     assert 'cron_line="17 4,5,6 * * 2-6 ' in installer
@@ -601,8 +677,37 @@ def test_installer_is_root_only_and_manages_one_repo_owned_cron_block() -> None:
     assert "--out-dir $target_dir" in installer
     assert "malformed existing D6 cron block" in installer
     assert "MAI_TAI_INSTALLER_LIB_ONLY" not in installer
+    assert 'require_root "${EUID:-$(id -u)}"' in installer
+    assert 'verify_d6_installed_copy "$source_cron" "$target_cron"' in installer
+    assert 'verify_exactly_one_d6_schedule "$cron_line" "$installed_cron"' in installer
     assert 'verify_d6_runtime "$python_bin" "$target_cron" "$target_check" ' in installer
     assert cron.DEFAULT_OUT_DIR / "STATUS.txt" == fleet_health._D6_STATUS_PATH
+
+
+def test_installer_root_copy_and_schedule_guards_each_fail_closed(tmp_path) -> None:
+    git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+    bash = str(git_bash) if git_bash.exists() else shutil.which("bash")
+    assert bash is not None
+    installer_lib = (OPS / "fanout_outcome_acceptance_install_lib.sh").as_posix()
+    reviewed = tmp_path / "reviewed.py"
+    installed = tmp_path / "installed.py"
+    reviewed.write_text("reviewed\n", encoding="utf-8")
+    installed.write_text("stale or truncated\n", encoding="utf-8")
+    cases = (
+        "require_root 1234",
+        f"verify_d6_installed_copy '{reviewed.as_posix()}' '{installed.as_posix()}'",
+        "verify_exactly_one_d6_schedule 'expected schedule' ''",
+    )
+
+    for guard in cases:
+        result = subprocess.run(
+            [bash, "-lc", f"source '{installer_lib}'; {guard}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode != 0, guard
+        assert "REFUSED:" in result.stderr, guard
 
 
 def test_installer_executes_help_with_the_selected_runtime(tmp_path) -> None:
@@ -710,6 +815,8 @@ def test_artifact_only_probe_accepts_exact_bytes_and_refuses_mismatch(tmp_path) 
         str(check),
         "--acceptance-sha256",
         digest,
+        "--out-dir",
+        str(tmp_path / "runtime-output"),
         "--verify-artifact-only",
     ]
 
@@ -719,5 +826,35 @@ def test_artifact_only_probe_accepts_exact_bytes_and_refuses_mismatch(tmp_path) 
 
     assert good.returncode == 0
     assert "[D6-INSTALL-ARTIFACT-VERIFIED]" in good.stdout
+    assert (tmp_path / "runtime-output").is_dir()
+    assert list((tmp_path / "runtime-output").iterdir()) == []
     assert stale.returncode != 0
     assert "artifact SHA-256 mismatch" in stale.stderr
+
+
+def test_artifact_only_probe_refuses_when_output_directory_cannot_be_written(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    check = tmp_path / "check.py"
+    check.write_text("# reviewed bytes\n", encoding="utf-8")
+    digest = hashlib.sha256(check.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        cron,
+        "_atomic_write",
+        lambda _path, _contents: (_ for _ in ()).throw(PermissionError("not writable")),
+    )
+
+    with pytest.raises(PermissionError, match="not writable"):
+        cron.main(
+            [
+                "--acceptance",
+                str(check),
+                "--acceptance-sha256",
+                digest,
+                "--out-dir",
+                str(tmp_path / "unwritable"),
+                "--verify-artifact-only",
+            ]
+        )
+
+    assert "[D6-INSTALL-ARTIFACT-VERIFIED]" not in capsys.readouterr().out

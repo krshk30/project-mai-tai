@@ -179,6 +179,21 @@ def _verify_acceptance_artifact(path: Path, expected_sha256: str) -> str:
     return actual
 
 
+def _verify_install_out_dir(path: Path) -> None:
+    """Prove the configured runtime output directory can carry a durable status write."""
+
+    path.mkdir(parents=True, exist_ok=True)
+    probe = path / f".d6-install-write-probe-{os.getpid()}"
+    _atomic_write(probe, "D6 install write probe\n")
+    probe.unlink()
+    if os.name != "nt":
+        parent_fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+
+
 def _denominator_contract(lines: Sequence[str]) -> tuple[bool, str]:
     requirements = {
         "paired_legs": ("usable=", " of "),
@@ -329,6 +344,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.verify_artifact_only:
         actual = _verify_acceptance_artifact(args.acceptance, args.acceptance_sha256)
+        _verify_install_out_dir(args.out_dir)
         print(f"[D6-INSTALL-ARTIFACT-VERIFIED] acceptance_sha256={actual}")
         return PASS
     result = run_once(

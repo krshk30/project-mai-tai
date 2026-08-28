@@ -89,6 +89,16 @@ def test_d6_yesterdays_success_is_red_when_a_new_session_is_due() -> None:
     assert "stale" in detail
 
 
+def test_d6_future_success_is_red_instead_of_blessing_the_wrong_session() -> None:
+    level, detail = fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-29 verdict=PASS\n",
+        expected_session=date(2026, 8, 28),
+    )
+
+    assert level == "RED"
+    assert "future" in detail
+
+
 def test_d6_current_nonpass_and_missing_status_are_red() -> None:
     expected = date(2026, 8, 28)
     assert fhc.classify_d6_status(
