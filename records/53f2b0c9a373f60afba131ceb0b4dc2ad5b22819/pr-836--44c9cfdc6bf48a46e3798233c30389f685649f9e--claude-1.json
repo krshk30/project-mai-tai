@@ -1,0 +1,9 @@
+{
+  "pr_number": 836,
+  "range_base": "44c9cfdc6bf48a46e3798233c30389f685649f9e",
+  "range_head": "53f2b0c9a373f60afba131ceb0b4dc2ad5b22819",
+  "reviewed_at": "2026-08-28T19:20:18Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after a clean rebase onto 44c9cfdc (main after #835). Re-verified, not re-stamped: base is the current main tip, one marked commit, the diff against the new base is BYTE-IDENTICAL to the diff reviewed at 51886e77, and the migration chain is still linear (20260828_0016 revises 20260820_0015, nothing else forks off it). Substance unchanged - ACCEPT. The index shape is exactly right: (snapshot_type, created_at DESC, id DESC) matches the #834 pre-insert probe WHERE snapshot_type=? ORDER BY created_at DESC, id DESC LIMIT 1, and the SAME order serves the #823 fanout-outcome keyset cursor at fanout_outcome_consumer.py:291-304 - one index, two consumers. Index and text are both imported in db/models.py so the __table_args__ addition cannot ImportError at startup. Measured justification recorded in the migration docstring: 6.891ms / 837 shared buffers per insert on a 237MB, 5068-row table, cost scaling with table size, on a path that runs for EVERY snapshot insert. \u26d4 DEPLOY CAVEAT unchanged and must be in the deploy plan: op.create_index has NO postgresql_concurrently, so it takes an ACCESS EXCLUSIVE lock and BLOCKS ALL WRITES to dashboard_snapshots while it builds. Writers are strategy-engine on every publish and the #823 fanout consumer in OMS. At 5068 rows the build should be seconds and this is fine in a post-16:00 window - but this is the FIRST migration in the batch, so 'no migrations' is no longer true, and it must run BEFORE the restarts. NOTE, not blocking: ix_dashboard_snapshots_snapshot_type is now a strict PREFIX of the new composite and is redundant write amplification on every insert; dropping it is a separate reversible follow-up."
+}
