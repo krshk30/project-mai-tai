@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -264,6 +266,8 @@ async def test_drift_path_persists_first_terminal_reply_and_bounds_the_second() 
         order = session.scalar(select(BrokerOrder).where(BrokerOrder.symbol == "KUST"))
         assert order is not None
         assert service.store.count_terminal_cancel_refusals(session, order_id=order.id) == 1
+        intent = session.get(TradeIntent, order.intent_id)
+        assert intent is not None and intent.status == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -435,7 +439,7 @@ def test_budget_is_per_row_uuid_even_when_two_rows_share_a_client_order_id() -> 
 
 
 @pytest.mark.asyncio
-async def test_cancel_verifier_resubmit_is_durable_and_bounded() -> None:
+async def test_cancel_verifier_resubmit_is_durable_bounded_and_never_silent() -> None:
     adapter = _DirectCancelAdapter()
     service, sessions = _service(adapter)
     service.settings = Settings(
@@ -445,6 +449,7 @@ async def test_cancel_verifier_resubmit_is_durable_and_bounded() -> None:
         oms_cancel_verify_interval_seconds=0,
         oms_cancel_verify_resubmits=2,
     )
+    service.logger = Mock()
     with sessions() as session:
         _strategy, account, _intent, order = _seed_target(session, symbol="VERIFY")
         order_id = order.id
@@ -469,10 +474,81 @@ async def test_cancel_verifier_resubmit_is_durable_and_bounded() -> None:
         broker_order_id="broker-VERIFY-target-1",
         target_order_id=order_id,
     )
+    first_messages = [call.args[0] for call in service.logger.warning.call_args_list]
+    assert any("[OMS-CANCEL-UNCONFIRMED]" in message for message in first_messages)
+    service.logger.reset_mock()
+    await service._verify_cancel_landed(
+        request=request,
+        symbol="VERIFY",
+        account_name=account.name,
+        client_order_id="VERIFY-target-1",
+        broker_order_id="broker-VERIFY-target-1",
+        target_order_id=order_id,
+    )
+    second_messages = [call.args[0] for call in service.logger.warning.call_args_list]
+    assert any("[OMS-CANCEL-UNCONFIRMED]" in message for message in second_messages)
+    assert any("dead_target_bound=%d" in message for message in second_messages)
 
     assert len(_cancel_requests(adapter)) == 1
     with sessions() as session:
         assert service.store.count_terminal_cancel_refusals(session, order_id=order_id) == 1
+
+
+def test_direct_and_strategy_intent_markers_have_distinct_pinned_schemas() -> None:
+    import inspect
+    from project_mai_tai.oms import service as service_module
+
+    source = inspect.getsource(service_module.OmsRiskService)
+    assert "[OMS-CANCEL-DEAD-TARGET-BOUND]" in source
+    assert "[OMS-DIRECT-CANCEL-DEAD-TARGET-BOUND]" in source
+    direct = inspect.getsource(
+        service_module.OmsRiskService._log_direct_cancel_dead_target_bound
+    )
+    assert "target_client_order_id=%s" in direct
+    assert "outcome=refused" in direct
+    assert "emission=once_per_target_path_per_process" in direct
+
+
+def test_direct_marker_deduplicates_per_target_and_path() -> None:
+    service, sessions = _service(_DirectCancelAdapter())
+    service.logger = Mock()
+    with sessions() as session:
+        _strategy, _account, _intent, order = _seed_target(session, symbol="DEDUP")
+        session.add(
+            BrokerOrderEvent(
+                order_id=order.id,
+                event_type="rejected",
+                event_source="unknown",
+                payload={"reason": TERMINAL_REASON},
+            )
+        )
+        session.commit()
+        assert service._direct_cancel_dead_target_bound_reached(
+            session, order=order, path="refresh"
+        )
+        assert service._direct_cancel_dead_target_bound_reached(
+            session, order=order, path="refresh"
+        )
+        assert service._direct_cancel_dead_target_bound_reached(
+            session, order=order, path="drift"
+        )
+    direct_messages = [
+        call.args[0]
+        for call in service.logger.warning.call_args_list
+        if "[OMS-DIRECT-CANCEL-DEAD-TARGET-BOUND]" in call.args[0]
+    ]
+    assert len(direct_messages) == 2
+
+
+def test_missing_target_row_fails_open_without_inventing_evidence() -> None:
+    service, sessions = _service(_DirectCancelAdapter())
+    with sessions() as session:
+        service._record_cancel_verify_reports(
+            session,
+            target_order_id=uuid4(),
+            reports=[],
+        )
+        assert session.scalar(select(BrokerOrderEvent)) is None
 
 
 def test_broker_report_cannot_blank_committed_fanout_identity() -> None:

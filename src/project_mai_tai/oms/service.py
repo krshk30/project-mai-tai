@@ -2086,6 +2086,15 @@ class OmsRiskService:
                         commit=False,
                     )
                     if bound_reached:
+                        self._log_cancel_unconfirmed(
+                            symbol=symbol,
+                            account_name=account_name,
+                            client_order_id=client_order_id,
+                            broker_order_id=broker_order_id,
+                            observed=observed,
+                            reads_failed=reads_failed,
+                            bounded_by_dead_target=True,
+                        )
                         return observed
                 self.logger.warning(
                     "[OMS-CANCEL-RESUBMIT] %s %s coid=%s still reads %s after %d reads — re-sending "
@@ -2111,14 +2120,42 @@ class OmsRiskService:
                         symbol, account_name, client_order_id, exc_info=True,
                     )
 
-        self.logger.warning(
-            "[OMS-CANCEL-UNCONFIRMED] %s %s coid=%s broker_id=%s last_status=%s reads_failed=%d — "
-            "THE CANCEL WAS NOT CONFIRMED. The order may still be WORKING and unowned at the broker. "
-            "This is the FRTT 2026-08-11 shape (136 min live). Check it by hand.",
-            symbol, account_name, client_order_id, broker_order_id,
-            observed or "UNREADABLE", reads_failed,
+        self._log_cancel_unconfirmed(
+            symbol=symbol,
+            account_name=account_name,
+            client_order_id=client_order_id,
+            broker_order_id=broker_order_id,
+            observed=observed,
+            reads_failed=reads_failed,
+            bounded_by_dead_target=False,
         )
         return observed
+
+    def _log_cancel_unconfirmed(
+        self,
+        *,
+        symbol: str,
+        account_name: str,
+        client_order_id: str,
+        broker_order_id: str | None,
+        observed: str | None,
+        reads_failed: int,
+        bounded_by_dead_target: bool,
+    ) -> None:
+        """Keep every verifier exit loud even when a durable budget suppresses resubmission."""
+        self.logger.warning(
+            "[OMS-CANCEL-UNCONFIRMED] %s %s coid=%s broker_id=%s last_status=%s reads_failed=%d "
+            "dead_target_bound=%d — THE CANCEL WAS NOT CONFIRMED. The order may still be WORKING "
+            "and unowned at the broker. This is the FRTT 2026-08-11 shape (136 min live). "
+            "Check it by hand.",
+            symbol,
+            account_name,
+            client_order_id,
+            broker_order_id,
+            observed or "UNREADABLE",
+            reads_failed,
+            int(bounded_by_dead_target),
+        )
 
     def _record_cancel_verify_reports(
         self,
@@ -8298,7 +8335,12 @@ class OmsRiskService:
         terminal_cancel_reports: int,
         path: str,
     ) -> None:
-        """Log one edge when a direct cancel path reaches the durable target budget."""
+        """Log one edge per (target, path, process) when a direct path reaches its budget.
+
+        Unlike #829's strategy-intent marker, this edge is deduplicated and cannot be counted
+        against that marker's per-refusal emissions. The common field names only make either
+        population independently queryable.
+        """
         key = (target_order_id, path)
         logged = self.__dict__.setdefault("_direct_cancel_dead_target_bound_logged", set())
         if key in logged:
@@ -8306,8 +8348,9 @@ class OmsRiskService:
         logged.add(key)
         self.logger.warning(
             "[OMS-DIRECT-CANCEL-DEAD-TARGET-BOUND] symbol=%s acct=%s target_order_id=%s "
-            "coid=%s terminal_reports=%d bound=%d reset=new_target_order_id "
-            "scope=strategy_internal_direct_cancel path=%s broker_request=refused",
+            "target_client_order_id=%s terminal_reports=%d bound=%d reset=new_target_order_id "
+            "scope=strategy_internal_direct_cancel path=%s outcome=refused "
+            "emission=once_per_target_path_per_process",
             symbol,
             broker_account_name,
             target_order_id,
