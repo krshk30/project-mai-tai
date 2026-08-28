@@ -86,6 +86,83 @@ def test_fill_holds_without_reading_virtual_positions_and_is_monotonic() -> None
     assert state.fanout_claim_outcome == "filled"
 
 
+def test_webull_fill_then_union_zero_keeps_the_claim_held() -> None:
+    """The Webull fill can terminalize its own intent before position visibility catches up."""
+
+    strategy, identity = _strategy()
+    state = strategy.watchlist_state("YYGH")
+    state.position_qty = 1
+    state.position_qty_held = 0
+
+    assert strategy.apply_fanout_outcome(_outcome(identity, "filled")) == "consumed"
+    strategy.update_position("YYGH", 0, held_qty=0)
+
+    assert state.fanout_webull_claimed is True
+    assert state.fanout_claim_outcome == "filled"
+
+
+def test_virtual_clear_false_zero_on_held_primary_does_not_release_positive_evidence(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A transient primary-position zero cannot outrank durable Webull evidence."""
+
+    caplog.set_level("INFO")
+    strategy, identity = _strategy()
+    state = strategy.watchlist_state("YYGH")
+    state.position_qty = 1
+    state.position_qty_held = 1
+    assert strategy.apply_fanout_outcome(_outcome(identity, "working")) == "held"
+
+    strategy.update_position("YYGH", 0, held_qty=0)
+
+    assert state.fanout_webull_claimed is True
+    assert state.fanout_claim_outcome == "held"
+    assert "release_allowed=0 released=0 held=1" in caplog.text
+    assert "outcome=held spurious=0" in caplog.text
+
+
+def test_spurious_union_zero_cannot_release_a_durable_fill(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The existing spurious classification must gate release, not merely annotate it."""
+
+    caplog.set_level("INFO")
+    strategy, identity = _strategy()
+    state = strategy.watchlist_state("YYGH")
+    state.position_qty = 1
+    state.position_qty_held = 0
+    assert strategy.apply_fanout_outcome(_outcome(identity, "filled")) == "consumed"
+
+    strategy.update_position("YYGH", 0, held_qty=0)
+
+    assert state.fanout_webull_claimed is True
+    assert state.fanout_claim_slot_id == identity["fanout_slot_id"]
+    assert "release_allowed=0 released=0 held=1" in caplog.text
+    assert "outcome=filled spurious=1" in caplog.text
+
+
+def test_legitimate_primary_close_still_releases_a_provisional_claim(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Evidence precedence must not turn every position transition into a permanent hold."""
+
+    caplog.set_level("INFO")
+    strategy, _identity = _strategy()
+    state = strategy.watchlist_state("YYGH")
+    state.position_qty = 1
+    state.position_qty_held = 1
+    assert state.fanout_claim_outcome == "queued"
+
+    strategy.update_position("YYGH", 0, held_qty=0)
+
+    assert state.fanout_webull_claimed is False
+    assert state.fanout_claim_outcome == "released"
+    assert state.cw_v2_emit_claimed is False
+    assert state.cw_v2_bars_since_exit == 0
+    assert "release_allowed=1 released=1 held=0" in caplog.text
+    assert "outcome=released spurious=0" in caplog.text
+
+
 def test_positive_terminal_no_fill_releases_only_the_exact_attempt() -> None:
     strategy, identity = _strategy()
     state = strategy.watchlist_state("YYGH")

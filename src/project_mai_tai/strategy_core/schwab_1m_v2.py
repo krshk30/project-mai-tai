@@ -1306,8 +1306,9 @@ class SchwabV2Strategy:
             spurious = prev_held == 0 and state.position_qty_held == 0
             logger.info(
                 "schwab_1m_v2 position closed for %s — qty %d -> 0 [held %d -> %d, %s]; reclaim "
-                "claim released (no cooldown) (cause: OMS exit, broker OCO leg, operator close, "
-                "reconcile, or our own resting intent going terminal)",
+                "claim released (no cooldown); Webull claim release evaluated separately "
+                "(cause: OMS exit, broker OCO leg, operator close, reconcile, or our own resting "
+                "intent going terminal)",
                 symbol,
                 prev,
                 prev_held,
@@ -1323,10 +1324,42 @@ class SchwabV2Strategy:
             if self._cw_v2_enabled:
                 state.cw_v2_emit_claimed = False
                 state.cw_v2_bars_since_exit = 0  # reclaim gap: start counting new bars from the exit
-                self._release_fanout_webull_claim(
-                    state,
-                    reason="schwab_position_closed_reclaim_available",
+                # ⛔ Evidence precedence at the release site. The UNION can fall to zero because
+                # a Webull fill terminalized its own open intent, while a transient
+                # [VIRTUAL-CLEAR] can separately make the fills-only read zero. Both converge
+                # here before position restoration can arrive (observed restore lag 6.648–19.119s,
+                # versus this transition within 10s in 64/65 reachable primary cases). Neither
+                # zero can outrank durable positive Webull order/fill evidence. This protects only
+                # the venue-local fan-out claim; v2's own reclaim availability above remains
+                # governed by its Schwab composition under operator reading A.
+                positive_webull_evidence = (
+                    state.fanout_webull_claimed
+                    and state.fanout_claim_outcome in {"held", "filled"}
                 )
+                if positive_webull_evidence:
+                    logger.info(
+                        "[V2-FANOUT-CLAIM-RELEASE-GUARD] %s trigger=schwab_union_zero "
+                        "evaluated=1 release_allowed=0 released=0 held=1 "
+                        "evidence_positive=1 outcome=%s spurious=%d — transient zero cannot "
+                        "outrank durable Webull evidence",
+                        symbol,
+                        state.fanout_claim_outcome,
+                        int(spurious),
+                    )
+                else:
+                    released = self._release_fanout_webull_claim(
+                        state,
+                        reason="schwab_position_closed_reclaim_available",
+                    )
+                    logger.info(
+                        "[V2-FANOUT-CLAIM-RELEASE] %s trigger=schwab_union_zero evaluated=1 "
+                        "release_allowed=1 released=%d held=0 evidence_positive=0 "
+                        "outcome=%s spurious=%d",
+                        symbol,
+                        int(released),
+                        state.fanout_claim_outcome,
+                        int(spurious),
+                    )
         if self._atr_rearm_enabled:
             self._poll_atr_guard(state, prev)
 
