@@ -554,7 +554,7 @@ async def test_emit_webull_fanout_legs_skips_ineligible():
 
 
 @pytest.mark.asyncio
-async def test_emit_webull_fanout_legs_refuses_unreadable_ineligible_list():
+async def test_emit_webull_fanout_legs_preserves_fail_open_when_factory_is_missing():
     bot = _bot()
     bot.strategy._pending_webull_fanout_intents.append(_draft("UNKNOWN"))
     bot.webull_intent_emitter = AsyncMock()
@@ -563,12 +563,23 @@ async def test_emit_webull_fanout_legs_refuses_unreadable_ineligible_list():
 
     await bot._emit_webull_fanout_legs()
 
+    bot.webull_intent_emitter.emit.assert_awaited_once()
+    bot._record_local_fanout_outcome.assert_not_awaited()
+    assert bot.strategy._pending_webull_fanout_intents == []
+
+
+@pytest.mark.asyncio
+async def test_emit_webull_fanout_legs_preserves_cached_fallback_on_query_failure():
+    bot = _bot()
+    bot.session_factory = lambda: None
+    bot._webull_ineligible_cache = {"NOPE"}
+    bot.strategy._pending_webull_fanout_intents.append(_draft("NOPE"))
+    bot.webull_intent_emitter = AsyncMock()
+    bot._webull_ineligible_symbols = lambda: None
+
+    await bot._emit_webull_fanout_legs()
+
     bot.webull_intent_emitter.emit.assert_not_awaited()
-    bot._record_local_fanout_outcome.assert_awaited_once()
-    assert bot._record_local_fanout_outcome.await_args.kwargs == {
-        "outcome": "could_not_tell",
-        "reason": "webull_ineligible_unreadable",
-    }
     assert bot.strategy._pending_webull_fanout_intents == []
 
 

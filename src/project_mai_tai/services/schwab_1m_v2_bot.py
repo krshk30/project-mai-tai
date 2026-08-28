@@ -252,6 +252,7 @@ class SchwabV2BotService:
         # must not suppress every symbol mid-session by turning boot incomplete again.
         self._boot_state_restoration_complete = False
         self._boot_scanner_selected: set[str] = set()
+        self._boot_exclusion_sources_readable = False
         self._boot_restore_last_hold_log_at: float | None = None
         # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
@@ -1617,21 +1618,16 @@ class SchwabV2BotService:
         # Dual-broker fan-out changes the eviction rule: a name keeps trading as long as >=1 broker
         # accepts it, so evict ONLY names BOTH brokers rejected (schwab ∩ webull). Flag-OFF keeps the
         # schwab-only eviction (byte-identical — `_webull_ineligible_symbols` returns empty when off).
+        unreadable_exclusion_sources: list[str] = []
         ineligible_exclude = self._schwab_ineligible_symbols()
         if ineligible_exclude is None:
-            logger.error(
-                "[V2-BOOT-RESTORE] restoration_complete=0 reason=schwab_ineligible_unreadable "
-                "snapshot_not_applied=1; an unreadable exclusion list is not an empty list"
-            )
-            return
+            unreadable_exclusion_sources.append("schwab")
+            ineligible_exclude = set(self._schwab_ineligible_cache)
         if bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
             webull_ineligible = self._webull_ineligible_symbols()
             if webull_ineligible is None:
-                logger.error(
-                    "[V2-BOOT-RESTORE] restoration_complete=0 reason=webull_ineligible_unreadable "
-                    "snapshot_not_applied=1; an unreadable exclusion list is not an empty list"
-                )
-                return
+                unreadable_exclusion_sources.append("webull")
+                webull_ineligible = set(self._webull_ineligible_cache)
             ineligible_exclude = ineligible_exclude & webull_ineligible
         if ineligible_exclude:
             selected -= ineligible_exclude
@@ -1640,6 +1636,17 @@ class SchwabV2BotService:
         # flag. A prior fully-excluded snapshot must not let held-position coverage launder a
         # later empty scanner pass into completed boot restoration.
         self._boot_scanner_selected = scanner_selected
+        self._boot_exclusion_sources_readable = not unreadable_exclusion_sources
+        if unreadable_exclusion_sources:
+            logger.warning(
+                "[V2-BOOT-RESTORE] restoration_complete=%d "
+                "reason=ineligible_exclusion_unreadable sources=%s snapshot_applied=1 "
+                "last_known_exclusions_applied=1 entries_held=%d; unreadable exclusions cannot "
+                "complete boot restoration",
+                int(self._boot_state_restoration_complete),
+                ",".join(unreadable_exclusion_sources),
+                int(bool(getattr(self.strategy, "_entries_held", False))),
+            )
         if selected == self._watchlist:
             self._try_complete_boot_state_restoration(selected, new_symbols=set())
             return
@@ -1735,6 +1742,17 @@ class SchwabV2BotService:
                     len(new_symbols) - confirmed,
                 )
             return
+        if not self._boot_exclusion_sources_readable:
+            results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
+            logger.warning(
+                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
+                "could_not_tell=%d reason=ineligible_exclusion_unreadable; snapshot was applied "
+                "but boot hold remains closed",
+                len(selected),
+                sum(result is True for result in results),
+                len(results) - sum(result is True for result in results),
+            )
+            return
         evaluated = len(selected)
         scanner_evaluated = len(self._boot_scanner_selected)
         if evaluated == 0:
@@ -1823,7 +1841,7 @@ class SchwabV2BotService:
         `session_date`-keyed `schwab_ineligible_today` table.
         """
         if self.session_factory is None:
-            return set()
+            return None
         now_m = time.monotonic()
         if (
             self._schwab_ineligible_loaded_monotonic is not None
@@ -1858,7 +1876,7 @@ class SchwabV2BotService:
         <=60s. Empty when fan-out is off / the Webull account is unset / paper mode; auto-clears daily
         via the `session_date`-keyed `webull_ineligible_today` table."""
         if self.session_factory is None:
-            return set()
+            return None
         if not bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
             return set()
         account_name = str(
@@ -2967,18 +2985,15 @@ class SchwabV2BotService:
             return
         webull_ineligible = self._webull_ineligible_symbols()
         if webull_ineligible is None:
-            logger.error(
-                "[V2-FANOUT] Webull ineligible-symbol read failed; refusing %d queued leg(s) "
-                "because unreadable is not empty",
-                len(legs),
+            # Preserve the pre-boot-guard fan-out policy exactly. A missing factory used to mean
+            # empty; a query failure used to fall back to the last cache. Boot restoration tracks
+            # readability separately and may hold entries, but this PR does not drop or requeue a
+            # venue leg after the primary has already been emitted.
+            webull_ineligible = (
+                set()
+                if self.session_factory is None
+                else set(self._webull_ineligible_cache)
             )
-            for leg in legs:
-                await self._record_local_fanout_outcome(
-                    leg,
-                    outcome="could_not_tell",
-                    reason="webull_ineligible_unreadable",
-                )
-            return
         for d in legs:
             sym = str(getattr(d, "symbol", "")).upper()
             if sym in webull_ineligible:

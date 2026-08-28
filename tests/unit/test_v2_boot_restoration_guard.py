@@ -19,14 +19,34 @@ from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 
 
+class _ReadableEmptySession:
+    """A readable eligibility/seed database with no matching rows."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def scalar(self, *_args, **_kwargs):
+        return None
+
+    def execute(self, *_args, **_kwargs):
+        return SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [])
+        )
+
+
 def _bot(**overrides) -> SchwabV2BotService:
     settings = {
         "strategy_schwab_1m_v2_cw_armed_segment_safety_enabled": True,
     }
     settings.update(overrides)
-    return SchwabV2BotService(
+    bot = SchwabV2BotService(
         settings=Settings(**settings)
     )
+    bot.session_factory = lambda: _ReadableEmptySession()
+    return bot
 
 
 def _apply_snapshot(
@@ -256,16 +276,19 @@ def test_ineligible_population_must_be_readable_before_boot_release(
     monkeypatch.setattr(bot, "_webull_ineligible_symbols", lambda: webull_result)
     monkeypatch.setattr(bot.strategy, "cw_armed_segments", lambda: [])
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         _apply_snapshot(bot, ["DAIC"])
         bot._cw_boot_hold_check()
 
-    assert bot._watchlist == set()
-    assert bot._boot_scanner_selected == set()
+    expected_selected = set() if unreadable_reason is None else {"DAIC"}
+    assert bot._watchlist == expected_selected
+    assert bot._boot_scanner_selected == expected_selected
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
     if unreadable_reason is not None:
-        assert unreadable_reason in caplog.text
+        assert "reason=ineligible_exclusion_unreadable" in caplog.text
+        assert "snapshot_applied=1" in caplog.text
+        assert "last_known_exclusions_applied=1" in caplog.text
 
 
 def test_ineligible_loader_query_failure_is_not_cached_empty() -> None:
@@ -278,6 +301,65 @@ def test_ineligible_loader_query_failure_is_not_cached_empty() -> None:
     bot.session_factory = fail_factory
 
     assert bot._schwab_ineligible_symbols() is None
+
+
+def test_webull_ineligible_loader_query_failure_is_not_cached_empty() -> None:
+    bot = _bot(
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    bot._webull_ineligible_cache = set()
+
+    def fail_factory():
+        raise RuntimeError("db unavailable")
+
+    bot.session_factory = fail_factory
+
+    assert bot._webull_ineligible_symbols() is None
+
+
+def test_missing_session_factory_is_unreadable_for_both_ineligible_loaders() -> None:
+    bot = _bot(
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    bot.session_factory = None
+
+    assert bot._schwab_ineligible_symbols() is None
+    assert bot._webull_ineligible_symbols() is None
+
+
+def test_post_latch_exclusion_blip_applies_snapshot_without_reholding_entries(
+    monkeypatch, caplog
+) -> None:
+    """Fail closed on exclusion evidence, not by freezing scanner turnover mid-session."""
+    bot = _bot(
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    bot._boot_state_restoration_complete = True
+    bot.strategy._entries_held = False
+    bot._watchlist = {"DAIC", "XOS"}
+    bot._rest_warmup_done = {"DAIC", "XOS"}
+    released: list[str] = []
+    monkeypatch.setattr(bot, "_schwab_ineligible_symbols", lambda: None)
+    monkeypatch.setattr(bot, "_webull_ineligible_symbols", lambda: None)
+    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
+    monkeypatch.setattr(
+        bot.strategy,
+        "release_and_drop_symbol",
+        lambda symbol: released.append(symbol),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _apply_snapshot(bot, ["AAPL", "TSLA"])
+
+    assert bot._watchlist == {"AAPL", "TSLA"}
+    assert released == ["DAIC", "XOS"]
+    assert bot._boot_state_restoration_complete is True
+    assert bot.strategy._entries_held is False
+    assert "restoration_complete=1" in caplog.text
+    assert "snapshot_applied=1" in caplog.text
 
 
 def test_completed_restoration_is_a_one_way_latch_across_empty_refresh(
@@ -392,6 +474,7 @@ def test_real_rest_warmup_callback_completes_the_latch(monkeypatch) -> None:
     bot = _bot()
     bot._watchlist = {"DAIC"}
     bot._boot_scanner_selected = {"DAIC"}
+    bot._boot_exclusion_sources_readable = True
     bot._db_seeded = {"DAIC"}
     bot.strategy._entries_held = True
 

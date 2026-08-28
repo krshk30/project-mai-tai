@@ -212,6 +212,21 @@ If runtime positions disappear but account positions remain:
 - do not assume the strategy remembers the position lifecycle
 - watch for reconciliation drift and do not make a second trading-critical change casually
 
+## Schwab 1-Min v2 Boot Hold
+
+- Do not restart `project-mai-tai-schwab-1m-v2.service` between 07:00 and 16:00 ET
+  without a new explicit operator decision. Premarket entries are live from 07:00.
+- After a restart, require `[V2-BOOT-RESTORE] restoration_complete=1` before treating
+  the entry path as available. An empty restored-state list before that marker is not safety.
+- `rest_warmed != evaluated` means every selected symbol has not yet supplied the fresh REST
+  bar required to finish restoration. One halted or thin symbol can therefore hold the entire
+  fleet indefinitely; there is deliberately no timeout that converts missing data into safety.
+- To clear a persistent warmup hold, identify the `warmup_pending` symbol. Restore its fresh REST
+  bar coverage, or—only after proving the symbol has no broker position, managed row, or working
+  order—remove it from the scanner-selected population and wait for the next scanner snapshot.
+  A held-position symbol must remain subscribed for exits. Never clear the hold by toggling the
+  safety flag or repeatedly restarting the service.
+
 ## TradingView Alerts Restart
 
 Use when:
@@ -422,4 +437,3 @@ The main missing capabilities are:
 - safe intent buffering or replay across OMS restarts
 - safer subscription re-seeding after isolated market-data restarts
 - a tested restart-with-open-positions validation pass
-

@@ -56,9 +56,13 @@ DRY_RUN = "--dry-run" in sys.argv
 
 def sh(cmd: list[str]) -> str | None:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout.strip()
+        completed = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
     except Exception:
         return None
+    stdout = completed.stdout.strip()
+    if completed.returncode != 0 or not stdout:
+        return None
+    return stdout
 
 
 def page(title: str, body: str, priority: str = "urgent", tags: str = "rotating_light") -> None:
@@ -180,17 +184,44 @@ def main() -> int:
              f"{STREAM} entries. Armed-segment state is UNOBSERVABLE — the P1.3 boot-hold cannot be "
              f"verified. Check the v2 bot and its state-publish loop BY HAND.")
         return 2
+    if age is None:
+        page(
+            "🔴 armed-segments SNAPSHOT TIME UNKNOWN",
+            "[armed-segments] the newest v2 snapshot has a missing or unparsable produced_at. "
+            "Its freshness cannot be proved, so the check will not print GREEN.",
+        )
+        return 2
     if age is not None and age > SNAPSHOT_STALE_SECS:
         page("🔴 armed-segments SNAPSHOT STALE",
              f"[armed-segments] v2 snapshot is {age:.0f}s old (>{SNAPSHOT_STALE_SECS}s) while the unit "
              f"is ACTIVE. The bot may be wedged; armed-segment state is unreliable. Verify BY HAND.")
         return 2
 
-    segments = payload.get("cw_armed_segments") or []
+    segments_raw = payload.get("cw_armed_segments")
+    if not isinstance(segments_raw, list):
+        page(
+            "🔴 armed-segments PAYLOAD UNKNOWN",
+            "[armed-segments] cw_armed_segments is missing or not a list. Missing armed-state "
+            "evidence cannot be interpreted as zero dangerous segments.",
+        )
+        return 2
+    segments = segments_raw
+    invalid_dangerous = [
+        index
+        for index, segment in enumerate(segments)
+        if not isinstance(segment, dict) or not isinstance(segment.get("dangerous"), bool)
+    ]
+    if invalid_dangerous:
+        page(
+            "🔴 armed-segments DANGER STATE UNKNOWN",
+            "[armed-segments] one or more segments have a missing or non-boolean dangerous "
+            f"field (indexes={invalid_dangerous}). The check will not treat them as safe.",
+        )
+        return 2
     entries_held = bool(payload.get("entries_held"))
     restoration_raw = payload.get("restoration_complete")
     restoration_complete = restoration_raw is True
-    dangerous = [s for s in segments if s.get("dangerous")]
+    dangerous = [s for s in segments if s["dangerous"]]
 
     if restoration_raw is not True and restoration_raw is not False and restoration_raw is not None:
         page(

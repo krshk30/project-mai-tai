@@ -300,6 +300,21 @@ def test_sh_failure_is_unknown_not_an_empty_success(monkeypatch):
     assert mod.sh(["sudo", "tr", "\\0", "\\n", "/proc/1234/environ"]) is None
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [
+        (1, "permission denied"),
+        (0, ""),
+    ],
+)
+def test_sh_nonzero_or_empty_stdout_is_unknown(monkeypatch, returncode, stdout):
+    mod = _load()
+    result = type("Completed", (), {"returncode": returncode, "stdout": stdout})()
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_args, **_kwargs: result)
+
+    assert mod.sh(["sudo", "tr", "\\0", "\\n", "/proc/1234/environ"]) is None
+
+
 def test_pages_when_live_flag_environ_read_fails(monkeypatch):
     """The live flag can be ON while MainPID -> /proc races; unreadable must never mean OFF."""
     mod = _load()
@@ -320,6 +335,55 @@ def test_pages_when_live_flag_environ_read_fails(monkeypatch):
     assert mod.main() == 2
     assert len(pages) == 1
     assert "SAFETY FLAG UNKNOWN" in pages[0][0]
+
+
+def test_missing_armed_segments_field_is_unknown_not_green(asc, monkeypatch):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: ({"entries_held": False, "restoration_complete": True}, 3.0),
+    )
+
+    assert asc.main() == 2
+    assert "PAYLOAD UNKNOWN" in asc._pages[0][0]
+
+
+def test_missing_dangerous_field_is_unknown_not_green(asc, monkeypatch):
+    segment = _seg("DAIC")
+    segment.pop("dangerous")
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [segment],
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
+
+    assert asc.main() == 2
+    assert "DANGER STATE UNKNOWN" in asc._pages[0][0]
+
+
+def test_unparsable_snapshot_time_is_unknown_not_green(asc, monkeypatch):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            None,
+        ),
+    )
+
+    assert asc.main() == 2
+    assert "SNAPSHOT TIME UNKNOWN" in asc._pages[0][0]
 
 
 # --------------------------------------------------------------- precedence
