@@ -15,7 +15,8 @@ end_marker="# END project-mai-tai D6 outcome acceptance"
 
 source "$source_lib"
 
-require_root "${EUID:-$(id -u)}"
+effective_uid="${EUID:-$(id -u)}"
+require_root "$effective_uid"
 
 for source in "$source_check" "$source_cron"; do
   python3 - "$source" <<'PY'
@@ -39,7 +40,7 @@ if [[ -f "$target_cron" ]] && ! cmp -s "$source_cron" "$target_cron"; then
 fi
 install -o root -g root -m 0755 "$source_check" "$target_check"
 install -o root -g root -m 0755 "$source_cron" "$target_cron"
-cmp "$source_check" "$target_check"
+verify_d6_installed_copy "$source_check" "$target_check"
 verify_d6_installed_copy "$source_cron" "$target_cron"
 verify_d6_runtime "$python_bin" "$target_cron" "$target_check" "$source_check_sha256" "$target_dir"
 
@@ -54,20 +55,7 @@ if ! crontab -l >"$current_cron" 2>"$cron_error"; then
     exit 1
   fi
 fi
-begin_count=$(grep -Fxc "$begin_marker" "$current_cron" || true)
-end_count=$(grep -Fxc "$end_marker" "$current_cron" || true)
-if [[ "$begin_count" -gt 1 || "$end_count" -gt 1 || "$begin_count" -ne "$end_count" ]]; then
-  echo "REFUSED: malformed existing D6 cron block begin=$begin_count end=$end_count" >&2
-  exit 1
-fi
-if [[ "$begin_count" -eq 1 ]]; then
-  begin_line=$(grep -nFx "$begin_marker" "$current_cron" | cut -d: -f1)
-  end_line=$(grep -nFx "$end_marker" "$current_cron" | cut -d: -f1)
-  if [[ "$begin_line" -ge "$end_line" ]]; then
-    echo "REFUSED: existing D6 cron block markers are out of order" >&2
-    exit 1
-  fi
-fi
+verify_d6_existing_cron_block "$begin_marker" "$end_marker" "$current_cron"
 awk -v begin="$begin_marker" -v end="$end_marker" '
   $0 == begin { inside=1; next }
   $0 == end { inside=0; next }

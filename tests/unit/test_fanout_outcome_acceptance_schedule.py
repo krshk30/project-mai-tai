@@ -606,9 +606,26 @@ def test_prior_nonpass_is_rerun_instead_of_skipped_as_success(tmp_path) -> None:
     ).read_text(encoding="utf-8")
 
 
-def test_a_pass_missing_a_denominator_fails_closed_and_notifies(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("metric", "needle", "replacement"),
+    (
+        ("paired_legs", "usable=", "population="),
+        ("paired_legs", " of ", " / "),
+        ("fill_rate", "mirror=", "webull="),
+        ("fill_rate", "schwab=", "primary="),
+        ("duplicate_legs", " of ", " / "),
+        ("refused_exits", "post_exit_episodes=", "episodes="),
+    ),
+)
+def test_a_pass_missing_any_denominator_field_fails_closed_and_notifies(
+    tmp_path, metric: str, needle: str, replacement: str
+) -> None:
     report = _pass_report()
-    bad_lines = tuple(line for line in report.lines if not line.startswith("metric=refused_exits "))
+    bad_lines = tuple(
+        line.replace(needle, replacement, 1) if line.startswith(f"metric={metric} ") else line
+        for line in report.lines
+    )
+    assert bad_lines != report.lines
     fake = SimpleNamespace(
         run_report=lambda **_kwargs: SimpleNamespace(
             exit_code=0,
@@ -627,7 +644,10 @@ def test_a_pass_missing_a_denominator_fails_closed_and_notifies(tmp_path) -> Non
 
     assert result.exit_code == cron.COULD_NOT_TELL
     assert notifications
-    assert "denominators=invalid" in (tmp_path / "STATUS.txt").read_text(encoding="utf-8")
+    status = (tmp_path / "STATUS.txt").read_text(encoding="utf-8")
+    assert "denominators=invalid" in status
+    assert f"metric={metric} omitted its denominator" in status
+    assert "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" not in status
 
 
 def test_failed_notification_is_visible_and_session_remains_retryable(tmp_path) -> None:
@@ -682,39 +702,88 @@ def test_installer_is_root_only_and_manages_one_repo_owned_cron_block() -> None:
     assert 'cron_line="17 4,5,6 * * 2-6 ' in installer
     assert "--acceptance-sha256 $source_check_sha256" in installer
     assert "--out-dir $target_dir" in installer
-    assert "malformed existing D6 cron block" in installer
+    assert "malformed existing D6 cron block" in installer_lib
     assert "MAI_TAI_INSTALLER_LIB_ONLY" not in installer
-    assert 'require_root "${EUID:-$(id -u)}"' in installer
+    assert 'require_root "$effective_uid"' in installer
+    assert 'verify_d6_installed_copy "$source_check" "$target_check"' in installer
     assert 'verify_d6_installed_copy "$source_cron" "$target_cron"' in installer
+    assert (
+        'verify_d6_existing_cron_block "$begin_marker" "$end_marker" "$current_cron"'
+        in installer
+    )
     assert 'verify_exactly_one_d6_schedule "$cron_line" "$installed_cron"' in installer
     assert 'verify_d6_runtime "$python_bin" "$target_cron" "$target_check" ' in installer
     assert cron.DEFAULT_OUT_DIR / "STATUS.txt" == fleet_health._D6_STATUS_PATH
 
+    target_dir_line = next(
+        line for line in installer.splitlines() if line.startswith("target_dir=")
+    )
+    shell_target_dir = Path(target_dir_line.split("=", 1)[1])
+    assert shell_target_dir == cron.DEFAULT_OUT_DIR
+    assert shell_target_dir == fleet_health._D6_STATUS_PATH.parent
 
-def test_installer_root_copy_and_schedule_guards_each_fail_closed(tmp_path) -> None:
+
+def test_every_installer_guard_call_site_fails_closed(tmp_path) -> None:
     git_bash = Path("C:/Program Files/Git/bin/bash.exe")
     bash = str(git_bash) if git_bash.exists() else shutil.which("bash")
     assert bash is not None
     installer_lib = (OPS / "fanout_outcome_acceptance_install_lib.sh").as_posix()
-    reviewed = tmp_path / "reviewed.py"
-    installed = tmp_path / "installed.py"
-    reviewed.write_text("reviewed\n", encoding="utf-8")
-    installed.write_text("stale or truncated\n", encoding="utf-8")
-    cases = (
-        "require_root 1234",
-        f"verify_d6_installed_copy '{reviewed.as_posix()}' '{installed.as_posix()}'",
-        "verify_exactly_one_d6_schedule 'expected schedule' ''",
+    installer = (OPS / "install_fanout_outcome_acceptance.sh").read_text(encoding="utf-8")
+    installer_lines = installer.splitlines()
+    reviewed_check = tmp_path / "reviewed-check.py"
+    installed_check = tmp_path / "installed-check.py"
+    reviewed_cron = tmp_path / "reviewed-cron.py"
+    installed_cron = tmp_path / "installed-cron.py"
+    current_cron = tmp_path / "current-crontab"
+    reviewed_check.write_text("reviewed check\n", encoding="utf-8")
+    installed_check.write_text("stale check\n", encoding="utf-8")
+    reviewed_cron.write_text("reviewed cron\n", encoding="utf-8")
+    installed_cron.write_text("stale cron\n", encoding="utf-8")
+    current_cron.write_text("# BEGIN project-mai-tai D6 outcome acceptance\n", encoding="utf-8")
+
+    definitions = (
+        "effective_uid=1234",
+        f"source_check='{reviewed_check.as_posix()}'",
+        f"target_check='{installed_check.as_posix()}'",
+        f"source_cron='{reviewed_cron.as_posix()}'",
+        f"target_cron='{installed_cron.as_posix()}'",
+        "begin_marker='# BEGIN project-mai-tai D6 outcome acceptance'",
+        "end_marker='# END project-mai-tai D6 outcome acceptance'",
+        f"current_cron='{current_cron.as_posix()}'",
+        "cron_line='expected schedule'",
+        "installed_cron=''",
+    )
+    call_prefixes = (
+        'require_root "$effective_uid"',
+        'verify_d6_installed_copy "$source_check"',
+        'verify_d6_installed_copy "$source_cron"',
+        "verify_d6_existing_cron_block ",
+        "verify_exactly_one_d6_schedule ",
     )
 
-    for guard in cases:
+    for call_prefix in call_prefixes:
+        call_site = next(line for line in installer_lines if line.startswith(call_prefix))
+        survived = tmp_path / f"survived-{len(list(tmp_path.glob('survived-*')))}"
+        harness = tmp_path / f"guard-{survived.name}.sh"
+        harness.write_text(
+            "set -euo pipefail\n"
+            f"source '{installer_lib}'\n"
+            + "\n".join(definitions)
+            + "\n"
+            + call_site
+            + "\n"
+            + f"touch '{survived.as_posix()}'\n",
+            encoding="utf-8",
+        )
         result = subprocess.run(
-            [bash, "-lc", f"source '{installer_lib}'; {guard}"],
+            [bash, str(harness)],
             capture_output=True,
             text=True,
             check=False,
         )
-        assert result.returncode != 0, guard
-        assert "REFUSED:" in result.stderr, guard
+        assert result.returncode != 0, call_site
+        assert "REFUSED:" in result.stderr, call_site
+        assert not survived.exists(), call_site
 
 
 def test_installer_executes_help_with_the_selected_runtime(tmp_path) -> None:

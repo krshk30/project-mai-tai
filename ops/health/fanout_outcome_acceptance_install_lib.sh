@@ -44,3 +44,28 @@ verify_exactly_one_d6_schedule() {
     return 1
   fi
 }
+
+verify_d6_existing_cron_block() {
+  local begin_marker=$1
+  local end_marker=$2
+  local current_cron=$3
+  local begin_count
+  local end_count
+  local begin_line
+  local end_line
+
+  begin_count=$(grep -Fxc "$begin_marker" "$current_cron" || true)
+  end_count=$(grep -Fxc "$end_marker" "$current_cron" || true)
+  if [[ "$begin_count" -gt 1 || "$end_count" -gt 1 || "$begin_count" -ne "$end_count" ]]; then
+    echo "REFUSED: malformed existing D6 cron block begin=$begin_count end=$end_count" >&2
+    return 1
+  fi
+  if [[ "$begin_count" -eq 1 ]]; then
+    begin_line=$(grep -nFx "$begin_marker" "$current_cron" | cut -d: -f1)
+    end_line=$(grep -nFx "$end_marker" "$current_cron" | cut -d: -f1)
+    if [[ "$begin_line" -ge "$end_line" ]]; then
+      echo "REFUSED: existing D6 cron block markers are out of order" >&2
+      return 1
+    fi
+  fi
+}
