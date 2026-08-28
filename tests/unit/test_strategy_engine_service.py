@@ -8025,7 +8025,13 @@ def test_publish_strategy_state_persists_scanner_cycle_history_snapshot() -> Non
     assert payload["top_confirmed"][0]["confirmed_at"] == "10:05:00 AM ET"
 
 
-def test_scanner_cycle_history_retention_and_dedup() -> None:
+def test_scanner_cycle_history_retention_and_dedup(monkeypatch) -> None:
+    # Reproduce the Windows/coarse-clock failure deterministically: every append observes the
+    # exact same wall-clock value. Retention must still keep the latest two distinct cycles.
+    fixed_now = datetime(2026, 8, 28, 17, 50, 16, 560136, tzinfo=UTC)
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow", lambda: fixed_now
+    )
     session_factory = build_test_session_factory()
     service = StrategyEngineService(
         settings=make_test_settings(
@@ -8068,7 +8074,8 @@ def test_scanner_cycle_history_retention_and_dedup() -> None:
         snapshots = session.scalars(
             select(DashboardSnapshot)
             .where(DashboardSnapshot.snapshot_type == "scanner_cycle_history")
-            .order_by(DashboardSnapshot.created_at)
+            # Mirror the production retention order, including its deterministic UUID tie-break.
+            .order_by(DashboardSnapshot.created_at, DashboardSnapshot.id)
         ).all()
 
     assert len(snapshots) == 2
