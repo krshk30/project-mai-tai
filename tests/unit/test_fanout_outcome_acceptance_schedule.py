@@ -106,7 +106,13 @@ def _cte(sql: str, name: str, following: str) -> str:
     return sql.split(f"{name} AS (", 1)[1].split(f"),\n{following} AS (", 1)[0]
 
 
-def _all_target_ctes_window_bound(sql: str) -> bool:
+def _target_window_text_tripwire(sql: str) -> bool:
+    """Cheap shape tripwire; the real window proof runs SQL in PostgreSQL.
+
+    This helper deliberately remains diagnostic only.  It cannot enumerate every
+    equivalent widening.  ``tests/integration/test_acceptance_sql_windows.py`` imports
+    ``acceptance.SQL`` and asks PostgreSQL whether inside/outside populations differ.
+    """
     target_bounds = [
         line.strip()
         for line in _cte(sql, "target_bounds", "fill_by_order").splitlines()
@@ -118,9 +124,9 @@ def _all_target_ctes_window_bound(sql: str) -> bool:
     ]:
         return False
 
-    # These are exact CTE tails rather than a subset of required lines.  An added ``OR TRUE`` on
-    # the next line is just as widening as editing the predicate itself, so either must invalidate
-    # the proof.  The SELECT projections above the tails may evolve without weakening the bound.
+    # Exact tails make this a useful fast tripwire for common edits.  They are not a semantic
+    # proof: derived tables and earlier UNION branches can widen a population without changing
+    # these strings, which is why the integration harness is load-bearing.
     direct = {
         "target_buy_legs": (
             "target_mirror_symbols",
@@ -437,11 +443,11 @@ def test_selected_session_dates_reach_the_real_sql_over_psql_stdin(
     assert notifications and "verdict=COULD_NOT_TELL" in notifications[0][1]
 
 
-def test_every_target_cte_is_semantically_bound_to_the_requested_window() -> None:
-    assert _all_target_ctes_window_bound(acceptance.SQL)
+def test_textual_target_window_tripwire_matches_the_current_query_shape() -> None:
+    assert _target_window_text_tripwire(acceptance.SQL)
 
 
-def test_window_proof_rejects_adjacent_or_true_and_a_widened_bounds_source() -> None:
+def test_textual_tripwire_rejects_adjacent_or_true_and_a_widened_bounds_source() -> None:
     adjacent_predicate = acceptance.SQL.replace(
         "AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at",
         "AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at\n"
@@ -454,13 +460,14 @@ def test_window_proof_rejects_adjacent_or_true_and_a_widened_bounds_source() -> 
         1,
     )
 
-    assert _all_target_ctes_window_bound(adjacent_predicate) is False
-    assert _all_target_ctes_window_bound(widened_source) is False
+    assert _target_window_text_tripwire(adjacent_predicate) is False
+    assert _target_window_text_tripwire(widened_source) is False
 
 
-def test_bounded_and_widened_sql_select_different_control_legs_and_verdicts(
+def test_fake_psql_smoke_selects_different_control_legs_and_verdicts(
     monkeypatch,
 ) -> None:
+    """Pin scheduler wiring only; PostgreSQL integration owns window semantics."""
     outputs = iter(
         [
             _csv_output(include_outside_window_population=False),
@@ -505,8 +512,8 @@ def test_bounded_and_widened_sql_select_different_control_legs_and_verdicts(
         until=datetime(2026, 8, 29, 0, 0, tzinfo=EASTERN_TZ),
     )
 
-    assert _all_target_ctes_window_bound(bounded_sql) is True
-    assert _all_target_ctes_window_bound(widened_sql) is False
+    assert _target_window_text_tripwire(bounded_sql) is True
+    assert _target_window_text_tripwire(widened_sql) is False
     assert submitted_sql == [bounded_sql, widened_sql]
     assert bounded_report.exit_code == acceptance.UNEXERCISED
     output = "\n".join(bounded_report.lines)
