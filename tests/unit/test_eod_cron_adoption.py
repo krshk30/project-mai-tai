@@ -106,6 +106,20 @@ def test_crashed_report_does_not_latch_the_day_and_next_run_retries(tmp_path) ->
     assert "VERDICT eod" in canonical.read_text(encoding="utf-8")
 
 
+def test_partial_canonical_report_is_replaced_by_a_real_completed_report(tmp_path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    canonical = out / "eod_2026-08-28.txt"
+    canonical.write_text("partial output from an interrupted run\n", encoding="utf-8")
+
+    result = _run(tmp_path, complete=True)
+
+    assert result.returncode == 0
+    report = canonical.read_text(encoding="utf-8")
+    assert report == "VERDICT eod day=2026-08-28 trips=0\n"
+    assert (out / "eod_2026-08-28.notified").exists()
+
+
 def test_force_run_uses_scratch_artifact_and_cannot_poison_canonical_latch(tmp_path) -> None:
     forced = _run(tmp_path, force=True, complete=True)
     out = tmp_path / "out"
