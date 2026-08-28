@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from project_mai_tai.broker_adapters.protocols import ExecutionReport
+from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.oms.store import OmsStore
 
 
@@ -142,6 +142,45 @@ def test_the_schwab_split_is_not_all_one_word() -> None:
     tests above would still pass — both classes must actually appear."""
     src = (_ADAPTERS / "schwab.py").read_text(encoding="utf-8")
     assert 'origin="broker"' in src and 'origin="client"' in src
+
+
+def test_schwab_status_order_report_is_broker_origin() -> None:
+    """A Schwab order returned by the venue must not remain in the unknown population."""
+    from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+
+    adapter = object.__new__(SchwabBrokerAdapter)
+    request = OrderRequest(
+        client_order_id="coid-status",
+        broker_account_name="live:schwab_1m_v2",
+        strategy_code="schwab_1m_v2",
+        symbol="DAIC",
+        side="buy",
+        intent_type="open",
+        quantity=Decimal("1"),
+        reason="test",
+    )
+    report = adapter._execution_report_from_order(
+        request=request,
+        order={
+            "orderId": "12345",
+            "status": "REJECTED",
+            "quantity": 1,
+            "enteredTime": "2026-08-28T14:30:00Z",
+            "statusDescription": "venue refused",
+        },
+        event_type="rejected",
+        broker_order_id="12345",
+    )
+
+    assert report.origin == "broker"
+    assert report.reason != request.reason
+
+
+def test_every_schwab_status_order_call_site_uses_the_classified_helper() -> None:
+    src = (_ADAPTERS / "schwab.py").read_text(encoding="utf-8")
+    assert src.count("self._execution_report_from_order(") == 3
+    helper = src[src.index("    def _execution_report_from_order(") :]
+    assert 'origin="broker"' in helper
 
 
 def test_webull_exception_paths_are_DERIVED_never_guessed() -> None:

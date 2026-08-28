@@ -1361,6 +1361,10 @@ class SchwabBrokerAdapter:
         )
         return ExecutionReport(
             event_type=event_type,  # type: ignore[arg-type]
+            # This helper is called only after Schwab returned an order record (initial terminal
+            # poll, fetch_order_update, or post-cancel fetch). The venue record is positive
+            # evidence; leaving it at the default "unknown" contaminated the reject census.
+            origin="broker",
             client_order_id=request.client_order_id,
             broker_order_id=broker_order_id or self._extract_order_id(order, None),
             broker_fill_id=self._build_fill_id(
