@@ -183,6 +183,105 @@ def test_every_schwab_status_order_call_site_uses_the_classified_helper() -> Non
     assert 'origin="broker"' in helper
 
 
+def _schwab_origin_request(
+    *, intent_type: str = "open", metadata: dict[str, str] | None = None
+) -> OrderRequest:
+    return OrderRequest(
+        client_order_id=f"schwab-origin-{intent_type}",
+        broker_account_name="live:schwab_1m_v2",
+        strategy_code="schwab_1m_v2",
+        symbol="DAIC",
+        side="buy",
+        intent_type=intent_type,
+        quantity=Decimal("1"),
+        reason="origin classification control",
+        metadata=metadata or {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_schwab_missing_account_rejection_is_client_never_broker() -> None:
+    """No account hash means no request can have reached Schwab."""
+    from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+
+    adapter = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
+    adapter.accounts_by_name = {}
+
+    reports = await adapter.submit_order(_schwab_origin_request())
+
+    assert len(reports) == 1
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "client"
+    assert reports[0].origin != "broker"
+
+
+@pytest.mark.asyncio
+async def test_schwab_submit_runtime_error_is_client_never_broker(monkeypatch) -> None:
+    """A local request-path RuntimeError is not a broker refusal."""
+    from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+    from project_mai_tai.settings import Settings
+
+    adapter = SchwabBrokerAdapter(
+        Settings(schwab_access_token="token", schwab_account_hash="account-hash")
+    )
+
+    async def fail_locally(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("local request construction/authentication failure")
+
+    monkeypatch.setattr(adapter, "_authorized_request_json", fail_locally)
+    reports = await adapter.submit_order(_schwab_origin_request())
+
+    assert len(reports) == 1
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "client"
+    assert reports[0].origin != "broker"
+
+
+@pytest.mark.asyncio
+async def test_schwab_cancel_missing_broker_id_is_client_never_broker() -> None:
+    """A cancel without a target id is refused before a DELETE can be sent."""
+    from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+    from project_mai_tai.settings import Settings
+
+    adapter = SchwabBrokerAdapter(
+        Settings(schwab_access_token="token", schwab_account_hash="account-hash")
+    )
+    reports = await adapter.submit_order(_schwab_origin_request(intent_type="cancel"))
+
+    assert len(reports) == 1
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "client"
+    assert reports[0].origin != "broker"
+
+
+@pytest.mark.asyncio
+async def test_schwab_cancel_runtime_error_is_client_never_broker(monkeypatch) -> None:
+    """A locally failed DELETE path must not wear the venue's name."""
+    from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+    from project_mai_tai.settings import Settings
+
+    adapter = SchwabBrokerAdapter(
+        Settings(schwab_access_token="token", schwab_account_hash="account-hash")
+    )
+
+    async def fail_locally(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("local DELETE authentication failure")
+
+    monkeypatch.setattr(adapter, "_authorized_request_json", fail_locally)
+    reports = await adapter.submit_order(
+        _schwab_origin_request(
+            intent_type="cancel", metadata={"broker_order_id": "target-order-1"}
+        )
+    )
+
+    assert len(reports) == 1
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "client"
+    assert reports[0].origin != "broker"
+
+
 def test_webull_exception_paths_are_DERIVED_never_guessed() -> None:
     """⛔⭐ The honest gap has been CLOSED BY READING THE PATH — which is what its own pin asked for.
 
