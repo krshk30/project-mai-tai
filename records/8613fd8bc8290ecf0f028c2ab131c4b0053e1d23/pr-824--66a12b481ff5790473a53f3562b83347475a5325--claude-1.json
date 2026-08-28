@@ -1,0 +1,9 @@
+{
+  "pr_number": 824,
+  "range_base": "66a12b481ff5790473a53f3562b83347475a5325",
+  "range_head": "8613fd8bc8290ecf0f028c2ab131c4b0053e1d23",
+  "reviewed_at": "2026-08-28T10:55:02Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "ACCEPT at 8613fd8b. Fixes the blocker I raised on 4f9a6b5f: an unbounded hold left outcome=filled with NO release path at all (union-zero blocked by the guard, durable terminal blocked by filled_is_monotonic, grace blocked by its queued/could_not_tell gate), which would have suppressed the Webull leg on every reclaim until flip or 04:00. Now bounded at 24.119s = measured 19.119s max restore lag + one 5.000s poll, derived with both operands named. Structure verified: the evaluation block correctly moved OUT of 'if position_closed' so the bound is re-checked each poll, while cw_v2_emit_claimed and cw_v2_bars_since_exit stay on the transition. All four branches reachable; restoration cancels the hold; _release_fanout_webull_claim resets the timer; the expiry uses a DISTINCT reason code so the two causes stay separable in logs. Threshold pinned at 24.118 holds / 24.119 releases, and the unbounded-head control fails 3 of 16 - the fix is what turns it green. RESIDUAL, documented not blocking: branch 3 starts a hold on position_qty==0 regardless of a prior >0, so for a SCHWAB-INELIGIBLE name the union reads zero permanently rather than transiently and the claim releases at 24.119s while the Webull leg is still open. The duplicate window is DELAYED, not closed. A Schwab-scoped position map cannot separate 'durable zero because closed' from 'durable zero because we never see Webull positions' - that is D3, already open and deferred to a measurement. Still a strict improvement: today the claim is erased immediately at the fill; this buys 24.119s. 64/65 remains documented as reachability, not harm; the harmful intersection remains UNMEASURED. Other N3 consumers untouched."
+}
