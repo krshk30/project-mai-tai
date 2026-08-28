@@ -420,6 +420,11 @@ class OmsRiskService:
     # 5s broker-position sync interval = 242.1s, rounded UP to the next whole sync interval = 245s.
     # ⛔ Age is only a STOP/PAGE boundary. It never becomes permission to emit another sell.
     _POST_EXIT_STALE_HELD_MAX_AGE_SECONDS = 245.0
+    # A terminal broker refusal is the complete budget for one CANCEL TARGET.  The first request
+    # is necessary to learn that the target is CANCELED/FILLED; every later request against that
+    # same order is repetition with no possible new outcome.  Reset is identity-scoped only: a
+    # different target order id gets its own first request.  HELD/flat reads never reset it.
+    _CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND = 1
     # ---- A2 ----
     # Slow the ladder from its 1-2s cadence to a probe. NOT suppression: the block can clear at any
     # second (median 271s, but 30s at the low end), so we must keep testing or we would trade the
@@ -1825,6 +1830,44 @@ class OmsRiskService:
         # existing chain identity on the cancel request/outcome rather than
         # replacing it with identity derived from the cancel intent.
         metadata = carry_fanout_identity(metadata, target_order.payload or {})
+
+        terminal_cancel_reports = self.store.count_terminal_cancel_refusals(
+            session,
+            order_id=target_order.id,
+        )
+        if terminal_cancel_reports >= self._CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND:
+            # LASE 2026-06-02 is the production control: one target received 48 identical
+            # ``FILLED cannot be canceled`` broker replies in 15.889 seconds.  The first reply is
+            # evidence; the other 47 are a retry storm.  Refuse locally after the evidence exists
+            # and keep the target id on the event so the caller/page can name what was bounded.
+            self.store.mark_intent_status(intent, "rejected")
+            self.logger.warning(
+                "[OMS-CANCEL-DEAD-TARGET-BOUND] symbol=%s acct=%s target_order_id=%s "
+                "target_client_order_id=%s terminal_reports=%d bound=%d outcome=refused "
+                "reset=new_target_order_id",
+                target_order.symbol,
+                event.payload.broker_account_name,
+                target_order.id,
+                target_order.client_order_id,
+                terminal_cancel_reports,
+                self._CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND,
+            )
+            rejected_event = self._build_rejected_event(
+                event,
+                intent.id,
+                reason="cancel_dead_target_retry_bound",
+            )
+            rejected_event.payload.client_order_id = target_order.client_order_id
+            rejected_event.payload.broker_order_id = target_order.broker_order_id
+            rejected_event.payload.metadata = {
+                **metadata,
+                "cancel_dead_target_terminal_reports": str(terminal_cancel_reports),
+                "cancel_dead_target_bound": str(
+                    self._CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND
+                ),
+                "cancel_dead_target_bound_reset": "new_target_order_id",
+            }
+            return [rejected_event]
 
         request = OrderRequest(
             client_order_id=target_order.client_order_id,

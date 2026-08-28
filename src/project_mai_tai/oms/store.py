@@ -33,6 +33,15 @@ def utcnow() -> datetime:
 
 class OmsStore:
     OPEN_ORDER_STATUSES = ("pending", "submitted", "accepted", "partially_filled")
+    # These are authoritative broker replies about the CANCEL TARGET, not generic request
+    # rejections.  Once either has been recorded, sending another cancel for the same target can
+    # teach us nothing: the order is already terminal for cancellation purposes.
+    TERMINAL_CANCEL_REFUSAL_REASONS = frozenset(
+        {
+            "ORDER IN STATE CANCELED CANNOT BE CANCELED",
+            "ORDER IN STATE FILLED CANNOT BE CANCELED",
+        }
+    )
 
     def list_open_orders(
         self,
@@ -447,6 +456,32 @@ class OmsStore:
             .where(BrokerOrder.symbol == symbol)
             .where(BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES))
             .order_by(BrokerOrder.updated_at.desc())
+        )
+
+    def count_terminal_cancel_refusals(
+        self,
+        session: Session,
+        *,
+        order_id: UUID,
+    ) -> int:
+        """Count durable broker evidence that ``order_id`` is already dead to CANCEL.
+
+        The budget is per target order id.  It is deliberately unrelated to position/HELD state:
+        a HELD read says something about the position, while these replies say that this exact
+        order can no longer be cancelled.  A new target order id therefore starts a new budget;
+        no timer or HELD observation resets the old one.
+        """
+
+        payloads = session.scalars(
+            select(BrokerOrderEvent.payload)
+            .where(BrokerOrderEvent.order_id == order_id)
+            .where(BrokerOrderEvent.event_type == "rejected")
+        ).all()
+        return sum(
+            1
+            for payload in payloads
+            if " ".join(str((payload or {}).get("reason", "")).upper().split())
+            in self.TERMINAL_CANCEL_REFUSAL_REASONS
         )
 
     def update_order_from_report(
