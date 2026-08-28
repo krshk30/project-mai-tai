@@ -20,7 +20,11 @@ from project_mai_tai.fanout_outcome_consumer import (
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
-from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
+from project_mai_tai.strategy_core.schwab_1m_v2 import (
+    FANOUT_POSITIVE_ZERO_HOLD_MS,
+    OHLCVBar,
+    SchwabV2Strategy,
+)
 
 
 SEGMENT = 1787846400000
@@ -84,6 +88,120 @@ def test_fill_holds_without_reading_virtual_positions_and_is_monotonic() -> None
     assert strategy.apply_fanout_outcome(_outcome(identity, "cancelled")) == "filled_wins"
     assert state.fanout_webull_claimed is True
     assert state.fanout_claim_outcome == "filled"
+
+
+def test_webull_fill_then_union_zero_keeps_the_claim_held() -> None:
+    """The Webull fill can terminalize its own intent before position visibility catches up."""
+
+    strategy, identity = _strategy()
+    state = strategy.watchlist_state("YYGH")
+    state.position_qty = 1
+    state.position_qty_held = 0
+
+    assert strategy.apply_fanout_outcome(_outcome(identity, "filled")) == "consumed"
+    strategy.update_position("YYGH", 0, held_qty=0)
+
+    assert state.fanout_webull_claimed is True
+    assert state.fanout_claim_outcome == "filled"
+
+
+def test_virtual_clear_false_zero_on_held_primary_does_not_release_positive_evidence(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A transient primary-position zero cannot outrank durable Webull evidence."""
+
+    caplog.set_level("INFO")
+    strategy, identity = _strategy()
+    now = [SEGMENT]
+    strategy._now_ms = lambda: now[0]
+    state = strategy.watchlist_state("YYGH")
+    state.position_qty = 1
+    state.position_qty_held = 1
+    assert strategy.apply_fanout_outcome(_outcome(identity, "working")) == "held"
+
+    strategy.update_position("YYGH", 0, held_qty=0)
+
+    assert state.fanout_webull_claimed is True
+    assert state.fanout_claim_outcome == "held"
+    assert "release_allowed=0 released=0 held=1" in caplog.text
+    assert "outcome=held spurious=0" in caplog.text
+
+    # The primary row returns before the measured bound. The hold is cancelled, while the
+    # positive Webull claim remains authoritative.
+    now[0] += 10_000
+    strategy.update_position("YYGH", 1, held_qty=1)
+    assert state.fanout_webull_claimed is True
+    assert state.fanout_zero_hold_started_ms == 0
+    assert "restored=1 hold_cancelled=1" in caplog.text
+
+
+def test_spurious_union_zero_cannot_release_a_durable_fill(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The existing spurious classification must gate release, not merely annotate it."""
+
+    caplog.set_level("INFO")
+    strategy, identity = _strategy()
+    state = strategy.watchlist_state("YYGH")
+    state.position_qty = 1
+    state.position_qty_held = 0
+    assert strategy.apply_fanout_outcome(_outcome(identity, "filled")) == "consumed"
+
+    strategy.update_position("YYGH", 0, held_qty=0)
+
+    assert state.fanout_webull_claimed is True
+    assert state.fanout_claim_slot_id == identity["fanout_slot_id"]
+    assert "release_allowed=0 released=0 held=1" in caplog.text
+    assert "outcome=filled spurious=1" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("elapsed_ms", "expected_claimed", "expected_release_allowed"),
+    [
+        (FANOUT_POSITIVE_ZERO_HOLD_MS - 1, True, 0),
+        (FANOUT_POSITIVE_ZERO_HOLD_MS, False, 1),
+    ],
+)
+def test_positive_evidence_union_zero_hold_is_bounded(
+    caplog: pytest.LogCaptureFixture,
+    elapsed_ms: int,
+    expected_claimed: bool,
+    expected_release_allowed: int,
+) -> None:
+    """One elapsed-time variable reaches both hold and legitimate release polarities."""
+
+    caplog.set_level("INFO")
+    strategy, identity = _strategy()
+    now = [SEGMENT]
+    strategy._now_ms = lambda: now[0]
+    persisted: list[tuple[str, str]] = []
+    strategy.configure_fanout_outcome_persistence(
+        lambda _metadata, _symbol, outcome, reason: persisted.append((outcome, reason))
+    )
+    state = strategy.watchlist_state("YYGH")
+    state.position_qty = 1
+    state.position_qty_held = 1
+    assert strategy.apply_fanout_outcome(_outcome(identity, "filled")) == "consumed"
+
+    strategy.update_position("YYGH", 0, held_qty=0)
+    now[0] += elapsed_ms
+    strategy.update_position("YYGH", 0, held_qty=0)
+
+    assert state.fanout_webull_claimed is expected_claimed
+    assert state.cw_v2_emit_claimed is False
+    assert state.cw_v2_bars_since_exit == 0
+    assert f"release_allowed={expected_release_allowed}" in caplog.text
+    if expected_claimed:
+        assert state.fanout_claim_outcome == "filled"
+        assert "hold_expired=0" in caplog.text
+        assert persisted == []
+    else:
+        assert state.fanout_claim_outcome == "released"
+        assert "reason=schwab_union_zero_positive_evidence_hold_expired" in caplog.text
+        assert "hold_expired=1" in caplog.text
+        assert persisted == [
+            ("strategy_release", "schwab_union_zero_positive_evidence_hold_expired")
+        ]
 
 
 def test_positive_terminal_no_fill_releases_only_the_exact_attempt() -> None:
