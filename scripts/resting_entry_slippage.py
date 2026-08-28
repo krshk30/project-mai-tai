@@ -52,14 +52,20 @@ PLACE_RE = re.compile(
 VALID_ENTRY_SLOTS = {"first", "reclaim"}
 
 
-def load_slot_index() -> dict[tuple[str, str, str], str]:
-    """(symbol, stop, limit) -> slot, from every v2 log still on disk.
+def load_slot_index() -> tuple[dict[tuple[str, str, str], str], str]:
+    """Return the historical slot index and a machine-readable service-log verdict.
 
     ⚠️ Logs rotate at 00:00 UTC = 20:00 ET and are kept ~7 days. A fill older than that loses its
     slot attribution entirely — reported below as UNATTRIBUTED rather than silently dropped.
     """
     index: dict[tuple[str, str, str], str] = {}
     paths = sorted(glob.glob(LOG_GLOB))
+    if not paths:
+        print(
+            "⛔ SERVICE LOGS MISSING_OR_ROTATED (0 files) — historical slot fallback is "
+            "COULD_NOT_TELL, not a zero placement population."
+        )
+        return index, "MISSING_OR_ROTATED"
     unreadable: list[str] = []
     for path in paths:
         opener = gzip.open if path.endswith(".gz") else open
@@ -74,19 +80,31 @@ def load_slot_index() -> dict[tuple[str, str, str], str]:
                             index.setdefault((m["sym"], sk, lk), m["slot"])
         except (OSError, PermissionError) as exc:
             unreadable.append(f"{path} ({type(exc).__name__})")
-    # ⛔ NEVER FAIL SILENTLY TO AN EMPTY INDEX. The first version swallowed PermissionError and
-    # `continue`d: run as `trader`, every root:root 640 log was unreadable, the index came back
-    # EMPTY, and the script printed confident numbers with ZERO slot attribution. An empty index
-    # is indistinguishable from "no placements found" unless it says so.
+    # ⛔ NEVER FAIL SILENTLY TO AN EMPTY INDEX. Missing/rotated files, unreadable files, and
+    # readable files containing zero placement markers are different evidence states. None may be
+    # laundered into a claim that the historical denominator itself was zero.
     if unreadable:
         print(f"⛔ {len(unreadable)}/{len(paths)} v2 log file(s) UNREADABLE — slot attribution will")
         print("   be WRONG, not merely absent. Logs are root:root 640; run this with sudo.")
         for u in unreadable[:4]:
             print(f"     {u}")
     if not index:
-        print("⛔ SLOT INDEX IS EMPTY — every fill below will read as unattributed. That is a")
-        print("   TOOL failure, not a finding about the strategy.")
-    return index
+        if unreadable:
+            print("⛔ SLOT INDEX IS EMPTY because retained logs were unreadable — TOOL failure.")
+        else:
+            print(
+                "SLOT INDEX has 0 placement markers across readable retained service logs; "
+                "historical_fallback=AVAILABLE_NO_MARKERS."
+            )
+    if len(unreadable) == len(paths):
+        evidence = "UNREADABLE"
+    elif unreadable:
+        evidence = "PARTIAL_UNREADABLE"
+    elif not index:
+        evidence = "AVAILABLE_NO_MARKERS"
+    else:
+        evidence = "AVAILABLE"
+    return index, evidence
 
 
 def _keys(stop: object, limit: object) -> list[tuple[str, str]]:
@@ -136,7 +154,10 @@ def resolve_entry_slot(row, slot_index: dict[tuple[str, str, str], str]) -> tupl
 def format_slot_coverage(attributed: int, total: int) -> str:
     """Refuse a numeric coverage result when the population is empty or partly unknown."""
     if attributed < 0 or total < 0 or attributed > total:
-        raise ValueError("slot coverage counts must satisfy 0 <= attributed <= total")
+        return (
+            f"cw_entry_slot coverage={attributed}/{total} -- COULD_NOT_TELL "
+            "(invalid counts: numerator must not exceed denominator)"
+        )
     if total == 0:
         return (
             "cw_entry_slot coverage=0/0 -- COULD_NOT_TELL "
@@ -189,7 +210,7 @@ def main() -> int:
 
     settings = get_settings()
     sf = build_session_factory(settings)
-    slot_index = load_slot_index()
+    slot_index, historical_log_verdict = load_slot_index()
 
     with sf() as s:
         rows = s.execute(text("""
@@ -258,7 +279,8 @@ def main() -> int:
     print("  - A median over a handful of fills from ONE symbol is not a population. Read n first.")
     print(
         f"\nVERDICT slot_attribution={'GRADEABLE' if slot_gradeable else 'COULD_NOT_TELL'} "
-        f"cw_entry_slot_coverage={attributed}/{slot_population}"
+        f"cw_entry_slot_coverage={attributed}/{slot_population} "
+        f"historical_log_verdict={historical_log_verdict}"
     )
     return 0
 
