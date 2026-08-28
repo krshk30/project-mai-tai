@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Run the D6 fan-out outcome acceptance once for each completed v2 entry session.
+"""Run the D6 fan-out outcome acceptance once for each completed ET session day.
 
-The root cron invokes this file at both UTC hours that can be 16:17 ET.  The runner computes the
-latest completed 07:00-16:00 ET session itself, skips weekends/full-closure holidays, and writes one
-durable result per session.  PASS is the only success marker.  FAIL, COULD_NOT_TELL, and
-UNEXERCISED are all notified and remain visibly non-green.
+The paired-leg, matched-fill, and refused-exit controls use ET calendar-day boundaries, so the
+scheduled target uses that same exact [00:00, next 00:00) shape.  The duplicate-cost control keeps
+its published historical incident interval, while its requested-window target is still the same
+calendar day.  The root cron invokes this file across the UTC hours that can be 00:17-01:17 ET. The runner
+skips weekends/full-closure holidays and writes one durable result per session day.  PASS is the
+only success marker.  FAIL, COULD_NOT_TELL, and UNEXERCISED are all notified and remain visibly
+non-green.
 """
 
 from __future__ import annotations
@@ -26,8 +29,7 @@ from project_mai_tai.strategy_core.time_utils import EASTERN_TZ, US_MARKET_HOLID
 
 PASS = 0
 COULD_NOT_TELL = 2
-SESSION_OPEN = time(7, 0)
-SESSION_CLOSE = time(16, 0)
+SESSION_SLICE_START = time(0, 0)
 DEFAULT_OUT_DIR = Path("/home/trader/fanout_outcome_acceptance")
 DEFAULT_NTFY_URL = "https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
 
@@ -50,21 +52,18 @@ def _is_session_day(candidate) -> bool:  # type: ignore[no-untyped-def]
 
 
 def completed_session_window(now: datetime) -> SessionWindow:
-    """Return the most recent fully completed 07:00-16:00 ET session."""
+    """Return the last completed ET calendar-day slice used by the compiled D6 baselines."""
 
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must carry an explicit timezone")
     now_et = now.astimezone(EASTERN_TZ)
-    candidate = now_et.date()
-    candidate_close = datetime.combine(candidate, SESSION_CLOSE, tzinfo=EASTERN_TZ)
-    if now_et < candidate_close:
-        candidate -= timedelta(days=1)
+    candidate = now_et.date() - timedelta(days=1)
     while not _is_session_day(candidate):
         candidate -= timedelta(days=1)
     return SessionWindow(
         session_date=candidate.isoformat(),
-        since=datetime.combine(candidate, SESSION_OPEN, tzinfo=EASTERN_TZ),
-        until=datetime.combine(candidate, SESSION_CLOSE, tzinfo=EASTERN_TZ),
+        since=datetime.combine(candidate, SESSION_SLICE_START, tzinfo=EASTERN_TZ),
+        until=datetime.combine(candidate + timedelta(days=1), SESSION_SLICE_START, tzinfo=EASTERN_TZ),
     )
 
 
@@ -113,6 +112,7 @@ def send_notification(title: str, body: str, *, url: str = DEFAULT_NTFY_URL) -> 
         [
             "curl",
             "-sS",
+            "--fail-with-body",
             "--max-time",
             "20",
             "-H",
@@ -134,9 +134,10 @@ def send_notification(title: str, body: str, *, url: str = DEFAULT_NTFY_URL) -> 
 def run_once(
     *,
     now: datetime,
-    acceptance: ModuleType,
+    acceptance: ModuleType | None,
     out_dir: Path,
     notify: Callable[[str, str], bool],
+    acceptance_path: Path | None = None,
 ) -> ScheduledResult:
     window = completed_session_window(now)
     attempted_path = out_dir / "last_attempted_session.txt"
@@ -145,9 +146,24 @@ def run_once(
             PASS,
             (
                 f"[D6-OUTCOME-ACCEPTANCE-SKIPPED] session={window.session_date} "
-                "reason=already_reported denominator=one completed session",
+                "reason=already_reported denominator=one completed ET calendar-day session",
             ),
         )
+
+    # Clear any prior PASS before loading or running the acceptance module.  If import, query, or
+    # process execution crashes, STATUS remains bound to this window as IN_PROGRESS; yesterday's
+    # success can never survive as the apparent current result.
+    started = (
+        f"[D6-OUTCOME-ACCEPTANCE-STARTED] session={window.session_date} "
+        f"window=[{window.since.isoformat()}, {window.until.isoformat()}) "
+        "verdict=IN_PROGRESS success_marker=absent "
+        "denominator=one completed ET calendar-day session\n"
+    )
+    _atomic_write(out_dir / "STATUS.txt", started)
+    if acceptance is None:
+        if acceptance_path is None:
+            raise ValueError("acceptance_path is required when acceptance is not supplied")
+        acceptance = _load_acceptance(acceptance_path)
 
     report = acceptance.run_report(since=window.since, until=window.until)
     report_lines = tuple(str(line) for line in report.lines)
@@ -179,9 +195,11 @@ def run_once(
         report_hash = hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:16]
         body = f"{marker}\nreport_sha256={report_hash}\n{rendered}"
         if not notify("D6 outcome acceptance NONPASS", body):
+            failed_lines = (*output_lines, "notification=FAILED session_not_marked=1")
+            _atomic_write(out_dir / "STATUS.txt", "\n".join(failed_lines) + "\n")
             return ScheduledResult(
                 COULD_NOT_TELL,
-                (*output_lines, "notification=FAILED session_not_marked=1"),
+                failed_lines,
             )
 
     _atomic_write(attempted_path, window.session_date + "\n")
@@ -193,12 +211,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--acceptance", type=Path, default=_default_acceptance_path())
     args = parser.parse_args(argv)
-    acceptance = _load_acceptance(args.acceptance)
     result = run_once(
         now=datetime.now(EASTERN_TZ),
-        acceptance=acceptance,
+        acceptance=None,
         out_dir=args.out_dir,
         notify=lambda title, body: send_notification(title, body),
+        acceptance_path=args.acceptance,
     )
     print("\n".join(result.lines))
     return result.exit_code

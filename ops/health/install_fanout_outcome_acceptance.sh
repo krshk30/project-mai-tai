@@ -14,7 +14,7 @@ target_dir=/home/trader/fanout_outcome_acceptance
 target_check="$target_dir/check.py"
 target_cron="$target_dir/cron.py"
 python_bin=/home/trader/project-mai-tai/.venv/bin/python
-cron_line="17 20,21 * * 1-5 $python_bin $target_cron >> $target_dir/cron.log 2>&1"
+cron_line="17 4,5,6 * * 2-6 $python_bin $target_cron >> $target_dir/cron.log 2>&1"
 begin_marker="# BEGIN project-mai-tai D6 outcome acceptance"
 end_marker="# END project-mai-tai D6 outcome acceptance"
 
@@ -73,8 +73,8 @@ awk -v begin="$begin_marker" -v end="$end_marker" '
 ' "$current_cron" >"$next_cron"
 {
   printf '\n%s\n' "$begin_marker"
-  # The box cron is UTC. 20:17/21:17 UTC cover 16:17 ET in EDT/EST; cron.py chooses the
-  # completed ET session and deduplicates the second invocation.
+  # The box cron is UTC. 04:17/05:17 UTC cover 00:17 ET in EDT/EST; 06:17 gives either timezone
+  # one retry if notification failed. cron.py deduplicates every completed result.
   printf '%s\n' "$cron_line"
   printf '%s\n' "$end_marker"
 } >>"$next_cron"
