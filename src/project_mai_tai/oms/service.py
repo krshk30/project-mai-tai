@@ -1911,6 +1911,7 @@ class OmsRiskService:
                 account_name=event.payload.broker_account_name,
                 client_order_id=target_order.client_order_id,
                 broker_order_id=target_order.broker_order_id,
+                target_order_id=target_order.id,
             )
 
         for report in reports:
@@ -1980,6 +1981,7 @@ class OmsRiskService:
         account_name: str,
         client_order_id: str,
         broker_order_id: str | None,
+        target_order_id: UUID | None = None,
     ) -> "asyncio.Task[str | None]":
         """Run `_verify_cancel_landed` OFF the intent path.
 
@@ -1999,6 +2001,7 @@ class OmsRiskService:
                 account_name=account_name,
                 client_order_id=client_order_id,
                 broker_order_id=broker_order_id,
+                target_order_id=target_order_id,
             )
         )
         tasks = getattr(self, "_cancel_verify_tasks", None)
@@ -2017,6 +2020,7 @@ class OmsRiskService:
         account_name: str,
         client_order_id: str,
         broker_order_id: str | None,
+        target_order_id: UUID | None = None,
     ) -> str | None:
         """Read the cancel TARGET back until it is settled; re-submit the cancel if it is not.
 
@@ -2069,6 +2073,20 @@ class OmsRiskService:
                     )
                     return observed
             if submit_round < resubmits:
+                if target_order_id is not None:
+                    bound_reached = await self._run_db(
+                        lambda session: (
+                            (order := session.get(BrokerOrder, target_order_id)) is not None
+                            and self._direct_cancel_dead_target_bound_reached(
+                                session,
+                                order=order,
+                                path="verify_cancel_landed",
+                            )
+                        ),
+                        commit=False,
+                    )
+                    if bound_reached:
+                        return observed
                 self.logger.warning(
                     "[OMS-CANCEL-RESUBMIT] %s %s coid=%s still reads %s after %d reads — re-sending "
                     "the cancel (round %d of %d)",
@@ -2076,7 +2094,16 @@ class OmsRiskService:
                     attempts, submit_round + 1, resubmits,
                 )
                 try:
-                    await self.broker_adapter.submit_order(request)
+                    reports = await self.broker_adapter.submit_order(request)
+                    if target_order_id is not None and reports:
+                        await self._run_db(
+                            lambda session: self._record_cancel_verify_reports(
+                                session,
+                                target_order_id=target_order_id,
+                                reports=reports,
+                            ),
+                            commit=True,
+                        )
                 except Exception:
                     self.logger.warning(
                         "[OMS-CANCEL-RESUBMIT-RAISED] %s %s coid=%s — re-sent cancel raised; "
@@ -2092,6 +2119,25 @@ class OmsRiskService:
             observed or "UNREADABLE", reads_failed,
         )
         return observed
+
+    def _record_cancel_verify_reports(
+        self,
+        session: Session,
+        *,
+        target_order_id: UUID,
+        reports: list[ExecutionReport],
+    ) -> None:
+        """Make verifier re-submit replies part of the target order's durable budget."""
+        order = session.get(BrokerOrder, target_order_id)
+        if order is None:
+            return
+        self._record_direct_cancel_reports(
+            session,
+            order=order,
+            reports=reports,
+            existing_metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
+            internal="CANCEL_VERIFY_RESUBMIT",
+        )
 
     # ------------------------------------------------ webull attach-after-fill (2026-08-13)
     def _check_bracket_born_triggered(
@@ -8259,7 +8305,7 @@ class OmsRiskService:
             return
         logged.add(key)
         self.logger.warning(
-            "[OMS-CANCEL-DEAD-TARGET-BOUND] symbol=%s acct=%s target_order_id=%s "
+            "[OMS-DIRECT-CANCEL-DEAD-TARGET-BOUND] symbol=%s acct=%s target_order_id=%s "
             "coid=%s terminal_reports=%d bound=%d reset=new_target_order_id "
             "scope=strategy_internal_direct_cancel path=%s broker_request=refused",
             symbol,
@@ -8282,7 +8328,7 @@ class OmsRiskService:
             session,
             order_id=order.id,
         )
-        if terminal_cancel_reports < self._CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND:
+        if not self._direct_cancel_dead_target_bound_reached_count(terminal_cancel_reports):
             return False
         account = session.get(BrokerAccount, order.broker_account_id)
         self._log_direct_cancel_dead_target_bound(
@@ -8296,6 +8342,10 @@ class OmsRiskService:
             path=path,
         )
         return True
+
+    def _direct_cancel_dead_target_bound_reached_count(self, count: int) -> bool:
+        """Pure threshold shared by every covered strategy-internal direct CANCEL path."""
+        return count >= self._CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND
 
     def _record_direct_cancel_reports(
         self,
@@ -8318,11 +8368,11 @@ class OmsRiskService:
         for report in reports:
             if report.event_type not in {"cancelled", "rejected"}:
                 continue
-            metadata = {
+            metadata = carry_fanout_identity({
                 **existing_metadata,
                 **{str(k): str(v) for k, v in report.metadata.items()},
                 **(extra_metadata or {}),
-            }
+            }, existing_metadata)
             if report.event_type == "cancelled":
                 cancelled_report = report
                 self.store.update_order_from_report(
@@ -8469,9 +8519,8 @@ class OmsRiskService:
                 order_type=candidate.order_type,
                 time_in_force=candidate.time_in_force,
             )
-            if (
+            if self._direct_cancel_dead_target_bound_reached_count(
                 candidate.terminal_cancel_reports
-                >= self._CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND
             ):
                 self._log_direct_cancel_dead_target_bound(
                     symbol=candidate.symbol,
