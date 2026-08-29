@@ -904,6 +904,38 @@ def test_installer_library_guards_have_reachable_positive_and_negative_polaritie
     ).returncode != 0
 
 
+@pytest.mark.parametrize(
+    ("current_lines", "proposed_lines"),
+    (
+        (
+            "MAILTO=ops@example.com\n",
+            "MAILTO = ops@example.com\n# BEGIN D6\njob\n# END D6\n",
+        ),
+        (
+            "# alpha\n7 * * * * /usr/local/bin/alpha\n",
+            "# omega\n9 * * * * /usr/local/bin/omega\n# BEGIN D6\njob\n# END D6\n",
+        ),
+        ("", "# injected foreign line\n# BEGIN D6\njob\n# END D6\n"),
+    ),
+    ids=("whitespace-is-data", "same-line-count-substitution", "empty-current-injection"),
+)
+def test_nonmanaged_cron_preservation_is_exact_on_each_independent_axis(
+    tmp_path: Path, current_lines: str, proposed_lines: str
+) -> None:
+    current = tmp_path / "current.cron"
+    proposed = tmp_path / "proposed.cron"
+    current.write_text(current_lines, encoding="utf-8")
+    proposed.write_text(proposed_lines, encoding="utf-8")
+
+    result = _run_install_helper(
+        f"verify_d6_nonmanaged_cron_preserved '# BEGIN D6' '# END D6' "
+        f"'{current.as_posix()}' '{proposed.as_posix()}'"
+    )
+
+    assert result.returncode != 0
+    assert "would alter or lose a non-D6 line" in result.stderr
+
+
 def _write_executable(path: Path, contents: str) -> None:
     path.write_text(contents, encoding="utf-8")
     path.chmod(0o755)
@@ -959,6 +991,13 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
         "exec /usr/bin/sha256sum \"$@\"\n",
     )
     _write_executable(
+        fake_bin / "cp",
+        "#!/usr/bin/env bash\n"
+        "printf 'cp %s\\n' \"$*\" >> \"$FAKE_COMMAND_LOG\"\n"
+        "if [[ ${FAKE_CP_FAIL:-0} == 1 ]]; then exit 28; fi\n"
+        "exec /usr/bin/cp \"$@\"\n",
+    )
+    _write_executable(
         fake_bin / "crontab",
         "#!/usr/bin/env bash\n"
         "printf 'crontab %s\\n' \"$*\" >> \"$FAKE_COMMAND_LOG\"\n"
@@ -993,6 +1032,19 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
         }
     )
     return health / "install_fanout_outcome_acceptance.sh", env, command_log, cron_state
+
+
+def _set_installer_shell_mode(installer: Path, shell_mode: str) -> None:
+    source = installer.read_text(encoding="utf-8")
+    assert source.count("set -euo pipefail") == 1
+    if shell_mode == "without-set-e":
+        source = source.replace("set -euo pipefail", "set -uo pipefail", 1)
+    elif shell_mode == "insert-set-plus-e":
+        source = source.replace("set -euo pipefail", "set -euo pipefail\nset +e", 1)
+    elif shell_mode != "normal":
+        raise AssertionError(f"unknown shell mode: {shell_mode}")
+    installer.write_text(source, encoding="utf-8")
+    installer.chmod(0o755)
 
 
 def test_whole_installer_succeeds_with_one_managed_schedule(tmp_path) -> None:
@@ -1038,9 +1090,17 @@ def test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block(tmp_p
         text=True,
         check=False,
     )
+    third = subprocess.run(
+        [_bash_executable(), str(installer)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
     assert first.returncode == 0, first.stderr
     assert second.returncode == 0, second.stderr
+    assert third.returncode == 0, third.stderr
     installed = cron_state.read_text(encoding="utf-8")
     assert installed.count("# BEGIN project-mai-tai D6 outcome acceptance") == 1
     assert installed.count("# END project-mai-tai D6 outcome acceptance") == 1
@@ -1048,13 +1108,19 @@ def test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block(tmp_p
     assert "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n" in installed
 
 
+@pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+@pytest.mark.parametrize(
+    "broken_source_name",
+    ("fanout_outcome_acceptance.py", "fanout_outcome_acceptance_cron.py"),
+)
 def test_whole_installer_refuses_broken_reviewed_source_without_touching_crontab(
-    tmp_path,
+    tmp_path, shell_mode: str, broken_source_name: str
 ) -> None:
     installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+    _set_installer_shell_mode(installer, shell_mode)
     original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
     cron_state.write_text(original, encoding="utf-8")
-    (installer.parent / "fanout_outcome_acceptance.py").write_text(
+    (installer.parent / broken_source_name).write_text(
         "def broken(:\n",
         encoding="utf-8",
     )
@@ -1068,8 +1134,95 @@ def test_whole_installer_refuses_broken_reviewed_source_without_touching_crontab
     )
 
     assert result.returncode != 0
+    assert "REFUSED: reviewed source does not compile" in result.stderr
     assert "SyntaxError" in result.stderr
     assert cron_state.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize(
+    ("installed_name", "source_name"),
+    (
+        ("check.py", "fanout_outcome_acceptance.py"),
+        ("cron.py", "fanout_outcome_acceptance_cron.py"),
+    ),
+)
+def test_differing_reinstall_preserves_a_pre_versioned_copy(
+    tmp_path: Path, installed_name: str, source_name: str
+) -> None:
+    installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+    first = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+    assert first.returncode == 0, first.stderr
+    installed_check = tmp_path / "runtime" / "installed" / installed_name
+    prior_bytes = b"# prior installed acceptance\n"
+    installed_check.write_bytes(prior_bytes)
+
+    second = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert second.returncode == 0, second.stderr
+    backups = list(installed_check.parent.glob(f"{installed_name}.pre-versioned-*"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == prior_bytes
+    assert installed_check.read_bytes() == (
+        installer.parent / source_name
+    ).read_bytes()
+
+
+@pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+@pytest.mark.parametrize("installed_name", ("check.py", "cron.py"))
+def test_backup_failure_refuses_before_overwriting_even_without_errexit(
+    tmp_path: Path, shell_mode: str, installed_name: str
+) -> None:
+    installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+    first = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+    assert first.returncode == 0, first.stderr
+    installed_check = tmp_path / "runtime" / "installed" / installed_name
+    prior_bytes = b"# must survive failed backup\n"
+    installed_check.write_bytes(prior_bytes)
+    _set_installer_shell_mode(installer, shell_mode)
+    env["FAKE_CP_FAIL"] = "1"
+
+    failed = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert failed.returncode != 0
+    assert "REFUSED: could not preserve prior D6" in failed.stderr
+    assert "restart_required=0" not in failed.stdout
+    assert installed_check.read_bytes() == prior_bytes
+    assert list(installed_check.parent.glob(f"{installed_name}.pre-versioned-*")) == []
+
+
+@pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+def test_proposed_crontab_is_validated_before_root_crontab_is_written(
+    tmp_path: Path, shell_mode: str
+) -> None:
+    installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original, encoding="utf-8")
+    source = installer.read_text(encoding="utf-8")
+    needle = "  printf '%s\\n' \"$cron_line\""
+    assert source.count(needle) == 1
+    installer.write_text(
+        source.replace(needle, "  printf '%s\\n' '# invalid managed schedule'", 1),
+        encoding="utf-8",
+    )
+    installer.chmod(0o755)
+    _set_installer_shell_mode(installer, shell_mode)
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert "proposed root crontab does not contain the reviewed D6 schedule" in result.stderr
+    assert cron_state.read_text(encoding="utf-8") == original
+    assert command_log.read_text(encoding="utf-8").count("crontab -l") == 1
 
 
 def test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled(
@@ -1109,7 +1262,7 @@ def test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled
     )
 
     assert result.returncode != 0
-    assert "proposed root crontab would alter or lose a non-D6 line" in result.stderr
+    assert "REFUSED: could not derive proposed root crontab" in result.stderr
     assert cron_state.read_text(encoding="utf-8") == original
 
 
@@ -1118,14 +1271,7 @@ def test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit(
     tmp_path, shell_mode: str
 ) -> None:
     installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
-    source = installer.read_text(encoding="utf-8")
-    assert source.count("set -euo pipefail") == 1
-    if shell_mode == "without-set-e":
-        source = source.replace("set -euo pipefail", "set -uo pipefail", 1)
-    elif shell_mode == "insert-set-plus-e":
-        source = source.replace("set -euo pipefail", "set -euo pipefail\nset +e", 1)
-    installer.write_text(source, encoding="utf-8")
-    installer.chmod(0o755)
+    _set_installer_shell_mode(installer, shell_mode)
     env["FAKE_CRONTAB_READ_FAIL"] = "1"
 
     result = subprocess.run(
@@ -1196,6 +1342,27 @@ def test_installer_runtime_probe_failure_refuses(monkeypatch, tmp_path) -> None:
     result = subprocess.run([bash, "-lc", command], capture_output=True, text=True, check=False)
 
     assert result.returncode == 9
+
+
+def test_installer_runtime_probe_imports_the_exact_acceptance_artifact(tmp_path) -> None:
+    installer_lib = (OPS / "fanout_outcome_acceptance_install_lib.sh").as_posix()
+    runner = OPS / "fanout_outcome_acceptance_cron.py"
+    broken_check = tmp_path / "check.py"
+    broken_check.write_text("def broken(:\n", encoding="utf-8")
+    digest = hashlib.sha256(broken_check.read_bytes()).hexdigest()
+    command = (
+        f"source '{installer_lib}'; "
+        f"verify_d6_runtime '{Path(sys.executable).as_posix()}' '{runner.as_posix()}' "
+        f"'{broken_check.as_posix()}' '{digest}' '{tmp_path.as_posix()}'"
+    )
+
+    result = subprocess.run(
+        [_bash_executable(), "-lc", command], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert "SyntaxError" in result.stderr
+    assert "D6-INSTALL-ARTIFACT-VERIFIED" not in result.stdout
 
 
 def test_installer_call_site_cannot_swallow_a_failed_runtime_probe(tmp_path) -> None:

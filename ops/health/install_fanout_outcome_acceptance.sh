@@ -36,27 +36,59 @@ if ! require_root "$effective_uid"; then
 fi
 
 for source in "$source_check" "$source_cron"; do
-  python3 - "$source" <<'PY'
+  if ! python3 - "$source" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
 compile(path.read_text(encoding="utf-8"), str(path), "exec")
 PY
+  then
+    echo "REFUSED: reviewed source does not compile: $source" >&2
+    exit 1
+  fi
 done
-source_check_sha256=$(sha256sum "$source_check" | awk '{print $1}')
+if ! source_check_sha256=$(sha256sum "$source_check" | awk '{print $1}'); then
+  echo "REFUSED: could not hash reviewed D6 acceptance source: $source_check" >&2
+  exit 1
+fi
 cron_line="17 4,5,6 * * 2-6 $python_bin $target_cron --acceptance $target_check --acceptance-sha256 $source_check_sha256 --out-dir $target_dir >> $target_dir/cron.log 2>&1"
 
-install -d -o trader -g trader -m 0755 "$target_dir"
+if ! install -d -o trader -g trader -m 0755 "$target_dir"; then
+  echo "REFUSED: could not create D6 target directory: $target_dir" >&2
+  exit 1
+fi
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 if [[ -f "$target_check" ]] && ! cmp -s "$source_check" "$target_check"; then
-  cp -a "$target_check" "$target_check.pre-versioned-$stamp"
+  check_backup="$target_check.pre-versioned-$stamp"
+  if ! cp -a "$target_check" "$check_backup"; then
+    echo "REFUSED: could not preserve prior D6 acceptance: $check_backup" >&2
+    exit 1
+  fi
+  if [[ ! -f "$check_backup" ]]; then
+    echo "REFUSED: prior D6 acceptance backup is missing: $check_backup" >&2
+    exit 1
+  fi
 fi
 if [[ -f "$target_cron" ]] && ! cmp -s "$source_cron" "$target_cron"; then
-  cp -a "$target_cron" "$target_cron.pre-versioned-$stamp"
+  cron_backup="$target_cron.pre-versioned-$stamp"
+  if ! cp -a "$target_cron" "$cron_backup"; then
+    echo "REFUSED: could not preserve prior D6 cron runner: $cron_backup" >&2
+    exit 1
+  fi
+  if [[ ! -f "$cron_backup" ]]; then
+    echo "REFUSED: prior D6 cron runner backup is missing: $cron_backup" >&2
+    exit 1
+  fi
 fi
-install -o root -g root -m 0755 "$source_check" "$target_check"
-install -o root -g root -m 0755 "$source_cron" "$target_cron"
+if ! install -o root -g root -m 0755 "$source_check" "$target_check"; then
+  echo "REFUSED: could not install reviewed D6 acceptance: $target_check" >&2
+  exit 1
+fi
+if ! install -o root -g root -m 0755 "$source_cron" "$target_cron"; then
+  echo "REFUSED: could not install reviewed D6 cron runner: $target_cron" >&2
+  exit 1
+fi
 if ! verify_d6_installed_copy "$source_check" "$target_check"; then
   exit 1
 fi
@@ -81,21 +113,39 @@ fi
 if ! verify_d6_existing_cron_block "$begin_marker" "$end_marker" "$current_cron"; then
   exit 1
 fi
-awk -v begin="$begin_marker" -v end="$end_marker" '
+if ! awk -v begin="$begin_marker" -v end="$end_marker" '
   $0 == begin { inside=1; next }
   $0 == end { inside=0; next }
   !inside { print }
-' "$current_cron" >"$next_cron"
-{
+' "$current_cron" >"$next_cron"; then
+  echo "REFUSED: could not derive proposed root crontab" >&2
+  exit 1
+fi
+if ! {
   printf '%s\n' "$begin_marker"
   # The box cron is UTC. In EDT, 04:17 is the first attempt and 05:17/06:17 are retries. In EST,
   # 04:17 is 23:17 on the prior ET day and deduplicates its already-graded session; 05:17 is the
   # first attempt and 06:17 the one retry. cron.py deduplicates every completed result.
   printf '%s\n' "$cron_line"
   printf '%s\n' "$end_marker"
-} >>"$next_cron"
+} >>"$next_cron"; then
+  echo "REFUSED: could not compose proposed D6 root crontab" >&2
+  exit 1
+fi
 if ! verify_d6_nonmanaged_cron_preserved \
   "$begin_marker" "$end_marker" "$current_cron" "$next_cron"; then
+  exit 1
+fi
+if ! verify_d6_existing_cron_block "$begin_marker" "$end_marker" "$next_cron"; then
+  echo "REFUSED: proposed root crontab does not contain one valid D6 block" >&2
+  exit 1
+fi
+if ! proposed_cron=$(cat "$next_cron"); then
+  echo "REFUSED: proposed root crontab is unreadable" >&2
+  exit 1
+fi
+if ! verify_exactly_one_d6_schedule "$cron_line" "$proposed_cron"; then
+  echo "REFUSED: proposed root crontab does not contain the reviewed D6 schedule" >&2
   exit 1
 fi
 if ! crontab "$next_cron"; then
@@ -103,7 +153,10 @@ if ! crontab "$next_cron"; then
   exit 1
 fi
 
-installed_cron=$(crontab -l)
+if ! installed_cron=$(crontab -l); then
+  echo "REFUSED: could not confirm the installed D6 root crontab" >&2
+  exit 1
+fi
 if ! verify_exactly_one_d6_schedule "$cron_line" "$installed_cron"; then
   exit 1
 fi

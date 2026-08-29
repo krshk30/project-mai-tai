@@ -344,6 +344,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.verify_artifact_only:
         actual = _verify_acceptance_artifact(args.acceptance, args.acceptance_sha256)
+        # A matching digest proves only that the reviewed bytes arrived.  Import the exact
+        # installed artifact with the selected runtime as well, so syntax errors and stale-venv
+        # import failures refuse installation instead of leaving STATUS stuck at IN_PROGRESS.
+        _load_acceptance(args.acceptance)
         _verify_install_out_dir(args.out_dir)
         print(f"[D6-INSTALL-ARTIFACT-VERIFIED] acceptance_sha256={actual}")
         return PASS
