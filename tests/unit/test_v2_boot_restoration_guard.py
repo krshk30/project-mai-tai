@@ -307,6 +307,29 @@ def test_unreadable_exclusion_telemetry_counts_the_last_known_set(monkeypatch, c
     assert "last_known_exclusions_applied=2" in caplog.text
 
 
+def test_unreadable_exclusion_without_new_symbols_reports_unknown_counts(
+    monkeypatch, caplog
+) -> None:
+    """A same-watchlist retry evaluated no new seed reads, so 0/0 is not a measurement."""
+    bot = _bot()
+    bot._boot_exclusion_sources_readable = False
+    bot._boot_scanner_selected = {"DAIC"}
+    monkeypatch.setattr(
+        bot,
+        "_seed_strategy_bars_from_db",
+        lambda _symbol: (_ for _ in ()).throw(
+            AssertionError("an empty new-symbol population must not be seeded")
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        bot._try_complete_boot_state_restoration({"DAIC"}, new_symbols=set())
+
+    assert "evaluated=1 confirmed=unknown could_not_tell=unknown" in caplog.text
+    assert "reason=ineligible_exclusion_unreadable" in caplog.text
+    assert "confirmed=0 could_not_tell=0" not in caplog.text
+
+
 def test_ineligible_loader_query_failure_is_not_cached_empty() -> None:
     bot = _bot()
     bot._schwab_ineligible_cache = set()
@@ -519,6 +542,49 @@ def test_rest_warmup_wave_is_rate_limited_with_a_population_denominator(
     assert "restoration_complete=1 evaluated=25 confirmed=25 rest_warmed=25" in caplog.text
 
 
+def test_every_incomplete_restoration_reason_is_rate_limited_independently(
+    monkeypatch, caplog
+) -> None:
+    """Each 25-callback wave emits one warning; a changed reason is visible immediately."""
+    bot = _bot()
+    selected = {"DAIC"}
+    monkeypatch.setattr(
+        "project_mai_tai.services.schwab_1m_v2_bot.time.monotonic",
+        lambda: 100.0,
+    )
+
+    def run_wave(reason: str) -> None:
+        before = len(
+            [record for record in caplog.records if f"reason={reason}" in record.message]
+        )
+        for _ in range(25):
+            bot._try_complete_boot_state_restoration(selected, new_symbols=set())
+        after = len(
+            [record for record in caplog.records if f"reason={reason}" in record.message]
+        )
+        assert after - before == 1
+
+    with caplog.at_level(logging.WARNING):
+        bot._boot_exclusion_sources_readable = False
+        run_wave("ineligible_exclusion_unreadable")
+
+        bot._boot_exclusion_sources_readable = True
+        selected = set()
+        run_wave("empty_evaluated_population_after_exclusions")
+
+        selected = {"DAIC"}
+        bot._boot_scanner_selected = set()
+        run_wave("empty_tradeable_scanner_population")
+
+        bot._boot_scanner_selected = {"DAIC"}
+        monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: False)
+        run_wave("state_seed_incomplete")
+
+        monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
+        bot._rest_warmup_done.clear()
+        run_wave("rest_warmup_incomplete")
+
+
 def test_real_rest_warmup_callback_completes_the_latch(monkeypatch) -> None:
     """Pin the production ordering: DB seed first, then the fresh REST callback opens the latch."""
     bot = _bot()
@@ -635,6 +701,23 @@ def test_pre_restoration_hold_warning_is_rate_limited(monkeypatch, caplog) -> No
     assert len(held) == 2
     assert {record.levelno for record in held} == {logging.WARNING}
     assert bot.strategy._entries_held is True
+
+
+def test_repeated_pre_restoration_checks_cannot_toggle_the_hold_open(
+    monkeypatch,
+) -> None:
+    """The held assignment is idempotent on every cycle, not merely true on the final cycle."""
+    bot = _bot()
+    bot.strategy._entries_held = True
+    monkeypatch.setattr(bot.strategy, "cw_armed_segments", lambda: [])
+    monkeypatch.setattr(
+        "project_mai_tai.services.schwab_1m_v2_bot.time.monotonic",
+        lambda: 100.0,
+    )
+
+    for _ in range(4):
+        bot._cw_boot_hold_check()
+        assert bot.strategy._entries_held is True
 
 
 def test_pre_restoration_hold_names_dangerous_symbols(monkeypatch, caplog) -> None:

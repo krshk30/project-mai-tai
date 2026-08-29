@@ -255,7 +255,11 @@ class SchwabV2BotService:
         self._boot_scanner_selected: set[str] = set()
         self._boot_exclusion_sources_readable = False
         self._boot_restore_last_hold_log_at: float | None = None
-        self._boot_restore_last_incomplete_log_at: float | None = None
+        # Restoration can be re-evaluated once per REST callback, so a 25-symbol warmup wave can
+        # revisit the same incomplete branch 25 times. Rate-limit each reason independently: an
+        # unchanged failure emits at most once per interval, while a different failure reason is
+        # still immediately observable.
+        self._boot_restore_last_warning_at: dict[str, float] = {}
         # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
         # every symbol that was already being watched.
@@ -1750,19 +1754,31 @@ class SchwabV2BotService:
             return
         if not self._boot_exclusion_sources_readable:
             results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
-            logger.warning(
-                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
-                "could_not_tell=%d reason=ineligible_exclusion_unreadable; snapshot was applied "
+            confirmed: int | str
+            could_not_tell: int | str
+            if new_symbols:
+                confirmed = sum(result is True for result in results)
+                could_not_tell = len(results) - confirmed
+            else:
+                # No newly selected symbol was read in this pass. A zero would be a fabricated
+                # measurement, not evidence that restoration succeeded or failed for zero rows.
+                confirmed = "unknown"
+                could_not_tell = "unknown"
+            self._log_boot_restore_warning(
+                "ineligible_exclusion_unreadable",
+                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%s "
+                "could_not_tell=%s reason=ineligible_exclusion_unreadable; snapshot was applied "
                 "but boot hold remains closed",
                 len(selected),
-                sum(result is True for result in results),
-                len(results) - sum(result is True for result in results),
+                confirmed,
+                could_not_tell,
             )
             return
         evaluated = len(selected)
         scanner_evaluated = len(self._boot_scanner_selected)
         if evaluated == 0:
-            logger.warning(
+            self._log_boot_restore_warning(
+                "empty_evaluated_population_after_exclusions",
                 "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 scanner_evaluated=%d "
                 "confirmed=unknown rest_warmed=unknown "
                 "reason=empty_evaluated_population_after_exclusions; "
@@ -1771,7 +1787,8 @@ class SchwabV2BotService:
             )
             return
         if scanner_evaluated == 0:
-            logger.warning(
+            self._log_boot_restore_warning(
+                "empty_tradeable_scanner_population",
                 "[V2-BOOT-RESTORE] restoration_complete=0 scanner_evaluated=0 "
                 "evaluated=%d confirmed=unknown rest_warmed=unknown "
                 "reason=empty_tradeable_scanner_population; held symbols are not scanner evidence",
@@ -1781,7 +1798,8 @@ class SchwabV2BotService:
         results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)]
         confirmed = sum(result is True for result in results)
         if confirmed != evaluated:
-            logger.warning(
+            self._log_boot_restore_warning(
+                "state_seed_incomplete",
                 "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
                 "could_not_tell=%d reason=state_seed_incomplete; boot hold remains closed",
                 evaluated,
@@ -1792,25 +1810,19 @@ class SchwabV2BotService:
         rest_warmed = len(selected & self._rest_warmup_done)
         if rest_warmed != evaluated:
             warmup_pending_symbols = sorted(selected - self._rest_warmup_done)
-            now = time.monotonic()
-            if (
-                self._boot_restore_last_incomplete_log_at is None
-                or now - self._boot_restore_last_incomplete_log_at
-                >= BOOT_RESTORE_INCOMPLETE_LOG_INTERVAL_SECONDS
-            ):
-                self._boot_restore_last_incomplete_log_at = now
-                logger.warning(
-                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
-                    "rest_warmed=%d warmup_pending=%d warmup_pending_symbols=%s "
-                    "reason=rest_warmup_incomplete; REST replay may still arm reconstructed state",
-                    evaluated,
-                    confirmed,
-                    rest_warmed,
-                    len(warmup_pending_symbols),
-                    ",".join(warmup_pending_symbols) or "-",
-                )
+            self._log_boot_restore_warning(
+                "rest_warmup_incomplete",
+                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
+                "rest_warmed=%d warmup_pending=%d warmup_pending_symbols=%s "
+                "reason=rest_warmup_incomplete; REST replay may still arm reconstructed state",
+                evaluated,
+                confirmed,
+                rest_warmed,
+                len(warmup_pending_symbols),
+                ",".join(warmup_pending_symbols) or "-",
+            )
             return
-        self._boot_restore_last_incomplete_log_at = None
+        self._boot_restore_last_warning_at.clear()
         self._boot_state_restoration_complete = True
         logger.info(
             "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=%d confirmed=%d rest_warmed=%d "
@@ -1819,6 +1831,21 @@ class SchwabV2BotService:
             confirmed,
             rest_warmed,
         )
+
+    def _log_boot_restore_warning(
+        self, reason: str, message: str, *args: object
+    ) -> None:
+        """Emit at most one incomplete-restoration warning per reason per interval."""
+
+        now = time.monotonic()
+        last = self._boot_restore_last_warning_at.get(reason)
+        if (
+            last is not None
+            and now - last < BOOT_RESTORE_INCOMPLETE_LOG_INTERVAL_SECONDS
+        ):
+            return
+        self._boot_restore_last_warning_at[reason] = now
+        logger.warning(message, *args)
 
     def _push_desired_symbols(self) -> None:
         """Push the SUBSCRIPTION set (watchlist ∪ held) to the REST client and streamer.
@@ -2532,7 +2559,10 @@ class SchwabV2BotService:
             st.pending_path_vwap = False
             st.pending_cross_bar_ts_ms = 0
             # P1.3: a CW-v2 segment reconstructed by this replay carries a historical arm_bar_ts
-            # (< boot). Mark it USED so v2 can only enter on flips AFTER boot.
+            # (< boot). Mark it USED so v2 can only enter on flips AFTER boot — a restart can never
+            # re-issue the per-segment cap (the CPHI class). Flag-gated; costs one legit first-entry
+            # on a pre-restart segment (fail-closed). The boot-hold self-verify catches this failing
+            # (segment stays dangerous => held + paged).
             # ⛔⭐⭐ NOT LOAD-BEARING — DO NOT TRUST THIS THE WAY THE LAST READER DID (2026-08-18).
             # It runs HERE, after the replay loop above, so every arm inside `on_bar` has already
             # fired and stamped. It has failed twice in production:
