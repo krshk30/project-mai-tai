@@ -1,0 +1,9 @@
+{
+  "pr_number": 845,
+  "range_base": "8715a0996b6c9ad32bc8e2b6e6d3d2050a920b0a",
+  "range_head": "7784f8ba52edc2da83afa4498e0a64f0db4f1bac",
+  "reviewed_at": "2026-08-29T20:36:50Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "ACCEPT. Reviewed the docs-only overwrite at exact head 7784f8ba. Verified box/main 8715a099 clean and every stated PID/NRestarts live; strategy is healthy at PID 1982263 but omitted from the table. Confirmed Monday GO requires both observed restoration_complete=1 and the explicit INFO release line; the active report-only automation now matches. Confirmed S0 remains unstarted: production env mtime 2026-08-20 predates the exposure and no rotation record exists. Scoped the last-bar claim: 23:59:30 is fleet-wide polygon_30s; v2 last bar is 23:59:00. Exact base/head, one Claude marker, and diff-check passed."
+}
