@@ -3,213 +3,204 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-08-28 17:14 ET; corrected 18:55 and 19:2x ET.**
-⚠ **This file has now been wrong three times** — a conflated count, an asserted unknown, and two
-stale lines. ⭐ **A state document decays faster than the code it describes.** Prefer regenerating
-it at close-out over patching it. ⚠ **This is a MID-SESSION INSURANCE SNAPSHOT, not a
-close-out.** No freeze, no manifest, no promote. The day is still running.
+**Written by `claude-1`, 2026-08-29 16:35 ET.** Weekend session, market closed. Needs `codex-2`'s
+review before merge — the author never reviews.
 
 ---
 
-# PRODUCTION — main is AHEAD of box by one test-only PR
+# PRODUCTION — main and box IN SYNC
 
 | | |
 |---|---|
-| main | **`a44c894a5b4ad531c5d008e9f309397bf1d62506`** |
-| box | **`69d622783e56030b8075169cc2100c8f721a0dbd`** |
-| the gap | ⭐ **#838 only — `tests/integration/` + `validate.yml`. Nothing to deploy.** ⛔ Do not read this as a pending release |
+| main / box | **`8715a0996b6c9ad32bc8e2b6e6d3d2050a920b0a`** |
 | checkout | clean |
-| alembic head | **`20260828_0016`** — first migration in weeks; `ix_dashboard_snapshots_type_created_id_desc` confirmed present |
-| open PRs | **5 — #827, #828 (both re-submitted, under review), #837 (this doc), #839, #840.** Everything else merged |
-
-**PIDs as of 17:14 ET. `NRestarts=0` on every unit.**
+| open PRs | **0** |
+| ledgers | flat — `virtual_positions` qty>0 **0**, non-terminal open intents **0**, working broker orders **0** |
+| last bar | Fri 2026-08-28 23:59:30 UTC (19:59:30 ET). No stream since. |
 
 | service | pid | moved today? |
 |---|---|---|
-| oms | 1982227 | ✅ twice — #825/#829/#830/#833 then #832 |
-| strategy | 1982263 | ✅ twice (same windows) |
-| market-data | 1974639 | ✅ once (#833) |
-| control | 1974293 | ✅ once (#833) — token refresher restarted with it |
-| **schwab-1m-v2** | **1884057** | ⛔ **DELIBERATELY UNTOUCHED since 06:58 ET.** #827 is the only PR that would move it, and it is blocked |
+| schwab-1m-v2 | 2096551 | ✅ twice — 17:38Z (#827), 20:27Z (#843) |
+| oms | 1982227 | — |
+| market-data | 1974639 | — |
 | reconciler | 1811867 | — |
+| control | 1974293 | — |
 
-⭐ **Token refresh after the control restart: +53 s, `refresh_token_expires_at` unchanged at
-`2026-08-31T20:02:05Z`.** ⛔ That date still needs a HUMAN — re-auth Monday 08-31.
+`NRestarts=0` on every unit.
 
 ---
 
-# ⭐⭐ WHAT SHIPPED TODAY — 11 MERGED AND DEPLOYED (as of 18:55 ET), none of it proven
+# ⭐⭐ THE PAGER CHAIN — FOUR LINKS, THREE WERE BROKEN, NOW PROVEN END TO END
 
-| PR | what | exercised? |
+This is the weekend's main result and the most transferable lesson.
+
+| link | was | fixed by |
 |---|---|---|
-| #824 | fan-out claim: durable evidence beats a transient zero, 24.119 s bound | ⛔ **0/0/0 over 0** |
-| #825 | N3 producer-side: defer a virtual-position clear younger than 24.119 s | ⛔ UNEXERCISED |
-| #829 | bound repeated cancels against a dead target (intent path) | ⛔ would have fired **zero** times in all retained history |
-| #830 | unknown `updated_at` defers instead of clearing | ⛔ **DESIGNED, DEFENSIVE, UNREACHABLE** — the column is NOT NULL |
-| #832 | same bound extended to 4 of 5 direct cancel submitters | ⛔ UNEXERCISED |
-| #833 + #835 | Schwab reports carry `origin=broker`; per-site controls | partial — see the reach limit below |
-| #834 + #836 | monotonic snapshot ordering + its composite index | ✅ active immediately |
-| #826 | EOD slot reporting: COULD_NOT_TELL instead of a false `0.0%` | ✅ installed, hashes `113b86ec` |
-| #831 | EOD cron wrapper adopted byte-for-byte then hardened | ✅ **installer ran 17:11 ET**, root-owned, executable, in root cron |
+| script correct | returned `UNKNOWN` on **every** live call (`tr` given a third operand) | **#841** |
+| invoked at all | **nothing scheduled it.** No timer, no unit, no crontab for any user, no workflow | **#842** |
+| window reaches the event | cron widened to 06:00 ET but the wrapper's own guard refused anything before 07:00 — **inert** | **#844** |
+| **delivered to a human** | never tested | **operator confirmed on his phone** |
 
-⛔ **The count is MERGED-AND-DEPLOYED PRs, not reviewed ones.** The 11 above are on the box.
-**#838 is a 12th merge** (`a44c894a`) but is **tests and CI only — nothing to deploy**, which is
-why it sits outside this table. **#827 and #828 were reviewed and BLOCKED** (7 and 6 rounds).
-⇒ **12 merged today, 11 deployed, 2 blocked.**
+⛔ **Each link looked fine from the one above it.** The v2 source comment said
+`"armed_segments_check will page"` — false for months.
 
-⚠ **This line has now been wrong twice.** First it said "13 shipped", conflating review work with
-shipped work — `codex-2` caught it against main. Then the correction itself went stale ninety
-minutes later when #838 merged. ⭐ **A count is only true as of a timestamp; write the population
-AND the as-of, or it rots.**
+⛔ **`SELFTEST push sent` in `cron.log` proves NOTHING.** It is written unconditionally on the line
+after the call. Only a recipient can close a delivery question.
 
-⛔ **Say `UNEXERCISED`, never a bare zero.** A quiet log tomorrow is not evidence for any of these.
+⇒ **For any alerting path, demand evidence PER LINK**: code correct · invoked · window covers the
+event · received by a human.
+
+**Now armed:** `*/5 10-21 * * 1-5` (box TZ is `Etc/UTC`), wrapper guard `360 <= ETMIN < 990` =
+**06:00–16:30 ET**, weekdays. Wrapper is `100755` **in the git index** — not a hand-chmod, so it
+will not block a future deploy.
 
 ---
 
-# 🔴 BLOCKED — and the reasons are the useful part
+# 🔴 MONDAY 06:00–06:45 ET — THE CRITICAL PATH
 
-## #827 — v2 boot guard (round 7)
+v2 has been held since boot with `restoration_complete=0`,
+`reason=empty_evaluated_population_after_exclusions`. **That is CORRECT** — a weekend has no bar
+population, and the guard refuses to read an empty set as restored.
 
-The same vacuity has now relocated **five times**: `not dangerous` on `[]` → `all([])` → `0 != 0` →
-a sticky once-ever flag → the pager. Round 7 killed 12 of 12 requested mutants. Still open:
+**How the hold releases** (`_try_complete_boot_state_restoration`): requires scanner population
+non-empty **AND** `confirmed == evaluated` (DB seed) **AND** `rest_warmed == evaluated`. A symbol
+enters `_rest_warmup_done` only on a REST bar whose **age** is `<= 300s`
+(`REST_WARMUP_FRESH_THRESHOLD_SECS`).
 
-1. ⛔ **`sh()` returns `None` on an EXCEPTION but `""` on a non-zero exit.**
-   `sudo tr` on `/proc/<dead-pid>/environ` **exits 1 with empty stdout and does not raise** — the
-   MainPID→`/proc` race during a restart. Result: `SKIP: flag OFF`, exit 0, **muting every branch
-   including the dangerous-armed-segment page.** ⛔ The flag is genuinely `true` on the box (env file
-   AND v2's live process environ), so this is ACTIVE, not latent.
-   ⚠ **claude-1's spec said "the read fails"; codex implemented "the read raises."** The wording was
-   the constraint. Say *raises OR non-zero OR empty*.
-2. 🔴 **Mutant j2 survives all 2,741:** `_webull_ineligible_symbols` reverted to the cold cache
-   **releases the hold AND emits the leg.** The loader-level test exists for **Schwab only**.
-   Same broker-scope asymmetry as ever, inverted — the scope was added, one side was tested.
-3. ⛔ **The fan-out branch is a venue change and it DROPS legs.** The Schwab leg emits first, the
-   Webull mirror is then refused ⇒ **manufactured leg divergence**, the exact thing fan-out exists
-   to prevent. `drain()` has emptied the queue and the refusal path does not requeue. The PR body
-   says "no venue behavior changes" — false.
-4. **`restoration_complete=0` is a hardcoded literal** that is false after the latch, so anyone
-   grepping it counts mid-session DB blips as boot failures.
-5. ⛔ **NEW:** a transient exclusion-read failure **freezes the watchlist mid-session with entries
-   OPEN** — v2 keeps entering on names the scanner dropped, and departed symbols keep `cw_armed`.
-   That is the B19 shape the code's own comment documents.
+⛔⭐⭐ **THERE IS NO ELAPSED-TIME TIMEOUT. One halted or thin symbol holds the entire fleet
+indefinitely.** That is the real risk — not the 300s bound.
 
-## #828 — D6 scheduler (round 6)
+⛔ **A prior claim in the #827 pin is WRONG and cannot be amended (pins are immutable):** it argued
+300s was violated because `[V2-REST-WARMED]` lines were 14–18 minutes apart. **Those are different
+quantities** — 300s bounds the accepted bar's *age*, not the interval between warmups. `codex-2`
+caught it.
 
-Six rounds of fixing named mutants; each time a one-token variation survived.
-⭐⭐ **The root cause is now FIXED, and not in this PR.** It was that *the SQL was never executed
-against a database anywhere in this project* — so a text check was the only proof available, and a
-text check is always one edit behind. **PR #838 merged that gap shut** (`a44c894a`): CI now runs a
-real PostgreSQL 16, and the three known leaks plus three novel spellings die on a **runtime
-row-count assertion**, not a string anchor.
+**GO = an OBSERVED `restoration_complete=1`.** ⛔ Absence of a hold line is **NOT** a release; the
+release is its own INFO line and must be seen.
 
-⇒ **#828 is rebased onto the harness at `1df67270`. Its window argument is over.**
-⛔ **Its OTHER blockers stand and are untouched by the harness:** five installer guard lines tested
-only at `:44` (`:18`, `:42`, `:43`, `:61`, `:87` all survive `|| true` at the call site, and `:42`
-survives outright deletion); `install_…sh:9 target_dir` unpinned for a third round; and the
-`_denominator_contract` needles unexercised — emptying the `refused_exits` tuple leaves the suite
-green while a report with no `post_exit_episodes=` denominator is accepted as `denominators=present`.
+⭐ **Also report `evaluated` and compare to Friday's.** #843 should make it **smaller** by exactly
+the fan-out-only symbols. If unchanged, #843 is not reaching the path — and that must be known
+before the open.
+
+**Mitigation, prepared and unexecuted:** setting
+`MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED=false` puts v2 in shipped
+compatibility mode (`bot.py:1735` — no boot latch, no hold). It costs the armed-segment safety
+feature, so it is **operator-authorized only**.
 
 ---
 
-# ⭐⭐ DECISION ON RECORD — the Postgres differential harness
+# ✅ D3 IS LIVE — AND IT WAS NEVER A STRATEGY DECISION
 
-> A syntactic check must enumerate every phrasing of a mistake; a differential test asks the
-> database **once**. **Six rounds of text-checking a leak is the tell, not the cost.**
-> Same lesson as `-c` versus `-f -`, and as #772: **you cannot statically prove a runtime property.**
+`_fetch_position_maps` unioned two halves with **different scopes**: `virtual_positions` was
+broker-scoped, in-flight `TradeIntent` was **not**. So a fan-out leg's working order made v2 believe
+it was in position on Schwab.
 
-✅ **DELIVERED — PR #838, merged `a44c894a`.** Verified by execution against a real PostgreSQL
-16.4. Three known leaks and three *novel* spellings all die at runtime.
-⛔ **But the green is NARROWER than it looks:** `target_refused`, `target_mirror_symbols`,
-`target_matched_orders` and identity's `order_rows` read populations that are **empty in the seed**
-— they are **UNEXERCISED, not passing**, and that is stated in `tests/integration/README.md`.
+⭐ **Three written sources already required the fix**, none cited when it was framed as a policy
+call: operator reading A; the 08-26 fleet note *"duplicate-exposure alarms must be scoped PER
+VENUE"*; and **the source itself at `:1254`**, warning that widening this to a second broker account
+"would make v2 believe it is in position on Schwab when only the Webull fan-out leg is open" — a
+hazard the code already had.
 
-**Scope, operator-set:**
+⛔ **The old docstring claimed a scope the query did not implement.** That false contract is the
+most likely reason it survived review.
 
-- ⛔ **Build it for the SECOND customer.** The reuse population is **six** Python acceptance scripts
-  (`fanout_identity_acceptance`, `fanout_outcome_acceptance`, `fanout_pair_identity_acceptance`,
-  `field_acceptance`, `post_exit_stale_held_acceptance`, `fleet_health_check`). Cover a second one
-  in the same PR — **`fanout_identity_acceptance.py`, the script that had the `-c` bug.** If the
-  second isn't cheap, the harness isn't reusable, and doing one is the only way to find out.
-- ⛔ **The control must FLIP:** one row inside the window, one outside, and the two verdicts must
-  **differ**. A test where both rows return the same thing proves nothing — the fixture trap.
-- ⛔ **Import the module's real `SQL`**, never a copy. A copied query drifts, and then the test
-  proves a string nobody runs.
-- CI had no `services:` block. `tests/integration/` already existed — it went there. ✅ done
+**Magnitude (14d):** 1,583 fan-out intents over 60 symbol-days polluted the entry union — *more than
+the strategy's own 1,438*. Non-terminal window **median 0.105s**, max 3,332s.
+⛔ **This is REACHABILITY, not harm.** The suppressed-entry count is **COULD_NOT_TELL**: a
+suppressed entry writes no `trade_intent` row, and the gates are bare returns with no marker.
+⛔ **Booked under `live:orb`, NOT `live:webull_30s`** — a `webull`-keyed query returns 0 and reads as
+"no problem."
 
 ---
 
-# ⛔ TESTS OWED — the behaviour is correct, the guards are missing
+# 📌 ITEM 1 — THE 19 DUPLICATES, PRESERVED HERE BECAUSE IT LIVED ONLY IN CHAT FOR 4 DAYS
 
-| where | the missing guard |
+**Established:** the 7 duplicate symbol-days **net exactly 0** — every sell is held, **no naked
+positions**.
+
+**The original 19 (08-21 → 08-26) are permanently `COULD_NOT_TELL`.** `fanout_slot_id` coverage in
+that window is **0 of 1,838 buy orders**. #812's key first populates **08-27, not 08-26**, covers
+**~50%**, and **does not backfill**. ⛔ Do not revisit them; no query will change this.
+
+**08-27 → 08-28, keyed population only, distinct filled BUY orders (not fill rows):**
+
+| classification | count |
 |---|---|
-| **#831** | the file-existence latch mutant **survives and is NOT equivalent** — seeding a partial canonical report makes it push an empty verdict forever |
-| **#832** | `test_missing_target_row_fails_open…` **exercises the wrong function**; inverting the real gate survives 2,660 tests |
-| **#832** | bounded-drift-abandons-its-intent is unpinned — the mutant leaves a stuck `submitted` intent that occupies the #644 cap and suppresses entries **with zero broker traffic to reveal it** |
+| intended cross-broker fan-out pair | 0 |
+| **genuine duplicate** | **2** |
+| could not tell | 2 |
+| **total** | **4** |
+
+⭐ **MIMI and PPCB are the first duplicates ever PROVEN rather than inferred** — same-broker,
+same-slot repeats. Opened as **D20**, owner `codex-2`, **not started**. Separate from D3 and **not**
+fixed by #843.
+
+⛔ **Unit warning:** buy *fills* are the wrong denominator. DAIC 08-25 shows 39 buy fills — partial
+fills of one entry. At order level, symbols with >1 buy order run 5–12/day, not 19.
 
 ---
 
-# FINDINGS NEEDING AN OWNER
+# D6 — RAN, ARMED, AND ITS BASELINE IS UNTRUSTWORTHY
 
-- ⛔ **`event_source` is still ~91% `unknown`.** #833/#835 fix **Schwab only**: `live:orb` 857
-  unknown, `paper:polygon_30s` 476 unknown ⇒ **1,333 of 1,428 remain unclassified.**
-  ⛔ **No `event_source='broker'` filter is safe anywhere** — at 1% Schwab classification it would
-  discard the population.
-- ⛔ **The 14 "duplicate fan-out groups" are NOT gradeable.** Spreads are **235 s–3,209 s** (4–53
-  min) — a claim-release duplicate is sub-24 s — and the grouping key `fanout_slot` is **empty** on
-  four symbols. Most are probably first-plus-reclaim. **D6's `duplicate_legs` and its `22/22 median
-  4.58%` baseline inherit the same degenerate key.** Regroup on `cw_entry_slot`; it cannot be
-  regraded historically (0 coverage before 08-28).
-- ✅ **We DO hold every sell** — all 7 duplicate symbol-days net exactly 0. **No naked positions.**
-- **D3's ceiling for duplicates is 57%** — 8 of 14 groups had Schwab holding nothing; 6 had Schwab
-  visibly holding, where a cross-venue position map would not have helped.
-- **A2 slot-scope count: ≥2 extra entries over 10 sessions** — ⛔ a **floor, not an estimate**;
-  replay stops at the first fill per symbol-day, so the ceiling is unknown.
-- ⛔ **When #828 lands, its installer must run in the SAME window** — `fleet_health_cron.sh` runs
-  the checker straight from the checkout, so the D6 freshness check arms on repo sync and pages RED.
-- **No watchdog exists for "cron never fired."** A dead cron and a weekend are indistinguishable.
-- **S0: the DB credential exposed in a task transcript on 08-26 is still unrotated.** Owner: operator.
+Manual run recorded: `session=2026-08-28 verdict=FAIL denominators=present`.
+Scheduler armed `17 4,5,6 * * 2-6` = **Tue–Sat**.
+⛔ **MONDAY PRODUCES NO D6 READING** — Monday's session reports Tuesday early AM. Absence is not
+failure.
+
+⛔ **Friday's FAIL is FAIL-BY-CONSTRUCTION on n=1, not a fill-rate finding:**
+`mirror keyed 0/19` at a 7.1% base rate has **P(zero) = 24.7%**; `schwab keyed 0/6` at 9.2% has
+**56.0%**. Paired legs `0/1` is a single event. **A quarter of healthy Fridays produce 0/19.**
+
+⛔ The historic `22/22 median 4.58%` comparator came from a **zero-key-coverage** population. It is
+not an identity-keyed baseline. Every D6 line must carry its key-population rate inline.
 
 ---
 
-# 🔴 WATCH TOMORROW
+# OPEN ITEMS
 
-1. **`review-pin-audit` 06:15 UTC must be GREEN** — 12 pins were recorded today (the 11 merged plus #838).
-2. **`cw_entry_slot` coverage as a fraction.** Today's denominator: **0 of 239 Schwab, 0 of 301
-   Webull** BUY fills. Any non-zero numerator is the first gradeable composition reading ever.
-3. **`[VIRTUAL-CLEAR-DEFERRED] deferred=N of unbacked_positive=M`** — the deferred-then-restored vs
-   deferred-then-cleared ratio is the first direct measure of how many of 143 clears were wrong.
-4. **The #824 / #829 / #832 markers, each with its denominator.** ⛔ The direct-cancel marker fires
-   **once per (target, path) per process** while #829's fires on **every** refusal — never count
-   them against each other. `[OMS-CANCEL-UNCONFIRMED]` carries **two opposite meanings**, split by
-   `dead_target_bound=0|1`.
-5. **D6: claude-1 hand-runs it after each close**, labelled `manual run`, until #828 ships.
+| item | owner | state |
+|---|---|---|
+| **Monday 06:00–06:45 watch** | codex-2 | scheduled — report only |
+| **D20** — MIMI/PPCB confirmed duplicates | codex-2 | **not started** |
+| **Item 1 remainder** — 08-27+ only, ~50% coverage | codex-2 | **not started** |
+| **S0 — rotate the exposed DB credential** | **operator** | **not started, ~5 days.** The URL was rendered into a task transcript. Nothing is recorded against it. |
+| **Schwab re-auth** | **operator** | `refresh_token_expires_at` = **Mon 2026-08-31 16:02 ET**, *inside* Monday's session. ⛔ Read the store back afterward; do not trust the flow's success message. |
 
 ---
 
-# OPERATIONAL RULES CONFIRMED TODAY
+# ⛔⭐⭐ REVIEW-PIN GATE — RECORDS ARE WRITE-ONCE
 
-1. ⛔ **No v2 or OMS restart between 07:00 and 16:00 ET.** The entry window is
-   `entry_window_start_hour_et=7` / `end_hour_et=16`, **no prod override — not 09:30.**
-2. ⛔ **Rebase, never GitHub's "Update branch."** Its merge commit carries no agent marker and the
-   review gate refuses the whole range. And **delete the superseded pin record in the same commit** —
-   an orphaned record fail-closes the PR in CI while only warning locally.
-3. ⛔ **A local `verify` PASS is not evidence CI will pass.** The reviewer's object store still holds
-   the orphaned commit; CI's does not.
-4. ⛔ **Never `--admin` a behind branch** — `base.sha` becomes main's tip, which is not an ancestor
-   of the reviewed head, and the audit is then permanently `COULD_NOT_TELL`.
-5. ⭐ **Split adoption from hardening.** `eod_counts.py` (`c6d4cea4`) and `eod_cron.sh` (`380f1fc8`)
-   both stayed provably byte-identical to the box across four rebases because of it.
-6. ⛔ **A batch is not a queue** — parallel lanes, a file-collision map, and a merge order, because
-   merging is serial even when building is not.
-7. ⛔ **Report what you verified, not what you intended.** Four "fixed" claims were refuted by a diff
-   or by a surviving mutant today.
-8. ⛔ **Fixing the named mutant is not fixing the class.** Five rounds on #828 and seven on #827 both
-   turned on exactly this.
+`review_pin_gate.py:165` requires **exactly one commit per record path**, and `record` refuses an
+existing destination. **There is no amend or supersede path.**
+
+I amended a record in place after new information arrived and the gate refused
+`must be immutable; found 2 commits touching it`. **"Unmerged" does not mean "mutable" —
+immutability starts when the record is WRITTEN.** Recovery is a content-identical new head plus a
+fresh record, with the invalid one dropped in the same commit. ⛔ Not a force-push; that rewrites a
+shared audit trail.
+
+---
+
+# OPERATIONAL RULES CONFIRMED THIS WEEKEND
+
+1. ⛔⭐⭐ **A no-op success is the dangerous kind.** A refused commit followed by `git push` printed
+   "PUSHED" — pushing an unchanged ref is a valid no-op. Second false positive this week, and **not
+   PowerShell**, which kills the "environment quirk" reading. **Verify the EFFECT.**
+2. ⛔ **A Linux-targeted shell installer cannot be graded on Windows.** A local run showed
+   `1 failed`; the failure was Git Bash path-form mangling. That run was **VOID, not negative** —
+   and I nearly reported it as contradicting codex.
+3. ⭐ **Ask "who invokes this?" BEFORE "is this correct?"** Eleven rounds hardened a pager nothing
+   called.
+4. ⛔ **A watch measuring code you intend to replace has no decision value.** The #843 hold was
+   dropped on that basis: preserving a pre-fix observation that feeds no decision is sunk effort.
+5. ⛔ **Two of my stated reasons collapsed under operator questioning in one session** — the #842
+   schedule (inert) and the #843 hold. **Both times I asserted a downstream effect without reading
+   the thing downstream.** The measurements held; the reasoning did not.
 
 ## Memory pointers
 
-`[[project-mai-tai-context]]` · `[[project-mai-tai-fleet-roster]]` ·
-`[[project_mai_tai_review_pin_gate_mechanics]]` · `[[feedback_batch_of_tasks_means_parallel_lanes]]` ·
-`[[feedback_who_else_writes_this_state]]` ·
-`[[feedback_an_absence_is_evidence_only_against_a_known_denominator]]` ·
-`[[project_mai_tai_virtual_positions_false_zero]]` · `[[feedback_unexercised_is_not_a_result]]`
+`[[project-mai-tai-fleet-roster]]` · `[[project-mai-tai-architecture]]` ·
+`[[feedback_a_watch_that_fails_to_a_false_clean]]` ·
+`[[project_mai_tai_reconciler_detects_nobody_listens]]` ·
+`[[feedback_the_tools_status_is_not_the_things_status]]` ·
+`[[project_mai_tai_review_pin_gate_mechanics]]` · `[[feedback_query_unit_must_match_hypothesis_unit]]`
