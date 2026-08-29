@@ -49,6 +49,12 @@ never hand-edit the deployed copy.
    ⇒ correctly silent. **The count is noisy; only `dangerous`, the boot-hold, and staleness are
    faults.**
 
+   The wrapper is armed by `install_armed_segments_schedule.sh`, which owns one marked root-cron
+   block containing the documented five-minute UTC-wide schedule. The installer preserves a
+   byte-for-byte root-crontab pre-image, rolls it back after any post-write failure, reads the
+   installed crontab back, and refuses unless exactly one managed entry exists. Installing the
+   schedule is an explicit production action; merging this source alone does not arm the pager.
+
 6. **Schwab refresh-count watch** (`schwab_refresh_count_check.py` plus the scheduled
    `schwab-refresh-count-watch.yml` workflow) — daily at 06:15 UTC, grades the previous complete
    Eastern calendar day across `control.log` and all rotations. The seven-day baseline is 48-50
