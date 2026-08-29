@@ -884,6 +884,12 @@ def test_installer_library_guards_have_reachable_positive_and_negative_polaritie
     assert _run_install_helper(
         f"verify_exactly_one_d6_schedule '{expected}' $'{expected}\\n{expected}'"
     ).returncode != 0
+    assert (
+        _run_install_helper(
+            f"verify_exactly_one_d6_schedule '{expected}' '# {expected}'"
+        ).returncode
+        != 0
+    )
 
     # Zero or one well-ordered managed blocks are valid; two, reversed, or unreadable refuse.
     for path in (empty_cron, one_block):
@@ -968,7 +974,22 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
     cron_state = tmp_path / "root.crontab"
     _write_executable(
         fake_bin / "id",
-        "#!/usr/bin/env bash\nif [[ ${1:-} == -u ]]; then echo 0; else /usr/bin/id \"$@\"; fi\n",
+        "#!/usr/bin/env bash\n"
+        "if [[ ${1:-} == -u ]]; then\n"
+        "  if [[ ${FAKE_ID_FAIL:-0} == 1 ]]; then exit 31; fi\n"
+        "  if [[ ${FAKE_ID_EMPTY:-0} == 1 ]]; then exit 0; fi\n"
+        "  echo 0\n"
+        "else\n"
+        '  /usr/bin/id "$@"\n'
+        "fi\n",
+    )
+    _write_executable(
+        fake_bin / "date",
+        "#!/usr/bin/env bash\n"
+        "if [[ ${FAKE_DATE_FAIL:-0} == 1 ]]; then exit 32; fi\n"
+        "if [[ ${FAKE_DATE_EMPTY:-0} == 1 ]]; then exit 0; fi\n"
+        "if [[ -n ${FAKE_DATE_VALUE:-} ]]; then printf '%s\\n' \"$FAKE_DATE_VALUE\"; exit 0; fi\n"
+        'exec /usr/bin/date "$@"\n',
     )
     _write_executable(
         fake_bin / "python3",
@@ -977,44 +998,56 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
     _write_executable(
         fake_bin / "install",
         "#!/usr/bin/env bash\n"
-        "printf 'install %s\\n' \"$*\" >> \"$FAKE_COMMAND_LOG\"\n"
+        'printf \'install %s\\n\' "$*" >> "$FAKE_COMMAND_LOG"\n'
         "args=()\n"
         "while (($#)); do\n"
-        "  case \"$1\" in -o|-g) shift 2 ;; *) args+=(\"$1\"); shift ;; esac\n"
+        '  case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac\n'
         "done\n"
-        "exec /usr/bin/install \"${args[@]}\"\n",
+        'exec /usr/bin/install "${args[@]}"\n',
     )
     _write_executable(
         fake_bin / "sha256sum",
         "#!/usr/bin/env bash\n"
-        "printf 'sha256sum %s\\n' \"$*\" >> \"$FAKE_COMMAND_LOG\"\n"
-        "exec /usr/bin/sha256sum \"$@\"\n",
+        'printf \'sha256sum %s\\n\' "$*" >> "$FAKE_COMMAND_LOG"\n'
+        "count=0\n"
+        '[[ -f $FAKE_SHA256_STATE ]] && count=$(cat "$FAKE_SHA256_STATE")\n'
+        'count=$((count + 1)); printf \'%s\' "$count" > "$FAKE_SHA256_STATE"\n'
+        "if [[ ${FAKE_SHA256_FAIL_AT:-0} == $count ]]; then exit 33; fi\n"
+        "if [[ ${FAKE_SHA256_EMPTY_AT:-0} == $count ]]; then exit 0; fi\n"
+        'exec /usr/bin/sha256sum "$@"\n',
     )
     _write_executable(
         fake_bin / "cp",
         "#!/usr/bin/env bash\n"
-        "printf 'cp %s\\n' \"$*\" >> \"$FAKE_COMMAND_LOG\"\n"
+        'printf \'cp %s\\n\' "$*" >> "$FAKE_COMMAND_LOG"\n'
         "if [[ ${FAKE_CP_FAIL:-0} == 1 ]]; then exit 28; fi\n"
-        "exec /usr/bin/cp \"$@\"\n",
+        'exec /usr/bin/cp "$@"\n',
     )
     _write_executable(
         fake_bin / "crontab",
         "#!/usr/bin/env bash\n"
-        "printf 'crontab %s\\n' \"$*\" >> \"$FAKE_COMMAND_LOG\"\n"
+        'printf \'crontab %s\\n\' "$*" >> "$FAKE_COMMAND_LOG"\n'
         "if [[ ${1:-} == -l ]]; then\n"
         "  if [[ ${FAKE_CRONTAB_READ_FAIL:-0} == 1 ]]; then\n"
         "    echo 'permission denied reading root crontab' >&2; exit 17\n"
         "  fi\n"
-        "  if [[ -f $FAKE_CRONTAB_STATE ]]; then cat \"$FAKE_CRONTAB_STATE\"; exit 0; fi\n"
+        "  if [[ ${FAKE_CRONTAB_FAIL_READ_AFTER_WRITE:-0} == 1 "
+        "&& -f $FAKE_CRONTAB_WRITE_STATE && ! -f $FAKE_CRONTAB_READ_FAIL_CONSUMED ]]; then\n"
+        '    touch "$FAKE_CRONTAB_READ_FAIL_CONSUMED"\n'
+        "    echo 'post-write root crontab read failed' >&2; exit 18\n"
+        "  fi\n"
+        '  if [[ -f $FAKE_CRONTAB_STATE ]]; then cat "$FAKE_CRONTAB_STATE"; exit 0; fi\n'
         "  echo 'no crontab for root' >&2; exit 1\n"
         "fi\n"
-        "cp \"$1\" \"$FAKE_CRONTAB_STATE\"\n",
+        'cp "$1" "$FAKE_CRONTAB_STATE"\n'
+        'touch "$FAKE_CRONTAB_WRITE_STATE"\n',
     )
     _write_executable(
         test_root / "python",
         f"#!/usr/bin/env bash\nexec '{Path(sys.executable).as_posix()}' \"$@\"\n",
     )
     env = os.environ.copy()
+    repo_src = (OPS.parents[1] / "src").resolve()
     env.update(
         {
             "PATH": ":".join(
@@ -1027,8 +1060,17 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
                 )
             ),
             "MAI_TAI_D6_INSTALL_TEST_ROOT": _shell_path(test_root),
+            # The installer executes the copied module with the selected runtime.
+            # Pin this worktree's source tree so a shared editable environment
+            # cannot make the runtime probe import another checkout.
+            "PYTHONPATH": os.pathsep.join(
+                part for part in (str(repo_src), os.environ.get("PYTHONPATH", "")) if part
+            ),
             "FAKE_COMMAND_LOG": command_log.as_posix(),
             "FAKE_CRONTAB_STATE": cron_state.as_posix(),
+            "FAKE_CRONTAB_WRITE_STATE": (tmp_path / "crontab-write-seen").as_posix(),
+            "FAKE_CRONTAB_READ_FAIL_CONSUMED": (tmp_path / "crontab-read-fail-consumed").as_posix(),
+            "FAKE_SHA256_STATE": (tmp_path / "sha256-count").as_posix(),
         }
     )
     return health / "install_fanout_outcome_acceptance.sh", env, command_log, cron_state
@@ -1198,6 +1240,200 @@ def test_backup_failure_refuses_before_overwriting_even_without_errexit(
     assert list(installed_check.parent.glob(f"{installed_name}.pre-versioned-*")) == []
 
 
+@pytest.mark.parametrize(
+    ("source_name", "installed_name"),
+    (
+        ("fanout_outcome_acceptance.py", "check.py"),
+        ("fanout_outcome_acceptance_cron.py", "cron.py"),
+    ),
+)
+def test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy(
+    tmp_path: Path, source_name: str, installed_name: str
+) -> None:
+    installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original_cron, encoding="utf-8")
+    target_dir = tmp_path / "runtime" / "installed"
+    target_dir.mkdir()
+    installed = target_dir / installed_name
+    installed.write_bytes(b"# prior installed bytes\n")
+    env["FAKE_DATE_VALUE"] = "20260829T120000Z"
+    backup = target_dir / f"{installed_name}.pre-versioned-20260829T120000Z"
+    prior_backup = b"# older preserved rollback copy\n"
+    backup.write_bytes(prior_backup)
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert "backup path already exists" in result.stderr
+    assert backup.read_bytes() == prior_backup
+    assert installed.read_bytes() == b"# prior installed bytes\n"
+    assert cron_state.read_text(encoding="utf-8") == original_cron
+    assert "restart_required=0" not in result.stdout
+
+
+@pytest.mark.parametrize("prior_artifacts", (False, True), ids=("new-install", "reinstall"))
+def test_runtime_failure_rolls_back_every_target_mutation(
+    tmp_path: Path, prior_artifacts: bool
+) -> None:
+    installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original_cron, encoding="utf-8")
+    target_dir = tmp_path / "runtime" / "installed"
+    target_dir.mkdir()
+    target_check = target_dir / "check.py"
+    target_cron = target_dir / "cron.py"
+    prior_check = b"# prior acceptance bytes\n"
+    prior_cron = b"# prior cron-runner bytes\n"
+    if prior_artifacts:
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+    (installer.parent / "fanout_outcome_acceptance.py").write_text(
+        "raise RuntimeError('module-scope rollback sentinel')\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert "module-scope rollback sentinel" in result.stderr
+    assert "prior artifacts and root crontab restored" in result.stderr
+    assert cron_state.read_text(encoding="utf-8") == original_cron
+    assert "restart_required=0" not in result.stdout
+    if prior_artifacts:
+        assert target_check.read_bytes() == prior_check
+        assert target_cron.read_bytes() == prior_cron
+    else:
+        assert not target_check.exists()
+        assert not target_cron.exists()
+
+
+def test_post_write_confirmation_failure_restores_root_cron_and_prior_artifacts(
+    tmp_path: Path,
+) -> None:
+    installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original_cron, encoding="utf-8")
+    target_dir = tmp_path / "runtime" / "installed"
+    target_dir.mkdir()
+    target_check = target_dir / "check.py"
+    target_cron = target_dir / "cron.py"
+    prior_check = b"# prior acceptance bytes\n"
+    prior_cron = b"# prior cron-runner bytes\n"
+    target_check.write_bytes(prior_check)
+    target_cron.write_bytes(prior_cron)
+    env["FAKE_CRONTAB_FAIL_READ_AFTER_WRITE"] = "1"
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert "could not confirm the installed D6 root crontab" in result.stderr
+    assert "prior artifacts and root crontab restored" in result.stderr
+    assert cron_state.read_text(encoding="utf-8") == original_cron
+    assert target_check.read_bytes() == prior_check
+    assert target_cron.read_bytes() == prior_cron
+    writes = [
+        line
+        for line in command_log.read_text(encoding="utf-8").splitlines()
+        if line.startswith("crontab ") and line != "crontab -l"
+    ]
+    assert len(writes) == 2  # attempted install, then verified rollback
+    assert "restart_required=0" not in result.stdout
+
+
+@pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+@pytest.mark.parametrize(
+    ("failure_env", "expected_message"),
+    (
+        ({"FAKE_ID_FAIL": "1"}, "numeric effective uid"),
+        ({"FAKE_ID_EMPTY": "1"}, "numeric effective uid"),
+        ({"FAKE_DATE_FAIL": "1"}, "unique D6 backup timestamp"),
+        ({"FAKE_DATE_EMPTY": "1"}, "unique D6 backup timestamp"),
+    ),
+    ids=("id-fails", "id-empty", "date-fails", "date-empty"),
+)
+def test_uid_and_backup_timestamp_fail_closed_without_errexit(
+    tmp_path: Path,
+    shell_mode: str,
+    failure_env: dict[str, str],
+    expected_message: str,
+) -> None:
+    installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original, encoding="utf-8")
+    _set_installer_shell_mode(installer, shell_mode)
+    env.update(failure_env)
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert expected_message in result.stderr
+    assert cron_state.read_text(encoding="utf-8") == original
+    assert "restart_required=0" not in result.stdout
+
+
+@pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+@pytest.mark.parametrize(
+    ("failure_env", "expected_message", "rollback_expected"),
+    (
+        ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+        ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+        ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+        ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+        ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+        ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+    ),
+    ids=(
+        "source-hash-fails",
+        "source-hash-empty",
+        "summary-check-hash-fails",
+        "summary-check-hash-empty",
+        "summary-cron-hash-fails",
+        "summary-cron-hash-empty",
+    ),
+)
+def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+    tmp_path: Path,
+    shell_mode: str,
+    failure_env: dict[str, str],
+    expected_message: str,
+    rollback_expected: bool,
+) -> None:
+    installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original_cron, encoding="utf-8")
+    target_dir = tmp_path / "runtime" / "installed"
+    target_dir.mkdir()
+    target_check = target_dir / "check.py"
+    target_cron = target_dir / "cron.py"
+    prior_check = b"# prior acceptance bytes\n"
+    prior_cron = b"# prior cron-runner bytes\n"
+    target_check.write_bytes(prior_check)
+    target_cron.write_bytes(prior_cron)
+    _set_installer_shell_mode(installer, shell_mode)
+    env.update(failure_env)
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert expected_message in result.stderr
+    assert cron_state.read_text(encoding="utf-8") == original_cron
+    assert target_check.read_bytes() == prior_check
+    assert target_cron.read_bytes() == prior_cron
+    assert ("prior artifacts and root crontab restored" in result.stderr) is rollback_expected
+    assert "restart_required=0" not in result.stdout
+
+
 @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
 def test_proposed_crontab_is_validated_before_root_crontab_is_written(
     tmp_path: Path, shell_mode: str
@@ -1206,10 +1442,10 @@ def test_proposed_crontab_is_validated_before_root_crontab_is_written(
     original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
     cron_state.write_text(original, encoding="utf-8")
     source = installer.read_text(encoding="utf-8")
-    needle = "  printf '%s\\n' \"$cron_line\""
+    needle = '  "$cron_line" \\'
     assert source.count(needle) == 1
     installer.write_text(
-        source.replace(needle, "  printf '%s\\n' '# invalid managed schedule'", 1),
+        source.replace(needle, "  '# invalid managed schedule' \\", 1),
         encoding="utf-8",
     )
     installer.chmod(0o755)
@@ -1223,6 +1459,32 @@ def test_proposed_crontab_is_validated_before_root_crontab_is_written(
     assert "proposed root crontab does not contain the reviewed D6 schedule" in result.stderr
     assert cron_state.read_text(encoding="utf-8") == original
     assert command_log.read_text(encoding="utf-8").count("crontab -l") == 1
+
+
+@pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+def test_single_cron_composition_command_refuses_as_a_unit(tmp_path: Path, shell_mode: str) -> None:
+    """A failure at any point in the one-command block cannot be hidden by a later printf."""
+    installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original, encoding="utf-8")
+    source = installer.read_text(encoding="utf-8")
+    needle = "if ! printf '%s\\n%s\\n%s\\n' \\\n"
+    assert source.count(needle) == 1
+    installer.write_text(
+        source.replace(needle, "if ! false \\\n", 1),
+        encoding="utf-8",
+    )
+    installer.chmod(0o755)
+    _set_installer_shell_mode(installer, shell_mode)
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert "REFUSED: could not compose proposed D6 root crontab" in result.stderr
+    assert cron_state.read_text(encoding="utf-8") == original
+    assert "restart_required=0" not in result.stdout
 
 
 def test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled(
@@ -1244,13 +1506,13 @@ def test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled
         tmp_path / "runtime" / "fake-bin" / "awk",
         "#!/usr/bin/env bash\n"
         "is_cron_filter=0\n"
-        "for arg in \"$@\"; do [[ $arg == begin=* ]] && is_cron_filter=1; done\n"
+        'for arg in "$@"; do [[ $arg == begin=* ]] && is_cron_filter=1; done\n'
         "if [[ $is_cron_filter == 1 ]]; then\n"
-        "  count=0; [[ -f $FAKE_AWK_STATE ]] && count=$(cat \"$FAKE_AWK_STATE\")\n"
-        "  count=$((count + 1)); printf '%s' \"$count\" > \"$FAKE_AWK_STATE\"\n"
+        '  count=0; [[ -f $FAKE_AWK_STATE ]] && count=$(cat "$FAKE_AWK_STATE")\n'
+        '  count=$((count + 1)); printf \'%s\' "$count" > "$FAKE_AWK_STATE"\n'
         "  if [[ $count == 1 ]]; then exit 29; fi\n"
         "fi\n"
-        "exec /usr/bin/awk \"$@\"\n",
+        'exec /usr/bin/awk "$@"\n',
     )
 
     result = subprocess.run(
@@ -1264,6 +1526,44 @@ def test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled
     assert result.returncode != 0
     assert "REFUSED: could not derive proposed root crontab" in result.stderr
     assert cron_state.read_text(encoding="utf-8") == original
+
+
+def test_lossy_successful_awk_is_refused_before_root_crontab_is_written(tmp_path) -> None:
+    """Pin the pre-write ordering: an exit-zero filter that drops one line cannot clobber root."""
+    installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original, encoding="utf-8")
+    awk_state = tmp_path / "awk-state"
+    env["FAKE_AWK_STATE"] = awk_state.as_posix()
+    _write_executable(
+        tmp_path / "runtime" / "fake-bin" / "awk",
+        "#!/usr/bin/env bash\n"
+        "is_cron_filter=0\n"
+        'for arg in "$@"; do [[ $arg == begin=* ]] && is_cron_filter=1; done\n'
+        "if [[ $is_cron_filter == 1 ]]; then\n"
+        '  count=0; [[ -f $FAKE_AWK_STATE ]] && count=$(cat "$FAKE_AWK_STATE")\n'
+        '  count=$((count + 1)); printf \'%s\' "$count" > "$FAKE_AWK_STATE"\n'
+        "  if [[ $count == 1 ]]; then\n"
+        "    /usr/bin/awk \"$@\" | /usr/bin/grep -v '/usr/local/bin/keep-me'\n"
+        "    exit 0\n"
+        "  fi\n"
+        "fi\n"
+        'exec /usr/bin/awk "$@"\n',
+    )
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert "would alter or lose a non-D6 line" in result.stderr
+    assert cron_state.read_text(encoding="utf-8") == original
+    writes = [
+        line
+        for line in command_log.read_text(encoding="utf-8").splitlines()
+        if line.startswith("crontab ") and line != "crontab -l"
+    ]
+    assert writes == []
 
 
 @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
@@ -1344,11 +1644,22 @@ def test_installer_runtime_probe_failure_refuses(monkeypatch, tmp_path) -> None:
     assert result.returncode == 9
 
 
-def test_installer_runtime_probe_imports_the_exact_acceptance_artifact(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("broken_source", "expected_error"),
+    (
+        ("def broken(:\n", "SyntaxError"),
+        ("raise RuntimeError('module-scope sentinel')\n", "module-scope sentinel"),
+        ("import definitely_missing_d6_dependency\n", "ModuleNotFoundError"),
+    ),
+    ids=("syntax", "module-scope-raise", "missing-runtime-dependency"),
+)
+def test_installer_runtime_probe_imports_the_exact_acceptance_artifact(
+    tmp_path, broken_source: str, expected_error: str
+) -> None:
     installer_lib = (OPS / "fanout_outcome_acceptance_install_lib.sh").as_posix()
     runner = OPS / "fanout_outcome_acceptance_cron.py"
     broken_check = tmp_path / "check.py"
-    broken_check.write_text("def broken(:\n", encoding="utf-8")
+    broken_check.write_text(broken_source, encoding="utf-8")
     digest = hashlib.sha256(broken_check.read_bytes()).hexdigest()
     command = (
         f"source '{installer_lib}'; "
@@ -1361,7 +1672,7 @@ def test_installer_runtime_probe_imports_the_exact_acceptance_artifact(tmp_path)
     )
 
     assert result.returncode != 0
-    assert "SyntaxError" in result.stderr
+    assert expected_error in result.stderr
     assert "D6-INSTALL-ARTIFACT-VERIFIED" not in result.stdout
 
 

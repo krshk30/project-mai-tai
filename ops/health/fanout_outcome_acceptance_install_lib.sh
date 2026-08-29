@@ -39,7 +39,14 @@ verify_d6_installed_copy() {
 verify_exactly_one_d6_schedule() {
   local expected_line=$1
   local installed_crontab=$2
-  if [[ $(grep -Fxc "$expected_line" <<<"$installed_crontab" || true) -ne 1 ]]; then
+  local line
+  local count=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$expected_line" ]]; then
+      count=$((count + 1))
+    fi
+  done <<<"$installed_crontab"
+  if [[ "$count" -ne 1 ]]; then
     echo "REFUSED: installed root crontab does not contain exactly one D6 schedule" >&2
     return 1
   fi
