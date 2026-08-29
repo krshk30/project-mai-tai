@@ -540,15 +540,72 @@ def test_direct_marker_deduplicates_per_target_and_path() -> None:
     assert len(direct_messages) == 2
 
 
-def test_missing_target_row_fails_open_without_inventing_evidence() -> None:
-    service, sessions = _service(_DirectCancelAdapter())
+@pytest.mark.asyncio
+async def test_missing_target_row_fails_open_and_verifier_still_resubmits() -> None:
+    adapter = _DirectCancelAdapter()
+    service, _sessions = _service(adapter)
+    service.settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="simulated",
+        oms_cancel_verify_attempts=1,
+        oms_cancel_verify_interval_seconds=0,
+        oms_cancel_verify_resubmits=1,
+    )
+    missing_target_order_id = uuid4()
+    request = type(
+        "Request",
+        (),
+        {
+            "intent_type": "cancel",
+            "client_order_id": "MISSING-target-1",
+            "metadata": {"broker_order_id": "broker-MISSING-target-1"},
+            "symbol": "MISSING",
+            "side": "buy",
+            "quantity": Decimal("10"),
+        },
+    )()
+
+    result = await service._verify_cancel_landed(
+        request=request,
+        symbol="MISSING",
+        account_name="live:schwab_1m_v2",
+        client_order_id=request.client_order_id,
+        broker_order_id=request.metadata["broker_order_id"],
+        target_order_id=missing_target_order_id,
+    )
+
+    assert result is None
+    assert len(_cancel_requests(adapter)) == 1
+
+
+@pytest.mark.asyncio
+async def test_bounded_drift_cancel_still_abandons_its_submitted_intent() -> None:
+    adapter = _DirectCancelAdapter()
+    service, sessions = _service(adapter)
     with sessions() as session:
-        service._record_cancel_verify_reports(
+        _strategy, _account, intent, order = _seed_target(
             session,
-            target_order_id=uuid4(),
-            reports=[],
+            symbol="BOUNDED",
+            order_type="limit",
         )
-        assert session.scalar(select(BrokerOrderEvent)) is None
+        session.add(
+            BrokerOrderEvent(
+                order_id=order.id,
+                event_type="rejected",
+                event_source="unknown",
+                payload={"reason": TERMINAL_REASON},
+            )
+        )
+        session.commit()
+        intent_id = intent.id
+
+    await service._run_drift_cancel("BOUNDED", {"ask": 2.70}, 0.01)
+
+    assert _cancel_requests(adapter) == []
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        assert intent is not None
+        assert intent.status == "cancelled"
 
 
 def test_broker_report_cannot_blank_committed_fanout_identity() -> None:
