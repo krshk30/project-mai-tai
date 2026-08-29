@@ -24,6 +24,7 @@ from project_mai_tai.db.models import (
     BrokerAccount,
     OmsManagedPosition,
     Strategy,
+    TradeIntent,
     VirtualPosition,
 )
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
@@ -132,10 +133,23 @@ def test_trading_logic_read_is_untouched_by_the_reporting_read() -> None:
             strategy_id=strategy.id, broker_account_id=fanout.id, symbol="QBTX",
             quantity=1, average_price=Decimal("8.80"),
         ))
+        session.add(TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=fanout.id,
+            symbol="ORBONLY",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("1"),
+            reason="Webull fan-out leg",
+            status="submitted",
+            payload={},
+        ))
         session.commit()
 
     bot = _bot(sf)
-    # the Webull-only position is INVISIBLE to the trading read ...
+    # Both Webull-only inputs are INVISIBLE to the trading read: a filled position and the
+    # working fan-out intent. The latter is the D3 regression -- it used to enter the union because
+    # the intent half filtered only by strategy, even though broker_account_id is already indexed.
     assert bot._fetch_open_positions() == {}
     # ... while the same symbol held in the PRIMARY account is visible.  Both polarities matter:
     # a read that returned empty for every account would also satisfy the assertion above.
@@ -146,8 +160,19 @@ def test_trading_logic_read_is_untouched_by_the_reporting_read() -> None:
             strategy_id=strategy.id, broker_account_id=primary.id, symbol="QBTX",
             quantity=2, average_price=Decimal("8.81"),
         ))
+        session.add(TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=primary.id,
+            symbol="SCHWABINTENT",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("3"),
+            reason="Schwab primary leg",
+            status="submitted",
+            payload={},
+        ))
         session.commit()
-    assert bot._fetch_open_positions() == {"QBTX": 2}
+    assert bot._fetch_open_positions() == {"QBTX": 2, "SCHWABINTENT": 3}
     # ... while the reporting read is the one that spans accounts
     with sf() as session:
         _managed(session, "QBTX", FANOUT, 1, "8.80")
