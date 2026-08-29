@@ -919,6 +919,9 @@ class SchwabV2BotService:
             return
         self._cw_boot_hold_check()
         reportable = await asyncio.to_thread(self._fetch_reportable_state)
+        safety_enabled = bool(
+            getattr(self.strategy, "_cw_armed_segment_safety_enabled", False)
+        )
         payload = StrategyBotStatePayload(
             strategy_code=STRATEGY_CODE,
             account_name=self.settings.strategy_schwab_1m_v2_account_name,
@@ -939,11 +942,11 @@ class SchwabV2BotService:
             cw_armed_segments=self.strategy.cw_armed_segments(),
             entries_held=bool(getattr(self.strategy, "_entries_held", False)),
             restoration_complete=self._boot_state_restoration_complete,
+            warmup_pending_symbols=(
+                sorted(self._watchlist - self._rest_warmup_done) if safety_enabled else []
+            ),
         )
         event = IsolatedBotStateEvent(source_service=SERVICE_NAME, payload=payload)
-        safety_enabled = bool(
-            getattr(self.strategy, "_cw_armed_segment_safety_enabled", False)
-        )
         await self.redis.xadd(
             self._isolated_state_stream,
             {
@@ -951,7 +954,7 @@ class SchwabV2BotService:
                     exclude=(
                         None
                         if safety_enabled
-                        else {"payload": {"restoration_complete"}}
+                        else {"payload": {"restoration_complete", "warmup_pending_symbols"}}
                     )
                 )
             },
@@ -1777,7 +1780,7 @@ class SchwabV2BotService:
         if confirmed != evaluated:
             logger.warning(
                 "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
-                "could_not_tell=%d; boot hold remains closed",
+                "could_not_tell=%d reason=state_seed_incomplete; boot hold remains closed",
                 evaluated,
                 confirmed,
                 evaluated - confirmed,
@@ -1785,13 +1788,16 @@ class SchwabV2BotService:
             return
         rest_warmed = len(selected & self._rest_warmup_done)
         if rest_warmed != evaluated:
+            warmup_pending_symbols = sorted(selected - self._rest_warmup_done)
             logger.warning(
                 "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
-                "rest_warmed=%d warmup_pending=%d; REST replay may still arm reconstructed state",
+                "rest_warmed=%d warmup_pending=%d warmup_pending_symbols=%s "
+                "reason=rest_warmup_incomplete; REST replay may still arm reconstructed state",
                 evaluated,
                 confirmed,
                 rest_warmed,
-                evaluated - rest_warmed,
+                len(warmup_pending_symbols),
+                ",".join(warmup_pending_symbols) or "-",
             )
             return
         self._boot_state_restoration_complete = True

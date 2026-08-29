@@ -275,7 +275,7 @@ def test_safety_flag_off_is_not_a_fault(asc, monkeypatch):
     assert asc._pages == []
 
 
-def test_absent_flag_uses_the_shipped_off_default(monkeypatch):
+def test_absent_flag_is_unknown_not_the_shipped_default(monkeypatch):
     mod = _load()
 
     def fake_sh(command: list[str]) -> str:
@@ -286,7 +286,39 @@ def test_absent_flag_uses_the_shipped_off_default(monkeypatch):
         raise AssertionError(command)
 
     monkeypatch.setattr(mod, "sh", fake_sh)
-    assert mod.safety_flag_on() is False
+    assert mod.safety_flag_on() is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("true", True),
+        ("1", True),
+        ("yes", True),
+        ("false", False),
+        ("0", False),
+        ("off", False),
+        ("definitely", None),
+    ],
+)
+def test_live_flag_parser_matches_pydantic_truthy_values_and_rejects_unknown(
+    monkeypatch, raw, expected
+):
+    """In particular, Pydantic treats ``1`` as true; the pager must do the same."""
+    mod = _load()
+
+    def fake_sh(command: list[str]) -> str:
+        if command[:3] == ["systemctl", "show", mod.UNIT]:
+            return "1234"
+        if command[:2] == ["sudo", "tr"]:
+            return (
+                "MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED="
+                f"{raw}\n"
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(mod, "sh", fake_sh)
+    assert mod.safety_flag_on() is expected
 
 
 def test_sh_failure_is_unknown_not_an_empty_success(monkeypatch):
@@ -337,6 +369,36 @@ def test_pages_when_live_flag_environ_read_fails(monkeypatch):
     assert "SAFETY FLAG UNKNOWN" in pages[0][0]
 
 
+def test_pages_when_live_flag_is_absent_or_unparsable(monkeypatch):
+    mod = _load()
+    pages: list[tuple[str, str]] = []
+    environments = iter(
+        [
+            "SOME_OTHER_FLAG=true\n",
+            "MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED=definitely\n",
+        ]
+    )
+
+    def fake_sh(command: list[str]) -> str:
+        if command[:3] == ["systemctl", "show", mod.UNIT]:
+            return "1234"
+        if command[:2] == ["sudo", "tr"]:
+            return next(environments)
+        raise AssertionError(command)
+
+    monkeypatch.setattr(mod, "unit_active", lambda: True)
+    monkeypatch.setattr(mod, "sh", fake_sh)
+    monkeypatch.setattr(mod, "page", lambda title, body, **_kw: pages.append((title, body)))
+    monkeypatch.setattr(mod.sys, "argv", ["armed_segments_check.py"])
+
+    assert mod.main() == 2
+    assert mod.main() == 2
+    assert [title for title, _body in pages] == [
+        "🔴 armed-segments SAFETY FLAG UNKNOWN",
+        "🔴 armed-segments SAFETY FLAG UNKNOWN",
+    ]
+
+
 def test_missing_armed_segments_field_is_unknown_not_green(asc, monkeypatch):
     monkeypatch.setattr(
         asc,
@@ -366,6 +428,19 @@ def test_missing_dangerous_field_is_unknown_not_green(asc, monkeypatch):
 
     assert asc.main() == 2
     assert "DANGER STATE UNKNOWN" in asc._pages[0][0]
+
+
+@pytest.mark.parametrize("entries_held", [None, "false", 0, 1])
+def test_missing_or_nonboolean_entries_held_is_unknown_not_green(
+    asc, monkeypatch, entries_held
+):
+    payload = {"cw_armed_segments": [], "restoration_complete": True}
+    if entries_held is not None:
+        payload["entries_held"] = entries_held
+    monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: (payload, 3.0))
+
+    assert asc.main() == 2
+    assert "ENTRY-HOLD STATE UNKNOWN" in asc._pages[0][0]
 
 
 def test_unparsable_snapshot_time_is_unknown_not_green(asc, monkeypatch):

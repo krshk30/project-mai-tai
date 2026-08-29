@@ -106,14 +106,17 @@ def safety_flag_on() -> bool | None:
     for line in env.splitlines():
         if line.startswith("MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED="):
             value = line.split("=", 1)[1].strip().lower()
-            if value == "true":
+            # Pydantic's boolean parser accepts this complete family. Keep the external pager's
+            # interpretation identical to the service: notably, a live env value of ``1`` enables
+            # the guard and must never be mistaken for an unreadable flag.
+            if value in {"1", "true", "on", "yes", "y"}:
                 return True
-            if value == "false":
+            if value in {"0", "false", "off", "no", "n"}:
                 return False
             return None
-    # settings.py ships this feature OFF. An absent env var is therefore OFF, not permission to
-    # reinterpret an old-bot payload as a restoration failure.
-    return False
+    # The live process environment is the authority. An absent key cannot prove whether this
+    # process inherited a configured/default value, so absence is UNKNOWN rather than OFF.
+    return None
 
 
 def latest_v2_snapshot() -> tuple[dict | None, float | None]:
@@ -218,7 +221,16 @@ def main() -> int:
             f"field (indexes={invalid_dangerous}). The check will not treat them as safe.",
         )
         return 2
-    entries_held = bool(payload.get("entries_held"))
+    entries_held_raw = payload.get("entries_held")
+    if not isinstance(entries_held_raw, bool):
+        page(
+            "🔴 v2 ENTRY-HOLD STATE UNKNOWN",
+            "[armed-segments] entries_held is missing or non-boolean "
+            f"({entries_held_raw!r}, type={type(entries_held_raw).__name__}). The check cannot "
+            "interpret missing hold evidence as entries released and will not print GREEN.",
+        )
+        return 2
+    entries_held = entries_held_raw
     restoration_raw = payload.get("restoration_complete")
     restoration_complete = restoration_raw is True
     dangerous = [s for s in segments if s["dangerous"]]

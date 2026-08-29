@@ -451,16 +451,19 @@ def test_same_watchlist_retries_unreadable_restoration_until_confirmed(
     assert bot._boot_state_restoration_complete is True
 
 
-def test_db_seed_is_not_enough_until_rest_warmup_finishes(monkeypatch) -> None:
+def test_db_seed_is_not_enough_until_rest_warmup_finishes(monkeypatch, caplog) -> None:
     """B3: REST replay can arm after DB seed; it is part of the release precondition."""
     bot = _bot()
     bot.strategy._entries_held = False
     monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
 
-    _apply_snapshot(bot, ["DAIC"], rest_warmed=False)
-    bot._cw_boot_hold_check()
+    with caplog.at_level(logging.WARNING):
+        _apply_snapshot(bot, ["DAIC"], rest_warmed=False)
+        bot._cw_boot_hold_check()
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
+    assert "reason=rest_warmup_incomplete" in caplog.text
+    assert "warmup_pending=1 warmup_pending_symbols=DAIC" in caplog.text
 
     bot._rest_warmup_done.add("DAIC")
     bot._try_complete_boot_state_restoration(bot._watchlist, new_symbols=set())
@@ -529,6 +532,42 @@ def test_flag_off_preserves_seed_without_hold_or_restoration_snapshot(monkeypatc
     asyncio.run(bot._publish_bot_state())
     payload = __import__("json").loads(written[0]["data"])["payload"]
     assert "restoration_complete" not in payload
+    assert "warmup_pending_symbols" not in payload
+
+
+def test_state_payload_names_each_warmup_pending_symbol(monkeypatch) -> None:
+    bot = _bot()
+    bot._watchlist = {"DAIC", "YYGH", "XOS"}
+    bot._rest_warmup_done = {"XOS"}
+    written: list[dict] = []
+
+    class _Redis:
+        async def xadd(self, _stream, fields, **_kwargs):
+            written.append(fields)
+
+    bot.redis = _Redis()
+    monkeypatch.setattr(
+        bot,
+        "_fetch_reportable_state",
+        lambda: {
+            "positions": [],
+            "pending_open": [],
+            "pending_close": [],
+            "daily_pnl": 0.0,
+            "closed_today": [],
+        },
+    )
+
+    asyncio.run(bot._publish_bot_state())
+
+    payload = __import__("json").loads(written[0]["data"])["payload"]
+    assert payload["warmup_pending_symbols"] == ["DAIC", "YYGH"]
+
+
+def test_pydantic_accepts_one_as_enabled_like_the_pager_parser() -> None:
+    """Regression: Settings accepts ``1`` as true, so the live pager parser must as well."""
+    settings = Settings(strategy_schwab_1m_v2_cw_armed_segment_safety_enabled="1")
+    assert settings.strategy_schwab_1m_v2_cw_armed_segment_safety_enabled is True
 
 
 def test_pre_restoration_hold_warning_is_rate_limited(monkeypatch, caplog) -> None:

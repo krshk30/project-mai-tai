@@ -192,6 +192,7 @@ class StrategyBotStatePayload(BaseModel):
     cw_armed_segments: list[dict[str, Any]] = Field(default_factory=list)
     entries_held: bool = False
     restoration_complete: bool = False
+    warmup_pending_symbols: list[str] = Field(default_factory=list)
 
 
 class StrategyStateSnapshotPayload(BaseModel):
