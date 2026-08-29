@@ -134,7 +134,66 @@ def test_d6_binary_status_is_red_not_an_amber_check_exception(
 
     assert level == "RED"
     assert name == "d6-outcome-acceptance"
-    assert "missing" in detail
+    assert "encoding error=UnicodeDecodeError" in detail
+
+
+def test_d6_freshness_green_path_reads_the_current_success(
+    monkeypatch, tmp_path
+) -> None:
+    status = tmp_path / "STATUS.txt"
+    status.write_text(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-28 verdict=PASS\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(fhc, "_D6_STATUS_PATH", status)
+    monkeypatch.setattr(
+        fhc,
+        "_last_completed_session_day",
+        lambda _today: date(2026, 8, 28),
+    )
+
+    level, name, detail = fhc.check_d6_status_freshness()
+
+    assert (level, name) == ("GREEN", "d6-outcome-acceptance")
+    assert "D6 SUCCESS current" in detail
+
+
+def test_d6_permission_failure_is_red_and_distinct_from_missing(monkeypatch) -> None:
+    class PermissionDeniedStatus:
+        def read_text(self, *, encoding: str) -> str:
+            raise PermissionError("root-only")
+
+    monkeypatch.setattr(fhc, "_D6_STATUS_PATH", PermissionDeniedStatus())
+    monkeypatch.setattr(
+        fhc,
+        "_last_completed_session_day",
+        lambda _today: date(2026, 8, 28),
+    )
+
+    level, name, detail = fhc.check_d6_status_freshness()
+
+    assert (level, name) == ("RED", "d6-outcome-acceptance")
+    assert "permission error=PermissionError" in detail
+    assert "missing" not in detail
+
+
+def test_d6_other_oserror_is_red_and_names_the_io_failure(monkeypatch) -> None:
+    class BrokenStatus:
+        def read_text(self, *, encoding: str) -> str:
+            raise OSError("I/O failure")
+
+    monkeypatch.setattr(fhc, "_D6_STATUS_PATH", BrokenStatus())
+    monkeypatch.setattr(
+        fhc,
+        "_last_completed_session_day",
+        lambda _today: date(2026, 8, 28),
+    )
+
+    level, name, detail = fhc.check_d6_status_freshness()
+
+    assert (level, name) == ("RED", "d6-outcome-acceptance")
+    assert "I/O error=OSError" in detail
+    assert "missing" not in detail
 
 
 def test_d6_freshness_check_is_registered_in_the_executed_check_list() -> None:

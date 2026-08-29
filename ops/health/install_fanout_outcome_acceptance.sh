@@ -6,17 +6,34 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 source_check="$repo_root/ops/health/fanout_outcome_acceptance.py"
 source_cron="$repo_root/ops/health/fanout_outcome_acceptance_cron.py"
 source_lib="$repo_root/ops/health/fanout_outcome_acceptance_install_lib.sh"
-target_dir=/home/trader/fanout_outcome_acceptance
+production_target_dir=/home/trader/fanout_outcome_acceptance
+production_python_bin=/home/trader/project-mai-tai/.venv/bin/python
+if [[ -n "${MAI_TAI_D6_INSTALL_TEST_ROOT:-}" ]]; then
+  # The end-to-end test executes this exact installer without writing /home or root's real crontab.
+  # A real root invocation may never redirect the production bindings through this test seam.
+  if [[ "${EUID:-0}" -eq 0 ]]; then
+    echo "REFUSED: D6 installer test root is unavailable to a real root invocation" >&2
+    exit 1
+  fi
+  target_dir="$MAI_TAI_D6_INSTALL_TEST_ROOT/installed"
+  python_bin="$MAI_TAI_D6_INSTALL_TEST_ROOT/python"
+  PATH="$MAI_TAI_D6_INSTALL_TEST_ROOT/fake-bin:$PATH"
+  export PATH
+else
+  target_dir="$production_target_dir"
+  python_bin="$production_python_bin"
+fi
 target_check="$target_dir/check.py"
 target_cron="$target_dir/cron.py"
-python_bin=/home/trader/project-mai-tai/.venv/bin/python
 begin_marker="# BEGIN project-mai-tai D6 outcome acceptance"
 end_marker="# END project-mai-tai D6 outcome acceptance"
 
 source "$source_lib"
 
-effective_uid="${EUID:-$(id -u)}"
-require_root "$effective_uid"
+effective_uid=$(id -u)
+if ! require_root "$effective_uid"; then
+  exit 1
+fi
 
 for source in "$source_check" "$source_cron"; do
   python3 - "$source" <<'PY'
@@ -40,9 +57,15 @@ if [[ -f "$target_cron" ]] && ! cmp -s "$source_cron" "$target_cron"; then
 fi
 install -o root -g root -m 0755 "$source_check" "$target_check"
 install -o root -g root -m 0755 "$source_cron" "$target_cron"
-verify_d6_installed_copy "$source_check" "$target_check"
-verify_d6_installed_copy "$source_cron" "$target_cron"
-verify_d6_runtime "$python_bin" "$target_cron" "$target_check" "$source_check_sha256" "$target_dir"
+if ! verify_d6_installed_copy "$source_check" "$target_check"; then
+  exit 1
+fi
+if ! verify_d6_installed_copy "$source_cron" "$target_cron"; then
+  exit 1
+fi
+if ! verify_d6_runtime "$python_bin" "$target_cron" "$target_check" "$source_check_sha256" "$target_dir"; then
+  exit 1
+fi
 
 current_cron=$(mktemp)
 next_cron=$(mktemp)
@@ -55,7 +78,9 @@ if ! crontab -l >"$current_cron" 2>"$cron_error"; then
     exit 1
   fi
 fi
-verify_d6_existing_cron_block "$begin_marker" "$end_marker" "$current_cron"
+if ! verify_d6_existing_cron_block "$begin_marker" "$end_marker" "$current_cron"; then
+  exit 1
+fi
 awk -v begin="$begin_marker" -v end="$end_marker" '
   $0 == begin { inside=1; next }
   $0 == end { inside=0; next }
@@ -72,8 +97,11 @@ awk -v begin="$begin_marker" -v end="$end_marker" '
 crontab "$next_cron"
 
 installed_cron=$(crontab -l)
-verify_exactly_one_d6_schedule "$cron_line" "$installed_cron"
+if ! verify_exactly_one_d6_schedule "$cron_line" "$installed_cron"; then
+  exit 1
+fi
 
+printf 'WARNING: fleet-health check #5 will page RED until the first 00:17 ET D6 cron success writes current STATUS.txt\n'
 printf 'installed check_sha256=%s cron_sha256=%s schedule="%s" restart_required=0\n' \
   "$(sha256sum "$target_check" | awk '{print $1}')" \
   "$(sha256sum "$target_cron" | awk '{print $1}')" \

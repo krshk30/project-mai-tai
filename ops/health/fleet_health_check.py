@@ -211,8 +211,28 @@ def check_d6_status_freshness() -> tuple[str, str, str]:
     expected = _last_completed_session_day(datetime.now(_EASTERN_TZ).date())
     try:
         contents = _D6_STATUS_PATH.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+    except FileNotFoundError:
         contents = None
+    except PermissionError as exc:
+        return (
+            "RED",
+            "d6-outcome-acceptance",
+            f"D6 STATUS unreadable permission error={type(exc).__name__}; "
+            f"expected={expected.isoformat()}",
+        )
+    except OSError as exc:
+        return (
+            "RED",
+            "d6-outcome-acceptance",
+            f"D6 STATUS unreadable I/O error={type(exc).__name__}; expected={expected.isoformat()}",
+        )
+    except UnicodeError as exc:
+        return (
+            "RED",
+            "d6-outcome-acceptance",
+            f"D6 STATUS unreadable encoding error={type(exc).__name__}; "
+            f"expected={expected.isoformat()}",
+        )
     level, detail = classify_d6_status(contents, expected_session=expected)
     return (level, "d6-outcome-acceptance", detail)
 

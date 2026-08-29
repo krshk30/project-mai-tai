@@ -54,8 +54,26 @@ verify_d6_existing_cron_block() {
   local begin_line
   local end_line
 
-  begin_count=$(grep -Fxc "$begin_marker" "$current_cron" || true)
-  end_count=$(grep -Fxc "$end_marker" "$current_cron" || true)
+  if [[ ! -r "$current_cron" ]]; then
+    echo "REFUSED: existing root crontab snapshot is unreadable: $current_cron" >&2
+    return 1
+  fi
+  if begin_count=$(grep -Fxc "$begin_marker" "$current_cron"); then
+    :
+  elif [[ "$?" -eq 1 ]]; then
+    begin_count=0
+  else
+    echo "REFUSED: could not inspect existing root crontab begin marker" >&2
+    return 1
+  fi
+  if end_count=$(grep -Fxc "$end_marker" "$current_cron"); then
+    :
+  elif [[ "$?" -eq 1 ]]; then
+    end_count=0
+  else
+    echo "REFUSED: could not inspect existing root crontab end marker" >&2
+    return 1
+  fi
   if [[ "$begin_count" -gt 1 || "$end_count" -gt 1 || "$begin_count" -ne "$end_count" ]]; then
     echo "REFUSED: malformed existing D6 cron block begin=$begin_count end=$end_count" >&2
     return 1

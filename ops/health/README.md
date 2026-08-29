@@ -84,6 +84,25 @@ Crontab (trader), dual-UTC for DST (the ET guard inside runs the body only in-wi
 `fleet_health_cron.sh --selftest` sends a RED push to verify phone delivery (no DB/Redis).
 Rollback: remove the crontab line. No live-service impact.
 
+### D6 outcome-acceptance install order
+
+The D6 freshness check is part of `fleet_health_check.py`, which cron executes directly from the
+checkout. Advancing the box checkout before D6 is installed arms check #5 against a missing
+`STATUS.txt` and pages RED. Treat the checker and its installed evidence producer as one release:
+
+1. From the exact independently reviewed and pinned PR head, run
+   `sudo ops/health/install_fanout_outcome_acceptance.sh` **before merging or advancing the box
+   checkout**.
+2. Confirm the installed `check.py` and `cron.py` hashes, the one managed root-cron line, and the
+   installer warning described below.
+3. Merge the same pinned head, advance the box checkout, and confirm no service PID moved.
+4. Until the first scheduled 00:17 ET run writes a current
+   `[D6-OUTCOME-ACCEPTANCE-SUCCESS]`, check #5 is expected to page RED. The installer prints this
+   explicitly; do not interpret that RED as an install failure or suppress the check.
+
+If step 1 cannot be completed from the exact reviewed head, do not merge. Merge-only leaves the
+monitor armed while the producer it watches is absent.
+
 ## Phantom managed-row counter
 
 `phantom_managed_rows.py` plus `.github/workflows/phantom-managed-row-watch.yml` runs every
