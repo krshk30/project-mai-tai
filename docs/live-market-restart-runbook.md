@@ -227,13 +227,14 @@ If runtime positions disappear but account positions remain:
     for f in /var/log/project-mai-tai/schwab-1m-v2.log*; do
       case "$f" in *.gz) zcat -- "$f";; *) cat -- "$f";; esac
     done
-  ' | grep -E '\[V2-BOOT-(RESTORE|HOLD)\]|\[V2-REST-WARMED\]' \
+  ' | grep -E '\[V2-BOOT-(RESTORE|HOLD)\]|\[V2-REST-WARMED\] schwab_v2 REST warmup complete for' \
     | LC_ALL=C sort | tail -n 100
   ```
 
 - Triage the `reason=` field before acting:
   - `ineligible_exclusion_unreadable`: repair the broker-eligibility DB read, then wait for the
-    next scanner snapshot. The last-known exclusions were used only to keep the watchlist moving.
+    next scanner snapshot. `last_known_exclusions_applied=N` states how many cached exclusions were
+    actually used; a cold post-restart cache correctly reports zero.
   - `state_seed_incomplete`: at least one selected symbol's DB seed was unreadable. Repair the DB
     read and let the next restoration pass retry it.
   - `rest_warmup_incomplete`: inspect the explicit `warmup_pending_symbols=` list and restore REST
@@ -250,7 +251,7 @@ If runtime positions disappear but account positions remain:
   1. Read `warmup_pending_symbols=` from the marker (also published in the isolated v2 state
      payload) and verify each name against the current scanner/watchlist.
   2. If a name is still scanner-selected or held, repair REST delivery and require a later
-     `[V2-REST-WARMED] <SYMBOL>` followed by
+     `[V2-REST-WARMED] schwab_v2 REST warmup complete for <SYMBOL>` followed by
      `[V2-BOOT-RESTORE] restoration_complete=1`. A held-position symbol must remain subscribed so
      exits continue; do not remove it to clear the entry gate.
   3. If a name has departed the scanner, wait for the next current scanner snapshot to remove it

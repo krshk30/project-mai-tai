@@ -160,7 +160,8 @@ def test_empty_current_watchlist_cannot_vacuously_complete_restoration(
 
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
-    assert "restoration_complete=0 evaluated=0 confirmed=0" in caplog.text
+    assert "restoration_complete=0 evaluated=0" in caplog.text
+    assert "confirmed=unknown rest_warmed=unknown" in caplog.text
     assert "scanner_evaluated=0" in caplog.text
 
 
@@ -185,7 +186,8 @@ def test_nonempty_scanner_reduced_to_zero_selected_cannot_complete(
     assert bot._watchlist == set()
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
-    assert "restoration_complete=0 evaluated=0 confirmed=0 rest_warmed=0" in caplog.text
+    assert "restoration_complete=0 evaluated=0" in caplog.text
+    assert "confirmed=unknown rest_warmed=unknown" in caplog.text
     assert "scanner_evaluated=0" in caplog.text
 
 
@@ -202,7 +204,7 @@ def test_schwab_ineligible_exclusion_removes_the_scanner_denominator(monkeypatch
 
 
 def test_empty_scanner_with_held_symbol_is_not_a_nonempty_restoration_population(
-    monkeypatch,
+    monkeypatch, caplog
 ) -> None:
     """B1: protected/held union must not launder a live scanner count=0 snapshot."""
     bot = _bot()
@@ -211,13 +213,16 @@ def test_empty_scanner_with_held_symbol_is_not_a_nonempty_restoration_population
     monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
     bot._rest_warmup_done.add("CYN2")
 
-    _apply_snapshot(bot, [])
-    bot._cw_boot_hold_check()
+    with caplog.at_level(logging.WARNING):
+        _apply_snapshot(bot, [])
+        bot._cw_boot_hold_check()
 
     assert bot._watchlist == {"CYN2"}
     assert bot._boot_scanner_selected == set()
     assert bot._boot_state_restoration_complete is False
     assert bot.strategy._entries_held is True
+    assert "scanner_evaluated=0 evaluated=1" in caplog.text
+    assert "confirmed=unknown rest_warmed=unknown" in caplog.text
 
 
 def test_prior_excluded_snapshot_cannot_launder_later_held_only_population(
@@ -288,7 +293,18 @@ def test_ineligible_population_must_be_readable_before_boot_release(
     if unreadable_reason is not None:
         assert "reason=ineligible_exclusion_unreadable" in caplog.text
         assert "snapshot_applied=1" in caplog.text
-        assert "last_known_exclusions_applied=1" in caplog.text
+        assert "last_known_exclusions_applied=0" in caplog.text
+
+
+def test_unreadable_exclusion_telemetry_counts_the_last_known_set(monkeypatch, caplog) -> None:
+    bot = _bot()
+    bot._schwab_ineligible_cache = {"DAIC", "XOS"}
+    monkeypatch.setattr(bot, "_schwab_ineligible_symbols", lambda: None)
+
+    with caplog.at_level(logging.WARNING):
+        _apply_snapshot(bot, ["DAIC", "XOS", "YYGH"])
+
+    assert "last_known_exclusions_applied=2" in caplog.text
 
 
 def test_ineligible_loader_query_failure_is_not_cached_empty() -> None:
@@ -470,6 +486,37 @@ def test_db_seed_is_not_enough_until_rest_warmup_finishes(monkeypatch, caplog) -
     bot._cw_boot_hold_check()
     assert bot._boot_state_restoration_complete is True
     assert bot.strategy._entries_held is False
+
+
+def test_rest_warmup_wave_is_rate_limited_with_a_population_denominator(
+    monkeypatch, caplog
+) -> None:
+    """Twenty-five warmup callbacks produce one WARN, not a log-masking 25-line wave."""
+    bot = _bot()
+    symbols = {f"SYM{i:02d}" for i in range(25)}
+    bot.strategy._entries_held = True
+    monkeypatch.setattr(bot, "_schwab_ineligible_symbols", lambda: set())
+    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
+    monkeypatch.setattr(
+        "project_mai_tai.services.schwab_1m_v2_bot.time.monotonic",
+        lambda: 100.0,
+    )
+
+    with caplog.at_level(logging.INFO):
+        _apply_snapshot(bot, sorted(symbols), rest_warmed=False)
+        for symbol in sorted(symbols):
+            bot._rest_warmup_done.add(symbol)
+            bot._try_complete_boot_state_restoration(bot._watchlist, new_symbols=set())
+
+    incomplete = [
+        record
+        for record in caplog.records
+        if "reason=rest_warmup_incomplete" in record.message
+    ]
+    assert len(incomplete) == 1
+    assert "evaluated=25 confirmed=25" in incomplete[0].message
+    assert "rest_warmed=0 warmup_pending=25" in incomplete[0].message
+    assert "restoration_complete=1 evaluated=25 confirmed=25 rest_warmed=25" in caplog.text
 
 
 def test_real_rest_warmup_callback_completes_the_latch(monkeypatch) -> None:

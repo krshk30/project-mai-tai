@@ -127,6 +127,7 @@ FANOUT_OUTCOME_POLL_INTERVAL_SECONDS = 5.0
 _DB_SEED_GAP_PROBE_MIN = timedelta(hours=2)
 STATE_PUBLISH_INTERVAL_SECONDS = 5
 BOOT_RESTORE_HOLD_LOG_INTERVAL_SECONDS = 60.0
+BOOT_RESTORE_INCOMPLETE_LOG_INTERVAL_SECONDS = 60.0
 POSITION_POLL_INTERVAL_SECONDS = 5
 # Max bar age (seconds) for DB-persistence. Older bars are warmup feeds
 # that prior service instances already persisted; redoing them on every
@@ -254,6 +255,7 @@ class SchwabV2BotService:
         self._boot_scanner_selected: set[str] = set()
         self._boot_exclusion_sources_readable = False
         self._boot_restore_last_hold_log_at: float | None = None
+        self._boot_restore_last_incomplete_log_at: float | None = None
         # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
         # every symbol that was already being watched.
@@ -1644,10 +1646,11 @@ class SchwabV2BotService:
             logger.warning(
                 "[V2-BOOT-RESTORE] restoration_complete=%d "
                 "reason=ineligible_exclusion_unreadable sources=%s snapshot_applied=1 "
-                "last_known_exclusions_applied=1 entries_held=%d; unreadable exclusions cannot "
+                "last_known_exclusions_applied=%d entries_held=%d; unreadable exclusions cannot "
                 "complete boot restoration",
                 int(self._boot_state_restoration_complete),
                 ",".join(unreadable_exclusion_sources),
+                len(ineligible_exclude),
                 int(bool(getattr(self.strategy, "_entries_held", False))),
             )
         if selected == self._watchlist:
@@ -1760,8 +1763,8 @@ class SchwabV2BotService:
         scanner_evaluated = len(self._boot_scanner_selected)
         if evaluated == 0:
             logger.warning(
-                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 confirmed=0 "
-                "rest_warmed=0 scanner_evaluated=%d "
+                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 scanner_evaluated=%d "
+                "confirmed=unknown rest_warmed=unknown "
                 "reason=empty_evaluated_population_after_exclusions; "
                 "zero evaluated states is not safety",
                 scanner_evaluated,
@@ -1770,7 +1773,7 @@ class SchwabV2BotService:
         if scanner_evaluated == 0:
             logger.warning(
                 "[V2-BOOT-RESTORE] restoration_complete=0 scanner_evaluated=0 "
-                "evaluated=%d confirmed=0 rest_warmed=0 "
+                "evaluated=%d confirmed=unknown rest_warmed=unknown "
                 "reason=empty_tradeable_scanner_population; held symbols are not scanner evidence",
                 evaluated,
             )
@@ -1789,17 +1792,25 @@ class SchwabV2BotService:
         rest_warmed = len(selected & self._rest_warmup_done)
         if rest_warmed != evaluated:
             warmup_pending_symbols = sorted(selected - self._rest_warmup_done)
-            logger.warning(
-                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
-                "rest_warmed=%d warmup_pending=%d warmup_pending_symbols=%s "
-                "reason=rest_warmup_incomplete; REST replay may still arm reconstructed state",
-                evaluated,
-                confirmed,
-                rest_warmed,
-                len(warmup_pending_symbols),
-                ",".join(warmup_pending_symbols) or "-",
-            )
+            now = time.monotonic()
+            if (
+                self._boot_restore_last_incomplete_log_at is None
+                or now - self._boot_restore_last_incomplete_log_at
+                >= BOOT_RESTORE_INCOMPLETE_LOG_INTERVAL_SECONDS
+            ):
+                self._boot_restore_last_incomplete_log_at = now
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
+                    "rest_warmed=%d warmup_pending=%d warmup_pending_symbols=%s "
+                    "reason=rest_warmup_incomplete; REST replay may still arm reconstructed state",
+                    evaluated,
+                    confirmed,
+                    rest_warmed,
+                    len(warmup_pending_symbols),
+                    ",".join(warmup_pending_symbols) or "-",
+                )
             return
+        self._boot_restore_last_incomplete_log_at = None
         self._boot_state_restoration_complete = True
         logger.info(
             "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=%d confirmed=%d rest_warmed=%d "
