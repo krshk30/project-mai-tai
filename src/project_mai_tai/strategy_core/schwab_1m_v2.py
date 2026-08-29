@@ -303,6 +303,12 @@ class SymbolState:
     fanout_claim_attempt_id: str = ""
     fanout_claim_outcome: str = "released"
     fanout_outcome_evidence_ids: set[str] = field(default_factory=set)
+    # Webull has its OWN per-segment composition cap. A confirmed Webull fill consumes only the
+    # venue-local economic slot named by the durable fan-out identity; it never consumes the
+    # Schwab ``cw_*`` slot. Unlike the provisional claim above, this survives a position close and
+    # claim expiry. It resets only when the segment itself ends.
+    fanout_webull_resting_taken: bool = False
+    fanout_webull_reclaim_taken: bool = False
     # First Schwab-union-zero observation while durable positive Webull evidence holds the claim.
     # A later position poll either sees the union restore and clears this timer, or releases the
     # venue-local claim at FANOUT_POSITIVE_ZERO_HOLD_MS. It is deliberately independent of
@@ -763,14 +769,15 @@ class SchwabV2Strategy:
         *,
         identity: Mapping[str, object],
         reason: str,
-    ) -> None:
+    ) -> bool:
+        if not self._fanout_webull_slot_available(state, identity=identity, reason=reason):
+            return False
         slot_id = str(identity.get("fanout_slot_id", "")).strip()
-        if not slot_id:
-            raise ValueError("fan-out claim requires fanout_slot_id")
+        slot = str(identity.get("fanout_slot", "")).strip().lower()
         state.fanout_webull_claimed = True
         state.fanout_claim_ms = self._now_ms()
         state.fanout_claim_slot_id = slot_id
-        state.fanout_claim_slot = str(identity.get("fanout_slot", "")).strip().lower()
+        state.fanout_claim_slot = slot
         state.fanout_claim_attempt_id = str(identity.get("fanout_attempt_id", "")).strip()
         state.fanout_claim_outcome = "queued"
         state.fanout_zero_hold_started_ms = 0
@@ -782,6 +789,56 @@ class SchwabV2Strategy:
             reason,
         )
         self._persist_fanout_claim_transition(state, outcome="queued", reason=reason)
+        return True
+
+    def _fanout_webull_slot_available(
+        self,
+        state: SymbolState,
+        *,
+        identity: Mapping[str, object],
+        reason: str,
+    ) -> bool:
+        slot_id = str(identity.get("fanout_slot_id", "")).strip()
+        if not slot_id:
+            raise ValueError("fan-out claim requires fanout_slot_id")
+        slot = str(identity.get("fanout_slot", "")).strip().lower()
+        if slot not in {"resting", "reclaim"}:
+            raise ValueError(f"fan-out claim requires a known economic slot: {slot!r}")
+        if self._fanout_webull_slot_taken(state, slot):
+            logger.info(
+                "[V2-FANOUT-SLOT-CONSUMED] %s slot=%s slot_id=%s attempted=1 suppressed=1 "
+                "reason=%s — denominator=attempted_same_slot_after_confirmed_fill; "
+                "zero attempts is UNEXERCISED, not clean",
+                state.symbol,
+                slot,
+                slot_id,
+                reason,
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _fanout_webull_slot_taken(state: SymbolState, slot: str) -> bool:
+        if slot == "resting":
+            return bool(state.fanout_webull_resting_taken)
+        if slot == "reclaim":
+            return bool(state.fanout_webull_reclaim_taken)
+        raise ValueError(f"unknown Webull fan-out economic slot: {slot!r}")
+
+    @staticmethod
+    def _consume_fanout_webull_slot(state: SymbolState, slot: str) -> None:
+        if slot == "resting":
+            state.fanout_webull_resting_taken = True
+            return
+        if slot == "reclaim":
+            state.fanout_webull_reclaim_taken = True
+            return
+        raise ValueError(f"unknown Webull fan-out economic slot: {slot!r}")
+
+    @staticmethod
+    def _reset_fanout_webull_slots(state: SymbolState) -> None:
+        state.fanout_webull_resting_taken = False
+        state.fanout_webull_reclaim_taken = False
 
     def _release_fanout_webull_claim(
         self,
@@ -862,11 +919,14 @@ class SchwabV2Strategy:
             state.fanout_webull_claimed = True
             state.fanout_claim_outcome = "filled"
             state.fanout_claim_ms = self._now_ms()
+            self._consume_fanout_webull_slot(state, record.slot)
             logger.info(
                 "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=filled held=1 "
-                "evidence=positive fill_rank=authoritative — v2 composition unchanged",
+                "evidence=positive fill_rank=authoritative webull_slot_consumed=1 "
+                "webull_slot=%s — Schwab composition unchanged",
                 record.symbol,
                 record.slot_id,
+                record.slot,
             )
             return "consumed"
 
@@ -1046,6 +1106,7 @@ class SchwabV2Strategy:
         state.cw_arm_bar_ts = 0
         self._release_fanout_webull_claim(state, reason=reason)
         self._clear_fanout_segment_id(state, reason=reason)
+        self._reset_fanout_webull_slots(state)
         state.cw_entries_this_flip = 0
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
@@ -1106,6 +1167,7 @@ class SchwabV2Strategy:
         state.cw_entries_this_flip = 0
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
+        self._reset_fanout_webull_slots(state)
         state.cw_v2_emit_claimed = False
         state.cw_v2_emit_ms = 0
         state.resting_flip_ms = 0
@@ -1268,30 +1330,30 @@ class SchwabV2Strategy:
                 state,
                 source="rth_resting",
             )
-            self._claim_fanout_webull(
+            if self._claim_fanout_webull(
                 state,
                 identity=shared_identity,
                 reason="schwab_resting_fill",
-            )
-            logger.info(
-                "[V2-FANOUT-ON-FILL] %s schwab resting entry FILLED at level=%.4f -> parallel "
-                "Webull leg queued immediately (no cross re-detection, no race)",
-                symbol, state.resting_level,
-            )
-            self._pending_webull_fanout_intents.append(
-                self._build_webull_fanout_draft(
-                    state,
-                    # Anchor BOTH the price and the band on the level the primary filled at — that
-                    # is the price we decided to buy, and it is what the Schwab leg actually paid.
-                    entry_px=state.resting_level,
-                    session_is_eh=False,
-                    source="rth_resting",
-                    entry_n=state.cw_entries_this_flip + 1,
-                    entry_slot=state.last_resting_placed_slot,
-                    band_anchor=state.resting_level,
-                    shared_identity=shared_identity,
+            ):
+                logger.info(
+                    "[V2-FANOUT-ON-FILL] %s schwab resting entry FILLED at level=%.4f -> parallel "
+                    "Webull leg queued immediately (no cross re-detection, no race)",
+                    symbol, state.resting_level,
                 )
-            )
+                self._pending_webull_fanout_intents.append(
+                    self._build_webull_fanout_draft(
+                        state,
+                        # Anchor BOTH the price and the band on the level the primary filled at — that
+                        # is the price we decided to buy, and it is what the Schwab leg actually paid.
+                        entry_px=state.resting_level,
+                        session_is_eh=False,
+                        source="rth_resting",
+                        entry_n=state.cw_entries_this_flip + 1,
+                        entry_slot=state.last_resting_placed_slot,
+                        band_anchor=state.resting_level,
+                        shared_identity=shared_identity,
+                    )
+                )
         position_closed = prev > 0 and state.position_qty == 0
         spurious = prev_held == 0 and state.position_qty_held == 0
         if position_closed:
@@ -1762,6 +1824,10 @@ class SchwabV2Strategy:
         state.cw_v2_emit_ms = 0
         self._release_fanout_webull_claim(state, reason="session_anchor_reset")
         restored_anchor = int(getattr(self, "_restored_fanout_session_anchor_ms", 0) or 0)
+        # Outcome replay runs before historical bar replay. Preserve a current-session durable fill
+        # while those older anchors walk through this reset; retire it only at the next real anchor.
+        if not restored_anchor or anchor > restored_anchor:
+            self._reset_fanout_webull_slots(state)
         self._clear_fanout_segment_id(
             state,
             reason="session_anchor_reset",
@@ -2312,13 +2378,16 @@ class SchwabV2Strategy:
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
             state.cw_arm_bar_ts = 0
             self._release_fanout_webull_claim(state, reason="flip")
+            live_fanout_transition = self._fanout_identity_bar_is_live(state)
             self._clear_fanout_segment_id(
                 state,
                 reason="flip",
                 # Historical SELLs are warmup reconstruction; the first fresh SELL is a real
                 # transition and must retire a durable key restored from the pre-restart process.
-                include_unconsumed_restore=self._fanout_identity_bar_is_live(state),
+                include_unconsumed_restore=live_fanout_transition,
             )
+            if live_fanout_transition:
+                self._reset_fanout_webull_slots(state)
             # A cross ENDS here, so this is where its slots are released. Moved from the arm block
             # (2026-08-03): entries belong to the cross that was live when they filled, or to the
             # cross that confirms while the position is still held.
@@ -2569,7 +2638,7 @@ class SchwabV2Strategy:
         # missing one it replaces.
         if self._dual_broker_fanout_enabled:
             if not state.fanout_webull_claimed:
-                self._claim_fanout_webull(
+                claimed = self._claim_fanout_webull(
                     state,
                     identity=shared_fanout_identity,
                     reason="reactive_draft_queued",
@@ -2585,24 +2654,25 @@ class SchwabV2Strategy:
                 # by exactly its own denominator — two metrics that must differ, reading the same
                 # number, for a reason invisible in either line. Same family as the greedy-regex
                 # sibling collision of 2026-08-21. Refer to the sibling in PROSE, never by token.
-                logger.info(
-                    "[V2-FANOUT-REACTIVE-LATCHED] %s reactive claimed the fan-out latch "
-                    "n=%d px=%.4f — this line is the DENOMINATOR for the reactive suppression "
-                    "count (its own marker is deliberately not repeated here)",
-                    state.symbol, state.cw_entries_this_flip, px,
-                )
-                self._pending_webull_fanout_intents.append(
-                    self._build_webull_fanout_draft(
-                        state,
-                        entry_px=px,
-                        session_is_eh=self._cw_is_extended_hours(now_ms),
-                        source="reactive",
-                        # ALREADY incremented just above -- the counter reflects THIS entry.
-                        entry_n=state.cw_entries_this_flip,
-                        entry_slot="reclaim",
-                        shared_identity=shared_fanout_identity,
+                if claimed:
+                    logger.info(
+                        "[V2-FANOUT-REACTIVE-LATCHED] %s reactive claimed the fan-out latch "
+                        "n=%d px=%.4f — this line is the DENOMINATOR for the reactive suppression "
+                        "count (its own marker is deliberately not repeated here)",
+                        state.symbol, state.cw_entries_this_flip, px,
                     )
-                )
+                    self._pending_webull_fanout_intents.append(
+                        self._build_webull_fanout_draft(
+                            state,
+                            entry_px=px,
+                            session_is_eh=self._cw_is_extended_hours(now_ms),
+                            source="reactive",
+                            # ALREADY incremented just above -- the counter reflects THIS entry.
+                            entry_n=state.cw_entries_this_flip,
+                            entry_slot="reclaim",
+                            shared_identity=shared_fanout_identity,
+                        )
+                    )
             else:
                 # ⛔⭐⭐ EVERY LINE HERE IS ONE §82 DUPLICATE THAT DID NOT HAPPEN.
                 # NON-ZERO IS GOOD NEWS — the same polarity as the seed-gap REFUSAL count, and the
@@ -2756,46 +2826,52 @@ class SchwabV2Strategy:
         # ⛔ Goes on the DIRECT queue, not the fan-out queue: the fan-out queue is drained through
         # `_maybe_emit`, and the matching CANCEL must never be gated.
         if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled:
-            self._claim_fanout_webull(
+            claimed = self._claim_fanout_webull(
                 state,
                 identity=shared_fanout_identity,
                 reason="resting_mirror_draft_queued",
             )
-            state.webull_resting_active = True
-            entry_n = state.cw_entries_this_flip + 1
-            segment_id = int(shared_fanout_identity["fanout_segment_id"])
-            logger.info(
-                "[V2-FANOUT-SEGMENT-BOUND] %s source=rth_resting_mirror "
-                "trigger=fanout_draft attributed=1 segment_id=%d entry_n=%d — polarity: "
-                "attributed=1 means this leg can be grouped; unattributed filled legs make the "
-                "duplicate grade UNEXERCISED",
-                state.symbol, segment_id, entry_n,
-            )
-            logger.info(
-                "[V2-WEBULL-RESTING-PLACE] %s slot=%s stop=%.4f limit=%.4f — mirrored rest sitting "
-                "at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)",
-                state.symbol, slot, line, limit,
-            )
-            self._pending_webull_direct_intents.append(TradeIntentDraft(
-                symbol=state.symbol, side="buy", intent_type="open",
-                quantity=Decimal(str(self._webull_fanout_qty)),
-                reason="schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)",
-                metadata={
-                    "path": "ATR Flip", "atr_variant": "CW-v2-fanout",
-                    "order_type": "STOP_LIMIT",
-                    "stop_price": f"{line:.4f}", "limit_price": f"{limit:.4f}",
-                    "reference_price": f"{line:.4f}", "entry_price": f"{line:.4f}",
-                    "cw_flip_level": f"{line:.4f}",
-                    "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
-                    "resting_entry": "true",
-                    "cw_entry_n": str(entry_n),
-                    "cw_entry_slot": slot,
-                    "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
-                    **shared_fanout_identity,
-                    # ⛔ NO bracket_* keys on purpose -- see the note above.
-                    "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
-                },
-            ))
+            if claimed:
+                state.webull_resting_active = True
+                entry_n = state.cw_entries_this_flip + 1
+                segment_id = int(shared_fanout_identity["fanout_segment_id"])
+                logger.info(
+                    "[V2-FANOUT-SEGMENT-BOUND] %s source=rth_resting_mirror "
+                    "trigger=fanout_draft attributed=1 segment_id=%d entry_n=%d — polarity: "
+                    "attributed=1 means this leg can be grouped; unattributed filled legs make the "
+                    "duplicate grade UNEXERCISED",
+                    state.symbol, segment_id, entry_n,
+                )
+                logger.info(
+                    "[V2-WEBULL-RESTING-PLACE] %s slot=%s stop=%.4f limit=%.4f — mirrored rest "
+                    "sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit "
+                    "master)",
+                    state.symbol, slot, line, limit,
+                )
+                self._pending_webull_direct_intents.append(
+                    TradeIntentDraft(
+                        symbol=state.symbol,
+                        side="buy",
+                        intent_type="open",
+                        quantity=Decimal(str(self._webull_fanout_qty)),
+                        reason="schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)",
+                        metadata={
+                            "path": "ATR Flip", "atr_variant": "CW-v2-fanout",
+                            "order_type": "STOP_LIMIT",
+                            "stop_price": f"{line:.4f}", "limit_price": f"{limit:.4f}",
+                            "reference_price": f"{line:.4f}", "entry_price": f"{line:.4f}",
+                            "cw_flip_level": f"{line:.4f}",
+                            "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
+                            "resting_entry": "true",
+                            "cw_entry_n": str(entry_n),
+                            "cw_entry_slot": slot,
+                            "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
+                            **shared_fanout_identity,
+                            # ⛔ NO bracket_* keys on purpose -- see the note above.
+                            "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
+                        },
+                    )
+                )
 
     def _queue_resting_cancel(self, state: SymbolState, *, reason: str) -> None:
         was_level = state.resting_level
@@ -3240,15 +3316,23 @@ class SchwabV2Strategy:
         # Dual-broker fan-out: co-queue the parallel Webull EH-LIMIT leg at the same EH cross (once,
         # guarded by resting_flip_ms set above). No-op unless fan-out is on.
         if self._dual_broker_fanout_enabled:
-            self._pending_webull_fanout_intents.append(
-                self._build_webull_fanout_draft(
-                    state, entry_px=level, session_is_eh=True, source="eh_resting",
-                    # NOT yet incremented on this path -- this leg is the NEXT entry.
-                    entry_n=state.cw_entries_this_flip + 1,
-                    entry_slot=state.last_resting_placed_slot,
-                    shared_identity=shared_fanout_identity,
+            # EH already owns its pre-outcome dedup through ``resting_flip_ms``. Do not introduce a
+            # second provisional latch here: a rejected/unsubmitted EH leg would otherwise suppress
+            # retries indefinitely. The durable filled-slot cap still applies before every emit.
+            if self._fanout_webull_slot_available(
+                state,
+                identity=shared_fanout_identity,
+                reason="eh_resting_cross_draft_attempted",
+            ):
+                self._pending_webull_fanout_intents.append(
+                    self._build_webull_fanout_draft(
+                        state, entry_px=level, session_is_eh=True, source="eh_resting",
+                        # NOT yet incremented on this path -- this leg is the NEXT entry.
+                        entry_n=state.cw_entries_this_flip + 1,
+                        entry_slot=state.last_resting_placed_slot,
+                        shared_identity=shared_fanout_identity,
+                    )
                 )
-            )
         return TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="open",
             quantity=Decimal(str(self._atr_qty)),
@@ -3506,11 +3590,12 @@ class SchwabV2Strategy:
             # gating the Schwab primary. Live CNET fired here at px=1.4300 on a thin tape.
             return
         shared_identity = self._fanout_identity_metadata(state, source="rth_resting")
-        self._claim_fanout_webull(
+        if not self._claim_fanout_webull(
             state,
             identity=shared_identity,
             reason="rth_resting_cross_draft_queued",
-        )
+        ):
+            return
         logger.info(
             "[V2-FANOUT-RTH-RESTING] %s px=%.4f >= resting_level=%.4f -> parallel Webull MARKET leg",
             state.symbol, px, state.resting_level,
