@@ -1,0 +1,9 @@
+{
+  "pr_number": 837,
+  "range_base": "f2296c24b67ff2669d0699ddeac250f00b4a38a7",
+  "range_head": "ee534198d75007025d9beab158e628d0b1105a5b",
+  "reviewed_at": "2026-08-29T15:08:01Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-verified the one-file docs-only range, base ancestry and five Claude markers; confirmed the final handoff blob matches reviewed head 4d5eb918, the shipped-count/install corrections are present on all document surfaces, and the snapshot is explicitly time-bound rather than current production authority."
+}
