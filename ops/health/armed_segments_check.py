@@ -100,10 +100,13 @@ def safety_flag_on() -> bool | None:
     pid = sh(["systemctl", "show", UNIT, "-p", "MainPID", "--value"])
     if pid is None or not pid or pid == "0":
         return None
-    env = sh(["sudo", "tr", "\\0", "\\n", f"/proc/{pid}/environ"])
+    # ``tr`` reads stdin; passing ``/proc/<pid>/environ`` as a third operand makes
+    # GNU tr fail with "extra operand" and turns every live check into UNKNOWN.
+    # Read the proc file directly, then split its NUL-delimited payload in Python.
+    env = sh(["sudo", "cat", f"/proc/{pid}/environ"])
     if env is None:
         return None
-    for line in env.splitlines():
+    for line in env.replace("\0", "\n").splitlines():
         if line.startswith("MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED="):
             value = line.split("=", 1)[1].strip().lower()
             # Pydantic's boolean parser accepts this complete family. Keep the external pager's

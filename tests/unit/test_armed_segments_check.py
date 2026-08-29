@@ -281,12 +281,33 @@ def test_absent_flag_is_unknown_not_the_shipped_default(monkeypatch):
     def fake_sh(command: list[str]) -> str:
         if command[:3] == ["systemctl", "show", mod.UNIT]:
             return "1234"
-        if command[:2] == ["sudo", "tr"]:
+        if command[:2] == ["sudo", "cat"]:
             return "SOME_OTHER_FLAG=true\n"
         raise AssertionError(command)
 
     monkeypatch.setattr(mod, "sh", fake_sh)
     assert mod.safety_flag_on() is None
+
+
+def test_safety_flag_reads_proc_environ_as_nul_delimited_file(monkeypatch):
+    mod = _load()
+    calls: list[list[str]] = []
+
+    def fake_sh(command: list[str]) -> str:
+        calls.append(command)
+        if command[:3] == ["systemctl", "show", mod.UNIT]:
+            return "1234"
+        if command == ["sudo", "cat", "/proc/1234/environ"]:
+            return (
+                "OTHER_FLAG=true\0"
+                "MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED=true\0"
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(mod, "sh", fake_sh)
+
+    assert mod.safety_flag_on() is True
+    assert calls[-1] == ["sudo", "cat", "/proc/1234/environ"]
 
 
 @pytest.mark.parametrize(
@@ -310,7 +331,7 @@ def test_live_flag_parser_matches_pydantic_truthy_values_and_rejects_unknown(
     def fake_sh(command: list[str]) -> str:
         if command[:3] == ["systemctl", "show", mod.UNIT]:
             return "1234"
-        if command[:2] == ["sudo", "tr"]:
+        if command[:2] == ["sudo", "cat"]:
             return (
                 "MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED="
                 f"{raw}\n"
@@ -329,7 +350,7 @@ def test_sh_failure_is_unknown_not_an_empty_success(monkeypatch):
         lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("unreadable")),
     )
 
-    assert mod.sh(["sudo", "tr", "\\0", "\\n", "/proc/1234/environ"]) is None
+    assert mod.sh(["sudo", "cat", "/proc/1234/environ"]) is None
 
 
 @pytest.mark.parametrize(
@@ -344,7 +365,7 @@ def test_sh_nonzero_or_empty_stdout_is_unknown(monkeypatch, returncode, stdout):
     result = type("Completed", (), {"returncode": returncode, "stdout": stdout})()
     monkeypatch.setattr(mod.subprocess, "run", lambda *_args, **_kwargs: result)
 
-    assert mod.sh(["sudo", "tr", "\\0", "\\n", "/proc/1234/environ"]) is None
+    assert mod.sh(["sudo", "cat", "/proc/1234/environ"]) is None
 
 
 def test_pages_when_live_flag_environ_read_fails(monkeypatch):
@@ -355,7 +376,7 @@ def test_pages_when_live_flag_environ_read_fails(monkeypatch):
     def fake_sh(command: list[str]) -> str | None:
         if command[:3] == ["systemctl", "show", mod.UNIT]:
             return "1234"
-        if command[:2] == ["sudo", "tr"]:
+        if command[:2] == ["sudo", "cat"]:
             return None
         raise AssertionError(command)
 
@@ -382,7 +403,7 @@ def test_pages_when_live_flag_is_absent_or_unparsable(monkeypatch):
     def fake_sh(command: list[str]) -> str:
         if command[:3] == ["systemctl", "show", mod.UNIT]:
             return "1234"
-        if command[:2] == ["sudo", "tr"]:
+        if command[:2] == ["sudo", "cat"]:
             return next(environments)
         raise AssertionError(command)
 
