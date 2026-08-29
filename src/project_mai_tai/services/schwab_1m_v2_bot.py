@@ -1409,8 +1409,9 @@ class SchwabV2BotService:
 
     def _fetch_open_positions(self) -> dict[str, int]:
         """SQL: virtual_positions(qty>0) ∪ in-flight trade_intents(open)
-        for the v2 broker account, keyed by symbol. Quantity is the max
-        across sources (a conservative "do we own this" signal).
+        for the v2 broker account, keyed by symbol. Both halves are independently
+        broker-account scoped. Quantity is the max across sources (a conservative
+        "do we own this on the primary venue" signal).
         """
         maps = self._fetch_position_maps()
         if maps is not None:
@@ -1427,7 +1428,9 @@ class SchwabV2BotService:
         """Returns (union, held).
 
         `union` is the historical conservative signal -- virtual_positions ∪ in-flight open intents
-        -- and is what `_fetch_open_positions` still returns, so every existing caller is unchanged.
+        for the configured v2 broker account -- and is what `_fetch_open_positions` still returns.
+        Cross-venue fan-out intents must not enter this entry-decision signal: reading A accounts for
+        the Webull claim separately from the Schwab primary venue.
 
         `held` counts virtual_positions ONLY, i.e. shares we actually own per filled orders. The two
         differ for exactly one reason: a resting buy-stop's open intent stays `submitted` for its
@@ -1469,6 +1472,7 @@ class SchwabV2BotService:
                     for ti in session.scalars(
                         select(TradeIntent).where(
                             TradeIntent.strategy_id == strategy.id,
+                            TradeIntent.broker_account_id == broker.id,
                             TradeIntent.intent_type == "open",
                             TradeIntent.status.notin_(
                                 INFLIGHT_INTENT_STATUSES_TERMINAL
