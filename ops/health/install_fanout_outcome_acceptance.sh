@@ -87,21 +87,30 @@ awk -v begin="$begin_marker" -v end="$end_marker" '
   !inside { print }
 ' "$current_cron" >"$next_cron"
 {
-  printf '\n%s\n' "$begin_marker"
+  printf '%s\n' "$begin_marker"
   # The box cron is UTC. In EDT, 04:17 is the first attempt and 05:17/06:17 are retries. In EST,
   # 04:17 is 23:17 on the prior ET day and deduplicates its already-graded session; 05:17 is the
   # first attempt and 06:17 the one retry. cron.py deduplicates every completed result.
   printf '%s\n' "$cron_line"
   printf '%s\n' "$end_marker"
 } >>"$next_cron"
-crontab "$next_cron"
+if ! verify_d6_nonmanaged_cron_preserved \
+  "$begin_marker" "$end_marker" "$current_cron" "$next_cron"; then
+  exit 1
+fi
+if ! crontab "$next_cron"; then
+  echo "REFUSED: could not install the reviewed D6 root crontab" >&2
+  exit 1
+fi
 
 installed_cron=$(crontab -l)
 if ! verify_exactly_one_d6_schedule "$cron_line" "$installed_cron"; then
   exit 1
 fi
 
-printf 'WARNING: fleet-health check #5 will page RED until the first 00:17 ET D6 cron success writes current STATUS.txt\n'
+printf 'REQUIRED BEFORE CHECKOUT ADVANCE: run the installed cron once as root to seed STATUS: sudo %s %s --acceptance %s --acceptance-sha256 %s --out-dir %s\n' \
+  "$python_bin" "$target_cron" "$target_check" "$source_check_sha256" "$target_dir"
+printf 'WARNING: fleet-health check #5 pages RED until a current D6 SUCCESS exists; a NONPASS seed remains RED until the first 00:17 ET success\n'
 printf 'installed check_sha256=%s cron_sha256=%s schedule="%s" restart_required=0\n' \
   "$(sha256sum "$target_check" | awk '{print $1}')" \
   "$(sha256sum "$target_cron" | awk '{print $1}')" \

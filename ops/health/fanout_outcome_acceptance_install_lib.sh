@@ -87,3 +87,47 @@ verify_d6_existing_cron_block() {
     fi
   fi
 }
+
+verify_d6_nonmanaged_cron_preserved() {
+  local begin_marker=$1
+  local end_marker=$2
+  local current_cron=$3
+  local next_cron=$4
+  local expected_nonmanaged
+  local actual_nonmanaged
+
+  if ! expected_nonmanaged=$(mktemp); then
+    echo "REFUSED: could not allocate current-crontab preservation check" >&2
+    return 1
+  fi
+  if ! actual_nonmanaged=$(mktemp); then
+    rm -f "$expected_nonmanaged"
+    echo "REFUSED: could not allocate next-crontab preservation check" >&2
+    return 1
+  fi
+
+  if ! awk -v begin="$begin_marker" -v end="$end_marker" '
+    $0 == begin { inside=1; next }
+    $0 == end { inside=0; next }
+    !inside { print }
+  ' "$current_cron" >"$expected_nonmanaged"; then
+    rm -f "$expected_nonmanaged" "$actual_nonmanaged"
+    echo "REFUSED: could not derive existing non-D6 root crontab lines" >&2
+    return 1
+  fi
+  if ! awk -v begin="$begin_marker" -v end="$end_marker" '
+    $0 == begin { inside=1; next }
+    $0 == end { inside=0; next }
+    !inside { print }
+  ' "$next_cron" >"$actual_nonmanaged"; then
+    rm -f "$expected_nonmanaged" "$actual_nonmanaged"
+    echo "REFUSED: could not derive proposed non-D6 root crontab lines" >&2
+    return 1
+  fi
+  if ! cmp -s "$expected_nonmanaged" "$actual_nonmanaged"; then
+    rm -f "$expected_nonmanaged" "$actual_nonmanaged"
+    echo "REFUSED: proposed root crontab would alter or lose a non-D6 line" >&2
+    return 1
+  fi
+  rm -f "$expected_nonmanaged" "$actual_nonmanaged"
+}

@@ -743,6 +743,7 @@ def test_installer_is_root_only_and_manages_one_repo_owned_cron_block() -> None:
     )
     assert 'if ! verify_exactly_one_d6_schedule "$cron_line" "$installed_cron"; then' in installer
     assert 'if ! verify_d6_runtime "$python_bin" "$target_cron" "$target_check" ' in installer
+    assert 'if ! verify_d6_nonmanaged_cron_preserved \\' in installer
     assert cron.DEFAULT_OUT_DIR / "STATUS.txt" == fleet_health._D6_STATUS_PATH
 
     target_dir_line = next(
@@ -751,7 +752,8 @@ def test_installer_is_root_only_and_manages_one_repo_owned_cron_block() -> None:
     shell_target_dir = Path(target_dir_line.split("=", 1)[1])
     assert shell_target_dir == cron.DEFAULT_OUT_DIR
     assert shell_target_dir == fleet_health._D6_STATUS_PATH.parent
-    assert "first 00:17 ET D6 cron success" in installer
+    assert "run the installed cron once as root to seed STATUS" in installer
+    assert "first 00:17 ET success" in installer
 
 
 @pytest.mark.parametrize(
@@ -775,6 +777,10 @@ def test_installer_is_root_only_and_manages_one_repo_owned_cron_block() -> None:
             'if ! verify_exactly_one_d6_schedule "$cron_line"',
             "verify_exactly_one_d6_schedule",
         ),
+        (
+            "if ! verify_d6_nonmanaged_cron_preserved \\",
+            "verify_d6_nonmanaged_cron_preserved",
+        ),
     ),
 )
 def test_each_real_installer_guard_call_refuses_even_without_errexit(
@@ -787,7 +793,10 @@ def test_each_real_installer_guard_call_refuses_even_without_errexit(
     call_index = next(
         index for index, line in enumerate(installer_lines) if line.startswith(call_prefix)
     )
-    call_site = "\n".join(installer_lines[call_index : call_index + 3])
+    call_end = next(
+        index for index in range(call_index, len(installer_lines)) if installer_lines[index] == "fi"
+    )
+    call_site = "\n".join(installer_lines[call_index : call_end + 1])
     survived = tmp_path / "survived"
     harness = tmp_path / "guard.sh"
     harness.write_text(
@@ -799,6 +808,7 @@ def test_each_real_installer_guard_call_refuses_even_without_errexit(
         "source_cron=source-cron target_cron=target-cron\n"
         "python_bin=python target_dir=target-dir source_check_sha256=digest\n"
         "begin_marker=begin end_marker=end current_cron=current-cron\n"
+        "next_cron=next-cron\n"
         "cron_line=cron-line installed_cron=installed-cron\n"
         f"{call_site}\n"
         f"touch '{survived.as_posix()}'\n",
@@ -844,12 +854,16 @@ def test_installer_library_guards_have_reachable_positive_and_negative_polaritie
     one_block = tmp_path / "one.cron"
     two_blocks = tmp_path / "two.cron"
     reversed_block = tmp_path / "reversed.cron"
+    preserved_block = tmp_path / "preserved.cron"
+    lost_nonmanaged = tmp_path / "lost-nonmanaged.cron"
     empty_cron.write_text("# unrelated\n", encoding="utf-8")
     one_block.write_text("# BEGIN D6\njob\n# END D6\n", encoding="utf-8")
     two_blocks.write_text(
         "# BEGIN D6\njob\n# END D6\n# BEGIN D6\njob\n# END D6\n", encoding="utf-8"
     )
     reversed_block.write_text("# END D6\njob\n# BEGIN D6\n", encoding="utf-8")
+    preserved_block.write_text("# unrelated\n# BEGIN D6\nnew job\n# END D6\n", encoding="utf-8")
+    lost_nonmanaged.write_text("# BEGIN D6\nnew job\n# END D6\n", encoding="utf-8")
 
     assert _run_install_helper("require_root 0").returncode == 0
     assert _run_install_helper("require_root 1").returncode != 0
@@ -880,6 +894,14 @@ def test_installer_library_guards_have_reachable_positive_and_negative_polaritie
         assert _run_install_helper(
             f"verify_d6_existing_cron_block '# BEGIN D6' '# END D6' '{path.as_posix()}'"
         ).returncode != 0
+    assert _run_install_helper(
+        f"verify_d6_nonmanaged_cron_preserved '# BEGIN D6' '# END D6' "
+        f"'{empty_cron.as_posix()}' '{preserved_block.as_posix()}'"
+    ).returncode == 0
+    assert _run_install_helper(
+        f"verify_d6_nonmanaged_cron_preserved '# BEGIN D6' '# END D6' "
+        f"'{empty_cron.as_posix()}' '{lost_nonmanaged.as_posix()}'"
+    ).returncode != 0
 
 
 def _write_executable(path: Path, contents: str) -> None:
@@ -985,7 +1007,8 @@ def test_whole_installer_succeeds_with_one_managed_schedule(tmp_path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "first 00:17 ET D6 cron success" in result.stdout
+    assert "run the installed cron once as root to seed STATUS" in result.stdout
+    assert "first 00:17 ET success" in result.stdout
     assert "restart_required=0" in result.stdout
     assert cron_state.read_text(encoding="utf-8").count(
         "/cron.py --acceptance "
@@ -994,6 +1017,100 @@ def test_whole_installer_succeeds_with_one_managed_schedule(tmp_path) -> None:
     assert "install -d" in commands
     assert "sha256sum" in commands
     assert commands.count("crontab -l") == 2
+
+
+def test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block(tmp_path) -> None:
+    installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original, encoding="utf-8")
+
+    first = subprocess.run(
+        [_bash_executable(), str(installer)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    second = subprocess.run(
+        [_bash_executable(), str(installer)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    installed = cron_state.read_text(encoding="utf-8")
+    assert installed.count("# BEGIN project-mai-tai D6 outcome acceptance") == 1
+    assert installed.count("# END project-mai-tai D6 outcome acceptance") == 1
+    assert installed.count("/cron.py --acceptance ") == 1
+    assert "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n" in installed
+
+
+def test_whole_installer_refuses_broken_reviewed_source_without_touching_crontab(
+    tmp_path,
+) -> None:
+    installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original, encoding="utf-8")
+    (installer.parent / "fanout_outcome_acceptance.py").write_text(
+        "def broken(:\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "SyntaxError" in result.stderr
+    assert cron_state.read_text(encoding="utf-8") == original
+
+
+def test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled(
+    tmp_path,
+) -> None:
+    installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+    original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+    cron_state.write_text(original, encoding="utf-8")
+    source = installer.read_text(encoding="utf-8")
+    assert source.count("set -euo pipefail") == 1  # Cheap setup tripwire, not the proof.
+    installer.write_text(
+        source.replace("set -euo pipefail", "set -euo pipefail\nset +e", 1),
+        encoding="utf-8",
+    )
+    installer.chmod(0o755)
+    awk_state = tmp_path / "awk-state"
+    env["FAKE_AWK_STATE"] = awk_state.as_posix()
+    _write_executable(
+        tmp_path / "runtime" / "fake-bin" / "awk",
+        "#!/usr/bin/env bash\n"
+        "is_cron_filter=0\n"
+        "for arg in \"$@\"; do [[ $arg == begin=* ]] && is_cron_filter=1; done\n"
+        "if [[ $is_cron_filter == 1 ]]; then\n"
+        "  count=0; [[ -f $FAKE_AWK_STATE ]] && count=$(cat \"$FAKE_AWK_STATE\")\n"
+        "  count=$((count + 1)); printf '%s' \"$count\" > \"$FAKE_AWK_STATE\"\n"
+        "  if [[ $count == 1 ]]; then exit 29; fi\n"
+        "fi\n"
+        "exec /usr/bin/awk \"$@\"\n",
+    )
+
+    result = subprocess.run(
+        [_bash_executable(), str(installer)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "proposed root crontab would alter or lose a non-D6 line" in result.stderr
+    assert cron_state.read_text(encoding="utf-8") == original
 
 
 @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
