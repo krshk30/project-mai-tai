@@ -68,6 +68,152 @@ def complete_db(**overrides: int) -> dict[str, int]:
     return result
 
 
+def status_for_denominator(case_name: str, denominator: int):
+    """Vary only one metric's opportunity denominator; keep its failure count at zero."""
+    metric_name = case_name
+    if case_name == "w1_reactive_suppression":
+        v2 = (
+            [line("2026-08-28 12:00:00", "[V2-FANOUT-REACTIVE-LATCHED] AAA")] if denominator else []
+        )
+        return metrics(v2=v2)[metric_name][0]
+    if case_name == "w2_fanout_identity":
+        status = "UNEXERCISED" if denominator == 0 else "OBSERVED"
+        identity = (
+            status,
+            {
+                "queued": denominator,
+                "submitted": denominator,
+                "intent_identity_complete": denominator,
+                "roots": denominator,
+                "max_chain_depth": denominator,
+                "chain_errors": 0,
+            },
+        )
+        return metrics(identity=identity)[metric_name][0]
+    if case_name == "w4_no_account_population":
+        metric_name = "w4_broker_sync"
+        oms = (
+            [
+                line(
+                    "2026-08-28 12:00:00",
+                    "[BROKER-SYNC-CENSUS] live:orb: ok=1 failed=0 consecutive_now=0",
+                )
+            ]
+            if denominator
+            else []
+        )
+        return metrics(oms=oms)[metric_name][0]
+    if case_name == "w4_per_account_reads":
+        metric_name = "w4_broker_sync"
+        oms = [
+            line(
+                "2026-08-28 12:00:00",
+                f"[BROKER-SYNC-CENSUS] live:orb: ok={denominator} failed=0 consecutive_now=0",
+            )
+        ]
+        return metrics(oms=oms)[metric_name][0]
+    if case_name == "w5_order_event_savepoint":
+        return metrics(db=complete_db(order_event_rows=denominator))[metric_name][0]
+    if case_name == "pr824_positive_zero_hold":
+        v2 = [line("2026-08-28 12:00:00", "[V2-FANOUT-CLAIM-ZERO-HOLD] AAA")] if denominator else []
+        return metrics(v2=v2)[metric_name][0]
+    if case_name == "pr825_virtual_clear_deferred":
+        oms = (
+            [
+                line(
+                    "2026-08-28 12:00:00",
+                    "[VIRTUAL-CLEAR-DEFERRED] deferred=1 of unbacked_positive=1 clear_allowed=0",
+                )
+            ]
+            if denominator
+            else []
+        )
+        return metrics(oms=oms)[metric_name][0]
+    if case_name == "pr829_intent_cancel_bound":
+        db = complete_db(strategy_cancel_followups=denominator)
+        return metrics(db=db)[metric_name][0]
+    if case_name == "boot_gate_1_population":
+        v2 = (
+            [
+                line(
+                    "2026-08-28 12:00:00",
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=1 confirmed=0 "
+                    "reason=state_seed_incomplete",
+                )
+            ]
+            if denominator
+            else []
+        )
+        return metrics(v2=v2)[metric_name][0]
+    if case_name == "boot_gate_2_state_seed":
+        v2 = (
+            [
+                line(
+                    "2026-08-28 12:00:00",
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=1 confirmed=1 "
+                    "rest_warmed=0 reason=rest_warmup_incomplete",
+                )
+            ]
+            if denominator
+            else []
+        )
+        return metrics(v2=v2)[metric_name][0]
+    if case_name == "boot_gate_3_rest_warmup":
+        v2 = (
+            [
+                line(
+                    "2026-08-28 12:00:00",
+                    "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=1 confirmed=1 rest_warmed=1",
+                )
+            ]
+            if denominator
+            else []
+        )
+        return metrics(v2=v2)[metric_name][0]
+    if case_name == "boot_hold_release":
+        v2 = [
+            line(
+                "2026-08-28 12:00:01",
+                "[V2-BOOT-HOLD] released restoration_complete=1 reconstructed_uncapped=0",
+            )
+        ]
+        if denominator:
+            v2.insert(
+                0,
+                line(
+                    "2026-08-28 12:00:00",
+                    "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=1 confirmed=1 rest_warmed=1",
+                ),
+            )
+        return metrics(v2=v2)[metric_name][0]
+    raise AssertionError(f"unhandled census denominator: {case_name}")
+
+
+@pytest.mark.parametrize(
+    "case_name",
+    (
+        "w1_reactive_suppression",
+        "w2_fanout_identity",
+        "w4_no_account_population",
+        "w4_per_account_reads",
+        "w5_order_event_savepoint",
+        "pr824_positive_zero_hold",
+        "pr825_virtual_clear_deferred",
+        "pr829_intent_cancel_bound",
+        "boot_gate_1_population",
+        "boot_gate_2_state_seed",
+        "boot_gate_3_rest_warmup",
+        "boot_hold_release",
+    ),
+)
+def test_every_reported_zero_denominator_is_unexercised(case_name: str) -> None:
+    zero = status_for_denominator(case_name, 0)
+    exercised = status_for_denominator(case_name, 1)
+
+    assert zero.status == "UNEXERCISED"
+    assert exercised.status == "OBSERVED"
+
+
 def test_window_is_half_open_and_marker_matching_is_exact() -> None:
     raw = [
         line("2026-08-28 11:00:00", "[V2-FANOUT-CLAIM-ZERO-HOLD] started"),
@@ -170,8 +316,20 @@ def test_cancel_bounds_state_exact_and_upper_bound_denominators_separately() -> 
     assert fields(direct) == {
         "refused": "1",
         "durable_terminal_targets_before_until": "4",
-        "exact_path_denominator": "unknown",
+        "exact_path_denominator": "absent_by_instrumentation",
     }
+
+
+@pytest.mark.parametrize("terminal_targets", (0, 7))
+def test_832_missing_exact_denominator_is_permanent_until_instrumented(
+    terminal_targets: int,
+) -> None:
+    row = metrics(db=complete_db(terminal_target_episodes=terminal_targets))[
+        "pr832_direct_cancel_bound"
+    ][0]
+    assert row.status == "COULD_NOT_TELL"
+    assert fields(row)["exact_path_denominator"] == "absent_by_instrumentation"
+    assert "permanently_could_not_tell" in row.zero_means
 
 
 def test_all_three_boot_gates_preserve_never_reached_false_zeros() -> None:

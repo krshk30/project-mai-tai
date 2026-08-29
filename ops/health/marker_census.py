@@ -584,11 +584,11 @@ def build_lines(
                 else "zero_refused_means_followups_existed_but_no_bound_marker_was_observed",
             )
         )
-        # Direct paths create no durable intent, so terminal targets are an upper-bound population,
-        # never an exact per-path denominator. Preserve that limitation on the line.
-        direct_status = (
-            "UNEXERCISED" if candidates == 0 else ("OBSERVED" if direct_bound else "COULD_NOT_TELL")
-        )
+        # Direct paths create no durable intent or per-attempt event. Terminal targets are only an
+        # upper-bound population, never the exact per-path denominator. Therefore a missing bound
+        # marker cannot establish a zero opportunity population: the denominator is absent by
+        # instrumentation, not waiting for a better query.
+        direct_status = "OBSERVED" if direct_bound else "COULD_NOT_TELL"
         result.append(
             CensusLine(
                 "pr832_direct_cancel_bound",
@@ -596,11 +596,9 @@ def build_lines(
                 (
                     ("refused", str(direct_bound)),
                     ("durable_terminal_targets_before_until", str(candidates)),
-                    ("exact_path_denominator", "unknown"),
+                    ("exact_path_denominator", "absent_by_instrumentation"),
                 ),
-                "UNEXERCISED(no_terminal_target_episode)"
-                if candidates == 0
-                else "zero_refused_cannot_distinguish_no_direct_retry_from_an_unbounded_direct_path",
+                "zero_refused_is_permanently_could_not_tell_until_direct_attempts_are_instrumented",
             )
         )
 
