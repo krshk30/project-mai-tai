@@ -412,6 +412,62 @@ def _outcome_seed_rows() -> tuple[SeedRow, ...]:
             },
             filled=True,
         )
+
+    # Keep the mirror-symbol and matched-order windows independently observable.  In the first
+    # pair only the Schwab order is in-window, so removing target_mirror_symbols' bound admits it.
+    # In the second pair only the Webull mirror is in-window, so removing target_matched_orders'
+    # bound admits its outside Schwab counterpart.  Symmetric timestamps would let either sibling
+    # CTE mask the predicate this fixture is meant to prove.
+    add_order(
+        label="target-mirror-outside",
+        account_id=WEBULL_ID,
+        symbol="MIRROR_BOUND",
+        side="buy",
+        at=OUTSIDE_AT,
+        status="cancelled",
+        payload={"fanout_source": "rth_resting_mirror"},
+    )
+    add_order(
+        label="target-mirror-outside-match-inside",
+        account_id=SCHWAB_ID,
+        symbol="MIRROR_BOUND",
+        side="buy",
+        at=INSIDE_AT,
+        status="cancelled",
+        payload={},
+    )
+    add_order(
+        label="target-mirror-inside",
+        account_id=WEBULL_ID,
+        symbol="MATCH_BOUND",
+        side="buy",
+        at=INSIDE_AT,
+        status="cancelled",
+        payload={"fanout_source": "rth_resting_mirror"},
+    )
+    add_order(
+        label="target-mirror-inside-match-outside",
+        account_id=SCHWAB_ID,
+        symbol="MATCH_BOUND",
+        side="buy",
+        at=OUTSIDE_AT,
+        status="cancelled",
+        payload={},
+    )
+
+    # The existing exact-until rows are BUY legs.  This SELL fill independently exercises
+    # target_exit_episodes' half-open upper bound.
+    add_order(
+        label="target-sell-until",
+        account_id=WEBULL_ID,
+        symbol="EXIT_UNTIL_BOUND",
+        side="sell",
+        at=LIVE_WINDOW.until,
+        status="filled",
+        payload={},
+        order_type="MARKET",
+        filled=True,
+    )
     for label, symbol, at in (
         ("target-sell-inside", "INSIDE", INSIDE_AT),
         ("target-sell-outside", "OUTSIDE", OUTSIDE_AT),
@@ -505,6 +561,57 @@ def _identity_seed_rows() -> tuple[SeedRow, ...]:
         assert order.values["id"] == order_id
         assert order.values["client_order_id"] == attempt_id
         orders.append(order)
+
+    # Isolate the broker-order timestamp from its sibling intent predicate.  The intent is inside
+    # the requested window but deliberately carries no fanout_source, while the linked order has
+    # full identity and lands exactly at the exclusive upper bound.  Deleting, loosening, or
+    # laundering only bo.submitted_at therefore changes the order_rows population by one.
+    order_bound_intent_id = _id("intent/identity-order-until")
+    order_bound_symbol = "IDENT_BO_UNTIL"
+    order_bound_segment = "9105"
+    order_bound_slot = fanout_slot_id(
+        strategy_code="schwab_1m_v2",
+        symbol=order_bound_symbol,
+        segment_id=order_bound_segment,
+        slot="resting",
+    )
+    intents.append(
+        SeedRow(
+            TradeIntent.__table__,
+            {
+                "id": order_bound_intent_id,
+                "strategy_id": STRATEGY_ID,
+                "broker_account_id": WEBULL_ID,
+                "symbol": order_bound_symbol,
+                "side": "buy",
+                "intent_type": "open",
+                "quantity": Decimal("1"),
+                "reason": "SQL harness order boundary",
+                "status": "queued",
+                "payload": {"metadata": {}},
+                "created_at": INSIDE_AT,
+                "updated_at": INSIDE_AT,
+            },
+        )
+    )
+    orders.append(
+        _order_row(
+            label="identity-order-until",
+            account_id=WEBULL_ID,
+            symbol=order_bound_symbol,
+            side="buy",
+            at=LIVE_WINDOW.until,
+            status="submitted",
+            payload={
+                "fanout_segment_id": order_bound_segment,
+                "fanout_slot": "resting",
+                "fanout_slot_id": order_bound_slot,
+                "fanout_attempt_id": f"sql-harness-{_id('order/identity-order-until')}",
+                "fanout_source": "rth_resting_mirror",
+            },
+            intent_id=order_bound_intent_id,
+        )
+    )
     return (*_common_rows(), *intents, *orders)
 
 
@@ -574,6 +681,14 @@ def _replace_once(sql: str, old: str, new: str) -> str:
     return sql.replace(old, new, 1)
 
 
+def _replace_once_in_cte(sql: str, cte: str, old: str, new: str) -> str:
+    start = sql.index(f"{cte} AS (")
+    end = sql.index("\n),", start)
+    block = sql[start:end]
+    assert block.count(old) == 1, f"{cte} mutation site must remain singular and reachable"
+    return sql[:start] + block.replace(old, new, 1) + sql[end:]
+
+
 def _launder_target_buy_fill_time(sql: str) -> str:
     old = "JOIN fill_by_order fbo ON fbo.order_id = bo.id\n    CROSS JOIN target_bounds b"
     new = """JOIN (
@@ -632,6 +747,33 @@ target_refused_classified AS ("""
     return _replace_once(sql, old, new)
 
 
+def _unbound_target_mirror_symbols(sql: str) -> str:
+    return _replace_once_in_cte(
+        sql,
+        "target_mirror_symbols",
+        "      AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
+        "",
+    )
+
+
+def _unbound_target_matched_orders(sql: str) -> str:
+    return _replace_once_in_cte(
+        sql,
+        "target_matched_orders",
+        "      AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
+        "",
+    )
+
+
+def _include_until_target_exit_episode(sql: str) -> str:
+    return _replace_once_in_cte(
+        sql,
+        "target_exit_episodes",
+        "      AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at < b.until_at",
+        "      AND sfbo.first_fill_at >= b.since_at AND sfbo.first_fill_at <= b.until_at",
+    )
+
+
 @pytest.mark.parametrize(
     ("mutator", "kind"),
     (
@@ -654,6 +796,44 @@ def test_d6_real_postgres_kills_textually_invisible_window_leaks(
     mutated_count = sum(row.kind == kind for row in mutated)
     assert correct_count == 0
     assert mutated_count > correct_count
+
+
+@pytest.mark.parametrize(
+    ("mutator", "kind", "order_label"),
+    (
+        pytest.param(
+            _unbound_target_mirror_symbols,
+            "MATCHED_ORDER",
+            "target-mirror-outside-match-inside",
+            id="target-mirror-symbols-window",
+        ),
+        pytest.param(
+            _unbound_target_matched_orders,
+            "MATCHED_ORDER",
+            "target-mirror-inside-match-outside",
+            id="target-matched-orders-window",
+        ),
+        pytest.param(
+            _include_until_target_exit_episode,
+            "EXIT_EPISODE",
+            "target-sell-until",
+            id="target-exit-episodes-until",
+        ),
+    ),
+)
+def test_d6_each_relational_window_changes_its_own_named_population(
+    postgres_harness: PostgresAcceptanceHarness,
+    mutator: Callable[[str], str],
+    kind: str,
+    order_label: str,
+) -> None:
+    case = AcceptanceSqlCase(OUTCOME, _outcome_seed_rows(), LIVE_WINDOW)
+    expected_order_id = str(_id(f"order/{order_label}"))
+    correct = OUTCOME.parse_rows(postgres_harness.execute(case))
+    mutated = OUTCOME.parse_rows(postgres_harness.execute(case, sql=mutator(OUTCOME.SQL)))
+
+    assert not any(row.kind == kind and expected_order_id in row.values for row in correct)
+    assert any(row.kind == kind and expected_order_id in row.values for row in mutated)
 
 
 def test_d6_uses_real_control_rows_and_fails_when_the_control_moves(
@@ -707,18 +887,33 @@ def test_identity_window_is_since_inclusive_and_until_exclusive_for_orders(
     assert "IDENT_SINCE" in {row.symbol for row in correct_orders}
     assert "IDENT_UNTIL" not in {row.symbol for row in correct_intents}
     assert "IDENT_UNTIL" not in {row.symbol for row in correct_orders}
+    assert "IDENT_BO_UNTIL" not in {row.symbol for row in correct_intents}
+    assert "IDENT_BO_UNTIL" not in {row.symbol for row in correct_orders}
 
-    ti_bound = "AND ti.created_at < :'window_until'::timestamptz"
     bo_bound = "AND bo.submitted_at < :'window_until'::timestamptz"
-    assert IDENTITY.SQL.count(ti_bound) == 2
-    assert IDENTITY.SQL.count(bo_bound) == 1
-    mutated_sql = IDENTITY.SQL.replace(ti_bound, ti_bound.replace(" < ", " <= "))
-    mutated_sql = mutated_sql.replace(bo_bound, bo_bound.replace(" < ", " <= "))
-    mutated_intents, mutated_orders = IDENTITY.parse_database_rows(
-        postgres_harness.execute(case, sql=mutated_sql)
-    )
-    assert "IDENT_UNTIL" in {row.symbol for row in mutated_intents}
-    assert "IDENT_UNTIL" in {row.symbol for row in mutated_orders}
+    mutations = {
+        "deleted": _replace_once(IDENTITY.SQL, f"      {bo_bound}\n", ""),
+        "loosened": _replace_once(
+            IDENTITY.SQL,
+            bo_bound,
+            bo_bound.replace(" < ", " <= "),
+        ),
+        # Preserve the literal bo predicate while allowing the sibling intent timestamp to make
+        # it irrelevant.  A SQL.count assertion cannot see this laundering; the relational row can.
+        "laundered": _replace_once(
+            IDENTITY.SQL,
+            bo_bound,
+            f"AND ({bo_bound.removeprefix('AND ')} OR "
+            "ti.created_at < :'window_until'::timestamptz)",
+        ),
+    }
+    for label, mutated_sql in mutations.items():
+        _mutated_intents, mutated_orders = IDENTITY.parse_database_rows(
+            postgres_harness.execute(case, sql=mutated_sql)
+        )
+        assert "IDENT_BO_UNTIL" in {
+            row.symbol for row in mutated_orders
+        }, f"bo.submitted_at {label} mutation did not change the relational population"
 
 
 def test_unavailable_postgres_is_a_failure_not_a_skip() -> None:
