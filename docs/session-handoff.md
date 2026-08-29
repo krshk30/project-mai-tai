@@ -16,7 +16,7 @@ review before merge — the author never reviews.
 | checkout | clean |
 | open PRs | **0** |
 | ledgers | flat — `virtual_positions` qty>0 **0**, non-terminal open intents **0**, working broker orders **0** |
-| last bar | Fri 2026-08-28 23:59:30 UTC (19:59:30 ET). No stream since. |
+| last bar | **v2**: Fri 2026-08-28 **23:59:00** UTC. (`23:59:30` is `polygon_30s`, fleet-wide — a max across series, not v2's. Corrected by `codex-2`.) No stream since. |
 
 | service | pid | moved today? |
 |---|---|---|
@@ -25,6 +25,7 @@ review before merge — the author never reviews.
 | market-data | 1974639 | — |
 | reconciler | 1811867 | — |
 | control | 1974293 | — |
+| strategy | 1982263 | — |
 
 `NRestarts=0` on every unit.
 
@@ -78,9 +79,22 @@ caught it.
 **GO = an OBSERVED `restoration_complete=1`.** ⛔ Absence of a hold line is **NOT** a release; the
 release is its own INFO line and must be seen.
 
-⭐ **Also report `evaluated` and compare to Friday's.** #843 should make it **smaller** by exactly
-the fan-out-only symbols. If unchanged, #843 is not reaching the path — and that must be known
-before the open.
+⛔⭐⭐ **THE `evaluated`-VERSUS-FRIDAY TEST WAS WRONG AND IS WITHDRAWN.** The original text said
+an unchanged `evaluated` means #843 is not reaching the path. **Unchanged is the EXPECTED reading.**
+
+Measured read-only across 08-24→08-28, weekdays 07:00–16:00 ET, probes every 3h: only **4** probes
+found *any* live open intent at all, and fan-out-only symbols removed by #843 were **0, 0, 1, 0**.
+The instantaneous population is **0, occasionally 1** — which follows directly from the median
+non-terminal window of **0.105s**. These intents almost never exist at the moment you look.
+
+⇒ **DB3 cannot be validated by production observation; its population is rare by design.** Its
+correctness rests on the EXECUTED MUTATION (deleting the predicate yields
+`assert {'ORBONLY': 1} == {}` against a 9-test baseline), not on a live reading. Its exercise row
+belongs in the standing census with zero labelled as the expected value.
+
+⭐ **What DOES have a real population is the OVER-narrowing check:** a duplicate entry on the
+Schwab primary would mean a genuine primary in-flight intent stopped blocking re-entry. Keep that
+one — it is not rare by construction, and nobody else is watching it.
 
 **Mitigation, prepared and unexecuted:** setting
 `MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED=false` puts v2 in shipped
