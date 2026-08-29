@@ -32,7 +32,18 @@ def asc(monkeypatch):
     monkeypatch.setattr(mod, "unit_active", lambda: True)
     monkeypatch.setattr(mod, "safety_flag_on", lambda: True)
     monkeypatch.setattr(mod, "uptime_secs", lambda: 86_400.0)
-    monkeypatch.setattr(mod, "latest_v2_snapshot", lambda: ({"cw_armed_segments": [], "entries_held": False}, 3.0))
+    monkeypatch.setattr(
+        mod,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
     monkeypatch.setattr(mod.sys, "argv", ["armed_segments_check.py"])
     mod._pages = pages
     return mod
@@ -50,7 +61,18 @@ def test_green_on_live_healthy_state(asc, monkeypatch):
     """Reproduces the real 2026-07-17 snapshot: 4 armed, 3 capped, none reconstructed."""
     segs = [_seg("IQST", entries=1, capped=True), _seg("DXST", entries=1, capped=True),
             _seg("LBGJ"), _seg("ASTN", entries=1, capped=True)]
-    monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": segs, "entries_held": False}, 3.0))
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": segs,
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
     assert asc.main() == 0
     assert asc._pages == []
 
@@ -69,7 +91,18 @@ def test_pages_on_dangerous_segment(asc, monkeypatch):
 def test_reconstructed_but_capped_is_not_dangerous(asc, monkeypatch):
     """P1.3 doing its job is not a fault. Only reconstructed AND uncapped pages."""
     segs = [_seg("CPHI", entries=1, capped=True, reconstructed=True, dangerous=False)]
-    monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": segs, "entries_held": False}, 3.0))
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": segs,
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
     assert asc.main() == 0
     assert asc._pages == []
 
@@ -97,10 +130,95 @@ def test_pages_when_boot_hold_outlives_grace(asc, monkeypatch):
     Uptime is ABSOLUTE (1h), not grace-relative: a grace-relative uptime makes this test pass for
     any grace, including one large enough to disable the check.
     """
-    monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": [], "entries_held": True}, 3.0))
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": True,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
     monkeypatch.setattr(asc, "uptime_secs", lambda: 3600.0)
     assert asc.main() == 2
     assert "BOOT-HOLD NEVER RELEASED" in asc._pages[0][0]
+
+
+def test_pages_with_the_real_reason_when_restoration_never_completes(asc, monkeypatch):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": True,
+                "restoration_complete": False,
+            },
+            3.0,
+        ),
+    )
+    monkeypatch.setattr(asc, "uptime_secs", lambda: 3600.0)
+
+    assert asc.main() == 2
+    title, body = asc._pages[0]
+    assert "STATE RESTORATION INCOMPLETE" in title
+    assert "restoration_complete=false" in body
+
+
+def test_pages_when_entries_are_released_before_restoration_completes(asc, monkeypatch):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": False,
+                "restoration_complete": False,
+            },
+            3.0,
+        ),
+    )
+
+    assert asc.main() == 2
+    title, body = asc._pages[0]
+    assert "RELEASED BEFORE STATE RESTORATION" in title
+    assert "entries_held=false" in body
+
+
+def test_missing_restoration_field_is_unknown_not_a_defect(asc, monkeypatch, capsys):
+    """An old/flag-off bot cannot prove restoration precedence, but it also did not violate it."""
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: ({"cw_armed_segments": [], "entries_held": False}, 3.0),
+    )
+
+    assert asc.main() == 0
+    assert asc._pages == []
+    assert "COULD_NOT_TELL: restoration_complete is absent" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("invalid", ["false", 0])
+def test_non_boolean_restoration_state_is_unknown_not_green(asc, monkeypatch, invalid):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": False,
+                "restoration_complete": invalid,
+            },
+            3.0,
+        ),
+    )
+
+    assert asc.main() == 2
+    assert len(asc._pages) == 1
+    assert "RESTORATION STATE UNKNOWN" in asc._pages[0][0]
 
 
 def test_boot_hold_within_grace_is_quiet(asc, monkeypatch):
@@ -155,6 +273,192 @@ def test_safety_flag_off_is_not_a_fault(asc, monkeypatch):
     monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: ({"cw_armed_segments": segs, "entries_held": True}, 3.0))
     assert asc.main() == 0
     assert asc._pages == []
+
+
+def test_absent_flag_is_unknown_not_the_shipped_default(monkeypatch):
+    mod = _load()
+
+    def fake_sh(command: list[str]) -> str:
+        if command[:3] == ["systemctl", "show", mod.UNIT]:
+            return "1234"
+        if command[:2] == ["sudo", "tr"]:
+            return "SOME_OTHER_FLAG=true\n"
+        raise AssertionError(command)
+
+    monkeypatch.setattr(mod, "sh", fake_sh)
+    assert mod.safety_flag_on() is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("true", True),
+        ("1", True),
+        ("yes", True),
+        ("false", False),
+        ("0", False),
+        ("off", False),
+        ("definitely", None),
+    ],
+)
+def test_live_flag_parser_matches_pydantic_truthy_values_and_rejects_unknown(
+    monkeypatch, raw, expected
+):
+    """In particular, Pydantic treats ``1`` as true; the pager must do the same."""
+    mod = _load()
+
+    def fake_sh(command: list[str]) -> str:
+        if command[:3] == ["systemctl", "show", mod.UNIT]:
+            return "1234"
+        if command[:2] == ["sudo", "tr"]:
+            return (
+                "MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED="
+                f"{raw}\n"
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(mod, "sh", fake_sh)
+    assert mod.safety_flag_on() is expected
+
+
+def test_sh_failure_is_unknown_not_an_empty_success(monkeypatch):
+    mod = _load()
+    monkeypatch.setattr(
+        mod.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("unreadable")),
+    )
+
+    assert mod.sh(["sudo", "tr", "\\0", "\\n", "/proc/1234/environ"]) is None
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [
+        (1, "permission denied"),
+        (0, ""),
+    ],
+)
+def test_sh_nonzero_or_empty_stdout_is_unknown(monkeypatch, returncode, stdout):
+    mod = _load()
+    result = type("Completed", (), {"returncode": returncode, "stdout": stdout})()
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_args, **_kwargs: result)
+
+    assert mod.sh(["sudo", "tr", "\\0", "\\n", "/proc/1234/environ"]) is None
+
+
+def test_pages_when_live_flag_environ_read_fails(monkeypatch):
+    """The live flag can be ON while MainPID -> /proc races; unreadable must never mean OFF."""
+    mod = _load()
+    pages: list[tuple[str, str]] = []
+
+    def fake_sh(command: list[str]) -> str | None:
+        if command[:3] == ["systemctl", "show", mod.UNIT]:
+            return "1234"
+        if command[:2] == ["sudo", "tr"]:
+            return None
+        raise AssertionError(command)
+
+    monkeypatch.setattr(mod, "unit_active", lambda: True)
+    monkeypatch.setattr(mod, "sh", fake_sh)
+    monkeypatch.setattr(mod, "page", lambda title, body, **_kw: pages.append((title, body)))
+    monkeypatch.setattr(mod.sys, "argv", ["armed_segments_check.py"])
+
+    assert mod.main() == 2
+    assert len(pages) == 1
+    assert "SAFETY FLAG UNKNOWN" in pages[0][0]
+
+
+def test_pages_when_live_flag_is_absent_or_unparsable(monkeypatch):
+    mod = _load()
+    pages: list[tuple[str, str]] = []
+    environments = iter(
+        [
+            "SOME_OTHER_FLAG=true\n",
+            "MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED=definitely\n",
+        ]
+    )
+
+    def fake_sh(command: list[str]) -> str:
+        if command[:3] == ["systemctl", "show", mod.UNIT]:
+            return "1234"
+        if command[:2] == ["sudo", "tr"]:
+            return next(environments)
+        raise AssertionError(command)
+
+    monkeypatch.setattr(mod, "unit_active", lambda: True)
+    monkeypatch.setattr(mod, "sh", fake_sh)
+    monkeypatch.setattr(mod, "page", lambda title, body, **_kw: pages.append((title, body)))
+    monkeypatch.setattr(mod.sys, "argv", ["armed_segments_check.py"])
+
+    assert mod.main() == 2
+    assert mod.main() == 2
+    assert [title for title, _body in pages] == [
+        "🔴 armed-segments SAFETY FLAG UNKNOWN",
+        "🔴 armed-segments SAFETY FLAG UNKNOWN",
+    ]
+
+
+def test_missing_armed_segments_field_is_unknown_not_green(asc, monkeypatch):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: ({"entries_held": False, "restoration_complete": True}, 3.0),
+    )
+
+    assert asc.main() == 2
+    assert "PAYLOAD UNKNOWN" in asc._pages[0][0]
+
+
+def test_missing_dangerous_field_is_unknown_not_green(asc, monkeypatch):
+    segment = _seg("DAIC")
+    segment.pop("dangerous")
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [segment],
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            3.0,
+        ),
+    )
+
+    assert asc.main() == 2
+    assert "DANGER STATE UNKNOWN" in asc._pages[0][0]
+
+
+@pytest.mark.parametrize("entries_held", [None, "false", 0, 1])
+def test_missing_or_nonboolean_entries_held_is_unknown_not_green(
+    asc, monkeypatch, entries_held
+):
+    payload = {"cw_armed_segments": [], "restoration_complete": True}
+    if entries_held is not None:
+        payload["entries_held"] = entries_held
+    monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: (payload, 3.0))
+
+    assert asc.main() == 2
+    assert "ENTRY-HOLD STATE UNKNOWN" in asc._pages[0][0]
+
+
+def test_unparsable_snapshot_time_is_unknown_not_green(asc, monkeypatch):
+    monkeypatch.setattr(
+        asc,
+        "latest_v2_snapshot",
+        lambda: (
+            {
+                "cw_armed_segments": [],
+                "entries_held": False,
+                "restoration_complete": True,
+            },
+            None,
+        ),
+    )
+
+    assert asc.main() == 2
+    assert "SNAPSHOT TIME UNKNOWN" in asc._pages[0][0]
 
 
 # --------------------------------------------------------------- precedence

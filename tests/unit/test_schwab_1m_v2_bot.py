@@ -712,7 +712,7 @@ def test_v2_excludes_schwab_ineligible_symbols_from_watchlist(monkeypatch) -> No
     assert "DDD" not in bot._watchlist
 
 
-def test_v2_schwab_ineligible_is_safe_noop_without_session_factory() -> None:
-    """The loader returns empty (no raise) when there's no DB handle."""
+def test_v2_schwab_ineligible_is_unreadable_without_session_factory() -> None:
+    """No DB handle is unknown eligibility, not a measured empty exclusion set."""
     bot = _bot()  # _bot() constructs with session_factory=None
-    assert bot._schwab_ineligible_symbols() == set()
+    assert bot._schwab_ineligible_symbols() is None

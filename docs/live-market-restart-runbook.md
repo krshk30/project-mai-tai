@@ -212,6 +212,56 @@ If runtime positions disappear but account positions remain:
 - do not assume the strategy remembers the position lifecycle
 - watch for reconciliation drift and do not make a second trading-critical change casually
 
+## Schwab 1-Min v2 Boot Hold
+
+- Do not restart `project-mai-tai-schwab-1m-v2.service` between 07:00 and 16:00 ET
+  without a new explicit operator decision. Premarket entries are live from 07:00.
+- After a restart, require `[V2-BOOT-RESTORE] restoration_complete=1` before treating
+  the entry path as available. An empty restored-state list before that marker is not safety.
+- The authoritative log is `/var/log/project-mai-tai/schwab-1m-v2.log`, not journald. It rotates
+  at 00:00 UTC (20:00 ET), so one trading day can span the current and rotated files. Read both in
+  chronological order before diagnosing a hold:
+
+  ```bash
+  sudo sh -c '
+    for f in /var/log/project-mai-tai/schwab-1m-v2.log*; do
+      case "$f" in *.gz) zcat -- "$f";; *) cat -- "$f";; esac
+    done
+  ' | grep -E '\[V2-BOOT-(RESTORE|HOLD)\]|\[V2-REST-WARMED\] schwab_v2 REST warmup complete for' \
+    | LC_ALL=C sort | tail -n 100
+  ```
+
+- Triage the `reason=` field before acting:
+  - `ineligible_exclusion_unreadable`: repair the broker-eligibility DB read, then wait for the
+    next scanner snapshot. `last_known_exclusions_applied=N` states how many cached exclusions were
+    actually used; a cold post-restart cache correctly reports zero.
+  - `state_seed_incomplete`: at least one selected symbol's DB seed was unreadable. Repair the DB
+    read and let the next restoration pass retry it.
+  - `rest_warmup_incomplete`: inspect the explicit `warmup_pending_symbols=` list and restore REST
+    bar delivery for those symbols.
+  - `empty_evaluated_population_after_exclusions`: no selected state was evaluated; wait for a
+    current non-empty scanner population. Zero evaluated states is not safety.
+  - `empty_tradeable_scanner_population`: only held/protected symbols remain. They preserve exit
+    ownership but are not evidence that the entry scanner was restored.
+- `rest_warmed != evaluated` means **at least one** selected symbol has not supplied a REST bar no
+  older than `REST_WARMUP_FRESH_THRESHOLD_SECS`; it does not mean every symbol is missing. One
+  halted or thin symbol can hold the fleet indefinitely. There is deliberately no timeout that
+  converts missing input into safety.
+- To clear a persistent `rest_warmup_incomplete` hold safely:
+  1. Read `warmup_pending_symbols=` from the marker (also published in the isolated v2 state
+     payload) and verify each name against the current scanner/watchlist.
+  2. If a name is still scanner-selected or held, repair REST delivery and require a later
+     `[V2-REST-WARMED] schwab_v2 REST warmup complete for <SYMBOL>` followed by
+     `[V2-BOOT-RESTORE] restoration_complete=1`. A held-position symbol must remain subscribed so
+     exits continue; do not remove it to clear the entry gate.
+  3. If a name has departed the scanner, wait for the next current scanner snapshot to remove it
+     naturally. Before any operator-directed scanner removal, prove it has no broker position, no
+     open managed row, and no working order using the same broker/managed/working-order preflight
+     surfaces used for a v2 restart. Then wait for the next snapshot and the complete marker.
+  4. Never clear the hold by toggling the safety flag, repeatedly restarting, or treating elapsed
+     time as restored evidence. If safe clearance cannot be proven, keep entries held and escalate
+     to the operator.
+
 ## TradingView Alerts Restart
 
 Use when:
@@ -422,4 +472,3 @@ The main missing capabilities are:
 - safe intent buffering or replay across OMS restarts
 - safer subscription re-seeding after isolated market-data restarts
 - a tested restart-with-open-positions validation pass
-

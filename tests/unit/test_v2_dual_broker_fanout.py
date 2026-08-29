@@ -554,6 +554,36 @@ async def test_emit_webull_fanout_legs_skips_ineligible():
 
 
 @pytest.mark.asyncio
+async def test_emit_webull_fanout_legs_preserves_fail_open_when_factory_is_missing():
+    bot = _bot()
+    bot.strategy._pending_webull_fanout_intents.append(_draft("UNKNOWN"))
+    bot.webull_intent_emitter = AsyncMock()
+    bot._webull_ineligible_symbols = lambda: None
+    bot._record_local_fanout_outcome = AsyncMock()
+
+    await bot._emit_webull_fanout_legs()
+
+    bot.webull_intent_emitter.emit.assert_awaited_once()
+    bot._record_local_fanout_outcome.assert_not_awaited()
+    assert bot.strategy._pending_webull_fanout_intents == []
+
+
+@pytest.mark.asyncio
+async def test_emit_webull_fanout_legs_preserves_cached_fallback_on_query_failure():
+    bot = _bot()
+    bot.session_factory = lambda: None
+    bot._webull_ineligible_cache = {"NOPE"}
+    bot.strategy._pending_webull_fanout_intents.append(_draft("NOPE"))
+    bot.webull_intent_emitter = AsyncMock()
+    bot._webull_ineligible_symbols = lambda: None
+
+    await bot._emit_webull_fanout_legs()
+
+    bot.webull_intent_emitter.emit.assert_not_awaited()
+    assert bot.strategy._pending_webull_fanout_intents == []
+
+
+@pytest.mark.asyncio
 async def test_emit_webull_fanout_legs_drains_when_emitter_unset():
     bot = _bot(strategy_schwab_1m_v2_webull_account_name="")   # no webull account -> emitter stays None
     bot.strategy._pending_webull_fanout_intents.append(_draft("TEST"))

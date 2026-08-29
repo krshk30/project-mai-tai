@@ -126,6 +126,8 @@ FANOUT_OUTCOME_POLL_INTERVAL_SECONDS = 5.0
 # Gaps below this never need a session lookup (>99.9% of all gaps), so the calendar query is rare.
 _DB_SEED_GAP_PROBE_MIN = timedelta(hours=2)
 STATE_PUBLISH_INTERVAL_SECONDS = 5
+BOOT_RESTORE_HOLD_LOG_INTERVAL_SECONDS = 60.0
+BOOT_RESTORE_INCOMPLETE_LOG_INTERVAL_SECONDS = 60.0
 POSITION_POLL_INTERVAL_SECONDS = 5
 # Max bar age (seconds) for DB-persistence. Older bars are warmup feeds
 # that prior service instances already persisted; redoing them on every
@@ -242,6 +244,22 @@ class SchwabV2BotService:
         )
         self._strategy_state_last_id = "$"
         self._watchlist: set[str] = set()
+        # P1 boot ordering: `_state_publish_loop` and `_scanner_consumer_loop` start together.
+        # Until the scanner has applied one current snapshot (including its synchronous DB-seed
+        # replays), an empty `cw_armed_segments()` means "nothing loaded yet", not "restoration
+        # found nothing dangerous". The boot hold may release only after a NON-EMPTY tradeable
+        # scanner population from the current snapshot is restored. Held-position coverage cannot
+        # supply that denominator. Once True it is a one-way boot latch: later scanner refreshes
+        # must not suppress every symbol mid-session by turning boot incomplete again.
+        self._boot_state_restoration_complete = False
+        self._boot_scanner_selected: set[str] = set()
+        self._boot_exclusion_sources_readable = False
+        self._boot_restore_last_hold_log_at: float | None = None
+        # Restoration can be re-evaluated once per REST callback, so a 25-symbol warmup wave can
+        # revisit the same incomplete branch 25 times. Rate-limit each reason independently: an
+        # unchanged failure emits at most once per interval, while a different failure reason is
+        # still immediately observable.
+        self._boot_restore_last_warning_at: dict[str, float] = {}
         # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
         # every symbol that was already being watched.
@@ -844,28 +862,58 @@ class SchwabV2BotService:
                 self._loop_health.mark_task_died(name, exc=exc)
 
     def _cw_boot_hold_check(self) -> None:
-        """Boot-hold self-verify (P1.3+P1.4). Runs each state-publish cycle. RELEASES entries once
-        there are zero reconstructed-uncapped ('dangerous') segments; RE-HOLDS + logs at error if a
-        dangerous segment ever appears (a P1.3 miss — this is what "the self-check catches P1.3
-        failing" means). Never releases on a timeout: if dangerous persists it stays held. The
-        external `armed_segments_check` cron does the paging off the published snapshot (dangerous
-        present, entries_held too long, or snapshot stale). The bar-ts discriminator makes this safe
-        to run continuously — a live post-boot flip is never counted dangerous."""
+        """Boot-hold self-verify (P1.3+P1.4). Runs each state-publish cycle.
+
+        RELEASES entries only after the scanner's initial current snapshot has been fully applied
+        AND there are zero reconstructed-uncapped (``dangerous``) segments. Before restoration is
+        complete, an empty segment list is absence of data, never evidence of safety. Re-holds and
+        reports ERROR if a dangerous segment ever appears (a P1.3 miss). Never releases on a
+        timeout: if restoration has not completed or dangerous persists, entries stay held. The
+        expected pre-restoration hold is WARNING; a reconstructed-uncapped segment after completed
+        restoration is a real defect and remains ERROR. The bar-ts discriminator keeps the
+        continuous check safe: a live post-boot flip is never counted dangerous.
+        """
         strat = self.strategy
         if not getattr(strat, "_cw_armed_segment_safety_enabled", False):
             return
-        dangerous = [s for s in strat.cw_armed_segments() if s["dangerous"]]
+        segments = strat.cw_armed_segments()
+        dangerous = [s for s in segments if s["dangerous"]]
+        dangerous_symbols = ",".join(
+            sorted(str(s.get("symbol") or "?") for s in dangerous)
+        ) or "-"
+        if not self._boot_state_restoration_complete:
+            if not strat._entries_held:
+                strat._entries_held = True
+            now = time.monotonic()
+            if (
+                self._boot_restore_last_hold_log_at is None
+                or now - self._boot_restore_last_hold_log_at
+                >= BOOT_RESTORE_HOLD_LOG_INTERVAL_SECONDS
+            ):
+                self._boot_restore_last_hold_log_at = now
+                logger.warning(
+                    "[V2-BOOT-HOLD] HELD — restoration_complete=0 "
+                    "armed_segments_observed=%d dangerous_observed=%d dangerous_symbols=%s; "
+                    "absence before initial state restoration is not safety",
+                    len(segments),
+                    len(dangerous),
+                    dangerous_symbols,
+                )
+            return
+        self._boot_restore_last_hold_log_at = None
         if not dangerous:
             if strat._entries_held:
                 strat._entries_held = False
                 logger.info(
-                    "[V2-BOOT-HOLD] released — 0 reconstructed-uncapped segments; CW-v2 entries open"
+                    "[V2-BOOT-HOLD] released — restoration_complete=1 "
+                    "reconstructed_uncapped=0; CW-v2 entries open"
                 )
             return
         if not strat._entries_held:
             strat._entries_held = True
         logger.error(
-            "[V2-BOOT-HOLD] HELD — reconstructed-uncapped segment(s) survived P1.3: %s "
+            "[V2-BOOT-HOLD] HELD — restoration_complete=1 reconstructed-uncapped "
+            "segment(s) survived P1.3: %s "
             "(CW-v2 entries suppressed; armed_segments_check will page)",
             ",".join(
                 f"{s['symbol']}(n={s['entries_this_flip']}/{s['max_entries']})" for s in dangerous
@@ -877,6 +925,9 @@ class SchwabV2BotService:
             return
         self._cw_boot_hold_check()
         reportable = await asyncio.to_thread(self._fetch_reportable_state)
+        safety_enabled = bool(
+            getattr(self.strategy, "_cw_armed_segment_safety_enabled", False)
+        )
         payload = StrategyBotStatePayload(
             strategy_code=STRATEGY_CODE,
             account_name=self.settings.strategy_schwab_1m_v2_account_name,
@@ -896,11 +947,23 @@ class SchwabV2BotService:
             last_tick_at=dict(self._last_tick_at),
             cw_armed_segments=self.strategy.cw_armed_segments(),
             entries_held=bool(getattr(self.strategy, "_entries_held", False)),
+            restoration_complete=self._boot_state_restoration_complete,
+            warmup_pending_symbols=(
+                sorted(self._watchlist - self._rest_warmup_done) if safety_enabled else []
+            ),
         )
         event = IsolatedBotStateEvent(source_service=SERVICE_NAME, payload=payload)
         await self.redis.xadd(
             self._isolated_state_stream,
-            {"data": event.model_dump_json()},
+            {
+                "data": event.model_dump_json(
+                    exclude=(
+                        None
+                        if safety_enabled
+                        else {"payload": {"restoration_complete", "warmup_pending_symbols"}}
+                    )
+                )
+            },
             maxlen=self.settings.redis_strategy_state_isolated_stream_maxlen,
             approximate=True,
         )
@@ -1543,7 +1606,8 @@ class SchwabV2BotService:
             return
         symbols = self._extract_confirmed_symbols(event)
         protected = self._protected_symbols()
-        selected = set(symbols[:max_watchlist]) | protected
+        scanner_selected = set(symbols[:max_watchlist])
+        selected = scanner_selected | protected
         # HARD-EXCLUDE operator-protected symbols (e.g. CYN) from v2's watchlist so
         # v2 never evaluates, subscribes, or signals on them — defense-in-depth on
         # top of the OMS protected-symbol order reject. CYN is the operator's
@@ -1553,6 +1617,7 @@ class SchwabV2BotService:
         protected_exclude = set(self.settings.protected_symbol_set)
         if protected_exclude:
             selected -= protected_exclude
+            scanner_selected -= protected_exclude
         # Stop EMITTING for symbols Schwab already refused to OPEN today
         # ("must be placed with a broker" — foreign/manual-handling names). The
         # OMS also blocks re-submission per account, but the isolated bot would
@@ -1562,12 +1627,38 @@ class SchwabV2BotService:
         # Dual-broker fan-out changes the eviction rule: a name keeps trading as long as >=1 broker
         # accepts it, so evict ONLY names BOTH brokers rejected (schwab ∩ webull). Flag-OFF keeps the
         # schwab-only eviction (byte-identical — `_webull_ineligible_symbols` returns empty when off).
+        unreadable_exclusion_sources: list[str] = []
         ineligible_exclude = self._schwab_ineligible_symbols()
+        if ineligible_exclude is None:
+            unreadable_exclusion_sources.append("schwab")
+            ineligible_exclude = set(self._schwab_ineligible_cache)
         if bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
-            ineligible_exclude = ineligible_exclude & self._webull_ineligible_symbols()
+            webull_ineligible = self._webull_ineligible_symbols()
+            if webull_ineligible is None:
+                unreadable_exclusion_sources.append("webull")
+                webull_ineligible = set(self._webull_ineligible_cache)
+            ineligible_exclude = ineligible_exclude & webull_ineligible
         if ineligible_exclude:
             selected -= ineligible_exclude
+            scanner_selected -= ineligible_exclude
+        # The authority is this snapshot's post-exclusion scanner population, not a once-ever
+        # flag. A prior fully-excluded snapshot must not let held-position coverage launder a
+        # later empty scanner pass into completed boot restoration.
+        self._boot_scanner_selected = scanner_selected
+        self._boot_exclusion_sources_readable = not unreadable_exclusion_sources
+        if unreadable_exclusion_sources:
+            logger.warning(
+                "[V2-BOOT-RESTORE] restoration_complete=%d "
+                "reason=ineligible_exclusion_unreadable sources=%s snapshot_applied=1 "
+                "last_known_exclusions_applied=%d entries_held=%d; unreadable exclusions cannot "
+                "complete boot restoration",
+                int(self._boot_state_restoration_complete),
+                ",".join(unreadable_exclusion_sources),
+                len(ineligible_exclude),
+                int(bool(getattr(self.strategy, "_entries_held", False))),
+            )
         if selected == self._watchlist:
+            self._try_complete_boot_state_restoration(selected, new_symbols=set())
             return
         new_symbols = selected - self._watchlist
         # ⛔ Captured HERE, before `self._watchlist` is reassigned below — computing it after the
@@ -1615,14 +1706,147 @@ class SchwabV2BotService:
         # persisted history so MACD/VWAP/ATR clear their warmup at once instead
         # of waiting ~135 live bars. Runs once per symbol; replayed bars carry
         # historical timestamps (not fresh) so no entry fires on the seed.
-        for sym in sorted(new_symbols):
-            self._seed_strategy_bars_from_db(sym)
+        self._try_complete_boot_state_restoration(selected, new_symbols=new_symbols)
         logger.info(
             "schwab_1m_v2 watchlist updated count=%d sample=%s warmed=%d",
             len(selected),
             ",".join(sorted(selected)[:5]),
             len(self._rest_warmup_done),
         )
+
+    def _try_complete_boot_state_restoration(
+        self, selected: set[str], *, new_symbols: set[str]
+    ) -> None:
+        """Latch boot restoration after scanner, DB seed and REST replay are all observable.
+
+        Both populations are load-bearing: the current snapshot must contain a non-empty tradeable
+        scanner population after exclusions (held-position protection cannot launder an empty
+        scanner snapshot), and the actual ``selected`` population must be non-empty. DB seed alone
+        is insufficient because REST warmup can arm another reconstructed segment afterwards.
+        Once latched, later additions remain per-symbol REST-gated but cannot re-arm the fleet-wide
+        boot hold; their seed result is logged explicitly rather than silently changing the fact.
+
+        Fail-closed residuals are explicit. ``session_factory is None`` makes every seed read
+        unreadable; ``run`` does not reconstruct it later, so the hold is unbounded until a service
+        restart. REST-warmup completion is wired into this gate, but remains live-UNPROVEN for thin
+        names that may not receive a fresh REST bar: those names also hold without a timeout rather
+        than treating missing input as safety.
+        """
+        if not getattr(self.strategy, "_cw_armed_segment_safety_enabled", False):
+            # Flag-OFF is the shipped compatibility mode. Preserve the pre-change DB seed for new
+            # symbols, but add no boot latch, hold, restoration field, or fleet-wide decision.
+            for symbol in sorted(new_symbols):
+                self._seed_strategy_bars_from_db(symbol)
+            return
+        if self._boot_state_restoration_complete:
+            results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
+            if new_symbols:
+                confirmed = sum(result is True for result in results)
+                log = logger.info if confirmed == len(new_symbols) else logger.warning
+                log(
+                    "[V2-BOOT-RESTORE] restoration_complete=1 post_latch_additions=%d "
+                    "seed_confirmed=%d could_not_tell=%d fleet_latch_unchanged=1 "
+                    "symbol_ingestion_rest_warmup_gated=1",
+                    len(new_symbols),
+                    confirmed,
+                    len(new_symbols) - confirmed,
+                )
+            return
+        if not self._boot_exclusion_sources_readable:
+            results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
+            confirmed: int | str
+            could_not_tell: int | str
+            if new_symbols:
+                confirmed = sum(result is True for result in results)
+                could_not_tell = len(results) - confirmed
+            else:
+                # No newly selected symbol was read in this pass. A zero would be a fabricated
+                # measurement, not evidence that restoration succeeded or failed for zero rows.
+                confirmed = "unknown"
+                could_not_tell = "unknown"
+            if self._boot_restore_warning_due("ineligible_exclusion_unreadable"):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%s "
+                    "could_not_tell=%s reason=ineligible_exclusion_unreadable; snapshot was "
+                    "applied but boot hold remains closed",
+                    len(results) if new_symbols else len(selected),
+                    confirmed,
+                    could_not_tell,
+                )
+            return
+        evaluated = len(selected)
+        scanner_evaluated = len(self._boot_scanner_selected)
+        if evaluated == 0:
+            if self._boot_restore_warning_due(
+                "empty_evaluated_population_after_exclusions"
+            ):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 scanner_evaluated=%d "
+                    "confirmed=unknown rest_warmed=unknown "
+                    "reason=empty_evaluated_population_after_exclusions; "
+                    "zero evaluated states is not safety",
+                    scanner_evaluated,
+                )
+            return
+        if scanner_evaluated == 0:
+            if self._boot_restore_warning_due("empty_tradeable_scanner_population"):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 scanner_evaluated=0 "
+                    "evaluated=%d confirmed=unknown rest_warmed=unknown "
+                    "reason=empty_tradeable_scanner_population; held symbols are not scanner "
+                    "evidence",
+                    evaluated,
+                )
+            return
+        results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)]
+        confirmed = sum(result is True for result in results)
+        if confirmed != evaluated:
+            if self._boot_restore_warning_due("state_seed_incomplete"):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
+                    "could_not_tell=%d reason=state_seed_incomplete; boot hold remains closed",
+                    evaluated,
+                    confirmed,
+                    evaluated - confirmed,
+                )
+            return
+        rest_warmed = len(selected & self._rest_warmup_done)
+        if rest_warmed != evaluated:
+            warmup_pending_symbols = sorted(selected - self._rest_warmup_done)
+            if self._boot_restore_warning_due("rest_warmup_incomplete"):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
+                    "rest_warmed=%d warmup_pending=%d warmup_pending_symbols=%s "
+                    "reason=rest_warmup_incomplete; REST replay may still arm reconstructed state",
+                    evaluated,
+                    confirmed,
+                    rest_warmed,
+                    len(warmup_pending_symbols),
+                    ",".join(warmup_pending_symbols) or "-",
+                )
+            return
+        self._boot_restore_last_warning_at.clear()
+        self._boot_state_restoration_complete = True
+        logger.info(
+            "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=%d confirmed=%d rest_warmed=%d "
+            "could_not_tell=0",
+            evaluated,
+            confirmed,
+            rest_warmed,
+        )
+
+    def _boot_restore_warning_due(self, reason: str) -> bool:
+        """Return whether this reason's literal warning is due for emission."""
+
+        now = time.monotonic()
+        last = self._boot_restore_last_warning_at.get(reason)
+        if (
+            last is not None
+            and now - last < BOOT_RESTORE_INCOMPLETE_LOG_INTERVAL_SECONDS
+        ):
+            return False
+        self._boot_restore_last_warning_at[reason] = now
+        return True
 
     def _push_desired_symbols(self) -> None:
         """Push the SUBSCRIPTION set (watchlist ∪ held) to the REST client and streamer.
@@ -1648,7 +1872,7 @@ class SchwabV2BotService:
             # 2026-05-23 entry for the race analysis.
             self.streamer.set_desired_symbols(desired)
 
-    def _schwab_ineligible_symbols(self) -> set[str]:
+    def _schwab_ineligible_symbols(self) -> set[str] | None:
         """Symbols Schwab refused to OPEN today ("must be placed with a broker").
 
         v2 must stop putting these on its watchlist so it stops EMITTING intents for
@@ -1662,7 +1886,7 @@ class SchwabV2BotService:
         `session_date`-keyed `schwab_ineligible_today` table.
         """
         if self.session_factory is None:
-            return set()
+            return None
         now_m = time.monotonic()
         if (
             self._schwab_ineligible_loaded_monotonic is not None
@@ -1685,19 +1909,19 @@ class SchwabV2BotService:
                     blocked = by_account.get(account_id, set())
         except Exception:  # noqa: BLE001
             logger.exception("schwab_1m_v2 failed loading Schwab ineligible symbols")
-            return self._schwab_ineligible_cache
+            return None
         self._schwab_ineligible_cache = blocked
         self._schwab_ineligible_loaded_monotonic = now_m
         return blocked
 
-    def _webull_ineligible_symbols(self) -> set[str]:
+    def _webull_ineligible_symbols(self) -> set[str] | None:
         """Dual-broker fan-out: symbols Webull refused to OPEN today (symmetric to
         `_schwab_ineligible_symbols`, scoped to the Webull account). Used to skip the Webull leg and
         — intersected with the Schwab set — to evict a name only when BOTH brokers reject it. Cached
         <=60s. Empty when fan-out is off / the Webull account is unset / paper mode; auto-clears daily
         via the `session_date`-keyed `webull_ineligible_today` table."""
         if self.session_factory is None:
-            return set()
+            return None
         if not bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
             return set()
         account_name = str(
@@ -1726,7 +1950,7 @@ class SchwabV2BotService:
                     blocked = by_account.get(account_id, set())
         except Exception:  # noqa: BLE001
             logger.exception("schwab_1m_v2 failed loading Webull ineligible symbols")
-            return self._webull_ineligible_cache
+            return None
         self._webull_ineligible_cache = blocked
         self._webull_ineligible_loaded_monotonic = now_m
         return blocked
@@ -1851,6 +2075,7 @@ class SchwabV2BotService:
             # ⛔ The invariant is in the method's own docstring: "MUST run after EVERY replay that
             # can arm a segment." Both the final bar feed and the drain are such replays.
             self._cap_reconstructed_segment(symbol, stage="rest-warmup")
+            self._try_complete_boot_state_restoration(self._watchlist, new_symbols=set())
 
     async def _handle_bar_from_streamer(self, symbol: str, bar: ChartBar) -> None:
         """Streamer callback.
@@ -2244,7 +2469,7 @@ class SchwabV2BotService:
             self._db_seed_gap_truncations += 1
         return kept
 
-    def _seed_strategy_bars_from_db(self, symbol: str) -> None:
+    def _seed_strategy_bars_from_db(self, symbol: str) -> bool:
         """Fix (b): hydrate `state.bars` from `strategy_bar_history` on cold-start.
 
         Replays the last DB_SEED_BAR_LIMIT persisted 60s bars (ascending) through
@@ -2260,11 +2485,15 @@ class SchwabV2BotService:
         consumed by the first live bar (gap <= pending_cross_max_gap_secs) and fire
         a PHANTOM entry from replayed history — worse than the blackout. The prev_*
         memos are KEPT (that's the point — live crosses then detect correctly).
-        Runs once per symbol (`_db_seeded`, pruned with the watchlist).
+        Runs once per symbol (`_db_seeded`, pruned with the watchlist). Returns True only when the
+        persisted-state source was successfully read (including a confirmed empty result). A
+        missing session or failed query returns False and remains retryable, so the boot hold can
+        never turn "could not read restoration state" into "restored zero dangerous states".
         """
-        if self.session_factory is None or symbol in self._db_seeded:
-            return
-        self._db_seeded.add(symbol)
+        if symbol in self._db_seeded:
+            return True
+        if self.session_factory is None:
+            return False
         try:
             with self.session_factory() as session:
                 rows = (
@@ -2295,58 +2524,73 @@ class SchwabV2BotService:
                 if rows:
                     rows = self._truncate_seed_rows_at_gap(session, symbol, rows)
         except Exception:  # noqa: BLE001
+            # The symbol is added to `_db_seeded` only after a complete successful read/replay, so
+            # no cleanup is needed here and the next current scanner snapshot can retry.
             logger.warning(
                 "schwab_1m_v2 db-seed query failed for %s; falling back to "
                 "live-only warmup",
                 symbol,
                 exc_info=True,
             )
-            return
+            return False
         if not rows:
-            return
-        for row in reversed(rows):  # ascending (oldest first)
-            bt = row.bar_time
-            if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
-                bt = bt.replace(tzinfo=UTC)
-            ts_ms = int(bt.timestamp() * 1000)
-            self._strategy_on_bar(
-                symbol,
-                ChartBar(
+            self._db_seeded.add(symbol)
+            return True
+        try:
+            for row in reversed(rows):  # ascending (oldest first)
+                bt = row.bar_time
+                if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
+                    bt = bt.replace(tzinfo=UTC)
+                ts_ms = int(bt.timestamp() * 1000)
+                self._strategy_on_bar(
                     symbol,
-                    float(row.open_price),
-                    float(row.high_price),
-                    float(row.low_price),
-                    float(row.close_price),
-                    int(row.volume),
-                    ts_ms,
-                ),
-                observation_phase="replay",
+                    ChartBar(
+                        symbol,
+                        float(row.open_price),
+                        float(row.high_price),
+                        float(row.low_price),
+                        float(row.close_price),
+                        int(row.volume),
+                        ts_ms,
+                    ),
+                    observation_phase="replay",
+                )
+            st = self.strategy.watchlist_state(symbol)
+            st.pending_path_macd = False
+            st.pending_path_vwap = False
+            st.pending_cross_bar_ts_ms = 0
+            # P1.3: a CW-v2 segment reconstructed by this replay carries a historical arm_bar_ts
+            # (< boot). Mark it USED so v2 can only enter on flips AFTER boot — a restart can never
+            # re-issue the per-segment cap (the CPHI class). Flag-gated; costs one legit first-entry
+            # on a pre-restart segment (fail-closed). The boot-hold self-verify catches this failing
+            # (segment stays dangerous => held + paged).
+            # ⛔⭐⭐ NOT LOAD-BEARING — DO NOT TRUST THIS THE WAY THE LAST READER DID (2026-08-18).
+            # It runs HERE, after the replay loop above, so every arm inside `on_bar` has already
+            # fired and stamped. It has failed twice in production:
+            #   * 2026-07-30 REST-warmup path — ran 50ms BEFORE the arm and saw nothing (#619);
+            #   * 2026-08-18 CAST — never ran at all; one [V2-CW-SEED-CAP] all day (WFF), zero
+            #     [V2-BOOT-HOLD], and CAST armed uncapped off a 06-18 bar at flip_level 7.99 vs a
+            #     live price of 1.21.
+            # The gap truncation above is what actually prevents that now, by removing bad input.
+            # Repair or delete this once truncation has proven out; until then it is decoration.
+            # `_db_seeded` is committed only after this block completes, so a failed replay remains
+            # retryable; that ordering does not promote this post-hoc cap into trusted evidence.
+            self._cap_reconstructed_segment(symbol, stage="db-seed")
+            logger.info(
+                "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",
+                symbol,
+                len(rows),
+                len(st.bars),
             )
-        st = self.strategy.watchlist_state(symbol)
-        st.pending_path_macd = False
-        st.pending_path_vwap = False
-        st.pending_cross_bar_ts_ms = 0
-        # P1.3: a CW-v2 segment reconstructed by this replay carries a historical arm_bar_ts (< boot).
-        # Mark it USED so v2 can only enter on flips AFTER boot — a restart can never re-issue the
-        # per-segment cap (the CPHI class). Flag-gated; costs one legit first-entry on a pre-restart
-        # segment (fail-closed). The boot-hold self-verify catches this failing (segment stays
-        # dangerous => held + paged).
-        # ⛔⭐⭐ NOT LOAD-BEARING — DO NOT TRUST THIS THE WAY THE LAST READER DID (2026-08-18).
-        # It runs HERE, after the replay loop above, so every arm inside `on_bar` has already fired
-        # and stamped. It has failed twice in production:
-        #   * 2026-07-30 REST-warmup path — ran 50ms BEFORE the arm and saw nothing (#619);
-        #   * 2026-08-18 CAST — never ran at all; one [V2-CW-SEED-CAP] all day (WFF), zero
-        #     [V2-BOOT-HOLD], and CAST armed uncapped off a 06-18 bar at flip_level 7.99 vs a
-        #     live price of 1.21.
-        # The gap truncation above is what actually prevents that now, by removing the bad input.
-        # Repair or delete this once the truncation has proven out; until then it is decoration.
-        self._cap_reconstructed_segment(symbol, stage="db-seed")
-        logger.info(
-            "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",
-            symbol,
-            len(rows),
-            len(st.bars),
-        )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "schwab_1m_v2 db-seed replay failed for %s; partial replay is not restoration",
+                symbol,
+                exc_info=True,
+            )
+            return False
+        self._db_seeded.add(symbol)
+        return True
 
     def _should_skip_rest_strategy_feed(self, symbol: str, bar: ChartBar) -> bool:
         """C3 gating: when streamer is connected and has already
@@ -2788,6 +3032,16 @@ class SchwabV2BotService:
                 )
             return
         webull_ineligible = self._webull_ineligible_symbols()
+        if webull_ineligible is None:
+            # Preserve the pre-boot-guard fan-out policy exactly. A missing factory used to mean
+            # empty; a query failure used to fall back to the last cache. Boot restoration tracks
+            # readability separately and may hold entries, but this PR does not drop or requeue a
+            # venue leg after the primary has already been emitted.
+            webull_ineligible = (
+                set()
+                if self.session_factory is None
+                else set(self._webull_ineligible_cache)
+            )
         for d in legs:
             sym = str(getattr(d, "symbol", "")).upper()
             if sym in webull_ineligible:
