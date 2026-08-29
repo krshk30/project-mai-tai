@@ -1764,63 +1764,66 @@ class SchwabV2BotService:
                 # measurement, not evidence that restoration succeeded or failed for zero rows.
                 confirmed = "unknown"
                 could_not_tell = "unknown"
-            self._log_boot_restore_warning(
-                "ineligible_exclusion_unreadable",
-                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%s "
-                "could_not_tell=%s reason=ineligible_exclusion_unreadable; snapshot was applied "
-                "but boot hold remains closed",
-                len(selected),
-                confirmed,
-                could_not_tell,
-            )
+            if self._boot_restore_warning_due("ineligible_exclusion_unreadable"):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%s "
+                    "could_not_tell=%s reason=ineligible_exclusion_unreadable; snapshot was "
+                    "applied but boot hold remains closed",
+                    len(selected),
+                    confirmed,
+                    could_not_tell,
+                )
             return
         evaluated = len(selected)
         scanner_evaluated = len(self._boot_scanner_selected)
         if evaluated == 0:
-            self._log_boot_restore_warning(
-                "empty_evaluated_population_after_exclusions",
-                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 scanner_evaluated=%d "
-                "confirmed=unknown rest_warmed=unknown "
-                "reason=empty_evaluated_population_after_exclusions; "
-                "zero evaluated states is not safety",
-                scanner_evaluated,
-            )
+            if self._boot_restore_warning_due(
+                "empty_evaluated_population_after_exclusions"
+            ):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=0 scanner_evaluated=%d "
+                    "confirmed=unknown rest_warmed=unknown "
+                    "reason=empty_evaluated_population_after_exclusions; "
+                    "zero evaluated states is not safety",
+                    scanner_evaluated,
+                )
             return
         if scanner_evaluated == 0:
-            self._log_boot_restore_warning(
-                "empty_tradeable_scanner_population",
-                "[V2-BOOT-RESTORE] restoration_complete=0 scanner_evaluated=0 "
-                "evaluated=%d confirmed=unknown rest_warmed=unknown "
-                "reason=empty_tradeable_scanner_population; held symbols are not scanner evidence",
-                evaluated,
-            )
+            if self._boot_restore_warning_due("empty_tradeable_scanner_population"):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 scanner_evaluated=0 "
+                    "evaluated=%d confirmed=unknown rest_warmed=unknown "
+                    "reason=empty_tradeable_scanner_population; held symbols are not scanner "
+                    "evidence",
+                    evaluated,
+                )
             return
         results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)]
         confirmed = sum(result is True for result in results)
         if confirmed != evaluated:
-            self._log_boot_restore_warning(
-                "state_seed_incomplete",
-                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
-                "could_not_tell=%d reason=state_seed_incomplete; boot hold remains closed",
-                evaluated,
-                confirmed,
-                evaluated - confirmed,
-            )
+            if self._boot_restore_warning_due("state_seed_incomplete"):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
+                    "could_not_tell=%d reason=state_seed_incomplete; boot hold remains closed",
+                    evaluated,
+                    confirmed,
+                    evaluated - confirmed,
+                )
             return
         rest_warmed = len(selected & self._rest_warmup_done)
         if rest_warmed != evaluated:
             warmup_pending_symbols = sorted(selected - self._rest_warmup_done)
-            self._log_boot_restore_warning(
-                "rest_warmup_incomplete",
-                "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
-                "rest_warmed=%d warmup_pending=%d warmup_pending_symbols=%s "
-                "reason=rest_warmup_incomplete; REST replay may still arm reconstructed state",
-                evaluated,
-                confirmed,
-                rest_warmed,
-                len(warmup_pending_symbols),
-                ",".join(warmup_pending_symbols) or "-",
-            )
+            if self._boot_restore_warning_due("rest_warmup_incomplete"):
+                logger.warning(
+                    "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
+                    "rest_warmed=%d warmup_pending=%d warmup_pending_symbols=%s "
+                    "reason=rest_warmup_incomplete; REST replay may still arm reconstructed state",
+                    evaluated,
+                    confirmed,
+                    rest_warmed,
+                    len(warmup_pending_symbols),
+                    ",".join(warmup_pending_symbols) or "-",
+                )
             return
         self._boot_restore_last_warning_at.clear()
         self._boot_state_restoration_complete = True
@@ -1832,10 +1835,8 @@ class SchwabV2BotService:
             rest_warmed,
         )
 
-    def _log_boot_restore_warning(
-        self, reason: str, message: str, *args: object
-    ) -> None:
-        """Emit at most one incomplete-restoration warning per reason per interval."""
+    def _boot_restore_warning_due(self, reason: str) -> bool:
+        """Return whether this reason's literal warning is due for emission."""
 
         now = time.monotonic()
         last = self._boot_restore_last_warning_at.get(reason)
@@ -1843,9 +1844,9 @@ class SchwabV2BotService:
             last is not None
             and now - last < BOOT_RESTORE_INCOMPLETE_LOG_INTERVAL_SECONDS
         ):
-            return
+            return False
         self._boot_restore_last_warning_at[reason] = now
-        logger.warning(message, *args)
+        return True
 
     def _push_desired_symbols(self) -> None:
         """Push the SUBSCRIPTION set (watchlist ∪ held) to the REST client and streamer.
