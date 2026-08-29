@@ -1,0 +1,9 @@
+{
+  "pr_number": 846,
+  "range_base": "825ad5541bf4a994ed1bc8c254076b2419a1b7e1",
+  "range_head": "3df853f31b06c17fb30fd528fe39ba6b3d6cbfa5",
+  "reviewed_at": "2026-08-29T20:48:02Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified live strategy PID 1982263 via systemd; queried strategy_bar_history showing schwab_1m_v2 23:59:00 UTC versus polygon_30s 23:59:30 UTC; confirmed the active Monday automation withdraws the evaluated-versus-Friday falsifier, labels zero excluded fan-out-only symbols expected, and retains the Schwab-primary over-narrowing check; reviewed the one-file docs diff and marker."
+}
