@@ -7,6 +7,7 @@ live (a frozen loop) — never on a quiet market / feed outage."""
 from __future__ import annotations
 
 import importlib.util
+from datetime import date
 from pathlib import Path
 
 _MOD_PATH = Path(__file__).resolve().parents[2] / "ops" / "health" / "fleet_health_check.py"
@@ -65,6 +66,142 @@ def test_stuck_intents_is_red_alive_but_not_executing():
 
 def test_unreadable_intents_is_amber_not_red():
     assert fhc.classify_order_lifecycle(None, None)[0] == "AMBER"
+
+
+# --- check #5: independently watch the D6 scheduler's durable success marker ------------------ #
+
+
+def test_d6_current_success_is_green() -> None:
+    level, detail = fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-28 verdict=PASS\n",
+        expected_session=date(2026, 8, 28),
+    )
+    assert level == "GREEN"
+    assert "session=2026-08-28" in detail
+
+
+def test_d6_yesterdays_success_is_red_when_a_new_session_is_due() -> None:
+    level, detail = fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-27 verdict=PASS\n",
+        expected_session=date(2026, 8, 28),
+    )
+    assert level == "RED"
+    assert "stale" in detail
+
+
+def test_d6_future_success_is_red_instead_of_blessing_the_wrong_session() -> None:
+    level, detail = fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-29 verdict=PASS\n",
+        expected_session=date(2026, 8, 28),
+    )
+
+    assert level == "RED"
+    assert "future" in detail
+
+
+def test_d6_current_nonpass_and_missing_status_are_red() -> None:
+    expected = date(2026, 8, 28)
+    assert fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-NONPASS] session=2026-08-28 verdict=FAIL\n",
+        expected_session=expected,
+    )[0] == "RED"
+    assert fhc.classify_d6_status(None, expected_session=expected)[0] == "RED"
+
+
+def test_d6_malformed_session_is_red_not_an_amber_check_exception() -> None:
+    level, detail = fhc.classify_d6_status(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-99-99 verdict=PASS\n",
+        expected_session=date(2026, 8, 28),
+    )
+
+    assert level == "RED"
+    assert "malformed" in detail
+
+
+def test_d6_binary_status_is_red_not_an_amber_check_exception(
+    monkeypatch, tmp_path
+) -> None:
+    status = tmp_path / "STATUS.txt"
+    status.write_bytes(b"\xff\xfe\x00\x80")
+    monkeypatch.setattr(fhc, "_D6_STATUS_PATH", status)
+    monkeypatch.setattr(
+        fhc,
+        "_last_completed_session_day",
+        lambda _today: date(2026, 8, 28),
+    )
+
+    level, name, detail = fhc.check_d6_status_freshness()
+
+    assert level == "RED"
+    assert name == "d6-outcome-acceptance"
+    assert "encoding error=UnicodeDecodeError" in detail
+
+
+def test_d6_freshness_green_path_reads_the_current_success(
+    monkeypatch, tmp_path
+) -> None:
+    status = tmp_path / "STATUS.txt"
+    status.write_text(
+        "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-28 verdict=PASS\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(fhc, "_D6_STATUS_PATH", status)
+    monkeypatch.setattr(
+        fhc,
+        "_last_completed_session_day",
+        lambda _today: date(2026, 8, 28),
+    )
+
+    level, name, detail = fhc.check_d6_status_freshness()
+
+    assert (level, name) == ("GREEN", "d6-outcome-acceptance")
+    assert "D6 SUCCESS current" in detail
+
+
+def test_d6_permission_failure_is_red_and_distinct_from_missing(monkeypatch) -> None:
+    class PermissionDeniedStatus:
+        def read_text(self, *, encoding: str) -> str:
+            raise PermissionError("root-only")
+
+    monkeypatch.setattr(fhc, "_D6_STATUS_PATH", PermissionDeniedStatus())
+    monkeypatch.setattr(
+        fhc,
+        "_last_completed_session_day",
+        lambda _today: date(2026, 8, 28),
+    )
+
+    level, name, detail = fhc.check_d6_status_freshness()
+
+    assert (level, name) == ("RED", "d6-outcome-acceptance")
+    assert "permission error=PermissionError" in detail
+    assert "missing" not in detail
+
+
+def test_d6_other_oserror_is_red_and_names_the_io_failure(monkeypatch) -> None:
+    class BrokenStatus:
+        def read_text(self, *, encoding: str) -> str:
+            raise OSError("I/O failure")
+
+    monkeypatch.setattr(fhc, "_D6_STATUS_PATH", BrokenStatus())
+    monkeypatch.setattr(
+        fhc,
+        "_last_completed_session_day",
+        lambda _today: date(2026, 8, 28),
+    )
+
+    level, name, detail = fhc.check_d6_status_freshness()
+
+    assert (level, name) == ("RED", "d6-outcome-acceptance")
+    assert "I/O error=OSError" in detail
+    assert "missing" not in detail
+
+
+def test_d6_freshness_check_is_registered_in_the_executed_check_list() -> None:
+    assert fhc.check_d6_status_freshness in fhc.CHECKS
+
+
+def test_d6_expected_session_skips_weekend_and_full_closure() -> None:
+    assert fhc._last_completed_session_day(date(2026, 9, 8)) == date(2026, 9, 4)
 
 
 # --- check #3: stops-armed (every OMS-owned open position has an armed stop) --- #
