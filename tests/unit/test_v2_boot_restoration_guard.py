@@ -307,6 +307,27 @@ def test_unreadable_exclusion_telemetry_counts_the_last_known_set(monkeypatch, c
     assert "last_known_exclusions_applied=2" in caplog.text
 
 
+def test_unreadable_exclusion_telemetry_counts_the_fanout_intersection(
+    monkeypatch, caplog
+) -> None:
+    """Applied means the exclusions actually used, not the larger Schwab cache."""
+    bot = _bot(
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    bot._schwab_ineligible_cache = {"DAIC", "XOS"}
+    bot._webull_ineligible_cache = {"XOS"}
+    monkeypatch.setattr(bot, "_schwab_ineligible_symbols", lambda: None)
+    monkeypatch.setattr(bot, "_webull_ineligible_symbols", lambda: None)
+
+    with caplog.at_level(logging.WARNING):
+        _apply_snapshot(bot, ["DAIC", "XOS", "YYGH"])
+
+    assert "sources=schwab,webull" in caplog.text
+    assert "last_known_exclusions_applied=1" in caplog.text
+    assert bot._watchlist == {"DAIC", "YYGH"}
+
+
 def test_unreadable_exclusion_without_new_symbols_reports_unknown_counts(
     monkeypatch, caplog
 ) -> None:
@@ -328,6 +349,26 @@ def test_unreadable_exclusion_without_new_symbols_reports_unknown_counts(
     assert "evaluated=1 confirmed=unknown could_not_tell=unknown" in caplog.text
     assert "reason=ineligible_exclusion_unreadable" in caplog.text
     assert "confirmed=0 could_not_tell=0" not in caplog.text
+
+
+def test_unreadable_exclusion_delta_counts_only_the_symbols_actually_seeded(
+    monkeypatch, caplog
+) -> None:
+    """A 3-symbol delta must not be reported as 3 confirmed out of all 25 selected."""
+    bot = _bot()
+    monkeypatch.setattr(bot, "_seed_strategy_bars_from_db", lambda _symbol: True)
+    initial = [f"S{i:02d}" for i in range(22)]
+    expanded = initial + ["N01", "N02", "N03"]
+    _apply_snapshot(bot, initial, rest_warmed=False)
+    monkeypatch.setattr(bot, "_schwab_ineligible_symbols", lambda: None)
+    caplog.clear()
+
+    with caplog.at_level(logging.WARNING):
+        _apply_snapshot(bot, expanded)
+
+    assert "evaluated=3 confirmed=3 could_not_tell=0" in caplog.text
+    assert "evaluated=25 confirmed=3" not in caplog.text
+    assert bot._watchlist == set(expanded)
 
 
 def test_ineligible_loader_query_failure_is_not_cached_empty() -> None:

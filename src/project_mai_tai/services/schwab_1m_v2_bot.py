@@ -1769,7 +1769,7 @@ class SchwabV2BotService:
                     "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%s "
                     "could_not_tell=%s reason=ineligible_exclusion_unreadable; snapshot was "
                     "applied but boot hold remains closed",
-                    len(selected),
+                    len(results) if new_symbols else len(selected),
                     confirmed,
                     could_not_tell,
                 )
