@@ -279,6 +279,39 @@ async def test_execution_report_origin_reaches_the_trade_intent_row(
     assert len(adapter.requests) == 1
 
 
+@pytest.mark.parametrize(
+    ("report_origin", "expected_origin"),
+    [
+        ("broker", "broker_reject"),
+        (None, "could_not_tell"),
+        ("", "could_not_tell"),
+        ("future_unrecognised_origin", "could_not_tell"),
+    ],
+)
+def test_report_origin_fallback_never_blames_the_broker(
+    report_origin: str | None,
+    expected_origin: str,
+) -> None:
+    """Only an explicit broker origin may become ``broker_reject``."""
+
+    intent = TradeIntent(payload={})
+    report = ExecutionReport(
+        event_type="rejected",
+        client_order_id="fallback-origin-control",
+        reason="ORIGIN_CONTROL",
+        origin=report_origin,  # type: ignore[arg-type]
+    )
+
+    OmsStore().mark_intent_from_report(intent, report)
+
+    assert intent.status == "rejected"
+    assert intent.payload["refusal_origin"] == expected_origin
+    assert intent.payload["refusal_code"] == "ORIGIN_CONTROL"
+    if expected_origin == "could_not_tell":
+        assert intent.payload["refusal_origin"] != "broker_reject"
+        assert intent.payload["refusal_origin"] != "client_abort"
+
+
 def test_legacy_rejected_row_without_provenance_stays_could_not_tell() -> None:
     factory = _session_factory()
     store = OmsStore()
@@ -308,3 +341,4 @@ def test_refusal_origin_is_a_closed_vocabulary() -> None:
     intent = TradeIntent(payload={})
     with pytest.raises(ValueError, match="unsupported intent refusal origin"):
         OmsStore().mark_intent_refused(intent, origin="maybe_broker", code="NOPE")
+    assert intent.payload == {}
