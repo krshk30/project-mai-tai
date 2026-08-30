@@ -1,0 +1,9 @@
+{
+  "pr_number": 850,
+  "range_base": "0f35fadc7b4e38dde076a7eff0db3f7f97e07b14",
+  "range_head": "75d77837bcb6246740a3fb42532eb7100f753442",
+  "reviewed_at": "2026-08-30T20:30:07Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Read all four exact-head blobs; regenerated the frozen 234-line manifest byte-for-byte (sha256 58cd8f95); verified box/main 0f35fadc clean, seven post-S0 PIDs and NRestarts=0, flat ledgers and current state; matched the Monday GO condition to the armed watch card; source-checked both findings; Validate passed on the exact head."
+}
