@@ -1026,7 +1026,11 @@ class OmsRiskService:
             )
 
             if not passed:
-                self.store.mark_intent_status(intent, "rejected")
+                self.store.mark_intent_refused(
+                    intent,
+                    origin="client_abort",
+                    code=risk_reason or "risk_rejected",
+                )
                 order_event = self._build_rejected_event(event, intent.id)
                 session.commit()
                 await self._publish_order_event(order_event)
@@ -1054,7 +1058,11 @@ class OmsRiskService:
                     symbol=event.payload.symbol,
                 )
             ):
-                self.store.mark_intent_status(intent, "rejected")
+                self.store.mark_intent_refused(
+                    intent,
+                    origin="skipped_before_submit",
+                    code="schwab_ineligible_cached",
+                )
                 order_event = self._build_rejected_event(
                     event,
                     intent.id,
@@ -1089,7 +1097,11 @@ class OmsRiskService:
                     symbol=event.payload.symbol,
                 )
             ):
-                self.store.mark_intent_status(intent, "rejected")
+                self.store.mark_intent_refused(
+                    intent,
+                    origin="skipped_before_submit",
+                    code="webull_ineligible_cached",
+                )
                 self.store.record_fanout_pre_submit_outcome(
                     session,
                     intent=intent,
@@ -1137,7 +1149,11 @@ class OmsRiskService:
                     symbol=event.payload.symbol,
                 )
                 if collision:
-                    self.store.mark_intent_status(intent, "rejected")
+                    self.store.mark_intent_refused(
+                        intent,
+                        origin="skipped_before_submit",
+                        code=collision,
+                    )
                     self.store.record_fanout_pre_submit_outcome(
                         session,
                         intent=intent,
@@ -1159,7 +1175,11 @@ class OmsRiskService:
                 symbol=event.payload.symbol,
             )
             if blocked_reason and event.payload.intent_type in {"open", "scale"}:
-                self.store.mark_intent_status(intent, "rejected")
+                self.store.mark_intent_refused(
+                    intent,
+                    origin="skipped_before_submit",
+                    code=blocked_reason,
+                )
                 self.store.record_fanout_pre_submit_outcome(
                     session,
                     intent=intent,
@@ -1208,7 +1228,11 @@ class OmsRiskService:
                     include_native_stop_guard=False,
                 )
                 if duplicate_exit is not None:
-                    self.store.mark_intent_status(intent, "rejected")
+                    self.store.mark_intent_refused(
+                        intent,
+                        origin="skipped_before_submit",
+                        code="duplicate_exit_in_flight",
+                    )
                     order_event = self._build_rejected_event(
                         event,
                         intent.id,
@@ -1232,7 +1256,11 @@ class OmsRiskService:
                     else Decimal("0")
                 )
                 if strategy_available_quantity <= 0:
-                    self.store.mark_intent_status(intent, "rejected")
+                    self.store.mark_intent_refused(
+                        intent,
+                        origin="skipped_before_submit",
+                        code="no_strategy_position_available_to_sell",
+                    )
                     order_event = self._build_rejected_event(
                         event,
                         intent.id,
@@ -1260,7 +1288,11 @@ class OmsRiskService:
                         symbol=event.payload.symbol,
                     )
                 if available_quantity <= 0:
-                    self.store.mark_intent_status(intent, "rejected")
+                    self.store.mark_intent_refused(
+                        intent,
+                        origin="skipped_before_submit",
+                        code="no_broker_position_available_to_sell",
+                    )
                     order_event = self._build_rejected_event(
                         event,
                         intent.id,
@@ -1278,7 +1310,11 @@ class OmsRiskService:
                 )
                 remaining_account_quantity = max(Decimal("0"), available_quantity - reserved_exit_quantity)
                 if remaining_account_quantity <= 0:
-                    self.store.mark_intent_status(intent, "rejected")
+                    self.store.mark_intent_refused(
+                        intent,
+                        origin="skipped_before_submit",
+                        code="broker_quantity_reserved_for_pending_exits",
+                    )
                     order_event = self._build_rejected_event(
                         event,
                         intent.id,
@@ -1318,7 +1354,11 @@ class OmsRiskService:
             if str(event.payload.metadata.get("resting_entry", "")).lower() == "true" and \
                     self._resting_entry_already_open(
                         session, event.payload.broker_account_name, event.payload.symbol):
-                self.store.mark_intent_status(intent, "rejected")
+                self.store.mark_intent_refused(
+                    intent,
+                    origin="skipped_before_submit",
+                    code="resting_entry_restart_dedup",
+                )
                 self.store.record_fanout_pre_submit_outcome(
                     session,
                     intent=intent,
@@ -1815,7 +1855,11 @@ class OmsRiskService:
             metadata=metadata,
         )
         if target_order is None:
-            self.store.mark_intent_status(intent, "rejected")
+            self.store.mark_intent_refused(
+                intent,
+                origin="skipped_before_submit",
+                code="cancel_target_not_found",
+            )
             return [
                 self._build_rejected_event(
                     event,
@@ -1841,7 +1885,11 @@ class OmsRiskService:
             # ``FILLED cannot be canceled`` broker replies in 15.889 seconds.  The first reply is
             # evidence; the other 47 are a retry storm.  Refuse locally after the evidence exists
             # and keep the target id on the event so the caller/page can name what was bounded.
-            self.store.mark_intent_status(intent, "rejected")
+            self.store.mark_intent_refused(
+                intent,
+                origin="client_abort",
+                code="cancel_dead_target_retry_bound",
+            )
             self.logger.warning(
                 "[OMS-CANCEL-DEAD-TARGET-BOUND] symbol=%s acct=%s target_order_id=%s "
                 "target_client_order_id=%s terminal_reports=%d bound=%d outcome=refused "
@@ -1953,9 +2001,13 @@ class OmsRiskService:
             # story, tracked on the order row, which stays open for the reconcile sweep.
             # A terminal report still wins — including "filled", which honestly records that the
             # cancel lost the race.
-            self.store.mark_intent_status(
+            self.store.mark_intent_from_report(
                 intent,
-                resolve_cancel_intent_status(event.payload.intent_type, report.event_type),
+                report,
+                status=resolve_cancel_intent_status(
+                    event.payload.intent_type,
+                    report.event_type,
+                ),
             )
             published_events.append(
                 self._build_order_event(
@@ -5515,10 +5567,7 @@ class OmsRiskService:
                                 )
                             )
 
-                    intent_status = report.event_type
-                    if report.event_type == "accepted":
-                        intent_status = "submitted"
-                    self.store.mark_intent_status(intent, intent_status)
+                    self.store.mark_intent_from_report(intent, report)
                     self._update_hard_stop_registry_from_order_status(
                         strategy_code=strategy.code if strategy is not None else "",
                         broker_account_name=account.name,
@@ -7243,7 +7292,11 @@ class OmsRiskService:
         md["abandon_reason_code"] = reason_code
         md["abandon_reason_detail"] = reason_detail
         md["oms_quote_priced"] = "abandoned"
-        self.store.mark_intent_status(intent, "rejected")
+        self.store.mark_intent_refused(
+            intent,
+            origin="client_abort",
+            code=reason_code,
+        )
         self.logger.info(
             "[OMS-ABANDON-INTENT] code=%s symbol=%s strategy=%s side=%s reason=%s",
             reason_code,
@@ -7575,7 +7628,11 @@ class OmsRiskService:
         md["abandon_reason_code"] = reason_code
         md["abandon_reason_detail"] = reason_detail
         md["oms_v2_eh_entry"] = "abandoned"
-        self.store.mark_intent_status(intent, "rejected")
+        self.store.mark_intent_refused(
+            intent,
+            origin="client_abort",
+            code=reason_code,
+        )
         self.logger.info(
             "[OMS-ABANDON-INTENT] code=%s symbol=%s strategy=%s side=%s reason=%s",
             reason_code, event.payload.symbol, event.payload.strategy_code,
@@ -8123,10 +8180,7 @@ class OmsRiskService:
                     entry_client_order_id=str(request.client_order_id or ""),
                 )
 
-            intent_status = report.event_type
-            if report.event_type == "accepted":
-                intent_status = "submitted"
-            self.store.mark_intent_status(intent, intent_status)
+            self.store.mark_intent_from_report(intent, report)
             self._update_hard_stop_registry_from_order_status(
                 strategy_code=intent_event.payload.strategy_code,
                 broker_account_name=intent_event.payload.broker_account_name,

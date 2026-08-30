@@ -33,6 +33,14 @@ def utcnow() -> datetime:
 
 class OmsStore:
     OPEN_ORDER_STATUSES = ("pending", "submitted", "accepted", "partially_filled")
+    INTENT_REFUSAL_ORIGINS = frozenset(
+        {
+            "client_abort",
+            "broker_reject",
+            "skipped_before_submit",
+            "could_not_tell",
+        }
+    )
     # These are authoritative broker replies about the CANCEL TARGET, not generic request
     # rejections.  Once either has been recorded, sending another cancel for the same target can
     # teach us nothing: the order is already terminal for cancellation purposes.
@@ -831,6 +839,59 @@ class OmsStore:
 
     def mark_intent_status(self, intent: TradeIntent, status: str) -> None:
         intent.status = status
+
+    def mark_intent_refused(
+        self,
+        intent: TradeIntent,
+        *,
+        origin: str,
+        code: str,
+    ) -> None:
+        """Persist why a rejected intent never became (or ceased being) an order.
+
+        ``trade_intents.status = 'rejected'`` collapses three materially different
+        outcomes: a client-side policy abort, a venue rejection, and a local skip
+        before submission.  Keep that stable status for existing consumers, and add
+        the distinction to the row's durable JSON payload.  Historical rows are not
+        backfilled: absence of these keys remains ``COULD_NOT_TELL`` by design.
+        """
+
+        normalized_origin = str(origin or "").strip().lower()
+        if normalized_origin not in self.INTENT_REFUSAL_ORIGINS:
+            raise ValueError(f"unsupported intent refusal origin: {origin!r}")
+        normalized_code = str(code or "").strip() or "UNSPECIFIED_REFUSAL"
+        payload = dict(intent.payload or {})
+        payload["refusal_origin"] = normalized_origin
+        payload["refusal_code"] = normalized_code
+        intent.payload = payload
+        intent.status = "rejected"
+
+    def mark_intent_from_report(
+        self,
+        intent: TradeIntent,
+        report: ExecutionReport,
+        *,
+        status: str | None = None,
+    ) -> None:
+        """Apply an execution report without laundering who produced a rejection."""
+
+        resolved_status = status or (
+            "submitted" if report.event_type == "accepted" else report.event_type
+        )
+        if resolved_status != "rejected":
+            self.mark_intent_status(intent, resolved_status)
+            return
+
+        origin = {
+            "client": "client_abort",
+            "broker": "broker_reject",
+            "unknown": "could_not_tell",
+        }.get(str(getattr(report, "origin", "unknown") or "unknown").lower(), "could_not_tell")
+        self.mark_intent_refused(
+            intent,
+            origin=origin,
+            code=report.reason or "UNSPECIFIED_BROKER_REPORT_REJECTION",
+        )
 
     def sync_account_positions(
         self,
