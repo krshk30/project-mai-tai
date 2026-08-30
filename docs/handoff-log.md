@@ -15,6 +15,44 @@
 
 ---
 
+
+## 2026-08-30 — weekend close-out (batch `2026-08-30`), integrator `claude-1`
+
+**Shipped:** #827 #828 #837 #841 #842 #843 #844 #845 #846 #847 #848 #849 — all merged, all
+deployed. main/box `0f35fadc`, 0 open PRs, 0 undeployed commits.
+
+**The main result: a four-link alerting chain with three links separately broken.** The
+armed-segment pager's script returned `UNKNOWN` on every live call (`tr` given a third operand);
+*nothing scheduled it at all* — no timer, no unit, no crontab for any user; and the cron window we
+then widened to 06:00 ET was **inert** behind the wrapper's own 07:00 guard. Delivery was finally
+confirmed on the operator's phone. ⛔ Each link looked fine from the one above it, and the v2 source
+comment asserting `"armed_segments_check will page"` had been false for months.
+
+**Two live-money fixes.** D3 (#843): the entry union's two halves had *different* broker scopes, so
+a fan-out leg's working order made v2 believe it held a Schwab position — the source comment at
+`:1254` warned of precisely that hazard while the code already had it, and the docstring claimed a
+scope the query did not implement. D20 (#848): 11 filled buys across 5 slots on 08-27 = **6 excess
+fills**, each a distinct `client_order_id`, i.e. new orders on an already-filled slot; fixed at slot
+consumption, scoped per *segment* per #644.
+
+**W2 (#849):** refusal provenance existed in the logs and the fan-out outcome path but not in
+`trade_intents.status` — the one surface every count derives from. Every DB reject number had been
+folding our own deliberate aborts in with venue rejections.
+
+**Operator-owned, both closed:** S0 credential rotation (the DSN exposed to a task transcript is now
+dead — verified by 9 live connections on the new secret) and the Schwab re-auth (read back from the
+store: `refresh_token_expires_at` Sun 2026-09-06 15:44 ET, moving the deadline out of Monday's
+session).
+
+**Board hygiene:** item 1 and T23 turned out to be *stale rows, not open work* — T23's fix shipped in
+#817 and was already loaded. The marker census (#847) collapsed 11 rows into one report and, on its
+first run, corrected a triage verdict of mine by finding W2 failing where I had marked it RETIRE.
+
+**Errors of mine worth carrying forward:** I lifted two of my own deploy holds after the operator
+pushed on them, both times having asserted a downstream effect without reading the thing downstream;
+a quoting diagnosis that was disproven the same hour survived unretracted into an operational
+runbook; and a `grep -c` that counted *references* was reported as *sourcing*.
+
 ## 2026-08-25 (Tue) PREMARKET — Codex post-deploy proof, and re-auth is not active yet
 
 ### The 08-24 batch is merged, deployed and proven at `a4235a653`
