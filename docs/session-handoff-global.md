@@ -1,5 +1,114 @@
 # Session Handoff - Global
 
+### 2026-05-22 production bot validation - `macd_30s` did best, `schwab_1m` was mixed, `polygon_30s` did worst
+
+- Scope:
+  - production validation for the three live production bots only:
+    - `macd_30s`
+    - `schwab_1m`
+    - `polygon_30s`
+  - explicitly ignore the new isolated bot for this report
+- Current live state at validation time:
+  - `macd_30s`
+    - `LISTENING`
+    - watchlist `['ARTL', 'CPSH', 'FJET', 'GOVX', 'VCIG']`
+    - latest decision `2026-05-22 05:10:00 PM ET`
+    - latest market data `2026-05-22 05:10:59 PM ET`
+    - `data_health.status=healthy`
+    - no warning symbols, no critical halted symbols
+  - `schwab_1m`
+    - `LISTENING`
+    - watchlist `['ARTL', 'CPSH', 'FJET', 'GOVX']`
+    - latest decision `2026-05-22 05:09:00 PM ET`
+    - latest market data `2026-05-22 05:10:59 PM ET`
+    - `data_health.status=healthy`
+    - no warning symbols, no critical halted symbols
+  - `polygon_30s`
+    - `LISTENING`
+    - watchlist `['AKTX', 'ARTL', 'BIYA', 'CPSH', 'FJET', 'GOVX', 'LFS', 'PCLA', 'RYOJ', 'VCIG']`
+    - latest decision `2026-05-22 05:10:30 PM ET`
+    - latest market data `2026-05-22 05:10:59 PM ET`
+    - `data_health.status=healthy`
+    - no warning symbols, no critical halted symbols
+- Whole-day persisted bar timing audit:
+  - audit window: `2026-05-22 04:00 AM ET` through `08:00 PM ET`
+  - lag metric:
+    - `persist_lag_secs = (created_at - bar_time) - interval_secs`
+  - thresholds:
+    - `macd_30s` / `polygon_30s`: warn `>15s`, error `>30s`
+    - `schwab_1m`: warn `>30s`, error `>60s`
+- `macd_30s` day summary:
+  - bars `5589`
+  - avg lag `10.0s`
+  - p95 lag `17.6s`
+  - max lag `264.4s`
+  - warn bars `509`
+  - error bars `110`
+  - worst windows:
+    - `12:00 ET` hour: avg `14.2s`, max `264.4s`, `75` warn bars
+    - `16:00 ET` hour: avg `13.7s`, max `218.0s`, `65` warn bars
+  - worst midday symbols:
+    - `VCIG`, `WHLR`, `RGTZ`, `GITS`, `MTVA`, `GOVX`
+    - many `12:01:00-12:01:30 ET` bars did not persist until `~12:05:53-12:05:54 ET`
+  - assessment:
+    - best of the three today
+    - still had one bad midday cluster and a smaller late-day cluster
+    - acceptable overall, not clean
+- `schwab_1m` day summary:
+  - bars `3400`
+  - avg lag `14.2s`
+  - p95 lag `43.1s`
+  - max lag `311.0s`
+  - warn bars `253`
+  - error bars `93`
+  - worst windows:
+    - `12:00 ET` hour: avg `31.2s`, max `311.0s`, `76` warn bars
+    - `16:00 ET` hour: avg `27.9s`, max `286.3s`, `39` warn bars
+  - worst midday symbols:
+    - `WHLR`, `RGTZ`, `MTVA`, `PCLA`, `GOVX`, `VCIG`, `GITS`
+    - many `12:01:00 ET` bars did not persist until `~12:07:10 ET`
+  - assessment:
+    - not good today
+    - serious midday degradation window
+    - secondary late-day weakness
+    - healthy at validation time, but the day was mixed/bad
+- `polygon_30s` day summary:
+  - bars `12331`
+  - avg lag `18.1s`
+  - p95 lag `102.2s`
+  - max lag `439.8s`
+  - warn bars `1575`
+  - error bars `1288`
+  - worst windows:
+    - `12:00 ET` hour: avg `63.1s`, max `439.8s`, `448` warn bars
+    - `16:00 ET` hour: avg `36.2s`, max `291.8s`, `299` warn bars
+  - worst midday symbols:
+    - `WHLR`, `GITS`, `MRM`, `ATPC`, `VCIG`, `RGTZ`, `BIYA`, `GOVX`, `RYOJ`, `AKTX`
+    - many `12:01:30-12:02:00 ET` bars did not persist until `~12:09 ET`
+  - assessment:
+    - worst of the three by a clear margin
+    - today was bad for Polygon `30s`
+- Hourly pattern:
+  - the biggest shared degradation window across all three bots was the `12:00 ET` hour
+  - `schwab_1m` and `polygon_30s` also had a meaningful late-day weak window around `16:00 ET`
+  - `macd_30s` recovered better than the others outside those windows
+- Additional live note on Schwab transport:
+  - even while the current bot views were healthy, the Schwab streamer log still showed frequent reconnect churn:
+    - repeated `Schwab streamer connected after 1 consecutive failure(s)`
+    - plus at least one real `schwab_1m` cluster recovery:
+      - `forced full Schwab streamer reconnect for stale schwab_1m cluster` at `2026-05-22 05:55:04 PM UTC`
+  - meaning:
+    - the current control-plane snapshot looked good
+    - but the underlying Schwab transport/runtime still did not look fully stable
+- Bottom-line ranking for `2026-05-22`:
+  - `1.` `macd_30s` did the best, but still had real bad windows
+  - `2.` `schwab_1m` was mixed and not good overall
+  - `3.` `polygon_30s` did the worst and had the heaviest lag concentration
+- Operator-facing blunt summary:
+  - `macd_30s`: acceptable with notable midday and late-day damage
+  - `schwab_1m`: not good today
+  - `polygon_30s`: bad today
+
 ### 2026-05-22 premarket scanner outage - scanner went blank because strategy-state publication was blocked behind subscription sync
 
 - Live production evidence:
