@@ -1,62 +1,62 @@
 # Fleet toolkit macOS compatibility report
 
-Date: 2026-08-30
+Date: 2026-08-31
 
 ## Outcome
 
-The isolated macOS patch is green under Apple Bash 3.2 and native system tools:
+The complete isolated patch passes under Apple Bash 3.2 with native BSD tools:
 
 ```text
 120 passed, 0 failed
 every guard refused its known-bad input, and every control still worked
 ```
 
-The live toolkit at `/Users/velkris/.claude/mai-tai-fleet` was not edited. Its
-`.checksums` SHA-256 remains
-`74822d944fcc055f4d05b2a38227c74983e81864c7dada43c3ef2a38de95d6e3`, identical
-to the untouched snapshot and isolated patched copy. `.checksums` was not re-recorded.
-Its entries contain absolute live-toolkit paths, so `checksums.sh verify` from the isolated copy
-correctly verifies the untouched live files; it does not bless or pin the patched files.
+The same complete patch applied without offsets to a fresh copy of the untouched normalized
+baseline. The applied tree matched the tested corrected tree byte-for-byte and independently
+passed `120 passed, 0 failed` under the same controlled environment.
 
-The patch is staged for independent review only. It has not been promoted to the live toolkit.
+The live toolkit at `/Users/velkris/.claude/mai-tai-fleet` was not edited. Its `.checksums`
+SHA-256 remains `74822d944fcc055f4d05b2a38227c74983e81864c7dada43c3ef2a38de95d6e3`,
+identical to the untouched snapshot and isolated patched copy. `.checksums` was not re-recorded.
+The patch is review-only and has not been installed or promoted.
 
 ## Controlled environment
 
-The valid native-BSD run used a private tool overlay at
-`/tmp/fleet-macos-tools.ThHBTz` containing only these links:
+The final native-BSD runs used a private dependency overlay at
+`/tmp/fleet-macos-update-tools.6HtvPh` containing only these links:
 
 ```text
-gh      -> /opt/homebrew/bin/gh       (2.98.0)
-python3 -> /opt/homebrew/bin/python3  (3.10.8)
+gh      -> /opt/homebrew/bin/gh
+python3 -> /opt/homebrew/bin/python3
 ```
 
 The test PATH was exactly:
 
 ```text
-/tmp/fleet-macos-tools.ThHBTz:/usr/bin:/bin:/usr/sbin:/sbin
+/tmp/fleet-macos-update-tools.6HtvPh:/usr/bin:/bin:/usr/sbin:/sbin
 ```
 
 `git`, `awk`, `sed`, `stat`, and `date` resolved to Apple system paths. No Homebrew GNU
-coreutils directory was exposed. `/sbin/sha256sum` is Apple-signed
-(`com.apple.sha256sum`), not a Homebrew GNU binary. Exact BSD controls separately forced
-`/usr/bin/shasum`, `/sbin/md5`, `/usr/bin/stat`, and `/bin/date`; exact GNU-interface
-controls used local stubs that delegated to those Apple tools.
+coreutils directory was exposed. Exact compatibility controls separately forced the BSD and
+GNU command interfaces through declared absolute paths and local test stubs. Missing `gh` or
+`python3` is classified as a dependency failure, not a BSD/GNU incompatibility.
 
 ## Counts
 
 | Platform / state | Passed | Failed | Interpretation |
 |---|---:|---:|---|
-| macOS untouched, system-only PATH | 69 | 33 | Original requested reproduction; missing `gh` is mixed with portability failures |
-| macOS interim patch, system-only PATH | 75 | 30 | Requested checkpoint; still a failed gate |
-| macOS untouched, valid dependency overlay | 76 | 26 | Untouched snapshot measured with dependencies present |
-| macOS interim patch, valid dependency overlay | 83 | 22 | Valid starting point for this repair pass |
-| macOS final isolated patch, valid dependency overlay | 120 | 0 | Green; includes 15 new portability/CRLF controls |
-| Windows Git Bash untouched toolkit | 105 | 0 | Current evidence supplied by the user |
-| Windows Git Bash exact patched toolkit | UNMEASURED | UNMEASURED | Must run separately after transferring this exact patch |
+| macOS untouched, system-only PATH | 69 | 33 | Original requested reproduction; dependency and portability failures are mixed |
+| macOS interim patch, system-only PATH | 75 | 30 | Failed checkpoint whose labels were captured and grouped |
+| macOS untouched, valid dependency overlay | 76 | 26 | Untouched snapshot with required dependencies present |
+| macOS final isolated patch, valid dependency overlay | 120 | 0 | Green native-BSD result |
+| macOS fresh application of final patch | 120 | 0 | Green independent apply control; tree matched exactly |
+| Windows Git Bash untouched toolkit | 105 | 0 | Earlier user-supplied untouched evidence |
+| Windows Git Bash supplied corrected tree | 116 | 0 | User-supplied evidence for the stated reference file hashes, not this final patch |
+| Windows Git Bash exact final patch | UNMEASURED | UNMEASURED | No compatibility claim; must be run separately |
 
-The later deliberate no-overlay rerun produced 74/31 because the live-PR control for stacked
-PR #772 also lost `gh`. That extra dependency failure is evidence that a missing dependency must
-not be classified as a BSD/GNU defect; the valid-overlay counts are the compatibility result.
+The final macOS fixture adds an explicit `/bin/date` fallback required by the native run after
+the synthetic counter became deterministic. Therefore its `selftest.sh` differs from the
+Windows-tested reference hash supplied with the defect report.
 
 ## Captured 75/30 labels by root cause
 
@@ -107,51 +107,29 @@ not be classified as a BSD/GNU defect; the valid-overlay counts are the compatib
 
 Total: 3 + 8 + 11 + 3 + 5 = 30 failing labels.
 
-## Patch behavior
+## Final harness controls
 
-- `board.sh` now uses parallel indexed arrays, preserving all pairwise matrix behavior on Bash 3.2.
-- `portable.sh` covers SHA-256, MD5, BSD/GNU `stat`, BSD/GNU epoch conversion, and Python selection.
-- Every exact override is variant-specific, requires an absolute executable path, and fails closed.
-- `gh` calls still request JSON; fixture records now emit the same JSON contract as production.
-- Carry-note controls restore `IFS`, exercise the real eleven-claim promotion, and kill all three mutants.
-- Historical legacy-OID classification is tested without requiring an unreachable object to remain in the clone.
-- The updated-PR fixture resets its temporary `main` branch portably instead of assuming the initial branch name.
+- The forced-rollover date stub requires `CC_DATE_COUNTER`. Both the mutant and control reset
+  the same explicit counter to zero, then the variable is unset after both runs.
+- Darwin requires direct execution of an initial CRLF shebang to fail.
+- MINGW, MSYS, and CYGWIN prove the fresh copy contains raw CR bytes instead, because Git Bash
+  may execute a CRLF shebang.
+- Both pre- and post-normalization CR checks use the binary-safe
+  `LC_ALL=C tr -cd '\r' | wc -c | awk '{print $1}'` count; unknown platforms fail closed.
+- The shared preparation path removes CR bytes, validates every shell script, and proves direct
+  LF-shebang execution.
+- Exact-path portability overrides remain absolute, executable, implementation-specific, and
+  fail closed.
 
-`promote.sh` gate semantics are preserved. The PR-head manifest and live/pinned manifest still pass
-through the same byte stream and SHA-256 comparison; no parsing, field comparison, or canonicalization
-was introduced. A mismatch still exits nonzero before rotation, an identical VOID manifest is refused,
-carrier/head/main bindings remain fail-closed, and failed moves leave journals intact.
+`promote.sh` gate semantics remain unchanged. The PR-head manifest and live/pinned manifest still
+pass through the same byte stream and byte-for-byte SHA-256 comparison. No parsing,
+canonicalization, or field comparison was introduced; mismatches and unreadable state still fail
+closed before rotation.
 
-## CRLF proof
+## Artifact integrity
 
-The final self-test creates a fresh copy, converts every `*.sh` and `fleet.cmd` to CRLF, and proves a
-CRLF shebang cannot execute directly on macOS. It then applies the supported preparation path:
-
-```bash
-/usr/bin/perl -pi -e 's/\r$//' ./*.sh ./fleet.cmd
-chmod +x ./*.sh
-```
-
-The control verifies zero CR bytes remain in shell scripts, every script passes Apple Bash 3.2
-`bash -n`, and `freeze.sh status` executes directly through its LF shebang.
-
-## Artifacts
-
-- `fleet-macos-compat.patch`: normalized diff from `live-original-normalized` to `live-copy-normalized`
-- `CHANGED_SHA256.txt`: before/after SHA-256 for every changed or added file
-- `macos-patched-full.log`: complete 120/0 native-BSD run
-- `macos-applied-patch-full.log`: independent apply-to-fresh-copy 120/0 run
-- `macos-untouched-valid-path.log`: complete untouched 76/26 valid-overlay run
-- `macos-75-30-no-overlay.log`: dependency-missing diagnostic run
-
-Patch SHA-256:
-`3071847fa5e843e4edc106fcb6bf5babbe9399f3e1bc07fc6b7c6151ca411adf`
-
-Transfer rehearsal: the patch applied to a fresh untouched normalized copy without offsets; the
-result matched `live-copy-normalized` exactly, retained the original `.checksums` bytes, and passed
-the complete suite at 120/0.
-
-Remaining macOS failures: none.
-
-Patched Windows Git Bash result: `UNMEASURED`. Do not substitute the untouched 105/0 evidence for a
-patched result; run the exact transferred patch independently before any live update or checksum re-record.
+- Complete patch SHA-256: `cfd6a7f41a94b94e5373d41318a808e3967f07dce05642eef10112f9499f5c84`
+- Final `selftest.sh`: `de69906851b9c4a411c45325d7863daa0847e9d70fae320f332cdb33e4e477bf`
+- Final `MACOS.md`: `0007701f4410019d99e458085f2e2cce268dd8f4fcb217097b1b828f990eb727`
+- Remaining macOS failures: none.
+- Final patched Windows result: `UNMEASURED`; no Windows compatibility claim is made.

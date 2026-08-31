@@ -1,7 +1,7 @@
-diff -ruN live-original-normalized/MACOS.md live-copy-normalized/MACOS.md
+diff -ruN live-original-normalized/MACOS.md live-copy-corrected-normalized/MACOS.md
 --- live-original-normalized/MACOS.md	1969-12-31 19:00:00
-+++ live-copy-normalized/MACOS.md	2026-08-30 19:10:24
-@@ -0,0 +1,32 @@
++++ live-copy-corrected-normalized/MACOS.md	2026-08-31 06:33:12
+@@ -0,0 +1,33 @@
 +# macOS bring-up notes
 +
 +Build a dependency-only overlay, then run the fleet with Apple system tools. The overlay contains
@@ -22,8 +22,9 @@ diff -ruN live-original-normalized/MACOS.md live-copy-normalized/MACOS.md
 +must be selected: `FLEET_SHA256SUM`, `FLEET_SHASUM`, `FLEET_MD5SUM`, `FLEET_MD5`,
 +`FLEET_BSD_STAT`, `FLEET_GNU_STAT`, `FLEET_BSD_DATE`, `FLEET_GNU_DATE`, and `FLEET_PYTHON`.
 +
-+If a fresh copy from Windows lands the shell scripts with CRLF line endings, direct execution can
-+fail before any in-script guard runs because the shebang itself is malformed. Normalize first:
++If a fresh copy from Windows lands the shell scripts with CRLF line endings, normalize first.
++Darwin rejects a CRLF shebang before any in-script guard runs, while Windows Git Bash may execute
++it; Windows therefore proves CR-byte presence before running the same normalization:
 +
 +```bash
 +/usr/bin/perl -pi -e 's/\r$//' ./*.sh ./fleet.cmd
@@ -31,12 +32,12 @@ diff -ruN live-original-normalized/MACOS.md live-copy-normalized/MACOS.md
 +```
 +
 +This normalization is external on purpose. A script with a CRLF shebang cannot repair itself before
-+the kernel or shell tries to parse it. `selftest.sh` creates a fresh CRLF copy, proves direct
-+execution initially fails, applies these exact commands, verifies every shell script is LF and
-+valid under Apple Bash 3.2, then proves direct shebang execution succeeds.
-diff -ruN live-original-normalized/board.sh live-copy-normalized/board.sh
++Darwin tries to parse it. `selftest.sh` creates a fresh CRLF copy; Darwin proves direct execution
++initially fails, while Windows Git Bash proves raw CR bytes are present. Both then apply these exact
++commands, verify every shell script is LF, and prove direct shebang execution succeeds.
+diff -ruN live-original-normalized/board.sh live-copy-corrected-normalized/board.sh
 --- live-original-normalized/board.sh	2026-08-30 19:10:23
-+++ live-copy-normalized/board.sh	2026-08-30 19:10:24
++++ live-copy-corrected-normalized/board.sh	2026-08-31 06:33:12
 @@ -12,6 +12,7 @@
  # ⛔⭐⭐ REPO CONTEXT IS MANDATORY for matrix/rehearse/overlap. Set MAI_TAI_REPO, or pass --repo.
  set -uo pipefail
@@ -89,9 +90,9 @@ diff -ruN live-original-normalized/board.sh live-copy-normalized/board.sh
      # rc: 0 = clean, 1 = conflicts, >1 = git could not answer.
      if [ $rc -gt 1 ]; then
        echo "⛔ COULD_NOT_TELL  $a  x  $b   (git rc=$rc)"
-diff -ruN live-original-normalized/checksums.sh live-copy-normalized/checksums.sh
+diff -ruN live-original-normalized/checksums.sh live-copy-corrected-normalized/checksums.sh
 --- live-original-normalized/checksums.sh	2026-08-30 19:10:23
-+++ live-copy-normalized/checksums.sh	2026-08-30 19:10:24
++++ live-copy-corrected-normalized/checksums.sh	2026-08-31 06:33:12
 @@ -5,13 +5,27 @@
  #   ./checksums.sh verify   fail if any gate script changed since it was pinned
  set -uo pipefail
@@ -123,9 +124,9 @@ diff -ruN live-original-normalized/checksums.sh live-copy-normalized/checksums.s
         echo "   ⇒ review the change, then ./checksums.sh record. An unreviewed gate is not a gate." >&2
         exit 1; fi ;;
  *) echo "usage: checksums.sh record|verify" >&2; exit 2 ;;
-diff -ruN live-original-normalized/freeze.sh live-copy-normalized/freeze.sh
+diff -ruN live-original-normalized/freeze.sh live-copy-corrected-normalized/freeze.sh
 --- live-original-normalized/freeze.sh	2026-08-30 19:10:24
-+++ live-copy-normalized/freeze.sh	2026-08-30 19:10:24
++++ live-copy-corrected-normalized/freeze.sh	2026-08-31 06:33:12
 @@ -5,6 +5,7 @@
  #   ./freeze.sh status | lift
  set -uo pipefail
@@ -143,9 +144,9 @@ diff -ruN live-original-normalized/freeze.sh live-copy-normalized/freeze.sh
  "            || echo "$$-$(date -u +%s%N)")
    [ -n "$_nonce" ] || { echo "⛔ could not generate a freeze nonce; refusing to start an unidentifiable freeze." >&2; exit 3; }
    { date -u +%Y-%m-%dT%H:%M:%SZ; echo "nonce $_nonce"; } > "$FZ"     || { echo "⛔ could not write $FZ. Not frozen." >&2; exit 3; }
-diff -ruN live-original-normalized/log.sh live-copy-normalized/log.sh
+diff -ruN live-original-normalized/log.sh live-copy-corrected-normalized/log.sh
 --- live-original-normalized/log.sh	2026-08-30 19:10:24
-+++ live-copy-normalized/log.sh	2026-08-30 19:10:24
++++ live-copy-corrected-normalized/log.sh	2026-08-31 06:33:12
 @@ -3,6 +3,7 @@
  #   AGENT=<name> ./log.sh <TYPE> "<claim>" ["<evidence or scope>"]
  set -euo pipefail
@@ -172,9 +173,9 @@ diff -ruN live-original-normalized/log.sh live-copy-normalized/log.sh
  LINE="$TS | $A | $T | $C | $E"
  printf '%s\n' "$LINE" >> "$R/agents/$A.md"
  case "$T" in CLAIM|RELEASE) printf '%s\n' "$LINE" >> "$R/claims/$A.md" ;; esac
-diff -ruN live-original-normalized/portable.sh live-copy-normalized/portable.sh
+diff -ruN live-original-normalized/portable.sh live-copy-corrected-normalized/portable.sh
 --- live-original-normalized/portable.sh	1969-12-31 19:00:00
-+++ live-copy-normalized/portable.sh	2026-08-30 19:10:24
++++ live-copy-corrected-normalized/portable.sh	2026-08-31 06:33:12
 @@ -0,0 +1,109 @@
 +#!/usr/bin/env bash
 +# Shared BSD/GNU compatibility helpers for the fleet scripts.
@@ -285,9 +286,9 @@ diff -ruN live-original-normalized/portable.sh live-copy-normalized/portable.sh
 +  local json="$1" expr="$2"
 +  json_eval "$expr" "$json"
 +}
-diff -ruN live-original-normalized/promote.sh live-copy-normalized/promote.sh
+diff -ruN live-original-normalized/promote.sh live-copy-corrected-normalized/promote.sh
 --- live-original-normalized/promote.sh	2026-08-30 19:10:24
-+++ live-copy-normalized/promote.sh	2026-08-30 19:10:24
++++ live-copy-corrected-normalized/promote.sh	2026-08-31 06:33:12
 @@ -14,6 +14,7 @@
  #     the PR *and match what is on disk right now* — so nothing can be left out by hand.
  set -uo pipefail
@@ -346,9 +347,9 @@ diff -ruN live-original-normalized/promote.sh live-copy-normalized/promote.sh
      printf '%s.%sZ | %s | NOTE | claim CARRIED into the batch after %s: %s | still held; not re-taken
  '       "$_cts" "$_ms" "$_ag" "$S" "$_cp" >> "$R/agents/$_ag.md" || {
        echo "⛔ claim rehydrated but the carry NOTE failed to write for $_ag." >&2; exit 3; }
-diff -ruN live-original-normalized/review.sh live-copy-normalized/review.sh
+diff -ruN live-original-normalized/review.sh live-copy-corrected-normalized/review.sh
 --- live-original-normalized/review.sh	2026-08-30 19:10:24
-+++ live-copy-normalized/review.sh	2026-08-30 19:10:24
++++ live-copy-corrected-normalized/review.sh	2026-08-31 06:33:12
 @@ -7,10 +7,15 @@
  #   ./review.sh list
  set -uo pipefail
@@ -429,9 +430,9 @@ diff -ruN live-original-normalized/review.sh live-copy-normalized/review.sh
 -*) echo 'usage: review.sh record <PR#> [--since <sha>] "<what you checked>" | own <PR#> <agent> "<why>" | owner <PR#> | check <PR#> | merge-cmd <PR#> | list' >&2; exit 2 ;;
 +*) echo 'usage: review.sh classify <sha> | record <PR#> [--since <sha>] "<what you checked>" | own <PR#> <agent> "<why>" | owner <PR#> | check <PR#> | merge-cmd <PR#> | list' >&2; exit 2 ;;
  esac
-diff -ruN live-original-normalized/selftest.sh live-copy-normalized/selftest.sh
+diff -ruN live-original-normalized/selftest.sh live-copy-corrected-normalized/selftest.sh
 --- live-original-normalized/selftest.sh	2026-08-30 19:10:24
-+++ live-copy-normalized/selftest.sh	2026-08-30 19:10:24
++++ live-copy-corrected-normalized/selftest.sh	2026-08-31 06:33:12
 @@ -5,6 +5,7 @@
  # require it to WORK — so the suite cannot pass by refusing everything.
  set -uo pipefail
@@ -659,15 +660,50 @@ diff -ruN live-original-normalized/selftest.sh live-copy-normalized/selftest.sh
    _DS=$(mktemp -d)
    # ⛔⭐⭐ THE STUB MUST MODEL A REAL ROLLOVER, i.e. GENUINELY MONOTONIC INSTANTS. An earlier
    # version held the second constant and let the fraction FALL — under that, correct single-read
-@@ -870,6 +913,7 @@
+@@ -839,7 +882,7 @@
+   # then 1001.001 — forward. The fault is in the COMBINATION, which is exactly the real race.
+   cat > "$_DS/date" <<'DSTUB'
+ #!/usr/bin/env bash
+-c="${TMPDIR:-/tmp}/.ccdate.$PPID"
++c="${CC_DATE_COUNTER:?CC_DATE_COUNTER is required}"
+ case "$*" in
+   *%s.%N*|*+%N*)
+       n=$(( $(cat "$c" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$c" ;;
+@@ -852,7 +895,7 @@
+   *%s.%N*) echo "$sec.$frac" ;;                 # single read: the whole instant, monotonic
+   *+%N*)   echo "$frac" ;;                      # two-read: fraction of instant k
+   *+%s*)   echo 1001 ;;                         # two-read: the second AFTER the tick (the race)
+-  *)       exec /usr/bin/date "$@" ;;
++  *)       exec /bin/date "$@" ;;
+ esac
+ DSTUB
+   chmod +x "$_DS/date"
+@@ -860,6 +903,8 @@
+   if cmp -s "$_F1/promote.sh" "$_F3/promote.sh"; then
+     bad "MUTANT B not applied" "clock anchor did not match — bad mutant, NOT a survivor"
+   else
++    export CC_DATE_COUNTER="$_DS/counter"
++    printf '0\n' > "$CC_DATE_COUNTER"
+     _out3=$(PATH="$_DS:$PATH" _cc_run "$_F3" "$_G3" "$_X3")
+     _ts3=$(printf '%s
+ ' "$_out3" | cut -d' ' -f1 | grep -c . || true)
+@@ -870,11 +915,15 @@
    fi
    # the UNMUTATED script under the SAME stub must stay monotonic
    _T4=$(mktemp -d); IFS='|' read -r _F4 _G4 _X4 <<< "$(_cc_setup "$_T4")"
 +  IFS="$_CC_OLD_IFS"
++  export CC_DATE_COUNTER="$_DS/counter"
++  printf '0\n' > "$CC_DATE_COUNTER"
    _out4=$(PATH="$_DS:$PATH" _cc_run "$_F4" "$_G4" "$_X4")
    if printf '%s
  ' "$_out4" | cut -d' ' -f1 | sort -c 2>/dev/null; then
-@@ -945,7 +989,7 @@
+     ok "CONTROL under the same stub: the single-read clock stays monotonic"
+   else bad "single-read clock went backward" "the production clock is not single-read"; fi
++  unset CC_DATE_COUNTER
+   rm -rf "$_T1" "$_T2" "$_T3" "$_T4" "$_DS"
+ fi
+ 
+@@ -945,7 +994,7 @@
    # promotion proof still read as valid. Pin, then move #802's head, and require a refusal.
    mkdir -p "$_MF/archive/mp"
    printf 'MANIFEST\n'        > "$_MF/archive/mp/.manifest-verified"
@@ -676,7 +712,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-normalized/selftest.sh
    printf '%s' "$_MANM"       > "$_MF/archive/mp/.manifest-verified.prhead"
    printf '%s' "801 802"      > "$_MF/archive/mp/.manifest-verified.prs"
    printf '%s' "$_MANM"       > "$_MF/archive/mp/.manifest-verified.mainsha"
-@@ -1028,6 +1072,103 @@
+@@ -1028,6 +1077,116 @@
    fi
    rm -rf "$_MPT"
  fi
@@ -756,19 +792,32 @@ diff -ruN live-original-normalized/selftest.sh live-copy-normalized/selftest.sh
 +echo "CRLF. FRESH WINDOWS COPY — preparation produces directly executable LF scripts"
 +_CT=$(mktemp -d); _CF="$_CT/fleet"; cp -R "$R" "$_CF"
 +/usr/bin/perl -pi -e 's/\r?\n/\r\n/g' "$_CF"/*.sh "$_CF/fleet.cmd"
-+_pre=$("$_CF/freeze.sh" status 2>&1); _prc=$?
-+[ "$_prc" -ne 0 ] && ok "CONTROL: a CRLF shebang is not falsely reported executable on macOS" \
-+  || bad "CRLF control did not start broken" "the preparation path was not actually exercised"
++case "$(uname -s)" in
++  Darwin)
++    _pre=$("$_CF/freeze.sh" status 2>&1); _prc=$?
++    [ "$_prc" -ne 0 ] && ok "CONTROL: a CRLF shebang is not falsely reported executable on macOS" \
++      || bad "CRLF control did not start broken" "the preparation path was not actually exercised" ;;
++  MINGW*|MSYS*|CYGWIN*)
++    _cr=0
++    for _f in "$_CF"/*.sh "$_CF/fleet.cmd"; do
++      _n=$(LC_ALL=C tr -cd '\r' < "$_f" | wc -c | awk '{print $1}')
++      _cr=$((_cr+_n))
++    done
++    [ "$_cr" -gt 0 ] && ok "CONTROL: the fresh Windows copy contains CR bytes before preparation" \
++      || bad "CRLF control did not start with CR bytes" "the preparation path was not actually exercised" ;;
++  *) bad "unknown CRLF test platform" "$(uname -s) is not Darwin, MINGW, MSYS, or CYGWIN — failing closed" ;;
++esac
 +# Supported fresh-copy preparation path. It is external because a CRLF shebang cannot self-repair.
 +/usr/bin/perl -pi -e 's/\r$//' "$_CF"/*.sh "$_CF/fleet.cmd"
 +chmod +x "$_CF"/*.sh
 +_cr=0; _syn=0
-+for _f in "$_CF"/*.sh; do
-+  LC_ALL=C grep -q "$(printf '\r')" "$_f" && _cr=$((_cr+1))
-+  /bin/bash -n "$_f" >/dev/null 2>&1 || _syn=$((_syn+1))
++for _f in "$_CF"/*.sh "$_CF/fleet.cmd"; do
++  _n=$(LC_ALL=C tr -cd '\r' < "$_f" | wc -c | awk '{print $1}')
++  _cr=$((_cr+_n))
++  case "$_f" in *.sh) /bin/bash -n "$_f" >/dev/null 2>&1 || _syn=$((_syn+1)) ;; esac
 +done
-+[ "$_cr" -eq 0 ] && ok "the supported preparation path removes every CR from shell scripts" \
-+  || bad "CRLF remained" "$_cr shell script(s) still contain CR bytes"
++[ "$_cr" -eq 0 ] && ok "the supported preparation path removes every CR byte" \
++  || bad "CRLF remained" "$_cr CR byte(s) remain after preparation"
 +[ "$_syn" -eq 0 ] && ok "every prepared shell script parses under Apple Bash 3.2" \
 +  || bad "prepared syntax failure" "$_syn shell script(s) failed bash -n"
 +mkdir -p "$_CF/merge"

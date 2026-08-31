@@ -1,1 +1,1 @@
-3071847fa5e843e4edc106fcb6bf5babbe9399f3e1bc07fc6b7c6151ca411adf  fleet-macos-compat.patch
+cfd6a7f41a94b94e5373d41318a808e3967f07dce05642eef10112f9499f5c84  fleet-macos-compat.patch
