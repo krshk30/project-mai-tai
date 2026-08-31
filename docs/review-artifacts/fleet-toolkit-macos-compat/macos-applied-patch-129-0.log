@@ -1,4 +1,4 @@
-  (isolated fleet: /var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/tmp.L9lNoyfsNY/fleet — the real journals are never written by this suite)
+  (isolated fleet: /var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/tmp.VuewnVboAY/fleet — the real journals are never written by this suite)
 ════ FLEET SELF-TEST ════
 
 A. THE MERGE GATE — can it still report a false clean?
@@ -47,6 +47,7 @@ H. FREEZE MEANS CLOSED — can an ACKed agent still write?
 
 I. ROTATION UNDER FAILURE — does a failed move still truncate the original?
   PASS  a genuinely FAILED mv stops the run and leaves the journal INTACT (      74 bytes)
+  PASS  the archived-file hash fallback runs in the parent shell and finds the moved journal
 K. PARTIAL ROTATION — is the manifest still stable, so a retry can resume?
   PASS  the manifest is IDENTICAL mid-rotation, so a retry can pass the completeness gate
 
@@ -75,6 +76,11 @@ P. REAL FAILED PROMOTION THEN RETRY — does the retry actually get further?
 
 Q. PROMOTION REFUSES A VOID MANIFEST — even when PR and disk agree perfectly
   PASS  an IDENTICAL VOID manifest on both sides is REFUSED and clears nothing
+
+QM. MANIFEST BYTE GATE — exact bytes pass, one-byte drift refuses, disabled guard is caught
+  PASS  CONTROL: exact manifest bytes pass the gate and complete promotion
+  PASS  a one-byte manifest difference is REFUSED and clears nothing
+  PASS  MUTANT killed: disabling the byte comparison lets the one-byte mismatch clear a journal
 
 R. REVIEW INTEGRITY — self-review, empty verdicts, moved heads, atomic merge
   PASS  an author cannot review its OWN namespace's branch
@@ -156,6 +162,13 @@ MP. MULTI-PR PROMOTION — stale carrier, unmerged carrier, duplicate, unreadabl
   PASS  a MISSING .manifest-verified.mainsha is refused, not skipped
   PASS  retrying with the FULL PR set resumes and completes
 
+CS. CHECKSUM CONTROLS — BSD/GNU records verify unchanged and diagnose drift
+  PASS  GNU hash output: record followed immediately by verify succeeds unchanged
+  PASS  an existing GNU hash-star-path manifest verifies unchanged
+  PASS  GNU hash-star-path drift refuses with the promised file diagnostic
+  PASS  BSD hash output: record followed immediately by verify succeeds unchanged
+  PASS  BSD hash-space-path drift refuses with the promised file diagnostic
+
 PC. PORTABILITY CONTROLS — exact BSD/GNU shims, fail-closed overrides
   PASS  exact BSD shasum path produces SHA-256
   PASS  exact BSD md5 path produces MD5
@@ -174,5 +187,5 @@ CRLF. FRESH WINDOWS COPY — preparation produces directly executable LF scripts
   PASS  every prepared shell script parses under Apple Bash 3.2
   PASS  a prepared fresh-copy script executes directly through its LF shebang
 
-════ 120 passed, 0 failed ════
+════ 129 passed, 0 failed ════
 ✅ every guard refused its known-bad input, and every control still worked.
