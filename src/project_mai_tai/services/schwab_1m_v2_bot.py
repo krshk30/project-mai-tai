@@ -133,15 +133,25 @@ POSITION_POLL_INTERVAL_SECONDS = 5
 # that prior service instances already persisted; redoing them on every
 # restart would block the bar loop for ~10s per symbol on cold-start.
 PERSIST_BAR_AGE_LIMIT_SECONDS = 300
-# Bar age (seconds) at which a REST-fed bar signals "REST warmup has
-# caught up to live for this symbol." The REST warmup batch returns
-# bars oldest-first; the tail of the batch is within ~5 min of wall
-# clock and crossing that threshold marks the symbol as ready for
+# Bar age (seconds) at which a REST- or streamer-fed bar proves current
+# data exists for this symbol. The REST warmup batch returns bars
+# oldest-first, while the streamer is the deployed live feed; crossing
+# this threshold from either source marks the symbol as ready for
 # direct strategy ingestion (no longer for streamer subscription —
 # the streamer now subscribes immediately on scanner-state arrival).
 # 300s matches PERSIST_BAR_AGE_LIMIT_SECONDS so we only mark warmed
 # once the same bar would qualify for DB persist.
 REST_WARMUP_FRESH_THRESHOLD_SECS = 300.0
+# Defence-in-depth bound for a seeded boot population that never observes a
+# fresh bar from either live-capable source. On 2026-08-31 the first production
+# execution released 69 seconds after the 07:00 entry window opened (n=1).
+# Add one unchanged 300s freshness allowance: 69 + 300 = 369 seconds. This is
+# an exposure-calibrated safety-policy bound, not a REST-latency claim; another
+# observed exceedance is a measured re-calibration item.
+BOOT_RESTORE_OBSERVED_OPEN_RELEASE_SECONDS = 69.0
+BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS = (
+    BOOT_RESTORE_OBSERVED_OPEN_RELEASE_SECONDS + REST_WARMUP_FRESH_THRESHOLD_SECS
+)
 # Cap on the per-symbol streamer-pending buffer used while REST warmup
 # is in flight. Streamer pushes at most one CHART_EQUITY bar per
 # symbol per minute, so 500 covers >8h of pre-warmup buffering — far
@@ -260,6 +270,11 @@ class SchwabV2BotService:
         # unchanged failure emits at most once per interval, while a different failure reason is
         # still immediately observable.
         self._boot_restore_last_warning_at: dict[str, float] = {}
+        # A warmup timeout is measured only while the exact selected population
+        # is readable and DB-seed confirmed. Any population or earlier-gate
+        # change resets it rather than laundering incomplete restoration.
+        self._boot_warmup_wait_started_monotonic: float | None = None
+        self._boot_warmup_wait_population: frozenset[str] = frozenset()
         # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
         # every symbol that was already being watched.
@@ -287,7 +302,7 @@ class SchwabV2BotService:
         self._bar_counts: dict[str, int] = {}
         self._last_tick_at: dict[str, str] = {}
         self._last_bar_at: dict[str, str] = {}
-        # Set of symbols whose REST warmup batch has caught up to within
+        # Set of symbols that received a REST or streamer bar within
         # REST_WARMUP_FRESH_THRESHOLD_SECS of wall clock. The streamer
         # subscribes to the full watchlist immediately on scanner-state
         # arrival (see `_apply_strategy_state_event`); this set instead
@@ -296,14 +311,19 @@ class SchwabV2BotService:
         # replayed in timestamp order when warmup completes, so the
         # strategy's append-only deque never sees an out-of-order bar.
         self._rest_warmup_done: set[str] = set()
+        # Symbols released by the bounded seeded-warmup fallback. Keep these
+        # separate from `_rest_warmup_done`: a timeout is not evidence that a
+        # stale bar was fresh, and the distinct population keeps that claim
+        # honest in state and logs.
+        self._boot_warmup_timeout_released: set[str] = set()
         # Last 04:00-ET anchor the time-driven session roll reported on. 0 => the first sweep
         # after boot logs, which is the proof-of-life line: "the sweep is running and found N".
         self._session_roll_last_anchor: int = 0
         # B20: ET date on which the 16:00 entry-window arm release last ran (once per boundary).
         self._entry_window_arm_release_day: str = ""
-        # Per-symbol queue of streamer bars received before this symbol's
-        # REST warmup completed. Drained in `_handle_bar_from_rest`
-        # when the symbol crosses into `_rest_warmup_done`, replaying
+        # Per-symbol queue of streamer bars received before this symbol has
+        # current-data proof. Drained from either source callback when the
+        # symbol crosses into `_rest_warmup_done`, replaying
         # in timestamp order only those bars strictly newer than the
         # latest bar already in `state.bars`.
         self._streamer_pending: dict[str, list[ChartBar]] = {}
@@ -773,6 +793,9 @@ class SchwabV2BotService:
             ).lower(),
             "watchlist_size": str(len(self._watchlist)),
             "warmed_size": str(len(self._rest_warmup_done)),
+            "warmup_timeout_released_size": str(
+                len(self._boot_warmup_timeout_released)
+            ),
             "bars_processed": str(sum(self._bar_counts.values())),
             "rest_bars_gated_total": str(self._rest_bars_gated),
             "rest_bars_gap_fill_total": str(self._rest_bars_gap_fill),
@@ -923,6 +946,7 @@ class SchwabV2BotService:
     async def _publish_bot_state(self) -> None:
         if self.redis is None:
             return
+        await self._release_seeded_boot_warmup_on_timeout()
         self._cw_boot_hold_check()
         reportable = await asyncio.to_thread(self._fetch_reportable_state)
         safety_enabled = bool(
@@ -949,7 +973,9 @@ class SchwabV2BotService:
             entries_held=bool(getattr(self.strategy, "_entries_held", False)),
             restoration_complete=self._boot_state_restoration_complete,
             warmup_pending_symbols=(
-                sorted(self._watchlist - self._rest_warmup_done) if safety_enabled else []
+                sorted(self._watchlist - self._warmup_ready_symbols())
+                if safety_enabled
+                else []
             ),
         )
         event = IsolatedBotStateEvent(source_service=SERVICE_NAME, payload=payload)
@@ -1214,7 +1240,7 @@ class SchwabV2BotService:
             if state.resting_active:  # #580: a working resting order must never be orphaned
                 return True
             # mid-warmup: the bar-driven path owns this symbol right now
-            return symbol in self._watchlist and symbol not in self._rest_warmup_done
+            return symbol in self._watchlist and symbol not in self._warmup_ready_symbols()
 
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         anchor = session_start_ts_ms(now_ms)
@@ -1694,6 +1720,7 @@ class SchwabV2BotService:
         for sym in sorted(departed_symbols):
             self.strategy.release_and_drop_symbol(sym)
         self._rest_warmup_done &= selected
+        self._boot_warmup_timeout_released &= selected
         self._db_seeded &= selected
         # Drop any buffered streamer bars for symbols no longer on the
         # watchlist — the streamer will be told to UNSUBS them below,
@@ -1731,18 +1758,21 @@ class SchwabV2BotService:
         boot hold; their seed result is logged explicitly rather than silently changing the fact.
 
         Fail-closed residuals are explicit. ``session_factory is None`` makes every seed read
-        unreadable; ``run`` does not reconstruct it later, so the hold is unbounded until a service
-        restart. REST-warmup completion is wired into this gate, but remains live-UNPROVEN for thin
-        names that may not receive a fresh REST bar: those names also hold without a timeout rather
-        than treating missing input as safety.
+        unreadable. Warmup accepts a current bar from REST or the streamer; once DB seed is
+        confirmed for the exact population, a separately reported bounded fallback prevents a
+        missing fresh-source observation from suppressing the fleet indefinitely. The fallback
+        never turns an unreadable seed into safety, and the dangerous-segment check remains the
+        final entry gate.
         """
         if not getattr(self.strategy, "_cw_armed_segment_safety_enabled", False):
             # Flag-OFF is the shipped compatibility mode. Preserve the pre-change DB seed for new
             # symbols, but add no boot latch, hold, restoration field, or fleet-wide decision.
             for symbol in sorted(new_symbols):
                 self._seed_strategy_bars_from_db(symbol)
+            self._reset_boot_warmup_wait()
             return
         if self._boot_state_restoration_complete:
+            self._reset_boot_warmup_wait()
             results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
             if new_symbols:
                 confirmed = sum(result is True for result in results)
@@ -1757,6 +1787,7 @@ class SchwabV2BotService:
                 )
             return
         if not self._boot_exclusion_sources_readable:
+            self._reset_boot_warmup_wait()
             results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
             confirmed: int | str
             could_not_tell: int | str
@@ -1781,6 +1812,7 @@ class SchwabV2BotService:
         evaluated = len(selected)
         scanner_evaluated = len(self._boot_scanner_selected)
         if evaluated == 0:
+            self._reset_boot_warmup_wait()
             if self._boot_restore_warning_due(
                 "empty_evaluated_population_after_exclusions"
             ):
@@ -1793,6 +1825,7 @@ class SchwabV2BotService:
                 )
             return
         if scanner_evaluated == 0:
+            self._reset_boot_warmup_wait()
             if self._boot_restore_warning_due("empty_tradeable_scanner_population"):
                 logger.warning(
                     "[V2-BOOT-RESTORE] restoration_complete=0 scanner_evaluated=0 "
@@ -1805,6 +1838,7 @@ class SchwabV2BotService:
         results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(selected)]
         confirmed = sum(result is True for result in results)
         if confirmed != evaluated:
+            self._reset_boot_warmup_wait()
             if self._boot_restore_warning_due("state_seed_incomplete"):
                 logger.warning(
                     "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
@@ -1814,30 +1848,100 @@ class SchwabV2BotService:
                     evaluated - confirmed,
                 )
             return
+        population = frozenset(selected)
+        if self._boot_warmup_wait_population != population:
+            self._boot_warmup_wait_population = population
+            self._boot_warmup_wait_started_monotonic = time.monotonic()
+        warmup_ready = self._warmup_ready_symbols()
         rest_warmed = len(selected & self._rest_warmup_done)
-        if rest_warmed != evaluated:
-            warmup_pending_symbols = sorted(selected - self._rest_warmup_done)
+        timeout_released = len(selected & self._boot_warmup_timeout_released)
+        if len(selected & warmup_ready) != evaluated:
+            warmup_pending_symbols = sorted(selected - warmup_ready)
             if self._boot_restore_warning_due("rest_warmup_incomplete"):
                 logger.warning(
                     "[V2-BOOT-RESTORE] restoration_complete=0 evaluated=%d confirmed=%d "
-                    "rest_warmed=%d warmup_pending=%d warmup_pending_symbols=%s "
-                    "reason=rest_warmup_incomplete; REST replay may still arm reconstructed state",
+                    "rest_warmed=%d timeout_released=%d warmup_pending=%d "
+                    "warmup_pending_symbols=%s reason=rest_warmup_incomplete; "
+                    "waiting for a fresh REST or streamer bar within %ds",
                     evaluated,
                     confirmed,
                     rest_warmed,
+                    timeout_released,
                     len(warmup_pending_symbols),
                     ",".join(warmup_pending_symbols) or "-",
+                    int(REST_WARMUP_FRESH_THRESHOLD_SECS),
                 )
             return
         self._boot_restore_last_warning_at.clear()
         self._boot_state_restoration_complete = True
+        self._reset_boot_warmup_wait()
         logger.info(
-            "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=%d confirmed=%d rest_warmed=%d "
-            "could_not_tell=0",
+            "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=%d confirmed=%d "
+            "rest_warmed=%d timeout_released=%d could_not_tell=0",
             evaluated,
             confirmed,
             rest_warmed,
+            timeout_released,
         )
+
+    def _warmup_ready_symbols(self) -> set[str]:
+        """Symbols ready through fresh-source proof or the bounded seeded fallback."""
+
+        return self._rest_warmup_done | self._boot_warmup_timeout_released
+
+    def _reset_boot_warmup_wait(self) -> None:
+        self._boot_warmup_wait_started_monotonic = None
+        self._boot_warmup_wait_population = frozenset()
+
+    async def _release_seeded_boot_warmup_on_timeout(self) -> bool:
+        """Bound a missing fresh-source observation without bypassing DB restoration.
+
+        The exact selected population must remain readable and DB-seed confirmed for
+        the whole wait. Stale pending streamer bars are replayed and reconstructed
+        segments capped before the warmup gate is released. The normal dangerous-
+        segment boot hold still runs afterwards and may continue to suppress entries.
+        """
+
+        if (
+            not getattr(self.strategy, "_cw_armed_segment_safety_enabled", False)
+            or self._boot_state_restoration_complete
+            or self._boot_warmup_wait_started_monotonic is None
+        ):
+            return False
+        selected = set(self._watchlist)
+        if (
+            not selected
+            or frozenset(selected) != self._boot_warmup_wait_population
+            or not self._boot_exclusion_sources_readable
+            or not self._boot_scanner_selected
+            or not selected.issubset(self._db_seeded)
+        ):
+            self._reset_boot_warmup_wait()
+            return False
+        elapsed = time.monotonic() - self._boot_warmup_wait_started_monotonic
+        if elapsed < BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS:
+            return False
+        pending = sorted(selected - self._warmup_ready_symbols())
+        if not pending:
+            return False
+        for symbol in pending:
+            await self._drain_streamer_pending(symbol)
+            self._cap_reconstructed_segment(symbol, stage="boot-warmup-timeout")
+        self._boot_warmup_timeout_released.update(pending)
+        logger.error(
+            "[V2-BOOT-REST-WARMUP-TIMEOUT] outcome=warmup_gate_released "
+            "reason=fresh_source_not_observed_within_bound elapsed_seconds=%.1f "
+            "bound_seconds=%d evaluated=%d confirmed=%d released=%d symbols=%s; "
+            "DB seed was confirmed and dangerous-segment boot hold remains active",
+            elapsed,
+            int(BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS),
+            len(selected),
+            len(selected & self._db_seeded),
+            len(pending),
+            ",".join(pending),
+        )
+        self._try_complete_boot_state_restoration(selected, new_symbols=set())
+        return True
 
     def _boot_restore_warning_due(self, reason: str) -> bool:
         """Return whether this reason's literal warning is due for emission."""
@@ -1865,8 +1969,8 @@ class SchwabV2BotService:
         if self.streamer is not None:
             # Streamer subscribes to the FULL watchlist immediately. The
             # subscribe/evaluate decoupling lives in
-            # `_handle_bar_from_streamer` (buffer until REST warmup) +
-            # `_handle_bar_from_rest` (drain buffer on warmup), so
+            # `_handle_bar_from_streamer` (buffer until a fresh source) +
+            # either source callback (drain buffer on warmup), so
             # subscription no longer waits on `_rest_warmup_done`.
             # Rationale: keeping symbols out of the SUBS set until they
             # warmed caused Schwab to close the empty session within
@@ -1999,17 +2103,17 @@ class SchwabV2BotService:
     async def _handle_bar_from_rest(self, symbol: str, bar: ChartBar) -> None:
         """REST callback. C3 + buffer-drain routing:
 
-        - If REST has caught up to live (bar age <
-          REST_WARMUP_FRESH_THRESHOLD_SECS) mark this symbol's warmup
-          as done. After feeding the current REST bar, drain any
+        - If REST has caught up to live (bar age <=
+          REST_WARMUP_FRESH_THRESHOLD_SECS) mark this symbol's fresh-source
+          warmup as done. After feeding the current REST bar, drain any
           streamer bars buffered during warmup in
           `_handle_bar_from_streamer`.
         - If the streamer is connected AND has already delivered a bar
           at this `bar.timestamp_ms` or later, skip the strategy feed
           (C3: streamer is signal source of truth when healthy; REST
           is warmup + gap fill only).
-        - Otherwise forward to `_handle_bar` (REST is the only live
-          feed, or this is a genuine gap fill bar that the streamer
+        - Otherwise forward to `_handle_bar` (REST is the current live
+          source, or this is a genuine gap fill bar that the streamer
           missed during a disconnect window).
         """
         if self._loop_fault_injection_remaining > 0:
@@ -2024,23 +2128,8 @@ class SchwabV2BotService:
                 "(MAI_TAI_STRATEGY_SCHWAB_1M_V2_LOOP_FAULT_INJECTION_COUNT) — "
                 "SPOF Workstream A v2 controlled survival test"
             )
-        was_warmed = symbol in self._rest_warmup_done
-        now_ms = int(datetime.now(UTC).timestamp() * 1000)
-        bar_age_secs = (now_ms - bar.timestamp_ms) / 1000.0
-        just_warmed = False
-        if (
-            bar_age_secs <= REST_WARMUP_FRESH_THRESHOLD_SECS
-            and symbol not in self._rest_warmup_done
-        ):
-            self._rest_warmup_done.add(symbol)
-            just_warmed = True
-            logger.info(
-                "[V2-REST-WARMED] schwab_v2 REST warmup complete for %s "
-                "(warmed=%d/%d)",
-                symbol,
-                len(self._rest_warmup_done),
-                len(self._watchlist),
-            )
+        was_warmed = symbol in self._warmup_ready_symbols()
+        just_warmed = self._mark_warmed_from_fresh_bar(symbol, bar, source="REST")
         if self._should_skip_rest_strategy_feed(symbol, bar):
             self._rest_bars_gated += 1
         else:
@@ -2084,13 +2173,13 @@ class SchwabV2BotService:
     async def _handle_bar_from_streamer(self, symbol: str, bar: ChartBar) -> None:
         """Streamer callback.
 
-        Before REST warmup completes for this symbol, streamer bars are
-        buffered in `_streamer_pending[symbol]` and replayed at warmup
-        completion. After warmup, bars are fed directly to the
-        strategy. C3 keeps REST out of the way once the streamer is
-        the signal source of truth.
+        Before fresh-source warmup completes for this symbol, streamer bars
+        are buffered in `_streamer_pending[symbol]`. A fresh streamer bar
+        satisfies the same current-data proof as a fresh REST bar, drains the
+        buffer, caps reconstructed state, and retries boot restoration. Stale
+        bars from either source remain gated by the same 300-second bound.
         """
-        if symbol not in self._rest_warmup_done:
+        if symbol not in self._warmup_ready_symbols():
             pending = self._streamer_pending.setdefault(symbol, [])
             if len(pending) >= STREAMER_PENDING_BARS_MAX_PER_SYMBOL:
                 logger.warning(
@@ -2101,11 +2190,54 @@ class SchwabV2BotService:
                 )
                 pending.pop(0)
             pending.append(bar)
+            if self._mark_warmed_from_fresh_bar(symbol, bar, source="streamer"):
+                await self._drain_streamer_pending(symbol)
+                self._cap_reconstructed_segment(symbol, stage="streamer-warmup")
+                self._try_complete_boot_state_restoration(
+                    self._watchlist, new_symbols=set()
+                )
             return
         await self._handle_bar(symbol, bar, observation_phase="live")
 
+    def _mark_warmed_from_fresh_bar(
+        self, symbol: str, bar: ChartBar, *, source: str
+    ) -> bool:
+        """Record current-data proof from REST or streamer under one age bound."""
+
+        if source not in {"REST", "streamer"}:
+            raise ValueError(f"unsupported warmup bar source: {source}")
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        bar_age_secs = (now_ms - bar.timestamp_ms) / 1000.0
+        if bar_age_secs > REST_WARMUP_FRESH_THRESHOLD_SECS:
+            return False
+        newly_ready = symbol not in self._warmup_ready_symbols()
+        was_fresh = symbol in self._rest_warmup_done
+        self._rest_warmup_done.add(symbol)
+        self._boot_warmup_timeout_released.discard(symbol)
+        if not was_fresh:
+            args = (
+                symbol,
+                bar_age_secs,
+                int(REST_WARMUP_FRESH_THRESHOLD_SECS),
+                len(self._rest_warmup_done),
+                len(self._watchlist),
+            )
+            if source == "REST":
+                logger.info(
+                    "[V2-REST-WARMED] schwab_v2 REST fresh-source warmup complete for %s "
+                    "(bar_age_seconds=%.3f bound_seconds=%d warmed=%d/%d)",
+                    *args,
+                )
+            elif source == "streamer":
+                logger.info(
+                    "[V2-STREAMER-WARMED] schwab_v2 streamer fresh-source warmup complete "
+                    "for %s (bar_age_seconds=%.3f bound_seconds=%d warmed=%d/%d)",
+                    *args,
+                )
+        return newly_ready
+
     async def _drain_streamer_pending(self, symbol: str) -> None:
-        """Replay buffered streamer bars for `symbol` after REST warmup
+        """Replay buffered streamer bars for `symbol` after fresh-source warmup
         completes. Bars whose timestamp is `>= state.bars[-1].timestamp_ms`
         are replayed in ascending order; strictly-older bars would
         corrupt the append-only deque and are dropped (logged for

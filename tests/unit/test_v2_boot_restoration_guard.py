@@ -15,7 +15,10 @@ from project_mai_tai.events import (
     StrategyStateSnapshotPayload,
 )
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
-from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+from project_mai_tai.services.schwab_1m_v2_bot import (
+    BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS,
+    SchwabV2BotService,
+)
 from project_mai_tai.settings import Settings
 
 
@@ -579,8 +582,11 @@ def test_rest_warmup_wave_is_rate_limited_with_a_population_denominator(
     ]
     assert len(incomplete) == 1
     assert "evaluated=25 confirmed=25" in incomplete[0].message
-    assert "rest_warmed=0 warmup_pending=25" in incomplete[0].message
-    assert "restoration_complete=1 evaluated=25 confirmed=25 rest_warmed=25" in caplog.text
+    assert "rest_warmed=0 timeout_released=0 warmup_pending=25" in incomplete[0].message
+    assert (
+        "restoration_complete=1 evaluated=25 confirmed=25 rest_warmed=25 "
+        "timeout_released=0" in caplog.text
+    )
 
 
 def test_every_incomplete_restoration_reason_is_rate_limited_independently(
@@ -657,6 +663,55 @@ def test_real_rest_warmup_callback_completes_the_latch(monkeypatch) -> None:
     assert bot._rest_warmup_done == {"DAIC"}
     assert bot._boot_state_restoration_complete is True
     assert bot.strategy._entries_held is False
+
+
+def test_seeded_warmup_timeout_is_bounded_and_distinct(monkeypatch, caplog) -> None:
+    """The fallback is unreachable before the bound and loud at the bound."""
+
+    bot = _bot()
+    bot._watchlist = {"DAIC"}
+    bot._boot_scanner_selected = {"DAIC"}
+    bot._boot_exclusion_sources_readable = True
+    bot._db_seeded = {"DAIC"}
+    now = [100.0]
+    monkeypatch.setattr(
+        "project_mai_tai.services.schwab_1m_v2_bot.time.monotonic",
+        lambda: now[0],
+    )
+    monkeypatch.setattr(bot, "_cap_reconstructed_segment", lambda *_args, **_kwargs: None)
+
+    bot._try_complete_boot_state_restoration(bot._watchlist, new_symbols=set())
+    now[0] += BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS - 0.001
+    assert asyncio.run(bot._release_seeded_boot_warmup_on_timeout()) is False
+    assert bot._boot_state_restoration_complete is False
+
+    now[0] += 0.001
+    with caplog.at_level(logging.ERROR):
+        assert asyncio.run(bot._release_seeded_boot_warmup_on_timeout()) is True
+    assert bot._boot_state_restoration_complete is True
+    assert bot._rest_warmup_done == set()
+    assert bot._boot_warmup_timeout_released == {"DAIC"}
+    assert "[V2-BOOT-REST-WARMUP-TIMEOUT]" in caplog.text
+    assert "outcome=warmup_gate_released" in caplog.text
+    assert f"bound_seconds={int(BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS)}" in caplog.text
+
+
+def test_warmup_timeout_cannot_release_an_unconfirmed_seed(monkeypatch) -> None:
+    bot = _bot()
+    bot._watchlist = {"DAIC", "YYGH"}
+    bot._boot_scanner_selected = {"DAIC", "YYGH"}
+    bot._boot_exclusion_sources_readable = True
+    bot._db_seeded = {"DAIC"}
+    bot._boot_warmup_wait_population = frozenset(bot._watchlist)
+    bot._boot_warmup_wait_started_monotonic = 100.0
+    monkeypatch.setattr(
+        "project_mai_tai.services.schwab_1m_v2_bot.time.monotonic",
+        lambda: 100.0 + BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS,
+    )
+
+    assert asyncio.run(bot._release_seeded_boot_warmup_on_timeout()) is False
+    assert bot._boot_state_restoration_complete is False
+    assert bot._boot_warmup_timeout_released == set()
 
 
 def test_flag_off_preserves_seed_without_hold_or_restoration_snapshot(monkeypatch) -> None:
