@@ -1,4 +1,4 @@
-  (isolated fleet: /var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/tmp.VuewnVboAY/fleet — the real journals are never written by this suite)
+  (isolated fleet: /var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/tmp.uf2j6VHJtX/fleet — the real journals are never written by this suite)
 ════ FLEET SELF-TEST ════
 
 A. THE MERGE GATE — can it still report a false clean?
@@ -78,9 +78,10 @@ Q. PROMOTION REFUSES A VOID MANIFEST — even when PR and disk agree perfectly
   PASS  an IDENTICAL VOID manifest on both sides is REFUSED and clears nothing
 
 QM. MANIFEST BYTE GATE — exact bytes pass, one-byte drift refuses, disabled guard is caught
-  PASS  CONTROL: exact manifest bytes pass the gate and complete promotion
-  PASS  a one-byte manifest difference is REFUSED and clears nothing
+  PASS  CONTROL: exact manifest bytes pass and the archived file matches the PR file
+  PASS  a one-byte non-newline manifest difference is REFUSED and clears nothing
   PASS  MUTANT killed: disabling the byte comparison lets the one-byte mismatch clear a journal
+  PASS  an extra terminal newline byte is REFUSED and clears nothing
 
 R. REVIEW INTEGRITY — self-review, empty verdicts, moved heads, atomic merge
   PASS  an author cannot review its OWN namespace's branch
@@ -187,5 +188,5 @@ CRLF. FRESH WINDOWS COPY — preparation produces directly executable LF scripts
   PASS  every prepared shell script parses under Apple Bash 3.2
   PASS  a prepared fresh-copy script executes directly through its LF shebang
 
-════ 129 passed, 0 failed ════
+════ 130 passed, 0 failed ════
 ✅ every guard refused its known-bad input, and every control still worked.

@@ -1,6 +1,6 @@
-diff -ruN live-original-normalized/MACOS.md live-copy-safety-normalized/MACOS.md
+diff -ruN live-original-normalized/MACOS.md live-copy-byte-exact-normalized/MACOS.md
 --- live-original-normalized/MACOS.md	1969-12-31 19:00:00
-+++ live-copy-safety-normalized/MACOS.md	2026-08-31 10:24:26
++++ live-copy-byte-exact-normalized/MACOS.md	2026-08-31 11:07:18
 @@ -0,0 +1,33 @@
 +# macOS bring-up notes
 +
@@ -35,9 +35,9 @@ diff -ruN live-original-normalized/MACOS.md live-copy-safety-normalized/MACOS.md
 +Darwin tries to parse it. `selftest.sh` creates a fresh CRLF copy; Darwin proves direct execution
 +initially fails, while Windows Git Bash proves raw CR bytes are present. Both then apply these exact
 +commands, verify every shell script is LF, and prove direct shebang execution succeeds.
-diff -ruN live-original-normalized/board.sh live-copy-safety-normalized/board.sh
+diff -ruN live-original-normalized/board.sh live-copy-byte-exact-normalized/board.sh
 --- live-original-normalized/board.sh	2026-08-30 19:10:23
-+++ live-copy-safety-normalized/board.sh	2026-08-31 10:24:26
++++ live-copy-byte-exact-normalized/board.sh	2026-08-31 11:07:18
 @@ -12,6 +12,7 @@
  # ⛔⭐⭐ REPO CONTEXT IS MANDATORY for matrix/rehearse/overlap. Set MAI_TAI_REPO, or pass --repo.
  set -uo pipefail
@@ -90,9 +90,9 @@ diff -ruN live-original-normalized/board.sh live-copy-safety-normalized/board.sh
      # rc: 0 = clean, 1 = conflicts, >1 = git could not answer.
      if [ $rc -gt 1 ]; then
        echo "⛔ COULD_NOT_TELL  $a  x  $b   (git rc=$rc)"
-diff -ruN live-original-normalized/checksums.sh live-copy-safety-normalized/checksums.sh
+diff -ruN live-original-normalized/checksums.sh live-copy-byte-exact-normalized/checksums.sh
 --- live-original-normalized/checksums.sh	2026-08-30 19:10:23
-+++ live-copy-safety-normalized/checksums.sh	2026-08-31 10:24:26
++++ live-copy-byte-exact-normalized/checksums.sh	2026-08-31 11:07:18
 @@ -5,14 +5,72 @@
  #   ./checksums.sh verify   fail if any gate script changed since it was pinned
  set -uo pipefail
@@ -172,9 +172,9 @@ diff -ruN live-original-normalized/checksums.sh live-copy-safety-normalized/chec
 +  fi ;;
  *) echo "usage: checksums.sh record|verify" >&2; exit 2 ;;
  esac
-diff -ruN live-original-normalized/freeze.sh live-copy-safety-normalized/freeze.sh
+diff -ruN live-original-normalized/freeze.sh live-copy-byte-exact-normalized/freeze.sh
 --- live-original-normalized/freeze.sh	2026-08-30 19:10:24
-+++ live-copy-safety-normalized/freeze.sh	2026-08-31 10:24:26
++++ live-copy-byte-exact-normalized/freeze.sh	2026-08-31 11:07:18
 @@ -5,6 +5,7 @@
  #   ./freeze.sh status | lift
  set -uo pipefail
@@ -192,9 +192,9 @@ diff -ruN live-original-normalized/freeze.sh live-copy-safety-normalized/freeze.
  "            || echo "$$-$(date -u +%s%N)")
    [ -n "$_nonce" ] || { echo "⛔ could not generate a freeze nonce; refusing to start an unidentifiable freeze." >&2; exit 3; }
    { date -u +%Y-%m-%dT%H:%M:%SZ; echo "nonce $_nonce"; } > "$FZ"     || { echo "⛔ could not write $FZ. Not frozen." >&2; exit 3; }
-diff -ruN live-original-normalized/log.sh live-copy-safety-normalized/log.sh
+diff -ruN live-original-normalized/log.sh live-copy-byte-exact-normalized/log.sh
 --- live-original-normalized/log.sh	2026-08-30 19:10:24
-+++ live-copy-safety-normalized/log.sh	2026-08-31 10:24:26
++++ live-copy-byte-exact-normalized/log.sh	2026-08-31 11:07:18
 @@ -3,6 +3,7 @@
  #   AGENT=<name> ./log.sh <TYPE> "<claim>" ["<evidence or scope>"]
  set -euo pipefail
@@ -221,9 +221,9 @@ diff -ruN live-original-normalized/log.sh live-copy-safety-normalized/log.sh
  LINE="$TS | $A | $T | $C | $E"
  printf '%s\n' "$LINE" >> "$R/agents/$A.md"
  case "$T" in CLAIM|RELEASE) printf '%s\n' "$LINE" >> "$R/claims/$A.md" ;; esac
-diff -ruN live-original-normalized/portable.sh live-copy-safety-normalized/portable.sh
+diff -ruN live-original-normalized/portable.sh live-copy-byte-exact-normalized/portable.sh
 --- live-original-normalized/portable.sh	1969-12-31 19:00:00
-+++ live-copy-safety-normalized/portable.sh	2026-08-31 10:24:26
++++ live-copy-byte-exact-normalized/portable.sh	2026-08-31 11:07:18
 @@ -0,0 +1,109 @@
 +#!/usr/bin/env bash
 +# Shared BSD/GNU compatibility helpers for the fleet scripts.
@@ -334,9 +334,9 @@ diff -ruN live-original-normalized/portable.sh live-copy-safety-normalized/porta
 +  local json="$1" expr="$2"
 +  json_eval "$expr" "$json"
 +}
-diff -ruN live-original-normalized/promote.sh live-copy-safety-normalized/promote.sh
+diff -ruN live-original-normalized/promote.sh live-copy-byte-exact-normalized/promote.sh
 --- live-original-normalized/promote.sh	2026-08-30 19:10:24
-+++ live-copy-safety-normalized/promote.sh	2026-08-31 10:24:26
++++ live-copy-byte-exact-normalized/promote.sh	2026-08-31 11:07:18
 @@ -14,6 +14,7 @@
  #     the PR *and match what is on disk right now* — so nothing can be left out by hand.
  set -uo pipefail
@@ -365,7 +365,31 @@ diff -ruN live-original-normalized/promote.sh live-copy-safety-normalized/promot
    if [ -z "$_a" ] || [ -z "$_b" ]; then
      echo "   ⛔ COULD_NOT_TELL: cannot read $d at ${_cm:0:9} or main"; miss=1; continue; fi
    if [ "$_a" != "$_b" ]; then
-@@ -200,7 +201,7 @@
+@@ -166,12 +167,17 @@
+ (cd "$REPO" && git fetch --quiet origin "pull/$PR/head" 2>/dev/null) ||   (cd "$REPO" && git fetch --quiet origin 2>/dev/null) || true
+ if ! (cd "$REPO" && git cat-file -e "$HEAD_OID^{commit}" 2>/dev/null); then
+   echo "⛔ COULD_NOT_TELL — head commit $HEAD_OID not fetchable. Nothing cleared." >&2; exit 3; fi
+-pr_bytes=$(cd "$REPO" && git show "$HEAD_OID:$MANIFEST_REL" 2>/dev/null) || {
+-  echo "⛔ manifest is NOT present at the PR head ($HEAD_OID). Nothing cleared." >&2; exit 1; }
+-# ⛔⭐ NORMALISE BOTH SIDES THE SAME WAY. `$(...)` strips trailing newlines, so hashing the PR
+-# side through a command substitution and the live side through a pipe compared two different
+-# normalisations of identical content — a MISMATCH on a manifest that was byte-correct.
+-# Found by the rotation-failure test, which could not get past this gate on a stubbed-equal pair.
++MANIFEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fleet-promote-manifest.XXXXXX") || {
++  echo "⛔ COULD_NOT_TELL — cannot create manifest comparison files. Nothing cleared." >&2; exit 3; }
++PR_MANIFEST_FILE="$MANIFEST_TMP/pr-manifest"
++LIVE_MANIFEST_FILE="$MANIFEST_TMP/live-manifest"
++trap 'rm -rf "$MANIFEST_TMP"' EXIT
++if ! (cd "$REPO" && git show "$HEAD_OID:$MANIFEST_REL" > "$PR_MANIFEST_FILE" 2>/dev/null); then
++  echo "⛔ manifest is NOT present at the PR head ($HEAD_OID). Nothing cleared." >&2; exit 1
++fi
++# ⛔⭐⭐ MANIFEST BYTES NEVER PASS THROUGH `$(...)`. Command substitution strips every trailing
++# newline, so a PR manifest with one extra terminal newline compared equal and authorised a clear.
++# Materialise both streams, compare the files directly, and archive the verified PR file itself.
+ # ⛔⭐⭐ REQUIRE **BALANCED**, NOT MERELY EQUALITY. Byte-equality alone let a VOID manifest
+ # authorise a rotation: the VOID copy in the PR matched the VOID copy on disk perfectly. Two
+ # identical broken documents agreeing is not evidence.
+@@ -200,7 +206,7 @@
  # reopened, entries landed, and the resume would still compare against the OLD pin — silently
  # promoting a batch whose manifest omits everything written in between. The pin now carries the
  # freeze's fingerprint and is REFUSED if the freeze it was taken under is not the freeze in force.
@@ -374,23 +398,52 @@ diff -ruN live-original-normalized/promote.sh live-copy-safety-normalized/promot
  if [ -f "$PIN" ]; then
    # ⛔⭐⭐ THE PIN IS ALSO BOUND TO THE HANDOFF PR'S HEAD. Pinning only the MANIFEST BYTES meant
    # a retry accepted the PR even if its handoff DOCUMENTS had changed underneath — the manifest is
-@@ -281,12 +282,12 @@
- case "$pr_bytes" in *"status                              : BALANCED"*) ;;
-   *) echo "⛔ the manifest committed in PR #$PR is VOID. Nothing cleared." >&2; exit 1 ;; esac
- live_sha=$(printf '%s
+@@ -269,35 +275,32 @@
+     echo "   ⇒ rm '$PIN' '$PINFZ', regenerate the manifest, re-commit it, and retry." >&2
+     exit 1
+   fi
+-  live_bytes=$(cat "$PIN"); _mrc=0
++  cat "$PIN" > "$LIVE_MANIFEST_FILE"; _mrc=$?
+   echo "   (resuming: comparing against the manifest pinned under THIS freeze)"
+ else
+-  live_bytes=$("$R/manifest.sh" "$S" --stdout); _mrc=$?
++  "$R/manifest.sh" "$S" --stdout > "$LIVE_MANIFEST_FILE"; _mrc=$?
+ fi
+ if [ $_mrc -ne 0 ]; then
+   echo "⛔ the LIVE manifest is VOID (duplicate or malformed entries). Nothing cleared." >&2
+   exit 1
+ fi
+-case "$pr_bytes" in *"status                              : BALANCED"*) ;;
+-  *) echo "⛔ the manifest committed in PR #$PR is VOID. Nothing cleared." >&2; exit 1 ;; esac
+-live_sha=$(printf '%s
 -' "$live_bytes" | sha256sum | cut -d" " -f1)
-+' "$live_bytes" | hash_sha256 | cut -d" " -f1)
- pr_sha=$(printf '%s
+-pr_sha=$(printf '%s
 -' "$pr_bytes" | sha256sum | cut -d" " -f1)
-+' "$pr_bytes" | hash_sha256 | cut -d" " -f1)
++grep -qF "status                              : BALANCED" "$PR_MANIFEST_FILE" || {
++  echo "⛔ the manifest committed in PR #$PR is VOID. Nothing cleared." >&2; exit 1; }
++live_sha=$(hash_sha256 "$LIVE_MANIFEST_FILE" | cut -d" " -f1)
++pr_sha=$(hash_sha256 "$PR_MANIFEST_FILE" | cut -d" " -f1)
  echo "   live journals : $live_sha"
  echo "   PR head       : $pr_sha  (commit ${HEAD_OID:0:9})"
 -if [ "$live_sha" != "$pr_sha" ]; then
-+if ! cmp -s <(printf '%s\n' "$live_bytes") <(printf '%s\n' "$pr_bytes"); then
++if ! cmp -s "$LIVE_MANIFEST_FILE" "$PR_MANIFEST_FILE"; then
    echo "⛔ MANIFEST MISMATCH — the manifest committed in PR #$PR is not what the journals say now." >&2
    echo "   Either entries landed after it was generated, or the wrong file was committed." >&2
    echo "   ⇒ ./manifest.sh $S, commit it, then retry. NOTHING cleared." >&2
-@@ -407,7 +408,7 @@
+-  (cd "$REPO" && git show "$HEAD_OID:$MANIFEST_REL" 2>/dev/null | diff - <("$R/manifest.sh" "$S" --stdout) | head -12 | sed "s/^/   /") >&2 || true
++  (diff "$PR_MANIFEST_FILE" "$LIVE_MANIFEST_FILE" | head -12 | sed "s/^/   /") >&2 || true
+   exit 1
+ fi
+ echo "   ✅ the manifest IN THE PR matches the journals byte-for-byte"
+ if [ ! -f "$PIN" ]; then
+   mkdir -p "$(dirname "$PIN")" || { echo "⛔ cannot create the archive dir to pin the manifest." >&2; exit 3; }
+-  printf '%s
+-' "$live_bytes" > "$PIN" || { echo "⛔ could not PIN the verified manifest; a retry would regenerate a different one." >&2; exit 3; }
++  cat "$LIVE_MANIFEST_FILE" > "$PIN" || { echo "⛔ could not PIN the verified manifest; a retry would regenerate a different one." >&2; exit 3; }
+   _fz_fingerprint > "$PINFZ" || { echo "⛔ could not bind the pin to this freeze; an unbound pin is not safe to resume from." >&2; rm -f "$PIN"; exit 3; }
+   printf '%s
+ ' "$HEAD_OID" > "$PINHEAD" || { echo "⛔ could not bind the pin to PR #$PR's head." >&2; rm -f "$PIN" "$PINFZ"; exit 3; }
+@@ -407,7 +410,7 @@
        esac
        case "$_frac" in *[!0-9]*|"") _frac="000000000" ;; esac
        _ms=$(printf '%03d' $(( 10#${_frac:0:3} )) )
@@ -399,9 +452,22 @@ diff -ruN live-original-normalized/promote.sh live-copy-safety-normalized/promot
      printf '%s.%sZ | %s | NOTE | claim CARRIED into the batch after %s: %s | still held; not re-taken
  '       "$_cts" "$_ms" "$_ag" "$S" "$_cp" >> "$R/agents/$_ag.md" || {
        echo "⛔ claim rehydrated but the carry NOTE failed to write for $_ag." >&2; exit 3; }
-diff -ruN live-original-normalized/review.sh live-copy-safety-normalized/review.sh
+@@ -421,10 +424,9 @@
+ 
+ # ⛔ ARCHIVE THE **VERIFIED PR BLOB**, not the working-tree file. The working copy can differ
+ # from what the PR actually contains, so archiving it files a record we never checked under the
+-# name of one we did. $pr_bytes is the exact content compared above.
++# name of one we did. PR_MANIFEST_FILE is the exact content compared above.
+ if ! _phase_done manifest-archived; then
+-  printf '%s
+-' "$pr_bytes" > "$D/manifest.md" || {
++  cat "$PR_MANIFEST_FILE" > "$D/manifest.md" || {
+     echo "⛔ could not archive the verified manifest. Batch NOT promoted; re-run to resume." >&2; exit 3; }
+   _phase_mark manifest-archived
+ fi
+diff -ruN live-original-normalized/review.sh live-copy-byte-exact-normalized/review.sh
 --- live-original-normalized/review.sh	2026-08-30 19:10:24
-+++ live-copy-safety-normalized/review.sh	2026-08-31 10:24:26
++++ live-copy-byte-exact-normalized/review.sh	2026-08-31 11:07:18
 @@ -7,10 +7,15 @@
  #   ./review.sh list
  set -uo pipefail
@@ -482,9 +548,9 @@ diff -ruN live-original-normalized/review.sh live-copy-safety-normalized/review.
 -*) echo 'usage: review.sh record <PR#> [--since <sha>] "<what you checked>" | own <PR#> <agent> "<why>" | owner <PR#> | check <PR#> | merge-cmd <PR#> | list' >&2; exit 2 ;;
 +*) echo 'usage: review.sh classify <sha> | record <PR#> [--since <sha>] "<what you checked>" | own <PR#> <agent> "<why>" | owner <PR#> | check <PR#> | merge-cmd <PR#> | list' >&2; exit 2 ;;
  esac
-diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selftest.sh
+diff -ruN live-original-normalized/selftest.sh live-copy-byte-exact-normalized/selftest.sh
 --- live-original-normalized/selftest.sh	2026-08-30 19:10:24
-+++ live-copy-safety-normalized/selftest.sh	2026-08-31 10:24:26
++++ live-copy-byte-exact-normalized/selftest.sh	2026-08-31 11:07:18
 @@ -5,6 +5,7 @@
  # require it to WORK — so the suite cannot pass by refusing everything.
  set -uo pipefail
@@ -600,7 +666,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    if [ "$_full" = "$_part" ]; then
      ok "the manifest is IDENTICAL mid-rotation, so a retry can pass the completeness gate"
    else
-@@ -420,7 +442,88 @@
+@@ -420,7 +442,101 @@
  fi
  
  echo
@@ -639,8 +705,8 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
 +  _mb_new
 +  _mbo=$(PATH="$MBS:$PATH" MB_MANIFEST="$MBF/.pr-manifest" MAI_TAI_REPO="$REPO" "$MBF/promote.sh" mbatch 770 2>&1); _mbr=$?
 +  if [ "$_mbr" -eq 0 ] && printf '%s' "$_mbo" | grep -q 'matches the journals byte-for-byte' \
-+       && [ -f "$MBF/archive/mbatch/manifest.md" ]; then
-+    ok "CONTROL: exact manifest bytes pass the gate and complete promotion"
++       && cmp -s "$MBF/.pr-manifest" "$MBF/archive/mbatch/manifest.md"; then
++    ok "CONTROL: exact manifest bytes pass and the archived file matches the PR file"
 +  else
 +    bad "exact manifest control" "exit=$_mbr: $(printf '%s' "$_mbo" | grep '⛔' | head -1)"
 +  fi
@@ -653,7 +719,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
 +  _mb_after=$(hash_md5 "$MBF/agents/selftest.md" | awk '{print $1}')
 +  if [ "$_mbr" -ne 0 ] && printf '%s' "$_mbo" | grep -q 'MANIFEST MISMATCH' \
 +       && [ "$_mb_before" = "$_mb_after" ] && [ ! -e "$MBF/archive/mbatch" ]; then
-+    ok "a one-byte manifest difference is REFUSED and clears nothing"
++    ok "a one-byte non-newline manifest difference is REFUSED and clears nothing"
 +  else
 +    bad "manifest mismatch guard" "exit=$_mbr before=$_mb_before after=$_mb_after archive=$([ -e "$MBF/archive/mbatch" ] && echo present || echo absent)"
 +  fi
@@ -662,7 +728,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
 +  if "$_mb_py" - "$MBF/promote.sh" "$MBF/promote-no-manifest-compare.sh" <<'MBPY'
 +import pathlib, sys
 +source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines(True)
-+hits = [i for i, line in enumerate(source) if line.startswith("if ! cmp -s <(printf")]
++hits = [i for i, line in enumerate(source) if line.startswith('if ! cmp -s "$LIVE_MANIFEST_FILE"')]
 +if len(hits) != 1:
 +    raise SystemExit("expected exactly one manifest comparison, found %d" % len(hits))
 +source[hits[0]] = "if false; then\n"
@@ -681,6 +747,19 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
 +    bad "manifest comparison mutant could not be built" "the production comparison was missing or duplicated"
 +  fi
 +  rm -rf "$MBS" "$(dirname "$MBF")"
++
++  _mb_new
++  _mb_before=$(hash_md5 "$MBF/agents/selftest.md" | awk '{print $1}')
++  printf '\n' >> "$MBF/.pr-manifest" # exactly one extra terminal newline byte
++  _mbo=$(PATH="$MBS:$PATH" MB_MANIFEST="$MBF/.pr-manifest" MAI_TAI_REPO="$REPO" "$MBF/promote.sh" mbatch 770 2>&1); _mbr=$?
++  _mb_after=$(hash_md5 "$MBF/agents/selftest.md" | awk '{print $1}')
++  if [ "$_mbr" -ne 0 ] && printf '%s' "$_mbo" | grep -q 'MANIFEST MISMATCH' \
++       && [ "$_mb_before" = "$_mb_after" ] && [ ! -e "$MBF/archive/mbatch" ]; then
++    ok "an extra terminal newline byte is REFUSED and clears nothing"
++  else
++    bad "terminal-newline manifest guard" "exit=$_mbr before=$_mb_before after=$_mb_after archive=$([ -e "$MBF/archive/mbatch" ] && echo present || echo absent)"
++  fi
++  rm -rf "$MBS" "$(dirname "$MBF")"
 +  unset -f _mb_new
 +fi
 +
@@ -689,7 +768,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
  echo "R. REVIEW INTEGRITY — self-review, empty verdicts, moved heads, atomic merge"
  if [ -z "$REPO" ]; then skipped="$skipped R(review)"; echo "  ⛔ NOT RUN — needs MAI_TAI_REPO. CRITICAL."
  else
-@@ -444,7 +547,7 @@
+@@ -444,7 +560,7 @@
    case "${#_sha}" in 40) ok "…and it pins the FULL 40-char reviewed SHA" ;;
      *) bad "short sha" "merge command pinned '${_sha}' (${#_sha} chars), not a full SHA" ;; esac
    # a moved head must break check
@@ -698,7 +777,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
  import sys,re,pathlib
  p=pathlib.Path(sys.argv[1]); p.write_text(re.sub(r'(\| PR#773 \| [0-9a-f]{40} \| )[0-9a-f]{40}', r'\g<1>'+'0'*40, p.read_text(encoding='utf-8')),encoding='utf-8')
  PYX
-@@ -496,9 +599,9 @@
+@@ -496,9 +612,9 @@
    : > "$UF/merge/REVIEWS.md"; : > "$UF/merge/OWNERSHIP.md"
  
    # 1. two freezes created back-to-back must NOT share a fingerprint
@@ -710,7 +789,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    "$UF/freeze.sh" lift  >/dev/null 2>&1
    [ "$_f1" != "$_f2" ] && ok "two same-second freezes have DIFFERENT identities (nonce)" \
                         || bad "freeze identity repeats" "a stale pin would be accepted under a NEW freeze"
-@@ -527,9 +630,10 @@
+@@ -527,9 +643,10 @@
    _FS=$(mktemp -d)
    printf '#!/usr/bin/env bash
  case "$*" in
@@ -724,7 +803,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    *) echo "{}" ;;
  esac
  '     "$_uh" "$_FBASE" > "$_FS/gh"; chmod +x "$_FS/gh"
-@@ -597,7 +701,7 @@
+@@ -597,7 +714,7 @@
    for _a in claude-1 codex-2; do AGENT=$_a "$WF/freeze.sh" ack >/dev/null 2>&1; done
    mkdir -p "$WF/archive/pb"
    printf 'x\n' > "$WF/archive/pb/.manifest-verified"
@@ -733,7 +812,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    : > "$WF/archive/pb/.manifest-verified.prhead"      # EMPTY on purpose
    _pbo=$(PATH="$WS:$PATH" MAI_TAI_REPO="$REPO" "$WF/promote.sh" pb 770 2>&1); _pbr=$?
    case "$_pbo" in
-@@ -632,7 +736,20 @@
+@@ -632,7 +749,20 @@
    git -C "$XR" checkout -qb mixed/feature
    git -C "$XR" commit -q --allow-empty -m 'claude work' -m 'Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>'
    XC1=$(git -C "$XR" rev-parse HEAD)
@@ -755,7 +834,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    chmod +x "$XS/gh"
  
    expect_ok "Codex can review a Claude-marked commit" \
-@@ -657,11 +774,19 @@
+@@ -657,11 +787,19 @@
    case "$_xa" in *"no single recognised agent marker"*) [ "$_xar" -eq 3 ] && ok "an AMBIGUOUS dual-marker commit is COULD_NOT_TELL" \
      || bad "ambiguous wrong exit" "exit $_xar" ;; *) bad "ambiguous commit accepted" "exit $_xar: $_xa" ;; esac
  
@@ -778,7 +857,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    expect_refuse "a legacy Codex OID is still self-review-refused for Codex" \
       env PATH="$XS:$PATH" STUB_HEAD=f3ebec98432fcc2760c4e00fca9a1153cda010d5 AGENT=codex-2 MAI_TAI_REPO="$REPO" "$XF/review.sh" record 902 "mine"
    expect_ok "stacked PR #772 is scoped to its codex branch base, not incorrectly back to main" \
-@@ -686,12 +811,23 @@
+@@ -686,12 +824,23 @@
    git -C "$YR" checkout -qb claude/updated-feature
    git -C "$YR" commit -q --allow-empty -m 'feature work' -m 'Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>'
    YOLD=$(git -C "$YR" rev-parse HEAD)
@@ -804,7 +883,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    git -C "$YR" commit -q --allow-empty -m 'main moved'
    YMAIN=$(git -C "$YR" rev-parse HEAD); git -C "$YR" update-ref refs/remotes/origin/main "$YMAIN"
    git -C "$YR" checkout -q claude/updated-feature
-@@ -735,7 +871,7 @@
+@@ -735,7 +884,7 @@
    # defect as verifying a pasted copy instead of the artifact. Everything below drives an isolated
    # COPY of the real script through an actual rotation and reads the notes IT wrote.
    _cc_setup() {   # _cc_setup <dir>  -> a fleet + repo primed with 11 carried claims
@@ -813,7 +892,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
      mkdir -p "$X"; cp -r "$R" "$F" 2>/dev/null
      rm -rf "$F/archive" "$F/agents" "$F/claims"; mkdir -p "$F/archive/ccb/claims" "$F/agents" "$F/claims" "$F/merge"
      printf 'x | claude-1 | NOTE | seed | e
-@@ -766,13 +902,17 @@
+@@ -766,13 +915,17 @@
      echo "$F|$G|$X"
    }
    _cc_run() {     # _cc_run <F> <G> <X> -> prints the carry notes promote.sh actually wrote
@@ -832,7 +911,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    _out1=$(_cc_run "$_F1" "$_G1" "$_X1")
    _n=$(printf '%s
  ' "$_out1" | grep -c 'CARRIED' || true)
-@@ -787,6 +927,7 @@
+@@ -787,6 +940,7 @@
    # ---------- MUTANT A: strip the path from the REAL production printf ----------
    # ⛔ This is the exact mutant that survived the previous version of this test.
    _T2=$(mktemp -d); IFS='|' read -r _F2 _G2 _X2 <<< "$(_cc_setup "$_T2")"
@@ -840,7 +919,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    perl -0pi -e 's/claim CARRIED into the batch after \%s: \%s/claim CARRIED into the batch after %s/; s/"\$_ag" "\$S" "\$_cp"/"\$_ag" "\$S"/' "$_F2/promote.sh"
    if cmp -s "$_F1/promote.sh" "$_F2/promote.sh"; then
      bad "MUTANT A not applied" "the anchor did not match — this is a bad mutant, NOT a surviving one"
-@@ -806,6 +947,7 @@
+@@ -806,6 +960,7 @@
      # ⛔ no path AND second-resolution time — the exact 2026-08-25 defect. THIS is what collapses
      # 11 notes into a handful and VOIDs the next manifest, and distinctness is the right kill here.
      _T5=$(mktemp -d); IFS='|' read -r _F5 _G5 _X5 <<< "$(_cc_setup "$_T5")"
@@ -848,7 +927,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
      perl -0pi -e 's/claim CARRIED into the batch after \%s: \%s/claim CARRIED into the batch after %s/; s/"\$_cts" "\$_ms" "\$_ag" "\$S" "\$_cp"/"\$(date -u +%Y-%m-%dT%H:%M:%SZ)" "" "\$_ag" "\$S"/; s/%s\.%sZ \| /%s%s | /' "$_F5/promote.sh"
      if cmp -s "$_F1/promote.sh" "$_F5/promote.sh"; then
        bad "MUTANT C not applied" "anchors did not match — bad mutant, NOT a survivor"
-@@ -824,6 +966,7 @@
+@@ -824,6 +979,7 @@
    # ⛔ Sorting eleven ordinary timestamps is luck, not a test. The stub makes %N DECREASE across
    # calls while %s holds, so a two-read clock MUST stamp backward and a single-read clock cannot.
    _T3=$(mktemp -d); IFS='|' read -r _F3 _G3 _X3 <<< "$(_cc_setup "$_T3")"
@@ -856,7 +935,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    _DS=$(mktemp -d)
    # ⛔⭐⭐ THE STUB MUST MODEL A REAL ROLLOVER, i.e. GENUINELY MONOTONIC INSTANTS. An earlier
    # version held the second constant and let the fraction FALL — under that, correct single-read
-@@ -839,7 +982,7 @@
+@@ -839,7 +995,7 @@
    # then 1001.001 — forward. The fault is in the COMBINATION, which is exactly the real race.
    cat > "$_DS/date" <<'DSTUB'
  #!/usr/bin/env bash
@@ -865,7 +944,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
  case "$*" in
    *%s.%N*|*+%N*)
        n=$(( $(cat "$c" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$c" ;;
-@@ -852,7 +995,7 @@
+@@ -852,7 +1008,7 @@
    *%s.%N*) echo "$sec.$frac" ;;                 # single read: the whole instant, monotonic
    *+%N*)   echo "$frac" ;;                      # two-read: fraction of instant k
    *+%s*)   echo 1001 ;;                         # two-read: the second AFTER the tick (the race)
@@ -874,7 +953,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
  esac
  DSTUB
    chmod +x "$_DS/date"
-@@ -860,6 +1003,8 @@
+@@ -860,6 +1016,8 @@
    if cmp -s "$_F1/promote.sh" "$_F3/promote.sh"; then
      bad "MUTANT B not applied" "clock anchor did not match — bad mutant, NOT a survivor"
    else
@@ -883,7 +962,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
      _out3=$(PATH="$_DS:$PATH" _cc_run "$_F3" "$_G3" "$_X3")
      _ts3=$(printf '%s
  ' "$_out3" | cut -d' ' -f1 | grep -c . || true)
-@@ -870,11 +1015,15 @@
+@@ -870,11 +1028,15 @@
    fi
    # the UNMUTATED script under the SAME stub must stay monotonic
    _T4=$(mktemp -d); IFS='|' read -r _F4 _G4 _X4 <<< "$(_cc_setup "$_T4")"
@@ -899,7 +978,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    rm -rf "$_T1" "$_T2" "$_T3" "$_T4" "$_DS"
  fi
  
-@@ -945,7 +1094,7 @@
+@@ -945,7 +1107,7 @@
    # promotion proof still read as valid. Pin, then move #802's head, and require a refusal.
    mkdir -p "$_MF/archive/mp"
    printf 'MANIFEST\n'        > "$_MF/archive/mp/.manifest-verified"
@@ -908,7 +987,7 @@ diff -ruN live-original-normalized/selftest.sh live-copy-safety-normalized/selft
    printf '%s' "$_MANM"       > "$_MF/archive/mp/.manifest-verified.prhead"
    printf '%s' "801 802"      > "$_MF/archive/mp/.manifest-verified.prs"
    printf '%s' "$_MANM"       > "$_MF/archive/mp/.manifest-verified.mainsha"
-@@ -1028,6 +1177,183 @@
+@@ -1028,6 +1190,183 @@
    fi
    rm -rf "$_MPT"
  fi
