@@ -61,6 +61,22 @@ def test_floor_consumes_ratchet_on_fallback_but_not_above_it():
     assert cw_effective_floor(100, 2.0, ratchet) == 110.0
 
 
+def test_effective_floor_never_weakens_restart_safe_fixed_floor():
+    fixed_floor = 102.0
+    cases = (
+        (110.0, 110.0),  # a higher durable ratchet wins
+        (101.0, fixed_floor),  # stale-low durable state loses
+        (None, fixed_floor),  # absent after restart loses
+        (0.0, fixed_floor),
+        (-1.0, fixed_floor),
+    )
+
+    for ratcheted_floor, expected in cases:
+        actual = cw_effective_floor(100.0, 2.0, ratcheted_floor)
+        assert actual == expected
+        assert actual >= fixed_floor
+
+
 def test_floor_exits_on_fallback_to_floor():
     # floor = 100*(1+2/100) = 102; a bid at/under 102 while armed -> floor exit
     assert cw_exit_decision(100, 102.0, True, floor_enabled=True, flip_pending=False, **KW) == ("floor", False)

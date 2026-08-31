@@ -26,7 +26,9 @@ def cw_effective_floor(
     """Return the fixed CW lock widened only by a positive durable BID ratchet."""
     fixed_floor = entry * (1.0 + floor_pct / 100.0)
     ratcheted = float(ratcheted_floor_price or 0.0)
-    return max(fixed_floor, ratcheted) if ratcheted > 0 else fixed_floor
+    # One comparison is the whole safety invariant: missing/zero/negative/stale-low durable
+    # state can never weaken the restart-safe fixed floor; only a strictly higher ratchet wins.
+    return max(fixed_floor, ratcheted)
 
 
 def cw_exit_decision(
