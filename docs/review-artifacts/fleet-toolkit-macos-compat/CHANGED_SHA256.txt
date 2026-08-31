@@ -1,0 +1,14 @@
+# SHA-256 of normalized complete-patch inputs (before -> after)
+# MISSING means the complete patch adds the file.
+MACOS.md         MISSING                                                           0007701f4410019d99e458085f2e2cce268dd8f4fcb217097b1b828f990eb727
+board.sh         721e8ccd177f65599a7619443e85d841ade97ad5274ef76ac4fb3691fd1151e4 3f9cb5a77eb5044c7512c9c89fdb637e34e72b96548ebe1b9f3aa00cbfadeb89
+checksums.sh     32616350bcf08804ba09c0bab84cab71e5ac51ce2de3f6750e33eb4c3ce3b1a6 3195502d98394fb053fdf2214e538ecd8ae5a77bd28dbecba075857cef18f60a
+freeze.sh        07ed00e1c756aed2e73e86e1e31fd3e76a92a0b1d64834a6d9c8d66b9b372655 56886cfcef31192e0391d9fad8a3bb671e425f098bfdbc69809d55911642b54e
+log.sh           68b285ebef342fa6c558a8bbcbadb5a8c4bd095c4be7832b14969ad06948f675 70894dbfaa777de6edc50e17c31ae05fc7c95391df080a96233c0e07c3a94e83
+portable.sh      MISSING                                                           30bf37990d8bcd9231a1949a41671392b3103d0af8dae757f1eff14e31a34534
+promote.sh       d59192e01db0ab400c281a6e5fe3640e2e2cacbf2078b25d220d6f7eb5bcba46 bc69bf0366afcf7cc9d51b8e004c9bf91a1267e32d0f3002c8ed99c85929ae23
+review.sh        e07e19096df3e060e872464552ac058b9b558266a869372d0f3d72d0d1d4ce9a 3f60f53db829323a43ae1081cc6c6702dfbad809a053829dc6d0690d3da6d99e
+selftest.sh      793f9403b3f8cca40ab0b34c4b36a6f0338bd4dfe12c117d3d99f69f08b67baf a4465f1d0a8c803881e374bd2c6c909403aaf64f841b99efbb8c520ef646dcbf
+
+# Complete patch artifact
+fleet-macos-compat.patch ed2244944285beae12eb126c9c436a128dabad8c77962e9bad5a23d51a54babb
