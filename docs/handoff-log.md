@@ -16,6 +16,43 @@
 ---
 
 
+
+## 2026-08-31 — batch `2026-08-31`, integrator `claude-1`
+
+**Shipped and deployed:** #851 #852 #853 #854. main/box `77ae556f`, 0 open PRs, exposure zero.
+
+⭐⭐ **Two live-money defects were found by 1-share positions worth $8.50, and one was proven working
+in production twelve hours after it was found.**
+
+**#852 — the v2 warmup latch.** `_rest_warmup_done` could only be entered by a REST bar younger than
+300s, on the docstring's own assumption *"REST is the only live feed."* False: the streamer is the
+live feed and REST backfills history, so pre-market REST returns days-old bars. REST freshness was unavailable during the observed early-pre-market
+interval and the latch had no elapsed-time bound; at 05:40 the hold had been stuck since 04:06 while
+both pending symbols had bars 56 seconds old in the DB. ⛔ Scope corrected by codex-2: NOT
+"structurally unreachable" — at 07:01 the pre-fix code warmed both symbols from REST and released
+naturally. The defect is the missing streamer route plus the absent timeout. Tonight's restart released it in
+**12.9 seconds** with **STREAMER 3/4** — three of four symbols warmed by the route the fix added.
+
+**#853 — the CW profit floor.** CW mode persisted a high-water floor and never consumed it,
+substituting a fixed entry+2%. AEHL ran 6.07 → 7.58 bid with the sell level frozen at 6.1914; 0 of
+376 ticks breached it. The control sat in the same log: YDDL breached its stop and exited correctly.
+⛔ It hid for months because **339 of 406 profit exits (83.5%) were taken by the broker's OCO
+bracket** — extended hours has no bracket, which is the only reason it surfaced.
+
+**#854 — the scanner alert**, broken by yesterday's S0 credential rotation: auth failed, stderr was
+discarded, and the failure was rendered as `ROWS=0` while capture was writing normally.
+
+**#851 — the fleet toolkit on macOS**, which turned out to fix a **false pass in `promote.sh`**: a
+manifest differing by one terminal newline compared equal and authorised a clear. Verified 126/0 on
+Windows by `claude-1` and 130/0 on macOS by the operator. The Windows-only close-out restriction is
+lifted, and the Mac becomes the journal-owning integrator after this batch.
+
+**Errors of mine worth carrying:** four grep-pattern mistakes in one day, each producing a confident
+wrong number and one causing a false live-money escalation against a watch that was working
+correctly. Codex corrected me four times — the OCO hypothesis, an equivalent mutant I reported as a
+coverage gap, the `unowned_position` escalation, and the morning's deploy-timing call. Every
+correction came with evidence and every one was right.
+
 ## 2026-08-30 — weekend close-out (batch `2026-08-30`), integrator `claude-1`
 
 **Shipped:** #827 #828 #837 #841 #842 #843 #844 #845 #846 #847 #848 #849 — all merged, all
