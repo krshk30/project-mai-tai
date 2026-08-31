@@ -71,10 +71,10 @@ GNU coreutils directory was exposed.
 | macOS corrected isolated tree | 130 | 0 | Native BSD full run |
 | macOS fresh application of corrected patch | 130 | 0 | Independent full run; exact tree match |
 | Windows Git Bash prior head `2b25851a` | 125 | 0 | Real count, but trailing-newline mutation remained false green |
-| Windows Git Bash corrected exact patch | UNMEASURED | UNMEASURED | Must be rerun independently; no claim made |
+| Windows Git Bash corrected exact patch | 126 | 0 | Exact package patch `ed2244944285beae12eb126c9c436a128dabad8c77962e9bad5a23d51a54babb` |
 
-The macOS count is higher because its BSD/GNU exact-path controls include Darwin-specific cases.
-Windows counts are reported separately and are not inferred from macOS.
+The four additional macOS passes are Darwin-specific BSD/GNU exact-path controls. Windows and
+macOS counts were measured separately.
 
 ## Artifact integrity
 
@@ -84,6 +84,6 @@ Windows counts are reported separately and are not inferred from macOS.
 - Final `selftest.sh`: `a4465f1d0a8c803881e374bd2c6c909403aaf64f841b99efbb8c520ef646dcbf`
 - Final `MACOS.md`: `0007701f4410019d99e458085f2e2cce268dd8f4fcb217097b1b828f990eb727`
 - Remaining macOS failures: none.
-- Corrected Windows result: `UNMEASURED`; no Windows compatibility claim is made.
+- Corrected Windows Git Bash result: `126 passed, 0 failed` on the exact package patch above.
 
 The package is review-only. It was not installed, pinned, merged, or promoted.
