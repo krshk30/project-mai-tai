@@ -26,9 +26,11 @@ in production twelve hours after it was found.**
 
 **#852 — the v2 warmup latch.** `_rest_warmup_done` could only be entered by a REST bar younger than
 300s, on the docstring's own assumption *"REST is the only live feed."* False: the streamer is the
-live feed and REST backfills history, so pre-market REST returns days-old bars. The proxy was
-structurally unreachable with no timeout, and at 05:40 the boot hold had been stuck since 04:06
-while both pending symbols had bars 56 seconds old in the DB. Tonight's restart released it in
+live feed and REST backfills history, so pre-market REST returns days-old bars. REST freshness was unavailable during the observed early-pre-market
+interval and the latch had no elapsed-time bound; at 05:40 the hold had been stuck since 04:06 while
+both pending symbols had bars 56 seconds old in the DB. ⛔ Scope corrected by codex-2: NOT
+"structurally unreachable" — at 07:01 the pre-fix code warmed both symbols from REST and released
+naturally. The defect is the missing streamer route plus the absent timeout. Tonight's restart released it in
 **12.9 seconds** with **STREAMER 3/4** — three of four symbols warmed by the route the fix added.
 
 **#853 — the CW profit floor.** CW mode persisted a high-water floor and never consumed it,

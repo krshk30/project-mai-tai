@@ -37,9 +37,14 @@ found.**
 ## #852 — v2 warmup latch · **EXERCISED, NOT MERELY DEPLOYED**
 
 **The defect:** `_rest_warmup_done` could only be entered by a REST bar younger than 300s, on the
-docstring's stated assumption *"REST is the only live feed."* **False** — the streamer is the live
-feed and REST backfills history, so pre-market REST returns days-old bars. The proxy was
-**structurally unreachable** and there was **no timeout**. At 05:40 ET the boot hold had been stuck
+docstring's stated assumption *"REST is the only live feed."* **Not reliably true** — the streamer is the live feed and
+REST backfills history, so during the observed early-pre-market interval REST returned days-old
+bars and the latch had **no elapsed-time bound**.
+
+⛔ **SCOPE, corrected by `codex-2`:** this is NOT "structurally unreachable". At **07:01 ET today the
+PRE-FIX code warmed AEHL and YDDL from REST and released the hold naturally.** REST freshness is
+unavailable during part of the early pre-market, not absent from it. The defect is the **missing
+streamer route plus the absent timeout**, not an impossible REST path. At 05:40 ET the boot hold had been stuck
 since 04:06 with `rest_warmed=0`, `warmup_pending=AEHL,YDDL`, while both symbols had bars **56
 seconds old** in the DB.
 
@@ -57,7 +62,7 @@ morning. The 369s timeout stayed **UNEXERCISED**, as intended.
 **The defect:** CW mode maintained and *persisted* a high-water floor and **never consumed it**,
 substituting a fixed entry+2% floor. AEHL entered 6.07, bid peaked **7.58**, the ratchet stood at
 **~7.48895**, bid fell to 7.46 — and CW returned a frozen **6.1914**. **0 of 376 quote ticks**
-breached it. Operator closed by hand at **+18.6%**.
+breached it. Operator closed by hand at **operator-reported ~+18.6%**; ⛔ internal execution price and P&L are **`COULD_NOT_TELL`** — the manual close was never recorded.
 
 ⭐ **The control was in the same log:** YDDL breached its −5% stop and exited correctly via
 `CW_HARD_STOP`. **Downside path executed, upside path did not.**
@@ -120,14 +125,30 @@ cp -r ~/.claude/mai-tai-fleet "$S/bundle/mai-tai-fleet"
 cd "$S/bundle" && find . -type f -print0 | sort -z | xargs -0 sha256sum > "$S/MANIFEST.sha256"
 cd "$S" && tar -czf mac-cutover.tar.gz bundle MANIFEST.sha256 && sha256sum mac-cutover.tar.gz
 
-# MAC  (⛔ note the memory folder name differs: -Users-velkris)
+# MAC — ⛔ FAILS CLOSED. Verification GATES the replacement; nothing is deleted.
+set -euo pipefail
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+MEM=~/.claude/projects/-Users-velkris/memory
+FLEET=~/.claude/mai-tai-fleet
+
 tar -xzf ~/mac-cutover.tar.gz -C ~
-cd ~/bundle && shasum -a 256 -c ../MANIFEST.sha256 2>&1 | grep -c "OK$"
-rm -rf ~/.claude/projects/-Users-velkris/memory ~/.claude/mai-tai-fleet
-cp -R ~/bundle/memory ~/.claude/projects/-Users-velkris/memory
-cp -R ~/bundle/mai-tai-fleet ~/.claude/mai-tai-fleet
-chmod +x ~/.claude/mai-tai-fleet/*.sh && ~/.claude/mai-tai-fleet/checksums.sh verify
+cd ~/bundle
+shasum -a 256 -c ../MANIFEST.sha256          # ⛔ non-zero exit here ABORTS under set -e
+
+mv "$MEM"   "$MEM.pre-cutover-$STAMP"        # rename, never rm -rf
+mv "$FLEET" "$FLEET.pre-cutover-$STAMP"
+cp -R ~/bundle/memory "$MEM"
+cp -R ~/bundle/mai-tai-fleet "$FLEET"
+chmod +x "$FLEET"/*.sh
+"$FLEET"/checksums.sh verify
 ```
+
+⛔⭐⭐ **Why this shape:** the earlier version piped verification into `grep -c "OK$"`, which merely
+**prints a count** — it gated nothing, and the `rm -rf` ran regardless. Without `pipefail` a
+`shasum` failure was not propagated either, so **a corrupt archive would have deleted the live
+memory and fleet board anyway.** Here `shasum -c` exits non-zero under `set -e` and aborts before
+anything is touched, and the originals are **renamed, not removed**, so rollback is `mv` back.
+⛔ Delete the `.pre-cutover-*` copies only after the behavioural check below passes.
 
 ⛔⭐⭐ **AFTER THE CUTOVER, WINDOWS MUST STOP WRITING FLEET JOURNALS ENTIRELY.** One writer per file
 is the whole guarantee; two machines appending in one batch diverge irreconcilably and
@@ -153,9 +174,10 @@ was covering for it' mean?"* A file count proves files moved; only an answer pro
 
 1. ⭐⭐ **Something else was covering for it.** Ask of any guard: *if I removed everything else,
    would this still work?* The cover is a broker order, a second data source, or a branch that runs
-   first — **none appear in the file you are reading.** Both of today's defects were this.
-2. ⭐ **Trade small size in the degraded environment on purpose.** Extended hours strips the broker
-   bracket and the same-day REST feed. **$8.50 exposed two months-old bugs.**
+   first — **none appear in the file you are reading.** ⭐ Scoped: the broker OCO covered #853; REST
+   *becoming* fresh around 07:01 masked #852's missing streamer route.
+2. ⭐ **Trade small size in the degraded environment on purpose.** Extended hours removes the broker
+   bracket outright, and makes same-day REST freshness intermittent rather than absent. **$8.50 exposed two months-old bugs.**
 3. ⭐ **Look for the case in the same window where the mechanism DID work.** YDDL vs AEHL settled
    the CW diagnosis in minutes.
 4. ⛔ **Require the rationale before the patch.** The fixed floor was deliberate; "just make it
