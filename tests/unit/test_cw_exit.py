@@ -2,7 +2,7 @@
 so this pins the single source of truth (backtest==live parity, 2026-07-14)."""
 from __future__ import annotations
 
-from project_mai_tai.exit_logic.cw_exit import cw_exit_decision
+from project_mai_tai.exit_logic.cw_exit import cw_effective_floor, cw_exit_decision
 
 # entry 100, target +2%, stop -5%, floor +2%.
 KW = dict(target_pct=2.0, stop_pct=5.0, floor_pct=2.0)
@@ -45,6 +45,20 @@ def test_floor_pre_arm_stop_and_flip_and_hold():
 def test_floor_rides_above_floor():
     # armed, well above the floor -> keep holding (the point: don't cap at +2%)
     assert cw_exit_decision(100, 105.0, True, floor_enabled=True, flip_pending=False, **KW) == ("hold", True)
+
+
+def test_floor_consumes_ratchet_on_fallback_but_not_above_it():
+    ratchet = 110.0
+    common = dict(
+        floor_enabled=True,
+        flip_pending=False,
+        ratcheted_floor_price=ratchet,
+        **KW,
+    )
+
+    assert cw_exit_decision(100, 110.01, True, **common) == ("hold", True)
+    assert cw_exit_decision(100, 109.99, True, **common) == ("floor", False)
+    assert cw_effective_floor(100, 2.0, ratchet) == 110.0
 
 
 def test_floor_exits_on_fallback_to_floor():

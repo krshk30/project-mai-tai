@@ -71,10 +71,11 @@ def _arm(svc, sf, *, entry=10.0, qty=100) -> None:
     svc._managed_v2_symbols.add((ACCT, SYM))
 
 
-def _quote(svc, bid: float) -> None:
+def _quote(svc, bid: float, *, ask: float | None = None) -> None:
     from datetime import UTC, datetime
     svc._latest_quotes_by_symbol[SYM] = {
-        "bid": bid, "ask": bid + 0.01, "received_at": datetime.now(UTC),
+        "bid": bid, "ask": bid + 0.01 if ask is None else ask,
+        "received_at": datetime.now(UTC),
     }
 
 
@@ -203,13 +204,52 @@ async def test_cw_floor_arms_at_target_then_exits_on_fallback():
     _quote(svc, bid=10.60)                            # rides higher -> still no exit
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
     assert _sell_intents(sf) == []
-    _quote(svc, bid=10.20)                            # falls back to the +2% floor -> CW_FLOOR
+    _quote(svc, bid=10.20)                            # falls through the persisted +4.5% ratchet
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
     intents = _sell_intents(sf)
     assert len(intents) == 1
     assert intents[0].reason.endswith("CW_FLOOR")
-    assert _ref(intents[0]) == Decimal("10.2000")     # the floor level
+    assert _ref(intents[0]) == Decimal("10.4500")     # the ratcheted floor level, not fixed +2%
     assert (ACCT, SYM) not in svc._cw_floor_armed
+
+
+@pytest.mark.asyncio
+async def test_cw_floor_consumes_bid_ratchet_with_both_fallback_outcomes_reachable():
+    sf = _make_sf()
+    svc = _svc(sf, cw=True, floor=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=10.25)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)  # arm fixed +2% minimum
+    _quote(svc, bid=10.60)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)  # peak +6% -> durable floor +4.5%
+
+    _quote(svc, bid=10.46)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    assert _sell_intents(sf) == []  # above 10.45 ratchet: keep riding
+
+    _quote(svc, bid=10.44)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    intents = _sell_intents(sf)
+    assert len(intents) == 1
+    assert intents[0].reason.endswith("CW_FLOOR")
+    assert _ref(intents[0]) == Decimal("10.4500")
+
+
+@pytest.mark.asyncio
+async def test_cw_floor_ignores_wide_ask_bounce_when_bid_does_not_really_move():
+    sf = _make_sf()
+    svc = _svc(sf, cw=True, floor=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=10.25)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    _quote(svc, bid=10.25, ask=12.00)  # spread bounce: ask jumps, executable bid does not
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    _quote(svc, bid=10.21, ask=10.22)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert _sell_intents(sf) == []
+    assert _row(sf).floor_price == Decimal("10.05000000")
 
 
 @pytest.mark.asyncio

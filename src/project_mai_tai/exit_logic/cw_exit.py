@@ -4,14 +4,29 @@ live and backtest are the same build (operator parity requirement, 2026-07-14).
 
 Two modes, selected by ``floor_enabled``:
   * OFF (current live): full close at **+target%** (hard) OR **-stop%** OR a bar-close flip.
-  * ON  (floor exit):   at **+target%** ARM a floor at **+floor_pct%** and RIDE; exit when the bid
-    falls back to that floor, else -stop% (only reachable before arming) or a bar-close flip.
+  * ON  (floor exit):   at **+target%** ARM a floor at **+floor_pct%** and RIDE; after arming,
+    consume the durable BID-derived price ratchet without ever loosening below that fixed lock.
+    Exit when the bid falls back through the effective floor, else -stop% (only reachable before
+    arming) or a bar-close flip.
     Backtest 07-09..07-14: floor@+2% + 1-bar reclaim gap + keep -5% was the best config.
 
-``armed`` is a plain bool (the floor is fixed at entry*(1+floor_pct/100), so it re-arms
-identically after an OMS restart — no durable state needed). Pure + deterministic.
+The fixed floor remains the restart-safe minimum. ``ratcheted_floor_price`` is the persisted
+high-water floor maintained by ``Position.update_price`` from BID quotes only; consuming it keeps
+the winner-following behaviour restart-durable without letting a wide ask/bid spread manufacture
+a high-water mark. Pure + deterministic.
 """
 from __future__ import annotations
+
+
+def cw_effective_floor(
+    entry: float,
+    floor_pct: float,
+    ratcheted_floor_price: float | None = None,
+) -> float:
+    """Return the fixed CW lock widened only by a positive durable BID ratchet."""
+    fixed_floor = entry * (1.0 + floor_pct / 100.0)
+    ratcheted = float(ratcheted_floor_price or 0.0)
+    return max(fixed_floor, ratcheted) if ratcheted > 0 else fixed_floor
 
 
 def cw_exit_decision(
@@ -24,6 +39,7 @@ def cw_exit_decision(
     floor_pct: float,
     floor_enabled: bool,
     flip_pending: bool,
+    ratcheted_floor_price: float | None = None,
 ) -> tuple[str, bool]:
     """Return ``(action, armed_out)``.
 
@@ -44,7 +60,7 @@ def cw_exit_decision(
         return "hold", armed
 
     # floor mode
-    floor = entry * (1.0 + floor_pct / 100.0)
+    floor = cw_effective_floor(entry, floor_pct, ratcheted_floor_price)
     if not armed:
         if bid >= tp:
             return "arm", True          # reached the target -> lock the floor, keep riding
