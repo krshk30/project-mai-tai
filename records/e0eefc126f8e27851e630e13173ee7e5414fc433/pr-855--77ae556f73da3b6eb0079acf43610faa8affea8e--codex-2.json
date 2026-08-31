@@ -1,0 +1,9 @@
+{
+  "pr_number": 855,
+  "range_base": "77ae556f73da3b6eb0079acf43610faa8affea8e",
+  "range_head": "e0eefc126f8e27851e630e13173ee7e5414fc433",
+  "reviewed_at": "2026-08-31T21:49:26Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified live box SHA and seven PIDs; #852 REST 1/4 streamer 3/4 timeout 0/4 natural release at 20:40:48.894Z; generated 129-line manifest byte-identical and BALANCED; correction delta scopes REST accurately, marks AEHL internal PnL COULD_NOT_TELL, and makes Mac cutover checksum-gated with rollback copies."
+}
