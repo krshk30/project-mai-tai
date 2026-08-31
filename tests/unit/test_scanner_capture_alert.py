@@ -178,6 +178,55 @@ def test_database_password_is_environment_only_not_psql_argv() -> None:
     assert captured["env"]["PGPASSWORD"] == "secret-value"
 
 
+def test_psql_return_code_separates_measured_rows_from_unmeasured_failure() -> None:
+    def reader_for(result: subprocess.CompletedProcess[str]):
+        def read(database_url: str, now_et: datetime):
+            return scanner_capture.read_database_observation(
+                database_url,
+                now_et,
+                runner=lambda *_args, **_kwargs: result,
+            )
+
+        return read
+
+    successful = scanner_capture.run_check(
+        now=_now(),
+        database_url="postgresql://mai_tai:secret-value@localhost/project_mai_tai",
+        database_reader=reader_for(
+            subprocess.CompletedProcess(
+                ["psql"],
+                0,
+                "37|12|2026-08-31 08:55:14|28|5\n",
+                "",
+            )
+        ),
+        feed_reader=lambda **_kwargs: 0,
+    )
+    failed = scanner_capture.run_check(
+        now=_now(),
+        database_url="postgresql://mai_tai:dead-value@localhost/project_mai_tai",
+        database_reader=reader_for(
+            subprocess.CompletedProcess(
+                ["psql"],
+                2,
+                "0|0|-|28|5\n",
+                "password authentication failed",
+            )
+        ),
+        feed_reader=lambda **_kwargs: 0,
+    )
+
+    assert successful.status == "OBSERVED"
+    assert successful.exit_code == 0
+    assert "rows=37" in successful.line
+    assert failed.status == "COULD_NOT_TELL"
+    assert failed.exit_code != 0
+    assert "row_count=UNMEASURED" in failed.line
+    assert "cause=NOT_DETERMINED" in failed.line
+    assert "rows=0" not in failed.line
+    assert "LOW_VOLUME" not in failed.line
+
+
 def test_wrapper_sources_current_env_and_never_embeds_or_asserts_a_cause() -> None:
     source = WRAPPER_PATH.read_text(encoding="utf-8")
 
