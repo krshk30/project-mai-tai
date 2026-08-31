@@ -1,0 +1,178 @@
+  (isolated fleet: /var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/tmp.1kbwkWtjLT/fleet — the real journals are never written by this suite)
+════ FLEET SELF-TEST ════
+
+A. THE MERGE GATE — can it still report a false clean?
+  [32mPASS[0m  a non-repo directory says COULD_NOT_TELL, not clean
+  [32mPASS[0m  a ref that does not exist says COULD_NOT_TELL
+  [32mPASS[0m  …and it EXITS non-zero, so a script cannot read it as a pass
+  [32mPASS[0m  the KNOWN-CONFLICTING pair is reported as CONFLICT
+  [32mPASS[0m  CONTROL: a known-clean pair still reads CLEAN
+
+B. IDENTITY — can an agent write someone else's journal by accident?
+  [32mPASS[0m  unset AGENT is refused (no shared default exists)
+  [32mPASS[0m  an unregistered/typo AGENT is refused
+  [32mPASS[0m  an AGENT with path characters is refused
+
+C. ENTRY QUALITY — can an unusable entry get in?
+  [32mPASS[0m  a FINDING with no population/scope is refused
+  [32mPASS[0m  a CLAIM with no path/duration is refused
+  [32mPASS[0m  an unknown TYPE is refused
+  [32mPASS[0m  CONTROL: a well-formed FINDING is accepted
+
+D. RECORD INTEGRITY — can free text corrupt the parse?
+  [32mPASS[0m  a raw '|' and a newline are neutralised (still exactly 5 fields)
+
+D2. INTERMITTENCY — does a burst of entries ALL land? (the octal-%N drop)
+  [32mPASS[0m  40 consecutive entries all landed (no octal drop)
+
+E. ROTATION — can it destroy work that was never promoted?
+  [32mPASS[0m  a bad PR number clears NOTHING (      41 lines intact)
+
+F. CLAIM-TIME OVERLAP — is it actually enforced, or only reportable?
+  [32mPASS[0m  a DIFFERENT agent claiming the same path is REFUSED (not merely reported)
+  [32mPASS[0m  …and the refusal SAYS WHY (not a silent exit 1)
+  [32mPASS[0m  a GLOB colliding with a literal path is refused
+  [32mPASS[0m  an UNTRACKED planned path still collides (prefix rule, not ls-files)
+  [32mPASS[0m  CONTROL: a genuinely unrelated path is still ACCEPTED
+
+G. ROTATION QUIESCENCE — can it race a writer?
+  [32mPASS[0m  rotation with NO freeze is refused (an agent may be mid-write)
+  [32mPASS[0m  a new CLAIM during a freeze is refused
+  [32mPASS[0m  rotation with an INCOMPLETE ack set is refused
+
+H. FREEZE MEANS CLOSED — can an ACKed agent still write?
+  [32mPASS[0m  an ACKed agent cannot write a FINDING (would land after manifest verification)
+  [32mPASS[0m  an ACKed agent cannot write a NOTE either
+  [32mPASS[0m  CONTROL: an agent that has NOT acked can still finish (non-CLAIM)
+
+I. ROTATION UNDER FAILURE — does a failed move still truncate the original?
+  [32mPASS[0m  a genuinely FAILED mv stops the run and leaves the journal INTACT (      74 bytes)
+K. PARTIAL ROTATION — is the manifest still stable, so a retry can resume?
+  [32mPASS[0m  the manifest is IDENTICAL mid-rotation, so a retry can pass the completeness gate
+
+L. CARRIED CLAIMS — does rotation erase what is still held?
+  [32mPASS[0m  a still-held claim SURVIVES rotation (rehydrated onto the fresh board)
+
+M. MANIFEST COMPLETENESS — does it silently omit any event type?
+  [32mPASS[0m  every event type in the journals is emitted (CLAIM/RELEASE/NOTE/CI included)
+  [32mPASS[0m  a NOVEL type is carried (types derived from data, not a hardcoded list)
+  [32mPASS[0m  the reconciliation identity balances
+  [32mPASS[0m  a malformed entry makes the manifest VOID, not quietly short
+
+N. VOID ENFORCEMENT + RECONCILIATION HONESTY
+  [32mPASS[0m  CONTROL: a clean manifest exits 0
+  [32mPASS[0m  a VOID manifest EXITS non-zero (printing VOID was never enforcement)
+  [32mPASS[0m  duplicate entries are COUNTED, not silently deduped
+  [32mPASS[0m  a duplicate makes the manifest VOID
+  [32mPASS[0m  a 3-field record is MALFORMED (schema is 5 fields)
+
+O. RESUME AFTER A PARTIAL ROTATION — is a carried claim still safe?
+  [32mPASS[0m  a claim moved by a failed attempt is still visible to the retry
+
+P. REAL FAILED PROMOTION THEN RETRY — does the retry actually get further?
+  [32mPASS[0m  a failed promotion RETRIES to completion (attempt1 exit 3, attempt2 exit 0)
+  [32mPASS[0m  …and the held claim is still on the board after the retry
+
+Q. PROMOTION REFUSES A VOID MANIFEST — even when PR and disk agree perfectly
+  [32mPASS[0m  an IDENTICAL VOID manifest on both sides is REFUSED and clears nothing
+
+R. REVIEW INTEGRITY — self-review, empty verdicts, moved heads, atomic merge
+  [32mPASS[0m  an author cannot review its OWN namespace's branch
+  [32mPASS[0m  a bare 'reviewed' verdict is refused (say what you checked)
+  [32mPASS[0m  CONTROL: the OTHER agent with a real verdict is accepted
+  [32mPASS[0m  check passes while the head is unchanged
+  [32mPASS[0m  the merge command is ATOMIC (--match-head-commit)
+  [32mPASS[0m  …and it pins the FULL 40-char reviewed SHA
+  [32mPASS[0m  a MOVED head makes check refuse (would ship unreviewed code)
+
+S. PIN IS BOUND TO ITS FREEZE — can a recreated freeze resurrect a stale manifest?
+  [32mPASS[0m  the first attempt PINNED the verified manifest
+  [32mPASS[0m  a pin from a LIFTED freeze is REFUSED (it would omit later entries)
+
+U. ROUND-8 GATE FIXES — nonce, PR-head binding, --repo, transferable ownership
+  [32mPASS[0m  two same-second freezes have DIFFERENT identities (nonce)
+  [32mPASS[0m  the merge command carries --repo (works from the fleet dir)
+  [32mPASS[0m  …and it is a real owner/name slug
+  [32mPASS[0m  the author is refused on the range it DID write
+  [32mPASS[0m  ...and the other agent CAN review that same range
+  [32mPASS[0m  an EMPTY range is COULD_NOT_TELL, not a green review of zero commits
+  [32mPASS[0m  a ONE-COMMIT range cannot authorise squashing all five #770 commits
+  [32mPASS[0m  a full-PR review covers all five #770 commits
+  [32mPASS[0m  merge-cmd works only after every #770 commit is covered
+  [32mPASS[0m  an authorship audit claim with no reason is refused
+  [32mPASS[0m  an agent cannot assign an audit claim to the other agent
+  [32mPASS[0m  CONTROL: an audit claim cannot block review of commits the claimant did not write
+
+W. ROUND-9 GAPS — the laundering exploit, a fail-open binding, and a backwards clock
+  [32mPASS[0m  an author CANNOT launder a self-review by transferring ownership away
+  [32mPASS[0m  …and it is refused on GIT AUTHORSHIP, not on the editable record
+  [32mPASS[0m  CONTROL: the non-author can still review it
+  [32mPASS[0m  an EMPTY pin-head binding reaches and REFUSES at the binding guard
+  [32mPASS[0m  25 consecutive stamps are MONOTONIC (single-read clock)
+
+X. ROUND-11 AUTHORSHIP + RANGE COVERAGE — every commit classified, every commit reviewed
+  [32mPASS[0m  Codex can review a Claude-marked commit
+  [32mPASS[0m  an UNMARKED commit is COULD_NOT_TELL, exit 3, with no review pin
+  [32mPASS[0m  reviewing only the first commit cannot authorise the new second commit
+  [32mPASS[0m  Codex cannot review its own Codex-marked commit
+  [32mPASS[0m  Claude can review the Codex-marked range
+  [32mPASS[0m  complementary independent ranges cover the whole mixed-author PR
+  [32mPASS[0m  an AMBIGUOUS dual-marker commit is COULD_NOT_TELL
+  [32mPASS[0m  legacy Codex OID f3ebec984 has an exact Codex attestation
+  [32mPASS[0m  legacy Codex OID 59fc115a4 has an exact Codex attestation
+  [32mPASS[0m  a reachable legacy Codex OID is reviewable by Claude via explicit attestation
+  [32mPASS[0m  a legacy Codex OID is still self-review-refused for Codex
+  [32mPASS[0m  stacked PR #772 is scoped to its codex branch base, not incorrectly back to main
+
+Y. UPDATED-PR REVIEW HISTORY — can a stale old-base pin poison a new full review?
+  [32mPASS[0m  CONTROL: the original PR range can be reviewed
+  [32mPASS[0m  a stale old-base review alone cannot authorise the updated PR
+  [32mPASS[0m  a new full review authorises the updated PR despite stale review history
+  [32mPASS[0m  merge-cmd ignores stale history once the current PR is fully covered
+
+J. STALE REFS — does a failed fetch fail OPEN?
+  [32mPASS[0m  an unreachable remote makes matrix exit non-zero (never answers over stale refs)
+CC. CARRY NOTES — a REAL isolated promotion must write 11 DISTINCT, path-bearing notes
+  [32mPASS[0m  REAL promotion wrote 11 carry notes
+  [32mPASS[0m  all 11 are DISTINCT physical entries (0 duplicates)
+  [32mPASS[0m  every claim PATH appears in its own note
+  [32mPASS[0m  MUTANT A killed: the real printf lost its path, 11 of 11 notes no longer name a claim
+  [32mPASS[0m  MUTANT C killed: the original defect collapses 11 notes to 1 distinct (VOIDs the next manifest)
+  [32mPASS[0m  MUTANT B killed: a two-read clock stamps BACKWARD under the forced rollover
+  [32mPASS[0m  CONTROL under the same stub: the single-read clock stays monotonic
+MP. MULTI-PR PROMOTION — stale carrier, unmerged carrier, duplicate, unreadable, moved head
+  [32mPASS[0m  a carrier whose blob differs from final main is refused as STALE
+  [32mPASS[0m  an UNMERGED carrier is refused
+  [32mPASS[0m  two carriers of the same document is refused
+  [32mPASS[0m  an unreadable PR is COULD_NOT_TELL(3), never a pass
+  [32mPASS[0m  the good set proves every document's blob equals final main
+  [32mPASS[0m  a COMPANION carrier moving invalidates the pin
+  [32mPASS[0m  the retry hint names EVERY carrier, not just the manifest's
+  [32mPASS[0m  a FAILED fetch is COULD_NOT_TELL(3), never a promotion on cached refs
+  [32mPASS[0m  a forced mv failure is reported (the retry path is reached)
+  [32mPASS[0m  the mv-failure retry names BOTH carriers (801 802)
+  [32mPASS[0m  a partial rotation leaves a pin to resume from
+  [32mPASS[0m  retrying with a TRUNCATED PR set is refused
+  [32mPASS[0m  a MISSING .manifest-verified.mainsha is refused, not skipped
+  [32mPASS[0m  retrying with the FULL PR set resumes and completes
+
+PC. PORTABILITY CONTROLS — exact BSD/GNU shims, fail-closed overrides
+  [32mPASS[0m  exact BSD shasum path produces SHA-256
+  [32mPASS[0m  exact BSD md5 path produces MD5
+  [32mPASS[0m  exact BSD stat path produces an epoch mtime
+  [32mPASS[0m  exact BSD date path converts epoch zero
+  [32mPASS[0m  exact GNU sha256sum interface is selected correctly
+  [32mPASS[0m  exact GNU md5sum interface is selected correctly
+  [32mPASS[0m  exact GNU stat interface is selected correctly
+  [32mPASS[0m  exact GNU date interface is selected correctly
+  [32mPASS[0m  exact Python path parses gh JSON
+  [32mPASS[0m  a non-absolute shim override is refused, not silently bypassed
+
+CRLF. FRESH WINDOWS COPY — preparation produces directly executable LF scripts
+  [32mPASS[0m  CONTROL: a CRLF shebang is not falsely reported executable on macOS
+  [32mPASS[0m  the supported preparation path removes every CR from shell scripts
+  [32mPASS[0m  every prepared shell script parses under Apple Bash 3.2
+  [32mPASS[0m  a prepared fresh-copy script executes directly through its LF shebang
+
+════ 120 passed, 0 failed ════
+✅ every guard refused its known-bad input, and every control still worked.

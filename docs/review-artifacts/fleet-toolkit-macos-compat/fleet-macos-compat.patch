@@ -1,0 +1,782 @@
+diff -ruN live-original-normalized/MACOS.md live-copy-normalized/MACOS.md
+--- live-original-normalized/MACOS.md	1969-12-31 19:00:00
++++ live-copy-normalized/MACOS.md	2026-08-30 19:10:24
+@@ -0,0 +1,32 @@
++# macOS bring-up notes
++
++Build a dependency-only overlay, then run the fleet with Apple system tools. The overlay contains
++links to `gh` and `python3` only; it does not expose Homebrew GNU coreutils:
++
++```bash
++fleet_tool_dir=$(/usr/bin/mktemp -d /tmp/fleet-macos-tools.XXXXXX)
++gh_path=$(command -v gh)
++python3_path=$(command -v python3)
++/bin/ln -s "$gh_path" "$fleet_tool_dir/gh"
++/bin/ln -s "$python3_path" "$fleet_tool_dir/python3"
++env PATH="$fleet_tool_dir:/usr/bin:/bin:/usr/sbin:/sbin" \
++  MAI_TAI_REPO=/Users/velkris/Projects/project-mai-tai \
++  /bin/bash ./selftest.sh
++```
++
++The compatibility helpers also accept fail-closed absolute overrides when an exact implementation
++must be selected: `FLEET_SHA256SUM`, `FLEET_SHASUM`, `FLEET_MD5SUM`, `FLEET_MD5`,
++`FLEET_BSD_STAT`, `FLEET_GNU_STAT`, `FLEET_BSD_DATE`, `FLEET_GNU_DATE`, and `FLEET_PYTHON`.
++
++If a fresh copy from Windows lands the shell scripts with CRLF line endings, direct execution can
++fail before any in-script guard runs because the shebang itself is malformed. Normalize first:
++
++```bash
++/usr/bin/perl -pi -e 's/\r$//' ./*.sh ./fleet.cmd
++chmod +x ./*.sh
++```
++
++This normalization is external on purpose. A script with a CRLF shebang cannot repair itself before
++the kernel or shell tries to parse it. `selftest.sh` creates a fresh CRLF copy, proves direct
++execution initially fails, applies these exact commands, verifies every shell script is LF and
++valid under Apple Bash 3.2, then proves direct shebang execution succeeds.
+diff -ruN live-original-normalized/board.sh live-copy-normalized/board.sh
+--- live-original-normalized/board.sh	2026-08-30 19:10:23
++++ live-copy-normalized/board.sh	2026-08-30 19:10:24
+@@ -12,6 +12,7 @@
+ # ⛔⭐⭐ REPO CONTEXT IS MANDATORY for matrix/rehearse/overlap. Set MAI_TAI_REPO, or pass --repo.
+ set -uo pipefail
+ R="$(cd "$(dirname "$0")" && pwd)"
++. "$R/portable.sh"
+ 
+ # ── repo resolution: explicit, verified, never inferred from $PWD ────────────────────────────
+ REPO="${MAI_TAI_REPO:-}"
+@@ -49,7 +50,7 @@
+     return
+   fi
+   local before after
+-  before=$(git -C "$REPO" for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin | sha256sum)
++  before=$(git -C "$REPO" for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin | hash_sha256)
+   if ! git -C "$REPO" fetch --quiet --prune origin 2>/dev/null; then
+     # ⛔⭐⭐ FAIL CLOSED. v3 printed COULD_NOT_TELL and RETURNED SUCCESS, so the matrix carried on
+     # over stale refs and printed CLEAN/CONFLICT anyway — a warning above a confident number is
+@@ -58,7 +59,7 @@
+     echo "       Fix connectivity, or accept staleness EXPLICITLY with MAI_TAI_NO_FETCH=1." >&2
+     return 3
+   fi
+-  after=$(git -C "$REPO" for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin | sha256sum)
++  after=$(git -C "$REPO" for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin | hash_sha256)
+   if [ "$before" = "$after" ]; then echo "    refs: fetched, nothing moved"
+   else echo "    ⚠ refs MOVED during fetch — a branch was updated since your last look. Re-read the SHAs below."; fi
+ }
+@@ -97,18 +98,20 @@
+   echo "=== PAIRWISE CONFLICT MATRIX ==="
+   echo "    repo: $REPO"
+   # ⛔ EVERY REF IS RESOLVED FIRST. An unresolvable ref used to print ✅ clean.
+-  declare -A S; bad=0
++  # Apple still ships Bash 3.2, which has indexed arrays but not associative arrays.
++  # Keep refs and resolved SHAs in parallel arrays so every pair is measured once.
++  refs=("$@"); shas=(); bad=0
+   for r in "$@"; do
+     s=$(sha_of "$r")
+     if [ -z "$s" ]; then echo "⛔ COULD_NOT_TELL — ref does not resolve: $r"; bad=1
+-    else S["$r"]="$s"; printf '    %-58s %s\n' "$r" "${s:0:9}"; fi
++    else shas+=("$s"); printf '    %-58s %s\n' "$r" "${s:0:9}"; fi
+   done
+   [ "$bad" = 1 ] && { echo; echo "⛔ VOID — refs missing, no pair was measured. Fetch, then re-run."; exit 3; }
+   echo
+   unknown=0; conflict=0
+-  for a in "$@"; do for b in "$@"; do
+-    [ "$a" \< "$b" ] || continue
+-    out=$(git -C "$REPO" merge-tree --write-tree --messages "${S[$a]}" "${S[$b]}" 2>&1); rc=$?
++  for ((i=0; i<${#refs[@]}; i++)); do for ((j=i+1; j<${#refs[@]}; j++)); do
++    a="${refs[$i]}"; b="${refs[$j]}"
++    out=$(git -C "$REPO" merge-tree --write-tree --messages "${shas[$i]}" "${shas[$j]}" 2>&1); rc=$?
+     # rc: 0 = clean, 1 = conflicts, >1 = git could not answer.
+     if [ $rc -gt 1 ]; then
+       echo "⛔ COULD_NOT_TELL  $a  x  $b   (git rc=$rc)"
+diff -ruN live-original-normalized/checksums.sh live-copy-normalized/checksums.sh
+--- live-original-normalized/checksums.sh	2026-08-30 19:10:23
++++ live-copy-normalized/checksums.sh	2026-08-30 19:10:24
+@@ -5,13 +5,27 @@
+ #   ./checksums.sh verify   fail if any gate script changed since it was pinned
+ set -uo pipefail
+ R="$(cd "$(dirname "$0")" && pwd)"; F="$R/.checksums"
++. "$R/portable.sh"
+ files() { ls "$R"/*.sh "$R"/fleet.cmd 2>/dev/null | grep -v checksums.sh; }
+ case "${1:-verify}" in
+-record) files | xargs sha256sum > "$F"; echo "pinned $(wc -l < "$F") file(s) -> .checksums" ;;
++record) files | while IFS= read -r f; do hash_sha256 "$f"; done > "$F"; echo "pinned $(wc -l < "$F") file(s) -> .checksums" ;;
+ verify) [ -f "$F" ] || { echo "⛔ COULD_NOT_TELL — nothing pinned yet. Run: ./checksums.sh record" >&2; exit 3; }
+-  if sha256sum -c "$F" --quiet 2>/dev/null; then echo "✅ gate scripts unchanged since pinning"
++  if while IFS= read -r line; do
++       [ -n "$line" ] || continue
++       _want="${line%%  *}"
++       _file="${line#*  }"
++       _got="$(hash_sha256 "$_file" 2>/dev/null | awk '{print $1}')"
++       [ "$_want" = "$_got" ] || exit 1
++     done < "$F"
++  then echo "✅ gate scripts unchanged since pinning"
+   else echo "⛔ GATE SCRIPTS HAVE DRIFTED since pinning:" >&2
+-       sha256sum -c "$F" 2>/dev/null | grep -v ': OK$' | sed 's/^/   /' >&2
++       while IFS= read -r line; do
++         [ -n "$line" ] || continue
++         _want="${line%%  *}"
++         _file="${line#*  }"
++         _got="$(hash_sha256 "$_file" 2>/dev/null | awk '{print $1}')"
++         [ "$_want" = "$_got" ] || printf '   %s: FAILED\n' "$_file" >&2
++       done < "$F"
+        echo "   ⇒ review the change, then ./checksums.sh record. An unreviewed gate is not a gate." >&2
+        exit 1; fi ;;
+ *) echo "usage: checksums.sh record|verify" >&2; exit 2 ;;
+diff -ruN live-original-normalized/freeze.sh live-copy-normalized/freeze.sh
+--- live-original-normalized/freeze.sh	2026-08-30 19:10:24
++++ live-copy-normalized/freeze.sh	2026-08-30 19:10:24
+@@ -5,6 +5,7 @@
+ #   ./freeze.sh status | lift
+ set -uo pipefail
+ R="$(cd "$(dirname "$0")" && pwd)"; FZ="$R/merge/FREEZE"
++. "$R/portable.sh"
+ case "${1:-status}" in
+ start) [ -f "$FZ" ] && { echo "already frozen since $(head -1 "$FZ")"; exit 0; }
+   # ⛔⭐⭐ A ONE-SECOND TIMESTAMP IS NOT AN IDENTITY. The manifest pin is bound to the freeze by
+@@ -12,7 +13,7 @@
+   # fingerprint repeats and a stale pin is accepted as if it belonged to the new freeze. The window
+   # is small and scripted rotation is exactly the thing that runs inside it. ⇒ a NONCE, so two
+   # freezes can never collide no matter how fast they follow each other.
+-  _nonce=$(cat /proc/sys/kernel/random/uuid 2>/dev/null            || od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d " 
++  _nonce=$(cat /proc/sys/kernel/random/uuid 2>/dev/null            || uuidgen 2>/dev/null            || od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d " 
+ "            || echo "$$-$(date -u +%s%N)")
+   [ -n "$_nonce" ] || { echo "⛔ could not generate a freeze nonce; refusing to start an unidentifiable freeze." >&2; exit 3; }
+   { date -u +%Y-%m-%dT%H:%M:%SZ; echo "nonce $_nonce"; } > "$FZ"     || { echo "⛔ could not write $FZ. Not frozen." >&2; exit 3; }
+diff -ruN live-original-normalized/log.sh live-copy-normalized/log.sh
+--- live-original-normalized/log.sh	2026-08-30 19:10:24
++++ live-copy-normalized/log.sh	2026-08-30 19:10:24
+@@ -3,6 +3,7 @@
+ #   AGENT=<name> ./log.sh <TYPE> "<claim>" ["<evidence or scope>"]
+ set -euo pipefail
+ R="$(cd "$(dirname "$0")" && pwd)"
++. "$R/portable.sh"
+ 
+ # ⛔⭐⭐ IDENTITY IS MANDATORY AND REGISTERED. There is NO shared fallback.
+ # A default `.agent` file used to hold "claude-1", so any agent that forgot AGENT= silently
+@@ -64,7 +65,7 @@
+   for _i in $(seq 1 60); do
+     if mkdir "$LOCK" 2>/dev/null; then _held=1; break; fi
+     if [ -d "$LOCK" ]; then
+-      _age=$(( $(date +%s) - $(stat -c %Y "$LOCK" 2>/dev/null || date +%s) ))
++      _age=$(( $(date +%s) - $(stat_mtime_epoch "$LOCK" 2>/dev/null || date +%s) ))
+       [ "$_age" -gt 30 ] && { rmdir "$LOCK" 2>/dev/null; echo "⚠ cleared a stale claim lock (${_age}s)" >&2; }
+     fi
+     sleep 0.1
+@@ -110,7 +111,7 @@
+ esac
+ case "$_frac" in *[!0-9]*|"") _frac="000000000" ;; esac
+ _ms=$(( 10#${_frac:0:3} ))
+-TS="$(date -u -d "@$_sec" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S).$(printf '%03d' "$_ms")Z"
++TS="$(date_utc_from_epoch "$_sec" 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S).$(printf '%03d' "$_ms")Z"
+ LINE="$TS | $A | $T | $C | $E"
+ printf '%s\n' "$LINE" >> "$R/agents/$A.md"
+ case "$T" in CLAIM|RELEASE) printf '%s\n' "$LINE" >> "$R/claims/$A.md" ;; esac
+diff -ruN live-original-normalized/portable.sh live-copy-normalized/portable.sh
+--- live-original-normalized/portable.sh	1969-12-31 19:00:00
++++ live-copy-normalized/portable.sh	2026-08-30 19:10:24
+@@ -0,0 +1,109 @@
++#!/usr/bin/env bash
++# Shared BSD/GNU compatibility helpers for the fleet scripts.
++# Exact-path overrides are intentionally variant-specific: BSD and GNU options differ.
++
++_exact_executable() {
++  local path="$1" label="$2"
++  case "$path" in
++    /*) ;;
++    *) echo "⛔ $label must be an absolute executable path (got '${path:-<empty>}')." >&2; return 127 ;;
++  esac
++  [ -x "$path" ] || { echo "⛔ $label is not executable: $path" >&2; return 127; }
++}
++
++hash_sha256() {
++  if [ "${FLEET_SHA256SUM+x}" = x ]; then
++    _exact_executable "$FLEET_SHA256SUM" FLEET_SHA256SUM || return
++    "$FLEET_SHA256SUM" "$@"
++  elif [ "${FLEET_SHASUM+x}" = x ]; then
++    _exact_executable "$FLEET_SHASUM" FLEET_SHASUM || return
++    "$FLEET_SHASUM" -a 256 "$@"
++  elif command -v sha256sum >/dev/null 2>&1; then
++    sha256sum "$@"
++  elif command -v shasum >/dev/null 2>&1; then
++    shasum -a 256 "$@"
++  else
++    echo "⛔ neither sha256sum nor shasum is available." >&2
++    return 127
++  fi
++}
++
++hash_md5() {
++  if [ "${FLEET_MD5SUM+x}" = x ]; then
++    _exact_executable "$FLEET_MD5SUM" FLEET_MD5SUM || return
++    "$FLEET_MD5SUM" "$@"
++  elif [ "${FLEET_MD5+x}" = x ]; then
++    _exact_executable "$FLEET_MD5" FLEET_MD5 || return
++    if [ "$#" -eq 0 ]; then "$FLEET_MD5" -q; else "$FLEET_MD5" -q "$@"; fi
++  elif command -v md5sum >/dev/null 2>&1; then
++    md5sum "$@"
++  elif command -v md5 >/dev/null 2>&1; then
++    if [ "$#" -eq 0 ]; then
++      md5 -q
++    else
++      md5 -q "$@"
++    fi
++  else
++    echo "⛔ neither md5sum nor md5 is available." >&2
++    return 127
++  fi
++}
++
++stat_mtime_epoch() {
++  if [ "${FLEET_BSD_STAT+x}" = x ]; then
++    _exact_executable "$FLEET_BSD_STAT" FLEET_BSD_STAT || return
++    "$FLEET_BSD_STAT" -f %m "$1"
++  elif [ "${FLEET_GNU_STAT+x}" = x ]; then
++    _exact_executable "$FLEET_GNU_STAT" FLEET_GNU_STAT || return
++    "$FLEET_GNU_STAT" -c %Y "$1"
++  elif stat -f %m "$1" >/dev/null 2>&1; then
++    stat -f %m "$1"
++  elif stat -c %Y "$1" >/dev/null 2>&1; then
++    stat -c %Y "$1"
++  else
++    echo "⛔ stat cannot report an mtime with BSD -f or GNU -c." >&2
++    return 127
++  fi
++}
++
++date_utc_from_epoch() {
++  if [ "${FLEET_BSD_DATE+x}" = x ]; then
++    _exact_executable "$FLEET_BSD_DATE" FLEET_BSD_DATE || return
++    "$FLEET_BSD_DATE" -u -r "$1" +%Y-%m-%dT%H:%M:%S
++  elif [ "${FLEET_GNU_DATE+x}" = x ]; then
++    _exact_executable "$FLEET_GNU_DATE" FLEET_GNU_DATE || return
++    "$FLEET_GNU_DATE" -u -d "@$1" +%Y-%m-%dT%H:%M:%S
++  elif date -u -r "$1" +%Y-%m-%dT%H:%M:%S >/dev/null 2>&1; then
++    date -u -r "$1" +%Y-%m-%dT%H:%M:%S
++  elif date -u -d "@$1" +%Y-%m-%dT%H:%M:%S >/dev/null 2>&1; then
++    date -u -d "@$1" +%Y-%m-%dT%H:%M:%S
++  else
++    echo "⛔ date cannot convert an epoch with BSD -r or GNU -d." >&2
++    return 127
++  fi
++}
++
++python_cmd() {
++  if [ "${FLEET_PYTHON+x}" = x ]; then
++    _exact_executable "$FLEET_PYTHON" FLEET_PYTHON || return
++    printf '%s\n' "$FLEET_PYTHON"
++  elif command -v python >/dev/null 2>&1; then
++    printf '%s\n' python
++  elif command -v python3 >/dev/null 2>&1; then
++    printf '%s\n' python3
++  else
++    return 1
++  fi
++}
++
++json_eval() {
++  local expr="$1"
++  local py
++  py="$(python_cmd)" || return 127
++  printf '%s' "$2" | "$py" -c "import json,sys; d=json.load(sys.stdin); $expr" 2>/dev/null
++}
++
++gh_json_field() {
++  local json="$1" expr="$2"
++  json_eval "$expr" "$json"
++}
+diff -ruN live-original-normalized/promote.sh live-copy-normalized/promote.sh
+--- live-original-normalized/promote.sh	2026-08-30 19:10:24
++++ live-copy-normalized/promote.sh	2026-08-30 19:10:24
+@@ -14,6 +14,7 @@
+ #     the PR *and match what is on disk right now* — so nothing can be left out by hand.
+ set -uo pipefail
+ R="$(cd "$(dirname "$0")" && pwd)"
++. "$R/portable.sh"
+ # ⛔⭐⭐ A BATCH'S HANDOFF CAN BE DELIVERED BY MORE THAN ONE PR, and assuming otherwise wedged a
+ # real promotion permanently. The 2026-08-24 batch landed session-handoff.md + handoff-log.md via
+ # #770 and the manifest via the #776 repair PR. The old single-PR check refused, and NO follow-up
+@@ -64,7 +65,7 @@
+   if [ -n "${PROMOTE_PR_FIXTURES:-}" ]; then cat "$PROMOTE_PR_FIXTURES/$1.json" 2>/dev/null; return $?; fi
+   (cd "$REPO" && gh pr view "$1" --json state,files,headRefOid,mergeCommit 2>/dev/null)
+ }
+-_jq() { printf '%s' "$2" | python -c "import sys,json;d=json.load(sys.stdin);$1" 2>/dev/null; }
++_jq() { gh_json_field "$2" "$1"; }
+ 
+ # ⛔⭐⭐ A FAILED FETCH IS NOT A CURRENT MAIN. This was `|| true`, so with the network down (or
+ # auth expired) `origin/main` resolved to whatever was CACHED — possibly hours stale — and every
+@@ -135,8 +136,8 @@
+   if [ -z "$_c" ]; then echo "   ⛔ MISSING from every PR: $d"; miss=1; continue; fi
+   _cm=$(printf '%s
+ ' "$DOC_CARRIERS" | awk -v d="$d" '$1==d{print $3; exit}')
+-  _a=$(cd "$REPO" && git show "$_cm:$d" 2>/dev/null | sha256sum | cut -d" " -f1)
+-  _b=$(cd "$REPO" && git show "$MAIN_SHA:$d" 2>/dev/null | sha256sum | cut -d" " -f1)
++  _a=$(cd "$REPO" && git show "$_cm:$d" 2>/dev/null | hash_sha256 | cut -d" " -f1)
++  _b=$(cd "$REPO" && git show "$MAIN_SHA:$d" 2>/dev/null | hash_sha256 | cut -d" " -f1)
+   if [ -z "$_a" ] || [ -z "$_b" ]; then
+     echo "   ⛔ COULD_NOT_TELL: cannot read $d at ${_cm:0:9} or main"; miss=1; continue; fi
+   if [ "$_a" != "$_b" ]; then
+@@ -200,7 +201,7 @@
+ # reopened, entries landed, and the resume would still compare against the OLD pin — silently
+ # promoting a batch whose manifest omits everything written in between. The pin now carries the
+ # freeze's fingerprint and is REFUSED if the freeze it was taken under is not the freeze in force.
+-_fz_fingerprint() { sha256sum < "$FZ" 2>/dev/null | cut -d" " -f1; }
++_fz_fingerprint() { hash_sha256 < "$FZ" 2>/dev/null | cut -d" " -f1; }
+ if [ -f "$PIN" ]; then
+   # ⛔⭐⭐ THE PIN IS ALSO BOUND TO THE HANDOFF PR'S HEAD. Pinning only the MANIFEST BYTES meant
+   # a retry accepted the PR even if its handoff DOCUMENTS had changed underneath — the manifest is
+@@ -281,9 +282,9 @@
+ case "$pr_bytes" in *"status                              : BALANCED"*) ;;
+   *) echo "⛔ the manifest committed in PR #$PR is VOID. Nothing cleared." >&2; exit 1 ;; esac
+ live_sha=$(printf '%s
+-' "$live_bytes" | sha256sum | cut -d" " -f1)
++' "$live_bytes" | hash_sha256 | cut -d" " -f1)
+ pr_sha=$(printf '%s
+-' "$pr_bytes" | sha256sum | cut -d" " -f1)
++' "$pr_bytes" | hash_sha256 | cut -d" " -f1)
+ echo "   live journals : $live_sha"
+ echo "   PR head       : $pr_sha  (commit ${HEAD_OID:0:9})"
+ if [ "$live_sha" != "$pr_sha" ]; then
+@@ -407,7 +408,7 @@
+       esac
+       case "$_frac" in *[!0-9]*|"") _frac="000000000" ;; esac
+       _ms=$(printf '%03d' $(( 10#${_frac:0:3} )) )
+-      _cts=$(date -u -d "@$_sec" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S)
++      _cts=$(date_utc_from_epoch "$_sec" 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S)
+     printf '%s.%sZ | %s | NOTE | claim CARRIED into the batch after %s: %s | still held; not re-taken
+ '       "$_cts" "$_ms" "$_ag" "$S" "$_cp" >> "$R/agents/$_ag.md" || {
+       echo "⛔ claim rehydrated but the carry NOTE failed to write for $_ag." >&2; exit 3; }
+diff -ruN live-original-normalized/review.sh live-copy-normalized/review.sh
+--- live-original-normalized/review.sh	2026-08-30 19:10:24
++++ live-copy-normalized/review.sh	2026-08-30 19:10:24
+@@ -7,10 +7,15 @@
+ #   ./review.sh list
+ set -uo pipefail
+ R="$(cd "$(dirname "$0")" && pwd)"; L="$R/merge/REVIEWS.md"; O="$R/merge/OWNERSHIP.md"
++. "$R/portable.sh"
+ [ -f "$O" ] || : > "$O"
+ REPO="${MAI_TAI_REPO:-}"
+ [ -n "$REPO" ] || { echo "⛔ COULD_NOT_TELL — set MAI_TAI_REPO. Nothing recorded." >&2; exit 3; }
+-head_of() { (cd "$REPO" && gh pr view "$1" --json headRefOid -q .headRefOid 2>/dev/null); }
++head_of() {
++  local _j
++  _j=$(cd "$REPO" && gh pr view "$1" --json headRefOid 2>/dev/null) || return $?
++  gh_json_field "$_j" "print(d.get('headRefOid') or '')"
++}
+ [ -f "$L" ] || : > "$L"
+ 
+ is_sha() { case "$1" in ???????*) [ "${#1}" -eq 40 ] && case "$1" in *[!0-9a-f]*) return 1 ;; *) return 0 ;; esac ;; *) return 1 ;; esac; }
+@@ -55,7 +60,9 @@
+ 
+ pr_base() {
+   local pr="$1" h="$2" boid
+-  boid=$( (cd "$REPO" && gh pr view "$pr" --json baseRefOid -q .baseRefOid 2>/dev/null) )
++  local _j
++  _j=$(cd "$REPO" && gh pr view "$pr" --json baseRefOid 2>/dev/null) || return 3
++  boid=$(gh_json_field "$_j" "print(d.get('baseRefOid') or '')")
+   is_sha "$boid" || return 3
+   (cd "$REPO" && git cat-file -e "$boid^{commit}" 2>/dev/null) || return 3
+   (cd "$REPO" && git merge-base "$boid" "$h" 2>/dev/null)
+@@ -157,6 +164,15 @@
+ }
+ 
+ case "${1:-list}" in
++classify)
++  _cc="${2:?commit SHA}"
++  _cls=$(commit_owner "$_cc"); _crc=$?
++  [ "$_crc" -eq 0 ] && [ -n "$_cls" ] || {
++    echo "⛔ COULD_NOT_TELL — commit ${_cc:0:9} has no single recognised agent marker." >&2
++    exit 3
++  }
++  printf '%s\n' "$_cls"
++  ;;
+ record)
+   PR="${2:?PR number}"; A="${AGENT:?set AGENT}"; shift 2 || true
+   # ⛔⭐⭐ A REVIEW IS OF A COMMIT **RANGE**, NOT OF A PULL REQUEST.
+@@ -227,7 +243,8 @@
+   # once codex claimed its own #770 additions it could no longer review claude's EARLIER commits
+   # on the same PR — the gate jamming shut again, one lifecycle step later. Stamping the head at
+   # claim time makes the claim answerable per-range: it blocks only reviews that OVERLAP it.
+-  _claim_at=$( (cd "$REPO" && gh pr view "$PR" --json headRefOid -q .headRefOid 2>/dev/null) )
++  _j=$(cd "$REPO" && gh pr view "$PR" --json headRefOid 2>/dev/null) || _j=""
++  _claim_at=$(gh_json_field "$_j" "print(d.get('headRefOid') or '')")
+   [ -n "$_claim_at" ] || { echo "⛔ COULD_NOT_TELL — no head SHA for PR #$PR; claim NOT recorded." >&2; exit 3; }
+   printf '%s | PR#%s | %s | %s | %s
+ ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PR" "$NEW" "$_claim_at" "$WHY" >> "$O" || {
+@@ -237,7 +254,8 @@
+   ;;
+ owner)
+   PR="${2:?PR number}"
+-  _b=$( (cd "$REPO" && gh pr view "$PR" --json headRefName -q .headRefName 2>/dev/null) )
++  _j=$(cd "$REPO" && gh pr view "$PR" --json headRefName 2>/dev/null) || _j=""
++  _b=$(gh_json_field "$_j" "print(d.get('headRefName') or '')")
+   _o=$(grep " | PR#$PR | " "$O" 2>/dev/null | tail -1 | awk -F' [|] ' '{print $3}' | tr -d ' ')
+   [ -n "$_o" ] && echo "PR #$PR latest audit claimant: $_o (informational only)" || echo "PR #$PR has no audit claimant (branch namespace: ${_b%%/*}; informational only)"
+   ;;
+@@ -252,12 +270,13 @@
+   # directory, which is NOT a git repository — so the emitted command failed there. A merge command
+   # that only works from the right directory is a trap: it fails loudly today and silently targets
+   # the WRONG repo the day someone runs it from another checkout. Carry the identity explicitly.
+-  _slug=$( (cd "$REPO" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) )
++  _j=$(cd "$REPO" && gh repo view --json nameWithOwner 2>/dev/null) || _j=""
++  _slug=$(gh_json_field "$_j" "print(d.get('nameWithOwner') or '')")
+   [ -n "$_slug" ] || { echo "⛔ COULD_NOT_TELL — cannot resolve the repo from MAI_TAI_REPO." >&2; exit 3; }
+   echo "# PR #$PR has complete independent review coverage at $H"
+   printf '%s\n' "$COVERAGE_RECORDS" | sed 's/^/#   /'
+   echo "gh pr merge $PR --repo $_slug --squash --match-head-commit $H"
+   ;;
+ list) [ -s "$L" ] && cat "$L" || echo "(no reviews recorded)" ;;
+-*) echo 'usage: review.sh record <PR#> [--since <sha>] "<what you checked>" | own <PR#> <agent> "<why>" | owner <PR#> | check <PR#> | merge-cmd <PR#> | list' >&2; exit 2 ;;
++*) echo 'usage: review.sh classify <sha> | record <PR#> [--since <sha>] "<what you checked>" | own <PR#> <agent> "<why>" | owner <PR#> | check <PR#> | merge-cmd <PR#> | list' >&2; exit 2 ;;
+ esac
+diff -ruN live-original-normalized/selftest.sh live-copy-normalized/selftest.sh
+--- live-original-normalized/selftest.sh	2026-08-30 19:10:24
++++ live-copy-normalized/selftest.sh	2026-08-30 19:10:24
+@@ -5,6 +5,7 @@
+ # require it to WORK — so the suite cannot pass by refusing everything.
+ set -uo pipefail
+ R="$(cd "$(dirname "$0")" && pwd)"
++. "$R/portable.sh"
+ REPO="${MAI_TAI_REPO:-}"
+ pass=0; fail=0; skipped=""
+ ok()   { pass=$((pass+1)); printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
+@@ -42,8 +43,9 @@
+ if [ -z "$REPO" ]; then
+   skipped="$skipped A(merge-gate)"; echo "  ⛔ NOT RUN — MAI_TAI_REPO unset. This section is CRITICAL."
+ else
++  _nonrepo=$(mktemp -d)
+   expect_says "a non-repo directory says COULD_NOT_TELL, not clean" "COULD_NOT_TELL" \
+-     env MAI_TAI_REPO="$R" "$R/board.sh" matrix origin/main origin/main~1
++     env MAI_TAI_REPO="$_nonrepo" "$R/board.sh" matrix origin/main origin/main~1
+   expect_says "a ref that does not exist says COULD_NOT_TELL" "COULD_NOT_TELL" \
+      env MAI_TAI_REPO="$REPO" "$R/board.sh" matrix origin/main refs/heads/no-such-ref-xyz
+   expect_refuse "…and it EXITS non-zero, so a script cannot read it as a pass" \
+@@ -56,6 +58,7 @@
+   expect_says "CONTROL: a known-clean pair still reads CLEAN" "CLEAN" \
+      env MAI_TAI_REPO="$REPO" "$R/board.sh" matrix \
+        origin/claude/s257-webull-attach-fill-price origin/claude/s195-s196-webull-origin-and-reason
++  rm -rf "$_nonrepo"
+ fi
+ 
+ echo
+@@ -207,15 +210,15 @@
+ exit 1
+ MVS
+   chmod +x "$_stub/mv"
+-  _sum_before=$(md5sum < "$IF/agents/selftest.md" | cut -d" " -f1)
++  _sum_before=$(hash_md5 < "$IF/agents/selftest.md" | cut -d" " -f1)
+   _out=$(PATH="$_stub:$PATH" MAI_TAI_REPO="$REPO" "$IF/promote.sh" failbatch 770 2>&1); _rc=$?
+   # ⛔ THE INVARIANT IS "NO CONTENT IS LOST", not "mv printed a particular string". `mv file dir/`
+   # SUCCEEDS by moving the file INTO the directory, so planting a directory cannot force a failed
+   # rename — it trips the next guard instead. Assert the property, and NAME which guard caught it,
+   # rather than asserting an implementation detail that a different failure mode would dodge.
+   _found=""
+-  [ -s "$IF/agents/selftest.md" ] && _found=$(md5sum < "$IF/agents/selftest.md" | cut -d" " -f1)
+-  [ -z "$_found" ] && _found=$(find "$IF/archive/failbatch" -name "selftest.md" -type f -exec md5sum {} \; 2>/dev/null | cut -d" " -f1 | head -1)
++  [ -s "$IF/agents/selftest.md" ] && _found=$(hash_md5 < "$IF/agents/selftest.md" | cut -d" " -f1)
++  [ -z "$_found" ] && _found=$(find "$IF/archive/failbatch" -name "selftest.md" -type f -exec sh -c 'hash_md5 "$1"' _ {} \; 2>/dev/null | cut -d" " -f1 | head -1)
+   _guard=$(printf '%s' "$_out" | grep '⛔' | head -1 | cut -c1-70)
+   if [ "$_rc" -ne 0 ] && [ "$_found" = "$_sum_before" ]; then
+     if printf '%s' "$_out" | grep -q "mv FAILED"; then
+@@ -235,11 +238,11 @@
+ if [ -z "$REPO" ]; then skipped="$skipped K(resume)"; echo "  ⛔ NOT RUN — needs MAI_TAI_REPO. CRITICAL."
+ else
+   AGENT=selftest "$TF/log.sh" FINDING "entry that must survive a partial rotation" "1 of 1" >/dev/null 2>&1
+-  _full=$("$TF/manifest.sh" resumeslug --stdout | sha256sum | cut -d" " -f1)
++  _full=$("$TF/manifest.sh" resumeslug --stdout | hash_sha256 | cut -d" " -f1)
+   mkdir -p "$TF/archive/resumeslug/agents"
+   cp "$TF/agents/selftest.md" "$TF/archive/resumeslug/agents/selftest.md"
+   : > "$TF/agents/selftest.md"
+-  _part=$("$TF/manifest.sh" resumeslug --stdout | sha256sum | cut -d" " -f1)
++  _part=$("$TF/manifest.sh" resumeslug --stdout | hash_sha256 | cut -d" " -f1)
+   if [ "$_full" = "$_part" ]; then
+     ok "the manifest is IDENTICAL mid-rotation, so a retry can pass the completeness gate"
+   else
+@@ -444,7 +447,7 @@
+   case "${#_sha}" in 40) ok "…and it pins the FULL 40-char reviewed SHA" ;;
+     *) bad "short sha" "merge command pinned '${_sha}' (${#_sha} chars), not a full SHA" ;; esac
+   # a moved head must break check
+-  python - "$RF/merge/REVIEWS.md" <<'PYX'
++  "$(python_cmd)" - "$RF/merge/REVIEWS.md" <<'PYX'
+ import sys,re,pathlib
+ p=pathlib.Path(sys.argv[1]); p.write_text(re.sub(r'(\| PR#773 \| [0-9a-f]{40} \| )[0-9a-f]{40}', r'\g<1>'+'0'*40, p.read_text(encoding='utf-8')),encoding='utf-8')
+ PYX
+@@ -496,9 +499,9 @@
+   : > "$UF/merge/REVIEWS.md"; : > "$UF/merge/OWNERSHIP.md"
+ 
+   # 1. two freezes created back-to-back must NOT share a fingerprint
+-  "$UF/freeze.sh" start >/dev/null 2>&1; _f1=$(sha256sum < "$UF/merge/FREEZE" | cut -d" " -f1)
++  "$UF/freeze.sh" start >/dev/null 2>&1; _f1=$(hash_sha256 < "$UF/merge/FREEZE" | cut -d" " -f1)
+   "$UF/freeze.sh" lift  >/dev/null 2>&1
+-  "$UF/freeze.sh" start >/dev/null 2>&1; _f2=$(sha256sum < "$UF/merge/FREEZE" | cut -d" " -f1)
++  "$UF/freeze.sh" start >/dev/null 2>&1; _f2=$(hash_sha256 < "$UF/merge/FREEZE" | cut -d" " -f1)
+   "$UF/freeze.sh" lift  >/dev/null 2>&1
+   [ "$_f1" != "$_f2" ] && ok "two same-second freezes have DIFFERENT identities (nonce)" \
+                        || bad "freeze identity repeats" "a stale pin would be accepted under a NEW freeze"
+@@ -527,9 +530,10 @@
+   _FS=$(mktemp -d)
+   printf '#!/usr/bin/env bash
+ case "$*" in
+-  *"--json headRefOid"*) echo %s ;;
+-  *baseRefOid*) echo %s ;;
+-  *headRefName*) echo fixture-branch ;;
++  *"--json headRefOid"*) printf '\''{"headRefOid":"%s"}\\n'\'' ;;
++  *baseRefOid*) printf '\''{"baseRefOid":"%s"}\\n'\'' ;;
++  *headRefName*) echo '\''{"headRefName":"fixture-branch"}'\'' ;;
++  *"repo view"*) echo '\''{"nameWithOwner":"fixture/repo"}'\'' ;;
+   *) echo "{}" ;;
+ esac
+ '     "$_uh" "$_FBASE" > "$_FS/gh"; chmod +x "$_FS/gh"
+@@ -597,7 +601,7 @@
+   for _a in claude-1 codex-2; do AGENT=$_a "$WF/freeze.sh" ack >/dev/null 2>&1; done
+   mkdir -p "$WF/archive/pb"
+   printf 'x\n' > "$WF/archive/pb/.manifest-verified"
+-  sha256sum < "$WF/merge/FREEZE" | cut -d' ' -f1 > "$WF/archive/pb/.manifest-verified.freeze"
++  hash_sha256 < "$WF/merge/FREEZE" | cut -d' ' -f1 > "$WF/archive/pb/.manifest-verified.freeze"
+   : > "$WF/archive/pb/.manifest-verified.prhead"      # EMPTY on purpose
+   _pbo=$(PATH="$WS:$PATH" MAI_TAI_REPO="$REPO" "$WF/promote.sh" pb 770 2>&1); _pbr=$?
+   case "$_pbo" in
+@@ -632,7 +636,20 @@
+   git -C "$XR" checkout -qb mixed/feature
+   git -C "$XR" commit -q --allow-empty -m 'claude work' -m 'Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>'
+   XC1=$(git -C "$XR" rev-parse HEAD)
+-  printf '#!/usr/bin/env bash\ncase "$*" in\n  *"--json headRefOid"*) [ -n "${STUB_HEAD:-}" ] && echo "$STUB_HEAD" || git -C "$MAI_TAI_REPO" rev-parse HEAD ;;\n  *baseRefOid*) git -C "$MAI_TAI_REPO" rev-parse refs/remotes/origin/main ;;\n  *headRefName*) echo mixed/feature ;;\n  *"repo view"*) echo krshk30/project-mai-tai ;;\n  *) echo "{}" ;;\nesac\n' > "$XS/gh"
++  cat > "$XS/gh" <<'GHX'
++#!/usr/bin/env bash
++case "$*" in
++  *"--json headRefOid"*)
++    h="${STUB_HEAD:-$(git -C "$MAI_TAI_REPO" rev-parse HEAD)}"
++    printf '{"headRefOid":"%s"}\n' "$h" ;;
++  *baseRefOid*)
++    b=$(git -C "$MAI_TAI_REPO" rev-parse refs/remotes/origin/main)
++    printf '{"baseRefOid":"%s"}\n' "$b" ;;
++  *headRefName*) echo '{"headRefName":"mixed/feature"}' ;;
++  *"repo view"*) echo '{"nameWithOwner":"krshk30/project-mai-tai"}' ;;
++  *) echo '{}' ;;
++esac
++GHX
+   chmod +x "$XS/gh"
+ 
+   expect_ok "Codex can review a Claude-marked commit" \
+@@ -657,11 +674,19 @@
+   case "$_xa" in *"no single recognised agent marker"*) [ "$_xar" -eq 3 ] && ok "an AMBIGUOUS dual-marker commit is COULD_NOT_TELL" \
+     || bad "ambiguous wrong exit" "exit $_xar" ;; *) bad "ambiguous commit accepted" "exit $_xar: $_xa" ;; esac
+ 
+-  # Migration: exact immutable legacy Codex OIDs are explicit, and a stacked PR uses its real base.
++  # Migration: exact immutable legacy Codex OIDs are explicit. Classification must not depend on
++  # those historical objects still being reachable in this clone.
+   for _legacy in f3ebec98432fcc2760c4e00fca9a1153cda010d5 59fc115a46224e237e9014c3ed8aeb9828c0b0b1; do
+-    expect_ok "legacy Codex OID ${_legacy:0:9} is reviewable by Claude via explicit attestation" \
+-       env PATH="$XS:$PATH" STUB_HEAD="$_legacy" AGENT=claude-1 MAI_TAI_REPO="$REPO" "$XF/review.sh" record 901 "legacy migration"
++    _lco=$(env MAI_TAI_REPO="$REPO" "$XF/review.sh" classify "$_legacy" 2>&1); _lcr=$?
++    case "$_lco" in codex-2\|legacy*) [ "$_lcr" -eq 0 ] \
++      && ok "legacy Codex OID ${_legacy:0:9} has an exact Codex attestation" \
++      || bad "legacy attestation wrong exit" "exit $_lcr" ;;
++      *) bad "legacy OID ${_legacy:0:9} misclassified" "said: $_lco" ;;
++    esac
+   done
++  # The reachable legacy object also exercises the complete independent-review path.
++  expect_ok "a reachable legacy Codex OID is reviewable by Claude via explicit attestation" \
++     env PATH="$XS:$PATH" STUB_HEAD=59fc115a46224e237e9014c3ed8aeb9828c0b0b1 AGENT=claude-1 MAI_TAI_REPO="$REPO" "$XF/review.sh" record 901 "legacy migration"
+   expect_refuse "a legacy Codex OID is still self-review-refused for Codex" \
+      env PATH="$XS:$PATH" STUB_HEAD=f3ebec98432fcc2760c4e00fca9a1153cda010d5 AGENT=codex-2 MAI_TAI_REPO="$REPO" "$XF/review.sh" record 902 "mine"
+   expect_ok "stacked PR #772 is scoped to its codex branch base, not incorrectly back to main" \
+@@ -686,12 +711,23 @@
+   git -C "$YR" checkout -qb claude/updated-feature
+   git -C "$YR" commit -q --allow-empty -m 'feature work' -m 'Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>'
+   YOLD=$(git -C "$YR" rev-parse HEAD)
+-  printf '#!/usr/bin/env bash\ncase "$*" in\n  *"--json headRefOid"*) git -C "$MAI_TAI_REPO" rev-parse HEAD ;;\n  *baseRefOid*) git -C "$MAI_TAI_REPO" rev-parse refs/remotes/origin/main ;;\n  *headRefName*) echo claude/updated-feature ;;\n  *"repo view"*) echo krshk30/project-mai-tai ;;\n  *) echo "{}" ;;\nesac\n' > "$YS/gh"
++  cat > "$YS/gh" <<'GHY'
++#!/usr/bin/env bash
++case "$*" in
++  *"--json headRefOid"*)
++    h=$(git -C "$MAI_TAI_REPO" rev-parse HEAD); printf '{"headRefOid":"%s"}\n' "$h" ;;
++  *baseRefOid*)
++    b=$(git -C "$MAI_TAI_REPO" rev-parse refs/remotes/origin/main); printf '{"baseRefOid":"%s"}\n' "$b" ;;
++  *headRefName*) echo '{"headRefName":"claude/updated-feature"}' ;;
++  *"repo view"*) echo '{"nameWithOwner":"krshk30/project-mai-tai"}' ;;
++  *) echo '{}' ;;
++esac
++GHY
+   chmod +x "$YS/gh"
+   expect_ok "CONTROL: the original PR range can be reviewed" \
+      env PATH="$YS:$PATH" AGENT=codex-2 MAI_TAI_REPO="$YR" "$YF/review.sh" record 910 "reviewed original range"
+ 
+-  git -C "$YR" checkout -qb main "$YB"
++  git -C "$YR" checkout -qB main "$YB"
+   git -C "$YR" commit -q --allow-empty -m 'main moved'
+   YMAIN=$(git -C "$YR" rev-parse HEAD); git -C "$YR" update-ref refs/remotes/origin/main "$YMAIN"
+   git -C "$YR" checkout -q claude/updated-feature
+@@ -735,7 +771,7 @@
+   # defect as verifying a pasted copy instead of the artifact. Everything below drives an isolated
+   # COPY of the real script through an actual rotation and reads the notes IT wrote.
+   _cc_setup() {   # _cc_setup <dir>  -> a fleet + repo primed with 11 carried claims
+-    local F="$1/fleet" G="$1/repo" X="$1/fx"
++    local F="$1/fleet" G="$1/repo" X="$1/fx" IFS=' '
+     mkdir -p "$X"; cp -r "$R" "$F" 2>/dev/null
+     rm -rf "$F/archive" "$F/agents" "$F/claims"; mkdir -p "$F/archive/ccb/claims" "$F/agents" "$F/claims" "$F/merge"
+     printf 'x | claude-1 | NOTE | seed | e
+@@ -766,13 +802,17 @@
+     echo "$F|$G|$X"
+   }
+   _cc_run() {     # _cc_run <F> <G> <X> -> prints the carry notes promote.sh actually wrote
+-    env MAI_TAI_REPO="$2" PROMOTE_PR_FIXTURES="$3" "$1/promote.sh" ccb 900 >/dev/null 2>&1
++    local _cco _ccr
++    _cco=$(env MAI_TAI_REPO="$2" PROMOTE_PR_FIXTURES="$3" "$1/promote.sh" ccb 900 2>&1); _ccr=$?
++    [ "$_ccr" -eq 0 ] || printf 'carry promotion failed (exit %s): %s\n' "$_ccr" "$_cco" >&2
+     grep 'CARRIED into the batch' "$1/agents/codex-2.md" 2>/dev/null
+   }
+   _CCPATHS="ops/a.sh ops/b.sh ops/c.py tests/d.py ops/e/xx ops/f.sh ops/g.yml ops/h.md ops/i.sh ops/j.py ops/k.sh"
++  _CC_OLD_IFS="$IFS"
+ 
+   # ---------- CONTROL: the unmodified production script ----------
+   _T1=$(mktemp -d); IFS='|' read -r _F1 _G1 _X1 <<< "$(_cc_setup "$_T1")"
++  IFS="$_CC_OLD_IFS"
+   _out1=$(_cc_run "$_F1" "$_G1" "$_X1")
+   _n=$(printf '%s
+ ' "$_out1" | grep -c 'CARRIED' || true)
+@@ -787,6 +827,7 @@
+   # ---------- MUTANT A: strip the path from the REAL production printf ----------
+   # ⛔ This is the exact mutant that survived the previous version of this test.
+   _T2=$(mktemp -d); IFS='|' read -r _F2 _G2 _X2 <<< "$(_cc_setup "$_T2")"
++  IFS="$_CC_OLD_IFS"
+   perl -0pi -e 's/claim CARRIED into the batch after \%s: \%s/claim CARRIED into the batch after %s/; s/"\$_ag" "\$S" "\$_cp"/"\$_ag" "\$S"/' "$_F2/promote.sh"
+   if cmp -s "$_F1/promote.sh" "$_F2/promote.sh"; then
+     bad "MUTANT A not applied" "the anchor did not match — this is a bad mutant, NOT a surviving one"
+@@ -806,6 +847,7 @@
+     # ⛔ no path AND second-resolution time — the exact 2026-08-25 defect. THIS is what collapses
+     # 11 notes into a handful and VOIDs the next manifest, and distinctness is the right kill here.
+     _T5=$(mktemp -d); IFS='|' read -r _F5 _G5 _X5 <<< "$(_cc_setup "$_T5")"
++    IFS="$_CC_OLD_IFS"
+     perl -0pi -e 's/claim CARRIED into the batch after \%s: \%s/claim CARRIED into the batch after %s/; s/"\$_cts" "\$_ms" "\$_ag" "\$S" "\$_cp"/"\$(date -u +%Y-%m-%dT%H:%M:%SZ)" "" "\$_ag" "\$S"/; s/%s\.%sZ \| /%s%s | /' "$_F5/promote.sh"
+     if cmp -s "$_F1/promote.sh" "$_F5/promote.sh"; then
+       bad "MUTANT C not applied" "anchors did not match — bad mutant, NOT a survivor"
+@@ -824,6 +866,7 @@
+   # ⛔ Sorting eleven ordinary timestamps is luck, not a test. The stub makes %N DECREASE across
+   # calls while %s holds, so a two-read clock MUST stamp backward and a single-read clock cannot.
+   _T3=$(mktemp -d); IFS='|' read -r _F3 _G3 _X3 <<< "$(_cc_setup "$_T3")"
++  IFS="$_CC_OLD_IFS"
+   _DS=$(mktemp -d)
+   # ⛔⭐⭐ THE STUB MUST MODEL A REAL ROLLOVER, i.e. GENUINELY MONOTONIC INSTANTS. An earlier
+   # version held the second constant and let the fraction FALL — under that, correct single-read
+@@ -870,6 +913,7 @@
+   fi
+   # the UNMUTATED script under the SAME stub must stay monotonic
+   _T4=$(mktemp -d); IFS='|' read -r _F4 _G4 _X4 <<< "$(_cc_setup "$_T4")"
++  IFS="$_CC_OLD_IFS"
+   _out4=$(PATH="$_DS:$PATH" _cc_run "$_F4" "$_G4" "$_X4")
+   if printf '%s
+ ' "$_out4" | cut -d' ' -f1 | sort -c 2>/dev/null; then
+@@ -945,7 +989,7 @@
+   # promotion proof still read as valid. Pin, then move #802's head, and require a refusal.
+   mkdir -p "$_MF/archive/mp"
+   printf 'MANIFEST\n'        > "$_MF/archive/mp/.manifest-verified"
+-  sha256sum < "$_MF/merge/FREEZE" | cut -d' ' -f1 > "$_MF/archive/mp/.manifest-verified.freeze"
++  hash_sha256 < "$_MF/merge/FREEZE" | cut -d' ' -f1 > "$_MF/archive/mp/.manifest-verified.freeze"
+   printf '%s' "$_MANM"       > "$_MF/archive/mp/.manifest-verified.prhead"
+   printf '%s' "801 802"      > "$_MF/archive/mp/.manifest-verified.prs"
+   printf '%s' "$_MANM"       > "$_MF/archive/mp/.manifest-verified.mainsha"
+@@ -1028,6 +1072,103 @@
+   fi
+   rm -rf "$_MPT"
+ fi
++
++echo
++echo "PC. PORTABILITY CONTROLS — exact BSD/GNU shims, fail-closed overrides"
++_PC=$(mktemp -d); printf 'abc' > "$_PC/input"
++_pc_sha=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
++_pc_md5=900150983cd24fb0d6963f7d28e17f72
++if [ "$(uname -s)" = Darwin ]; then
++  _v=$(FLEET_SHASUM=/usr/bin/shasum hash_sha256 "$_PC/input" | awk '{print $1}')
++  [ "$_v" = "$_pc_sha" ] && ok "exact BSD shasum path produces SHA-256" \
++    || bad "BSD shasum override" "got $_v"
++  _v=$(FLEET_MD5=/sbin/md5 hash_md5 "$_PC/input" | awk '{print $1}')
++  [ "$_v" = "$_pc_md5" ] && ok "exact BSD md5 path produces MD5" \
++    || bad "BSD md5 override" "got $_v"
++  _v=$(FLEET_BSD_STAT=/usr/bin/stat stat_mtime_epoch "$_PC/input")
++  case "$_v" in *[!0-9]*|"") bad "BSD stat override" "non-epoch output: $_v" ;; \
++    *) ok "exact BSD stat path produces an epoch mtime" ;; esac
++  _v=$(FLEET_BSD_DATE=/bin/date date_utc_from_epoch 0)
++  [ "$_v" = 1970-01-01T00:00:00 ] && ok "exact BSD date path converts epoch zero" \
++    || bad "BSD date override" "got $_v"
++
++  # GNU-interface stubs exercise only option selection; their work delegates to Apple tools.
++  cat > "$_PC/sha256sum" <<'PCSHA'
++#!/usr/bin/env bash
++exec /usr/bin/shasum -a 256 "$@"
++PCSHA
++  cat > "$_PC/md5sum" <<'PCMD5'
++#!/usr/bin/env bash
++exec /sbin/md5 -q "$@"
++PCMD5
++  cat > "$_PC/stat" <<'PCSTAT'
++#!/usr/bin/env bash
++[ "$1" = -c ] && [ "$2" = %Y ] || exit 64
++exec /usr/bin/stat -f %m "$3"
++PCSTAT
++  cat > "$_PC/date" <<'PCDATE'
++#!/usr/bin/env bash
++[ "$1" = -u ] && [ "$2" = -d ] || exit 64
++exec /bin/date -u -r "${3#@}" "$4"
++PCDATE
++  chmod +x "$_PC/sha256sum" "$_PC/md5sum" "$_PC/stat" "$_PC/date"
++  _v=$(FLEET_SHA256SUM="$_PC/sha256sum" hash_sha256 "$_PC/input" | awk '{print $1}')
++  [ "$_v" = "$_pc_sha" ] && ok "exact GNU sha256sum interface is selected correctly" \
++    || bad "GNU sha256sum override" "got $_v"
++  _v=$(FLEET_MD5SUM="$_PC/md5sum" hash_md5 "$_PC/input" | awk '{print $1}')
++  [ "$_v" = "$_pc_md5" ] && ok "exact GNU md5sum interface is selected correctly" \
++    || bad "GNU md5sum override" "got $_v"
++  _v=$(FLEET_GNU_STAT="$_PC/stat" stat_mtime_epoch "$_PC/input")
++  case "$_v" in *[!0-9]*|"") bad "GNU stat override" "non-epoch output: $_v" ;; \
++    *) ok "exact GNU stat interface is selected correctly" ;; esac
++  _v=$(FLEET_GNU_DATE="$_PC/date" date_utc_from_epoch 0)
++  [ "$_v" = 1970-01-01T00:00:00 ] && ok "exact GNU date interface is selected correctly" \
++    || bad "GNU date override" "got $_v"
++else
++  _sha_path=$(command -v sha256sum 2>/dev/null); _md5_path=$(command -v md5sum 2>/dev/null)
++  _stat_path=$(command -v stat 2>/dev/null); _date_path=$(command -v date 2>/dev/null)
++  _v=$(FLEET_SHA256SUM="$_sha_path" hash_sha256 "$_PC/input" | awk '{print $1}')
++  [ "$_v" = "$_pc_sha" ] && ok "exact GNU sha256sum path produces SHA-256" || bad "GNU sha256sum path" "got $_v"
++  _v=$(FLEET_MD5SUM="$_md5_path" hash_md5 "$_PC/input" | awk '{print $1}')
++  [ "$_v" = "$_pc_md5" ] && ok "exact GNU md5sum path produces MD5" || bad "GNU md5sum path" "got $_v"
++  _v=$(FLEET_GNU_STAT="$_stat_path" stat_mtime_epoch "$_PC/input")
++  case "$_v" in *[!0-9]*|"") bad "GNU stat path" "non-epoch output: $_v" ;; *) ok "exact GNU stat path produces an epoch mtime" ;; esac
++  _v=$(FLEET_GNU_DATE="$_date_path" date_utc_from_epoch 0)
++  [ "$_v" = 1970-01-01T00:00:00 ] && ok "exact GNU date path converts epoch zero" || bad "GNU date path" "got $_v"
++fi
++_py_path=$(command -v python3 2>/dev/null || command -v python 2>/dev/null)
++_v=$(FLEET_PYTHON="$_py_path" gh_json_field '{"value":"exact"}' "print(d['value'])")
++[ "$_v" = exact ] && ok "exact Python path parses gh JSON" || bad "Python override" "got $_v"
++if FLEET_SHASUM=relative/path hash_sha256 "$_PC/input" >/dev/null 2>&1; then
++  bad "relative shim override accepted" "exact-path controls must fail closed"
++else ok "a non-absolute shim override is refused, not silently bypassed"; fi
++rm -rf "$_PC"
++
++echo
++echo "CRLF. FRESH WINDOWS COPY — preparation produces directly executable LF scripts"
++_CT=$(mktemp -d); _CF="$_CT/fleet"; cp -R "$R" "$_CF"
++/usr/bin/perl -pi -e 's/\r?\n/\r\n/g' "$_CF"/*.sh "$_CF/fleet.cmd"
++_pre=$("$_CF/freeze.sh" status 2>&1); _prc=$?
++[ "$_prc" -ne 0 ] && ok "CONTROL: a CRLF shebang is not falsely reported executable on macOS" \
++  || bad "CRLF control did not start broken" "the preparation path was not actually exercised"
++# Supported fresh-copy preparation path. It is external because a CRLF shebang cannot self-repair.
++/usr/bin/perl -pi -e 's/\r$//' "$_CF"/*.sh "$_CF/fleet.cmd"
++chmod +x "$_CF"/*.sh
++_cr=0; _syn=0
++for _f in "$_CF"/*.sh; do
++  LC_ALL=C grep -q "$(printf '\r')" "$_f" && _cr=$((_cr+1))
++  /bin/bash -n "$_f" >/dev/null 2>&1 || _syn=$((_syn+1))
++done
++[ "$_cr" -eq 0 ] && ok "the supported preparation path removes every CR from shell scripts" \
++  || bad "CRLF remained" "$_cr shell script(s) still contain CR bytes"
++[ "$_syn" -eq 0 ] && ok "every prepared shell script parses under Apple Bash 3.2" \
++  || bad "prepared syntax failure" "$_syn shell script(s) failed bash -n"
++mkdir -p "$_CF/merge"
++_post=$(env PATH="$PATH" "$_CF/freeze.sh" status 2>&1); _porc=$?
++[ "$_porc" -eq 0 ] && [ "$_post" = "not frozen" ] \
++  && ok "a prepared fresh-copy script executes directly through its LF shebang" \
++  || bad "prepared direct execution" "exit $_porc: $_post"
++rm -rf "$_CT"
+ 
+ echo
+ echo "════ $pass passed, $fail failed ════"
