@@ -3,8 +3,8 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-08-30 16:20 ET.** Weekend close-out, batch `2026-08-30`. Integrator
-for this rotation. Needs `codex-2`'s review before merge — the author never reviews.
+**Written by `claude-1`, 2026-08-31 17:15 ET.** Batch `2026-08-31`. Integrator for this rotation.
+Needs `codex-2`'s review before merge — the author never reviews.
 
 ---
 
@@ -12,90 +12,129 @@ for this rotation. Needs `codex-2`'s review before merge — the author never re
 
 | | |
 |---|---|
-| main / box | **`0f35fadc7b4e38dde076a7eff0db3f7f97e07b14`** |
+| main / box | **`77ae556f73da3b6eb0079acf43610faa8affea8e`** |
 | checkout | clean |
-| open PRs | **0** · undeployed commits **0** |
-| ledgers | flat — `virtual_positions` qty>0 **0**, non-terminal open intents **0**, working orders **0** |
-| last v2 bar | Fri 2026-08-28 **23:59:00** UTC (`23:59:30` is `polygon_30s`, fleet-wide — not v2's) |
-
-**PIDs after the S0 rotation restart, all `NRestarts=0`:**
+| open PRs | **0** |
+| exposure | managed **0** · virtual **0** · account_positions **0** · non-terminal intents **0** · working orders **0** |
 
 | service | pid | | service | pid |
 |---|---|---|---|---|
-| schwab-1m-v2 | 2203258 | | strategy | 2203071 |
-| oms | 2203008 | | market-data | 2202865 |
+| schwab-1m-v2 | 2364618 | | strategy | 2203071 |
+| oms | 2365948 | | market-data | 2202865 |
 | control | 2203323 | | market-capture | 2202817 |
 | reconciler | 2202771 | | | |
 
----
-
-# 🔴 MONDAY 06:00–06:45 ET — THE ONLY THING LEFT
-
-**GO = an OBSERVED `restoration_complete=1` AND the explicit `[V2-BOOT-HOLD] released` INFO line.**
-⛔ Absence of a hold line is **NOT** a release.
-
-⛔⭐⭐ **GATES 2 AND 3 HAVE NEVER EXECUTED ONCE, ON ANY TAPE.** `rest_warmup_incomplete` reads **0
-EVER** and `restoration_complete=1` reads **0 EVER** — both are **FALSE ZEROS: never reached, not
-never-failed.** The `[V2-BOOT-HOLD] released` lines that do exist are dated 08-28 in the **old**
-message format, i.e. the pre-#827 mechanism. **Monday 04:00–07:00 is their first execution in the
-system's history.**
-
-**How the hold releases:** scanner population non-empty **AND** `confirmed == evaluated` (DB seed)
-**AND** `rest_warmed == evaluated`. A symbol enters `_rest_warmup_done` only on a REST bar whose
-**age** is ≤300s (`REST_WARMUP_FRESH_THRESHOLD_SECS`).
-⛔⭐⭐ **There is NO elapsed-time timeout — one halted or thin symbol holds the fleet indefinitely.**
-
-**Report these as SEPARATE lines. A combined verdict destroys attribution:**
-
-| change | expected Monday reading |
-|---|---|
-| **#843** scope | fan-out-only exclusions — ⛔ **ZERO IS THE EXPECTED VALUE** |
-| **#848** slot consumption | `[V2-FANOUT-SLOT-CONSUMED]` attempted/suppressed |
-| **#849** provenance | `refusal_origin` + code present on any refused intent |
-
-⛔ **#843's `evaluated`-vs-Friday test was WITHDRAWN.** Measured across 08-24→08-28: only **4**
-probes found any live open intent at all, and fan-out-only symbols removed were **0, 0, 1, 0**. The
-instantaneous population is 0—occasionally 1, following from the **0.105s** median non-terminal
-window. **Unchanged `evaluated` is the expected reading**, not a defect. #843's correctness rests on
-an executed mutation, not a live observation.
-
-**Mitigation, prepared and unexecuted:** setting
-`MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_ARMED_SEGMENT_SAFETY_ENABLED=false` puts v2 in shipped
-compatibility mode (`bot.py:1735`). ⭐ The pre-#827 mechanism **did** release repeatedly on 08-28, so
-this is a **demonstrated** path, not a theoretical one. **Operator-authorized only.**
+`NRestarts=0` on every unit. Only v2 and OMS moved tonight, each in its own restart.
 
 ---
 
-# ⭐⭐ THE WEEKEND'S MAIN RESULT — A CHAIN WITH FOUR LINKS, THREE BROKEN
+# ⭐⭐ TODAY IN ONE LINE
 
-| link | was | fixed |
-|---|---|---|
-| script correct | returned `UNKNOWN` on **every** live call (`tr` given a third operand) | #841 |
-| invoked at all | **nothing scheduled it** — no timer, no unit, no crontab for any user | #842 |
-| window reaches the event | cron widened to 06:00 ET but the wrapper's own guard refused before 07:00 — **inert** | #844 |
-| delivered to a human | never tested | **operator confirmed on his phone** |
+**Two live-money defects were found by 1-share positions worth $8.50, fixed, mutation-verified,
+deployed the same day — and one of them was proven working in production twelve hours after it was
+found.**
 
-⛔ **Each link looked fine from the one above it.** The v2 source comment said
-`"armed_segments_check will page"` — false for months.
-⛔ **`SELFTEST push sent` proves NOTHING** — written unconditionally on the line after the call.
-⇒ **For any alerting path, demand evidence PER LINK.**
+## #852 — v2 warmup latch · **EXERCISED, NOT MERELY DEPLOYED**
 
-**Now armed:** `*/5 10-21 * * 1-5` (box TZ `Etc/UTC`), wrapper guard `360 ≤ ETMIN < 990` =
-**06:00–16:30 ET**, weekdays. Wrapper mode `100755` **in the git index**, not a hand-chmod.
+**The defect:** `_rest_warmup_done` could only be entered by a REST bar younger than 300s, on the
+docstring's stated assumption *"REST is the only live feed."* **False** — the streamer is the live
+feed and REST backfills history, so pre-market REST returns days-old bars. The proxy was
+**structurally unreachable** and there was **no timeout**. At 05:40 ET the boot hold had been stuck
+since 04:06 with `rest_warmed=0`, `warmup_pending=AEHL,YDDL`, while both symbols had bars **56
+seconds old** in the DB.
+
+**Tonight's deploy proves the fix:**
+```
+REST 1/4 · STREAMER 3/4 · timeout 0/4
+20:40:48.894Z [V2-BOOT-HOLD] released — 12.9s after start
+"fresh-source warmup complete for AEHL (bar_age_seconds=283.7)"
+```
+⭐ **Three of four symbols warmed via the path #852 added** — a route that did not exist this
+morning. The 369s timeout stayed **UNEXERCISED**, as intended.
+
+## #853 — CW profit floor · **UNEXERCISED**
+
+**The defect:** CW mode maintained and *persisted* a high-water floor and **never consumed it**,
+substituting a fixed entry+2% floor. AEHL entered 6.07, bid peaked **7.58**, the ratchet stood at
+**~7.48895**, bid fell to 7.46 — and CW returned a frozen **6.1914**. **0 of 376 quote ticks**
+breached it. Operator closed by hand at **+18.6%**.
+
+⭐ **The control was in the same log:** YDDL breached its −5% stop and exited correctly via
+`CW_HARD_STOP`. **Downside path executed, upside path did not.**
+
+⛔⛔ **Why it hid for months — measured, 07-14→08-31: 339 of 406 profit exits (83.5%) were taken by
+the BROKER'S OCO BRACKET**, only 67 (16.5%) by the software ladder. In RTH the bracket silently did
+the job. **Extended hours has no bracket, which is the only reason this surfaced.**
+
+⛔ **The fixed floor was DELIBERATE** — chosen for restart determinism, *"no durable state needed."*
+The fix is safe only because a lost ratchet **degrades to the fixed floor**:
+`max(fixed_floor, ratcheted)`, one comparison, tested both directions.
+
+**Verdict tonight: `0` CW-floor opportunities over `0` managed positions ⇒ UNEXERCISED, not PASS.**
+
+## #854 — scanner alert · S0 fallout
+
+The alert held the **pre-rotation credential**; auth failed, stderr was discarded, the return code
+ignored, and the failure was **rendered as `ROWS=0`** — then it asserted a cause it never measured.
+Capture was writing: 37 rows, newest 5 minutes before the page. Now compares against five matching
+weekdays, alerts below 20% of median, prints both populations, and a DB failure yields
+`COULD_NOT_TELL / row_count=UNMEASURED` with a non-zero exit.
+
+## #851 — fleet toolkit macOS · ⭐ **and it fixed a false pass in `promote.sh`**
+
+⛔⛔ **The gate that authorises close-outs had a false PASS.** The prior code normalised both sides
+through `$(...)` to cure a false *mismatch* — and that created a false *match*: **a manifest
+differing by ONE TERMINAL NEWLINE compared equal and AUTHORISED A CLEAR.** Both sides now hash from
+files. The selftest pins both directions.
+
+**Two-platform verification, both independent:** Windows **126/0** (run by `claude-1`, counted two
+ways) · macOS **130/0**, `SELFTEST_RC=0` (run by the **operator** in Terminal — third-party, not
+codex self-report). The 130-vs-126 gap is four Darwin-only BSD controls and is **expected**.
+
+✅ **The Windows-only close-out restriction is LIFTED.**
 
 ---
 
-# ✅ CLOSED THIS WEEKEND
+# 🔴 TOMORROW — THE MAC CUTOVER
 
-| item | outcome |
-|---|---|
-| **S0 credential rotation** | ✅ Done. Env rewritten 19:52:33Z, 9 live connections on the new secret, 7 services restarted `NRestarts=0`, rollback copy shredded. **The credential exposed to a transcript is dead.** 36 `.bak` env files hold the now-dead old one — awaiting operator's call. |
-| **Schwab re-auth** | ✅ Read back from the store: `refresh_token_expires_at` = **Sun 2026-09-06 15:44 ET**, 7.00 days. Weekday **derived**, not labelled. ⛔ `expires_at` is the short-lived access token the refresher rotates itself — a ready-made false alarm. |
-| **D3 / #843** | Cross-venue scope. The union's two halves had **different scopes**; the source comment at `:1254` warned of the exact hazard the code already had, and the docstring claimed a scope the query did not implement. |
-| **D20 / #848** | 11 filled buys across 5 slots on 08-27 = **6 excess fills**, each a distinct `client_order_id` — new orders on an already-filled slot. Fixed at slot consumption, scoped **per segment** (#644's cap), not per position. |
-| **W2 / #849** | Provenance reached the logs and fan-out outcome but **not `trade_intents.status`** — the one surface counts derive from. Now records `refusal_origin`/`refusal_code`. |
-| **Marker census / #847** | Live, with a stored Friday baseline (`a62ac547`). Collapsed 11 board rows. |
-| **Item 1 · T23** | Answered · already shipped in #817. Both were **stale rows, not open work**. |
+**Working from the Mac starts tomorrow.** The migration is complete and verified: repo at
+`~/Projects/project-mai-tai`, memory loaded, SSH to the box, `gh` authed, toolkit green.
+
+⛔⛔ **THE CUTOVER MUST CARRY MEMORY, NOT JUST THE JOURNALS.** Files written on Windows on 08-31
+that the Mac does not have:
+```
+feedback_something_else_was_covering_for_it.md   (new — explains BOTH of today's defects)
+project_mai_tai_v2_three_exit_rules.md           (the CW floor defect)
+MEMORY.md                                        (index)
+project_mai_tai_v2_trading_window_and_exit_churn.md   (08-30)
+```
+
+**Procedure — only AFTER this batch is promoted** (the archive and journal rotation happen *during*
+promote):
+
+```bash
+# WINDOWS
+S=~/Desktop/mac-cutover && mkdir -p "$S/bundle"
+cp -r ~/.claude/projects/C--Users-kkvkr/memory "$S/bundle/memory"
+cp -r ~/.claude/mai-tai-fleet "$S/bundle/mai-tai-fleet"
+cd "$S/bundle" && find . -type f -print0 | sort -z | xargs -0 sha256sum > "$S/MANIFEST.sha256"
+cd "$S" && tar -czf mac-cutover.tar.gz bundle MANIFEST.sha256 && sha256sum mac-cutover.tar.gz
+
+# MAC  (⛔ note the memory folder name differs: -Users-velkris)
+tar -xzf ~/mac-cutover.tar.gz -C ~
+cd ~/bundle && shasum -a 256 -c ../MANIFEST.sha256 2>&1 | grep -c "OK$"
+rm -rf ~/.claude/projects/-Users-velkris/memory ~/.claude/mai-tai-fleet
+cp -R ~/bundle/memory ~/.claude/projects/-Users-velkris/memory
+cp -R ~/bundle/mai-tai-fleet ~/.claude/mai-tai-fleet
+chmod +x ~/.claude/mai-tai-fleet/*.sh && ~/.claude/mai-tai-fleet/checksums.sh verify
+```
+
+⛔⭐⭐ **AFTER THE CUTOVER, WINDOWS MUST STOP WRITING FLEET JOURNALS ENTIRELY.** One writer per file
+is the whole guarantee; two machines appending in one batch diverge irreconcilably and
+`manifest.sh` cannot reconcile it. Keep Windows as a **read-only** fallback.
+
+⚠️ **Verify behaviourally, not by file count** — ask a fresh Mac session *"what does 'something else
+was covering for it' mean?"* A file count proves files moved; only an answer proves memory loaded.
 
 ---
 
@@ -103,51 +142,34 @@ this is a **demonstrated** path, not a theoretical one. **Operator-authorized on
 
 | item | owner | state |
 |---|---|---|
-| **Monday watch** | codex-2 | armed, report-only |
-| **W2's 3 chain errors** | codex-2 | ⛔ **codex's number, never checked by claude-1.** Not adopted. |
-| 36 `.bak` env files | operator | hold a dead credential; delete or keep as config history |
-| `board.sh` "open BLOCKED" | — | **FINDING, not a task** — see below |
+| **Manual-close lifecycle defect** | codex-2 | boarded. A manual broker close leaves **no execution record** and orphans the managed row. Today one sat 0.14% from firing a sell into a flat account |
+| **Three non-cron research scripts** | codex-2 | hold dead embedded credentials; cleanup only |
+| **CI rule** | codex-2 | scripts load the DSN from the managed env; DB failure ⇒ `COULD_NOT_TELL` + non-zero exit, never zero. **CI scans RESOLVED CRON TARGETS, not filename patterns** |
+| **AEHL exit price / P&L** | — | permanently `COULD_NOT_TELL`. The manual close was never recorded |
 
 ---
 
-# ⛔ FINDINGS (no owner, no next action — do not put these on the board)
+# OPERATIONAL RULES CONFIRMED TODAY
 
-**1. `board.sh` reports "open BLOCKED" with no concept of closure.** Line 74 greps every
-` | BLOCKED | ` line ever written and prints the last 10 under that heading. A resolved BLOCKED sits
-there forever. It misled `claude-1` into contradicting a correct report from `codex-2` during this
-very close-out. **Same class as everything else this weekend: a label asserting more than its
-mechanism supports.**
-
-**2. `assert_fleet_flat.sh` does not source the env file** — it expects `MAI_TAI_DATABASE_URL` in the
-environment and **fails closed** without it. Correct behaviour; worth knowing before invoking it
-from a bare shell.
-
----
-
-# OPERATIONAL RULES CONFIRMED THIS WEEKEND
-
-1. ⭐⭐ **Ask "who invokes this?" BEFORE "is this correct?"** Eleven review rounds hardened a pager
-   nothing called.
-2. ⛔ **A no-op success is the dangerous kind.** A refused commit followed by `git push` printed
-   "PUSHED" — pushing an unchanged ref is a valid no-op. **Verify the EFFECT.**
-3. ⛔ **For any consume/release pair, mutate BOTH halves.** The guard half is obvious; the release
-   half is where the silent cost lives (a broken release = one entry per symbol per segment forever).
-4. ⛔ **A guard tested only on its KNOWN inputs is untested where it earns its keep.** #849's unknown
-   -origin fallback survived four mutants because every one traversed a known-origin path.
-5. ⛔ **A watch measuring code you intend to replace has no decision value.** Two deploy holds were
-   lifted on this basis.
-6. ⛔ **A Linux-targeted shell installer cannot be graded on Windows.** A local failure was a
-   path-form artifact — **VOID, not negative**.
-7. ⛔ **Review-pin records are WRITE-ONCE.** `review_pin_gate.py:165` requires exactly one commit per
-   record path. "Unmerged" does not mean "mutable."
-8. ⛔ **Check the verb.** `grep -c "env|VAR"` counts *references*, not *sourcing*; imports ≠ executes.
-9. ⛔ **A wrong reason that stops being examined propagates.** A quoting diagnosis, disproven the same
-   hour by the real cause, survived unretracted into an operational runbook.
+1. ⭐⭐ **Something else was covering for it.** Ask of any guard: *if I removed everything else,
+   would this still work?* The cover is a broker order, a second data source, or a branch that runs
+   first — **none appear in the file you are reading.** Both of today's defects were this.
+2. ⭐ **Trade small size in the degraded environment on purpose.** Extended hours strips the broker
+   bracket and the same-day REST feed. **$8.50 exposed two months-old bugs.**
+3. ⭐ **Look for the case in the same window where the mechanism DID work.** YDDL vs AEHL settled
+   the CW diagnosis in minutes.
+4. ⛔ **Require the rationale before the patch.** The fixed floor was deliberate; "just make it
+   trail" would have shipped a regression dressed as a fix.
+5. ⛔⛔ **A PATTERN MATCH IS A LEAD, NEVER A FINDING.** `claude-1` made **four** grep errors today,
+   each a confident wrong number, one causing a **false live-money escalation**. Every one was
+   caught by a *second method*. Confirm twice before reporting a number.
+6. ⛔ **A guard tested only on its known inputs is untested where it earns its keep.** Four PRs
+   today had a surviving mutant in round 1; every one was on the *safety* half, not the feature.
+7. ⛔ **A deploy guard bound to a stale SHA refuses — that is correct.** It cost 25 minutes and
+   prevented shipping an unreviewed delta.
 
 ## Memory pointers
 
-`[[project-mai-tai-fleet-roster]]` · `[[project-mai-tai-architecture]]` ·
-`[[feedback_a_watch_that_fails_to_a_false_clean]]` ·
-`[[project_mai_tai_reconciler_detects_nobody_listens]]` ·
-`[[feedback_the_tools_status_is_not_the_things_status]]` ·
-`[[project_mai_tai_review_pin_gate_mechanics]]` · `[[feedback_a_wrong_reason_is_worse_than_a_missing_one]]`
+`[[feedback_something_else_was_covering_for_it]]` · `[[project_mai_tai_v2_three_exit_rules]]` ·
+`[[project_mai_tai_v2_post_boot_promotion_uncapped_fleet_hold]]` ·
+`[[feedback_a_watch_that_fails_to_a_false_clean]]` · `[[project_mai_tai_review_pin_gate_mechanics]]`
