@@ -66,6 +66,18 @@ never hand-edit the deployed copy.
    checkout, install anything, or restart a service. This is a lagging complete-day outage watch,
    not the separate +35-minute post-control-restart proof.
 
+7. **Scanner-confirmed capture volume** (`scanner_capture_check.py` plus
+   `scanner_capture_verify_cron.sh`) — preserves the existing half-hour root schedule while
+   replacing the former box-only zero-row check. It compares the current ET window with the
+   median of the previous five matching weekdays at the same ET cutoff and alerts below 20% only
+   when the independent market-data stream is fresh. Every line prints current rows, distinct
+   symbols, newest row, baseline, baseline denominator, and current/baseline rate. A database read
+   failure is `COULD_NOT_TELL` with `row_count=UNMEASURED`; it can never become a measured zero.
+   `LOW_VOLUME` is an observation with `cause=NOT_DETERMINED`, never a claim that the writer is
+   broken. Run `install_scanner_capture_verify.sh` to replace the scheduled box artifact after
+   review; it requires the legacy schedule exactly once, preserves a root-only pre-image, verifies
+   the installed bytes, and restarts no service.
+
 ## fleet_health_check.py — the F3 framework
 A check registry: each check verdicts GREEN/AMBER/RED against ground truth; `main()` prints one
 `VERDICT:` line per check + an aggregate and exits worst (0/1/2) → the cron routes to ntfy.
