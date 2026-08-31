@@ -333,13 +333,29 @@ def _now_ms_at_age(age_secs: float) -> int:
 
 def test_streamer_bar_before_warmup_is_buffered_not_fed_to_strategy() -> None:
     bot = _bot()
-    bar = _bar(ts_ms=_now_ms_at_age(30.0))
+    bar = _bar(ts_ms=_now_ms_at_age(REST_WARMUP_FRESH_THRESHOLD_SECS + 1.0))
 
     asyncio.run(bot._handle_bar_from_streamer("AAA", bar))
 
     assert "AAA" in bot._streamer_pending
     assert bot._streamer_pending["AAA"] == [bar]
     assert len(bot.strategy.watchlist_state("AAA").bars) == 0
+
+
+def test_stale_rest_stays_gated_then_fresh_streamer_warms_same_symbol(caplog) -> None:
+    """One age-bound input change makes both required outcomes reachable."""
+
+    bot = _bot()
+    stale = _bar(ts_ms=_now_ms_at_age(REST_WARMUP_FRESH_THRESHOLD_SECS + 1.0))
+    asyncio.run(bot._handle_bar_from_rest("AAA", stale))
+    assert "AAA" not in bot._rest_warmup_done
+
+    fresh = _bar(ts_ms=_now_ms_at_age(REST_WARMUP_FRESH_THRESHOLD_SECS - 1.0))
+    with caplog.at_level(logging.INFO):
+        asyncio.run(bot._handle_bar_from_streamer("AAA", fresh))
+    assert "AAA" in bot._rest_warmup_done
+    assert "AAA" not in bot._streamer_pending
+    assert "[V2-STREAMER-WARMED]" in caplog.text
 
 
 def test_streamer_bar_after_warmup_is_fed_directly_no_buffer() -> None:
@@ -368,12 +384,14 @@ def test_bar_routing_labels_warmup_replay_separately_from_live_streamer() -> Non
 
     bot.strategy.on_observed_bar = record_phase  # type: ignore[method-assign]
     t_base = _now_ms_at_age(60.0)
-    buffered = _bar(ts_ms=t_base + 60_000)
+    buffered = _bar(
+        ts_ms=_now_ms_at_age(REST_WARMUP_FRESH_THRESHOLD_SECS + 60.0)
+    )
     asyncio.run(bot._handle_bar_from_streamer("AAA", buffered))
     asyncio.run(bot._handle_bar_from_rest("AAA", _bar(ts_ms=t_base)))
     asyncio.run(bot._handle_bar_from_streamer("AAA", _bar(ts_ms=t_base + 120_000)))
 
-    assert observed_phases == ["replay", "replay", "live"]
+    assert observed_phases == ["replay", "live"]
 
 
 def test_warmup_completion_drains_buffer_in_timestamp_order() -> None:
@@ -385,9 +403,7 @@ def test_warmup_completion_drains_buffer_in_timestamp_order() -> None:
     early = _bar(ts_ms=t_base + 120_000)
     middle = _bar(ts_ms=t_base + 60_000)
     late = _bar(ts_ms=t_base + 180_000)
-    asyncio.run(bot._handle_bar_from_streamer("AAA", early))
-    asyncio.run(bot._handle_bar_from_streamer("AAA", middle))
-    asyncio.run(bot._handle_bar_from_streamer("AAA", late))
+    bot._streamer_pending["AAA"] = [early, middle, late]
     assert len(bot._streamer_pending["AAA"]) == 3
 
     # REST delivers the warmup-completing bar. Its timestamp is older
@@ -418,9 +434,7 @@ def test_drain_skips_buffered_bars_strictly_older_than_latest_deque_bar() -> Non
     stale = _bar(ts_ms=t_base - 60_000)
     same = _bar(ts_ms=t_base)
     fresh = _bar(ts_ms=t_base + 60_000)
-    asyncio.run(bot._handle_bar_from_streamer("AAA", stale))
-    asyncio.run(bot._handle_bar_from_streamer("AAA", same))
-    asyncio.run(bot._handle_bar_from_streamer("AAA", fresh))
+    bot._streamer_pending["AAA"] = [stale, same, fresh]
 
     rest_bar = _bar(ts_ms=t_base)
     asyncio.run(bot._handle_bar_from_rest("AAA", rest_bar))
@@ -444,7 +458,7 @@ def test_drain_replays_equal_timestamp_streamer_bar_as_update_in_place() -> None
     t_base = _now_ms_at_age(60.0)
     # Streamer's copy: more complete (volume 999, close 2.0).
     streamer_copy = _bar(ts_ms=t_base, close=2.0, volume=999)
-    asyncio.run(bot._handle_bar_from_streamer("AAA", streamer_copy))
+    bot._streamer_pending["AAA"] = [streamer_copy]
     # REST's copy of the same bucket: in-flight version (volume 100, close 1.0).
     rest_copy = _bar(ts_ms=t_base, close=1.0, volume=100)
     asyncio.run(bot._handle_bar_from_rest("AAA", rest_copy))
@@ -463,14 +477,14 @@ def test_buffer_cap_drops_oldest_when_full() -> None:
     overflow = STREAMER_PENDING_BARS_MAX_PER_SYMBOL + 1
     t_base = _now_ms_at_age(3600.0)
     for i in range(overflow):
-        bar = _bar(ts_ms=t_base + i * 60_000)
+        bar = _bar(ts_ms=t_base - i * 60_000)
         asyncio.run(bot._handle_bar_from_streamer("AAA", bar))
 
     pending = bot._streamer_pending["AAA"]
     assert len(pending) == STREAMER_PENDING_BARS_MAX_PER_SYMBOL
     # Oldest (i=0) dropped; the kept window starts at i=1.
-    assert pending[0].timestamp_ms == t_base + 60_000
-    assert pending[-1].timestamp_ms == t_base + overflow * 60_000 - 60_000
+    assert pending[0].timestamp_ms == t_base - 60_000
+    assert pending[-1].timestamp_ms == t_base - overflow * 60_000 + 60_000
 
 
 def test_watchlist_transition_drops_pending_for_removed_symbols() -> None:
@@ -602,7 +616,9 @@ def test_warmup_completion_only_fires_on_fresh_bar_not_old_one() -> None:
     # REST delivers an OLD bar (older than freshness threshold). It
     # should be fed to the strategy but NOT mark the symbol warmed,
     # and NOT drain the buffer.
-    pending_bar = _bar(ts_ms=_now_ms_at_age(30.0))
+    pending_bar = _bar(
+        ts_ms=_now_ms_at_age(REST_WARMUP_FRESH_THRESHOLD_SECS + 30.0)
+    )
     asyncio.run(bot._handle_bar_from_streamer("AAA", pending_bar))
 
     old_rest_bar = _bar(
