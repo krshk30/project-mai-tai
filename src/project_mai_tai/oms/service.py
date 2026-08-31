@@ -35,7 +35,7 @@ from project_mai_tai.db.models import (
     TradeIntent,
 )
 from project_mai_tai.exit_logic.config import TradingConfig
-from project_mai_tai.exit_logic.cw_exit import cw_exit_decision
+from project_mai_tai.exit_logic.cw_exit import cw_effective_floor, cw_exit_decision
 from project_mai_tai.exit_logic.engine import ExitEngine
 from project_mai_tai.exit_logic.position import Position
 from project_mai_tai.events import (
@@ -3538,7 +3538,10 @@ class OmsRiskService:
             if self._cw_exit_enabled:
                 # Decision is the SHARED helper (exit_logic.cw_exit) — same code path as the
                 # backtest so live == backtest. floor OFF => byte-identical to the prior hard-target
-                # close; floor ON => arm a floor at +floor_pct% on reaching +target% and ride.
+                # close; floor ON => arm a fixed +floor_pct% minimum, then consume the durable
+                # BID-derived high-water floor that `_hydrate_v2_position` restored above. BID-only
+                # is load-bearing: an ask spike on a wide spread must not manufacture a ratchet that
+                # the unchanged bid immediately breaches.
                 flip_pending = (acct, symbol) in self._cw_flip_pending
                 armed = (acct, symbol) in self._cw_floor_armed
                 action, _armed_out = cw_exit_decision(
@@ -3546,6 +3549,7 @@ class OmsRiskService:
                     target_pct=self._cw_target_pct, stop_pct=self._cw_stop_pct,
                     floor_pct=self._cw_floor_pct, floor_enabled=self._cw_floor_exit_enabled,
                     flip_pending=flip_pending,
+                    ratcheted_floor_price=position.floor_price,
                 )
                 if action == "arm":
                     # reached +target% -> lock the floor, keep riding (NO exit); persist state.
@@ -3572,7 +3576,9 @@ class OmsRiskService:
                     if action == "target":
                         ref, tag = entry_price * (1.0 + self._cw_target_pct / 100.0), "CW_TARGET"
                     elif action == "floor":
-                        ref, tag = entry_price * (1.0 + self._cw_floor_pct / 100.0), "CW_FLOOR"
+                        ref, tag = cw_effective_floor(
+                            entry_price, self._cw_floor_pct, position.floor_price
+                        ), "CW_FLOOR"
                     elif action == "stop":
                         ref, tag = entry_price * (1.0 - self._cw_stop_pct / 100.0), "CW_HARD_STOP"
                     else:  # flip: full close at the current bid (trend exit)

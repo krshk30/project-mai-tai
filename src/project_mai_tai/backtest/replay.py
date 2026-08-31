@@ -74,7 +74,9 @@ from project_mai_tai.backtest.broker_refusal import (
     build_refusal_model,
     header,
 )
-from project_mai_tai.exit_logic.cw_exit import cw_exit_decision
+from project_mai_tai.exit_logic.config import TradingConfig
+from project_mai_tai.exit_logic.cw_exit import cw_effective_floor, cw_exit_decision
+from project_mai_tai.exit_logic.position import Position
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote as StratQuote
 from project_mai_tai.settings import Settings
@@ -647,6 +649,7 @@ def replay_symbol_day(
     cw_stop_pct = float(getattr(settings, "oms_v2_cw_hard_stop_pct", 5.0))
     cw_floor_pct = float(getattr(settings, "oms_v2_cw_floor_pct", 2.0))
     cw_floor_enabled = bool(getattr(settings, "oms_v2_cw_floor_exit_enabled", False))
+    v2_exit_config = TradingConfig().make_v2_variant()
 
     # Overnight-flatten backstop endpoint (spec § overnight flatten): the live `_v2_overnight_flatten`
     # closes every still-held managed v2 position at 19:55 ET before the 20:00 fillable gate. Read the
@@ -661,6 +664,7 @@ def replay_symbol_day(
     geometry = ""  # "rth_static_oco" | "eh_floor_ride"
     exit_done = False
     eh_armed = False  # EH floor-ride: cw_exit_decision floor-armed state
+    eh_position: Position | None = None  # durable-price-state analogue for the BID ratchet
     eh_flip_pending = False  # EH floor-ride: a bar-close ATR SELL-flip fired while holding
     eh_last_bid: tuple[datetime, float] | None = None
     latest_stratquote: dict[str, StratQuote] = {}
@@ -719,7 +723,7 @@ def replay_symbol_day(
         """Record the entry, mark the symbol in-position, and select the exit geometry by the OPEN
         session. RTH resolves the static OCO immediately (broker-arbitrated); EH continues the loop
         so the SHARED cw_exit_decision rides the tape bids."""
-        nonlocal filled, entry_rec, geometry
+        nonlocal filled, entry_rec, geometry, eh_position
         result.entries.append(e)
         strat.update_position(symbol, qty)
         filled = True
@@ -731,6 +735,17 @@ def replay_symbol_day(
             geometry = "rth_static_oco"
         else:
             geometry = "eh_floor_ride"
+            eh_position = Position(
+                ticker=e.symbol,
+                entry_price=e.fill_price,
+                quantity=qty,
+                floor_lock_at_1pct_peak_pct=v2_exit_config.profit_floor_lock_at_1pct_peak_pct,
+                floor_lock_at_2pct_peak_pct=v2_exit_config.profit_floor_lock_at_2pct_peak_pct,
+                floor_lock_at_3pct_peak_pct=v2_exit_config.profit_floor_lock_at_3pct_peak_pct,
+                floor_trail_buffer_over_4pct_pct=(
+                    v2_exit_config.profit_floor_trail_buffer_over_4pct_pct
+                ),
+            )
 
     def _gate_and_maybe_fill(draft, eff_dt: datetime) -> None:
         """Run a strategy-returned draft (reactive break OR the P-B2 EH resting cross) through the SHARED
@@ -936,6 +951,11 @@ def replay_symbol_day(
             entry_px = (
                 entry_rec.fill_price
             )  # EH ladder anchors off the FILL (managed-row entry_price)
+            if eh_position is None:  # pragma: no cover - geometry is assigned with the position
+                raise RuntimeError("EH floor-ride has no ratchet position")
+            # Live OMS ratchets from BID, never ask/last. Keeping the replay on the same input is
+            # part of the wide-spread self-trigger guard as well as the live/backtest parity rule.
+            eh_position.update_price(bid)
             action, eh_armed = cw_exit_decision(
                 entry_px,
                 bid,
@@ -945,6 +965,7 @@ def replay_symbol_day(
                 floor_pct=cw_floor_pct,
                 floor_enabled=cw_floor_enabled,
                 flip_pending=eh_flip_pending,
+                ratcheted_floor_price=eh_position.floor_price,
             )
             if action in ("arm", "hold"):
                 continue
@@ -952,7 +973,11 @@ def replay_symbol_day(
             if action == "target":
                 _finish_eh_exit(eff_dt, entry_px * (1.0 + cw_target_pct / 100.0), "target")
             elif action == "floor":
-                _finish_eh_exit(eff_dt, entry_px * (1.0 + cw_floor_pct / 100.0), "floor")
+                _finish_eh_exit(
+                    eff_dt,
+                    cw_effective_floor(entry_px, cw_floor_pct, eh_position.floor_price),
+                    "floor",
+                )
             elif action == "stop":
                 _finish_eh_exit(eff_dt, entry_px * (1.0 - cw_stop_pct / 100.0), "stop")
             else:  # flip -> close at the current bid
