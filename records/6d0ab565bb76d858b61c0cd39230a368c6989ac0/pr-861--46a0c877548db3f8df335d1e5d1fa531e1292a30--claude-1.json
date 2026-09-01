@@ -1,0 +1,9 @@
+{
+  "pr_number": 861,
+  "range_base": "46a0c877548db3f8df335d1e5d1fa531e1292a30",
+  "range_head": "6d0ab565bb76d858b61c0cd39230a368c6989ac0",
+  "reviewed_at": "2026-09-01T12:00:58Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Independent review: DB3 census false-clean-zero contract inverted to fail-visible; three branches test-pinned (UNEXERCISED/FAIL/OBSERVED); 33 tests + ruff at exact head; forward cost (healthy zero fails once the sawtooth is fixed) named in the FAIL text for later re-litigation."
+}
