@@ -123,8 +123,9 @@ def test_disarm_clears_arm_bar_ts() -> None:
 
 # --- G01 (2026-08-31): the cap must consume the slots the live entry paths READ -------------
 #
-# NCRA: [V2-CW-SEED-CAP] at 11:06 ET, then THREE intrabar entries fired through the "capped"
-# segment (13:47, 14:01, 15:25 ET, each n=3), the last +42% past a flip we never watched.
+# NCRA (times corrected 09-01): [V2-CW-SEED-CAP] across three boots (09:47/10:01/11:12 ET),
+# and after EACH cap a reactive Schwab BUY intent EMITTED through the "capped" segment
+# (09:47:05, 10:01:14, 11:25:11 ET, each n=3) — all Schwab-rejected; emissions, not fills.
 # The counter the cap wrote is "kept for labelling/back-compat; NOT the cap" — the live gates
 # are the composition claims. One-variable controlled pair: vary ONLY the arm's timing.
 

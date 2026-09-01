@@ -2355,10 +2355,12 @@ class SchwabV2BotService:
             # are the composition claims (resting path: `cw_resting_taken`; reactive/reclaim
             # path: `cw_reclaim_taken`), so a cap that writes only the counter flips `dangerous`
             # to false — releasing the boot hold — while leaving the stale arm fully tradeable.
-            # NCRA 08-31: capped 11:06 ET at stage=db-seed, then THREE intrabar entries fired
-            # through the "capped" segment (13:47, 14:01, 15:25 ET, each logged n=3), the last
-            # +42% past a flip we never watched — the APLX/SNDG chase shape this function exists
-            # to prevent. Consume the slots the live paths read; both reset at the next SELL
+            # NCRA 08-31 (times CORRECTED 09-01 — the originals were UTC mislabeled as ET):
+            # capped at 09:47, 10:01 and 11:12 ET across three boots, and after EACH cap the
+            # reactive path emitted a Schwab BUY intent through the "capped" segment (09:47:05,
+            # 10:01:14, 11:25:11 ET, each n=3 = the cap's counter 2, +1 at emit; two reclaim
+            # rests placed through it too). All Schwab-rejected — emissions, not fills. The
+            # APLX/SNDG chase shape this function exists to prevent. Consume the slots the live paths read; both reset at the next SELL
             # flip, which is exactly the operator's "wait for a fresh flip" rule.
             st.cw_resting_taken = True
             st.cw_reclaim_taken = True
