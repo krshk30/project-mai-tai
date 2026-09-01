@@ -1,0 +1,9 @@
+{
+  "pr_number": 861,
+  "range_base": "46a0c877548db3f8df335d1e5d1fa531e1292a30",
+  "range_head": "d8c2e186a35385bf97fcc0363deb699c1760df12",
+  "reviewed_at": "2026-09-01T12:17:31Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Independent re-review of the COUNT_ONLY correction: no-verdict contract is right under the operator Hold ruling (sawtooth = expected Schwab policy); count+denominator on the line, unreadable stays COULD_NOT_TELL, exit code unaffected; 33 tests + ruff at exact head."
+}
