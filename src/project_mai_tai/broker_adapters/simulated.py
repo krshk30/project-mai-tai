@@ -27,6 +27,7 @@ class SimulatedBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="client",
                     client_order_id=request.client_order_id,
                     broker_order_id=str(request.metadata.get("broker_order_id", "")).strip() or None,
                     symbol=request.symbol,
@@ -45,6 +46,7 @@ class SimulatedBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="client",
                     client_order_id=request.client_order_id,
                     broker_order_id=broker_order_id,
                     symbol=request.symbol,

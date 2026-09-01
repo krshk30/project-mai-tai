@@ -95,6 +95,7 @@ class AlpacaPaperBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="client",
                     client_order_id=request.client_order_id,
                     symbol=request.symbol,
                     side=request.side,
@@ -118,6 +119,11 @@ class AlpacaPaperBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin=(
+                        "client"
+                        if status_code == 599
+                        else ("broker" if status_code >= 400 else "unknown")
+                    ),
                     client_order_id=request.client_order_id,
                     symbol=request.symbol,
                     side=request.side,
@@ -179,6 +185,7 @@ class AlpacaPaperBrokerAdapter:
                 return [
                     ExecutionReport(
                         event_type="rejected",
+                        origin="client" if status_code == 599 else "broker",
                         client_order_id=target_client_order_id or request.client_order_id,
                         broker_order_id=None,
                         symbol=request.symbol,
@@ -194,6 +201,7 @@ class AlpacaPaperBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="client",
                     client_order_id=target_client_order_id or request.client_order_id,
                     broker_order_id=None,
                     symbol=request.symbol,
@@ -214,6 +222,7 @@ class AlpacaPaperBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="client" if status_code == 599 else "broker",
                     client_order_id=target_client_order_id or request.client_order_id,
                     broker_order_id=broker_order_id,
                     symbol=request.symbol,
@@ -468,6 +477,7 @@ class AlpacaPaperBrokerAdapter:
 
         return ExecutionReport(
             event_type=event_type,  # type: ignore[arg-type]
+            origin="broker",
             client_order_id=str(order.get("client_order_id", request.client_order_id)),
             broker_order_id=broker_order_id,
             broker_fill_id=broker_fill_id,
