@@ -2728,6 +2728,29 @@ class SchwabV2Strategy:
                     "age=-1 means the claim carried no timestamp)",
                     state.symbol, age_ms, state.cw_entries_this_flip, px,
                 )
+                if state.fanout_claim_outcome == "filled":
+                    # ⛔ OPERATOR RULING 2026-09-01 (#858): BLOCK chosen — a FILLED claim (kept
+                    # held by the zero-hold veto above) suppresses the reclaim fan-out for the
+                    # rest of the segment. A duplicate-while-held and a legitimate
+                    # re-entry-after-close read the SAME from here (the Schwab-scoped union
+                    # cannot see the Webull venue), so blocking is the safe side — and this line
+                    # is the ruling's price tag. Without it the cost is invisible and the block
+                    # can never be re-litigated with numbers.
+                    # Denominator = the subset of the suppression line just above where the
+                    # claim outcome is `filled`; classify each event post-hoc by joining
+                    # slot_id to the venue book (was the leg's position still open?).
+                    logger.info(
+                        "[V2-FANOUT-RECLAIM-BLOCKED-BY-FILLED-CLAIM] %s slot_id=%s "
+                        "claim_age_ms=%d n=%d px=%.4f schwab_union_qty=%d — cost line for the "
+                        "2026-09-01 BLOCK ruling; duplicate-while-held vs re-entry-after-close "
+                        "is NOT distinguishable at emit time, join slot_id to the venue book",
+                        state.symbol,
+                        state.fanout_claim_slot_id,
+                        age_ms,
+                        state.cw_entries_this_flip,
+                        px,
+                        state.position_qty,
+                    )
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",
