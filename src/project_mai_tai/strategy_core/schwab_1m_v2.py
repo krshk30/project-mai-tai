@@ -3519,6 +3519,12 @@ class SchwabV2Strategy:
         segment = segment_id or self._ensure_fanout_segment_id(state)
         return {
             "fanout_segment_id": str(segment),
+            # S7 (2026-09-01): first-slot resting drafts are built before the BUY arm exists, so
+            # serializing state.cw_arm_bar_ts stamped 0 on every first fill while reclaim carried a
+            # value. The durable fan-out segment is already bound at that first draft and survives
+            # through reclaim. Keep the legacy grading key as its metadata-only alias; never stamp
+            # SymbolState early, because the live seed-cap and entry gates read that state field.
+            "cw_arm_bar_ts": str(segment),
             **self._fanout_slot_metadata(state, source=source, segment_id=segment),
         }
 
