@@ -1,0 +1,9 @@
+{
+  "pr_number": 858,
+  "range_base": "327f843ec12ccfcb59a1493d508fc51d0577bc6a",
+  "range_head": "c79782769b2fdc799ca4edce9a3f36ee1333fce1",
+  "reviewed_at": "2026-09-01T11:07:25Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independent review: DB2/DB3 Webull venue-state guards preserve the non-filled release control; the operator-ruled filled-claim block is instrumented by exact slot_id; 31 focused tests and ruff pass."
+}
