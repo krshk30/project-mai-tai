@@ -298,8 +298,15 @@ tail below the floor is the accepted, paged risk. It releases only via the lifet
 above; a bid recovering to ≥ floor fills it naturally. The below-floor page fires ONCE per
 stand-down episode (counted, deduped per position-episode) — no page churn.
 
-🔶 **STATUS (single label): §3 = DESIGN-COMPLETE, PENDING OPERATOR CONFIRMATION** of the
-below-floor handling + this formula. No build before that confirmation. (Q21 Parts 1/2/4 are a
+⛔⭐ **WHAT §3 IS AND IS NOT (operator framing, 2026-09-01 — carry this into every reading):
+§3 is STALENESS protection, not GAP protection.** It converts "limit stranded far above the
+market" into "limit at the floor" — a real gain only in the band between the stranded limit and
+the floor. **Below the floor, the exposure is IDENTICAL to today; the only change is that it is
+PAGED.** Read as "EH risk solved," this design over-promises; read as "the stranded-limit band
+closed and the residual made visible," it delivers exactly what it says.
+
+✅ **STATUS (single label): §3 = OPERATOR-CONFIRMED 2026-09-01** — the formula, the one-shot
+lifetime, and the below-floor handling as written above. Buildable. (Q21 Parts 1/2/4 are a
 separate, operator-APPROVED build and do not wait on §3.)
 
 ---

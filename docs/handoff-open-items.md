@@ -273,9 +273,9 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   fence. Log/fence-only, cannot oversell. Denominator: pre-market `live:orb` fills per session.
   Falsifier: a session with pre-market fills where the counted line ≠ fill count.
   Status, one label each: **Parts 1/2/4 = APPROVED-BUILD (codex, unblocked)** · **§3 =
-  DESIGN-COMPLETE, PENDING OPERATOR CONFIRMATION** (floor computed: max(entry×(1−hard_stop_pct),
-  #853 ratcheted floor); one-shot lifetime + below-floor page defined in the design doc; no §3
-  build before confirmation). Kin: item 11 above.
+  OPERATOR-CONFIRMED 09-01, buildable** (floor = max(entry×(1−hard_stop_pct), #853 ratcheted
+  floor); one-shot; below-floor pages. ⛔ STALENESS protection, not GAP protection — no gain
+  below the floor, the exposure there only becomes visible). Kin: item 11 above.
 - **C42 — post-04:00 joiners arm on stale anchors** *(owner: codex-2; replaces C28+C41, one
   question asked twice)*. 09-01: 4 arms on 08-31 anchors (GYGY 04:06 · WETO 04:25 · SSM 04:35 ·
   FLYE 05:49 ET), unrolled AND uncapped — the 04:00 roll ran at `watchlist=0`, and the seed-cap is
