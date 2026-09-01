@@ -159,7 +159,13 @@ def test_spurious_union_zero_cannot_release_a_durable_fill(
     ("elapsed_ms", "expected_claimed", "expected_release_allowed"),
     [
         (FANOUT_POSITIVE_ZERO_HOLD_MS - 1, True, 0),
-        (FANOUT_POSITIVE_ZERO_HOLD_MS, False, 1),
+        # DB2 (2026-08-31): the expired hold used to RELEASE here — asserting the pre-#843
+        # premise that union-zero could mean "a Webull fill terminalized its own intent".
+        # Post-#843 the union is Schwab-scoped and a FILLED claim is a live position at its
+        # own venue: expiry now VETOES the release (claim kept, timer cleared). The release
+        # polarity for a non-filled claim lives in
+        # test_v2_fanout_zero_hold_mirror_scope.py::test_expired_hold_releases_a_held_claim.
+        (FANOUT_POSITIVE_ZERO_HOLD_MS, True, 0),
     ],
 )
 def test_positive_evidence_union_zero_hold_is_bounded(
@@ -195,6 +201,10 @@ def test_positive_evidence_union_zero_hold_is_bounded(
         assert state.fanout_claim_outcome == "filled"
         assert "hold_expired=0" in caplog.text
         assert persisted == []
+        if elapsed_ms >= FANOUT_POSITIVE_ZERO_HOLD_MS:
+            # The expiry was reached and the release was VETOED, not merely not-yet-due.
+            assert "[V2-FANOUT-CLAIM-ZERO-HOLD-VETOED]" in caplog.text
+            assert state.fanout_zero_hold_started_ms == 0
     else:
         assert state.fanout_claim_outcome == "released"
         assert "reason=schwab_union_zero_positive_evidence_hold_expired" in caplog.text
