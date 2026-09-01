@@ -23,6 +23,10 @@ class _State:
         self.cw_armed = True
         self.cw_arm_bar_ts = arm_ts
         self.cw_entries_this_flip = 0
+        # Same defaults as SymbolState — the cap must consume BOTH composition slots (G01):
+        # the counter it used to write is labelling-only and no live entry path reads it.
+        self.cw_resting_taken = False
+        self.cw_reclaim_taken = False
 
 
 class _Strat:
@@ -55,6 +59,8 @@ def test_a_flip_from_BEFORE_the_symbol_joined_is_disqualified() -> None:
     bot = _bot(BOOT, st, {"APLX": BOOT + 900})         # ...but before the join
     bot._cap_reconstructed_segment("APLX", stage="rest-warmup")
     assert st.cw_entries_this_flip == CAPPED, "a pre-watch flip must not be enterable"
+    # G01: the counter is labelling-only — the slots the live entry paths actually read:
+    assert st.cw_resting_taken is True and st.cw_reclaim_taken is True
 
 
 def test_a_flip_AFTER_the_symbol_joined_is_kept() -> None:
@@ -63,6 +69,7 @@ def test_a_flip_AFTER_the_symbol_joined_is_kept() -> None:
     bot = _bot(BOOT, st, {"APLX": BOOT + 900})
     bot._cap_reconstructed_segment("APLX", stage="rest-warmup")
     assert st.cw_entries_this_flip == 0, "a fresh post-join flip must survive"
+    assert st.cw_resting_taken is False and st.cw_reclaim_taken is False  # slots untouched (G01)
 
 
 def test_a_symbol_held_since_boot_is_EXEMPT_and_behaves_as_before() -> None:
