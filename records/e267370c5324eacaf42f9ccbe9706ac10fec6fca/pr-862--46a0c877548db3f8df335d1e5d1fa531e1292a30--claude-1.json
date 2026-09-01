@@ -1,0 +1,9 @@
+{
+  "pr_number": 862,
+  "range_base": "46a0c877548db3f8df335d1e5d1fa531e1292a30",
+  "range_head": "e267370c5324eacaf42f9ccbe9706ac10fec6fca",
+  "reviewed_at": "2026-09-01T12:17:31Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Trailer-only amendment re-pin: tree equality d5c401b == e267370 (3fdf717) proven, content review carries \u2014 five-event control, proxies rejected by number, intent-level duplicate counting, reporting-only cost reconciliation, union-widening ban; D20 COULD_NOT_TELL until the #863 event deploys and reproduces the five controls."
+}
