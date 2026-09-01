@@ -309,6 +309,9 @@ class SymbolState:
     # claim expiry. It resets only when the segment itself ends.
     fanout_webull_resting_taken: bool = False
     fanout_webull_reclaim_taken: bool = False
+    # D20 denominator observation: the last slot_id whose crossing was logged while a mirrored
+    # rest was LIVE at Webull. Dedup key only — never gates an emit or a claim.
+    fanout_mirror_cross_observed_slot_id: str = ""
     # First Schwab-union-zero observation while durable positive Webull evidence holds the claim.
     # A later position poll either sees the union restore and clears this timer, or releases the
     # venue-local claim at FANOUT_POSITIVE_ZERO_HOLD_MS. It is deliberately independent of
@@ -3627,6 +3630,43 @@ class SchwabV2Strategy:
                 state,
                 reason="provisional_without_positive_evidence",
             )
+        # ⭐ D20 DENOMINATOR — OBSERVE THE CROSSING BEFORE ANY GUARD CAN EAT IT (2026-09-01).
+        # The #858 guards below fix the 08-31 duplicates and return before the emit line that
+        # used to be the only record a crossing happened. A crossed LIVE mirror is exactly the
+        # population the fan-out acceptance grades duplicates against, so it must stay countable
+        # while being suppressed: one line per slot_id, on a live bar, gated by NOTHING below
+        # (neither the claim state nor the mirror guard may hide it).
+        # Blind spots, declared: boot-hold, an EH session, and a cancelled Schwab rest return
+        # above this line — a crossing in those states is NOT observed here.
+        if state.webull_resting_active:
+            obs_bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+            if obs_bar_ms and (self._now_ms() - obs_bar_ms) <= self._resting_max_bar_age_ms:
+                obs_px = float(getattr(quote, "last_price", 0.0) or 0.0)
+                if obs_px <= 0.0:
+                    obs_bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
+                    obs_ask = float(getattr(quote, "ask_price", 0.0) or 0.0)
+                    obs_px = (obs_bid + obs_ask) / 2.0 if (obs_bid > 0.0 and obs_ask > 0.0) else 0.0
+                if obs_px >= state.resting_level > 0.0:
+                    obs_slot_id = str(state.fanout_claim_slot_id or "").strip()
+                    if not obs_slot_id and int(state.fanout_segment_id or 0) > 0:
+                        obs_slot_id = fanout_slot_id(
+                            strategy_code="schwab_1m_v2",
+                            symbol=state.symbol,
+                            segment_id=int(state.fanout_segment_id),
+                            slot="resting",
+                        )
+                    if obs_slot_id and obs_slot_id != state.fanout_mirror_cross_observed_slot_id:
+                        state.fanout_mirror_cross_observed_slot_id = obs_slot_id
+                        logger.info(
+                            "[V2-FANOUT-MIRROR-CROSS-OBSERVED] %s slot_id=%s px=%.4f "
+                            "level=%.4f — DENOMINATOR line: one crossed-live-mirror slot; the "
+                            "guards below may rightly suppress the emit, this line fires anyway "
+                            "(zero next session = UNEXERCISED, not clean)",
+                            state.symbol,
+                            obs_slot_id,
+                            obs_px,
+                            state.resting_level,
+                        )
         if state.position_qty != 0 or state.fanout_webull_claimed:
             return
         # ⛔ DB2/DB3 (2026-08-31): a mirrored rest FILLS ITSELF at Webull on the very cross that
