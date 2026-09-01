@@ -1,0 +1,9 @@
+{
+  "pr_number": 864,
+  "range_base": "9c151712f31fe8d1ea3ec441e73a2c1fee92ac5d",
+  "range_head": "746204cc85edf8e63f68c98184bc7c017d61fa5b",
+  "reviewed_at": "2026-09-01T15:16:57Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified both 2026-08-31 replay suites at the real strategy gates; reconciled five filled duplicate legs and three rejected NCRA reactive emissions against box logs/database; confirmed UTC-to-ET narrative correction; ran 38 replay/neighbor tests, Ruff, exact pre-858 five-case reproduction, and the three-red G01 cap mutant; CI Validate passed at this head."
+}
