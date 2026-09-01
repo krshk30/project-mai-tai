@@ -24,14 +24,21 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.oms import service as svc
+
+RTH_NOW = datetime(2026, 9, 1, 14, 0, tzinfo=UTC)  # Tuesday 10:00 ET
+
+
+@pytest.fixture(autouse=True)
+def _inject_rth_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(svc, "utcnow", lambda: RTH_NOW)
 
 
 # ------------------------------------------------------------------ the payload the broker accepts
@@ -156,16 +163,15 @@ def _svc(adapter):
 
 
 def _run(s):
-    with patch.object(svc, "_is_regular_market_session", return_value=True):
-        return asyncio.run(
-            s._attach_webull_protection(
-                broker_account_name="live:orb",
-                symbol="TEST",
-                quantity=1,
-                entry_price=5.0,
-                strategy_code="schwab_1m_v2",
-            )
+    return asyncio.run(
+        s._attach_webull_protection(
+            broker_account_name="live:orb",
+            symbol="TEST",
+            quantity=1,
+            entry_price=5.0,
+            strategy_code="schwab_1m_v2",
         )
+    )
 
 
 def test_it_attaches_and_stops(caplog: pytest.LogCaptureFixture) -> None:
