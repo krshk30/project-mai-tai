@@ -259,6 +259,50 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ---
 
+## LIVE-MONEY board (operator letter codes — committed 2026-09-01, batch 2)
+
+> ⛔ **Two batches lost time to definitions living outside the repo** (D21/W2B on 09-01 AM, then
+> 11 of 21 rows on 09-01 PM). Rows are CREATED here from now on; a code with no row here is not a
+> task. Closures move to [`handoff-log.md`](handoff-log.md) — per this file's own header rule.
+
+### Open, defined, owned
+
+- **Q21 — EH downside protection** *(owner: codex-2, build APPROVED by operator 09-01; design =
+  `webull-premarket-protection-decision.md` Parts 1/2/4 exactly as written 08-18)*. RTH-gate the
+  pre-market attach · ONE counted `[WEBULL-PREMARKET-UNPROTECTED]` line per fill · OMS-restart
+  fence. Log/fence-only, cannot oversell. Denominator: pre-market `live:orb` fills per session.
+  Falsifier: a session with pre-market fills where the counted line ≠ fill count.
+  ⛔ §3 reprice-to-bid is NOT approved — separate operator discussion. Kin: item 11 above.
+- **C42 — post-04:00 joiners arm on stale anchors** *(owner: codex-2; replaces C28+C41, one
+  question asked twice)*. 09-01: 4 arms on 08-31 anchors (GYGY 04:06 · WETO 04:25 · SSM 04:35 ·
+  FLYE 05:49 ET), unrolled AND uncapped — the 04:00 roll ran at `watchlist=0`, and the seed-cap is
+  blind to post-boot joiners (per-symbol watch_start = boot for boot-present symbols). Spec: apply
+  roll/seed-cap logic at watchlist-join time. Denominator: post-04:00 joiners per session with
+  pre-04:00 anchors (09-01: 4). Falsifier: a joiner arming on a stale anchor with no cap/roll line.
+- **S7 — 'first'-slot fills stamp `cw_arm_bar_ts=0`** *(owner: codex-2; found in the S5 re-grade)*.
+  Reclaim stamps the segment id; first does not — per-segment 'first'-slot composition grading is
+  COULD_NOT_TELL **by construction**. Spec: stamp the resting/'first' path like reclaim.
+  Denominator: 'first'-slot BUY fills per session. Falsifier: a stamped-era 'first' fill with
+  `cw_arm_bar_ts=0`.
+- **S8 — SSM/WETO/GYGY stale-anchor harm-linkage** *(owner: claude-1, reading)*. The C42 arms'
+  disarm-vs-fill sequencing is untraced for three of four symbols (FLYE traced: its fills came from
+  a fresh 09:31 ET arm). Answer: did any 09-01 fill trace to a stale-anchor segment?
+- **Q4 — a guard structurally unable to fire, counted as coverage** *(owner: BLOCKED — definition
+  missing; operator flagged it as still-real)*. The two candidate guards checked 09-01 came back
+  healthy (liquidity floor called at 5 live sites; replace-link written at `oms/service.py:9308`) —
+  Q4 is a different guard. ⛔ Cannot be specced until the row text is restated.
+
+### Definition stubs — restate once, then they live here
+
+**Q27 · Q22 · Q19 · Q15 · B9 · Q8 · M9 · T35 · D17 · B21 · B22** — no definition exists in the
+repo, the fleet dir, its archives, or the surviving thread context (originals predate a context
+compaction). ⛔ Untriageable until restated; each needs one line + an owner + a next action.
+
+### Closed in batch 2 (evidence in [`handoff-log.md`](handoff-log.md), 2026-09-01 entry)
+
+Q16 · S6 · N3 · T22 · S5 · D23(read clean ×2 sessions) · D21 · D20(regrade delivered) · W2B ·
+DB2 · DB3 · G01 · C28/C41(superseded by C42).
+
 ## ⚠️ Watch items live in [`session-handoff.md`](session-handoff.md), not here
 Verification is a *state* ("is this behaving?"), not a *task* ("do this"). Keeping them here is what
 made an open-items file that could never reach zero.
