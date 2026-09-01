@@ -1,0 +1,2338 @@
+{
+  "population": {
+    "selected": 129,
+    "wins": 46,
+    "losses": 83,
+    "win_rate_pct": 35.65891472868217,
+    "total_return_pct": -137.2649429141915,
+    "mean_return_pct": -1.0640693249162132
+  },
+  "by_day": {
+    "2026-08-24": {
+      "candidates": 29,
+      "wins": 5,
+      "losses": 24,
+      "oracle_top_6_wins": 5,
+      "oracle_top_6_losses": 1
+    },
+    "2026-08-25": {
+      "candidates": 16,
+      "wins": 7,
+      "losses": 9,
+      "oracle_top_6_wins": 6,
+      "oracle_top_6_losses": 0
+    },
+    "2026-08-26": {
+      "candidates": 22,
+      "wins": 15,
+      "losses": 7,
+      "oracle_top_6_wins": 6,
+      "oracle_top_6_losses": 0
+    },
+    "2026-08-27": {
+      "candidates": 16,
+      "wins": 5,
+      "losses": 11,
+      "oracle_top_6_wins": 5,
+      "oracle_top_6_losses": 1
+    },
+    "2026-08-28": {
+      "candidates": 2,
+      "wins": 1,
+      "losses": 1,
+      "oracle_top_6_wins": 1,
+      "oracle_top_6_losses": 1
+    },
+    "2026-08-31": {
+      "candidates": 25,
+      "wins": 7,
+      "losses": 18,
+      "oracle_top_6_wins": 6,
+      "oracle_top_6_losses": 0
+    },
+    "2026-09-01": {
+      "candidates": 19,
+      "wins": 6,
+      "losses": 13,
+      "oracle_top_6_wins": 6,
+      "oracle_top_6_losses": 0
+    }
+  },
+  "zero_floor_audit": {
+    "entries": 129,
+    "first_bid_negative": 127,
+    "first_bid_non_negative": 2,
+    "later_reached_plus_1": 112,
+    "later_reached_plus_2": 106,
+    "later_reached_plus_5": 88,
+    "floor_losers_later_reached_plus_1": 66,
+    "floor_losers_later_reached_plus_2": 62,
+    "floor_losers_later_reached_plus_5": 49,
+    "floor_loser_plus_5_median_prior_mae_pct": -4.524886877828059,
+    "floor_loser_plus_5_median_seconds": 2444.504964
+  },
+  "feature_stats": {
+    "log_entry_price": {
+      "coverage": 129,
+      "winner_median": 0.7214655376620842,
+      "loser_median": 0.6232492903979004,
+      "auc_higher_is_win": 0.5278941854374017
+    },
+    "spread_pct": {
+      "coverage": 129,
+      "winner_median": 0.5076142131979701,
+      "loser_median": 0.5347593582887704,
+      "auc_higher_is_win": 0.46935568360398117
+    },
+    "minutes_since_0700": {
+      "coverage": 129,
+      "winner_median": 326.84929166666666,
+      "loser_median": 347.63551666666666,
+      "auc_higher_is_win": 0.46856993190151913
+    },
+    "scanner_age_min": {
+      "coverage": 129,
+      "winner_median": 290.48860833333333,
+      "loser_median": 267.32405,
+      "auc_higher_is_win": 0.5667888947092719
+    },
+    "confirm_rank_score": {
+      "coverage": 129,
+      "winner_median": 60.0,
+      "loser_median": 60.0,
+      "auc_higher_is_win": 0.49423782084861184
+    },
+    "log_confirm_day_volume": {
+      "coverage": 129,
+      "winner_median": 6.474226611237628,
+      "loser_median": 6.67880772124129,
+      "auc_higher_is_win": 0.4106862231534835
+    },
+    "log_float_used": {
+      "coverage": 129,
+      "winner_median": 6.184166464566747,
+      "loser_median": 6.3028543212245784,
+      "auc_higher_is_win": 0.4540335254059717
+    },
+    "confirm_change_pct": {
+      "coverage": 129,
+      "winner_median": 58.333,
+      "loser_median": 58.333,
+      "auc_higher_is_win": 0.4848088004190676
+    },
+    "vwap_dist_pct": {
+      "coverage": 129,
+      "winner_median": -0.7942395943522433,
+      "loser_median": -3.7165507126356587,
+      "auc_higher_is_win": 0.5434782608695652
+    },
+    "macd_pct": {
+      "coverage": 129,
+      "winner_median": 0.44320741715959555,
+      "loser_median": 0.47028506812184817,
+      "auc_higher_is_win": 0.4567836563645888
+    },
+    "histogram_pct": {
+      "coverage": 129,
+      "winner_median": 0.15151691431900297,
+      "loser_median": 0.24041813095098727,
+      "auc_higher_is_win": 0.3860660031430068
+    },
+    "macd_delta_pct": {
+      "coverage": 129,
+      "winner_median": 0.06874745077225963,
+      "loser_median": 0.12166237683830038,
+      "auc_higher_is_win": 0.38894709271870087
+    },
+    "macd_increasing": {
+      "coverage": 129,
+      "winner_median": 1.0,
+      "loser_median": 1.0,
+      "auc_higher_is_win": 0.5119172341540074
+    },
+    "macd_above_signal": {
+      "coverage": 129,
+      "winner_median": 1.0,
+      "loser_median": 1.0,
+      "auc_higher_is_win": 0.45887899423782086
+    },
+    "poly_volume_ratio_20": {
+      "coverage": 129,
+      "winner_median": 1.7921564685504046,
+      "loser_median": 1.400444214031465,
+      "auc_higher_is_win": 0.5906233630172866
+    },
+    "poly_volume_5_vs_prev_5": {
+      "coverage": 129,
+      "winner_median": 1.3688427468408453,
+      "loser_median": 1.2979881652926148,
+      "auc_higher_is_win": 0.5193818753273965
+    },
+    "schwab_volume_ratio_5": {
+      "coverage": 129,
+      "winner_median": 2.9494632861938754,
+      "loser_median": 1.6904427695218334,
+      "auc_higher_is_win": 0.71503404924044
+    },
+    "is_reclaim": {
+      "coverage": 129,
+      "winner_median": 0.5,
+      "loser_median": 0.0,
+      "auc_higher_is_win": 0.5210843373493976
+    },
+    "is_reactive": {
+      "coverage": 129,
+      "winner_median": 0.0,
+      "loser_median": 0.0,
+      "auc_higher_is_win": 0.5459664745940283
+    },
+    "entry_sequence": {
+      "coverage": 129,
+      "winner_median": 3.0,
+      "loser_median": 3.0,
+      "auc_higher_is_win": 0.4781299109481404
+    }
+  },
+  "leave_one_day_out": {
+    "all": {
+      "selected": 38,
+      "wins": 16,
+      "losses": 22,
+      "win_rate_pct": 42.10526315789473,
+      "total_return_pct": -33.16225490830925,
+      "mean_return_pct": -0.8726909186397172
+    },
+    "volume": {
+      "selected": 38,
+      "wins": 17,
+      "losses": 21,
+      "win_rate_pct": 44.73684210526316,
+      "total_return_pct": -29.822379728172734,
+      "mean_return_pct": -0.7847994665308614
+    },
+    "macd": {
+      "selected": 38,
+      "wins": 16,
+      "losses": 22,
+      "win_rate_pct": 42.10526315789473,
+      "total_return_pct": -31.190714387956742,
+      "mean_return_pct": -0.8208082733672827
+    },
+    "vwap": {
+      "selected": 38,
+      "wins": 14,
+      "losses": 24,
+      "win_rate_pct": 36.84210526315789,
+      "total_return_pct": -37.49628042968719,
+      "mean_return_pct": -0.9867442218338734
+    },
+    "market_context": {
+      "selected": 38,
+      "wins": 17,
+      "losses": 21,
+      "win_rate_pct": 44.73684210526316,
+      "total_return_pct": -28.076147752849472,
+      "mean_return_pct": -0.7388459934960387
+    },
+    "path_only": {
+      "selected": 38,
+      "wins": 12,
+      "losses": 26,
+      "win_rate_pct": 31.57894736842105,
+      "total_return_pct": -45.19988505860942,
+      "mean_return_pct": -1.1894706594370899
+    }
+  },
+  "leave_one_day_out_variants": {
+    "volume_one_per_symbol": {
+      "selected": 26,
+      "wins": 13,
+      "losses": 13,
+      "win_rate_pct": 50.0,
+      "total_return_pct": -17.653624589869064,
+      "mean_return_pct": -0.6789855611488101
+    },
+    "volume_two_per_symbol": {
+      "selected": 38,
+      "wins": 18,
+      "losses": 20,
+      "win_rate_pct": 47.368421052631575,
+      "total_return_pct": -27.87713013923751,
+      "mean_return_pct": -0.7336086878746714
+    },
+    "market_context_two_per_symbol": {
+      "selected": 38,
+      "wins": 19,
+      "losses": 19,
+      "win_rate_pct": 50.0,
+      "total_return_pct": -24.446285167841086,
+      "mean_return_pct": -0.6433232938905549
+    }
+  },
+  "selections": {
+    "all": [
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 1,
+        "score": 0.7164093784015032,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T19:15:33.876000+00:00",
+        "won": false,
+        "ret_pct": -2.0304568527918803
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 2,
+        "score": 0.6461503103038253,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T15:27:56.995000+00:00",
+        "won": false,
+        "ret_pct": -2.1008403361344463
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 3,
+        "score": 0.5137063795601378,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T12:11:34.390000+00:00",
+        "won": false,
+        "ret_pct": -2.2727272727272845
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 4,
+        "score": 0.5090023945695624,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T13:24:27.770000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000087
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 5,
+        "score": 0.48855667949249254,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T19:14:30.630000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999947
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 6,
+        "score": 0.4316163440476177,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T17:44:34.414000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000044
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 1,
+        "score": 0.9176067938247517,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T18:49:43.081000+00:00",
+        "won": false,
+        "ret_pct": -2.525252525252525
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 2,
+        "score": 0.8428136475559167,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T15:36:53.044000+00:00",
+        "won": false,
+        "ret_pct": -2.187500000000009
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 3,
+        "score": 0.7712244094177322,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T16:04:47.455000+00:00",
+        "won": false,
+        "ret_pct": -1.8750000000000018
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 4,
+        "score": 0.659690208857113,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T16:24:30.693000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000027
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 5,
+        "score": 0.5867463713795854,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T18:39:19.411000+00:00",
+        "won": false,
+        "ret_pct": -1.6494845360824757
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 6,
+        "score": 0.5630530807296593,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T16:10:54.265000+00:00",
+        "won": false,
+        "ret_pct": -2.2727272727272747
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 1,
+        "score": 0.6158089429611251,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-26T18:47:15.525000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999948
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 2,
+        "score": 0.5631044903818367,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T18:26:11.618000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000027
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 3,
+        "score": 0.4632895383032513,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T13:36:59.147000+00:00",
+        "won": false,
+        "ret_pct": -2.0297699594045935
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 4,
+        "score": 0.4597032930621498,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-26T19:14:12.990000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000098
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 5,
+        "score": 0.4447228047481652,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T16:18:21.719000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999993
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 6,
+        "score": 0.4171658445011708,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-26T12:38:25.799000+00:00",
+        "won": false,
+        "ret_pct": -2.0134228187919483
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 1,
+        "score": 0.5894998821121099,
+        "symbol": "MIMI",
+        "entry_ts": "2026-08-27T15:29:44.815000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999979
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 2,
+        "score": 0.5756182079125003,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T16:58:23.443000+00:00",
+        "won": false,
+        "ret_pct": -2.0661157024793315
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 3,
+        "score": 0.5614390787630237,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T18:27:55.507000+00:00",
+        "won": false,
+        "ret_pct": -1.785714285714287
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 4,
+        "score": 0.494419487308441,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T15:09:22.377000+00:00",
+        "won": false,
+        "ret_pct": -2.0979020979020997
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 5,
+        "score": 0.4893549161258383,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T14:59:27.311000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000002
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 6,
+        "score": 0.4638580071582275,
+        "symbol": "MIMI",
+        "entry_ts": "2026-08-27T15:46:29.211000+00:00",
+        "won": false,
+        "ret_pct": -1.7921146953404954
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 1,
+        "score": 0.9578029289101736,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T13:14:28.153000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000029
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 2,
+        "score": 0.6710632622306999,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T12:41:20.756000+00:00",
+        "won": false,
+        "ret_pct": -2.6610644257703013
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 1,
+        "score": 0.9496353220114335,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T12:45:04.504000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000053
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 2,
+        "score": 0.617838343578277,
+        "symbol": "YDDL",
+        "entry_ts": "2026-08-31T12:19:05.799000+00:00",
+        "won": false,
+        "ret_pct": -2.049180327868845
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 3,
+        "score": 0.6060987289595802,
+        "symbol": "RDHL",
+        "entry_ts": "2026-08-31T19:47:29.456000+00:00",
+        "won": false,
+        "ret_pct": -2.8079331941544807
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 4,
+        "score": 0.5434077722545816,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T15:35:09.345000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000038
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 5,
+        "score": 0.4619284371108058,
+        "symbol": "RDHL",
+        "entry_ts": "2026-08-31T19:53:32.074000+00:00",
+        "won": false,
+        "ret_pct": -2.5026068821689167
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 6,
+        "score": 0.4478706683230716,
+        "symbol": "WETO",
+        "entry_ts": "2026-08-31T17:47:23.599000+00:00",
+        "won": false,
+        "ret_pct": -2.3041474654377883
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 1,
+        "score": 0.6784907798395645,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T13:25:20.136000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000056
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 2,
+        "score": 0.651506167381365,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T18:30:13.361000+00:00",
+        "won": false,
+        "ret_pct": -2.0740740740740695
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 3,
+        "score": 0.6417859521365127,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T14:43:50.601000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000102
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 4,
+        "score": 0.5566327624154684,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T13:48:02.717000+00:00",
+        "won": false,
+        "ret_pct": -2.0642201834862557
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 5,
+        "score": 0.5182260762582287,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T18:58:19.154000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000067
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 6,
+        "score": 0.48054310218405294,
+        "symbol": "RDAC",
+        "entry_ts": "2026-09-01T19:38:51.958000+00:00",
+        "won": false,
+        "ret_pct": -3.999999999999994
+      }
+    ],
+    "volume": [
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 1,
+        "score": 0.6806845713537142,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T19:15:33.876000+00:00",
+        "won": false,
+        "ret_pct": -2.0304568527918803
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 2,
+        "score": 0.5417373947586297,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-24T18:55:09.410000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999988
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 3,
+        "score": 0.5047867029737344,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T12:11:34.390000+00:00",
+        "won": false,
+        "ret_pct": -2.2727272727272845
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 4,
+        "score": 0.4696486617038713,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T19:14:30.630000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999947
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 5,
+        "score": 0.44574086262132745,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-24T14:54:06.629000+00:00",
+        "won": false,
+        "ret_pct": -2.244039270687239
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 6,
+        "score": 0.4362306251300211,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T11:33:49.292000+00:00",
+        "won": false,
+        "ret_pct": -2.0594965675057177
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 1,
+        "score": 0.5899065444435309,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T16:04:47.455000+00:00",
+        "won": false,
+        "ret_pct": -1.8750000000000018
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 2,
+        "score": 0.3927385132228188,
+        "symbol": "AIXI",
+        "entry_ts": "2026-08-25T16:29:11.222000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000038
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 3,
+        "score": 0.3915917406715698,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T18:39:19.411000+00:00",
+        "won": false,
+        "ret_pct": -1.6494845360824757
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 4,
+        "score": 0.3908288145818772,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T15:36:53.044000+00:00",
+        "won": false,
+        "ret_pct": -2.187500000000009
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 5,
+        "score": 0.3841605238209241,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T18:49:43.081000+00:00",
+        "won": false,
+        "ret_pct": -2.525252525252525
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 6,
+        "score": 0.3248978697927006,
+        "symbol": "WVVIP",
+        "entry_ts": "2026-08-25T15:59:03.415000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000084
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 1,
+        "score": 0.6646268610282406,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T18:26:11.618000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000027
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 2,
+        "score": 0.624463736858775,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-26T18:47:15.525000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999948
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 3,
+        "score": 0.41238858006316087,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-26T17:29:09.550000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999976
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 4,
+        "score": 0.41135869500231786,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T17:23:41.368000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000049
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 5,
+        "score": 0.35132770975895344,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T16:49:01.231000+00:00",
+        "won": false,
+        "ret_pct": -2.0866773675762564
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 6,
+        "score": 0.3476920109156249,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-26T12:34:27.627000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999957
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 1,
+        "score": 0.5805676547380826,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T14:59:27.311000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000002
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 2,
+        "score": 0.4669225465198862,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T16:58:23.443000+00:00",
+        "won": false,
+        "ret_pct": -2.0661157024793315
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 3,
+        "score": 0.4580676663537875,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T17:51:53.572000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000044
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 4,
+        "score": 0.45177837783297,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T19:13:01.665000+00:00",
+        "won": false,
+        "ret_pct": -2.1276595744680966
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 5,
+        "score": 0.4455608440794252,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T18:27:55.507000+00:00",
+        "won": false,
+        "ret_pct": -1.785714285714287
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 6,
+        "score": 0.3939906321434176,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T15:09:22.377000+00:00",
+        "won": false,
+        "ret_pct": -2.0979020979020997
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 1,
+        "score": 0.7790857007433354,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T13:14:28.153000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000029
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 2,
+        "score": 0.33582085059661626,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T12:41:20.756000+00:00",
+        "won": false,
+        "ret_pct": -2.6610644257703013
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 1,
+        "score": 0.9031346024089194,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T12:45:04.504000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000053
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 2,
+        "score": 0.5950906018225155,
+        "symbol": "WETO",
+        "entry_ts": "2026-08-31T17:47:23.599000+00:00",
+        "won": false,
+        "ret_pct": -2.3041474654377883
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 3,
+        "score": 0.5278140415287749,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T15:35:09.345000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000038
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 4,
+        "score": 0.41915155324333403,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T18:28:45.219000+00:00",
+        "won": false,
+        "ret_pct": -2.238805970149259
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 5,
+        "score": 0.38795037518502906,
+        "symbol": "WETO",
+        "entry_ts": "2026-08-31T16:49:08.164000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999999
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 6,
+        "score": 0.381550998609148,
+        "symbol": "RDHL",
+        "entry_ts": "2026-08-31T19:47:29.456000+00:00",
+        "won": false,
+        "ret_pct": -2.8079331941544807
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 1,
+        "score": 0.8844224666474366,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T18:30:13.361000+00:00",
+        "won": false,
+        "ret_pct": -2.0740740740740695
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 2,
+        "score": 0.7562085507769939,
+        "symbol": "RDAC",
+        "entry_ts": "2026-09-01T19:38:51.958000+00:00",
+        "won": false,
+        "ret_pct": -3.999999999999994
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 3,
+        "score": 0.6736155238839238,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T18:58:19.154000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000067
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 4,
+        "score": 0.6300720300066122,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T19:06:47.347000+00:00",
+        "won": false,
+        "ret_pct": -2.0437956204379515
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 5,
+        "score": 0.4810058081927286,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T14:43:50.601000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000102
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 6,
+        "score": 0.4484192332237664,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T16:39:33.085000+00:00",
+        "won": false,
+        "ret_pct": -1.68453292496172
+      }
+    ],
+    "macd": [
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 1,
+        "score": 0.7050934817642422,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T15:27:56.995000+00:00",
+        "won": false,
+        "ret_pct": -2.1008403361344463
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 2,
+        "score": 0.4651139692028655,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T19:15:33.876000+00:00",
+        "won": false,
+        "ret_pct": -2.0304568527918803
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 3,
+        "score": 0.4552125514141968,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T17:44:34.414000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000044
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 4,
+        "score": 0.4351163405836024,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T13:24:27.770000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000087
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 5,
+        "score": 0.42835592928661853,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T15:17:42.456000+00:00",
+        "won": false,
+        "ret_pct": -1.6877637130801704
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 6,
+        "score": 0.4274903095968216,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-24T18:38:43.267000+00:00",
+        "won": false,
+        "ret_pct": -2.0325203252032447
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 1,
+        "score": 0.7206580414489855,
+        "symbol": "AIXI",
+        "entry_ts": "2026-08-25T16:29:11.222000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000038
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 2,
+        "score": 0.7206116639867467,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T18:49:43.081000+00:00",
+        "won": false,
+        "ret_pct": -2.525252525252525
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 3,
+        "score": 0.673768592360924,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T15:36:53.044000+00:00",
+        "won": false,
+        "ret_pct": -2.187500000000009
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 4,
+        "score": 0.4450732120339772,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T16:10:54.265000+00:00",
+        "won": false,
+        "ret_pct": -2.2727272727272747
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 5,
+        "score": 0.4336293031075887,
+        "symbol": "AIXI",
+        "entry_ts": "2026-08-25T19:53:58.736000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000093
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 6,
+        "score": 0.3902563033956908,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T16:04:47.455000+00:00",
+        "won": false,
+        "ret_pct": -1.8750000000000018
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 1,
+        "score": 0.47540688353606414,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-26T12:34:27.627000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999957
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 2,
+        "score": 0.4318171684463089,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T19:47:06.734000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000013
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 3,
+        "score": 0.38733573060113163,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T16:54:16.223000+00:00",
+        "won": false,
+        "ret_pct": -2.056962025316454
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 4,
+        "score": 0.36916093357853014,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-26T19:14:12.990000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000098
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 5,
+        "score": 0.35532042680431486,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T13:36:59.147000+00:00",
+        "won": false,
+        "ret_pct": -2.0297699594045935
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 6,
+        "score": 0.35042752364279495,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T13:01:26.497000+00:00",
+        "won": true,
+        "ret_pct": 1.000000000000002
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 1,
+        "score": 0.6714132782766089,
+        "symbol": "MIMI",
+        "entry_ts": "2026-08-27T15:29:44.815000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999979
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 2,
+        "score": 0.4107917662813805,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T18:27:55.507000+00:00",
+        "won": false,
+        "ret_pct": -1.785714285714287
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 3,
+        "score": 0.39428930801207146,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T16:58:23.443000+00:00",
+        "won": false,
+        "ret_pct": -2.0661157024793315
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 4,
+        "score": 0.3702206988735822,
+        "symbol": "CELU",
+        "entry_ts": "2026-08-27T16:35:28.976000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000115
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 5,
+        "score": 0.3666369763788519,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T15:09:22.377000+00:00",
+        "won": false,
+        "ret_pct": -2.0979020979020997
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 6,
+        "score": 0.36055377643516756,
+        "symbol": "CELU",
+        "entry_ts": "2026-08-27T19:39:17.215000+00:00",
+        "won": false,
+        "ret_pct": -2.358490566037748
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 1,
+        "score": 0.42121877082225107,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T13:14:28.153000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000029
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 2,
+        "score": 0.3997811262877353,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T12:41:20.756000+00:00",
+        "won": false,
+        "ret_pct": -2.6610644257703013
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 1,
+        "score": 0.6329992181853615,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T19:55:58.250000+00:00",
+        "won": true,
+        "ret_pct": 1.000000000000006
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 2,
+        "score": 0.601195485458859,
+        "symbol": "RDHL",
+        "entry_ts": "2026-08-31T19:53:32.074000+00:00",
+        "won": false,
+        "ret_pct": -2.5026068821689167
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 3,
+        "score": 0.4662560927932623,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T12:45:04.504000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000053
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 4,
+        "score": 0.4353566598646869,
+        "symbol": "WETO",
+        "entry_ts": "2026-08-31T16:46:07.319000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999976
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 5,
+        "score": 0.4287275892015632,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T18:14:01.310000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999957
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 6,
+        "score": 0.42380245875658085,
+        "symbol": "YDDL",
+        "entry_ts": "2026-08-31T19:10:02.339000+00:00",
+        "won": false,
+        "ret_pct": -2.643171806167403
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 1,
+        "score": 0.5855070794104735,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T16:47:38.131000+00:00",
+        "won": false,
+        "ret_pct": -1.6616314199395819
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 2,
+        "score": 0.5297392749850556,
+        "symbol": "FLYE",
+        "entry_ts": "2026-09-01T17:57:53.300000+00:00",
+        "won": false,
+        "ret_pct": -2.380952380952394
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 3,
+        "score": 0.5220672388057205,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T15:31:53.572000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999976
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 4,
+        "score": 0.5060127145126087,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T18:30:13.361000+00:00",
+        "won": false,
+        "ret_pct": -2.0740740740740695
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 5,
+        "score": 0.503557798141383,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T19:06:47.347000+00:00",
+        "won": false,
+        "ret_pct": -2.0437956204379515
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 6,
+        "score": 0.49464765052442794,
+        "symbol": "FLYE",
+        "entry_ts": "2026-09-01T15:41:13.048000+00:00",
+        "won": false,
+        "ret_pct": -2.1164021164021065
+      }
+    ],
+    "vwap": [
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 1,
+        "score": 0.5803424209762117,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-24T17:07:42.376000+00:00",
+        "won": false,
+        "ret_pct": -1.0067114093959666
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 2,
+        "score": 0.5388221132627765,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T13:24:27.770000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000087
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 3,
+        "score": 0.5308469192212658,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T12:11:34.390000+00:00",
+        "won": false,
+        "ret_pct": -2.2727272727272845
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 4,
+        "score": 0.527851933414147,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T11:33:49.292000+00:00",
+        "won": false,
+        "ret_pct": -2.0594965675057177
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 5,
+        "score": 0.4960849046010233,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-24T15:54:34.573000+00:00",
+        "won": false,
+        "ret_pct": -2.2222222222222143
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 6,
+        "score": 0.4829941138833514,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T13:26:57.301000+00:00",
+        "won": false,
+        "ret_pct": -2.380952380952383
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 1,
+        "score": 0.37286194626782765,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T18:49:43.081000+00:00",
+        "won": false,
+        "ret_pct": -2.525252525252525
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 2,
+        "score": 0.3670684572846765,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T18:39:19.411000+00:00",
+        "won": false,
+        "ret_pct": -1.6494845360824757
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 3,
+        "score": 0.3370425703516125,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T19:48:31.394000+00:00",
+        "won": false,
+        "ret_pct": -2.2842639593908594
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 4,
+        "score": 0.33137012645491587,
+        "symbol": "AIXI",
+        "entry_ts": "2026-08-25T19:53:58.736000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000093
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 5,
+        "score": 0.32606140011344,
+        "symbol": "AIXI",
+        "entry_ts": "2026-08-25T17:38:30.138000+00:00",
+        "won": false,
+        "ret_pct": -2.325581395348839
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 6,
+        "score": 0.32523480249878317,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T16:24:30.693000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000027
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 1,
+        "score": 0.42169374275999216,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T13:01:26.497000+00:00",
+        "won": true,
+        "ret_pct": 1.000000000000002
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 2,
+        "score": 0.38731567504629644,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-26T12:38:25.799000+00:00",
+        "won": false,
+        "ret_pct": -2.0134228187919483
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 3,
+        "score": 0.38307365197091126,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-26T12:34:27.627000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999957
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 4,
+        "score": 0.2986913043160402,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T13:36:59.147000+00:00",
+        "won": false,
+        "ret_pct": -2.0297699594045935
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 5,
+        "score": 0.29476024764118963,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T13:43:03.756000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000009
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 6,
+        "score": 0.2929234265821909,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T13:39:54.404000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000027
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 1,
+        "score": 0.39538963108833525,
+        "symbol": "CELU",
+        "entry_ts": "2026-08-27T18:20:00.020000+00:00",
+        "won": false,
+        "ret_pct": -2.192982456140343
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 2,
+        "score": 0.38049531061812464,
+        "symbol": "CELU",
+        "entry_ts": "2026-08-27T18:15:59.508000+00:00",
+        "won": false,
+        "ret_pct": -2.3474178403755785
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 3,
+        "score": 0.37849037908239064,
+        "symbol": "CELU",
+        "entry_ts": "2026-08-27T16:39:21.672000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999966
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 4,
+        "score": 0.37537635826041377,
+        "symbol": "CELU",
+        "entry_ts": "2026-08-27T19:39:17.215000+00:00",
+        "won": false,
+        "ret_pct": -2.358490566037748
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 5,
+        "score": 0.3714625539280161,
+        "symbol": "CELU",
+        "entry_ts": "2026-08-27T16:35:28.976000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000115
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 6,
+        "score": 0.34988252261706115,
+        "symbol": "MIMI",
+        "entry_ts": "2026-08-27T15:46:29.211000+00:00",
+        "won": false,
+        "ret_pct": -1.7921146953404954
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 1,
+        "score": 0.42553252382392964,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T13:14:28.153000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000029
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 2,
+        "score": 0.42046686147857887,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T12:41:20.756000+00:00",
+        "won": false,
+        "ret_pct": -2.6610644257703013
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 1,
+        "score": 0.48857306024299835,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T12:45:04.504000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000053
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 2,
+        "score": 0.4416317732589625,
+        "symbol": "YDDL",
+        "entry_ts": "2026-08-31T12:19:05.799000+00:00",
+        "won": false,
+        "ret_pct": -2.049180327868845
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 3,
+        "score": 0.3924181950960778,
+        "symbol": "WETO",
+        "entry_ts": "2026-08-31T15:30:11.002000+00:00",
+        "won": false,
+        "ret_pct": -2.3622047244094406
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 4,
+        "score": 0.3871835801768798,
+        "symbol": "NCRA",
+        "entry_ts": "2026-08-31T16:21:20.347000+00:00",
+        "won": false,
+        "ret_pct": -2.2950819672131098
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 5,
+        "score": 0.38170585894470566,
+        "symbol": "NCRA",
+        "entry_ts": "2026-08-31T18:46:48.376000+00:00",
+        "won": false,
+        "ret_pct": -2.2950819672131098
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 6,
+        "score": 0.3807196437657749,
+        "symbol": "NCRA",
+        "entry_ts": "2026-08-31T19:10:13.429000+00:00",
+        "won": false,
+        "ret_pct": -1.9801980198019673
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 1,
+        "score": 0.4223202792784018,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T13:25:20.136000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000056
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 2,
+        "score": 0.4222465812336527,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T13:07:47.323000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000004
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 3,
+        "score": 0.41866357228679457,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T13:02:22.382000+00:00",
+        "won": false,
+        "ret_pct": -2.0895522388059784
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 4,
+        "score": 0.41866357228679457,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T13:00:26.214000+00:00",
+        "won": false,
+        "ret_pct": -2.238805970149259
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 5,
+        "score": 0.3710449664422182,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T13:48:02.717000+00:00",
+        "won": false,
+        "ret_pct": -2.0642201834862557
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 6,
+        "score": 0.3671573267725929,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T13:38:12.723000+00:00",
+        "won": true,
+        "ret_pct": 1.000000000000002
+      }
+    ],
+    "market_context": [
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 1,
+        "score": 0.8320805060008953,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T19:15:33.876000+00:00",
+        "won": false,
+        "ret_pct": -2.0304568527918803
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 2,
+        "score": 0.6267834199488701,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T19:14:30.630000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999947
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 3,
+        "score": 0.520191264260176,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T17:44:34.414000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000044
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 4,
+        "score": 0.5100289429976251,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T12:11:34.390000+00:00",
+        "won": false,
+        "ret_pct": -2.2727272727272845
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 5,
+        "score": 0.5026681281859504,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T15:27:56.995000+00:00",
+        "won": false,
+        "ret_pct": -2.1008403361344463
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 6,
+        "score": 0.4870895858405139,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T16:15:50.517000+00:00",
+        "won": false,
+        "ret_pct": -2.050113895216398
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 1,
+        "score": 0.7046312360607191,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T16:04:47.455000+00:00",
+        "won": false,
+        "ret_pct": -1.8750000000000018
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 2,
+        "score": 0.665238976358848,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T18:49:43.081000+00:00",
+        "won": false,
+        "ret_pct": -2.525252525252525
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 3,
+        "score": 0.5889641769090874,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T15:36:53.044000+00:00",
+        "won": false,
+        "ret_pct": -2.187500000000009
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 4,
+        "score": 0.4869480070774559,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T16:10:54.265000+00:00",
+        "won": false,
+        "ret_pct": -2.2727272727272747
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 5,
+        "score": 0.4845299646565518,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T18:10:24.827000+00:00",
+        "won": false,
+        "ret_pct": -1.8518518518518476
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 6,
+        "score": 0.4754095317507207,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T16:24:30.693000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000027
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 1,
+        "score": 0.6940455151595658,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T18:26:11.618000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000027
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 2,
+        "score": 0.5650432344703826,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-26T18:47:15.525000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999948
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 3,
+        "score": 0.5181337366439004,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T13:36:59.147000+00:00",
+        "won": false,
+        "ret_pct": -2.0297699594045935
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 4,
+        "score": 0.46797840371889526,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T16:54:16.223000+00:00",
+        "won": false,
+        "ret_pct": -2.056962025316454
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 5,
+        "score": 0.4530618119878402,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-26T19:14:12.990000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000098
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 6,
+        "score": 0.4376426775277403,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T16:18:21.719000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999993
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 1,
+        "score": 0.39563570649716195,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T17:51:53.572000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000044
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 2,
+        "score": 0.3668950771888662,
+        "symbol": "MIMI",
+        "entry_ts": "2026-08-27T15:46:29.211000+00:00",
+        "won": false,
+        "ret_pct": -1.7921146953404954
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 3,
+        "score": 0.36598217046105364,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T18:27:55.507000+00:00",
+        "won": false,
+        "ret_pct": -1.785714285714287
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 4,
+        "score": 0.3466213740435981,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T14:59:27.311000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000002
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 5,
+        "score": 0.34300508952423175,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T16:58:23.443000+00:00",
+        "won": false,
+        "ret_pct": -2.0661157024793315
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 6,
+        "score": 0.29651883046071853,
+        "symbol": "MIMI",
+        "entry_ts": "2026-08-27T15:29:44.815000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999979
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 1,
+        "score": 0.9435118680584333,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T13:14:28.153000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000029
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 2,
+        "score": 0.6960390494699965,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T12:41:20.756000+00:00",
+        "won": false,
+        "ret_pct": -2.6610644257703013
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 1,
+        "score": 0.9445245777993552,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T12:45:04.504000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000053
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 2,
+        "score": 0.529396078535706,
+        "symbol": "YDDL",
+        "entry_ts": "2026-08-31T12:19:05.799000+00:00",
+        "won": false,
+        "ret_pct": -2.049180327868845
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 3,
+        "score": 0.5029375337566431,
+        "symbol": "WETO",
+        "entry_ts": "2026-08-31T17:47:23.599000+00:00",
+        "won": false,
+        "ret_pct": -2.3041474654377883
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 4,
+        "score": 0.45310315829672176,
+        "symbol": "RDHL",
+        "entry_ts": "2026-08-31T19:47:29.456000+00:00",
+        "won": false,
+        "ret_pct": -2.8079331941544807
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 5,
+        "score": 0.43574569830774956,
+        "symbol": "YDDL",
+        "entry_ts": "2026-08-31T13:34:23.180000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000058
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 6,
+        "score": 0.4061800221010018,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T15:35:09.345000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000038
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 1,
+        "score": 0.761356722818477,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T18:30:13.361000+00:00",
+        "won": false,
+        "ret_pct": -2.0740740740740695
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 2,
+        "score": 0.7141490686714672,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T18:58:19.154000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000067
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 3,
+        "score": 0.657487650782042,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T14:43:50.601000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000102
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 4,
+        "score": 0.6003439877215644,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T13:25:20.136000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000056
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 5,
+        "score": 0.5748480550144834,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T19:06:47.347000+00:00",
+        "won": false,
+        "ret_pct": -2.0437956204379515
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 6,
+        "score": 0.4859650390815516,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T13:00:26.214000+00:00",
+        "won": false,
+        "ret_pct": -2.238805970149259
+      }
+    ],
+    "path_only": [
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 1,
+        "score": 0.6447328464481066,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T13:24:27.770000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000087
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 2,
+        "score": 0.6439016772987515,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-24T17:07:42.376000+00:00",
+        "won": false,
+        "ret_pct": -1.0067114093959666
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 3,
+        "score": 0.6439016772987515,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-24T12:11:34.390000+00:00",
+        "won": false,
+        "ret_pct": -2.2727272727272845
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 4,
+        "score": 0.42684431046659804,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T19:43:51.469000+00:00",
+        "won": false,
+        "ret_pct": -2.1390374331550817
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 5,
+        "score": 0.4250706650123827,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T18:46:14.436000+00:00",
+        "won": false,
+        "ret_pct": -2.051282051282053
+      },
+      {
+        "session_day_et": "2026-08-24",
+        "rank": 6,
+        "score": 0.4241845621703322,
+        "symbol": "BTCT",
+        "entry_ts": "2026-08-24T18:11:02.196000+00:00",
+        "won": false,
+        "ret_pct": -2.42718446601943
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 1,
+        "score": 0.3304139211361593,
+        "symbol": "AIXI",
+        "entry_ts": "2026-08-25T16:22:56.155000+00:00",
+        "won": false,
+        "ret_pct": -2.5862068965517264
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 2,
+        "score": 0.3304139211361593,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T16:19:28.916000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000024
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 3,
+        "score": 0.3304139211361593,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T15:36:53.044000+00:00",
+        "won": false,
+        "ret_pct": -2.187500000000009
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 4,
+        "score": 0.3291487264097854,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-25T16:04:47.455000+00:00",
+        "won": false,
+        "ret_pct": -1.8750000000000018
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 5,
+        "score": 0.3278860039486775,
+        "symbol": "PMI",
+        "entry_ts": "2026-08-25T18:39:19.411000+00:00",
+        "won": false,
+        "ret_pct": -1.6494845360824757
+      },
+      {
+        "session_day_et": "2026-08-25",
+        "rank": 6,
+        "score": 0.3266257671401737,
+        "symbol": "AIXI",
+        "entry_ts": "2026-08-25T18:12:09.641000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999972
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 1,
+        "score": 0.58543618855032,
+        "symbol": "YYGH",
+        "entry_ts": "2026-08-26T13:01:26.497000+00:00",
+        "won": true,
+        "ret_pct": 1.000000000000002
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 2,
+        "score": 0.5792317610250373,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-26T12:38:25.799000+00:00",
+        "won": false,
+        "ret_pct": -2.0134228187919483
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 3,
+        "score": 0.27796824848986684,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T13:36:59.147000+00:00",
+        "won": false,
+        "ret_pct": -2.0297699594045935
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 4,
+        "score": 0.27148912607627296,
+        "symbol": "XPON",
+        "entry_ts": "2026-08-26T15:36:09.608000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000075
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 5,
+        "score": 0.27148912607627296,
+        "symbol": "DAIC",
+        "entry_ts": "2026-08-26T12:34:27.627000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999957
+      },
+      {
+        "session_day_et": "2026-08-26",
+        "rank": 6,
+        "score": 0.2678453907294044,
+        "symbol": "CRE",
+        "entry_ts": "2026-08-26T16:23:02.015000+00:00",
+        "won": false,
+        "ret_pct": -2.1840873634945486
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 1,
+        "score": 0.38553891786239186,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T19:13:01.665000+00:00",
+        "won": false,
+        "ret_pct": -2.1276595744680966
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 2,
+        "score": 0.37814952841339083,
+        "symbol": "PPCB",
+        "entry_ts": "2026-08-27T18:27:55.507000+00:00",
+        "won": false,
+        "ret_pct": -1.785714285714287
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 3,
+        "score": 0.356329858824723,
+        "symbol": "CELU",
+        "entry_ts": "2026-08-27T18:20:00.020000+00:00",
+        "won": false,
+        "ret_pct": -2.192982456140343
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 4,
+        "score": 0.34918216359074006,
+        "symbol": "MIMI",
+        "entry_ts": "2026-08-27T17:02:48.235000+00:00",
+        "won": false,
+        "ret_pct": -2.247191011235957
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 5,
+        "score": 0.3421016425482438,
+        "symbol": "CELU",
+        "entry_ts": "2026-08-27T16:39:21.672000+00:00",
+        "won": true,
+        "ret_pct": 0.9999999999999966
+      },
+      {
+        "session_day_et": "2026-08-27",
+        "rank": 6,
+        "score": 0.3421016425482438,
+        "symbol": "MIMI",
+        "entry_ts": "2026-08-27T15:46:29.211000+00:00",
+        "won": false,
+        "ret_pct": -1.7921146953404954
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 1,
+        "score": 0.5344236041406752,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T13:14:28.153000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000029
+      },
+      {
+        "session_day_et": "2026-08-28",
+        "rank": 2,
+        "score": 0.3546666188163769,
+        "symbol": "QNRX",
+        "entry_ts": "2026-08-28T12:41:20.756000+00:00",
+        "won": false,
+        "ret_pct": -2.6610644257703013
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 1,
+        "score": 0.5615995409993915,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T12:45:04.504000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000053
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 2,
+        "score": 0.5615995409993915,
+        "symbol": "YDDL",
+        "entry_ts": "2026-08-31T12:19:05.799000+00:00",
+        "won": false,
+        "ret_pct": -2.049180327868845
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 3,
+        "score": 0.5133271087197512,
+        "symbol": "AEHL",
+        "entry_ts": "2026-08-31T15:35:09.345000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000038
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 4,
+        "score": 0.40957415503142436,
+        "symbol": "NCRA",
+        "entry_ts": "2026-08-31T16:21:20.347000+00:00",
+        "won": false,
+        "ret_pct": -2.2950819672131098
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 5,
+        "score": 0.40957415503142436,
+        "symbol": "WETO",
+        "entry_ts": "2026-08-31T15:30:11.002000+00:00",
+        "won": false,
+        "ret_pct": -2.3622047244094406
+      },
+      {
+        "session_day_et": "2026-08-31",
+        "rank": 6,
+        "score": 0.40957415503142436,
+        "symbol": "RDHL",
+        "entry_ts": "2026-08-31T14:30:06.403000+00:00",
+        "won": false,
+        "ret_pct": -2.702702702702705
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 1,
+        "score": 0.5469976133240182,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T13:25:20.136000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000056
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 2,
+        "score": 0.5409114792510323,
+        "symbol": "SSM",
+        "entry_ts": "2026-09-01T13:48:02.717000+00:00",
+        "won": false,
+        "ret_pct": -2.0642201834862557
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 3,
+        "score": 0.5409114792510323,
+        "symbol": "BIAF",
+        "entry_ts": "2026-09-01T13:07:47.323000+00:00",
+        "won": true,
+        "ret_pct": 1.0000000000000004
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 4,
+        "score": 0.37605080784996975,
+        "symbol": "RDAC",
+        "entry_ts": "2026-09-01T19:38:51.958000+00:00",
+        "won": false,
+        "ret_pct": -3.999999999999994
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 5,
+        "score": 0.3731768736756097,
+        "symbol": "FLYE",
+        "entry_ts": "2026-09-01T15:41:13.048000+00:00",
+        "won": false,
+        "ret_pct": -2.1164021164021065
+      },
+      {
+        "session_day_et": "2026-09-01",
+        "rank": 6,
+        "score": 0.3703118678478975,
+        "symbol": "FLYE",
+        "entry_ts": "2026-09-01T17:57:53.300000+00:00",
+        "won": false,
+        "ret_pct": -2.380952380952394
+      }
+    ]
+  }
+}
