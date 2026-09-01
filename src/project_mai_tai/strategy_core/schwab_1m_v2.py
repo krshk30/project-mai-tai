@@ -527,6 +527,7 @@ class SchwabV2Strategy:
         self._atr_gap_pairs_evaluated: dict[str, int] = {"replay": 0, "live": 0}
         self._atr_gaps_observed: dict[str, int] = {"replay": 0, "live": 0}
         self._atr_symbol_gaps_observed: dict[tuple[str, str], int] = {}
+        self._atr_nonadjacent_arm_evaluations: dict[tuple[int, str], int] = {}
         self._bar_observation_phase: Literal["replay", "live"] = "live"
         self._atr_period = max(
             1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_period", 5))
@@ -1954,6 +1955,10 @@ class SchwabV2Strategy:
         hl_cur = cur.high - cur.low
         state.atr_hl.append(hl_cur)
         prev = state.atr_prev_bar
+        decision_prev_bar_ts = int(prev.timestamp_ms) if prev is not None else 0
+        decision_gap_ms = (
+            int(cur.timestamp_ms) - decision_prev_bar_ts if decision_prev_bar_ts else 0
+        )
         tr: float | None = None
         if len(state.atr_hl) == period and prev is not None:
             self._atr_gap_pairs_evaluated[phase] += 1
@@ -1979,7 +1984,7 @@ class SchwabV2Strategy:
             #
             # ⚠️ Gaps are NOT restart-only. Same day, no outage: CRWU 25 min, AXTU 2-13 min,
             # SNDG 3 min. This guard covers all of them.
-            gap_ms = int(cur.timestamp_ms) - int(prev.timestamp_ms)
+            gap_ms = decision_gap_ms
             if gap_ms > _ATR_MAX_BAR_GAP_MS:
                 tr = hilo
                 self._atr_gaps_observed[phase] += 1
@@ -2108,6 +2113,12 @@ class SchwabV2Strategy:
             "loss": loss,
             "state": state.atr_state,
             "state_age": state.atr_state_age,
+            # The BUY arm compares this bar's close with the prior bar's trail/state. Carry that
+            # exact pair to the arm consumer so continuity is decided at the mutation boundary.
+            "decision_prev_bar_ts": decision_prev_bar_ts,
+            "decision_cur_bar_ts": int(cur.timestamp_ms),
+            "decision_gap_ms": decision_gap_ms,
+            "observation_phase": phase,
         }
 
     def _maybe_atr_emit(
@@ -2376,6 +2387,34 @@ class SchwabV2Strategy:
             return
         flip = atr_signal.get("flip")
         if flip == "BUY":
+            gap_ms = int(atr_signal.get("decision_gap_ms") or 0)
+            if gap_ms > _ATR_MAX_BAR_GAP_MS:
+                prev_bar_ts = int(atr_signal.get("decision_prev_bar_ts") or 0)
+                cur_bar_ts = int(
+                    atr_signal.get("decision_cur_bar_ts")
+                    or (state.bars[-1].timestamp_ms if state.bars else 0)
+                )
+                phase = str(atr_signal.get("observation_phase") or "live")
+                session_anchor = int(state.atr_session_anchor_ms)
+                denominator_key = (session_anchor, phase)
+                session_evaluations = (
+                    self._atr_nonadjacent_arm_evaluations.get(denominator_key, 0) + 1
+                )
+                self._atr_nonadjacent_arm_evaluations[denominator_key] = session_evaluations
+                logger.warning(
+                    "[V2-ATR-ARM-GAP] %s phase=%s session_anchor_ms=%d "
+                    "nonadjacent_arms_evaluated_session=%d refused=1 "
+                    "consumed_gap_count=1 consumed_gaps=%d->%d(%.1fmin) -- "
+                    "BUY arm refused before arm-state mutation",
+                    state.symbol,
+                    phase,
+                    session_anchor,
+                    session_evaluations,
+                    prev_bar_ts,
+                    cur_bar_ts,
+                    gap_ms / 60000.0,
+                )
+                return
             state.cw_armed = True
             state.cw_bars_waited = 0
             state.cw_trigger = float(state.bars[-1].high)   # flip bar starts the 3-bar trigger
