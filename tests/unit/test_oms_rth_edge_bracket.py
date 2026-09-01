@@ -23,10 +23,26 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from project_mai_tai.oms import service as oms_service
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 
 ET = ZoneInfo("America/New_York")
+RTH_NOW = datetime(2026, 9, 1, 14, 0, tzinfo=UTC)  # Tuesday 10:00 ET
+
+
+class _FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return RTH_NOW.replace(tzinfo=None)
+        return RTH_NOW.astimezone(tz)
+
+
+@pytest.fixture(autouse=True)
+def _inject_oms_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(oms_service, "utcnow", lambda: RTH_NOW)
+    monkeypatch.setattr(oms_service, "datetime", _FrozenDateTime)
 
 
 class _Logger:
@@ -229,7 +245,7 @@ def _rearm_svc(*, cleared_secs_ago: float | None, enabled: bool = True, **over):
     svc = _svc(oms_v2_stand_down_clear_rearm_enabled=enabled, **over)
     svc._native_oco_resolving = {}
     if cleared_secs_ago is not None:
-        svc._native_oco_resolving[("live:schwab_1m_v2", "KUST")] = datetime.now(UTC) - timedelta(
+        svc._native_oco_resolving[("live:schwab_1m_v2", "KUST")] = RTH_NOW - timedelta(
             seconds=cleared_secs_ago
         )
     return svc
@@ -241,30 +257,30 @@ def test_a_bracket_that_JUST_cleared_is_NOT_re_armed() -> None:
     (Schwab fill -> positions runs to ~6 min). Re-arming inside that window places a fresh pair of
     sells against a position about to be flat -- the E5 shape the bracket exists to eliminate."""
     svc = _rearm_svc(cleared_secs_ago=5)
-    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is False
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=RTH_NOW) is False
 
 
 def test_a_bracket_cleared_LONGER_AGO_THAN_THE_GRACE_on_a_still_held_position_re_arms() -> None:
     """Grace elapsed AND still in the managed set => it did NOT resolve by a fill. That is NVVE."""
     svc = _rearm_svc(cleared_secs_ago=120)
-    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is True
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=RTH_NOW) is True
 
 
 def test_the_grace_boundary_is_the_configured_value_not_a_hardcode() -> None:
     """⛔ Pin the VALUE. If the resolution grace is retuned, the re-arm gate must move with it."""
     svc = _rearm_svc(cleared_secs_ago=120, oms_native_oco_resolve_grace_seconds=300)
-    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is False
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=RTH_NOW) is False
 
 
 def test_no_stand_down_means_no_re_arm() -> None:
     svc = _rearm_svc(cleared_secs_ago=None)
-    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is False
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=RTH_NOW) is False
 
 
 def test_the_rearm_flag_defaults_OFF_and_gates_the_path() -> None:
     assert Settings().oms_v2_stand_down_clear_rearm_enabled is False
     svc = _rearm_svc(cleared_secs_ago=120, enabled=False)
-    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is False
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=RTH_NOW) is False
 
 
 @pytest.mark.asyncio

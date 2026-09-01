@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -29,6 +30,15 @@ import pytest
 
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.oms import service as svc
+
+RTH_NOW = datetime(2026, 9, 1, 14, 0, tzinfo=UTC)  # Tuesday 10:00 ET
+POST_CLOSE_NOW = datetime(2026, 9, 1, 21, 0, tzinfo=UTC)  # Tuesday 17:00 ET
+
+
+@pytest.fixture(autouse=True)
+def _inject_rth_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retry geometry tests own an RTH clock instead of inheriting the CI run hour."""
+    monkeypatch.setattr(svc, "utcnow", lambda: RTH_NOW)
 
 
 class _Adapter:
@@ -164,6 +174,17 @@ def test_it_still_gives_up_rather_than_retrying_forever() -> None:
     a = _Adapter()
     _run_capturing_sleeps(_svc(a))
     assert len(a.calls) == 5, "the attempt cap must still bound the loop"
+
+
+def test_post_close_gate_still_refuses_the_attach(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opposite polarity: clock injection must not bypass the production RTH gate."""
+    monkeypatch.setattr(svc, "utcnow", lambda: POST_CLOSE_NOW)
+    adapter = _Adapter()
+
+    slept = _run_capturing_sleeps(_svc(adapter))
+
+    assert adapter.calls == []
+    assert slept == []
 
 
 def test_the_broker_reason_is_NOT_truncated_to_200(caplog: pytest.LogCaptureFixture) -> None:

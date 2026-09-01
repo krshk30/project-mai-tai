@@ -26,11 +26,18 @@ from project_mai_tai.db.models import (
     OmsManagedPosition,
     TradeIntent,
 )
+from project_mai_tai.oms import service as oms_service
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 
 ACCT = "live:orb"
 SYMBOL = "YYGH"
+RTH_NOW = datetime(2026, 9, 1, 14, 0, tzinfo=UTC)  # Tuesday 10:00 ET
+
+
+@pytest.fixture(autouse=True)
+def _inject_oms_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(oms_service, "utcnow", lambda: RTH_NOW)
 
 
 class _FakeRedis:
@@ -175,7 +182,7 @@ def _quote(service: OmsRiskService) -> None:
     service._latest_quotes_by_symbol[SYMBOL] = {
         "bid": 1.90,
         "ask": 1.91,
-        "received_at": datetime.now(UTC),
+        "received_at": RTH_NOW,
     }
 
 
@@ -205,7 +212,7 @@ async def test_stale_snapshot_waits_then_newer_held_retries_and_fresh_flat_close
     """Known-positive: inside the measured window, evidence advances the retry to success."""
     sf = _session_factory()
     service = _service(sf)
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = RTH_NOW
     fill_at = now - timedelta(seconds=20)
     _arm(service, sf, entry_at=fill_at - timedelta(minutes=5))
     _seed_sell_fill_and_position(
@@ -236,7 +243,7 @@ async def test_outside_measured_bound_stops_reports_and_retains_owned_row() -> N
     """Negative polarity: age stops retries; it never turns into permission to sell."""
     sf = _session_factory()
     service = _service(sf, bound_seconds=245.0)
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = RTH_NOW
     fill_at = now - timedelta(seconds=246)
     _arm(service, sf, entry_at=fill_at - timedelta(minutes=5))
     _seed_sell_fill_and_position(
@@ -263,7 +270,7 @@ async def test_without_preceding_sell_fill_no_position_is_not_settlement_lag() -
     """Classifier polarity: no preceding SELL fill means C3 must not intercept the exit."""
     sf = _session_factory()
     service = _service(sf)
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = RTH_NOW
     _arm(service, sf, entry_at=now - timedelta(minutes=5))
     _quote(service)
 
@@ -278,7 +285,7 @@ async def test_partial_scale_sell_fill_is_not_misclassified_as_full_exit() -> No
     """A partial sell is not evidence that the venue already sold the whole position."""
     sf = _session_factory()
     service = _service(sf)
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = RTH_NOW
     fill_at = now - timedelta(seconds=20)
     _arm(service, sf, entry_at=fill_at - timedelta(minutes=5))
     _seed_sell_fill_and_position(
@@ -300,7 +307,7 @@ async def test_partial_scale_sell_fill_is_not_misclassified_as_full_exit() -> No
 async def test_fresh_flat_after_sell_fill_closes_without_another_sell() -> None:
     sf = _session_factory()
     service = _service(sf)
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = RTH_NOW
     fill_at = now - timedelta(seconds=10)
     _arm(service, sf, entry_at=fill_at - timedelta(minutes=5))
     _seed_sell_fill_and_position(
