@@ -1426,7 +1426,31 @@ class SchwabV2Strategy:
                 )
             elif state.position_qty == 0 and hold_started_ms:
                 hold_elapsed_ms = max(0, now_ms - hold_started_ms)
-                if hold_elapsed_ms >= FANOUT_POSITIVE_ZERO_HOLD_MS:
+                if hold_elapsed_ms >= FANOUT_POSITIVE_ZERO_HOLD_MS and (
+                    state.fanout_claim_outcome == "filled" or state.webull_resting_active
+                ):
+                    # ⛔ DB2 (2026-08-31): this release used the SCHWAB-scoped union to erase the
+                    # WEBULL claim. Post-#843 the union says nothing about the Webull venue, and
+                    # union==0 is the NORMAL state for the whole life of a working mirror — the
+                    # premise in the comment above ("a Webull fill terminalized its own open
+                    # intent") described the pre-#843 union. A FILLED claim is a live position at
+                    # ITS venue, and a working mirrored rest makes union-zero expected: veto the
+                    # release in both states. Clearing the timer logs this once per zero episode,
+                    # not every poll. On 08-31 all 29 filled legs had their claim erased ~29s
+                    # after fill by this branch; 5 became duplicate bare positions.
+                    state.fanout_zero_hold_started_ms = 0
+                    logger.info(
+                        "[V2-FANOUT-CLAIM-ZERO-HOLD-VETOED] %s trigger=schwab_union_zero "
+                        "evaluated=1 release_allowed=0 released=0 held=1 outcome=%s "
+                        "webull_resting_active=%d elapsed_ms=%d hold_bound_ms=%d "
+                        "reason=webull_venue_state_overrides_schwab_scoped_zero",
+                        symbol,
+                        state.fanout_claim_outcome,
+                        int(state.webull_resting_active),
+                        hold_elapsed_ms,
+                        FANOUT_POSITIVE_ZERO_HOLD_MS,
+                    )
+                elif hold_elapsed_ms >= FANOUT_POSITIVE_ZERO_HOLD_MS:
                     outcome_before_release = state.fanout_claim_outcome
                     released = self._release_fanout_webull_claim(
                         state,
@@ -1445,7 +1469,16 @@ class SchwabV2Strategy:
                         hold_elapsed_ms,
                         FANOUT_POSITIVE_ZERO_HOLD_MS,
                     )
-            elif state.position_qty == 0 and positive_webull_evidence:
+            elif (
+                state.position_qty == 0
+                and positive_webull_evidence
+                and not state.webull_resting_active
+            ):
+                # ⛔ DB3 (2026-08-31): while a mirrored rest is WORKING at Webull, the (post-#843,
+                # Schwab-scoped) union reading zero is the expected steady state, not evidence —
+                # do not even start the hold clock. The clock arms only when positive evidence
+                # exists with no working rest (e.g. the rest was cancelled but the claim outcome
+                # is still held), which is the transient #824 actually targeted.
                 state.fanout_zero_hold_started_ms = now_ms
                 logger.info(
                     "[V2-FANOUT-CLAIM-ZERO-HOLD] %s trigger=schwab_union_zero evaluated=1 "
@@ -2695,6 +2728,29 @@ class SchwabV2Strategy:
                     "age=-1 means the claim carried no timestamp)",
                     state.symbol, age_ms, state.cw_entries_this_flip, px,
                 )
+                if state.fanout_claim_outcome == "filled":
+                    # ⛔ OPERATOR RULING 2026-09-01 (#858): BLOCK chosen — a FILLED claim (kept
+                    # held by the zero-hold veto above) suppresses the reclaim fan-out for the
+                    # rest of the segment. A duplicate-while-held and a legitimate
+                    # re-entry-after-close read the SAME from here (the Schwab-scoped union
+                    # cannot see the Webull venue), so blocking is the safe side — and this line
+                    # is the ruling's price tag. Without it the cost is invisible and the block
+                    # can never be re-litigated with numbers.
+                    # Denominator = the subset of the suppression line just above where the
+                    # claim outcome is `filled`; classify each event post-hoc by joining
+                    # slot_id to the venue book (was the leg's position still open?).
+                    logger.info(
+                        "[V2-FANOUT-RECLAIM-BLOCKED-BY-FILLED-CLAIM] %s slot_id=%s "
+                        "claim_age_ms=%d n=%d px=%.4f schwab_union_qty=%d — cost line for the "
+                        "2026-09-01 BLOCK ruling; duplicate-while-held vs re-entry-after-close "
+                        "is NOT distinguishable at emit time, join slot_id to the venue book",
+                        state.symbol,
+                        state.fanout_claim_slot_id,
+                        age_ms,
+                        state.cw_entries_this_flip,
+                        px,
+                        state.position_qty,
+                    )
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",
@@ -3572,6 +3628,14 @@ class SchwabV2Strategy:
                 reason="provisional_without_positive_evidence",
             )
         if state.position_qty != 0 or state.fanout_webull_claimed:
+            return
+        # ⛔ DB2/DB3 (2026-08-31): a mirrored rest FILLS ITSELF at Webull on the very cross that
+        # fires this detector. While that rest is working, the claim may already have been freed
+        # by the zero-hold release (Schwab-scoped union == 0 is the NORMAL state for the life of
+        # a working mirror post-#843), so `fanout_webull_claimed` alone cannot gate this emitter.
+        # The on-fill path (#688) checks this flag; this software cross detector did not — all 5
+        # duplicate legs on 2026-08-31 were a mirror-fill + cross-fill pair on one slot.
+        if state.webull_resting_active:
             return
         # LIVE-BAR guard (#528 mirror): only fire off a live feed, never a warmup-replayed / stale bar.
         bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0

@@ -220,3 +220,57 @@ def test_the_two_MARKERS_ARE_NOT_SUBSTRINGS_OF_EACH_OTHER(caplog) -> None:
 
     suppressed_line = next(ln for ln in text2.splitlines() if SUPPRESSED in ln)
     assert LATCHED not in suppressed_line, "the SUPPRESSED line contains the LATCHED marker"
+
+
+# ── the 2026-09-01 BLOCK ruling's cost line ──────────────────────────────────────────────────
+BLOCKED_BY_FILLED = "[V2-FANOUT-RECLAIM-BLOCKED-BY-FILLED-CLAIM]"
+
+
+def test_a_FILLED_claim_suppression_also_logs_the_ruling_cost_line(caplog) -> None:
+    """⭐ THE CONTROL of the ruling pair (varies ONE input vs the test below: `fanout_claim_outcome`).
+
+    Operator ruling 2026-09-01 on the DB2/DB3 fix: a FILLED claim keeps blocking the reclaim
+    fan-out (BLOCK chosen over permitting a possible duplicate) — but the cost must be measurable.
+    A suppression while the claim outcome is `filled` is exactly that cost, and it must say so
+    with a slot_id the analyst can join to the venue book."""
+    strat = _strat()
+    st = _armed(strat)
+    st.fanout_webull_claimed = True
+    st.fanout_claim_ms = strat._now_ms() - 31_400
+    st.fanout_claim_outcome = "filled"
+    st.fanout_claim_slot_id = "d93b6e2d-f10c-5681-bc2a-e78d0a81881c"
+
+    draft, text = _run(strat, st, caplog)
+
+    assert SUPPRESSED in text, "the cost line is a SUBSET of the suppression line, never a replacement"
+    assert BLOCKED_BY_FILLED in text, (
+        "⛔ the BLOCK ruling's price tag is silent — the cost of blocking a possibly-legitimate "
+        "re-entry is invisible and the ruling can never be re-litigated with numbers"
+    )
+    line = next(ln for ln in text.splitlines() if BLOCKED_BY_FILLED in ln)
+    assert "slot_id=d93b6e2d-f10c-5681-bc2a-e78d0a81881c" in line, (
+        "without the slot_id the event cannot be classified post-hoc (open at the venue = "
+        "duplicate prevented; closed = legitimate re-entry blocked)"
+    )
+    assert not strat._pending_webull_fanout_intents, "the leg must still be suppressed"
+    assert draft is not None, "the Schwab primary is unaffected by the ruling"
+
+
+def test_a_provisional_claim_suppression_does_NOT_log_the_cost_line(caplog) -> None:
+    """⛔ THE OTHER ARM (same setup, claim outcome left provisional). An ordinary latch-claimed
+    suppression is #739's prevented duplicate, not the ruling's cost — counting it here would
+    inflate the BLOCK ruling's price by the whole §82 population and get the block repealed on a
+    fake number. This is also the mutant-killer for `!= "filled"` / a dropped condition."""
+    strat = _strat()
+    st = _armed(strat)
+    st.fanout_webull_claimed = True
+    st.fanout_claim_ms = strat._now_ms() - 31_400
+    st.fanout_claim_outcome = "queued"
+
+    draft, text = _run(strat, st, caplog)
+
+    assert SUPPRESSED in text, "the ordinary suppression line must still fire"
+    assert BLOCKED_BY_FILLED not in text, (
+        "⛔ a provisional-claim suppression is wearing the ruling's cost marker — wrong population"
+    )
+    assert draft is not None
