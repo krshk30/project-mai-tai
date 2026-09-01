@@ -26,6 +26,12 @@ from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.oms import service as svc
 
 
+@pytest.fixture(autouse=True)
+def _attach_tests_run_in_rth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests grade attach internals, not the new outside-RTH refusal boundary."""
+    monkeypatch.setattr(svc, "_is_regular_market_session", lambda: True)
+
+
 class _Adapter:
     """Records every submit. Accepts whatever it is given."""
 

@@ -111,13 +111,13 @@ def _attach_body() -> str:
     return parts[2] if len(parts) > 2 else src
 
 
-def test_the_OMS_sends_a_HINT_not_a_webull_enum() -> None:
-    """⛔ Layering: no broker enum VALUE in the OMS, and the adapter never imports the clock
-    upward. (Naming ALL_DAY in a comment is fine and useful; sending it from here is not.)"""
+def test_the_OMS_attach_is_rth_only_and_sends_the_rth_hint() -> None:
+    """The broker-proven-impossible pre-market combo is refused before request construction."""
     body = _attach_body()
-    assert 'session_hint = "RTH" if _is_regular_market_session() else "EXTENDED"' in body
+    assert "if not _is_regular_market_session():" in body
+    assert 'session_hint = "RTH"' in body
     assert '"market_session": session_hint' in body
-    assert '"ALL_DAY"' not in body, "the Webull enum must be a VALUE only inside the adapter"
+    assert '"EXTENDED"' not in body
 
 
 def test_the_session_is_LOGGED_on_every_outcome_line() -> None:

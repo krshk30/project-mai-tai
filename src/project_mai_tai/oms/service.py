@@ -2309,6 +2309,30 @@ class OmsRiskService:
         )
         return self._bare_webull_fill_count
 
+    def _count_premarket_unprotected_webull_fill(
+        self, *, symbol: str, broker_account_name: str, quantity: int, entry_price: float
+    ) -> int:
+        """Emit one counted warning for each Webull fill that cannot be attached before RTH."""
+        session_et = utcnow().astimezone(SESSION_TZ).date().isoformat()
+        if getattr(self, "_webull_premarket_unprotected_session", None) != session_et:
+            self._webull_premarket_unprotected_session = session_et
+            self._webull_premarket_unprotected_count = 0
+        self._webull_premarket_unprotected_count = (
+            getattr(self, "_webull_premarket_unprotected_count", 0) + 1
+        )
+        self.logger.warning(
+            "[WEBULL-PREMARKET-UNPROTECTED] %s %s qty=%d entry=%.4f — no broker-side "
+            "protection is available before RTH. The software ladder owns this exit. "
+            "unprotected_fills_this_session=%d session_et=%s",
+            symbol,
+            broker_account_name,
+            int(quantity),
+            float(entry_price),
+            self._webull_premarket_unprotected_count,
+            session_et,
+        )
+        return self._webull_premarket_unprotected_count
+
     def _spawn_webull_protection(self, **kw) -> "asyncio.Task[None] | None":
         """Run the attach OFF the fill path -- it retries with sleeps and must never stall a fill.
 
@@ -2325,6 +2349,14 @@ class OmsRiskService:
         just re-send a pair that either already rests or was already refused.
         """
         key = (str(kw.get("broker_account_name", "")), str(kw.get("symbol", "")).upper())
+        if not _is_regular_market_session():
+            self.logger.info(
+                "[WEBULL-PROTECT-RTH-GATED] %s %s — protective combo attach is disabled outside "
+                "RTH; the in-process software ladder remains the only cover",
+                key[1],
+                key[0],
+            )
+            return None
         inflight = getattr(self, "_webull_protect_inflight", None)
         if inflight is None:
             inflight = {}
@@ -2376,6 +2408,14 @@ class OmsRiskService:
         nothing that was not protected before. The live PASS to require is a
         `[WEBULL-PROTECT-ATTACHED]`, which has never yet been observed.
         """
+        if not _is_regular_market_session():
+            self.logger.info(
+                "[WEBULL-PROTECT-RTH-GATED] %s %s — protective combo attach is disabled outside "
+                "RTH; the in-process software ladder remains the only cover",
+                symbol,
+                broker_account_name,
+            )
+            return
         target_pct = float(getattr(self.settings, "oms_v2_cw_target_pct", 2.0))
         stop_pct = float(getattr(self.settings, "oms_v2_cw_hard_stop_pct", 5.0))
         target = entry_price * (1.0 + target_pct / 100.0)
@@ -2394,14 +2434,9 @@ class OmsRiskService:
         # `SETTLE-LAG: VISIBLE` and were still refused. Position visibility (`list_account_positions`)
         # and order-side available-to-sell are different surfaces and have NOT been shown to move
         # together. If this lands and refusals persist, the settle window is exonerated.
-        # ⛔⭐⭐ THE SESSION TAG DECIDES WHETHER THIS CAN PLACE AT ALL (root cause, 2026-08-17).
-        # Webull validates a CORE-tagged order against the CORE reference — the PRIOR CLOSE — so
-        # pre-market a stop below our entry still sits far ABOVE that reference and is refused.
-        # Live IVF: bought 2.53 pre-market, stop 2.40, prior close 0.9716 -> 5 refusals.
-        # RTH keeps CORE (proven working); only the non-RTH path widens to ALL_DAY.
-        # ⛔ The OMS says WHICH SESSION WE ARE IN; the adapter owns the broker's enum. No Webull
-        # string appears here, and the adapter never imports upward for the clock.
-        session_hint = "RTH" if _is_regular_market_session() else "EXTENDED"
+        # The caller and this method both fail closed outside RTH. CORE is the proven RTH value;
+        # pre-market combo attaches were broker-proven impossible against the prior-close reference.
+        session_hint = "RTH"
         attempts = max(1, int(getattr(self.settings, "oms_webull_protect_attempts", 5)))
         interval = max(0.0, float(getattr(self.settings, "oms_webull_protect_interval_seconds", 2.0)))
         backoff = max(1.0, float(getattr(self.settings, "oms_webull_protect_backoff_multiplier", 2.0)))
@@ -3150,16 +3185,22 @@ class OmsRiskService:
                 # ⛔ PER ET SESSION, and the session is ON THE LINE. A since-boot counter reads as a
                 # day's exposure to anyone who does not know when the process started -- the exact
                 # ambiguity the seed census had to add a denominator to fix.
-                self._count_bare_webull_fill(
-                    symbol=symbol, broker_account_name=broker_account_name,
-                    quantity=int(quantity), entry_price=float(price),
-                )
-                self._spawn_webull_protection(
-                    broker_account_name=broker_account_name, symbol=symbol,
-                    quantity=int(quantity), entry_price=float(price),
-                    strategy_code=strategy_code,
-                    entry_client_order_id=entry_client_order_id,
-                )
+                if _is_regular_market_session():
+                    self._count_bare_webull_fill(
+                        symbol=symbol, broker_account_name=broker_account_name,
+                        quantity=int(quantity), entry_price=float(price),
+                    )
+                    self._spawn_webull_protection(
+                        broker_account_name=broker_account_name, symbol=symbol,
+                        quantity=int(quantity), entry_price=float(price),
+                        strategy_code=strategy_code,
+                        entry_client_order_id=entry_client_order_id,
+                    )
+                else:
+                    self._count_premarket_unprotected_webull_fill(
+                        symbol=symbol, broker_account_name=broker_account_name,
+                        quantity=int(quantity), entry_price=float(price),
+                    )
         elif s == "sell":
             # #6: when close-on-fill is ON, the managed-exit row is closed HERE, on the
             # CONFIRMED fill (current_quantity decrement + close-at-0) — NOT on submit in
