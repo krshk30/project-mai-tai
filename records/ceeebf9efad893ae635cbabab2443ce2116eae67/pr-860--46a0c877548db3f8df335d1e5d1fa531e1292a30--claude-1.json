@@ -1,0 +1,9 @@
+{
+  "pr_number": 860,
+  "range_base": "46a0c877548db3f8df335d1e5d1fa531e1292a30",
+  "range_head": "ceeebf9efad893ae635cbabab2443ce2116eae67",
+  "reviewed_at": "2026-09-01T12:00:58Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Independent review: refusal-provenance completion verified \u2014 adapters stamp origin, store maps refusal_origin (oms/store.py:864), classifier reads durable payload only with no inference and declared blind spots; 42 tests + ruff at exact head; box crontab verified running the 08-05 hand-installed copy, activation (crontab repoint) owed at deploy."
+}
