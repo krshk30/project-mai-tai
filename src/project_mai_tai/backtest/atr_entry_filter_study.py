@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -76,9 +76,41 @@ class EntryCandidate:
     features: dict[str, float | None]
     first_bid_ret_pct: float | None
     future_mfe_pct: float | None
+    future_mae_pct: float | None
     future_reached_plus_1: bool
     future_reached_plus_2: bool
     future_reached_plus_5: bool
+    mae_before_plus_1_pct: float | None
+    mae_before_plus_2_pct: float | None
+    mae_before_plus_5_pct: float | None
+    seconds_to_plus_1: float | None
+    seconds_to_plus_2: float | None
+    seconds_to_plus_5: float | None
+
+
+@dataclass(frozen=True)
+class FutureAudit:
+    first_bid_ret_pct: float | None
+    mfe_pct: float | None
+    mae_pct: float | None
+    mae_before_plus_1_pct: float | None
+    mae_before_plus_2_pct: float | None
+    mae_before_plus_5_pct: float | None
+    seconds_to_plus_1: float | None
+    seconds_to_plus_2: float | None
+    seconds_to_plus_5: float | None
+
+    @property
+    def reached_plus_1(self) -> bool:
+        return self.seconds_to_plus_1 is not None
+
+    @property
+    def reached_plus_2(self) -> bool:
+        return self.seconds_to_plus_2 is not None
+
+    @property
+    def reached_plus_5(self) -> bool:
+        return self.seconds_to_plus_5 is not None
 
 
 MODEL_FEATURES = (
@@ -277,14 +309,37 @@ def _entry_quote(quotes: Sequence[Quote], entry_ts: datetime) -> Quote | None:
 
 def audit_future_quotes(
     quotes: Sequence[Quote], entry_ts: datetime, entry_px: float
-) -> tuple[float | None, float | None, bool, bool, bool]:
+) -> FutureAudit:
     future = [quote for quote in quotes if quote.ts > entry_ts and quote.bid > 0]
     if not future:
-        return None, None, False, False, False
-    returns = [(float(quote.bid) - entry_px) / entry_px * 100.0 for quote in future]
-    first_bid_ret = returns[0]
-    mfe = max(returns)
-    return first_bid_ret, mfe, mfe >= 1.0, mfe >= 2.0, mfe >= 5.0
+        return FutureAudit(None, None, None, None, None, None, None, None, None)
+    returns = [
+        (quote.ts, (float(quote.bid) - entry_px) / entry_px * 100.0) for quote in future
+    ]
+
+    def first_passage(threshold: float) -> tuple[float | None, float | None]:
+        running_min = 0.0
+        for ts, value in returns:
+            running_min = min(running_min, value)
+            if value >= threshold:
+                return running_min, (ts - entry_ts).total_seconds()
+        return None, None
+
+    mae_1, seconds_1 = first_passage(1.0)
+    mae_2, seconds_2 = first_passage(2.0)
+    mae_5, seconds_5 = first_passage(5.0)
+    values = [value for _, value in returns]
+    return FutureAudit(
+        first_bid_ret_pct=values[0],
+        mfe_pct=max(values),
+        mae_pct=min(values),
+        mae_before_plus_1_pct=mae_1,
+        mae_before_plus_2_pct=mae_2,
+        mae_before_plus_5_pct=mae_5,
+        seconds_to_plus_1=seconds_1,
+        seconds_to_plus_2=seconds_2,
+        seconds_to_plus_5=seconds_5,
+    )
 
 
 def load_policy_trades(path: Path, policy: str = POLICY) -> list[PolicyTrade]:
@@ -341,7 +396,7 @@ def build_candidates(source: DbFeatureSource, trades: Sequence[PolicyTrade]) -> 
             )
             entry_et = trade.entry_ts.astimezone(EASTERN)
             seven = entry_et.replace(hour=7, minute=0, second=0, microsecond=0)
-            first_bid_ret, future_mfe, hit_1, hit_2, hit_5 = audit_future_quotes(
+            future_audit = audit_future_quotes(
                 exit_quotes, trade.entry_ts, trade.entry_px
             )
             features: dict[str, float | None] = {
@@ -411,11 +466,18 @@ def build_candidates(source: DbFeatureSource, trades: Sequence[PolicyTrade]) -> 
                     won=trade.won,
                     ret_pct=trade.ret_pct,
                     features=features,
-                    first_bid_ret_pct=first_bid_ret,
-                    future_mfe_pct=future_mfe,
-                    future_reached_plus_1=hit_1,
-                    future_reached_plus_2=hit_2,
-                    future_reached_plus_5=hit_5,
+                    first_bid_ret_pct=future_audit.first_bid_ret_pct,
+                    future_mfe_pct=future_audit.mfe_pct,
+                    future_mae_pct=future_audit.mae_pct,
+                    future_reached_plus_1=future_audit.reached_plus_1,
+                    future_reached_plus_2=future_audit.reached_plus_2,
+                    future_reached_plus_5=future_audit.reached_plus_5,
+                    mae_before_plus_1_pct=future_audit.mae_before_plus_1_pct,
+                    mae_before_plus_2_pct=future_audit.mae_before_plus_2_pct,
+                    mae_before_plus_5_pct=future_audit.mae_before_plus_5_pct,
+                    seconds_to_plus_1=future_audit.seconds_to_plus_1,
+                    seconds_to_plus_2=future_audit.seconds_to_plus_2,
+                    seconds_to_plus_5=future_audit.seconds_to_plus_5,
                 )
             )
         print(f"features {day_text} {symbol}: {len(symbol_trades)}", flush=True)
@@ -516,6 +578,7 @@ def leave_one_day_out(
     features: Sequence[str],
     *,
     daily_cap: int = MAX_DAILY_SELECTION,
+    per_symbol_cap: int | None = None,
 ) -> list[dict[str, object]]:
     selected: list[dict[str, object]] = []
     days = sorted({candidate.session_day_et for candidate in candidates})
@@ -527,8 +590,17 @@ def leave_one_day_out(
             ((model.score(candidate), candidate) for candidate in test),
             key=lambda item: (item[0], item[1].entry_ts),
             reverse=True,
-        )[:daily_cap]
-        for rank, (score, candidate) in enumerate(ranked, 1):
+        )
+        chosen: list[tuple[float, EntryCandidate]] = []
+        symbol_counts: dict[str, int] = defaultdict(int)
+        for score, candidate in ranked:
+            if per_symbol_cap is not None and symbol_counts[candidate.symbol] >= per_symbol_cap:
+                continue
+            chosen.append((score, candidate))
+            symbol_counts[candidate.symbol] += 1
+            if len(chosen) >= daily_cap:
+                break
+        for rank, (score, candidate) in enumerate(chosen, 1):
             selected.append(
                 {
                     "session_day_et": held_day,
@@ -580,6 +652,18 @@ def build_summary(candidates: Sequence[EntryCandidate]) -> dict[str, object]:
         rows = leave_one_day_out(candidates, features)
         family_rows[family] = _selection_summary(rows)
         selections[family] = rows
+    selection_variants = {}
+    for name, family, symbol_cap in (
+        ("volume_one_per_symbol", "volume", 1),
+        ("volume_two_per_symbol", "volume", 2),
+        ("market_context_two_per_symbol", "market_context", 2),
+    ):
+        rows = leave_one_day_out(
+            candidates,
+            FEATURE_FAMILIES[family],
+            per_symbol_cap=symbol_cap,
+        )
+        selection_variants[name] = _selection_summary(rows)
 
     by_day = {}
     for day in sorted({candidate.session_day_et for candidate in candidates}):
@@ -621,6 +705,15 @@ def build_summary(candidates: Sequence[EntryCandidate]) -> dict[str, object]:
         candidate.first_bid_ret_pct is not None and candidate.first_bid_ret_pct < 0
         for candidate in candidates
     )
+    losers = [candidate for candidate in candidates if not candidate.won]
+    plus_5_runners_after_loss = [
+        candidate for candidate in losers if candidate.future_reached_plus_5
+    ]
+
+    def median_present(values: Iterable[float | None]) -> float | None:
+        observed = [float(value) for value in values if value is not None]
+        return statistics.median(observed) if observed else None
+
     return {
         "population": _selection_summary(
             [
@@ -636,9 +729,23 @@ def build_summary(candidates: Sequence[EntryCandidate]) -> dict[str, object]:
             "later_reached_plus_1": sum(candidate.future_reached_plus_1 for candidate in candidates),
             "later_reached_plus_2": sum(candidate.future_reached_plus_2 for candidate in candidates),
             "later_reached_plus_5": sum(candidate.future_reached_plus_5 for candidate in candidates),
+            "floor_losers_later_reached_plus_1": sum(
+                candidate.future_reached_plus_1 for candidate in losers
+            ),
+            "floor_losers_later_reached_plus_2": sum(
+                candidate.future_reached_plus_2 for candidate in losers
+            ),
+            "floor_losers_later_reached_plus_5": len(plus_5_runners_after_loss),
+            "floor_loser_plus_5_median_prior_mae_pct": median_present(
+                candidate.mae_before_plus_5_pct for candidate in plus_5_runners_after_loss
+            ),
+            "floor_loser_plus_5_median_seconds": median_present(
+                candidate.seconds_to_plus_5 for candidate in plus_5_runners_after_loss
+            ),
         },
         "feature_stats": feature_stats,
         "leave_one_day_out": family_rows,
+        "leave_one_day_out_variants": selection_variants,
         "selections": selections,
     }
 

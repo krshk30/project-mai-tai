@@ -28,9 +28,16 @@ def _candidate(day: str, index: int, *, won: bool) -> EntryCandidate:
         features={"signal": value},
         first_bid_ret_pct=-0.1,
         future_mfe_pct=5.0,
+        future_mae_pct=-2.0,
         future_reached_plus_1=True,
         future_reached_plus_2=True,
         future_reached_plus_5=True,
+        mae_before_plus_1_pct=-0.5,
+        mae_before_plus_2_pct=-1.0,
+        mae_before_plus_5_pct=-2.0,
+        seconds_to_plus_1=10.0,
+        seconds_to_plus_2=20.0,
+        seconds_to_plus_5=30.0,
     )
 
 
@@ -54,11 +61,13 @@ def test_zero_floor_can_exit_before_a_later_five_percent_run() -> None:
         Quote(entry + timedelta(minutes=2), bid=10.6, ask=10.61),
     ]
 
-    first, mfe, hit_1, hit_2, hit_5 = audit_future_quotes(quotes, entry, 10.0)
+    audit = audit_future_quotes(quotes, entry, 10.0)
 
-    assert first == pytest.approx(-0.5)
-    assert mfe == pytest.approx(6.0)
-    assert hit_1 and hit_2 and hit_5
+    assert audit.first_bid_ret_pct == pytest.approx(-0.5)
+    assert audit.mfe_pct == pytest.approx(6.0)
+    assert audit.mae_before_plus_5_pct == pytest.approx(-0.5)
+    assert audit.seconds_to_plus_5 == pytest.approx(120.0)
+    assert audit.reached_plus_1 and audit.reached_plus_2 and audit.reached_plus_5
 
 
 def test_leave_one_day_out_caps_each_day_at_six() -> None:
