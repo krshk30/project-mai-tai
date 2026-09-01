@@ -1,0 +1,9 @@
+{
+  "pr_number": 871,
+  "range_base": "a660160a3db5c5caf3ae43ca1eb0d453e9bc43e6",
+  "range_head": "8088c0c26afe8dcf7d4720cd8398a1349830da92",
+  "reviewed_at": "2026-09-01T21:40:30Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Amend verified: policy population widened to the five clock-dependent suites; both of my un-injection falsifier mutants now RED (were green at e9f0ff9); 63 tests green at the post-16:00 hour; class-level fix for the recurring override."
+}
