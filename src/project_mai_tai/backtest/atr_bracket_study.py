@@ -20,6 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from dataclasses import asdict
 from datetime import UTC, date, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -112,6 +113,7 @@ class BracketStudyResult:
     policy: BracketPolicy
     n_bars: int
     n_quotes: int
+    n_exit_quotes: int
     n_scanner_windows: int
     trades: list[StudyTrade] = field(default_factory=list)
     skips: list[StudySkip] = field(default_factory=list)
@@ -243,7 +245,16 @@ def run_symbol_policy(
     )
 
     bars = source.schwab_bars(symbol, observation_start, session_end)
-    quotes = source.schwab_quotes(symbol, observation_start, session_end)
+    strategy_quotes = source.schwab_quotes(symbol, observation_start, session_end)
+    # ATR entry decisions must use the Schwab feed the live strategy saw.  Bracket execution is a
+    # different question: a broker order does not stop existing when our sparse Schwab capture goes
+    # quiet.  Use the dense captured executable quote tape for exits when available, and fall back
+    # to Schwab quotes only for hermetic fixtures.
+    exit_quote_reader = getattr(source, "quotes", None)
+    separate_exit_tape = callable(exit_quote_reader)
+    exit_quotes = (
+        exit_quote_reader(symbol, observation_start, session_end) if separate_exit_tape else []
+    )
     try:
         windows = source.watch_windows(
             symbol,
@@ -258,7 +269,8 @@ def run_symbol_policy(
         session_day_et=session_day_et,
         policy=policy,
         n_bars=len(bars),
-        n_quotes=len(quotes),
+        n_quotes=len(strategy_quotes),
+        n_exit_quotes=len(exit_quotes) if separate_exit_tape else len(strategy_quotes),
         n_scanner_windows=len(windows),
     )
     if not windows:
@@ -280,7 +292,7 @@ def run_symbol_policy(
     session_anchor_ms = session_start_ts_ms(int(entry_start.timestamp() * 1000))
 
     # Boundary events make cancellation happen at the scanner timestamp, not at whichever market
-    # event happens to arrive next.  Priority: leave, join, bar-close, quote.
+    # event happens to arrive next.  Priority: leave, join, bar-close, strategy quote, exit quote.
     events: list[tuple[int, int, str, object]] = []
     for window in windows:
         events.append((window.start_ms, 1, "join", window))
@@ -288,8 +300,10 @@ def run_symbol_policy(
             events.append((window.end_ms, 0, "leave", window))
     for bar in bars:
         events.append((int(bar.ts) + BAR_CLOSE_OFFSET_MS, 2, "bar", bar))
-    for quote in quotes:
-        events.append((int(quote.ts.timestamp() * 1000), 3, "quote", quote))
+    for quote in strategy_quotes:
+        events.append((int(quote.ts.timestamp() * 1000), 3, "strategy_quote", quote))
+    for quote in exit_quotes:
+        events.append((int(quote.ts.timestamp() * 1000), 4, "exit_quote", quote))
     events.sort(key=lambda event: (event[0], event[1]))
 
     working_rest: _WorkingRest | None = None
@@ -457,6 +471,34 @@ def run_symbol_policy(
         strategy.drain_webull_fanout_intents()
         open_trade = None
 
+    def evaluate_exit_quote(quote: TapeQuote) -> None:
+        nonlocal open_trade, last_bid
+        if quote.bid <= 0:
+            return
+        last_bid = (quote.ts, float(quote.bid))
+        if open_trade is None or quote.ts <= open_trade.entry_ts:
+            return
+        bid = float(quote.bid)
+        open_trade.observe(quote.ts, bid)
+        if open_trade.floor_trigger_ts is not None:
+            finish_trade(
+                trigger_ts=open_trade.floor_trigger_ts,
+                exit_ts=quote.ts,
+                exit_px=bid,
+                reason="floor",
+            )
+            return
+        if bid >= open_trade.target_px:
+            finish_trade(
+                trigger_ts=quote.ts,
+                exit_ts=quote.ts,
+                exit_px=open_trade.target_px,
+                reason="target",
+            )
+            return
+        if bid <= open_trade.floor_px:
+            open_trade.floor_trigger_ts = quote.ts
+
     for event_ms, _, event_type, payload in events:
         event_dt = datetime.fromtimestamp(event_ms / 1000.0, UTC)
         if event_dt < observation_start.astimezone(UTC) or event_dt >= session_end.astimezone(UTC):
@@ -503,37 +545,16 @@ def run_symbol_policy(
             continue
 
         quote: TapeQuote = payload  # type: ignore[assignment]
-        if quote.bid > 0:
-            last_bid = (quote.ts, float(quote.bid))
+        if event_type == "exit_quote":
+            evaluate_exit_quote(quote)
+            continue
+
         strategy_quote = _to_stratquote(symbol, quote)
         latest_quote[symbol] = strategy_quote
 
         if open_trade is not None:
-            # The fill quote existed before the bracket children could become active.  Start exit
-            # observation on the first strictly later snapshot; this still makes a 0% floor expose
-            # the spread immediately without time-travelling within one quote.
-            if quote.ts <= open_trade.entry_ts or quote.bid <= 0:
-                continue
-            bid = float(quote.bid)
-            open_trade.observe(quote.ts, bid)
-            if open_trade.floor_trigger_ts is not None:
-                finish_trade(
-                    trigger_ts=open_trade.floor_trigger_ts,
-                    exit_ts=quote.ts,
-                    exit_px=bid,
-                    reason="floor",
-                )
-                continue
-            if bid >= open_trade.target_px:
-                finish_trade(
-                    trigger_ts=quote.ts,
-                    exit_ts=quote.ts,
-                    exit_px=open_trade.target_px,
-                    reason="target",
-                )
-                continue
-            if bid <= open_trade.floor_px:
-                open_trade.floor_trigger_ts = quote.ts
+            if not separate_exit_tape:
+                evaluate_exit_quote(quote)
             continue
 
         if not eligible or window is None:
@@ -586,6 +607,39 @@ def run_symbol_policy(
             )
         )
     return result
+
+
+class _CachedSource:
+    """Cache one symbol/day data slice across the six policy runs."""
+
+    def __init__(self, source) -> None:
+        self._source = source
+
+    @lru_cache(maxsize=None)
+    def schwab_bars(self, symbol, start, end):
+        return self._source.schwab_bars(symbol, start, end)
+
+    @lru_cache(maxsize=None)
+    def schwab_quotes(self, symbol, start, end):
+        return self._source.schwab_quotes(symbol, start, end)
+
+    @lru_cache(maxsize=None)
+    def quotes(self, symbol, start, end):
+        return self._source.quotes(symbol, start, end)
+
+    @lru_cache(maxsize=None)
+    def watch_windows(self, symbol, trade_date, *, realtime_confirms_only=False):
+        return self._source.watch_windows(
+            symbol,
+            trade_date,
+            realtime_confirms_only=realtime_confirms_only,
+        )
+
+    def scanner_confirmed_symbols(self, trade_date, *, realtime_confirms_only=False):
+        return self._source.scanner_confirmed_symbols(
+            trade_date,
+            realtime_confirms_only=realtime_confirms_only,
+        )
 
 
 def trading_sessions(start: date, end: date) -> list[date]:
@@ -726,7 +780,7 @@ def main() -> int:
         strategy_schwab_1m_v2_dual_broker_fanout_enabled=False,
         strategy_schwab_1m_v2_webull_resting_mirror_enabled=False,
     )
-    source = DbMarketDataSource(build_session_factory(base_settings))
+    source = _CachedSource(DbMarketDataSource(build_session_factory(base_settings)))
     policies = [
         BracketPolicy(target_pct=target, floor_pct=floor)
         for target in (1.0, 2.0)

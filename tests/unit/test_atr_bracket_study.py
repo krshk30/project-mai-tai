@@ -87,7 +87,7 @@ class Source:
         window_end: datetime | None = None,
     ):
         self.bars = bars or _bars()
-        self.quotes = quotes
+        self._quotes = quotes
         start_ms = int(BASE.timestamp() * 1000)
         end_ms = int(window_end.timestamp() * 1000) if window_end else None
         self.windows = [WatchWindow(start_ms, end_ms)]
@@ -97,10 +97,19 @@ class Source:
         return [bar for bar in self.bars if lo <= bar.ts < hi]
 
     def schwab_quotes(self, symbol, start, end):
-        return [quote for quote in self.quotes if start <= quote.ts < end]
+        return [quote for quote in self._quotes if start <= quote.ts < end]
 
     def watch_windows(self, symbol, trade_date, *, realtime_confirms_only=False):
         return self.windows
+
+
+class DenseExitSource(Source):
+    def __init__(self, strategy_quotes: list[Quote], exit_quotes: list[Quote]):
+        super().__init__(strategy_quotes)
+        self._exit_quotes = exit_quotes
+
+    def quotes(self, symbol, start, end):
+        return [quote for quote in self._exit_quotes if start <= quote.ts < end]
 
 
 def _settings():
@@ -160,6 +169,41 @@ def test_zero_floor_triggers_on_first_later_bid_and_fills_on_next_bid() -> None:
     assert trade.exit_ts == fill_ts
     assert trade.exit_px == pytest.approx(98.3)
     assert trade.ret_pct < 0
+
+
+def test_dense_exit_tape_does_not_wait_for_next_schwab_capture() -> None:
+    strategy_quotes = _entry_quotes()
+    strategy_quotes.append(
+        Quote(
+            ts=BASE + timedelta(minutes=26, seconds=30),
+            bid=90.0,
+            ask=90.1,
+            last=90.05,
+        )
+    )
+    trigger_ts = BASE + timedelta(minutes=16, seconds=31)
+    fill_ts = BASE + timedelta(minutes=16, seconds=32)
+    exit_quotes = [
+        Quote(ts=trigger_ts, bid=96.4, ask=96.5, last=96.45),
+        Quote(ts=fill_ts, bid=96.3, ask=96.4, last=96.35),
+    ]
+
+    result = run_symbol_policy(
+        DenseExitSource(strategy_quotes, exit_quotes),
+        SYMBOL,
+        "2026-07-23",
+        _settings(),
+        BracketPolicy(2.0, -2.0),
+    )
+
+    assert len(result.trades) == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "floor"
+    assert trade.exit_trigger_ts == trigger_ts
+    assert trade.exit_ts == fill_ts
+    assert trade.exit_px == pytest.approx(96.3)
+    assert result.n_quotes == len(strategy_quotes)
+    assert result.n_exit_quotes == len(exit_quotes)
 
 
 def test_scanner_removal_cancels_entry_eligibility() -> None:
