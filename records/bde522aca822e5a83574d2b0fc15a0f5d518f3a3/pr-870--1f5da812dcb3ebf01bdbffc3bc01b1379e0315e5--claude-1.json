@@ -1,0 +1,9 @@
+{
+  "pr_number": 870,
+  "range_base": "1f5da812dcb3ebf01bdbffc3bc01b1379e0315e5",
+  "range_head": "bde522aca822e5a83574d2b0fc15a0f5d518f3a3",
+  "reviewed_at": "2026-09-01T21:01:10Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Arm-adjacency guard: refusal before mutation, BUY-only, SELL-disarm pinned intact, per-session denominator on the line, replay-phase fail-safe; 4 behavioral pairs + guard-dropped mutant red; within-ATR-window residual named as future new-row evidence."
+}
