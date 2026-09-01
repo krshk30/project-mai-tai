@@ -1,0 +1,9 @@
+{
+  "pr_number": 866,
+  "range_base": "7f623cee9293a96d8a13cd2baad4d566028057d2",
+  "range_head": "5b9b3cb8d0248e4e5a0beb675fcf0214936863d3",
+  "reviewed_at": "2026-09-01T18:36:36Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the full five-commit docs range; checked the floor formula and persisted input provenance against OMS service/Position/#853, verified generic P0a release is separated from the confirmed one-shot section-3 lifetime and below-floor page, reconciled all active statuses, and confirmed the 11-stub retirement against the operator ruling recorded in the fleet journal."
+}
