@@ -390,13 +390,28 @@ def test_post_latch_addition_does_not_fabricate_initial_boot_completion() -> Non
     assert fields(release)["restoration_complete"] == "0"
 
 
-def test_db3_zero_is_expected_not_pass_and_keeps_its_denominator() -> None:
+def test_db3_zero_with_a_real_population_fails_and_keeps_its_denominator() -> None:
     row = metrics(db=complete_db(db3_probe_symbols=17, db3_fanout_only_excluded=0))[
         "db3_fanout_only_excluded"
     ][0]
-    assert row.status == "EXPECTED_ZERO"
+    assert row.status == "FAIL"
     assert fields(row) == {"excluded": "0", "probe_symbols": "17"}
-    assert "mutation" in row.zero_means
+    assert "FALSE_ZERO" in row.zero_means
+
+
+def test_db3_zero_without_a_probe_population_is_unexercised() -> None:
+    row = metrics(db=complete_db())["db3_fanout_only_excluded"][0]
+    assert row.status == "UNEXERCISED"
+    assert fields(row) == {"excluded": "0", "probe_symbols": "0"}
+    assert "no_observed_probe_population" in row.zero_means
+
+
+def test_db3_nonzero_is_observed() -> None:
+    row = metrics(db=complete_db(db3_probe_symbols=17, db3_fanout_only_excluded=4))[
+        "db3_fanout_only_excluded"
+    ][0]
+    assert row.status == "OBSERVED"
+    assert fields(row) == {"excluded": "4", "probe_symbols": "17"}
 
 
 def test_database_count_parser_refuses_missing_or_impossible_rows() -> None:

@@ -9,8 +9,6 @@ states what zero means.  The report deliberately keeps these states distinct:
 * UNEXERCISED -- the denominator was zero, including a gate never reached;
 * COULD_NOT_TELL -- the required evidence was unreadable or no exact
   denominator exists;
-* EXPECTED_ZERO -- DB3's production population is rare by construction and its
-  correctness is mutation-proven, not graded from a live zero;
 * BLOCKED / FAIL -- the measured population reached a known bad state.
 
 W3 (the raw-invalid refusal watch) is intentionally absent.  Its population is
@@ -690,14 +688,24 @@ def build_lines(
     else:
         excluded = db["db3_fanout_only_excluded"]
         probe_symbols = db["db3_probe_symbols"]
+        if probe_symbols == 0:
+            status = "UNEXERCISED"
+            zero_means = "FALSE_ZERO(no_observed_probe_population)"
+        elif excluded == 0:
+            status = "FAIL"
+            zero_means = (
+                "FALSE_ZERO(fanout_only_exclusions_are_observed_in_production;"
+                "zero_with_a_real_probe_population_is_not_clean)"
+            )
+        else:
+            status = "OBSERVED"
+            zero_means = "nonzero_is_an_exercise_count_not_a_correctness_grade"
         result.append(
             CensusLine(
                 "db3_fanout_only_excluded",
-                "EXPECTED_ZERO" if excluded == 0 else "OBSERVED",
+                status,
                 (("excluded", str(excluded)), ("probe_symbols", str(probe_symbols))),
-                "EXPECTED(the_population_is_rare_by_design;correctness_is_mutation_proven)"
-                if excluded == 0
-                else "nonzero_is_an_exercise_count_not_a_correctness_grade",
+                zero_means,
             )
         )
 
