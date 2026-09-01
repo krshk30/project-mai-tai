@@ -18,11 +18,29 @@ fills at the next captured bid. A target fills at its stated price when the bid 
 | FLYE | 3 | 0 | 3 | -6.6138 pts | -2.2046% |
 | RDAC | 1 | 0 | 1 | -4.0000 pts | -4.0000% |
 
-| Entry path | Trades | Wins | Losses | Sum return | Mean return |
+| Slot / execution mode | Trades | Wins | Losses | Sum return | Mean return |
 |---|---:|---:|---:|---:|---:|
 | First / resting | 8 | 3 | 5 | -7.2034 pts | -0.9004% |
 | Reclaim / reactive | 3 | 2 | 1 | -0.0642 pts | -0.0214% |
 | Reclaim / resting | 8 | 1 | 7 | -15.1763 pts | -1.8970% |
+
+## Two-slot audit
+
+The intended cap is two entries per ATR segment: one `first` resting slot and one `reclaim` slot.
+`reactive` is an execution mode for reclaim, not a third slot.
+
+The replay found 19 trades across 12 segment identities. Six segments produced one entry, five
+produced the valid `first + reclaim` pair, and one BIAF segment produced three entries:
+
+| Segment | Entry 1 | Entry 2 | Entry 3 | Verdict |
+|---|---|---|---|---|
+| BIAF 08:59 ET | 09:00:26 first/resting | 09:02:22 first/resting | 09:07:47 reclaim/reactive | breach: duplicate first slot |
+
+This is not a report-label artifact. The first BIAF trade hit the modeled `-2%` floor at 09:01:40,
+before the BUY arm bar closed. The live state transition consumed `cw_resting_taken`, but the
+first-resting placement path does not read that consumed flag before placing another order. The
+existing `+2% / -5%` exit can cover this gap by keeping the first position open through the arm;
+the tighter research exit exposed it. No live strategy change was made in this study.
 
 ## Executions
 

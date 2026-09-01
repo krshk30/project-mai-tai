@@ -142,6 +142,7 @@ def test_target_uses_executable_ask_entry_and_stated_limit_exit() -> None:
     trade = result.trades[0]
     assert trade.entry_slot == "first"
     assert trade.entry_mode == "resting"
+    assert trade.segment_id > 0
     assert trade.entry_px == pytest.approx(98.5)
     assert trade.exit_reason == "target"
     assert trade.exit_px == pytest.approx(98.5 * 1.01)
@@ -283,6 +284,8 @@ def test_modelled_close_runs_live_transition_and_allows_reclaim_round_trip() -> 
 
     assert [trade.entry_slot for trade in result.trades] == ["first", "reclaim"]
     assert [trade.exit_reason for trade in result.trades] == ["target", "target"]
+    assert len({trade.segment_id for trade in result.trades}) == 1
+    assert result.trades[0].segment_id > 0
 
 
 def test_watch_start_cap_consumes_the_live_composition_flags() -> None:

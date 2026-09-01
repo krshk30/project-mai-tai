@@ -85,6 +85,7 @@ class StudyTrade:
     order_type: str
     scanner_window_start: datetime
     scanner_window_end: datetime | None
+    segment_id: int
     arm_bar_ts_ms: int
     signal_ts: datetime
     entry_ts: datetime
@@ -129,6 +130,7 @@ class _WorkingRest:
     place_ts: datetime
     entry_ref: float
     slot: Literal["first", "reclaim"]
+    segment_id: int
     arm_bar_ts_ms: int
 
 
@@ -140,6 +142,7 @@ class _OpenTrade:
     signal_ts: datetime
     entry_ts: datetime
     entry_px: float
+    segment_id: int
     arm_bar_ts_ms: int
     scanner_window: WatchWindow
     target_px: float
@@ -177,6 +180,29 @@ def _entry_slot(value: object, *, mode: str) -> Literal["first", "reclaim"]:
     if raw in ("first", "reclaim"):
         return raw  # type: ignore[return-value]
     return "reclaim" if mode == "reactive" else "first"
+
+
+def _entry_segment_id(
+    strategy: ReplayStrategy,
+    symbol: str,
+    metadata: dict[str, object],
+) -> int:
+    """Return the live segment identity, including pre-arm first-slot entries.
+
+    A first resting order can be placed before the BUY bar closes, when ``cw_arm_bar_ts`` is still
+    zero. Production solves that ambiguity by binding ``fanout_segment_id`` at the first draft and
+    retaining it through the later arm and reclaim. The study must do the same even with fan-out
+    disabled, otherwise every first entry is falsely grouped into segment zero.
+    """
+    state = strategy.watchlist_state(symbol)
+    active_segment_id = int(state.fanout_segment_id or 0)
+    if active_segment_id > 0:
+        return active_segment_id
+    for key in ("fanout_segment_id", "cw_arm_bar_ts"):
+        segment_id = int(metadata.get(key) or 0)
+        if segment_id > 0:
+            return segment_id
+    return strategy._ensure_fanout_segment_id(state)
 
 
 def _consume_stale_arm(
@@ -328,6 +354,7 @@ def run_symbol_policy(
                 result.n_entry_drafts_outside_scanner += int(not eligible)
                 continue
             mode = "resting"
+            segment_id = _entry_segment_id(strategy, symbol, metadata)
             working_rest = _WorkingRest(
                 stop=float(metadata["stop_price"]),
                 limit=float(metadata["limit_price"]),
@@ -338,6 +365,7 @@ def run_symbol_policy(
                     or metadata["stop_price"]
                 ),
                 slot=_entry_slot(metadata.get("cw_entry_slot"), mode=mode),
+                segment_id=segment_id,
                 arm_bar_ts_ms=int(metadata.get("cw_arm_bar_ts") or 0),
             )
         # Fan-out is explicitly disabled for this signal-level study, but drain defensively so a
@@ -353,6 +381,7 @@ def run_symbol_policy(
         signal_ts: datetime,
         fill_ts: datetime,
         fill_px: float,
+        segment_id: int,
         arm_bar_ts_ms: int,
         scanner_window: WatchWindow,
     ) -> None:
@@ -364,6 +393,7 @@ def run_symbol_policy(
             signal_ts=signal_ts,
             entry_ts=fill_ts,
             entry_px=fill_px,
+            segment_id=segment_id,
             arm_bar_ts_ms=arm_bar_ts_ms,
             scanner_window=scanner_window,
             target_px=fill_px * (1.0 + policy.target_pct / 100.0),
@@ -414,6 +444,7 @@ def run_symbol_policy(
             signal_ts=now,
             fill_ts=quote.ts,
             fill_px=fill_px,
+            segment_id=_entry_segment_id(strategy, symbol, metadata),
             arm_bar_ts_ms=int(metadata.get("cw_arm_bar_ts") or 0),
             scanner_window=window,
         )
@@ -445,6 +476,7 @@ def run_symbol_policy(
                     if trade.scanner_window.end_ms is not None
                     else None
                 ),
+                segment_id=trade.segment_id,
                 arm_bar_ts_ms=trade.arm_bar_ts_ms,
                 signal_ts=trade.signal_ts,
                 entry_ts=trade.entry_ts,
@@ -575,6 +607,7 @@ def run_symbol_policy(
                 signal_ts=working_rest.place_ts,
                 fill_ts=quote.ts,
                 fill_px=float(quote.ask),
+                segment_id=working_rest.segment_id,
                 arm_bar_ts_ms=working_rest.arm_bar_ts_ms,
                 scanner_window=window,
             )
