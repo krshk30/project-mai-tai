@@ -1,0 +1,9 @@
+{
+  "pr_number": 856,
+  "range_base": "10da525cd0919f9aec272d5e589145b7201695e6",
+  "range_head": "c774eea1bd259600087f759a80facc776fe9f53b",
+  "reviewed_at": "2026-09-01T00:07:59Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed exact docs-only head c774eea1b. Independently verified bundle/live checksum path prefixes differ; copied verify reports 12/12 FAILED and rc=1; migration manifest has 253 lines and 253 OK; bundle and live memory each contain 168 entries; PR #851 artifacts preserve the terminal-newline false PASS and corrected refusal. Also inspected fail-closed transfer ordering and one-writer journal/manifest locality."
+}
