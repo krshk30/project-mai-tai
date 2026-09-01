@@ -1,0 +1,9 @@
+{
+  "pr_number": 859,
+  "range_base": "46a0c877548db3f8df335d1e5d1fa531e1292a30",
+  "range_head": "379fc65845bb5e80a336e0e8575efad976f4f985",
+  "reviewed_at": "2026-09-01T12:11:58Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Exact-range review: traced reconstructed cap into both live composition-slot gates and their SELL-flip resets; ran the real-gate reconstructed/live controlled pair within 112 focused tests, Ruff, range/symlink exclusion, and ignore-file checks."
+}
