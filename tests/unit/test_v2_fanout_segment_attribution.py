@@ -76,7 +76,7 @@ def test_fanout_off_reactive_path_stays_quiet(caplog) -> None:
     assert not any(MARKER in r.getMessage() for r in caplog.records)
 
 
-def test_prearm_resting_and_later_reactive_share_one_identity() -> None:
+def test_prearm_first_and_later_reclaim_share_one_nonzero_arm_stamp() -> None:
     strategy = _strategy()
     strategy._now_ms = lambda: RTH_MS
     state = strategy.watchlist_state("DAIC")
@@ -89,9 +89,10 @@ def test_prearm_resting_and_later_reactive_share_one_identity() -> None:
         state, entry_px=3.30, session_is_eh=False, source="reactive", entry_n=1,
     )
 
-    assert resting.metadata["cw_arm_bar_ts"] == "0"
-    assert reactive.metadata["cw_arm_bar_ts"] == str(RTH_MS + 60_000)
+    assert resting.metadata["cw_arm_bar_ts"] == str(RTH_MS)
+    assert reactive.metadata["cw_arm_bar_ts"] == str(RTH_MS)
     assert resting.metadata["fanout_segment_id"] == reactive.metadata["fanout_segment_id"]
+    assert resting.metadata["cw_arm_bar_ts"] == resting.metadata["fanout_segment_id"]
 
 
 def test_resting_mirror_is_inside_the_attributed_population(caplog) -> None:
@@ -113,6 +114,10 @@ def test_resting_mirror_is_inside_the_attributed_population(caplog) -> None:
     assert len(mirror) == 1
     assert mirror[0].metadata["fanout_source"] == "rth_resting_mirror"
     assert mirror[0].metadata["fanout_segment_id"] == str(RTH_MS)
+    assert primary[0].metadata["cw_entry_slot"] == "first"
+    assert mirror[0].metadata["cw_entry_slot"] == "first"
+    assert primary[0].metadata["cw_arm_bar_ts"] == str(RTH_MS)
+    assert mirror[0].metadata["cw_arm_bar_ts"] == str(RTH_MS)
     for key in ("fanout_segment_id", "fanout_slot", "fanout_slot_id"):
         assert primary[0].metadata[key] == mirror[0].metadata[key]
     assert any(MARKER in r.getMessage() for r in caplog.records)
