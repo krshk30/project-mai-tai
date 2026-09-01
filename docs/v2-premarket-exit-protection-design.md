@@ -272,9 +272,35 @@ silently = the unbounded gap exposure §3 exists to close, decided by accident).
 Falsifier for the build: a stand-down with `bid < floor` that produces either an order priced
 below the floor, or no counted below-floor line.
 
-🔶 **PROPOSED, awaiting operator confirmation:** the below-floor behaviour above (floor-priced
-rest + page) is claude-1's answer to the operator's stated requirement; the ruling approved the
-floor concept, not yet this specific case-handling. No build until confirmed.
+**The floor, computed — no new parameters, both inputs already persisted on the managed row:**
+
+```text
+floor = max( entry_price * (1 - oms_v2_cw_hard_stop_pct/100),   # the same `protect` level the
+                                                               # bracket paths already compute
+                                                               # (oms/service.py:1621, :2382)
+             position.floor_price or 0.0 )                      # #853's BID-derived ratcheted
+                                                               # high-water floor (nonzero only
+                                                               # after +target arming)
+```
+
+Deterministic at stand-down; BID-derived on both terms (an ask spike cannot manufacture it).
+
+**No-churn lifetime (one-shot is structural):** §3 prices ONCE per stand-down episode — a
+placed-flag on the managed row forbids any second §3 reprice. The resulting limit lives until:
+fill · position closed elsewhere (cancel + verify by status poll — a cancel is fire-and-forget,
+#684) · the 09:30 RTH edge, where Part 1's sweep replaces it (cancel, await broker-confirmed
+terminal, then bracket — Part 1's own no-oversell rule). ⚠ An EH DAY order that survives to
+session end expires and leaves the overnight state unchanged — out of §3's scope, named not
+hidden.
+
+**Release when bid < floor:** the floor-priced rest is NOT cancelled on further decline — the
+tail below the floor is the accepted, paged risk. It releases only via the lifetime events
+above; a bid recovering to ≥ floor fills it naturally. The below-floor page fires ONCE per
+stand-down episode (counted, deduped per position-episode) — no page churn.
+
+🔶 **STATUS (single label): §3 = DESIGN-COMPLETE, PENDING OPERATOR CONFIRMATION** of the
+below-floor handling + this formula. No build before that confirmation. (Q21 Parts 1/2/4 are a
+separate, operator-APPROVED build and do not wait on §3.)
 
 ---
 
