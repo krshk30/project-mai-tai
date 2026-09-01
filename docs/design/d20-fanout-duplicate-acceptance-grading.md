@@ -14,21 +14,27 @@ The filled-claim suppression cost is a separate metric. It reports how many
 how many joined to a Webull position already flat, and how many could not be classified. It does
 not widen the strategy position union across venues.
 
-## Why the current artifacts are insufficient
+## The 2026-08-31 known-bad attempt census
 
-The 2026-08-31 live control has exactly five software crossing attempts:
+The first control incorrectly stopped at 15:30 UTC. The complete 2026-08-31 ET session is
+04:00 UTC on August 31 through 04:00 UTC on September 1, spanning the tail of
+`schwab-1m-v2.log-20260831.gz` and all of `schwab-1m-v2.log-20260901`. That population contains
+27 `V2-FANOUT-RTH-RESTING` emissions and 27 durable `rth_resting` intents: 20 rejected, five filled,
+and two cancelled. These are measured attempts admitted after the old guard. They prove the defect
+was exercised, but they are not the number of live mirror up-crosses that exercised it.
 
-| UTC time | symbol |
-|---|---|
-| 14:29:37 | YDDL |
-| 14:30:09 | RDHL |
-| 15:24:34 | NCRA |
-| 15:24:44 | NCRA |
-| 15:30:11 | WETO |
+The previously published value of **16 crossing edges is withdrawn**. It combined 12 groups of
+REST emissions sharing a slot and mirror level with four inferred re-arms. The 12 groups begin at a
+placement or changed level, neither of which proves an up-cross. The four boundaries came from
+intervening below-level `market_quote_ticks` LEVELONE events, but that observer-only streamer is not
+the strategy's REST `on_quote` input and cannot prove the strategy observed the corresponding
+re-cross. The composite therefore has no measured unit under the #863 event contract.
 
-Those are the five `V2-FANOUT-RTH-RESTING` lines. They also produced five durable `rth_resting`
-intents: two filled, one cancelled, and two rejected. The defect is therefore visible at intent
-creation even when a second order does not fill.
+No retained 2026-08-31 artifact records the required pre-guard observation. The historical
+`crossed_mirror_slots` denominator is unavailable and must not be replaced by a reduction of the 27
+attempts.
+
+## Why the old proxies are insufficient
 
 Two tempting proxies answer different questions on the same session:
 
@@ -36,8 +42,10 @@ Two tempting proxies answer different questions on the same session:
 - Live one-minute bars whose high reached a mirror stop during the broker-order interval: 19
   orders and 18 distinct slot IDs.
 
-Neither reproduces the five-event control. Broker execution and one-minute OHLC do not prove that
-the strategy's live quote path observed the crossing while the mirror flag was live.
+Neither is the required control. Broker execution and one-minute OHLC do not prove that the
+strategy's live quote path observed the crossing while the mirror flag was live. Mirror placements,
+distinct `(symbol, level)` pairs, and symbol counts measure still other populations and are also not
+substitutes.
 
 The old `V2-FANOUT-RTH-RESTING` line is not a usable post-fix denominator either. It is emitted only
 after the duplicate leg is admitted. PR #858 returns on `webull_resting_active` before that line,
@@ -45,8 +53,8 @@ so a working fix and an unexercised path both print zero. Grading that zero woul
 
 ## Required crossing evidence
 
-Before D20 can issue a PASS, the strategy owner must add an observation-only event at the live
-quote up-cross, before the `webull_resting_active` veto:
+PR #863 supplies an observation-only event at the live quote up-cross, before the
+`webull_resting_active` veto:
 
 ```text
 [V2-FANOUT-MIRROR-LIVE-CROSS] SYMBOL slot_id=... cross_seq=... px=... level=...
@@ -66,16 +74,16 @@ The event contract is:
 - Mutate observation state only. Do not claim or release a slot, alter an order, or change either
   venue's position input.
 
-Until that event exists and reproduces the five 2026-08-31 controls, D20 is `COULD_NOT_TELL`, not
-PASS. An ops-only implementation cannot recover the missing live-quote fact after the session.
+PR #863 added this event, but it was not present on 2026-08-31 and is not yet deployed. Until the
+marker is deployed and a completed session exercises it, D20 remains `COULD_NOT_TELL`, not PASS.
 
 ## Duplicate grade
 
 For each `V2-FANOUT-MIRROR-LIVE-CROSS` row in the session, join `(symbol, slot_id)` to durable
 `trade_intents.payload.metadata` on `live:orb` and count a duplicate leg when a later BUY-open
 intent with `fanout_source=rth_resting` carries the same slot ID for that crossing opportunity.
-Count intents regardless of terminal status; the 2026-08-31 rejected and cancelled attempts are
-part of the known-bad five.
+Count intents regardless of terminal status. The 27 attempts from 2026-08-31 are a known-bad
+attempt census only; do not use them to set or validate `crossed_mirror_slots`.
 
 | Evidence | Verdict |
 |---|---|
@@ -126,9 +134,9 @@ change the post-#843 Schwab-scoped position union.
 
 The implementation PR must include these controlled checks:
 
-1. The retained 2026-08-31 artifacts reproduce five crossing opportunities and five duplicate
-   intents. Replacing the denominator with mirror fills produces 18 and fails the control;
-   replacing it with one-minute bar crossings produces 19 and fails the control.
+1. The retained 2026-08-31 artifacts reproduce 27 emissions and 27 durable intents, and report the
+   historical crossed-mirror denominator as unavailable. Mutants that substitute raw emissions,
+   mirror fills, bar crossings, placements, or distinct symbol-level pairs for the denominator fail.
 2. Removing the mirror-live veto keeps the crossed denominator fixed and changes only
    `duplicate_legs` from zero to nonzero.
 3. Killing the crossing event yields `UNEXERCISED`, never PASS.
@@ -141,8 +149,9 @@ The implementation PR must include these controlled checks:
 
 ## Delivery sequence
 
-1. Strategy owner adds only the observation event and its controlled pair. No trading behavior or
-   position-union change belongs in that increment.
-2. D20 adds the read-only log-plus-database grader after the event schema is pinned.
-3. The reviewed artifacts are deployed together before the measured session. The first completed
+1. Deploy the merged #863 observation event and duplicate fix together. No trading behavior or
+   position-union change belongs in the observation increment.
+2. D20 adds the read-only log-plus-database grader after the event schema and the unavailable
+   retrospective-control ruling are pinned.
+3. The reviewed artifacts run together for the measured session. The first completed
    session reports `PASS`, `FAIL`, `UNEXERCISED`, or `COULD_NOT_TELL`; no bare zero is published.
