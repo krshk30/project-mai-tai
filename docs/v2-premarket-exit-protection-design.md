@@ -206,8 +206,12 @@ qty-1 proof before it goes anywhere near the managed path.
 Per §2 this is believed already true. **Deliverable is proof, plus whatever the proof exposes.**
 
 - Confirm on live EH tape that a marketable EH exit is **held**, not cancel/replaced.
-- Confirm the hold **releases** correctly when the bid falls below the limit (the exemption is
-  *not* "never reprice" — a stale exit that never adjusts is the same bug facing the other way).
+- Confirm the hold **releases** correctly when the bid falls below the limit. ⛔ SCOPE
+  (2026-09-01): this refresh-resumes behaviour is the GENERIC marketable-hold contract and it
+  applies to exits the ladder itself prices. A **§3-placed floor order is exempt by design** —
+  its confirmed lifetime is one-shot: the hold's release does NOT reprice it; the floor rest
+  remains, and the below-floor state is paged (see the §3 decision block). The two contracts are
+  split so neither can be satisfied by violating the other.
 - If the proof shows the hold does **not** engage in EH, the cause is one of the predicate clauses
   above and the fix is targeted at that clause — not a new mechanism.
 
@@ -229,7 +233,7 @@ an explicit decision at `[OMS-OCO-STAND-DOWN-CLEARED]` (`oms/service.py:3400`):
 | position still held, RTH, no live OCO | **re-arm a bracket** (Part 1's exit-only path) | ✅ built, flag-gated off |
 | position still held, EH (no bracket possible) | **P0a-held software exit**, explicitly | ✅ inherited (P0a has no session gate) |
 | exit marketable | P0a hold — already covered | ✅ + now observable |
-| exit NOT marketable | **must still not churn** | 🔴 **STILL OPEN — operator decision** |
+| exit NOT marketable | **one-shot reprice to max(bid, floor), then never again** | ✅ **RULED + CONFIRMED 2026-09-01 — see the §3 decision block below** |
 
 ### ⛔⭐ A HAZARD THE RE-ARM DESIGN ORIGINALLY MISSED (found in build, 2026-08-04)
 
@@ -253,12 +257,66 @@ That is NVVE, and it is the only case that re-arms. Pinned by
 RTH entry that *was* properly bracketed and then stood down — excluding RTH entries would miss the
 very case the constraint exists for.
 
-### 🔴 THE ONE DECISION STILL OWED
+### ✅ THE DECISION — RULED 2026-09-01: **APPROVED WITH A FLOOR** (not approved without one)
 
-For **"exit not marketable at stand-down"**, satisfying "never the bare timer" requires a one-shot
-**reprice-to-bid** so P0a's hold can engage (P0b already caps at the bid). That changes exit
-*pricing* behaviour, so it is **deliberately not built** — inventing a pricing rule silently is
-how band-aids get shipped. Operator's call.
+For **"exit not marketable at stand-down"**: one-shot reprice, price = **max(bid, floor)**, with
+the floor anchored to the **R2 trail floor** for the position. Without the bound, "known cost"
+isn't known — the KUST tape trips breakeven in 0.5s, and a thin-EH bid can sit percent below the
+limit.
+
+**⛔ The bid-below-floor case, stated so it is decided by design and not by accident**
+(operator requirement, 2026-09-01): when `bid < floor`, the market is already past the
+position's own stop level. The one-shot places the limit **AT the floor** (never below — the
+order cannot fill worse than the bound, by construction) **and emits ONE counted marker +
+ntfy page** (`[OMS-P0A-REPRICE-BELOW-FLOOR]`, ASCII title): the position is past its stop and
+the residual tail below the floor is **explicitly accepted and paged, never silent**. Fail
+direction: fail-visible-and-bounded — the alternatives are worse in a named way (chasing the
+bid below the floor = unbounded cost, the thing the floor forbids; holding the stale limit
+silently = the unbounded gap exposure §3 exists to close, decided by accident).
+Falsifier for the build: a stand-down with `bid < floor` that produces either an order priced
+below the floor, or no counted below-floor line.
+
+**The floor, computed — no new parameters, both inputs already persisted on the managed row:**
+
+```text
+floor = max( entry_price * (1 - oms_v2_cw_hard_stop_pct/100),   # the same `protect` level the
+                                                               # bracket paths already compute
+                                                               # (oms/service.py:1621, :2382)
+             position.floor_price or 0.0 )                      # #853's BID-derived ratcheted
+                                                               # high-water floor (nonzero once
+                                                               # the BID peak reaches +1% —
+                                                               # Position._calculate_floor_pct —
+                                                               # independent of +target arming)
+```
+
+Deterministic at stand-down. Input provenance, precisely: `entry_price` is the CONFIRMED FILL
+persisted by `_apply_managed_position_after_fill` (fill-derived, not a quote); `position.floor_price`
+is BID-derived. Neither term can be manufactured by an ask spike — the first is a fill fact, the
+second is BID-only by construction.
+
+**No-churn lifetime (one-shot is structural):** §3 prices ONCE per stand-down episode — a
+placed-flag on the managed row forbids any second §3 reprice. The resulting limit lives until:
+fill · position closed elsewhere (cancel + verify by status poll — a cancel is fire-and-forget,
+#684) · the 09:30 RTH edge, where Part 1's sweep replaces it (cancel, await broker-confirmed
+terminal, then bracket — Part 1's own no-oversell rule). ⚠ An EH DAY order that survives to
+session end expires and leaves the overnight state unchanged — out of §3's scope, named not
+hidden.
+
+**Release when bid < floor:** the floor-priced rest is NOT cancelled on further decline — the
+tail below the floor is the accepted, paged risk. It releases only via the lifetime events
+above; a bid recovering to ≥ floor fills it naturally. The below-floor page fires ONCE per
+stand-down episode (counted, deduped per position-episode) — no page churn.
+
+⛔⭐ **WHAT §3 IS AND IS NOT (operator framing, 2026-09-01 — carry this into every reading):
+§3 is STALENESS protection, not GAP protection.** It converts "limit stranded far above the
+market" into "limit at the floor" — a real gain only in the band between the stranded limit and
+the floor. **Below the floor, the exposure is IDENTICAL to today; the only change is that it is
+PAGED.** Read as "EH risk solved," this design over-promises; read as "the stranded-limit band
+closed and the residual made visible," it delivers exactly what it says.
+
+✅ **STATUS (single label): §3 = OPERATOR-CONFIRMED 2026-09-01** — the formula, the one-shot
+lifetime, and the below-floor handling as written above. Buildable. (Q21 Parts 1/2/4 are a
+separate, operator-APPROVED build and do not wait on §3.)
 
 ---
 
@@ -286,7 +344,8 @@ that nothing was observed.
 | **A1** | A pre-market entry is protected **at all times** — software P0a-hold before the open, native OCO from the open onward | one continuous timeline for one position: EH exit present → RTH edge → OCO legs confirmed live at the broker → software exit stood down **after** that confirmation. **Zero unprotected gap.** |
 | **A2** | **No bare-timer fallback at any stand-down** | across the run, zero cancel/replace of a *marketable* managed exit. The KUST signature (repeated cancels while bid ≥ limit) must be **absent from the tape**, verified against the captured bid series, not from the absence of an alert |
 | **A3** | **Stand-down-clear is PROVEN, not assumed** — force a bracket stand-down on a marketable exit | `[OMS-OCO-STAND-DOWN-CLEARED]` followed by the P0a hold engaging (or a re-armed bracket), and the position exiting cleanly. **This is the P0a validation.** |
-| **A4** | The P0a hold **releases** when the exit stops being marketable | one observation of bid falling below limit → refresh resumes → exit repriced. Without this, A2 could be satisfied by an exit that never adjusts |
+| **A4** | The P0a hold **releases** when the exit stops being marketable — **GENERIC ladder-priced exits only** | one observation of bid falling below limit → refresh resumes → exit repriced. Without this, A2 could be satisfied by an exit that never adjusts. ⛔ Does NOT apply to a §3-placed floor order — see A7 |
+| **A7** | A **§3 floor order** honors the one-shot contract | one §3 stand-down observed end-to-end: priced once at max(bid, floor) → `placed`-flag prevents any second §3 reprice → on a further decline the order REMAINS at the floor and exactly one `[OMS-P0A-REPRICE-BELOW-FLOOR]` page fires → released only by fill / close-elsewhere / the 09:30 Part-1 replacement |
 | **A5** | **Byte-identical on the RTH path** | the existing in-hours OCO flow is unperturbed: characterize before, re-prove identical after. A pre-market fix must not touch the path that already works |
 | **A6** | The failure path is safe | with the bracket emit forced to fail, the position keeps its software exit and the failure is logged. Prove by **deliberate mutation**, not by absence of failure |
 

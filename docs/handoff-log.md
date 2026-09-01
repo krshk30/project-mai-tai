@@ -3063,3 +3063,35 @@ PR — this handoff (#804) itself**; zero others.
 ⛔ `ops/health/fanout_identity_acceptance.py` remains broken — psql does not interpolate `:'var'`
 in a `-c` string — so `#800`'s identity report cannot produce a reading, and it is **not**
 sync-only eligible.
+
+## 2026-09-01 — batch 2: the 21-row triage, session grades, Q21 design (claude-1)
+
+**Closures, one line of evidence each:**
+- **Q16** OMS restarted 08-31 16:47 ET on box HEAD `77ae556` which contains the fix.
+- **S6** the 08-14 "breaches" predate slot stamping; #821 measured coverage 0/239+0/301 — every
+  pre-08-27 composition verdict is ungradeable, both close as artifacts.
+- **N3** 09-01 reading: 5/5 `live:schwab_1m_v2` `[VIRTUAL-CLEAR]`s were TRUE-unbacked (position
+  sold 13–90s before each clear); FLYE virtual=2 backed. False-zero class did not occur that day.
+- **T22** reflog-pinned: box FF'd to `0f35fad` 08-30 15:37 ET; market-data restarted 15:54 ET —
+  the process postdates its fix by 17 minutes.
+- **S5** re-graded per SEGMENT over the stamped era (48/48 BUY fills stamped since 08-28): every
+  stamped breach reduces to the two already-fixed-not-yet-deployed defects (NCRA capped-segment
+  reclaim ×2 = G01; NCRA 14:46 ET pair = #858). The escalation dissolves. ⚠ Session-level grouping
+  had shown 10 "breaches"; 8 dissolve under per-segment grouping — the aggregation-grouping trap.
+- **D23** over-narrowing on the Schwab primary: 08-31 = 207 BUY-open intents / 0 same-symbol
+  successors before terminal (codex); 09-01 = 74 / 0 (claude). Two clean sessions, full populations.
+
+**Grades:** #858/#859/#863 = **NOT DEPLOYED for any completed session** — box ran `77ae556`
+through 09-01; merged ≠ deployed. 09-01 re-demonstrated both defects on old code: **LIDR held
+qty 2 @ 1.55 via a capped-segment entry (fill's `cw_arm_bar_ts` = the capped arm, [pinned]) —
+the live confirmation of the G01 replay (#864)** — closed itself 12:05 ET; 36 zero-hold claim
+releases; zero duplicate fan-out fills = downstream luck, not the fix.
+
+**New defects found:** C42 (post-04:00 joiners arm on stale anchors — 4 on 09-01) and S7
+('first'-slot fills stamp arm_ts=0) — boarded above with owners.
+
+**Q21:** design complete — Probe P matrix + #647 built-dark (flag `false`, re-verified) + P0a
+never-fired (`OMS-P0A-HOLD=0`, re-verified) + the approved 08-18 Webull Parts 1/2/4 NEVER BUILT
+(marker absent everywhere, re-verified). Operator approved building Parts 1/2/4. §3: ruled approved-with-a-floor and then
+**CONFIRMED later the same day** (formula + one-shot lifetime + below-floor paging) — the
+"stays open" wording this entry first carried is superseded by that confirmation.
