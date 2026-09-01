@@ -1,0 +1,9 @@
+{
+  "pr_number": 868,
+  "range_base": "7f623cee9293a96d8a13cd2baad4d566028057d2",
+  "range_head": "4408146084612d2bd6d0352ebc49824a58ca6172",
+  "reviewed_at": "2026-09-01T18:48:09Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Trailer-only re-pin, tree equality 164919b proven; content: S7 segment-id alias, consumers verified join-key-only, pairing improves."
+}

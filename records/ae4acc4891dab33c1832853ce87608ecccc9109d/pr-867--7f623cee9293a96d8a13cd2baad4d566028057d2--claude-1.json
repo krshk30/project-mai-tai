@@ -1,0 +1,9 @@
+{
+  "pr_number": 867,
+  "range_base": "7f623cee9293a96d8a13cd2baad4d566028057d2",
+  "range_head": "ae4acc4891dab33c1832853ce87608ecccc9109d",
+  "reviewed_at": "2026-09-01T18:48:09Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Trailer-only re-pin, tree equality 9343585 proven; content: C42 anchor-floor cap, call sites verified, 3 polarities + G01 replay green."
+}
