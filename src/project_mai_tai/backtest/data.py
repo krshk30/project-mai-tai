@@ -100,7 +100,13 @@ class DbMarketDataSource:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._sf = session_factory
 
-    def watch_windows(self, symbol: str, trade_date):
+    def watch_windows(
+        self,
+        symbol: str,
+        trade_date,
+        *,
+        realtime_confirms_only: bool = False,
+    ):
         """Per-symbol scanner watchlist-membership windows for the #618/#619 watch-start cap.
 
         Reads the durable `scanner_confirmed_events` feed (live since 2026-07-10). Days before that
@@ -109,7 +115,38 @@ class DbMarketDataSource:
         """
         from project_mai_tai.backtest.watch_start import load_watch_windows
 
-        return load_watch_windows(self._sf, trade_date, symbol)
+        return load_watch_windows(
+            self._sf,
+            trade_date,
+            symbol,
+            realtime_confirms_only=realtime_confirms_only,
+        )
+
+    def scanner_confirmed_symbols(
+        self, trade_date, *, realtime_confirms_only: bool = False
+    ) -> list[str]:
+        """Symbols with a genuine scanner CONFIRM on ``trade_date``.
+
+        The optional real-time filter excludes copied prior-session confirmations.  This is the
+        universe required by scanner-window studies; unlike ``v2_qualified_symbols`` it does not
+        admit a name merely because a strategy bar or broker order exists.
+        """
+        realtime_clause = ""
+        if realtime_confirms_only:
+            realtime_clause = (
+                "AND abs(extract(epoch from (created_at - event_at))) <= 120 "
+            )
+        with self._sf() as s:
+            rows = s.execute(
+                text(
+                    "SELECT DISTINCT symbol FROM scanner_confirmed_events "
+                    "WHERE trade_date=:trade_date AND event_type='CONFIRM' "
+                    + realtime_clause
+                    + "ORDER BY symbol"
+                ),
+                {"trade_date": trade_date},
+            ).all()
+        return [str(row[0]).upper() for row in rows]
 
     def trades(self, symbol: str, start: datetime, end: datetime) -> list[Trade]:
         with self._sf() as s:

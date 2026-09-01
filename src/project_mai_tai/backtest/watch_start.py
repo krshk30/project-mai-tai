@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..db.models import ScannerConfirmedEvent
 
@@ -65,18 +65,38 @@ def build_windows(events: list[tuple[str, int]]) -> list[WatchWindow]:
     return windows
 
 
-def load_watch_windows(session_factory, trade_date: date, symbol: str) -> list[WatchWindow]:
-    """Read one symbol's membership windows for a session day from `scanner_confirmed_events`."""
+def load_watch_windows(
+    session_factory,
+    trade_date: date,
+    symbol: str,
+    *,
+    realtime_confirms_only: bool = False,
+) -> list[WatchWindow]:
+    """Read one symbol's membership windows for a session day from `scanner_confirmed_events`.
+
+    ``realtime_confirms_only`` removes the historical carry-forward rows whose ``CONFIRM``
+    timestamp was copied into a later session.  Real scanner decisions are persisted within two
+    minutes of their event timestamp; carry-forward rows are not.  Leave events remain in the
+    stream so a real membership span still closes at the recorded fade/removal boundary.
+    """
     with session_factory() as session:
-        rows = session.execute(
-            select(
-                ScannerConfirmedEvent.event_type,
-                ScannerConfirmedEvent.event_at,
-            )
+        query = (
+            select(ScannerConfirmedEvent.event_type, ScannerConfirmedEvent.event_at)
             .where(ScannerConfirmedEvent.trade_date == trade_date)
             .where(ScannerConfirmedEvent.symbol == symbol.upper())
             .order_by(ScannerConfirmedEvent.event_at)
-        ).all()
+        )
+        if realtime_confirms_only:
+            age_seconds = func.abs(
+                func.extract(
+                    "epoch",
+                    ScannerConfirmedEvent.created_at - ScannerConfirmedEvent.event_at,
+                )
+            )
+            query = query.where(
+                (ScannerConfirmedEvent.event_type != _JOIN) | (age_seconds <= 120)
+            )
+        rows = session.execute(query).all()
     return build_windows([(str(t), int(at.timestamp() * 1000)) for t, at in rows])
 
 
