@@ -36,6 +36,15 @@ echo "- confirm no pending, submitted, or accepted intents remain"
 echo "- confirm no fill/cancel workflow is still in progress"
 confirm_step "Has OMS drained cleanly and is it safe to restart OMS now? [y/N] "
 
+OMS_RESTART_PREFLIGHT="$SCRIPT_DIR/../preflight/preflight_oms_restart.sh"
+if [[ ! -x "$OMS_RESTART_PREFLIGHT" ]]; then
+  echo "OMS restart REFUSED: tracked preflight is missing or not executable: $OMS_RESTART_PREFLIGHT" >&2
+  exit 2
+fi
+echo
+echo "Running the fail-closed OMS restart preflight..."
+"$OMS_RESTART_PREFLIGHT"
+
 restart_unit "project-mai-tai-oms.service"
 
 if (( HOLD_STRATEGY )); then

@@ -305,6 +305,16 @@ run_live_preflight() {
     --overview-url "$APP_OVERVIEW_URL"
 }
 
+run_oms_restart_preflight() {
+  local fence="$REPO_DIR/ops/preflight/preflight_oms_restart.sh"
+  if [[ ! -x "$fence" ]]; then
+    echo "OMS restart REFUSED: tracked preflight is missing or not executable: $fence" >&2
+    exit 2
+  fi
+  echo "Running the fail-closed OMS restart preflight..."
+  "$fence"
+}
+
 cd "$REPO_DIR"
 
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -331,6 +341,7 @@ case "$SERVICE_TARGET" in
     ;;
   oms)
     stop_unit "project-mai-tai-strategy.service"
+    run_oms_restart_preflight
     restart_unit "$PRIMARY_UNIT"
     if [[ "$HOLD_STRATEGY" == "1" ]]; then
       echo "Strategy remains stopped because MAI_TAI_HOLD_STRATEGY=1"

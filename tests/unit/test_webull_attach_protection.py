@@ -26,6 +26,7 @@ import inspect
 import logging
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -155,15 +156,16 @@ def _svc(adapter):
 
 
 def _run(s):
-    return asyncio.run(
-        s._attach_webull_protection(
-            broker_account_name="live:orb",
-            symbol="TEST",
-            quantity=1,
-            entry_price=5.0,
-            strategy_code="schwab_1m_v2",
+    with patch.object(svc, "_is_regular_market_session", return_value=True):
+        return asyncio.run(
+            s._attach_webull_protection(
+                broker_account_name="live:orb",
+                symbol="TEST",
+                quantity=1,
+                entry_price=5.0,
+                strategy_code="schwab_1m_v2",
+            )
         )
-    )
 
 
 def test_it_attaches_and_stops(caplog: pytest.LogCaptureFixture) -> None:
@@ -239,6 +241,46 @@ def test_the_attach_runs_OFF_the_fill_path() -> None:
     assert "ensure_future" in src
 
 
+def test_non_rth_spawn_is_refused_before_a_task_or_broker_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _Adapter(["accepted"])
+    service = _svc(adapter)
+    monkeypatch.setattr(svc, "_is_regular_market_session", lambda: False)
+
+    task = service._spawn_webull_protection(
+        broker_account_name="live:orb",
+        symbol="TEST",
+        quantity=1,
+        entry_price=5.0,
+        strategy_code="schwab_1m_v2",
+    )
+
+    assert task is None
+    assert adapter.calls == []
+    assert "_webull_protect_tasks" not in service.__dict__
+
+
+def test_non_rth_direct_attach_is_refused_before_broker_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _Adapter(["accepted"])
+    service = _svc(adapter)
+    monkeypatch.setattr(svc, "_is_regular_market_session", lambda: False)
+
+    asyncio.run(
+        service._attach_webull_protection(
+            broker_account_name="live:orb",
+            symbol="TEST",
+            quantity=1,
+            entry_price=5.0,
+            strategy_code="schwab_1m_v2",
+        )
+    )
+
+    assert adapter.calls == []
+
+
 # ==================================================================================================
 # §167 — ONE COUNTED LINE PER BARE WEBULL FILL.
 #
@@ -254,6 +296,106 @@ def _counter_svc():
     s = svc.OmsRiskService.__new__(svc.OmsRiskService)
     s.logger = logging.getLogger("test-bare-fill")
     return s
+
+
+class _ManagedFillStore:
+    def __init__(self) -> None:
+        self.row = None
+
+    def get_open_managed_position(self, _session, **_kwargs):
+        return self.row
+
+    def create_managed_position(self, _session, **kwargs) -> None:
+        self.row = SimpleNamespace(**kwargs)
+
+
+def _managed_fill_svc():
+    service = svc.OmsRiskService.__new__(svc.OmsRiskService)
+    service.settings = SimpleNamespace(
+        oms_v2_exit_management_enabled=True,
+        oms_settlement_probe_enabled=False,
+    )
+    service.store = _ManagedFillStore()
+    service._managed_v2_symbols = set()
+    service.logger = logging.getLogger("test-webull-premarket-fill")
+    spawned: list[dict[str, object]] = []
+    service._spawn_webull_protection = lambda **kwargs: spawned.append(kwargs)
+    return service, spawned
+
+
+def _apply_bare_webull_fill(service) -> None:
+    service._apply_managed_position_after_fill(
+        session=object(),
+        strategy_code="schwab_1m_v2",
+        broker_account_name="live:orb",
+        symbol="TEST",
+        side="buy",
+        intent_type="open",
+        quantity=Decimal("1"),
+        price=Decimal("5.00"),
+        metadata={"fanout_leg": "webull"},
+        entry_client_order_id="entry-1",
+    )
+
+
+def test_premarket_fill_emits_exactly_one_counted_marker_and_does_not_attach(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime as _dt
+
+    service, spawned = _managed_fill_svc()
+    monkeypatch.setattr(svc, "utcnow", lambda: _dt(2026, 9, 1, 12, 0, tzinfo=UTC))  # 08:00 ET
+
+    with caplog.at_level(logging.WARNING):
+        _apply_bare_webull_fill(service)
+
+    lines = [r.getMessage() for r in caplog.records if "WEBULL-PREMARKET-UNPROTECTED" in r.getMessage()]
+    assert len(lines) == 1
+    assert "unprotected_fills_this_session=1" in lines[0]
+    assert "session_et=2026-09-01" in lines[0]
+    assert "WEBULL-BARE-FILL" not in caplog.text
+    assert spawned == []
+
+
+def test_rth_fill_keeps_the_existing_bare_count_and_attach(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime as _dt
+
+    service, spawned = _managed_fill_svc()
+    monkeypatch.setattr(svc, "utcnow", lambda: _dt(2026, 9, 1, 14, 0, tzinfo=UTC))  # 10:00 ET
+
+    with caplog.at_level(logging.WARNING):
+        _apply_bare_webull_fill(service)
+
+    assert "[WEBULL-BARE-FILL]" in caplog.text
+    assert "WEBULL-PREMARKET-UNPROTECTED" not in caplog.text
+    assert len(spawned) == 1
+
+
+def test_premarket_counter_is_one_line_per_fill_with_a_running_session_count(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime as _dt
+
+    service = _counter_svc()
+    monkeypatch.setattr(svc, "utcnow", lambda: _dt(2026, 9, 1, 12, 0, tzinfo=UTC))
+
+    with caplog.at_level(logging.WARNING):
+        counts = [
+            service._count_premarket_unprotected_webull_fill(
+                symbol=symbol,
+                broker_account_name="live:orb",
+                quantity=1,
+                entry_price=1.0,
+            )
+            for symbol in ("AAA", "BBB", "CCC")
+        ]
+
+    lines = [r.getMessage() for r in caplog.records if "WEBULL-PREMARKET-UNPROTECTED" in r.getMessage()]
+    assert counts == [1, 2, 3]
+    assert len(lines) == 3
+    assert "unprotected_fills_this_session=3" in lines[-1]
 
 
 def test_a_bare_fill_emits_one_counted_line(caplog: pytest.LogCaptureFixture) -> None:
