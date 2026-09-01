@@ -390,13 +390,29 @@ def test_post_latch_addition_does_not_fabricate_initial_boot_completion() -> Non
     assert fields(release)["restoration_complete"] == "0"
 
 
-def test_db3_zero_is_expected_not_pass_and_keeps_its_denominator() -> None:
+def test_db3_zero_with_a_real_population_is_count_only_with_its_denominator() -> None:
     row = metrics(db=complete_db(db3_probe_symbols=17, db3_fanout_only_excluded=0))[
         "db3_fanout_only_excluded"
     ][0]
-    assert row.status == "EXPECTED_ZERO"
+    assert row.status == "COUNT_ONLY"
     assert fields(row) == {"excluded": "0", "probe_symbols": "17"}
-    assert "mutation" in row.zero_means
+    assert "no_correctness_verdict" in row.zero_means
+
+
+def test_db3_zero_without_a_probe_population_is_still_count_only() -> None:
+    row = metrics(db=complete_db())["db3_fanout_only_excluded"][0]
+    assert row.status == "COUNT_ONLY"
+    assert fields(row) == {"excluded": "0", "probe_symbols": "0"}
+    assert "no_correctness_verdict" in row.zero_means
+
+
+def test_db3_nonzero_is_count_only() -> None:
+    row = metrics(db=complete_db(db3_probe_symbols=17, db3_fanout_only_excluded=4))[
+        "db3_fanout_only_excluded"
+    ][0]
+    assert row.status == "COUNT_ONLY"
+    assert fields(row) == {"excluded": "4", "probe_symbols": "17"}
+    assert "no_correctness_verdict" in row.zero_means
 
 
 def test_database_count_parser_refuses_missing_or_impossible_rows() -> None:

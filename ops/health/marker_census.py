@@ -5,12 +5,11 @@ This is a census, not an acceptance gate.  It never promotes a quiet marker to
 PASS.  Each line names the population that could have produced the marker and
 states what zero means.  The report deliberately keeps these states distinct:
 
+* COUNT_ONLY -- an informational count with no correctness verdict;
 * OBSERVED -- a non-zero population made the line readable;
 * UNEXERCISED -- the denominator was zero, including a gate never reached;
 * COULD_NOT_TELL -- the required evidence was unreadable or no exact
   denominator exists;
-* EXPECTED_ZERO -- DB3's production population is rare by construction and its
-  correctness is mutation-proven, not graded from a live zero;
 * BLOCKED / FAIL -- the measured population reached a known bad state.
 
 W3 (the raw-invalid refusal watch) is intentionally absent.  Its population is
@@ -684,7 +683,7 @@ def build_lines(
                 "db3_fanout_only_excluded",
                 "COULD_NOT_TELL",
                 (("excluded", "unknown"), ("probe_symbols", "unknown")),
-                "expected_zero_but_the_observational_population_was_unreadable",
+                "count_and_denominator_are_unreadable",
             )
         )
     else:
@@ -693,11 +692,9 @@ def build_lines(
         result.append(
             CensusLine(
                 "db3_fanout_only_excluded",
-                "EXPECTED_ZERO" if excluded == 0 else "OBSERVED",
+                "COUNT_ONLY",
                 (("excluded", str(excluded)), ("probe_symbols", str(probe_symbols))),
-                "EXPECTED(the_population_is_rare_by_design;correctness_is_mutation_proven)"
-                if excluded == 0
-                else "nonzero_is_an_exercise_count_not_a_correctness_grade",
+                "zero_and_nonzero_are_normal_under_schwab_policy;no_correctness_verdict",
             )
         )
 
