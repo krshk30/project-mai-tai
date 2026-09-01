@@ -309,9 +309,13 @@ class SymbolState:
     # claim expiry. It resets only when the segment itself ends.
     fanout_webull_resting_taken: bool = False
     fanout_webull_reclaim_taken: bool = False
-    # D20 denominator observation: the last slot_id whose crossing was logged while a mirrored
-    # rest was LIVE at Webull. Dedup key only — never gates an emit or a claim.
-    fanout_mirror_cross_observed_slot_id: str = ""
+    # D20 denominator observation (#862 pinned schema): edge-triggered live up-cross of the
+    # mirror level. `below_seen` arms on placement and re-arms when price prints below the level;
+    # `cross_seq` numbers real up-crosses of one economic slot. Observation state only — never
+    # gates an emit or a claim.
+    fanout_mirror_cross_below_seen: bool = False
+    fanout_mirror_cross_seq: int = 0
+    fanout_mirror_cross_slot_id: str = ""
     # First Schwab-union-zero observation while durable positive Webull evidence holds the claim.
     # A later position poll either sees the union restore and clears this timer, or releases the
     # venue-local claim at FANOUT_POSITIVE_ZERO_HOLD_MS. It is deliberately independent of
@@ -2892,6 +2896,9 @@ class SchwabV2Strategy:
             )
             if claimed:
                 state.webull_resting_active = True
+                # D20 observation edge: a fresh mirror level arms the below-edge so the FIRST
+                # live up-cross of this placement emits (price sits below a new stop by design).
+                state.fanout_mirror_cross_below_seen = True
                 entry_n = state.cw_entries_this_flip + 1
                 segment_id = int(shared_fanout_identity["fanout_segment_id"])
                 logger.info(
@@ -3646,7 +3653,11 @@ class SchwabV2Strategy:
                     obs_bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
                     obs_ask = float(getattr(quote, "ask_price", 0.0) or 0.0)
                     obs_px = (obs_bid + obs_ask) / 2.0 if (obs_bid > 0.0 and obs_ask > 0.0) else 0.0
-                if obs_px >= state.resting_level > 0.0:
+                if 0.0 < obs_px < state.resting_level:
+                    # EDGE RE-ARM (#862): a print below the level makes the next at-or-above
+                    # print a REAL up-cross. Repeated quotes above one level emit nothing.
+                    state.fanout_mirror_cross_below_seen = True
+                elif obs_px >= state.resting_level > 0.0 and state.fanout_mirror_cross_below_seen:
                     obs_slot_id = str(state.fanout_claim_slot_id or "").strip()
                     if not obs_slot_id and int(state.fanout_segment_id or 0) > 0:
                         obs_slot_id = fanout_slot_id(
@@ -3655,15 +3666,20 @@ class SchwabV2Strategy:
                             segment_id=int(state.fanout_segment_id),
                             slot="resting",
                         )
-                    if obs_slot_id and obs_slot_id != state.fanout_mirror_cross_observed_slot_id:
-                        state.fanout_mirror_cross_observed_slot_id = obs_slot_id
+                    if obs_slot_id:
+                        state.fanout_mirror_cross_below_seen = False
+                        if obs_slot_id != state.fanout_mirror_cross_slot_id:
+                            state.fanout_mirror_cross_slot_id = obs_slot_id
+                            state.fanout_mirror_cross_seq = 0
+                        state.fanout_mirror_cross_seq += 1
                         logger.info(
-                            "[V2-FANOUT-MIRROR-CROSS-OBSERVED] %s slot_id=%s px=%.4f "
-                            "level=%.4f — DENOMINATOR line: one crossed-live-mirror slot; the "
-                            "guards below may rightly suppress the emit, this line fires anyway "
-                            "(zero next session = UNEXERCISED, not clean)",
+                            "[V2-FANOUT-MIRROR-LIVE-CROSS] %s slot_id=%s cross_seq=%d px=%.4f "
+                            "level=%.4f — D20 DENOMINATOR (#862): one real live up-cross of a "
+                            "LIVE mirror level; the guards below may rightly suppress the emit, "
+                            "this line fires anyway (zero next session = UNEXERCISED, not clean)",
                             state.symbol,
                             obs_slot_id,
+                            state.fanout_mirror_cross_seq,
                             obs_px,
                             state.resting_level,
                         )
