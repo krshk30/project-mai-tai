@@ -272,7 +272,9 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   pre-market attach · ONE counted `[WEBULL-PREMARKET-UNPROTECTED]` line per fill · OMS-restart
   fence. Log/fence-only, cannot oversell. Denominator: pre-market `live:orb` fills per session.
   Falsifier: a session with pre-market fills where the counted line ≠ fill count.
-  ⛔ §3 reprice-to-bid is NOT approved — separate operator discussion. Kin: item 11 above.
+  §3 RULED 09-01: **approved WITH a floor** (R2 trail anchor); bid-below-floor case stated in
+  the design (floor-priced rest + counted page) — 🔶 that case-handling awaits operator
+  confirmation before any §3 build. Kin: item 11 above.
 - **C42 — post-04:00 joiners arm on stale anchors** *(owner: codex-2; replaces C28+C41, one
   question asked twice)*. 09-01: 4 arms on 08-31 anchors (GYGY 04:06 · WETO 04:25 · SSM 04:35 ·
   FLYE 05:49 ET), unrolled AND uncapped — the 04:00 roll ran at `watchlist=0`, and the seed-cap is

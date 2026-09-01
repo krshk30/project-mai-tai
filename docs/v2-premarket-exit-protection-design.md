@@ -253,12 +253,28 @@ That is NVVE, and it is the only case that re-arms. Pinned by
 RTH entry that *was* properly bracketed and then stood down — excluding RTH entries would miss the
 very case the constraint exists for.
 
-### 🔴 THE ONE DECISION STILL OWED
+### ✅ THE DECISION — RULED 2026-09-01: **APPROVED WITH A FLOOR** (not approved without one)
 
-For **"exit not marketable at stand-down"**, satisfying "never the bare timer" requires a one-shot
-**reprice-to-bid** so P0a's hold can engage (P0b already caps at the bid). That changes exit
-*pricing* behaviour, so it is **deliberately not built** — inventing a pricing rule silently is
-how band-aids get shipped. Operator's call.
+For **"exit not marketable at stand-down"**: one-shot reprice, price = **max(bid, floor)**, with
+the floor anchored to the **R2 trail floor** for the position. Without the bound, "known cost"
+isn't known — the KUST tape trips breakeven in 0.5s, and a thin-EH bid can sit percent below the
+limit.
+
+**⛔ The bid-below-floor case, stated so it is decided by design and not by accident**
+(operator requirement, 2026-09-01): when `bid < floor`, the market is already past the
+position's own stop level. The one-shot places the limit **AT the floor** (never below — the
+order cannot fill worse than the bound, by construction) **and emits ONE counted marker +
+ntfy page** (`[OMS-P0A-REPRICE-BELOW-FLOOR]`, ASCII title): the position is past its stop and
+the residual tail below the floor is **explicitly accepted and paged, never silent**. Fail
+direction: fail-visible-and-bounded — the alternatives are worse in a named way (chasing the
+bid below the floor = unbounded cost, the thing the floor forbids; holding the stale limit
+silently = the unbounded gap exposure §3 exists to close, decided by accident).
+Falsifier for the build: a stand-down with `bid < floor` that produces either an order priced
+below the floor, or no counted below-floor line.
+
+🔶 **PROPOSED, awaiting operator confirmation:** the below-floor behaviour above (floor-priced
+rest + page) is claude-1's answer to the operator's stated requirement; the ruling approved the
+floor concept, not yet this specific case-handling. No build until confirmed.
 
 ---
 
