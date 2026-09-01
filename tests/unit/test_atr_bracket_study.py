@@ -7,6 +7,8 @@ import pytest
 
 from project_mai_tai.backtest.atr_bracket_study import (
     BracketPolicy,
+    TrailingPolicy,
+    _CompositionCappedReplayStrategy,
     _consume_stale_arm,
     run_symbol_policy,
 )
@@ -124,6 +126,18 @@ def test_positive_floor_is_rejected() -> None:
         BracketPolicy(target_pct=1.0, floor_pct=1.0)
 
 
+def test_counterfactual_exit_cannot_reopen_consumed_first_slot() -> None:
+    strategy = _CompositionCappedReplayStrategy(_settings())
+    state = strategy.watchlist_state(SYMBOL)
+    state.cw_resting_taken = True
+
+    strategy._queue_resting_place(state, 10.0, slot="first")
+
+    assert strategy.drain_pending_intents() == []
+    assert state.resting_active is False
+    assert strategy.n_duplicate_first_slots_refused == 1
+
+
 def test_target_uses_executable_ask_entry_and_stated_limit_exit() -> None:
     quotes = _entry_quotes()
     quotes.append(
@@ -170,6 +184,55 @@ def test_zero_floor_triggers_on_first_later_bid_and_fills_on_next_bid() -> None:
     assert trade.exit_ts == fill_ts
     assert trade.exit_px == pytest.approx(98.3)
     assert trade.ret_pct < 0
+
+
+def test_trailing_policy_runs_past_activation_then_exits_on_pullback() -> None:
+    quotes = _entry_quotes()
+    quotes.extend(
+        [
+            Quote(
+                ts=BASE + timedelta(minutes=16, seconds=31),
+                bid=99.60,
+                ask=99.70,
+                last=99.65,
+            ),
+            Quote(
+                ts=BASE + timedelta(minutes=16, seconds=32),
+                bid=100.50,
+                ask=100.60,
+                last=100.55,
+            ),
+            Quote(
+                ts=BASE + timedelta(minutes=16, seconds=33),
+                bid=99.48,
+                ask=99.58,
+                last=99.53,
+            ),
+            Quote(
+                ts=BASE + timedelta(minutes=16, seconds=34),
+                bid=99.55,
+                ask=99.65,
+                last=99.60,
+            ),
+        ]
+    )
+
+    result = run_symbol_policy(
+        Source(quotes),
+        SYMBOL,
+        "2026-07-23",
+        _settings(),
+        TrailingPolicy(initial_floor_pct=-1.0, activation_pct=1.0, trail_pct=1.0),
+    )
+
+    assert len(result.trades) == 1
+    trade = result.trades[0]
+    assert trade.target_px is None
+    assert trade.trailing_activation_ts == BASE + timedelta(minutes=16, seconds=31)
+    assert trade.trailing_high_px == pytest.approx(100.50)
+    assert trade.exit_reason == "trail"
+    assert trade.exit_ts == BASE + timedelta(minutes=16, seconds=34)
+    assert trade.ret_pct > 1.0
 
 
 def test_dense_exit_tape_does_not_wait_for_next_schwab_capture() -> None:

@@ -61,6 +61,40 @@ class BracketPolicy:
 
 
 @dataclass(frozen=True)
+class TrailingPolicy:
+    """Protect a reached gain while allowing the position to continue higher."""
+
+    initial_floor_pct: float
+    activation_pct: float
+    trail_pct: float
+    lock_pct: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.initial_floor_pct > 0:
+            raise ValueError("initial_floor_pct must be zero or negative")
+        if self.activation_pct <= 0:
+            raise ValueError("activation_pct must be positive")
+        if self.trail_pct <= 0:
+            raise ValueError("trail_pct must be positive")
+        if self.resolved_lock_pct > self.activation_pct:
+            raise ValueError("lock_pct cannot exceed activation_pct")
+
+    @property
+    def resolved_lock_pct(self) -> float:
+        return self.activation_pct if self.lock_pct is None else self.lock_pct
+
+    @property
+    def name(self) -> str:
+        return (
+            f"trail_activate+{self.activation_pct:g}_lock{self.resolved_lock_pct:+g}"
+            f"_distance{self.trail_pct:g}_floor{self.initial_floor_pct:+g}"
+        )
+
+
+ExitPolicy = BracketPolicy | TrailingPolicy
+
+
+@dataclass(frozen=True)
 class StudySkip:
     symbol: str
     reason: str
@@ -90,12 +124,16 @@ class StudyTrade:
     signal_ts: datetime
     entry_ts: datetime
     entry_px: float
-    target_px: float
+    target_px: float | None
     floor_px: float
+    trailing_activation_px: float | None
+    trailing_activation_ts: datetime | None
+    trailing_high_px: float | None
+    trailing_stop_px: float | None
     exit_trigger_ts: datetime
     exit_ts: datetime
     exit_px: float
-    exit_reason: Literal["target", "floor", "close", "unmodellable"]
+    exit_reason: Literal["target", "floor", "trail", "close", "unmodellable"]
     ret_pct: float
     duration_seconds: float
     mfe_pct: float
@@ -111,7 +149,7 @@ class StudyTrade:
 class BracketStudyResult:
     symbol: str
     session_day_et: str
-    policy: BracketPolicy
+    policy: ExitPolicy
     n_bars: int
     n_quotes: int
     n_exit_quotes: int
@@ -121,6 +159,26 @@ class BracketStudyResult:
     misses: list[StudyMiss] = field(default_factory=list)
     n_watch_start_capped: int = 0
     n_entry_drafts_outside_scanner: int = 0
+    n_duplicate_first_slots_refused: int = 0
+
+
+class _CompositionCappedReplayStrategy(ReplayStrategy):
+    """Keep counterfactual exits from reopening a consumed first-entry slot.
+
+    Production records the fill in ``cw_resting_taken`` and documents that an exit does not refill
+    the slot. The live first-resting placement manager does not currently read that flag, which is
+    normally covered by the position remaining open through the confirming BUY arm. A tighter
+    research floor can close before that arm and expose a duplicate placement that violates the
+    strategy contract. The study enforces the contract without changing production code.
+    """
+
+    n_duplicate_first_slots_refused: int = 0
+
+    def _queue_resting_place(self, state, line: float, *, slot: str = "first") -> None:
+        if slot == "first" and state.cw_resting_taken:
+            self.n_duplicate_first_slots_refused += 1
+            return
+        super()._queue_resting_place(state, line, slot=slot)
 
 
 @dataclass
@@ -145,8 +203,11 @@ class _OpenTrade:
     segment_id: int
     arm_bar_ts_ms: int
     scanner_window: WatchWindow
-    target_px: float
+    target_px: float | None
     floor_px: float
+    trailing_activation_px: float | None
+    trailing_lock_px: float | None
+    trailing_distance_pct: float | None
     max_bid: float
     min_bid: float
     quotes_observed: int = 0
@@ -155,6 +216,9 @@ class _OpenTrade:
     minus_1_ts: datetime | None = None
     minus_2_ts: datetime | None = None
     floor_trigger_ts: datetime | None = None
+    trailing_activation_ts: datetime | None = None
+    trailing_stop_px: float | None = None
+    pending_exit_reason: Literal["floor", "trail"] | None = None
 
     def observe(self, ts: datetime, bid: float) -> None:
         self.quotes_observed += 1
@@ -245,7 +309,7 @@ def run_symbol_policy(
     symbol: str,
     session_day_et: str,
     settings: Settings,
-    policy: BracketPolicy,
+    policy: ExitPolicy,
     *,
     observation_start_hour_et: int = 4,
     entry_start_hour_et: int = 7,
@@ -312,7 +376,7 @@ def run_symbol_policy(
         )
         return result
 
-    strategy = ReplayStrategy(settings, watch_windows=windows)
+    strategy = _CompositionCappedReplayStrategy(settings, watch_windows=windows)
     strategy._boot_ms = int(observation_start.timestamp() * 1000)
     quantity = strategy._atr_qty
     session_anchor_ms = session_start_ts_ms(int(entry_start.timestamp() * 1000))
@@ -396,8 +460,34 @@ def run_symbol_policy(
             segment_id=segment_id,
             arm_bar_ts_ms=arm_bar_ts_ms,
             scanner_window=scanner_window,
-            target_px=fill_px * (1.0 + policy.target_pct / 100.0),
-            floor_px=fill_px * (1.0 + policy.floor_pct / 100.0),
+            target_px=(
+                fill_px * (1.0 + policy.target_pct / 100.0)
+                if isinstance(policy, BracketPolicy)
+                else None
+            ),
+            floor_px=fill_px
+            * (
+                1.0
+                + (
+                    policy.floor_pct
+                    if isinstance(policy, BracketPolicy)
+                    else policy.initial_floor_pct
+                )
+                / 100.0
+            ),
+            trailing_activation_px=(
+                fill_px * (1.0 + policy.activation_pct / 100.0)
+                if isinstance(policy, TrailingPolicy)
+                else None
+            ),
+            trailing_lock_px=(
+                fill_px * (1.0 + policy.resolved_lock_pct / 100.0)
+                if isinstance(policy, TrailingPolicy)
+                else None
+            ),
+            trailing_distance_pct=(
+                policy.trail_pct if isinstance(policy, TrailingPolicy) else None
+            ),
             max_bid=fill_px,
             min_bid=fill_px,
         )
@@ -454,7 +544,7 @@ def run_symbol_policy(
         trigger_ts: datetime,
         exit_ts: datetime,
         exit_px: float,
-        reason: Literal["target", "floor", "close", "unmodellable"],
+        reason: Literal["target", "floor", "trail", "close", "unmodellable"],
     ) -> None:
         nonlocal open_trade
         trade = open_trade
@@ -483,6 +573,12 @@ def run_symbol_policy(
                 entry_px=trade.entry_px,
                 target_px=trade.target_px,
                 floor_px=trade.floor_px,
+                trailing_activation_px=trade.trailing_activation_px,
+                trailing_activation_ts=trade.trailing_activation_ts,
+                trailing_high_px=(
+                    trade.max_bid if trade.trailing_activation_ts is not None else None
+                ),
+                trailing_stop_px=trade.trailing_stop_px,
                 exit_trigger_ts=trigger_ts,
                 exit_ts=exit_ts,
                 exit_px=exit_px,
@@ -517,10 +613,10 @@ def run_symbol_policy(
                 trigger_ts=open_trade.floor_trigger_ts,
                 exit_ts=quote.ts,
                 exit_px=bid,
-                reason="floor",
+                reason=open_trade.pending_exit_reason or "floor",
             )
             return
-        if bid >= open_trade.target_px:
+        if open_trade.target_px is not None and bid >= open_trade.target_px:
             finish_trade(
                 trigger_ts=quote.ts,
                 exit_ts=quote.ts,
@@ -528,8 +624,30 @@ def run_symbol_policy(
                 reason="target",
             )
             return
+        if open_trade.trailing_activation_px is not None:
+            if (
+                open_trade.trailing_activation_ts is None
+                and bid >= open_trade.trailing_activation_px
+            ):
+                open_trade.trailing_activation_ts = quote.ts
+            if open_trade.trailing_activation_ts is not None:
+                assert open_trade.trailing_lock_px is not None
+                assert open_trade.trailing_distance_pct is not None
+                open_trade.trailing_stop_px = max(
+                    open_trade.trailing_lock_px,
+                    open_trade.max_bid
+                    * (1.0 - open_trade.trailing_distance_pct / 100.0),
+                )
+                if (
+                    quote.ts > open_trade.trailing_activation_ts
+                    and bid <= open_trade.trailing_stop_px
+                ):
+                    open_trade.floor_trigger_ts = quote.ts
+                    open_trade.pending_exit_reason = "trail"
+                return
         if bid <= open_trade.floor_px:
             open_trade.floor_trigger_ts = quote.ts
+            open_trade.pending_exit_reason = "floor"
 
     for event_ms, _, event_type, payload in events:
         event_dt = datetime.fromtimestamp(event_ms / 1000.0, UTC)
@@ -628,7 +746,11 @@ def run_symbol_policy(
                 trigger_ts=trigger_ts,
                 exit_ts=last_bid[0],
                 exit_px=last_bid[1],
-                reason="floor" if open_trade.floor_trigger_ts else "close",
+                reason=(
+                    open_trade.pending_exit_reason or "floor"
+                    if open_trade.floor_trigger_ts
+                    else "close"
+                ),
             )
     if working_rest is not None:
         result.misses.append(
@@ -639,6 +761,7 @@ def run_symbol_policy(
                 f"{working_rest.slot} band [{working_rest.stop:.4f},{working_rest.limit:.4f}]",
             )
         )
+    result.n_duplicate_first_slots_refused = strategy.n_duplicate_first_slots_refused
     return result
 
 
@@ -716,6 +839,7 @@ def _summary_rows(results: list[BracketStudyResult]) -> list[dict[str, object]]:
                     "trades": len(trades),
                     "targets": sum(trade.exit_reason == "target" for trade in trades),
                     "floors": sum(trade.exit_reason == "floor" for trade in trades),
+                    "trails": sum(trade.exit_reason == "trail" for trade in trades),
                     "closes": sum(trade.exit_reason == "close" for trade in trades),
                     "wins": sum(value > 0 for value in returns),
                     "losses": sum(value < 0 for value in returns),
@@ -759,9 +883,10 @@ def _write_outputs(
     *,
     start: date,
     end: date,
+    study_name: str = "atr-bracket-study",
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"atr-bracket-study-{start.isoformat()}-to-{end.isoformat()}"
+    stem = f"{study_name}-{start.isoformat()}-to-{end.isoformat()}"
     detail_path = output_dir / f"{stem}.json"
     trades_path = output_dir / f"{stem}-trades.csv"
     summary_path = output_dir / f"{stem}-summary.csv"
@@ -798,6 +923,11 @@ def main() -> int:
     parser.add_argument("--start", required=True, type=date.fromisoformat)
     parser.add_argument("--end", required=True, type=date.fromisoformat)
     parser.add_argument("--output-dir", default="analysis/reports")
+    parser.add_argument(
+        "--policy-set",
+        choices=("bracket", "trailing", "trailing-ladder"),
+        default="bracket",
+    )
     args = parser.parse_args()
 
     from project_mai_tai.backtest.data import DbMarketDataSource
@@ -814,11 +944,35 @@ def main() -> int:
         strategy_schwab_1m_v2_webull_resting_mirror_enabled=False,
     )
     source = _CachedSource(DbMarketDataSource(build_session_factory(base_settings)))
-    policies = [
-        BracketPolicy(target_pct=target, floor_pct=floor)
-        for target in (1.0, 2.0)
-        for floor in (-2.0, -1.0, 0.0)
-    ]
+    if args.policy_set == "trailing":
+        policies: list[ExitPolicy] = [
+            TrailingPolicy(
+                initial_floor_pct=floor,
+                activation_pct=activation,
+                trail_pct=trail,
+            )
+            for floor in (-1.0, 0.0)
+            for activation in (1.0, 2.0)
+            for trail in (1.0, 2.0)
+        ]
+    elif args.policy_set == "trailing-ladder":
+        policies = [
+            TrailingPolicy(
+                initial_floor_pct=floor,
+                activation_pct=activation,
+                lock_pct=lock,
+                trail_pct=trail,
+            )
+            for floor in (-2.0, -1.0)
+            for activation, lock in ((1.0, 0.0), (2.0, 1.0))
+            for trail in (1.0, 2.0)
+        ]
+    else:
+        policies = [
+            BracketPolicy(target_pct=target, floor_pct=floor)
+            for target in (1.0, 2.0)
+            for floor in (-2.0, -1.0, 0.0)
+        ]
 
     results: list[BracketStudyResult] = []
     sessions = trading_sessions(args.start, args.end)
@@ -847,6 +1001,15 @@ def main() -> int:
         results,
         start=args.start,
         end=args.end,
+        study_name=(
+            "atr-trailing-study"
+            if args.policy_set == "trailing"
+            else (
+                "atr-trailing-ladder-study"
+                if args.policy_set == "trailing-ladder"
+                else "atr-bracket-study"
+            )
+        ),
     )
     total_trades = sum(len(result.trades) for result in results)
     total_skips = sum(len(result.skips) for result in results)

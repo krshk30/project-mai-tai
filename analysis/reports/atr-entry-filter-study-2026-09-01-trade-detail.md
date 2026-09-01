@@ -1,4 +1,8 @@
-# September 1 ATR Trade Detail
+# September 1 ATR Trade Detail (Superseded)
+
+> **WITHDRAWN:** this version contains the invalid second BIAF first-slot entry at 09:02 ET.
+> Use the [corrected two-slot report](atr-two-slot-study-2026-09-01-corrected.md). The corrected
+> replay has 18 trades and zero segments with more than one first plus one reclaim.
 
 Policy: current live ATR entry logic, research exit at +1% target / -2% floor.
 

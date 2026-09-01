@@ -1,4 +1,9 @@
-# ATR Entry / Static Bracket Backtest
+# ATR Entry / Static Bracket Backtest (Superseded Narrative)
+
+> **WITHDRAWN:** the original narrative was generated before counterfactual exits were prevented
+> from reopening a consumed first slot. Use the regenerated CSV/JSON artifacts and the
+> [trailing study](atr-trailing-study-2026-08-24-to-2026-09-01.md). The corrected +1% / -2%
+> baseline is 119 trades, 44 wins, 75 losses, and zero segment-cap violations.
 
 Study period: 2026-08-24 through 2026-09-01 (seven weekday sessions)
 

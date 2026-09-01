@@ -1,4 +1,8 @@
-# ATR Entry Filter And Zero-Floor Reassessment
+# ATR Entry Filter And Zero-Floor Reassessment (Superseded)
+
+> **WITHDRAWN:** this report's 129-trade population predates enforcement of the documented V2
+> two-slot composition cap. The corrected +1% / -2% population is 119 trades with zero duplicate
+> first or reclaim slots. Do not use the selector results below for a trading decision.
 
 Study population: the 129 `target+1_floor-2` trades from 2026-08-24 through 2026-09-01.
 
