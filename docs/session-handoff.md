@@ -12,7 +12,9 @@ Needs `codex-2`'s review before merge — the author never reviews.
 
 | | |
 |---|---|
-| main / box | **`77ae556f73da3b6eb0079acf43610faa8affea8e`** |
+| box (deployed) | **`77ae556f73da3b6eb0079acf43610faa8affea8e`** — re-verified ON THE BOX 2026-08-31 20:15 ET, branch `main`, checkout clean |
+| main | ahead of the box by **docs-only** commits (#855, #856 and this one; `db3bf331` at 20:15 ET) |
+| ⛔ main vs box | **`git diff --name-only 77ae556 <main>` returns NOTHING outside `docs/`** — measured, 4 files. The box is **NOT behind on code**; do not "catch it up" |
 | checkout | clean |
 | open PRs | **0** |
 | exposure | managed **0** · virtual **0** · account_positions **0** · non-terminal intents **0** · working orders **0** |
@@ -167,6 +169,7 @@ was covering for it' mean?"* A file count proves files moved; only an answer pro
 | **Three non-cron research scripts** | codex-2 | hold dead embedded credentials; cleanup only |
 | **CI rule** | codex-2 | scripts load the DSN from the managed env; DB failure ⇒ `COULD_NOT_TELL` + non-zero exit, never zero. **CI scans RESOLVED CRON TARGETS, not filename patterns** |
 | **AEHL exit price / P&L** | — | permanently `COULD_NOT_TELL`. The manual close was never recorded |
+| **`.checksums` pins ABSOLUTE paths** | claude-1 | boarded 2026-08-31 by the author of #856, who scoped it OUT of that PR rather than leave it unowned. **NEXT ACTION:** record/verify paths *relative* to the fleet dir so a machine move is not reported as tampering. ⛔ Must KEEP the fail-closed refusal, and needs a selftest case in BOTH directions — moved machine ⇒ pass, modified content ⇒ still refuse. Low priority; no migration is imminent |
 
 ---
 
