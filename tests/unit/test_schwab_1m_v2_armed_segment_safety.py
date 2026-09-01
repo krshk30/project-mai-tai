@@ -119,3 +119,46 @@ def test_disarm_clears_arm_bar_ts() -> None:
     s._cw_v2_track(st, _sig(flip="SELL"))  # SELL flip disarms
     assert st.cw_armed is False and st.cw_arm_bar_ts == 0
     assert s.cw_armed_segments() == []  # no armed segments after disarm
+
+
+# --- G01 (2026-08-31): the cap must consume the slots the live entry paths READ -------------
+#
+# NCRA: [V2-CW-SEED-CAP] at 11:06 ET, then THREE intrabar entries fired through the "capped"
+# segment (13:47, 14:01, 15:25 ET, each n=3), the last +42% past a flip we never watched.
+# The counter the cap wrote is "kept for labelling/back-compat; NOT the cap" — the live gates
+# are the composition claims. One-variable controlled pair: vary ONLY the arm's timing.
+
+def _bare_bot(strat, watch_start: dict[str, int]):
+    from project_mai_tai.services import schwab_1m_v2_bot as botmod
+    bot = object.__new__(botmod.SchwabV2BotService)
+    bot.strategy = strat
+    bot._watch_start_ms = watch_start
+    return bot
+
+
+def test_capped_reconstructed_segment_refuses_the_live_entry_gate() -> None:
+    """Pair arm B — the NCRA shape: reconstructed arm, cap run, hold released. The REAL reactive
+    gate must refuse; before G01 it emitted, because the cap wrote only the labelling counter."""
+    s = _safe()
+    st = s.watchlist_state("TEST")
+    _arm(s, st, base_ts=1)                       # arm predates the watch => reconstructed
+    _bare_bot(s, {})._cap_reconstructed_segment("TEST", stage="db-seed")
+    assert st.cw_resting_taken is True and st.cw_reclaim_taken is True
+    assert s.cw_armed_segments()[0]["dangerous"] is False   # boot hold releases on this read...
+    s._entries_held = False
+    assert s._cw_v2_quote(st, _quote(12.5)) is None, (
+        "a capped reconstructed segment must not be tradeable once the hold releases"
+    )
+
+
+def test_live_armed_segment_still_enters_after_the_cap_runs() -> None:
+    """Pair arm A (control) — identical setup, arm timestamped AFTER the watch start: the cap
+    must not touch it and the same breaking quote must still produce a draft (the entry
+    mechanism survives; the pair measures the guard, not a dead path)."""
+    s = _safe()
+    st = s.watchlist_state("TEST")
+    _arm(s, st, base_ts=s._boot_ms + 60_000)     # live arm, watched flip
+    _bare_bot(s, {})._cap_reconstructed_segment("TEST", stage="db-seed")
+    assert st.cw_resting_taken is False and st.cw_reclaim_taken is False
+    s._entries_held = False
+    assert s._cw_v2_quote(st, _quote(12.5)) is not None

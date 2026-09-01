@@ -1932,7 +1932,9 @@ class SchwabV2BotService:
             "[V2-BOOT-REST-WARMUP-TIMEOUT] outcome=warmup_gate_released "
             "reason=fresh_source_not_observed_within_bound elapsed_seconds=%.1f "
             "bound_seconds=%d evaluated=%d confirmed=%d released=%d symbols=%s; "
-            "DB seed was confirmed and dangerous-segment boot hold remains active",
+            "DB seed was confirmed; reconstructed arms were capped with their entry slots "
+            "consumed (untradeable until a fresh SELL flip) — the boot hold then releases "
+            "on the same dangerous==0 read, it does NOT remain active",
             elapsed,
             int(BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS),
             len(selected),
@@ -2341,12 +2343,29 @@ class SchwabV2BotService:
         if (
             st.cw_armed
             and 0 < st.cw_arm_bar_ts <= watch_start
-            and st.cw_entries_this_flip < max_e
+            and (
+                st.cw_entries_this_flip < max_e
+                or not st.cw_resting_taken
+                or not st.cw_reclaim_taken
+            )
         ):
             st.cw_entries_this_flip = max_e
+            # ⛔ G01 (2026-08-31): the counter above is "kept for labelling/back-compat; NOT the
+            # cap" (SymbolState) — no live entry path reads it. The gates the live paths DO read
+            # are the composition claims (resting path: `cw_resting_taken`; reactive/reclaim
+            # path: `cw_reclaim_taken`), so a cap that writes only the counter flips `dangerous`
+            # to false — releasing the boot hold — while leaving the stale arm fully tradeable.
+            # NCRA 08-31: capped 11:06 ET at stage=db-seed, then THREE intrabar entries fired
+            # through the "capped" segment (13:47, 14:01, 15:25 ET, each logged n=3), the last
+            # +42% past a flip we never watched — the APLX/SNDG chase shape this function exists
+            # to prevent. Consume the slots the live paths read; both reset at the next SELL
+            # flip, which is exactly the operator's "wait for a fresh flip" rule.
+            st.cw_resting_taken = True
+            st.cw_reclaim_taken = True
             logger.info(
                 "[V2-CW-SEED-CAP] %s reconstructed armed segment capped — the flip predates our "
-                "watch (entries->%d, arm_bar_ts=%d, watch_start=%d, boot=%d, stage=%s)",
+                "watch (entries->%d, resting_taken=1, reclaim_taken=1, arm_bar_ts=%d, "
+                "watch_start=%d, boot=%d, stage=%s)",
                 symbol, max_e, st.cw_arm_bar_ts, watch_start, strat._boot_ms, stage,
             )
 
