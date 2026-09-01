@@ -3092,4 +3092,6 @@ releases; zero duplicate fan-out fills = downstream luck, not the fix.
 
 **Q21:** design complete — Probe P matrix + #647 built-dark (flag `false`, re-verified) + P0a
 never-fired (`OMS-P0A-HOLD=0`, re-verified) + the approved 08-18 Webull Parts 1/2/4 NEVER BUILT
-(marker absent everywhere, re-verified). Operator approved building Parts 1/2/4; §3 stays open.
+(marker absent everywhere, re-verified). Operator approved building Parts 1/2/4. §3: ruled approved-with-a-floor and then
+**CONFIRMED later the same day** (formula + one-shot lifetime + below-floor paging) — the
+"stays open" wording this entry first carried is superseded by that confirmation.

@@ -295,11 +295,13 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   healthy (liquidity floor called at 5 live sites; replace-link written at `oms/service.py:9308`) —
   Q4 is a different guard. ⛔ Cannot be specced until the row text is restated.
 
-### Definition stubs — restate once, then they live here
+### Retired 2026-09-01 (operator ruling)
 
-**Q27 · Q22 · Q19 · Q15 · B9 · Q8 · M9 · T35 · D17 · B21 · B22** — no definition exists in the
-repo, the fleet dir, its archives, or the surviving thread context (originals predate a context
-compaction). ⛔ Untriageable until restated; each needs one line + an owner + a next action.
+**Q27 · Q22 · Q19 · Q15 · B9 · Q8 · M9 · T35 · D17 · B21 · B22** — closed WITHOUT restatement:
+no recorded definition anywhere, subjects superseded, and carrying them cost more than they were
+worth. ⭐ The standard that closes them is the standard that would reopen them: **if any is real
+it resurfaces with evidence** — and then it enters this board as a new row with an owner and a
+next action, like any finding.
 
 ### Closed in batch 2 (evidence in [`handoff-log.md`](handoff-log.md), 2026-09-01 entry)
 
