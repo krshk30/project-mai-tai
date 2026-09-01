@@ -2339,7 +2339,15 @@ class SchwabV2BotService:
             return
         st = strat.watchlist_state(symbol)
         max_e = strat._cw_v2_max_entries_per_flip
-        watch_start = self._watch_start_for(symbol)
+        # C42 (2026-09-01): a process can survive the 04:00 ET boundary with no symbols in the
+        # roll population. A symbol admitted afterward can then fall back to the older boot clock,
+        # making a prior-session arm look post-boot and therefore live. The current session anchor
+        # is the minimum honest observation boundary; a later per-symbol join still wins.
+        now_ms_fn = getattr(strat, "_now_ms", None)
+        session_anchor = (
+            session_start_ts_ms(int(now_ms_fn())) if callable(now_ms_fn) else 0
+        )
+        watch_start = max(self._watch_start_for(symbol), session_anchor)
         if (
             st.cw_armed
             and 0 < st.cw_arm_bar_ts <= watch_start
@@ -2367,8 +2375,14 @@ class SchwabV2BotService:
             logger.info(
                 "[V2-CW-SEED-CAP] %s reconstructed armed segment capped — the flip predates our "
                 "watch (entries->%d, resting_taken=1, reclaim_taken=1, arm_bar_ts=%d, "
-                "watch_start=%d, boot=%d, stage=%s)",
-                symbol, max_e, st.cw_arm_bar_ts, watch_start, strat._boot_ms, stage,
+                "watch_start=%d, session_anchor=%d, boot=%d, stage=%s)",
+                symbol,
+                max_e,
+                st.cw_arm_bar_ts,
+                watch_start,
+                session_anchor,
+                strat._boot_ms,
+                stage,
             )
 
     def _missed_sessions_between(self, session, older, newer) -> int:
