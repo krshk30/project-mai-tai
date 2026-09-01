@@ -102,7 +102,54 @@ async def test_alpaca_adapter_rejects_when_account_credentials_are_missing() -> 
 
     assert len(reports) == 1
     assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "client"
     assert "missing Alpaca credentials" in reports[0].reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "response", "expected_origin"),
+    [
+        (422, {"message": "venue refused order"}, "broker"),
+        (599, {"message": "local transport failed"}, "client"),
+        (200, ["malformed response"], "unknown"),
+    ],
+)
+async def test_alpaca_adapter_preserves_rejection_origin(
+    monkeypatch,
+    status_code: int,
+    response: object,
+    expected_origin: str,
+) -> None:
+    settings = Settings(
+        oms_adapter="alpaca_paper",
+        alpaca_macd_30s_api_key="key-30s",
+        alpaca_macd_30s_secret_key="secret-30s",
+    )
+    adapter = AlpacaPaperBrokerAdapter(settings)
+
+    async def fake_request_json(credentials, method, path, body=None):
+        del credentials, method, path, body
+        return status_code, response
+
+    monkeypatch.setattr(adapter, "_request_json", fake_request_json)
+    reports = await adapter.submit_order(
+        OrderRequest(
+            client_order_id="macd_30s-UGRO-open-abc123",
+            broker_account_name="paper:macd_30s",
+            strategy_code="macd_30s",
+            symbol="UGRO",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("10"),
+            reason="ENTRY_P1_MACD_CROSS",
+            metadata={"reference_price": "2.55"},
+        )
+    )
+
+    assert len(reports) == 1
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == expected_origin
 
 
 @pytest.mark.asyncio
@@ -178,6 +225,39 @@ async def test_alpaca_adapter_cancels_order_by_client_order_id_lookup(monkeypatc
     assert reports[0].event_type == "cancelled"
     assert reports[0].broker_order_id == "ord-123"
     assert reports[0].client_order_id == "macd_30s-UGRO-open-abc123"
+
+
+@pytest.mark.asyncio
+async def test_alpaca_cancel_lookup_transport_failure_is_a_client_abort(monkeypatch) -> None:
+    settings = Settings(
+        oms_adapter="alpaca_paper",
+        alpaca_macd_30s_api_key="key-30s",
+        alpaca_macd_30s_secret_key="secret-30s",
+    )
+    adapter = AlpacaPaperBrokerAdapter(settings)
+
+    async def fake_request_json(credentials, method, path, body=None):
+        del credentials, method, path, body
+        return 599, {"message": "local transport failed"}
+
+    monkeypatch.setattr(adapter, "_request_json", fake_request_json)
+    reports = await adapter.submit_order(
+        OrderRequest(
+            client_order_id="macd_30s-UGRO-cancel-abc123",
+            broker_account_name="paper:macd_30s",
+            strategy_code="macd_30s",
+            symbol="UGRO",
+            side="buy",
+            intent_type="cancel",
+            quantity=Decimal("10"),
+            reason="USER_CANCEL",
+            metadata={"target_client_order_id": "macd_30s-UGRO-open-abc123"},
+        )
+    )
+
+    assert len(reports) == 1
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "client"
 
 
 @pytest.mark.asyncio
