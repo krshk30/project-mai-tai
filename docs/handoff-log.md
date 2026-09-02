@@ -15,6 +15,129 @@
 
 ---
 
+## 2026-09-02 — the day a monitor that refused correctly was still off for ten sessions
+
+**Batch `2026-09-02-blind-watch-day`.** Integrator `claude-1`. Three PRs merged (#873, #874, #875)
+and deployed; box ended at `f437100`, flat on every layer.
+
+### The find: an honest refusal is only half a contract
+
+The seed-exposure watch had been emitting `⛔ CANNOT SEE — REFUSING: no DSN` on **every 5-minute
+tick of every trading session since 2026-08-20 — ten consecutive days.** Its exit-code discipline
+was working exactly as designed: it refused rather than decaying into a PASS. What was missing was
+the environment. `ops/health/seed_exposure_cron.sh` never sourced
+`/etc/project-mai-tai/project-mai-tai.env`, while its sibling `bar_gap_watch_cron.sh` had always
+sourced it, under the same `set -u`, every five minutes.
+
+Proven by a one-variable controlled pair on the box: the installed wrapper returned `CANNOT SEE`;
+the same wrapper with the env sourced returned `swept 1 of 1 ✅ coverage proven`.
+
+⭐ **The durable lesson is not "source the env".** It is that **a repeating alert is a dead alert** —
+the same string ten days running is one unfixed defect plus nine desensitising events, and it *looks*
+like the system is talking to you, which is worse than silence. It also dragged the 09:12 readiness
+verdict to AMBER daily, so the pre-open GREEN dead-man's signal was degraded the entire time. The
+alarm ate its own channel. Second lesson: the defect was invisible inside the check's own logic and
+obvious in one grep across its siblings — **diff a misbehaving wrapper against its family, not
+against its own spec.**
+
+`codex-2`'s review then caught what the fix missed: the **09:12 readiness caller is a second,
+independent invocation** of the same detector and was blind for the same reason. Fixing only the
+5-minute cron would have left the daily AMBER intact — i.e. would have left this PR's central claim
+false. It also caught that the new unreadable-env branch produced an **empty alert summary and dedup
+key**, because the message did not match the `^\s+(VERDICT|⛔ CANNOT SEE)` grep. Both real.
+
+### And the fix still is not deployed where it matters
+
+`git pull` does not reach the 09:12 slot. Root's crontab runs `/home/trader/preopen_readiness_cron.sh`,
+a **separate unversioned copy** (inode `524437`) of the repo file (inode `1861068`). Identical
+contents, so it reads as versioned and is not. Merged ≠ deployed, demonstrated on the very PR written
+to close a monitoring gap.
+
+### S8 answered, and the trap inside it
+
+*Did any 09-01 fill trace to a stale-anchor segment?* **No — and stronger than "no fill": the stale
+segments emitted ZERO intents.** UNEXERCISED, not merely unfilled. GYGY produced no intents all day;
+SSM's two 08-31-anchor arms disarmed `reason=flip` in the same millisecond they were created; WETO's
+survived 2h35m and was killed by `session_anchor_reset` at 07:01:02.
+
+⛔ **The trap:** SSM's first 09-01 fill is 90 seconds after its stale arm and WETO's is two minutes
+after. At face value that is a direct hit on every symbol. **They are `paper:polygon_30s` — a
+different bot.** Resolving `broker_account_id` dissolved the false hit *and* independently confirmed
+FLYE's earlier trace rather than contradicting it. **Check the account before reading any v2
+timeline.**
+
+What S8 adds beyond "no harm": **WETO satisfies C42's falsifier** — a joiner armed on a stale anchor
+with no cap/roll line. C42 is a confirmed mechanism, and 09-01 is a clean sample, not a refutation.
+What ended the exposure was the 07:00 `session_anchor_reset`, *not* the 04:00 roll (which ran at
+`watchlist=0`) and *not* the seed cap (blind to joiners) — the two mechanisms C42 names as broken
+were both absent from the rescue. Residual: ~62 seconds of stale-anchor exposure inside the tradable
+window.
+
+### The fan-out question the operator asked from the bot screen
+
+BIAF looked TOS-only. It was not — it fanned out to Webull on two of three v2 entries. The 11:25
+entry was Schwab-only because that segment's Webull slot had been **consumed by the 11:16 fill**
+(`webull_slot_consumed=1`), so the #858 duplicate guard suppressed the mirror leg. Not eligibility,
+not a broker reject.
+
+The asymmetry underneath is real and was not previously written down: **within one segment Schwab may
+take two entries (resting + reclaim) while Webull gets one**, because the Webull slot is not released
+when its leg exits — the leg had already exited three minutes before the suppressed entry. Scale
+stated honestly: 23 suppression *events* today across four symbols, but those are reprice attempts,
+not lost entries; the distinct-slot denominator was not derived.
+
+Separately, the same window produced three Webull market close-sells rejected
+`NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K` — Webull refusing to sell shares its own
+OCO leg had already sold. Two exit routes racing the same shares: our defect, not market. It
+self-healed via `[OMS-V2-RECONCILE-FLAT]`.
+
+### Two reviews, two withheld pins, both resolved
+
+**#874** (paper exit harness): pin withheld at `e95e907` because PAPER1 was filed under
+"Open, defined, owned" while reading `owner: unassigned` — against the standing rule that nothing
+boards without an owner and a next action. Fixed in one line; the diff-of-diffs was exactly that
+line, so the code review carried over. The OMS touch was verified as a genuine **second** line of
+defence: intents are already swallowed at source by `_consume_intents`, so the refusal does not fire
+in normal operation. The test claim was re-derived rather than co-signed — 46 local failures turned
+out to be **pre-existing**, reproduced identically by a control run on `origin/main` without the PR.
+
+**#875** (halt-safe exits): pin withheld at `ce1e204` on a **silent** gap — `bid_size` was never
+read, so the measurement design's "sufficient displayed size" and "insufficient depth → UNGRADABLE"
+were unimplemented *and* undisclosed. Unlike the recalculated-SELL caveat, which was honestly labelled
+per row, a reader could not tell it had happened. Resolved by per-row `NOT SIZE-QUALIFIED` disclosure
+on all 82 rows, with the operator ruling Option B on the SELL endpoint.
+
+The decomposition was **re-derived independently** from a fresh read-only VPS run at the exact head
+rather than read off the summary: `58 × +100.9479`, `18 × −56.4359`, `4 × −4.1388`, `2` unanswerable;
+`58 + 18 + 4 + 2 = 82`; pooled `+40.3732` exact to four decimals; `58 = 43 + 15`. It reconciled across
+a refactor of the halt detector — it could have come out false and did not. The halt exclusion was
+confirmed genuinely covered by a controlled mutation (forcing `halt_is_confirmed` False turns six
+tests red, including the same-function test), and one code path was confirmed: thresholds defined only
+in `market_halts.py`, imported by both the live harness and the historical script.
+
+⭐ **Two results that must travel with that work, and both are about denominators.** SEG1's identity is
+falsifiable — true key returns 13 on the 09-02 tape, dropping `entry_slot` returns 12 — but it is
+exercised by **exactly one slot** (BIAF `58f2bc1e`); without that single event the check is vacuous.
+And the hold-until-proven cost of `0/82` is observable on only **4/82** rows. Both correct as measured,
+both thin as evidence.
+
+### Deploy
+
+Operator gave GO after the close. Gate 0 was an **unconfirmed** live Webull BUY (PPBT) whose status
+the OMS had failed to read seven times — our row said `accepted`, which was our last known state and
+not broker truth. The operator hand-cancelled it at the broker; working orders then read 0 and the
+deploy proceeded. ⚠️ `schwab-1m-v2` was never restarted across three deploys and still holds PID
+`2531255`, so the fleet ended the day on **mixed code**. Benign-looking, plausibly a deliberate
+bar-hole avoidance, but unconfirmed — carried as tomorrow's first item.
+
+### Record-keeping note
+
+The manifest reconciles (34 in, 34 out) but **all 34 entries are `claude-1`; `codex-2`'s journal is
+empty** despite codex building both PRs and running the deploy. The manifest's completeness guarantee
+is an arithmetic identity over what was *written* — it cannot see work that was never journalled.
+
+---
+
 
 
 ## 2026-08-31 — batch `2026-08-31`, integrator `claude-1`
