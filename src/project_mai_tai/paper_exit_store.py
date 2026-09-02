@@ -315,6 +315,102 @@ class PaperExitStore:
                 )
             )
 
+    def entry_assumption_rows(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+        source_fills: list[PaperSourceFill],
+    ) -> list[dict[str, object]]:
+        """Put modelled ask fills beside actual mirror fills without pooling the arms."""
+        with self.session_factory() as session:
+            independent_entries = list(
+                session.scalars(
+                    select(PaperExitEvent)
+                    .where(
+                        PaperExitEvent.arm == "independent",
+                        PaperExitEvent.event_type == "INDEPENDENT_ENTRY",
+                        PaperExitEvent.observed_at >= start,
+                        PaperExitEvent.observed_at <= end,
+                    )
+                    .order_by(PaperExitEvent.observed_at, PaperExitEvent.created_at)
+                )
+            )
+
+        mirror_groups: dict[tuple[object, str, str], list[PaperSourceFill]] = defaultdict(list)
+        for source in source_fills:
+            key = (source.session_date, source.symbol.upper(), source.fanout_slot_id)
+            mirror_groups[key].append(source)
+        independent_groups: dict[tuple[object, str, str], list[PaperExitEvent]] = defaultdict(list)
+        for event in independent_entries:
+            attempt_id = str((event.payload or {}).get("independent_attempt_id", "")).strip()
+            key = (event.session_date, event.symbol.upper(), attempt_id)
+            independent_groups[key].append(event)
+
+        rows: list[dict[str, object]] = []
+        for key in sorted(
+            mirror_groups.keys() | independent_groups.keys(),
+            key=lambda item: (str(item[0]), item[1], item[2]),
+        ):
+            mirror_legs = mirror_groups.get(key, [])
+            independent = independent_groups.get(key, [])
+            mirror_quantity = sum((leg.quantity for leg in mirror_legs), Decimal("0"))
+            mirror_price = (
+                sum((leg.price * leg.quantity for leg in mirror_legs), Decimal("0"))
+                / mirror_quantity
+                if mirror_quantity > 0
+                else None
+            )
+            assumption = independent[0] if len(independent) == 1 else None
+            assumed_price = Decimal(assumption.price) if assumption and assumption.price else None
+            if not mirror_legs:
+                status = "INDEPENDENT_ONLY"
+            elif not independent:
+                status = "NO_INDEPENDENT_FILL"
+            elif len(independent) > 1:
+                status = f"AMBIGUOUS_{len(independent)}_INDEPENDENT_FILLS"
+            else:
+                status = "MATCHED_ASSUMPTION"
+            assumed_vs_actual_pct = (
+                ((assumed_price / mirror_price) - Decimal("1")) * Decimal("100")
+                if assumed_price is not None and mirror_price is not None
+                else None
+            )
+            rows.append(
+                {
+                    "session_date": str(key[0]),
+                    "symbol": key[1],
+                    "fanout_slot_id": key[2] or "missing",
+                    "mirror_fill_price": str(mirror_price) if mirror_price is not None else "",
+                    "mirror_first_fill_at": (
+                        min(leg.filled_at for leg in mirror_legs).isoformat()
+                        if mirror_legs
+                        else ""
+                    ),
+                    "mirror_last_fill_at": (
+                        max(leg.filled_at for leg in mirror_legs).isoformat()
+                        if mirror_legs
+                        else ""
+                    ),
+                    "mirror_venues": sorted({leg.venue for leg in mirror_legs}),
+                    "mirror_legs": len(mirror_legs),
+                    "independent_assumed_fill": (
+                        str(assumed_price) if assumed_price is not None else ""
+                    ),
+                    "independent_assumed_at": (
+                        assumption.observed_at.isoformat() if assumption is not None else ""
+                    ),
+                    "independent_fill_count": len(independent),
+                    "assumed_vs_actual_pct": (
+                        str(assumed_vs_actual_pct)
+                        if assumed_vs_actual_pct is not None
+                        else ""
+                    ),
+                    "status": status,
+                }
+            )
+        return rows
+
     def mirror_grades(
         self,
         *,

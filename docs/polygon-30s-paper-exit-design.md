@@ -106,6 +106,11 @@ control event self-heals. Every paper entry pins the exact config row effective 
 an already-open measurement window never changes when a later version becomes effective. The
 screen and every decision show the config ID, values, and effective timestamp.
 
+This is an operator-selected starting rule, not a conclusion to be re-derived from the backtest.
+It deliberately accepts a lower win rate than a roughly symmetric two-percent rule in order to
+preserve larger average wins. Alternative targets, stops, trailing, and runner-release behavior are
+outside v1.
+
 ## 5. Forbidden Shared State
 
 Neither arm consumes first/reclaim/fan-out slots, writes `virtual_positions` or
@@ -149,3 +154,9 @@ derived by the stated collapse. Every matched logical entry must have one durabl
 by close, an exit or explicit `UNANSWERABLE` state. If `N = 0`, Mirror is `UNEXERCISED`, never
 `PASS`; service, feed, scanner, reconciliation, independent-arm, and structural no-order checks are
 reported separately and cannot turn that zero into an exercised mirror result.
+
+The daily surface also prints entry assumptions without pooling results: each stamped slot shows
+the independent arm's modelled executable-ask fill beside the actual quantity-weighted mirror fill,
+its venue legs and timestamps, and their signed percentage difference. Independent-only and
+mirror-without-independent-fill rows remain visible. This exposes optimistic paper fills; it does
+not convert the independent arm into evidence about live execution.

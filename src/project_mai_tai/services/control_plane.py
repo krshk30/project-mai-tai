@@ -5790,6 +5790,7 @@ def _render_bot_detail_page(
         acceptance = dict(paper_exit.get("acceptance", {}) or {})
         grade = dict(acceptance.get("grade", {}) or {})
         independent = dict(paper_exit.get("independent", {}) or {})
+        assumption_rows = list(acceptance.get("entry_assumptions", []) or [])
         verdict = str(acceptance.get("verdict", "UNEXERCISED"))
         evidence_rows = "".join(
             "<tr>"
@@ -5814,6 +5815,20 @@ def _render_bot_detail_page(
             "</tr>"
             for row in list(grade.get("rows", []))
         ) or '<tr><td colspan="6">No completed matched entries yet.</td></tr>'
+        assumption_table_rows = "".join(
+            "<tr>"
+            f"<td>{escape(str(row.get('symbol', '')))}</td>"
+            f"<td>{escape(str(row.get('fanout_slot_id', '')))}</td>"
+            f"<td>{escape(', '.join(str(item) for item in row.get('mirror_venues', [])) or '-')}</td>"
+            f"<td>{escape(str(row.get('mirror_fill_price', '')) or '-')}</td>"
+            f"<td>{escape(str(row.get('mirror_first_fill_at', '')) or '-')}</td>"
+            f"<td>{escape(str(row.get('independent_assumed_fill', '')) or '-')}</td>"
+            f"<td>{escape(str(row.get('independent_assumed_at', '')) or '-')}</td>"
+            f"<td>{escape(str(row.get('assumed_vs_actual_pct', '')) or '-')}</td>"
+            f"<td>{escape(str(row.get('status', '')))}</td>"
+            "</tr>"
+            for row in assumption_rows
+        ) or '<tr><td colspan="9">No fill assumptions yet.</td></tr>'
         paper_exit_panel = f"""
             <section class="panel full accent-panel">
                 <div class="panel-header">
@@ -5839,6 +5854,14 @@ def _render_bot_detail_page(
                         <input name="changed_by" type="hidden" value="operator-screen">
                         <button type="submit">Record new rule</button>
                     </form>
+                </div>
+                <div class="table-wrap" style="margin-top:14px">
+                    <h3>Entry Fill Assumptions</h3>
+                    <div class="sub">Independent uses a modelled executable ask. Mirror is the actual quantity-weighted broker fill. Negative delta means the model assumed a cheaper fill.</div>
+                    <table>
+                        <thead><tr><th>Symbol</th><th>Slot</th><th>Mirror venues</th><th>Mirror actual</th><th>Mirror time</th><th>Independent assumed</th><th>Assumed time</th><th>Delta %</th><th>Status</th></tr></thead>
+                        <tbody>{assumption_table_rows}</tbody>
+                    </table>
                 </div>
                 <div class="table-wrap" style="margin-top:14px">
                     <table>

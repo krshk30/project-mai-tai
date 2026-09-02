@@ -2186,6 +2186,8 @@ def test_polygon_bot_legacy_webull_routes_remain_compatible() -> None:
         legacy_page = client.get("/bot/30s-webull")
         assert legacy_page.status_code == 200
         assert "Polygon Paper Exit Harness" in legacy_page.text
+        assert "Entry Fill Assumptions" in legacy_page.text
+        assert "Independent assumed" in legacy_page.text
         assert "AUUD" in legacy_page.text
 
 

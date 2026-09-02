@@ -6614,6 +6614,11 @@ class StrategyEngineService:
             ),
             "rows": grades,
         }
+        acceptance["entry_assumptions"] = self.paper_exit_store.entry_assumption_rows(
+            start=start,
+            end=end,
+            source_fills=fills,
+        )
         self.paper_exit_runtime.set_acceptance(acceptance)
         decisions.append(
             PaperDecision(

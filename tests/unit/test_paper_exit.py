@@ -638,6 +638,82 @@ def test_append_only_config_and_decision_tape_are_durable() -> None:
         assert len(list(session.scalars(select(PaperExitEvent)))) == 1
 
 
+def test_entry_assumptions_keep_modelled_and_actual_fills_separate() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    schwab = fill(
+        fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        broker_fill_id="schwab-fill",
+        venue="schwab",
+        quantity="2",
+        price="10",
+    )
+    webull = fill(
+        fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        broker_fill_id="webull-fill",
+        venue="webull",
+        quantity="1",
+        price="11",
+        at=AT + timedelta(minutes=1, seconds=2),
+    )
+    with factory() as session:
+        session.add_all(
+            [
+                PaperExitEvent(
+                    event_key="independent-entry-matched",
+                    logical_id="independent:slot-1",
+                    arm="independent",
+                    event_type="INDEPENDENT_ENTRY",
+                    session_date=AT.date(),
+                    symbol="TEST",
+                    venue="modelled",
+                    observed_at=AT + timedelta(seconds=30),
+                    price=Decimal("10.5"),
+                    quantity=Decimal("1"),
+                    payload={"independent_attempt_id": "slot-1"},
+                ),
+                PaperExitEvent(
+                    event_key="independent-entry-only",
+                    logical_id="independent:slot-2",
+                    arm="independent",
+                    event_type="INDEPENDENT_ENTRY",
+                    session_date=AT.date(),
+                    symbol="OTHER",
+                    venue="modelled",
+                    observed_at=AT + timedelta(minutes=2),
+                    price=Decimal("4.2"),
+                    quantity=Decimal("1"),
+                    payload={"independent_attempt_id": "slot-2"},
+                ),
+            ]
+        )
+        session.commit()
+
+    rows = PaperExitStore(factory).entry_assumption_rows(
+        start=AT,
+        end=AT + timedelta(hours=1),
+        source_fills=[schwab, webull],
+    )
+
+    matched = next(row for row in rows if row["fanout_slot_id"] == "slot-1")
+    assert matched["status"] == "MATCHED_ASSUMPTION"
+    assert matched["mirror_venues"] == ["schwab", "webull"]
+    assert matched["mirror_legs"] == 2
+    assert Decimal(str(matched["mirror_fill_price"])) == Decimal(31) / Decimal(3)
+    assert Decimal(str(matched["independent_assumed_fill"])) == Decimal("10.5")
+    assert Decimal(str(matched["assumed_vs_actual_pct"])) > 0
+
+    independent_only = next(row for row in rows if row["fanout_slot_id"] == "slot-2")
+    assert independent_only["status"] == "INDEPENDENT_ONLY"
+    assert independent_only["mirror_fill_price"] == ""
+    assert independent_only["independent_assumed_fill"] == "4.20000000"
+
+
 def test_authoritative_fill_census_reads_both_live_venues_and_collapses_the_slot() -> None:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
