@@ -1,0 +1,9 @@
+{
+  "pr_number": 873,
+  "range_base": "3ec81e55685a4f196f56270ce722f732ad40fbac",
+  "range_head": "8448e0d10ef69e0cd799bbddd3000a97c83d83d4",
+  "reviewed_at": "2026-09-02T14:08:07Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed both wrapper call sites; reproduced the 10-session no-DSN census, non-empty refusal key and summary, env-backed detector coverage, and VPS bash syntax/LF; confirmed exact two-file scope with no crontab or deploy changes."
+}
