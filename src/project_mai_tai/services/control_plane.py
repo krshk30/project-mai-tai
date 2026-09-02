@@ -5792,6 +5792,18 @@ def _render_bot_detail_page(
         independent = dict(paper_exit.get("independent", {}) or {})
         assumption_rows = list(acceptance.get("entry_assumptions", []) or [])
         verdict = str(acceptance.get("verdict", "UNEXERCISED"))
+        grade_status = str(grade.get("status", "COULD_NOT_TELL"))
+        grade_value = (
+            f'{int(grade.get("matched", 0) or 0)} / {int(grade.get("total", 0) or 0)}'
+            if grade_status == "READY"
+            else grade_status
+        )
+        grade_note = (
+            f'paper {escape(str(grade.get("paper_pct", "0")))}% · '
+            f'live {escape(str(grade.get("real_pct", "0")))}%'
+            if grade_status == "READY"
+            else escape(str(grade.get("reason", "report boundary unavailable")))
+        )
         evidence_rows = "".join(
             "<tr>"
             f"<td>{escape(str(row.get('time', '')))}</td>"
@@ -5842,7 +5854,7 @@ def _render_bot_detail_page(
                     <div class="hero-card"><span>Mirror entries</span><strong>{int(acceptance.get("matched", 0) or 0)} / {int(acceptance.get("live", 0) or 0)}</strong><small>terminal {int(acceptance.get("terminal", 0) or 0)} / {int(acceptance.get("terminal_expected", 0) or 0)} · missed {int(acceptance.get("missed", 0) or 0)} · phantom {int(acceptance.get("phantom", 0) or 0)}</small></div>
                     <div class="hero-card"><span>Open mirror</span><strong>{int(paper_exit.get("mirror_open", 0) or 0)}</strong><small>Live resting fills, both venues</small></div>
                     <div class="hero-card"><span>Independent</span><strong>{int(independent.get("filled", 0) or 0)} / {int(independent.get("armed", 0) or 0)}</strong><small>filled / armed · never pooled</small></div>
-                    <div class="hero-card"><span>Daily grade</span><strong>{int(grade.get("matched", 0) or 0)} / {int(grade.get("total", 0) or 0)}</strong><small>paper {escape(str(grade.get("paper_pct", "0")))}% · live {escape(str(grade.get("real_pct", "0")))}%</small></div>
+                    <div class="hero-card"><span>Daily grade</span><strong>{escape(grade_value)}</strong><small>{grade_note}</small></div>
                     <div class="hero-card"><span>Active rule</span><strong>+{escape(str(paper_config.get("target_pct", "5")))}% / -{escape(str(paper_config.get("stop_pct", "8")))}%</strong><small>Effective {escape(str(paper_config.get("effective_at", "-")))}</small></div>
                 </div>
                 <div class="panel-copy">

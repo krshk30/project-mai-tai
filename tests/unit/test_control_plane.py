@@ -19,6 +19,7 @@ from project_mai_tai.db.models import (
     BrokerOrder,
     DashboardSnapshot,
     Fill,
+    PaperExitEvent,
     PaperExitRuleConfig,
     ReconciliationFinding,
     ReconciliationRun,
@@ -2165,10 +2166,42 @@ def test_polygon_bot_legacy_webull_routes_remain_compatible() -> None:
                     "last_bar_at": "2026-05-08T08:47:00-04:00",
                 }
             ],
+            paper_exit={
+                "acceptance": {
+                    "verdict": "UNEXERCISED",
+                    "grade": {
+                        "status": "REFUSED_SPANS_EVIDENCE_CUTOVER",
+                        "reason": "daily report window crosses the paper evidence-table cutover",
+                        "matched": None,
+                        "total": None,
+                        "paper_pct": "",
+                        "real_pct": "",
+                        "rows": [],
+                    },
+                }
+            },
         )
     )
     strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
     redis = FakeRedis(streams)
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            PaperExitEvent(
+                event_key="wbd1-webull-render-control",
+                logical_id="mirror:wbd1-webull-render-control",
+                arm="mirror",
+                event_type="MIRROR_ENTRY",
+                session_date=now.date(),
+                symbol="WBD1X",
+                venue="webull",
+                observed_at=now,
+                price=Decimal("5.25"),
+                quantity=Decimal("1"),
+                payload={"reason": "first Webull mirror render control"},
+            )
+        )
+        session.commit()
 
     app = build_app(
         settings=settings,
@@ -2188,6 +2221,9 @@ def test_polygon_bot_legacy_webull_routes_remain_compatible() -> None:
         assert "Polygon Paper Exit Harness" in legacy_page.text
         assert "Entry Fill Assumptions" in legacy_page.text
         assert "Independent assumed" in legacy_page.text
+        assert "REFUSED_SPANS_EVIDENCE_CUTOVER" in legacy_page.text
+        assert "WBD1X" in legacy_page.text
+        assert "<td>webull</td>" in legacy_page.text
         assert "AUUD" in legacy_page.text
 
 

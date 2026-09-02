@@ -35,7 +35,10 @@ from project_mai_tai.paper_exit import (
     resting_fill_classification,
     terminal_evidence_covers,
 )
-from project_mai_tai.paper_exit_store import PaperExitStore
+from project_mai_tai.paper_exit_store import (
+    PAPER_EXIT_EVIDENCE_CUTOVER_SHA,
+    PaperExitStore,
+)
 from project_mai_tai.services.strategy_engine_app import (
     PaperDisabledPolygonEntryEngine,
     PaperPolygonRuntimeAdapter,
@@ -636,6 +639,112 @@ def test_append_only_config_and_decision_tape_are_durable() -> None:
     with factory() as session:
         assert len(list(session.scalars(select(PaperExitRuleConfig)))) == 2
         assert len(list(session.scalars(select(PaperExitEvent)))) == 1
+
+
+def test_daily_grade_refuses_a_window_spanning_the_evidence_cutover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    cutover = AT + timedelta(minutes=30)
+    with factory() as session:
+        session.add(
+            PaperExitRuleConfig(
+                id=CONFIG_ID,
+                target_pct=Decimal("5"),
+                stop_pct=Decimal("8"),
+                effective_at=datetime(1970, 1, 1, tzinfo=UTC),
+                changed_by="migration-initial-v1",
+                created_at=cutover,
+            )
+        )
+        session.commit()
+    store = PaperExitStore(factory)
+
+    def invalid_mixed_window(**_kwargs: object) -> list[dict[str, object]]:
+        pytest.fail("a cutover-spanning report reached the P&L join")
+
+    monkeypatch.setattr(store, "mirror_grades", invalid_mixed_window)
+    report_window = store.report_window(
+        start=cutover - timedelta(hours=1),
+        end=cutover + timedelta(hours=1),
+    )
+    grade = store.daily_grade(report_window=report_window, source_fills=[])
+
+    assert report_window.evidence_start == cutover
+    assert grade["status"] == "REFUSED_SPANS_EVIDENCE_CUTOVER"
+    assert grade["boundary_sha"] == PAPER_EXIT_EVIDENCE_CUTOVER_SHA
+    assert grade["boundary_at"] == cutover.isoformat()
+    assert grade["matched"] is None
+    assert grade["total"] is None
+    assert grade["paper_pct"] == ""
+    assert grade["real_pct"] == ""
+    assert grade["rows"] == []
+
+
+def test_daily_grade_cannot_tell_when_cutover_record_is_missing() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    store = PaperExitStore(factory)
+
+    report_window = store.report_window(start=AT, end=AT + timedelta(hours=1))
+    grade = store.daily_grade(report_window=report_window, source_fills=[])
+
+    assert report_window.evidence_start is None
+    assert grade["status"] == "COULD_NOT_TELL"
+    assert grade["matched"] is None
+    assert grade["total"] is None
+
+
+def test_daily_grade_preserves_post_cutover_denominator_and_totals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    cutover = AT - timedelta(hours=1)
+    with factory() as session:
+        session.add(
+            PaperExitRuleConfig(
+                id=CONFIG_ID,
+                target_pct=Decimal("5"),
+                stop_pct=Decimal("8"),
+                effective_at=datetime(1970, 1, 1, tzinfo=UTC),
+                changed_by="migration-initial-v1",
+                created_at=cutover,
+            )
+        )
+        session.commit()
+    store = PaperExitStore(factory)
+    rows = [
+        {"gradable": True, "paper_pct": "5.25", "real_pct": "3.50"},
+        {"gradable": False, "paper_pct": "", "real_pct": ""},
+    ]
+    monkeypatch.setattr(store, "mirror_grades", lambda **_kwargs: rows)
+
+    report_window = store.report_window(start=AT, end=AT + timedelta(hours=1))
+    grade = store.daily_grade(report_window=report_window, source_fills=[])
+
+    assert grade["status"] == "READY"
+    assert grade["matched"] == 1
+    assert grade["total"] == 2
+    assert grade["paper_pct"] == "5.25"
+    assert grade["real_pct"] == "3.50"
+    assert grade["rows"] == rows
 
 
 def test_entry_assumptions_keep_modelled_and_actual_fills_separate() -> None:

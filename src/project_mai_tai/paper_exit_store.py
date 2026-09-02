@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from collections import defaultdict, deque
 from uuid import UUID, uuid4
 
 from sqlalchemy import Select, select
@@ -29,6 +30,44 @@ from project_mai_tai.paper_exit import (
 )
 
 LIVE_VENUES = frozenset({"schwab", "webull"})
+PAPER_EXIT_EVIDENCE_CUTOVER_SHA = "028817d8be8639c8e48aad648ef822a0abd18de5"
+PAPER_EXIT_INITIAL_CONFIG_AUTHOR = "migration-initial-v1"
+
+
+@dataclass(frozen=True)
+class PaperReportWindow:
+    status: str
+    start: datetime
+    end: datetime
+    boundary_at: datetime | None
+
+    @property
+    def evidence_start(self) -> datetime | None:
+        if self.boundary_at is None or self.end < self.boundary_at:
+            return None
+        return max(self.start, self.boundary_at)
+
+    def payload(self) -> dict[str, object]:
+        boundary_at = self.boundary_at.isoformat() if self.boundary_at is not None else ""
+        if self.status == "READY":
+            reason = "window is wholly after the paper-evidence cutover"
+        elif self.status == "REFUSED_SPANS_EVIDENCE_CUTOVER":
+            reason = (
+                "daily report window crosses the paper evidence-table cutover; "
+                "split the reading at the named SHA"
+            )
+        elif self.status == "REFUSED_BEFORE_EVIDENCE_CUTOVER":
+            reason = "paper_exit_events is not the evidence source before the named SHA"
+        else:
+            reason = "migration-seeded cutover timestamp is missing; report boundary is unknowable"
+        return {
+            "status": self.status,
+            "window_start": self.start.isoformat(),
+            "window_end": self.end.isoformat(),
+            "boundary_sha": PAPER_EXIT_EVIDENCE_CUTOVER_SHA,
+            "boundary_at": boundary_at,
+            "reason": reason,
+        }
 
 
 class PaperExitStore:
@@ -69,6 +108,63 @@ class PaperExitStore:
                 )
             )
         return [self._config(row) for row in rows]
+
+    def report_window(self, *, start: datetime, end: datetime) -> PaperReportWindow:
+        """Refuse reports that would mix legacy order tables with paper_exit_events."""
+        with self.session_factory() as session:
+            boundary_at = session.scalar(
+                select(PaperExitRuleConfig.created_at)
+                .where(PaperExitRuleConfig.changed_by == PAPER_EXIT_INITIAL_CONFIG_AUTHOR)
+                .order_by(PaperExitRuleConfig.created_at)
+                .limit(1)
+            )
+        if boundary_at is None:
+            return PaperReportWindow("COULD_NOT_TELL", start, end, None)
+        if boundary_at.tzinfo is None:
+            boundary_at = boundary_at.replace(tzinfo=UTC)
+        if end < boundary_at:
+            status = "REFUSED_BEFORE_EVIDENCE_CUTOVER"
+        elif start < boundary_at <= end:
+            status = "REFUSED_SPANS_EVIDENCE_CUTOVER"
+        else:
+            status = "READY"
+        return PaperReportWindow(status, start, end, boundary_at)
+
+    def daily_grade(
+        self,
+        *,
+        report_window: PaperReportWindow,
+        source_fills: list[PaperSourceFill],
+    ) -> dict[str, object]:
+        """Return totals only when the complete report window is post-cutover."""
+        boundary = report_window.payload()
+        if report_window.status != "READY":
+            return {
+                **boundary,
+                "matched": None,
+                "total": None,
+                "paper_pct": "",
+                "real_pct": "",
+                "rows": [],
+            }
+        grades = self.mirror_grades(
+            start=report_window.start,
+            end=report_window.end,
+            source_fills=source_fills,
+        )
+        gradable = [row for row in grades if bool(row.get("gradable"))]
+        return {
+            **boundary,
+            "matched": len(gradable),
+            "total": len(grades),
+            "paper_pct": str(
+                sum((Decimal(str(row["paper_pct"])) for row in gradable), Decimal("0"))
+            ),
+            "real_pct": str(
+                sum((Decimal(str(row["real_pct"])) for row in gradable), Decimal("0"))
+            ),
+            "rows": grades,
+        }
 
     def ensure_initial_config(
         self,

@@ -155,6 +155,14 @@ by close, an exit or explicit `UNANSWERABLE` state. If `N = 0`, Mirror is `UNEXE
 `PASS`; service, feed, scanner, reconciliation, independent-arm, and structural no-order checks are
 reported separately and cannot turn that zero into an exercised mirror result.
 
+The daily grade names its UTC window and the evidence-table cutover at merge SHA
+`028817d8be8639c8e48aad648ef822a0abd18de5`. The durable timestamp is the `created_at` value on the
+migration-seeded `migration-initial-v1` config row. A window before that boundary refuses because
+`paper_exit_events` was not yet the source; a window crossing it refuses rather than combining the
+legacy order tables with the new tape; and a missing seed row is `COULD_NOT_TELL`. Refused reports
+emit no denominator, P&L totals, or rows. Mirror capture may still record post-cutover evidence on
+the cutover day so venue visibility can be checked without presenting a mixed-day grade.
+
 The daily surface also prints entry assumptions without pooling results: each stamped slot shows
 the independent arm's modelled executable-ask fill beside the actual quantity-weighted mirror fill,
 its venue legs and timestamps, and their signed percentage difference. Independent-only and
