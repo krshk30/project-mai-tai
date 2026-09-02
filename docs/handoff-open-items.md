@@ -267,7 +267,7 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
-- **PAPER1 — successor exit question above +5%** *(owner: unassigned; blocked on exercised paper
+- **PAPER1 — successor exit question above +5%** *(owner: codex-2; blocked on exercised paper
   harness evidence)*. Once the v1 paper harness has run forward, measure whether a position that
   reaches +5% should be sold or released as a runner. This is explicitly outside v1: do not change
   its locked first-trigger rule, add trailing behavior, or derive a choice from the historical
