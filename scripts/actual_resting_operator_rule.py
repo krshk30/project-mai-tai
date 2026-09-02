@@ -47,6 +47,11 @@ TARGET_PCT = Decimal("5")
 TARGET_10_PCT = Decimal("10")
 STOP_PCT = Decimal("8")
 QUOTE_FRESHNESS = timedelta(seconds=10)
+DEPTH_DISCLOSURE = (
+    "NOT SIZE-QUALIFIED: displayed bid-size contract is unverified; price-level bid only"
+)
+
+
 @dataclass(frozen=True)
 class QuotePoint:
     at: datetime
@@ -879,6 +884,7 @@ def main() -> int:
                     for fill, result in zip(legs, actual_results, strict=True)
                 ),
                 "dependency": note,
+                "depth_basis": DEPTH_DISCLOSURE,
                 "plus5_no_stop_return_pct": f"{plus5_return:+.4f}"
                 if plus5_return is not None
                 else "NA",
@@ -948,6 +954,7 @@ def main() -> int:
     )
     summary = [
         "Every result uses `actual resting fill -> recalculated ATR SELL`; `16:00 ET` is backstop only.",
+        f"Depth basis on every row: {DEPTH_DISCLOSURE}.",
         f"Halt definition: print gap >= {HALT_MIN_PRINT_GAP.total_seconds():.0f}s with "
         f">= {HALT_MIN_QUOTE_UPDATES} quote updates continuing inside the gap.",
         f"PRE-FIX HALT EXPOSURE: windows containing halt {len(halt_window_events)} / {total}; "
@@ -1068,8 +1075,8 @@ def main() -> int:
                 for row in dropped_plus10
             ],
             "",
-            "| sym | buy | fill | hi % / hi t | lo % / lo t | exit | px | by | rule % | real % |",
-            "|---|---|---|---|---|---|---|---|---:|---:|",
+            "| sym | buy | fill | hi % / hi t | lo % / lo t | exit | px | by | rule % | real % | depth |",
+            "|---|---|---|---|---|---|---|---|---:|---:|---|",
         ]
     )
     for row in rows:
@@ -1087,7 +1094,7 @@ def main() -> int:
             f"| {row['symbol']} | {row['fill_time_et']} | {row['fill_price']} | "
             f"{row['high_bid_pct_time']} | {row['low_bid_pct_time']} | "
             f"{row['trigger_time_et']} | {row['exit_bid']} | {by} | "
-            f"{row['event_return_pct']}% | {real}% |"
+            f"{row['event_return_pct']}% | {real}% | {row['depth_basis']} |"
         )
 
     args.csv.parent.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Measure real V2 resting fills through the next production ATR SELL transition."""
+"""SUPERSEDED measurement helper; do not use for the operator-rule study.
+
+This legacy instrument uses trade prints for extrema and reconstructs ATR SELL
+boundaries with ``ReplayStrategy``. Use ``actual_resting_operator_rule.py`` for
+the guarded bid-based measurement instead.
+"""
 
 from __future__ import annotations
 
