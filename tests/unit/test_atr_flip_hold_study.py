@@ -7,6 +7,8 @@ import pytest
 from project_mai_tai.backtest.atr_flip_hold_study import (
     FlipCandidate,
     HoldPolicy,
+    natural_path,
+    policy_grid,
     simulate_policy,
 )
 from project_mai_tai.backtest.data import Quote
@@ -115,3 +117,30 @@ def test_scaled_runner_can_exceed_first_target_before_trailing_exit() -> None:
     assert outcome.exit_reason == "trail"
     assert outcome.exit_ts == BASE + timedelta(seconds=4)
     assert outcome.return_pct == pytest.approx(0.5 * 5.0 + 0.5 * 9.0)
+
+
+def test_policy_grid_contains_exact_fixed_scale_without_earned_floor() -> None:
+    policy = next(
+        row for row in policy_grid() if row.name == "scale0.5@+5_rest@+8_no_floor_stop-10"
+    )
+
+    assert policy.first_fraction == 0.5
+    assert policy.first_target_pct == 5.0
+    assert policy.final_target_pct == 8.0
+    assert policy.earned_floor_pct is None
+
+
+def test_max_drawdown_stops_at_atr_sell_boundary() -> None:
+    quotes = [
+        _quote(0, 9.99, 10.0),
+        _quote(1, 9.80),
+        _quote(2, 9.70),
+        _quote(3, 5.00),
+    ]
+    candidate = _candidate(quotes, sell_after=2)
+
+    path = natural_path(candidate, quotes, BASE + timedelta(minutes=1))
+
+    assert path.natural_exit_reason == "atr_sell"
+    assert path.natural_exit_ts == BASE + timedelta(seconds=2)
+    assert path.mae_pct == pytest.approx(-3.0)

@@ -168,6 +168,15 @@ def policy_grid() -> list[HoldPolicy]:
                     )
         policies.append(
             HoldPolicy(
+                f"scale0.5@+5_rest@+8_no_floor_{stop_label}",
+                stop,
+                first_target_pct=5.0,
+                first_fraction=0.5,
+                final_target_pct=8.0,
+            )
+        )
+        policies.append(
+            HoldPolicy(
                 f"scale0.5@+5_trail2_floor+0_{stop_label}",
                 stop,
                 first_target_pct=5.0,
@@ -283,6 +292,15 @@ def natural_path(
     for quote in quotes[candidate.entry_quote_index + 1 :]:
         if quote.ts >= session_end:
             break
+        bid = float(quote.bid)
+        last_quote = quote
+        observed += 1
+        max_bid = max(max_bid, bid)
+        min_bid = min(min_bid, bid)
+        gain = (bid / candidate.entry_px - 1.0) * 100.0
+        for level in reached:
+            if reached[level] is None and gain >= level:
+                reached[level] = quote.ts
         if candidate.sell_signal_ts is not None and quote.ts >= candidate.sell_signal_ts:
             return NaturalPath(
                 symbol=candidate.symbol,
@@ -301,15 +319,6 @@ def natural_path(
                 reached_10_ts=reached[10.0],
                 quote_count=observed,
             )
-        bid = float(quote.bid)
-        last_quote = quote
-        observed += 1
-        max_bid = max(max_bid, bid)
-        min_bid = min(min_bid, bid)
-        gain = (bid / candidate.entry_px - 1.0) * 100.0
-        for level in reached:
-            if reached[level] is None and gain >= level:
-                reached[level] = quote.ts
     return NaturalPath(
         symbol=candidate.symbol,
         buy_signal_ts=candidate.buy_signal_ts,
