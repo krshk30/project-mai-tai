@@ -111,6 +111,15 @@ It deliberately accepts a lower win rate than a roughly symmetric two-percent ru
 preserve larger average wins. Alternative targets, stops, trailing, and runner-release behavior are
 outside v1.
 
+All executable-price decisions share the backtest's halt classifier: a print-free interval of at
+least 285 seconds with at least two continuing quote updates. The live process cannot know that a
+gap will reach 285 seconds, so an exit first seen after the latest print remains provisional. A
+later print shorter than the threshold clears the suspicion, and the paper exit uses the next quote;
+a confirmed halt suppresses the trigger and likewise waits for the first quote after the reopening
+print. If that quote never arrives, the row is `UNANSWERABLE`. This deliberately delays valid paper
+exits on print-sparse names and can produce a worse modelled price; the cost is preferable to
+crediting a fill against a quote whose market-open state cannot yet be established.
+
 ## 5. Forbidden Shared State
 
 Neither arm consumes first/reclaim/fan-out slots, writes `virtual_positions` or

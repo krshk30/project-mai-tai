@@ -65,6 +65,7 @@ from project_mai_tai.market_data.schwab_tick_archive import (
 )
 from project_mai_tai.market_data.schwab_streamer import SchwabStreamerClient
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
+from project_mai_tai.market_data.tick_time import normalize_ts_ns, ns_to_datetime
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.paper_exit import (
     MIRROR_ARM,
@@ -7216,8 +7217,21 @@ class StrategyEngineService:
                 cumulative_volume=event.payload.cumulative_volume,
                 strategy_codes=strategy_codes,
             )
+            normalized_trade_ns = normalize_ts_ns(event.payload.timestamp_ns)
+            paper_decisions = (
+                self.paper_exit_runtime.on_trade(
+                    symbol=event.payload.symbol,
+                    observed_at=(
+                        ns_to_datetime(normalized_trade_ns)
+                        if normalized_trade_ns is not None
+                        else event.produced_at
+                    ),
+                )
+                if self.paper_exit_runtime is not None
+                else []
+            )
             await self._flush_pending_persists()
-            self._persist_paper_decisions()
+            self._persist_paper_decisions(paper_decisions)
             for intent in intents:
                 await self._publish_intent(intent)
             if intents:

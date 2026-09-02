@@ -5790,6 +5790,11 @@ def _render_bot_detail_page(
         acceptance = dict(paper_exit.get("acceptance", {}) or {})
         grade = dict(acceptance.get("grade", {}) or {})
         independent = dict(paper_exit.get("independent", {}) or {})
+        halt_suppression = dict(
+            grade.get("halt_suppression", {})
+            or paper_exit.get("halt_suppression", {})
+            or {}
+        )
         assumption_rows = list(acceptance.get("entry_assumptions", []) or [])
         verdict = str(acceptance.get("verdict", "UNEXERCISED"))
         grade_status = str(grade.get("status", "COULD_NOT_TELL"))
@@ -5855,6 +5860,7 @@ def _render_bot_detail_page(
                     <div class="hero-card"><span>Open mirror</span><strong>{int(paper_exit.get("mirror_open", 0) or 0)}</strong><small>Live resting fills, both venues</small></div>
                     <div class="hero-card"><span>Independent</span><strong>{int(independent.get("filled", 0) or 0)} / {int(independent.get("armed", 0) or 0)}</strong><small>filled / armed · never pooled</small></div>
                     <div class="hero-card"><span>Daily grade</span><strong>{escape(grade_value)}</strong><small>{grade_note}</small></div>
+                    <div class="hero-card"><span>Halt-suppressed triggers</span><strong>{escape(str(halt_suppression.get("status", "UNEXERCISED")))}</strong><small>{escape(str(halt_suppression.get("suppressed_triggers", 0)))} triggers / {escape(str(halt_suppression.get("denominator", 0)))} confirmed halt windows</small></div>
                     <div class="hero-card"><span>Active rule</span><strong>+{escape(str(paper_config.get("target_pct", "5")))}% / -{escape(str(paper_config.get("stop_pct", "8")))}%</strong><small>Effective {escape(str(paper_config.get("effective_at", "-")))}</small></div>
                 </div>
                 <div class="panel-copy">

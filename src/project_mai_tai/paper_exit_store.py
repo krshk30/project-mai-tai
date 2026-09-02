@@ -148,11 +148,21 @@ class PaperExitStore:
                 "paper_pct": "",
                 "real_pct": "",
                 "rows": [],
+                "halt_suppression": {
+                    "status": "COULD_NOT_TELL",
+                    "suppressed_triggers": None,
+                    "confirmed_halts": None,
+                    "denominator": None,
+                },
             }
         grades = self.mirror_grades(
             start=report_window.start,
             end=report_window.end,
             source_fills=source_fills,
+        )
+        halt_suppression = self.halt_suppression_grade(
+            start=report_window.start,
+            end=report_window.end,
         )
         gradable = [row for row in grades if bool(row.get("gradable"))]
         return {
@@ -166,6 +176,30 @@ class PaperExitStore:
                 sum((Decimal(str(row["real_pct"])) for row in gradable), Decimal("0"))
             ),
             "rows": grades,
+            "halt_suppression": halt_suppression,
+        }
+
+    def halt_suppression_grade(self, *, start: datetime, end: datetime) -> dict[str, object]:
+        """Report trigger suppression against confirmed halt windows, never as a pass."""
+        with self.session_factory() as session:
+            event_types = list(
+                session.scalars(
+                    select(PaperExitEvent.event_type).where(
+                        PaperExitEvent.observed_at >= start,
+                        PaperExitEvent.observed_at <= end,
+                        PaperExitEvent.event_type.in_(
+                            ("HALT_CONFIRMED", "HALT_TRIGGER_SUPPRESSED")
+                        ),
+                    )
+                )
+            )
+        confirmed = event_types.count("HALT_CONFIRMED")
+        suppressed = event_types.count("HALT_TRIGGER_SUPPRESSED")
+        return {
+            "status": "MEASURED" if confirmed else "UNEXERCISED",
+            "suppressed_triggers": suppressed,
+            "confirmed_halts": confirmed,
+            "denominator": confirmed,
         }
 
     def ensure_initial_config(

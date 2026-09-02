@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import ast
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -80,6 +82,27 @@ def fill(
         entry_slot=entry_slot,  # type: ignore[arg-type]
         source="rth_resting_mirror" if venue == "webull" else "cw-v2-resting",
     )
+
+
+def release_candidate_after_print(
+    runtime: PaperExitRuntime,
+    *,
+    bid: Decimal,
+    ask: Decimal,
+    observed_at: datetime,
+) -> PaperDecision:
+    """Stage an uncertain quote, then prove the short gap ended and use the next quote."""
+    assert runtime.on_quote(
+        symbol="TEST", bid=bid, ask=ask, observed_at=observed_at
+    ) == []
+    runtime.on_trade(symbol="TEST", observed_at=observed_at + timedelta(milliseconds=1))
+    decisions = runtime.on_quote(
+        symbol="TEST",
+        bid=bid,
+        ask=ask,
+        observed_at=observed_at + timedelta(milliseconds=2),
+    )
+    return next(decision for decision in decisions if decision.event_type == "PAPER_EXIT")
 
 
 @pytest.mark.parametrize(
@@ -278,14 +301,14 @@ def test_first_timestamped_target_stop_flip_close_priority() -> None:
         venue="schwab",
     )
     runtime.add_mirror_fill(source)
-    runtime.mark_atr_sell("TEST", AT + timedelta(minutes=2))
-    decisions = runtime.on_quote(
-        symbol="TEST",
+    runtime.on_atr_sell(symbol="TEST", observed_at=AT + timedelta(minutes=2))
+    decision = release_candidate_after_print(
+        runtime,
         bid=Decimal("10.50"),
         ask=Decimal("10.51"),
         observed_at=AT + timedelta(minutes=2),
     )
-    assert decisions[0].detail["reason"] == "TARGET"
+    assert decision.detail["reason"] == "TARGET"
 
 
 def test_earlier_atr_sell_beats_a_target_seen_on_the_next_quote() -> None:
@@ -298,13 +321,155 @@ def test_earlier_atr_sell_beats_a_target_seen_on_the_next_quote() -> None:
         )
     )
     assert runtime.on_atr_sell(symbol="TEST", observed_at=AT + timedelta(minutes=2)) == []
-    decision = runtime.on_quote(
-        symbol="TEST",
+    decision = release_candidate_after_print(
+        runtime,
         bid=Decimal("10.50"),
         ask=Decimal("10.51"),
         observed_at=AT + timedelta(minutes=2, seconds=1),
-    )[0]
+    )
     assert decision.detail["reason"] == "ATR_SELL"
+
+
+def test_confirmed_halt_suppresses_target_until_first_quote_after_reopen() -> None:
+    runtime = PaperExitRuntime(config())
+    runtime.add_mirror_fill(
+        fill(
+            fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            broker_fill_id="fill-1",
+            venue="schwab",
+        )
+    )
+    last_print = AT + timedelta(minutes=1)
+    runtime.on_trade(symbol="TEST", observed_at=last_print)
+
+    assert runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("10.50"),
+        ask=Decimal("10.51"),
+        observed_at=last_print + timedelta(seconds=1),
+    ) == []
+    confirmed = runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("10.60"),
+        ask=Decimal("10.61"),
+        observed_at=last_print + timedelta(seconds=285),
+    )
+
+    assert [decision.event_type for decision in confirmed] == [
+        "HALT_CONFIRMED",
+        "HALT_TRIGGER_SUPPRESSED",
+    ]
+    assert all(decision.event_type != "PAPER_EXIT" for decision in confirmed)
+
+    reopen = last_print + timedelta(minutes=5)
+    runtime.on_trade(symbol="TEST", observed_at=reopen)
+    released = runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("9.75"),
+        ask=Decimal("9.76"),
+        observed_at=reopen + timedelta(milliseconds=1),
+    )
+    exit_decision = next(
+        decision for decision in released if decision.event_type == "PAPER_EXIT"
+    )
+    assert exit_decision.detail["reason"] == "TARGET"
+    assert exit_decision.price == Decimal("9.75")
+    assert runtime.summary()["paper_exit"]["halt_suppression"] == {
+        "status": "MEASURED",
+        "suppressed_triggers": 1,
+        "confirmed_halts": 1,
+        "denominator": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("reason", "bid"),
+    [("HARD_STOP", Decimal("9.20")), ("ATR_SELL", Decimal("10.00"))],
+)
+def test_stop_and_flip_cannot_exit_inside_a_confirmed_halt(
+    reason: str, bid: Decimal
+) -> None:
+    runtime = PaperExitRuntime(config())
+    runtime.add_mirror_fill(
+        fill(
+            fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            broker_fill_id="fill-1",
+            venue="schwab",
+        )
+    )
+    last_print = AT + timedelta(minutes=1)
+    runtime.on_trade(symbol="TEST", observed_at=last_print)
+    runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("10.00"),
+        ask=Decimal("10.01"),
+        observed_at=last_print + timedelta(seconds=1),
+    )
+    runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("10.00"),
+        ask=Decimal("10.01"),
+        observed_at=last_print + timedelta(seconds=285),
+    )
+    trigger_at = last_print + timedelta(seconds=286)
+    if reason == "ATR_SELL":
+        decisions = runtime.on_atr_sell(symbol="TEST", observed_at=trigger_at)
+    else:
+        decisions = runtime.on_quote(
+            symbol="TEST",
+            bid=bid,
+            ask=bid + Decimal("0.01"),
+            observed_at=trigger_at,
+        )
+
+    assert [decision.event_type for decision in decisions] == [
+        "HALT_TRIGGER_SUPPRESSED"
+    ]
+    assert decisions[0].detail["reason"] == reason
+    assert runtime.summary()["paper_exit"]["mirror_open"] == 1
+
+
+def test_suspected_halt_never_grants_a_fill_and_missing_reopen_is_unanswerable() -> None:
+    runtime = PaperExitRuntime(config())
+    runtime.add_mirror_fill(
+        fill(
+            fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            broker_fill_id="fill-1",
+            venue="schwab",
+            at=datetime(2026, 9, 2, 19, 50, tzinfo=UTC),
+        )
+    )
+    runtime.on_trade(
+        symbol="TEST", observed_at=datetime(2026, 9, 2, 19, 55, tzinfo=UTC)
+    )
+    assert runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("10.00"),
+        ask=Decimal("10.01"),
+        observed_at=datetime(2026, 9, 2, 19, 55, 1, tzinfo=UTC),
+    ) == []
+    confirmed = runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("10.00"),
+        ask=Decimal("10.01"),
+        observed_at=datetime(2026, 9, 2, 19, 59, 45, tzinfo=UTC),
+    )
+    assert [decision.event_type for decision in confirmed] == ["HALT_CONFIRMED"]
+    close_decisions = runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("10.00"),
+        ask=Decimal("10.01"),
+        observed_at=datetime(2026, 9, 2, 20, 0, tzinfo=UTC),
+    )
+    assert [decision.event_type for decision in close_decisions] == [
+        "HALT_TRIGGER_SUPPRESSED"
+    ]
+    assert close_decisions[0].detail["reason"] == "16:00"
+
+    decisions = runtime.on_clock(datetime(2026, 9, 2, 20, 1, tzinfo=UTC))
+
+    assert [decision.event_type for decision in decisions] == ["UNANSWERABLE"]
+    assert "no post-reopen quote" in str(decisions[0].detail["reason"])
 
 
 def test_late_arriving_earlier_atr_sell_is_unanswerable_without_quote_replay() -> None:
@@ -316,12 +481,12 @@ def test_late_arriving_earlier_atr_sell_is_unanswerable_without_quote_replay() -
             venue="schwab",
         )
     )
-    first = runtime.on_quote(
-        symbol="TEST",
+    first = release_candidate_after_print(
+        runtime,
         bid=Decimal("10.50"),
         ask=Decimal("10.51"),
         observed_at=AT + timedelta(minutes=3),
-    )[0]
+    )
     assert first.detail["reason"] == "TARGET"
 
     correction = runtime.on_atr_sell(
@@ -371,12 +536,12 @@ def test_terminal_decision_remains_pending_until_durable_acknowledgement() -> No
             venue="schwab",
         )
     )
-    decision = runtime.on_quote(
-        symbol="TEST",
+    decision = release_candidate_after_print(
+        runtime,
         bid=Decimal("10.50"),
         ask=Decimal("10.51"),
         observed_at=AT + timedelta(minutes=2),
-    )[0]
+    )
     assert runtime.pending_terminal_decisions() == [decision]
     runtime.acknowledge_decisions({decision.event_key})
     assert runtime.pending_terminal_decisions() == []
@@ -405,12 +570,12 @@ def test_failed_terminal_persist_is_retried_before_restart_restore() -> None:
         venue="schwab",
     )
     runtime.add_mirror_fill(source)
-    decision = runtime.on_quote(
-        symbol="TEST",
+    decision = release_candidate_after_print(
+        runtime,
         bid=Decimal("10.50"),
         ask=Decimal("10.51"),
         observed_at=AT + timedelta(minutes=2),
-    )[0]
+    )
 
     class _FailOnceStore:
         def __init__(self) -> None:
@@ -468,12 +633,12 @@ def test_config_change_never_changes_an_open_window_and_survives_in_decision() -
         AT + timedelta(minutes=2),
     )
     runtime.update_config(next_config)
-    decision = runtime.on_quote(
-        symbol="TEST",
+    decision = release_candidate_after_print(
+        runtime,
         bid=Decimal("10.50"),
         ask=Decimal("10.51"),
         observed_at=AT + timedelta(minutes=3),
-    )[0]
+    )
     assert decision.config_id == CONFIG_ID
     assert decision.detail["target_pct"] == "5"
     second = fill(
@@ -657,6 +822,44 @@ async def test_independent_arm_uses_stamped_v2_resting_attempt_and_collapses_ven
 
 
 @pytest.mark.asyncio
+async def test_market_trade_event_time_reaches_the_live_halt_tracker() -> None:
+    service = StrategyEngineService.__new__(StrategyEngineService)
+    captured: list[datetime] = []
+
+    class _Runtime:
+        def on_trade(self, *, symbol: str, observed_at: datetime) -> list[PaperDecision]:
+            assert symbol == "TEST"
+            captured.append(observed_at)
+            return []
+
+    service.paper_exit_runtime = _Runtime()
+    service.state = SimpleNamespace(handle_trade_tick=lambda **_kwargs: [])
+    service._generic_market_data_strategy_codes = lambda _symbol: []
+
+    async def _flush() -> None:
+        return None
+
+    service._flush_pending_persists = _flush
+    service._persist_paper_decisions = lambda _decisions=None: 0
+    event_at = AT + timedelta(seconds=7)
+    payload = {
+        "event_type": "trade_tick",
+        "source_service": "market-data-gateway",
+        "produced_at": (event_at + timedelta(seconds=10)).isoformat(),
+        "payload": {
+            "symbol": "TEST",
+            "price": "10.00",
+            "size": 100,
+            "timestamp_ns": int(event_at.timestamp() * 1_000),
+        },
+    }
+
+    await service._handle_stream_message("test:market-data", {"data": json.dumps(payload)})
+
+    assert captured == [event_at]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("entry_slot", "source"),
     [("reclaim", "rth_resting"), ("first", "reactive"), ("first", "unknown")],
@@ -819,6 +1022,60 @@ def test_daily_grade_preserves_post_cutover_denominator_and_totals(
     assert grade["paper_pct"] == "5.25"
     assert grade["real_pct"] == "3.50"
     assert grade["rows"] == rows
+    assert grade["halt_suppression"] == {
+        "status": "UNEXERCISED",
+        "suppressed_triggers": 0,
+        "confirmed_halts": 0,
+        "denominator": 0,
+    }
+
+
+def test_daily_halt_line_counts_confirmed_windows_and_suppressed_triggers() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    store = PaperExitStore(factory)
+    store.append_decisions(
+        [
+            PaperDecision(
+                event_key="HALT_CONFIRMED:TEST:1",
+                logical_id="halt:TEST:1",
+                arm="mirror",
+                event_type="HALT_CONFIRMED",
+                session_date=AT.date(),
+                symbol="TEST",
+                observed_at=AT,
+                price=None,
+                quantity=None,
+                config_id=None,
+            ),
+            PaperDecision(
+                event_key="HALT_TRIGGER_SUPPRESSED:TEST:1",
+                logical_id="logical-1",
+                arm="mirror",
+                event_type="HALT_TRIGGER_SUPPRESSED",
+                session_date=AT.date(),
+                symbol="TEST",
+                observed_at=AT + timedelta(seconds=1),
+                price=None,
+                quantity=Decimal("1"),
+                config_id=None,
+            ),
+        ]
+    )
+
+    assert store.halt_suppression_grade(
+        start=AT - timedelta(seconds=1), end=AT + timedelta(minutes=1)
+    ) == {
+        "status": "MEASURED",
+        "suppressed_triggers": 1,
+        "confirmed_halts": 1,
+        "denominator": 1,
+    }
 
 
 def test_entry_assumptions_keep_modelled_and_actual_fills_separate() -> None:
