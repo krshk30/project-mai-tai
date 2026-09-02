@@ -16,6 +16,7 @@ from project_mai_tai.backtest.dot_entry import (
     _green_macd,
     fast_stoch_k,
     lowest_prior,
+    macd_histogram,
     rsi_wilders,
 )
 
@@ -67,6 +68,22 @@ def test_all_green_requires_all_three_rows() -> None:
     assert DotRows(macd=up, stoch=strong, rsi=strong).all_green(4) is True
     assert DotRows(macd=up, stoch=strong, rsi=weak).all_green(4) is False
     assert DotRows(macd=up, stoch=strong, rsi=weak).consensus(4) == 2
+
+
+def test_all_red_allows_at_most_one_green_row() -> None:
+    up = [9.0, 2.0, 1.0, 0.0, 0.5]
+    strong = [95.0, 90.0, 85.0, 80.0, 75.0]
+    weak = [80.0, 60.0, 55.0, 50.0, 45.0]
+    assert DotRows(macd=up, stoch=weak, rsi=weak).all_red(4) is True
+    assert DotRows(macd=up, stoch=strong, rsi=weak).all_red(4) is False
+
+
+def test_macd_histogram_uses_tos_12_26_9_defaults() -> None:
+    closes = [float(value) for value in range(1, 50)]
+    histogram = macd_histogram(closes)
+    assert len(histogram) == len(closes)
+    assert histogram[0] == 0.0
+    assert histogram[-1] > 0.0
 
 
 def test_fast_stoch_k_endpoints() -> None:

@@ -56,6 +56,15 @@ def macd_value(closes: list[float], fast: int = 6, slow: int = 13) -> list[float
     return [f[i] - s[i] for i in range(len(closes))]
 
 
+def macd_histogram(
+    closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9
+) -> list[float]:
+    """TOS MACDHistogram Diff using its 12/26/9 exponential defaults."""
+    value = macd_value(closes, fast, slow)
+    average = ema(value, signal)
+    return [value[i] - average[i] for i in range(len(value))]
+
+
 def fast_stoch_k(
     highs: list[float], lows: list[float], closes: list[float], k_period: int = 10
 ) -> list[float]:
@@ -140,6 +149,9 @@ class DotRows:
 
     def all_green(self, i: int) -> bool:
         return self.consensus(i) >= 3
+
+    def all_red(self, i: int) -> bool:
+        return self.consensus(i) <= 1
 
 
 def build_rows(

@@ -1,0 +1,13 @@
+population,rule,trades,before_close_exits,session_close_exits,total_return_pct,mean_return_pct,median_return_pct,mean_duration_minutes,median_duration_minutes,mean_capture_pct,median_capture_pct,capture_denominator_trades
+Reached +5,fixed_5,42,42,0,210.0,5.0,5.0,20.69,14.46,42.49,38.62,42
+Reached +5,atr_sell,42,34,8,34.5194,0.8219,-0.3871,65.39,66.01,-9.54,-2.54,42
+Reached +5,dot_bearish,42,41,1,-28.3982,-0.6761,-1.0993,6.79,5.15,-3.94,-5.53,42
+Reached +5,macd_hist_below_zero,42,38,4,31.4989,0.75,-0.3205,16.81,14.99,3.03,-1.32,42
+Reached +5,first,42,41,1,-28.3982,-0.6761,-1.0993,6.79,5.15,-3.94,-5.53,42
+Reached +5,second,42,38,4,31.4989,0.75,-0.3205,16.81,14.99,3.03,-1.32,42
+Did not reach +5,fixed_5,55,45,10,-282.1954,-5.1308,-4.1026,25.96,19.04,-174.17,-50.0,47
+Did not reach +5,atr_sell,55,45,10,-315.0752,-5.7286,-4.1026,27.03,19.98,-183.95,-66.67,47
+Did not reach +5,dot_bearish,55,51,4,-144.6351,-2.6297,-1.956,4.74,4.03,-90.35,-23.53,47
+Did not reach +5,macd_hist_below_zero,55,50,5,-204.9859,-3.727,-3.0303,12.08,9.03,-130.46,-45.45,47
+Did not reach +5,first,55,51,4,-144.6351,-2.6297,-1.956,4.58,4.03,-90.35,-23.53,47
+Did not reach +5,second,55,50,5,-204.9859,-3.727,-3.0303,12.24,10.0,-130.46,-45.45,47
