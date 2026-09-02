@@ -1038,7 +1038,7 @@ contains it. The lint generalises that catch to every marker, including the ones
 
 ---
 
-## B33. LIVE V2 MAY CONSUME LOCKED QUOTES DURING A LULD HALT
+## HALT1. LIVE V2 MAY CONSUME LOCKED QUOTES DURING A LULD HALT
 
 **Boarded, not yet investigated.** Four study readings on DAIC 2026-08-24 came from locked quote
 ladders inside 300.068s, 600.030s, and 300.064s print-free pauses. That is an event, not proof of a

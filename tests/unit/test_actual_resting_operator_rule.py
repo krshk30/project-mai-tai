@@ -15,6 +15,7 @@ from actual_resting_operator_rule import (
     HaltWindow,
     LegResult,
     QuotePoint,
+    choose_boundary,
     choose_outcome,
     choose_yardstick,
     detect_halt_windows,
@@ -383,3 +384,26 @@ def test_no_stop_yardstick_uses_endpoint_when_target_never_trades() -> None:
     )
     assert result.outcome == "exited on ATR flip"
     assert result.return_pct == Decimal("-3.00")
+
+
+def test_stopped_counterfactual_uses_halt_aware_atr_sell_quote() -> None:
+    fill = _fill("live:schwab_1m_v2")
+    sell_at = fill.at + timedelta(minutes=5)
+    executable_at = sell_at + timedelta(seconds=2)
+
+    result = choose_boundary(
+        fill,
+        sell_at,
+        fill.at.replace(hour=20),
+        {
+            "first": QuotePoint(fill.at, Decimal("10")),
+            "endpoint_after": QuotePoint(executable_at, Decimal("8.50")),
+            "endpoint_before": None,
+        },
+        sell_deferred=True,
+    )
+
+    assert result.outcome == "exited on ATR flip"
+    assert result.trigger_at == executable_at
+    assert result.return_pct == Decimal("-15.00")
+    assert "executed after reopen" in result.note

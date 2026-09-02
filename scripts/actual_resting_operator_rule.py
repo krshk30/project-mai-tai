@@ -537,6 +537,43 @@ def choose_yardstick(
     return LegResult(fill, outcome, endpoint.at, endpoint.bid, result, note)
 
 
+def choose_boundary(
+    fill: Fill,
+    sell_at: datetime | None,
+    cutoff: datetime,
+    points: dict[str, QuotePoint | tuple[datetime, datetime] | None],
+    *,
+    sell_deferred: bool = False,
+) -> LegResult:
+    """Hold without price exits until the halt-aware ATR SELL or 16:00 backstop."""
+    if points["first"] is None:
+        return LegResult(
+            fill, "UNANSWERABLE", None, None, None, "no valid bid within 10s after fill"
+        )
+    endpoint = points["endpoint_after"] if sell_at is not None else points["endpoint_before"]
+    assert endpoint is None or isinstance(endpoint, QuotePoint)
+    if endpoint is None:
+        where = "recalculated ATR SELL" if sell_at is not None else "16:00"
+        return LegResult(
+            fill,
+            "UNANSWERABLE",
+            sell_at or cutoff,
+            None,
+            None,
+            f"no valid bid within 10s of {where}",
+        )
+    result = (endpoint.bid / fill.price - Decimal("1")) * Decimal("100")
+    if sell_at is not None:
+        outcome = "exited on ATR flip"
+        note = "depends on recalculated ATR SELL endpoint"
+        if sell_deferred:
+            note += "; raw flip was halted, executed after reopen"
+    else:
+        outcome = "still open at 16:00"
+        note = "16:00 backstop"
+    return LegResult(fill, outcome, endpoint.at, endpoint.bid, result, note)
+
+
 def event_outcome(results: list[LegResult]) -> tuple[str, Decimal | None, str]:
     outcomes = {result.outcome for result in results}
     if "UNANSWERABLE" in outcomes:
@@ -743,9 +780,20 @@ def main() -> int:
             )
             for fill, points in zip(legs, leg_points, strict=True)
         ]
+        boundary_results = [
+            choose_boundary(
+                fill,
+                sell_at,
+                cutoff,
+                points,
+                sell_deferred=sell_deferred,
+            )
+            for fill, points in zip(legs, leg_points, strict=True)
+        ]
         outcome, return_pct, note = event_outcome(leg_results)
         plus5_return = event_return(plus5_results)
         plus10_return = event_return(plus10_results)
+        boundary_return = event_return(boundary_results)
         actual_results = [actual_leg_result(fill) for fill in legs]
         actual_return = weighted_values(
             [(fill, result[0]) for fill, result in zip(legs, actual_results, strict=True)]
@@ -850,8 +898,21 @@ def main() -> int:
                 "plus5_no_stop_return_pct": f"{plus5_return:+.4f}"
                 if plus5_return is not None
                 else "NA",
+                "plus5_ungradable_reason": "; ".join(
+                    f"{account_label(result.fill.account)}: {result.note}"
+                    for result in plus5_results
+                    if result.return_pct is None
+                ),
                 "plus10_no_stop_return_pct": f"{plus10_return:+.4f}"
                 if plus10_return is not None
+                else "NA",
+                "plus10_ungradable_reason": "; ".join(
+                    f"{account_label(result.fill.account)}: {result.note}"
+                    for result in plus10_results
+                    if result.return_pct is None
+                ),
+                "atr_sell_counterfactual_pct": f"{boundary_return:+.4f}"
+                if boundary_return is not None
                 else "NA",
                 "window": "actual resting fill -> recalculated ATR SELL; 16:00 backstop",
                 "bid_print_gate": "; ".join(
@@ -961,6 +1022,29 @@ def main() -> int:
     plus10_total = sum(
         (Decimal(row["plus10_no_stop_return_pct"]) for row in plus10_pairs), Decimal("0")
     )
+    operator_rows = [row for row in rows if row["event_return_pct"] != "NA"]
+    realized_pairs = [row for row in operator_rows if row["actual_return_pct"] != "NA"]
+    realized_operator = sum(
+        (Decimal(row["event_return_pct"]) for row in realized_pairs), Decimal("0")
+    )
+    realized_total = sum(
+        (Decimal(row["actual_return_pct"]) for row in realized_pairs), Decimal("0")
+    )
+    stopped_rows = [row for row in operator_rows if row["outcome"] == "exited at -8%"]
+    stopped_counterfactual = [
+        row for row in stopped_rows if row["atr_sell_counterfactual_pct"] != "NA"
+    ]
+    stopped_paid = sum((Decimal(row["event_return_pct"]) for row in stopped_rows), Decimal("0"))
+    stopped_paired_paid = sum(
+        (Decimal(row["event_return_pct"]) for row in stopped_counterfactual),
+        Decimal("0"),
+    )
+    stopped_unprotected = sum(
+        (Decimal(row["atr_sell_counterfactual_pct"]) for row in stopped_counterfactual),
+        Decimal("0"),
+    )
+    dropped_plus5 = [row for row in operator_rows if row["plus5_no_stop_return_pct"] == "NA"]
+    dropped_plus10 = [row for row in operator_rows if row["plus10_no_stop_return_pct"] == "NA"]
     summary.extend(
         [
             "",
@@ -969,6 +1053,36 @@ def main() -> int:
             f"+5 {plus5_total:+.4f}% on {len(plus5_pairs)} / {total}.",
             f"Paired with +10 yardstick: operator {plus10_operator:+.4f}% vs "
             f"+10 {plus10_total:+.4f}% on {len(plus10_pairs)} / {total}.",
+            "",
+            f"REALIZED CONTROL: matched {len(realized_pairs)} / {len(operator_rows)}; "
+            f"operator {realized_operator:+.4f}% vs realized {realized_total:+.4f}%.",
+            f"STOPPED COUNTERFACTUAL: all {len(stopped_rows)} stops cost "
+            f"{stopped_paid:+.4f}%; matched {len(stopped_counterfactual)} / "
+            f"{len(stopped_rows)} compare -8 rule {stopped_paired_paid:+.4f}% vs "
+            f"ATR SELL {stopped_unprotected:+.4f}%.",
+            "",
+            "| stopped | date | sym | -8 rule % | ATR SELL % |",
+            "|---:|---|---|---:|---:|",
+            *[
+                f"| {row['event']} | {row['date_et']} | {row['symbol']} | "
+                f"{row['event_return_pct']} | {row['atr_sell_counterfactual_pct']} |"
+                for row in stopped_rows
+            ],
+            "",
+            f"Dropped from +5 pairing: {len(dropped_plus5)} rows; operator contribution "
+            f"{sum((Decimal(row['event_return_pct']) for row in dropped_plus5), Decimal('0')):+.4f}%.",
+            *[
+                f"- event {row['event']} {row['date_et']} {row['symbol']}: "
+                f"operator {row['event_return_pct']}%; {row['plus5_ungradable_reason']}"
+                for row in dropped_plus5
+            ],
+            f"Dropped from +10 pairing: {len(dropped_plus10)} rows; operator contribution "
+            f"{sum((Decimal(row['event_return_pct']) for row in dropped_plus10), Decimal('0')):+.4f}%.",
+            *[
+                f"- event {row['event']} {row['date_et']} {row['symbol']}: "
+                f"operator {row['event_return_pct']}%; {row['plus10_ungradable_reason']}"
+                for row in dropped_plus10
+            ],
             "",
             "| sym | buy | fill | hi % / hi t | lo % / lo t | exit | px | by | rule % | real % |",
             "|---|---|---|---|---|---|---|---|---:|---:|",
