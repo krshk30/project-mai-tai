@@ -1,0 +1,126 @@
+horizon_bar,condition_count,conditions,build_target_total,build_comparator_total,build_target_assessed,build_comparator_assessed,build_target_caught,build_comparator_touched,build_target_not_caught,build_comparator_not_touched,build_unavailable,holdout_target_total,holdout_comparator_total,holdout_target_assessed,holdout_comparator_assessed,holdout_target_caught,holdout_comparator_touched,holdout_target_not_caught,holdout_comparator_not_touched,holdout_unavailable
+1,2,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -1,19,48,18,48,12,5,7,43,1,5,25,5,25,2,4,3,21,0
+1,2,b1.price_vs_vwap_pct >= -2 AND b1.traded_above_entry is False,19,48,18,48,12,3,7,45,1,5,25,5,25,2,0,3,25,0
+1,3,b1.close_vs_entry_pct <= +0 AND b1.running_low_pct >= -5 AND b1.price_vs_vwap_pct >= -2,19,48,18,48,13,5,6,43,1,5,25,5,25,2,5,3,20,0
+1,3,b1.close_vs_entry_pct <= +0 AND b1.volume_ratio_20 >= +0.5 AND b1.price_vs_vwap_pct >= -2,19,48,18,48,14,5,5,43,1,5,25,5,25,2,5,3,20,0
+1,3,b1.close_vs_entry_pct <= +0 AND b1.volume_ratio_20 >= +0.5 AND b1.price_vs_vwap_pct >= -1,19,48,18,48,12,4,7,44,1,5,25,5,25,2,4,3,21,0
+1,3,b1.close_vs_entry_pct <= +0 AND b1.volume_ratio_20 >= +0.75 AND b1.price_vs_vwap_pct >= -2,19,48,18,48,12,5,7,43,1,5,25,5,25,1,5,4,20,0
+1,3,b1.close_vs_entry_pct <= +1 AND b1.running_low_pct >= -3 AND b1.price_vs_vwap_pct >= -1,19,48,18,48,12,5,7,43,1,5,25,5,25,2,3,3,22,0
+1,3,b1.volume_ratio_20 >= +0.5 AND b1.price_vs_vwap_pct >= -2 AND b1.traded_above_entry is False,19,48,18,48,12,2,7,46,1,5,25,5,25,2,0,3,25,0
+2,2,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0,19,48,17,46,13,5,6,43,4,5,25,5,25,2,5,3,20,0
+2,2,b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +1.5,19,48,17,46,12,5,7,43,4,5,25,5,25,2,2,3,23,0
+2,2,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False,19,48,18,46,14,3,5,45,3,5,25,5,25,2,3,3,22,0
+2,2,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +0,19,48,17,46,12,3,7,45,4,5,25,5,25,2,4,3,21,0
+2,2,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1,19,48,17,46,13,5,6,43,4,5,25,5,25,2,5,3,20,0
+2,2,b1.price_vs_vwap_pct >= -1 AND b2.traded_above_entry is False,19,48,18,46,12,2,7,46,3,5,25,5,25,2,2,3,23,0
+2,3,b1.close_vs_entry_pct >= -3 AND b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0,19,48,17,46,12,4,7,44,4,5,25,5,25,2,4,3,21,0
+2,3,b1.close_vs_entry_pct >= -3 AND b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +1.5,19,48,17,46,12,4,7,44,4,5,25,5,25,2,2,3,23,0
+2,3,b1.close_vs_entry_pct >= -3 AND b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False,19,48,18,46,13,2,6,46,3,5,25,5,25,2,2,3,23,0
+2,3,b1.close_vs_entry_pct >= -3 AND b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1,19,48,17,46,12,4,7,44,4,5,25,5,25,2,4,3,21,0
+2,3,b1.close_vs_entry_pct >= -3 AND b1.price_vs_vwap_pct >= -1 AND b2.volume_ratio_20 <= +2,19,48,17,46,12,5,7,43,4,5,25,5,25,2,2,3,23,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct >= -3,19,48,17,46,12,4,7,44,4,5,25,5,25,2,3,3,22,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0,19,48,17,46,13,4,6,44,4,5,25,5,25,2,4,3,21,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b2.running_low_pct >= -5,19,48,18,48,12,5,7,43,1,5,25,5,25,2,3,3,22,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +2,19,48,17,46,12,4,7,44,4,5,25,5,25,2,3,3,22,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b2.macd_histogram_pct >= +0,19,48,17,46,13,5,6,43,4,5,25,5,25,2,5,3,20,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b2.stochastic >= +30,19,48,17,46,12,5,7,43,4,5,25,5,25,2,4,3,21,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b2.dot_consensus >= +1,19,48,17,46,12,5,7,43,4,5,25,5,25,2,4,3,21,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b2.atr_stop_position is below,19,48,18,48,13,5,6,43,1,5,25,5,25,2,5,3,20,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -1 AND b2.macd_histogram_pct >= +0,19,48,17,46,12,4,7,44,4,5,25,5,25,2,4,3,21,0
+2,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -1 AND b2.atr_stop_position is below,19,48,18,48,12,4,7,44,1,5,25,5,25,2,4,3,21,0
+2,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +1.5,19,48,17,46,12,4,7,44,4,5,25,5,25,2,1,3,24,0
+2,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +2,19,48,17,46,13,5,6,43,4,5,25,5,25,2,3,3,22,0
+2,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct >= -3,19,48,17,46,12,5,7,43,4,5,25,5,25,2,3,3,22,0
+2,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1,19,48,17,46,13,4,6,44,4,5,25,5,25,2,4,3,21,0
+2,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -1 AND b2.volume_ratio_20 <= +2,19,48,17,46,12,4,7,44,4,5,25,5,25,2,2,3,23,0
+2,3,b1.running_low_pct <= -1 AND b1.traded_above_entry is False AND b2.traded_above_entry is False,19,48,19,46,12,5,7,43,2,5,25,5,25,3,7,2,18,0
+2,3,b1.volume_ratio_20 >= +0.5 AND b1.traded_above_entry is False AND b2.traded_above_entry is False,19,48,18,46,12,5,7,43,3,5,25,5,25,4,7,1,18,0
+2,3,b1.volume_ratio_20 >= +0.75 AND b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False,19,48,18,46,12,3,7,45,3,5,25,5,25,1,3,4,22,0
+2,3,b1.rsi >= +50 AND b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0,19,48,17,46,12,5,7,43,4,5,25,5,25,2,5,3,20,0
+2,3,b1.rsi >= +50 AND b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False,19,48,18,46,13,3,6,45,3,5,25,5,25,2,3,3,22,0
+2,3,b1.rsi >= +50 AND b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1,19,48,17,46,12,5,7,43,4,5,25,5,25,2,5,3,20,0
+2,3,b1.rsi <= +70 AND b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +1,19,48,17,46,14,5,5,43,4,5,25,5,25,2,5,3,20,0
+2,3,b1.price_vs_vwap_pct >= -2 AND b1.traded_above_entry is False AND b2.traded_above_entry is False,19,48,18,46,12,1,7,47,3,5,25,5,25,2,0,3,25,0
+2,3,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct >= -3 AND b2.traded_above_entry is False,19,48,17,46,12,2,7,46,4,5,25,5,25,2,1,3,24,0
+2,3,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0 AND b2.stochastic >= +30,19,48,17,46,12,5,7,43,4,5,25,5,25,2,4,3,21,0
+2,3,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0 AND b2.dot_consensus >= +1,19,48,17,46,12,5,7,43,4,5,25,5,25,2,4,3,21,0
+2,3,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0 AND b2.traded_above_entry is False,19,48,17,46,13,3,6,45,4,5,25,5,25,2,3,3,22,0
+2,3,b1.price_vs_vwap_pct >= -2 AND b2.running_low_pct >= -5 AND b2.traded_above_entry is False,19,48,18,46,12,2,7,46,3,5,25,5,25,2,1,3,24,0
+2,3,b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +2 AND b2.traded_above_entry is False,19,48,17,46,12,3,7,45,4,5,25,5,25,2,3,3,22,0
+2,3,b1.price_vs_vwap_pct >= -2 AND b2.dot_consensus >= +1 AND b2.traded_above_entry is False,19,48,17,46,12,3,7,45,4,5,25,5,25,2,2,3,23,0
+2,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b2.atr_stop_position is below,19,48,18,46,13,3,6,45,3,5,25,5,25,2,3,3,22,0
+2,3,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +0 AND b2.traded_above_entry is False,19,48,17,46,12,2,7,46,4,5,25,5,25,2,2,3,23,0
+2,3,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1 AND b2.volume_ratio_20 >= +0.5,19,48,17,46,12,5,7,43,4,5,25,5,25,1,5,4,20,0
+2,3,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1 AND b2.stochastic >= +30,19,48,17,46,12,5,7,43,4,5,25,5,25,2,4,3,21,0
+2,3,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1 AND b2.dot_consensus >= +1,19,48,17,46,12,5,7,43,4,5,25,5,25,2,4,3,21,0
+3,2,b1.price_vs_vwap_pct >= -2 AND b3.traded_above_entry is False,19,48,17,46,13,5,6,43,4,5,25,5,25,1,4,4,21,0
+3,2,b1.price_vs_vwap_pct >= -1 AND b3.traded_above_entry is False,19,48,17,46,12,3,7,45,4,5,25,5,25,1,3,4,22,0
+3,2,b1.traded_above_entry is False AND b3.traded_above_entry is False,19,48,17,46,12,4,7,44,4,5,25,5,25,3,6,2,19,0
+3,3,b1.close_vs_entry_pct >= -3 AND b1.price_vs_vwap_pct >= -2 AND b3.traded_above_entry is False,19,48,17,46,12,4,7,44,4,5,25,5,25,1,3,4,22,0
+3,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b3.running_low_pct >= -5,19,48,18,48,12,5,7,43,1,5,25,5,25,2,3,3,22,0
+3,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b3.running_low_pct <= -1,19,48,18,48,12,4,7,44,1,5,25,5,25,2,4,3,21,0
+3,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b3.traded_above_entry is False,19,48,17,46,13,4,6,44,4,5,25,5,25,1,3,4,22,0
+3,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b3.atr_stop_position is below,19,48,18,48,12,5,7,43,1,5,25,5,25,2,5,3,20,0
+3,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -1 AND b3.atr_stop_position is below,19,48,18,48,12,4,7,44,1,5,25,5,25,2,4,3,21,0
+3,3,b1.rsi >= +50 AND b1.price_vs_vwap_pct >= -2 AND b3.traded_above_entry is False,19,48,17,46,12,5,7,43,4,5,25,5,25,1,4,4,21,0
+3,3,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0 AND b3.atr_stop_position is below,19,48,17,46,12,5,7,43,4,5,25,5,25,2,5,3,20,0
+3,3,b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +1.5 AND b3.running_low_pct >= -5,19,48,17,46,12,4,7,44,4,5,25,5,25,2,2,3,23,0
+3,3,b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +2 AND b3.traded_above_entry is False,19,48,17,46,12,4,7,44,4,5,25,5,25,1,3,4,22,0
+3,3,b1.price_vs_vwap_pct >= -2 AND b2.stochastic >= +30 AND b3.traded_above_entry is False,19,48,17,46,12,5,7,43,4,5,25,5,25,1,3,4,22,0
+3,3,b1.price_vs_vwap_pct >= -2 AND b2.dot_consensus >= +1 AND b3.traded_above_entry is False,19,48,17,46,12,5,7,43,4,5,25,5,25,1,3,4,22,0
+3,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b3.running_low_pct >= -5,19,48,18,46,12,2,7,46,3,5,25,5,25,2,1,3,24,0
+3,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b3.running_low_pct <= -1,19,48,18,46,12,2,7,46,3,5,25,5,25,2,2,3,23,0
+3,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b3.traded_above_entry is False,19,48,17,46,13,3,6,45,4,5,25,5,25,1,3,4,22,0
+3,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b3.atr_stop_position is below,19,48,18,46,12,3,7,45,3,5,25,5,25,2,3,3,22,0
+3,3,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1 AND b3.atr_stop_position is below,19,48,17,46,13,5,6,43,4,5,25,5,25,2,5,3,20,0
+3,3,b1.price_vs_vwap_pct >= -1 AND b2.traded_above_entry is False AND b3.traded_above_entry is False,19,48,17,46,12,2,7,46,4,5,25,5,25,1,2,4,23,0
+3,3,b1.price_vs_vwap_pct >= -1 AND b2.traded_above_entry is False AND b3.atr_stop_position is below,19,48,18,46,12,2,7,46,3,5,25,5,25,2,2,3,23,0
+3,3,b1.traded_above_entry is False AND b2.traded_above_entry is False AND b3.running_low_pct <= -1,19,48,19,46,12,5,7,43,2,5,25,5,25,4,7,1,18,0
+4,2,b1.price_vs_vwap_pct >= -1 AND b4.close_vs_entry_pct <= +0,19,48,17,46,12,5,7,43,4,5,25,5,23,2,4,3,21,2
+4,2,b1.price_vs_vwap_pct >= -1 AND b4.traded_above_entry is False,19,48,17,46,12,4,7,44,4,5,25,5,23,2,2,3,23,2
+4,2,b1.traded_above_entry is False AND b4.traded_above_entry is False,19,48,17,46,12,4,7,44,4,5,25,5,23,4,7,1,18,2
+4,2,b2.close_vs_entry_pct <= +1 AND b4.price_vs_vwap_pct >= -2,19,48,17,46,12,5,7,43,4,5,25,5,23,2,5,3,20,2
+4,3,b1.close_vs_entry_pct >= -3 AND b1.price_vs_vwap_pct >= -2 AND b4.traded_above_entry is False,19,48,17,46,12,5,7,43,4,5,25,5,23,2,3,3,22,2
+4,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b4.close_vs_entry_pct <= +0,19,48,17,46,13,5,6,43,4,5,25,5,23,2,4,3,21,2
+4,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b4.running_low_pct <= -1,19,48,18,48,12,4,7,44,1,5,25,5,25,2,5,3,20,0
+4,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b4.macd_histogram_pct >= +0,19,48,17,46,12,4,7,44,4,5,25,5,23,2,4,3,21,2
+4,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b4.traded_above_entry is False,19,48,17,46,13,4,6,44,4,5,25,5,23,2,2,3,23,2
+4,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b4.macd_histogram_direction is falling,19,48,18,48,12,5,7,43,1,5,25,5,25,2,3,3,22,0
+4,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -1 AND b4.close_vs_entry_pct <= +0,19,48,17,46,12,4,7,44,4,5,25,5,23,2,3,3,22,2
+4,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -1 AND b4.traded_above_entry is False,19,48,17,46,12,3,7,45,4,5,25,5,23,2,1,3,24,2
+4,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -2 AND b4.traded_above_entry is False,19,48,17,46,13,5,6,43,4,5,25,5,23,2,3,3,22,2
+4,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -1 AND b4.close_vs_entry_pct <= +1,19,48,17,46,13,4,6,44,4,5,25,5,23,2,4,3,21,2
+4,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -1 AND b4.macd_histogram_pct >= +0,19,48,17,46,12,5,7,43,4,5,25,5,23,2,4,3,21,2
+4,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -1 AND b4.rsi <= +70,19,48,17,46,13,5,6,43,4,5,25,5,23,2,4,3,21,2
+4,3,b1.close_vs_entry_pct <= +1 AND b4.close_vs_entry_pct <= +1 AND b4.price_vs_vwap_pct >= -2,19,48,17,46,12,5,7,43,4,5,25,5,23,2,5,3,20,2
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0 AND b4.macd_histogram_pct >= +0,19,48,17,46,12,4,7,44,4,5,25,5,23,2,4,3,21,2
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0 AND b4.macd_histogram_direction is falling,19,48,17,46,12,5,7,43,4,5,25,5,25,2,4,3,21,0
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +1.5 AND b4.close_vs_entry_pct <= +1,19,48,17,46,12,4,7,44,4,5,25,5,23,2,1,3,24,2
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +1.5 AND b4.macd_histogram_pct >= +0,19,48,17,46,12,4,7,44,4,5,25,5,23,2,1,3,24,2
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +1.5 AND b4.rsi <= +70,19,48,17,46,12,5,7,43,4,5,25,5,23,2,1,3,24,2
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.volume_ratio_20 <= +2 AND b4.close_vs_entry_pct <= +0,19,48,17,46,12,4,7,44,4,5,25,5,23,2,3,3,22,2
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b4.close_vs_entry_pct <= +0,19,48,17,46,13,3,6,45,4,5,25,5,23,2,3,3,22,2
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b4.running_low_pct <= -1,19,48,18,46,12,2,7,46,3,5,25,5,25,2,3,3,22,0
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b4.macd_histogram_pct >= +0,19,48,17,46,12,2,7,46,4,5,25,5,23,2,2,3,23,2
+4,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b4.macd_histogram_direction is falling,19,48,18,46,12,3,7,45,3,5,25,5,25,2,2,3,23,0
+4,3,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1 AND b4.close_vs_entry_pct <= +1,19,48,17,46,13,4,6,44,4,5,25,5,23,2,4,3,21,2
+4,3,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1 AND b4.macd_histogram_pct >= +0,19,48,17,46,12,4,7,44,4,5,25,5,23,2,3,3,22,2
+4,3,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1 AND b4.rsi <= +70,19,48,17,46,13,5,6,43,4,5,25,5,23,2,4,3,21,2
+4,3,b1.price_vs_vwap_pct >= -1 AND b2.volume_ratio_20 <= +2 AND b4.close_vs_entry_pct <= +1,19,48,17,46,12,5,7,43,4,5,25,5,23,2,2,3,23,2
+4,3,b1.price_vs_vwap_pct >= -1 AND b2.volume_ratio_20 <= +2 AND b4.macd_histogram_pct >= +0,19,48,17,46,12,5,7,43,4,5,25,5,23,2,1,3,24,2
+4,3,b1.price_vs_vwap_pct >= -1 AND b2.traded_above_entry is False AND b4.close_vs_entry_pct <= +0,19,48,17,46,12,2,7,46,4,5,25,5,23,2,2,3,23,2
+4,3,b1.traded_above_entry is False AND b2.close_vs_entry_pct <= +0 AND b4.close_vs_entry_pct <= +0,19,48,17,46,12,4,7,44,4,5,25,5,23,4,7,1,18,2
+4,3,b1.traded_above_entry is False AND b2.close_vs_entry_pct <= +0 AND b4.close_vs_entry_pct <= +1,19,48,17,46,12,5,7,43,4,5,25,5,23,4,7,1,18,2
+4,3,b1.traded_above_entry is False AND b2.close_vs_entry_pct <= +0 AND b4.traded_above_entry is False,19,48,17,46,12,3,7,45,4,5,25,5,23,4,7,1,18,2
+4,3,b1.traded_above_entry is False AND b2.close_vs_entry_pct <= +1 AND b4.close_vs_entry_pct <= +0,19,48,17,46,12,5,7,43,4,5,25,5,23,4,7,1,18,2
+4,3,b1.traded_above_entry is False AND b2.traded_above_entry is False AND b4.running_low_pct <= -1,19,48,19,46,12,5,7,43,2,5,25,5,25,4,7,1,18,0
+4,3,b1.traded_above_entry is False AND b3.traded_above_entry is False AND b4.rsi <= +70,19,48,17,46,12,4,7,44,4,5,25,5,23,3,6,2,19,2
+4,3,b2.close_vs_entry_pct <= +1 AND b4.close_vs_entry_pct <= +1 AND b4.price_vs_vwap_pct >= -2,19,48,17,46,12,4,7,44,4,5,25,5,23,2,5,3,20,2
+5,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b5.running_low_pct <= -1,19,48,18,48,12,5,7,43,1,5,25,5,25,2,5,3,20,0
+5,3,b1.close_vs_entry_pct <= +0 AND b1.price_vs_vwap_pct >= -2 AND b5.atr_stop_position is below,19,48,18,48,12,5,7,43,1,5,25,5,25,2,5,3,20,0
+5,3,b1.close_vs_entry_pct <= +1 AND b1.price_vs_vwap_pct >= -2 AND b5.macd_histogram_direction is falling,19,48,18,48,12,5,7,43,1,5,25,5,25,2,3,3,22,0
+5,3,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +0 AND b5.atr_stop_position is below,19,48,17,46,12,5,7,43,4,5,25,5,25,2,4,3,21,0
+5,3,b1.price_vs_vwap_pct >= -2 AND b2.close_vs_entry_pct <= +1 AND b5.macd_histogram_direction is falling,19,48,17,46,12,5,7,43,4,5,25,5,25,2,3,3,22,0
+5,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b5.running_low_pct <= -1,19,48,18,46,12,3,7,45,3,5,25,5,25,2,3,3,22,0
+5,3,b1.price_vs_vwap_pct >= -2 AND b2.traded_above_entry is False AND b5.atr_stop_position is below,19,48,18,46,12,3,7,45,3,5,25,5,25,2,3,3,22,0
+5,3,b1.price_vs_vwap_pct >= -1 AND b2.close_vs_entry_pct <= +1 AND b5.atr_stop_position is below,19,48,17,46,12,5,7,43,4,5,25,5,25,2,3,3,22,0
