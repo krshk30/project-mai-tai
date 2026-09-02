@@ -1,0 +1,22 @@
+checkpoint_minutes,measure,side_true,side_false,winner_count,winner_true,winner_false,loser_count,loser_true,loser_false
+3,Touched +2%,Yes,No,39,11,28,47,10,37
+3,Touched -3%,Yes,No,39,9,30,47,16,31
+3,Last bar up,Yes,No,39,16,23,47,13,34
+3,Last bar down,Yes,No,39,22,17,47,30,17
+3,Last bar flat,Yes,No,39,1,38,47,4,43
+3,Latest minute made new low,Yes,No,39,6,33,47,16,31
+3,Every minute made new low,Yes,No,39,2,37,47,8,39
+5,Touched +2%,Yes,No,39,14,25,47,12,35
+5,Touched -3%,Yes,No,39,12,27,47,19,28
+5,Last bar up,Yes,No,39,15,24,47,17,30
+5,Last bar down,Yes,No,39,20,19,47,27,20
+5,Last bar flat,Yes,No,39,4,35,47,3,44
+5,Latest minute made new low,Yes,No,39,7,32,47,14,33
+5,Every minute made new low,Yes,No,39,0,39,47,4,43
+10,Touched +2%,Yes,No,39,22,17,47,14,33
+10,Touched -3%,Yes,No,39,13,26,47,26,21
+10,Last bar up,Yes,No,39,22,17,47,23,24
+10,Last bar down,Yes,No,39,16,23,47,24,23
+10,Last bar flat,Yes,No,39,1,38,47,0,47
+10,Latest minute made new low,Yes,No,39,0,39,47,8,39
+10,Every minute made new low,Yes,No,39,0,39,47,0,47

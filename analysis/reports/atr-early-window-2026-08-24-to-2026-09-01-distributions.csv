@@ -1,0 +1,13 @@
+checkpoint_minutes,measure,winner_count,winner_q1,winner_median,winner_q3,loser_count,loser_q1,loser_median,loser_q3
+3,Price vs entry,39,-1.7371,-0.5102,0.6379,47,-2.4336,-1.2407,-0.5857
+3,Highest point so far,39,-0.0745,1.1561,2.4907,47,-0.3735,0.4386,1.8819
+3,Lowest point so far,39,-2.7559,-1.7657,-1.2157,47,-3.5287,-2.0376,-1.1551
+3,Consecutive new-low minutes,39,0.0,0.0,0.0,47,0.0,0.0,1.0
+5,Price vs entry,39,-1.4379,-0.5291,1.1122,47,-3.6926,-1.4888,-0.3337
+5,Highest point so far,39,0.1149,1.3928,3.4524,47,-0.3735,0.4505,1.9809
+5,Lowest point so far,39,-3.2516,-2.1244,-1.4753,47,-4.714,-2.4,-1.3968
+5,Consecutive new-low minutes,39,0.0,0.0,0.0,47,0.0,0.0,1.0
+10,Price vs entry,39,-0.885,0.0,2.5412,47,-3.8172,-1.9608,-0.477
+10,Highest point so far,39,0.5626,2.507,6.1843,47,-0.108,0.8929,2.2856
+10,Lowest point so far,39,-3.4234,-2.5797,-1.7696,47,-6.9441,-3.6036,-2.0804
+10,Consecutive new-low minutes,39,0.0,0.0,0.0,47,0.0,0.0,0.0
