@@ -267,6 +267,16 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **RT1 — strategy -> OMS -> position roundtrip has no active integration test** *(owner:
+  codex-2; boarded, not chased)*. The only cross-service test was introduced 2026-03-29, first
+  stopped reaching OMS at `934d5f42` (2026-04-22) when seeded bars became closed history and one
+  following tick could only start, not complete, the next bar, then was marked non-strict `xfail`
+  at `3b90c089` (2026-06-17). Active tests separately cover entry -> intent, intent -> OMS/database
+  positions, and OMS order event -> strategy position, but no test joins all three seams. **Next
+  action:** replace the xfail with one faithful completed-bar roundtrip that must emit an intent,
+  persist the OMS fill/positions, and update strategy state from the returned order event.
+  Denominator: 1 active cross-service roundtrip; current result 0/1. Falsifier: the replacement
+  passes after either the strategy-to-OMS or OMS-to-strategy handoff is disconnected.
 - **PAPER1 — successor exit question above +5%** *(owner: codex-2; blocked on exercised paper
   harness evidence)*. Once the v1 paper harness has run forward, measure whether a position that
   reaches +5% should be sold or released as a runner. This is explicitly outside v1: do not change
