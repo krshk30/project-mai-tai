@@ -45,6 +45,15 @@ class ExitOutcome:
     duration_minutes: float
 
 
+@dataclass(frozen=True)
+class PathTiming:
+    first_5_ts: datetime | None
+    minutes_to_first_5: float | None
+    low_ts: datetime
+    minutes_to_low: float
+    max_down_pct: float
+
+
 def indicator_exit_signals(
     bars: list[SchwabBar],
 ) -> tuple[list[datetime], list[datetime]]:
@@ -158,14 +167,134 @@ def _capture_pct(return_pct: float, max_up_pct: float) -> float | None:
 
 
 def _session_max_up(candidate: FlipCandidate, quotes: list[Quote], end: datetime) -> float:
-    bids = [
-        float(quote.bid)
-        for quote in quotes[candidate.entry_quote_index :]
-        if quote.ts < end
-    ]
+    bids = [float(quote.bid) for quote in quotes[candidate.entry_quote_index :] if quote.ts < end]
     if not bids:
         raise ValueError(f"{candidate.symbol} {candidate.buy_signal_ts}: no MFE quotes")
     return (max(bids) / candidate.entry_px - 1.0) * 100.0
+
+
+def path_timing(
+    candidate: FlipCandidate,
+    path: NaturalPath,
+    quotes: list[Quote],
+) -> PathTiming:
+    """Time the first +5 touch and first occurrence of the segment low."""
+    observed = [
+        quote for quote in quotes[candidate.entry_quote_index :] if quote.ts <= path.natural_exit_ts
+    ]
+    if not observed:
+        raise ValueError(f"{candidate.symbol} {candidate.buy_signal_ts}: no path quotes")
+    low_quote = min(observed, key=lambda quote: float(quote.bid))
+    first_5_ts = path.reached_5_ts
+    return PathTiming(
+        first_5_ts=first_5_ts,
+        minutes_to_first_5=(
+            (first_5_ts - candidate.entry_ts).total_seconds() / 60.0
+            if first_5_ts is not None
+            else None
+        ),
+        low_ts=low_quote.ts,
+        minutes_to_low=(low_quote.ts - candidate.entry_ts).total_seconds() / 60.0,
+        max_down_pct=(float(low_quote.bid) / candidate.entry_px - 1.0) * 100.0,
+    )
+
+
+def _five_number(values: list[float]) -> dict[str, float]:
+    if not values:
+        raise ValueError("timing distribution requires at least one observation")
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        q1 = q3 = ordered[0]
+    else:
+        q1, _, q3 = statistics.quantiles(ordered, n=4, method="inclusive")
+    return {
+        "min_minutes": round(ordered[0], 2),
+        "q1_minutes": round(q1, 2),
+        "median_minutes": round(statistics.median(ordered), 2),
+        "q3_minutes": round(q3, 2),
+        "max_minutes": round(ordered[-1], 2),
+    }
+
+
+def _upside_timing_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    buckets = (
+        ("+5 to +8%", 5.0, 8.0),
+        ("+8 to +10%", 8.0, 10.0),
+        ("+10 to +20%", 10.0, 20.0),
+        ("+20 to +40%", 20.0, 40.0),
+        ("Above +40%", 40.0, None),
+    )
+    result: list[dict[str, object]] = []
+    for label, lower, upper in buckets:
+        group = [
+            row
+            for row in rows
+            if bool(row["reached_5"])
+            and float(row["atr_segment_max_up_pct"]) >= lower
+            and (upper is None or float(row["atr_segment_max_up_pct"]) < upper)
+        ]
+        timings = [float(row["minutes_to_first_5"]) for row in group]
+        result.append({"range": label, "trades": len(group), **_five_number(timings)})
+    return result
+
+
+def _downside_bucket(max_down_pct: float) -> str:
+    if max_down_pct >= -3.0:
+        return "0 to -3%"
+    if max_down_pct >= -5.0:
+        return "-3 to -5%"
+    if max_down_pct >= -8.0:
+        return "-5 to -8%"
+    if max_down_pct >= -12.0:
+        return "-8 to -12%"
+    return "Past -12%"
+
+
+def _downside_timing_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    for population, reached in (("Reached +5", True), ("Did not reach +5", False)):
+        for bucket in ("0 to -3%", "-3 to -5%", "-5 to -8%", "-8 to -12%", "Past -12%"):
+            group = [
+                row
+                for row in rows
+                if bool(row["reached_5"]) is reached
+                and _downside_bucket(float(row["atr_segment_max_down_pct"])) == bucket
+            ]
+            timing = (
+                _five_number([float(row["minutes_to_low"]) for row in group])
+                if group
+                else {
+                    "min_minutes": None,
+                    "q1_minutes": None,
+                    "median_minutes": None,
+                    "q3_minutes": None,
+                    "max_minutes": None,
+                }
+            )
+            result.append(
+                {
+                    "population": population,
+                    "max_down_range": bucket,
+                    "trades": len(group),
+                    **timing,
+                }
+            )
+    return result
+
+
+def _timing_cell(row: dict[str, object]) -> str:
+    if row["trades"] == 0:
+        return "-"
+    return " / ".join(
+        f"{float(row[key]):.1f}"
+        for key in (
+            "min_minutes",
+            "q1_minutes",
+            "median_minutes",
+            "q3_minutes",
+            "max_minutes",
+        )
+    )
 
 
 def _population_keys(path: Path) -> set[tuple[str, datetime]]:
@@ -217,7 +346,9 @@ def _summary_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
                     "mean_duration_minutes": round(statistics.fmean(durations), 2),
                     "median_duration_minutes": round(statistics.median(durations), 2),
                     "mean_capture_pct": round(statistics.fmean(captures), 2) if captures else None,
-                    "median_capture_pct": round(statistics.median(captures), 2) if captures else None,
+                    "median_capture_pct": round(statistics.median(captures), 2)
+                    if captures
+                    else None,
                     "capture_denominator_trades": len(captures),
                 }
             )
@@ -229,6 +360,8 @@ def _report(
     rows: list[dict[str, object]],
     summaries: list[dict[str, object]],
 ) -> None:
+    upside_timing = _upside_timing_rows(rows)
+    downside_timing = _downside_timing_rows(rows)
     labels = {
         "fixed_5": "Fixed +5 / -10 stop",
         "atr_sell": "ATR SELL",
@@ -259,12 +392,49 @@ def _report(
         "fractions use a common entry-to-16:00 max-up because the replacement trend exits may "
         "occur after ATR SELL. Capture is undefined where that common max-up is <=0.",
         "",
-        "## Population Split",
+        "## Timing by ATR Segment",
         "",
-        "| Population | Rule | N | Before-close exits | 16:00 exits | Total | Mean | Median | "
-        "Mean hold min | Median hold min | Mean capture | Median capture | Capture N |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "Elapsed minutes start at the executable ask fill. The segment ends at the first "
+        "executable quote at or after ATR SELL, or the last quote before 16:00 ET. Each timing "
+        "spread is `minimum / Q1 / median / Q3 / maximum`; quartiles use inclusive linear "
+        "interpolation. A repeated low is timed at its first occurrence.",
+        "",
+        "### Table 1 - First +5% Touch by Eventual Max-Up",
+        "",
+        "| ATR-segment max-up | Trades | Minutes to first +5: min / Q1 / median / Q3 / max |",
+        "|---|---:|---:|",
     ]
+    for timing in upside_timing:
+        lines.append(f"| {timing['range']} | {timing['trades']} | {_timing_cell(timing)} |")
+
+    lines.extend(
+        [
+            "",
+            "### Table 2 - Time to Segment Low by Max-Down and Outcome",
+            "",
+            "Boundary convention: `0 to -3%` includes -3%; each following bucket includes its "
+            "more-negative endpoint, and `Past -12%` is strictly below -12%.",
+            "",
+            "| Population | ATR-segment max-down | Trades | Minutes to low: min / Q1 / median / Q3 / max |",
+            "|---|---|---:|---:|",
+        ]
+    )
+    for timing in downside_timing:
+        lines.append(
+            f"| {timing['population']} | {timing['max_down_range']} | "
+            f"{timing['trades']} | {_timing_cell(timing)} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Population Split",
+            "",
+            "| Population | Rule | N | Before-close exits | 16:00 exits | Total | Mean | Median | "
+            "Mean hold min | Median hold min | Mean capture | Median capture | Capture N |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
     for summary in summaries:
         mean_capture = summary["mean_capture_pct"]
         median_capture = summary["median_capture_pct"]
@@ -292,13 +462,11 @@ def _report(
         for row in rows
     )
     dot_only = sum(
-        row["dot_bearish_signal_ts"] is not None
-        and row["macd_hist_below_zero_signal_ts"] is None
+        row["dot_bearish_signal_ts"] is not None and row["macd_hist_below_zero_signal_ts"] is None
         for row in rows
     )
     hist_only = sum(
-        row["dot_bearish_signal_ts"] is None
-        and row["macd_hist_below_zero_signal_ts"] is not None
+        row["dot_bearish_signal_ts"] is None and row["macd_hist_below_zero_signal_ts"] is not None
         for row in rows
     )
     neither = len(rows) - both - dot_only - hist_only
@@ -334,10 +502,7 @@ def _report(
         group = [row for row in rows if row["session_day_et"] == session]
         lines.append(
             f"| {session} | {len(group)} | {sum(bool(row['reached_5']) for row in group)} | "
-            + " | ".join(
-                f"{sum(_rule_return(row, rule) for row in group):+.2f}%"
-                for rule in RULES
-            )
+            + " | ".join(f"{sum(_rule_return(row, rule) for row in group):+.2f}%" for rule in RULES)
             + " |"
         )
 
@@ -356,6 +521,7 @@ def _report(
         ]
     )
     for index, row in enumerate(sorted(rows, key=lambda item: item["buy_signal_ts"]), 1):
+
         def baseline_cell(rule: str) -> str:
             capture = row[f"{rule}_capture_pct"]
             capture_text = f"{float(capture):+.1f}%" if capture is not None else "-"
@@ -395,9 +561,7 @@ def run_measurement(source, settings, start: date, end: date, population_csv: Pa
 
     path_by_key = {(row.symbol, row.buy_signal_ts): row for row in paths}
     fixed_by_key = {
-        (row.symbol, row.buy_signal_ts): row
-        for row in outcomes
-        if row.policy == FIXED_POLICY
+        (row.symbol, row.buy_signal_ts): row for row in outcomes if row.policy == FIXED_POLICY
     }
     grouped: dict[tuple[str, str], list[FlipCandidate]] = defaultdict(list)
     for candidate in candidates:
@@ -416,10 +580,9 @@ def run_measurement(source, settings, start: date, end: date, population_csv: Pa
             key = (symbol, candidate.buy_signal_ts)
             path: NaturalPath = path_by_key[key]
             fixed: PolicyOutcome = fixed_by_key[key]
-            trends = trend_outcomes(
-                candidate, quotes, session_end, dot_signals, hist_signals
-            )
+            trends = trend_outcomes(candidate, quotes, session_end, dot_signals, hist_signals)
             session_mfe = _session_max_up(candidate, quotes, session_end)
+            timing = path_timing(candidate, path, quotes)
             row: dict[str, object] = {
                 "session_day_et": day_text,
                 "symbol": symbol,
@@ -428,6 +591,15 @@ def run_measurement(source, settings, start: date, end: date, population_csv: Pa
                 "entry_px": round(candidate.entry_px, 4),
                 "reached_5": path.reached_5_ts is not None,
                 "atr_segment_max_up_pct": round(path.mfe_pct, 4),
+                "atr_segment_max_down_pct": round(timing.max_down_pct, 4),
+                "first_5_ts": timing.first_5_ts,
+                "minutes_to_first_5": (
+                    round(timing.minutes_to_first_5, 2)
+                    if timing.minutes_to_first_5 is not None
+                    else None
+                ),
+                "low_ts": timing.low_ts,
+                "minutes_to_low": round(timing.minutes_to_low, 2),
                 "session_max_up_pct": round(session_mfe, 4),
             }
             baselines = {
@@ -475,10 +647,7 @@ def run_measurement(source, settings, start: date, end: date, population_csv: Pa
                         f"{rule}_duration_minutes": round(outcome.duration_minutes, 2),
                         f"{rule}_capture_pct": (
                             round(value, 2)
-                            if (
-                                value := _capture_pct(outcome.return_pct, session_mfe)
-                            )
-                            is not None
+                            if (value := _capture_pct(outcome.return_pct, session_mfe)) is not None
                             else None
                         ),
                     }
@@ -494,9 +663,7 @@ def main() -> int:
     parser.add_argument(
         "--population-csv",
         type=Path,
-        default=Path(
-            "analysis/reports/atr-flip-hold-week-2026-08-24-to-2026-09-01-trades.csv"
-        ),
+        default=Path("analysis/reports/atr-flip-hold-week-2026-08-24-to-2026-09-01-trades.csv"),
     )
     parser.add_argument("--output-dir", type=Path, default=Path("analysis/reports"))
     args = parser.parse_args()
@@ -509,14 +676,14 @@ def main() -> int:
     base = get_settings()
     settings = build_replay_settings(base=base)
     source = DbMarketDataSource(build_session_factory(base))
-    rows = run_measurement(
-        source, settings, args.start, args.end, args.population_csv
-    )
+    rows = run_measurement(source, settings, args.start, args.end, args.population_csv)
     summaries = _summary_rows(rows)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     stem = f"atr-trend-exit-{args.start.isoformat()}-to-{args.end.isoformat()}"
     _write_csv(args.output_dir / f"{stem}-trades.csv", rows)
     _write_csv(args.output_dir / f"{stem}-summary.csv", summaries)
+    _write_csv(args.output_dir / f"{stem}-upside-timing.csv", _upside_timing_rows(rows))
+    _write_csv(args.output_dir / f"{stem}-downside-timing.csv", _downside_timing_rows(rows))
     _report(args.output_dir / f"{stem}.md", rows, summaries)
     (args.output_dir / f"{stem}.json").write_text(
         json.dumps(

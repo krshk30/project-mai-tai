@@ -1,0 +1,11 @@
+population,max_down_range,trades,min_minutes,q1_minutes,median_minutes,q3_minutes,max_minutes
+Reached +5,0 to -3%,19,0.0,0.81,4.45,10.07,37.61
+Reached +5,-3 to -5%,10,0.92,5.14,12.59,23.88,64.35
+Reached +5,-5 to -8%,6,1.24,5.81,14.1,47.49,68.96
+Reached +5,-8 to -12%,2,0.07,20.94,41.81,62.69,83.56
+Reached +5,Past -12%,5,18.47,27.77,34.65,37.0,69.63
+Did not reach +5,0 to -3%,9,1.61,4.65,10.22,16.56,57.8
+Did not reach +5,-3 to -5%,17,0.0,6.32,15.32,26.52,64.71
+Did not reach +5,-5 to -8%,12,4.32,13.54,18.85,42.12,60.75
+Did not reach +5,-8 to -12%,10,0.0,4.62,13.47,32.98,62.97
+Did not reach +5,Past -12%,7,4.89,9.5,15.24,20.61,32.46
