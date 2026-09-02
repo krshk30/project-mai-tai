@@ -111,6 +111,15 @@ It deliberately accepts a lower win rate than a roughly symmetric two-percent ru
 preserve larger average wins. Alternative targets, stops, trailing, and runner-release behavior are
 outside v1.
 
+All executable-price decisions share the backtest's halt classifier: a print-free interval of at
+least 285 seconds with at least two continuing quote updates. The live process cannot know that a
+gap will reach 285 seconds, so an exit first seen after the latest print remains provisional. A
+later print shorter than the threshold clears the suspicion, and the paper exit uses the next quote;
+a confirmed halt suppresses the trigger and likewise waits for the first quote after the reopening
+print. If that quote never arrives, the row is `UNANSWERABLE`. This deliberately delays valid paper
+exits on print-sparse names and can produce a worse modelled price; the cost is preferable to
+crediting a fill against a quote whose market-open state cannot yet be established.
+
 ## 5. Forbidden Shared State
 
 Neither arm consumes first/reclaim/fan-out slots, writes `virtual_positions` or
@@ -154,6 +163,14 @@ derived by the stated collapse. Every matched logical entry must have one durabl
 by close, an exit or explicit `UNANSWERABLE` state. If `N = 0`, Mirror is `UNEXERCISED`, never
 `PASS`; service, feed, scanner, reconciliation, independent-arm, and structural no-order checks are
 reported separately and cannot turn that zero into an exercised mirror result.
+
+The daily grade names its UTC window and the evidence-table cutover at merge SHA
+`028817d8be8639c8e48aad648ef822a0abd18de5`. The durable timestamp is the `created_at` value on the
+migration-seeded `migration-initial-v1` config row. A window before that boundary refuses because
+`paper_exit_events` was not yet the source; a window crossing it refuses rather than combining the
+legacy order tables with the new tape; and a missing seed row is `COULD_NOT_TELL`. Refused reports
+emit no denominator, P&L totals, or rows. Mirror capture may still record post-cutover evidence on
+the cutover day so venue visibility can be checked without presenting a mixed-day grade.
 
 The daily surface also prints entry assumptions without pooling results: each stamped slot shows
 the independent arm's modelled executable-ask fill beside the actual quantity-weighted mirror fill,

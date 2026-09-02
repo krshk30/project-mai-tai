@@ -65,6 +65,7 @@ from project_mai_tai.market_data.schwab_tick_archive import (
 )
 from project_mai_tai.market_data.schwab_streamer import SchwabStreamerClient
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
+from project_mai_tai.market_data.tick_time import normalize_ts_ns, ns_to_datetime
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.paper_exit import (
     MIRROR_ARM,
@@ -6440,8 +6441,17 @@ class StrategyEngineService:
         now_et = now.astimezone(EASTERN_TZ)
         start = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
         end = now_et.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(UTC)
-        fills, refused = self.paper_exit_store.live_resting_fills(start=start, end=end)
-        persisted_fill_ids = self.paper_exit_store.event_fill_ids(start=start, end=end)
+        report_window = self.paper_exit_store.report_window(start=start, end=end)
+        evidence_start = report_window.evidence_start
+        if evidence_start is None:
+            fills, refused = [], []
+        else:
+            fills, refused = self.paper_exit_store.live_resting_fills(
+                start=evidence_start,
+                end=end,
+            )
+        event_start = evidence_start or end + timedelta(microseconds=1)
+        persisted_fill_ids = self.paper_exit_store.event_fill_ids(start=event_start, end=end)
         decisions = list(refused)
         for fill in fills:
             decisions.extend(
@@ -6453,8 +6463,8 @@ class StrategyEngineService:
             )
         self._persist_paper_decisions(decisions)
         decisions = []
-        persisted_fill_ids = self.paper_exit_store.event_fill_ids(start=start, end=end)
-        session_events = self.paper_exit_store.session_events(start=start, end=end)
+        persisted_fill_ids = self.paper_exit_store.event_fill_ids(start=event_start, end=end)
+        session_events = self.paper_exit_store.session_events(start=event_start, end=end)
         for event in session_events:
             observed_at = event.observed_at
             if observed_at.tzinfo is None:
@@ -6601,21 +6611,12 @@ class StrategyEngineService:
             "terminal": terminal,
             "terminal_expected": len(matched_ids),
         }
-        grades = self.paper_exit_store.mirror_grades(start=start, end=end, source_fills=fills)
-        gradable = [row for row in grades if bool(row.get("gradable"))]
-        acceptance["grade"] = {
-            "matched": len(gradable),
-            "total": len(grades),
-            "paper_pct": str(
-                sum((Decimal(str(row["paper_pct"])) for row in gradable), Decimal("0"))
-            ),
-            "real_pct": str(
-                sum((Decimal(str(row["real_pct"])) for row in gradable), Decimal("0"))
-            ),
-            "rows": grades,
-        }
+        acceptance["grade"] = self.paper_exit_store.daily_grade(
+            report_window=report_window,
+            source_fills=fills,
+        )
         acceptance["entry_assumptions"] = self.paper_exit_store.entry_assumption_rows(
-            start=start,
+            start=event_start,
             end=end,
             source_fills=fills,
         )
@@ -6624,7 +6625,9 @@ class StrategyEngineService:
             PaperDecision(
                 event_key=(
                     f"RECONCILIATION:{now_et.date()}:{len(live_ids)}:{len(matched_ids)}:"
-                    f"{missed}:{phantom}:{verdict}:{len(gradable)}:{len(grades)}"
+                    f"{missed}:{phantom}:{verdict}:"
+                    f"{acceptance['grade']['status']}:"
+                    f"{acceptance['grade']['matched']}:{acceptance['grade']['total']}"
                 ),
                 logical_id=f"reconciliation:{now_et.date()}",
                 arm=MIRROR_ARM,
@@ -7214,8 +7217,21 @@ class StrategyEngineService:
                 cumulative_volume=event.payload.cumulative_volume,
                 strategy_codes=strategy_codes,
             )
+            normalized_trade_ns = normalize_ts_ns(event.payload.timestamp_ns)
+            paper_decisions = (
+                self.paper_exit_runtime.on_trade(
+                    symbol=event.payload.symbol,
+                    observed_at=(
+                        ns_to_datetime(normalized_trade_ns)
+                        if normalized_trade_ns is not None
+                        else event.produced_at
+                    ),
+                )
+                if self.paper_exit_runtime is not None
+                else []
+            )
             await self._flush_pending_persists()
-            self._persist_paper_decisions()
+            self._persist_paper_decisions(paper_decisions)
             for intent in intents:
                 await self._publish_intent(intent)
             if intents:

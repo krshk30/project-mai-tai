@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from collections import defaultdict, deque
 from uuid import UUID, uuid4
 
 from sqlalchemy import Select, select
@@ -25,10 +26,50 @@ from project_mai_tai.paper_exit import (
     PaperRuleConfig,
     PaperSourceFill,
     logical_mirror_id,
-    resting_fill_classification,
+    mirrored_fill_classification,
 )
 
 LIVE_VENUES = frozenset({"schwab", "webull"})
+LIVE_ACCOUNT_NAMES = frozenset({"live:schwab_1m_v2", "live:orb"})
+LIVE_ACCOUNT_ENVIRONMENTS = frozenset({"live", "production"})
+PAPER_EXIT_EVIDENCE_CUTOVER_SHA = "028817d8be8639c8e48aad648ef822a0abd18de5"
+PAPER_EXIT_INITIAL_CONFIG_AUTHOR = "migration-initial-v1"
+
+
+@dataclass(frozen=True)
+class PaperReportWindow:
+    status: str
+    start: datetime
+    end: datetime
+    boundary_at: datetime | None
+
+    @property
+    def evidence_start(self) -> datetime | None:
+        if self.boundary_at is None or self.end < self.boundary_at:
+            return None
+        return max(self.start, self.boundary_at)
+
+    def payload(self) -> dict[str, object]:
+        boundary_at = self.boundary_at.isoformat() if self.boundary_at is not None else ""
+        if self.status == "READY":
+            reason = "window is wholly after the paper-evidence cutover"
+        elif self.status == "REFUSED_SPANS_EVIDENCE_CUTOVER":
+            reason = (
+                "daily report window crosses the paper evidence-table cutover; "
+                "split the reading at the named SHA"
+            )
+        elif self.status == "REFUSED_BEFORE_EVIDENCE_CUTOVER":
+            reason = "paper_exit_events is not the evidence source before the named SHA"
+        else:
+            reason = "migration-seeded cutover timestamp is missing; report boundary is unknowable"
+        return {
+            "status": self.status,
+            "window_start": self.start.isoformat(),
+            "window_end": self.end.isoformat(),
+            "boundary_sha": PAPER_EXIT_EVIDENCE_CUTOVER_SHA,
+            "boundary_at": boundary_at,
+            "reason": reason,
+        }
 
 
 class PaperExitStore:
@@ -69,6 +110,97 @@ class PaperExitStore:
                 )
             )
         return [self._config(row) for row in rows]
+
+    def report_window(self, *, start: datetime, end: datetime) -> PaperReportWindow:
+        """Refuse reports that would mix legacy order tables with paper_exit_events."""
+        with self.session_factory() as session:
+            boundary_at = session.scalar(
+                select(PaperExitRuleConfig.created_at)
+                .where(PaperExitRuleConfig.changed_by == PAPER_EXIT_INITIAL_CONFIG_AUTHOR)
+                .order_by(PaperExitRuleConfig.created_at)
+                .limit(1)
+            )
+        if boundary_at is None:
+            return PaperReportWindow("COULD_NOT_TELL", start, end, None)
+        if boundary_at.tzinfo is None:
+            boundary_at = boundary_at.replace(tzinfo=UTC)
+        if end < boundary_at:
+            status = "REFUSED_BEFORE_EVIDENCE_CUTOVER"
+        elif start < boundary_at <= end:
+            status = "REFUSED_SPANS_EVIDENCE_CUTOVER"
+        else:
+            status = "READY"
+        return PaperReportWindow(status, start, end, boundary_at)
+
+    def daily_grade(
+        self,
+        *,
+        report_window: PaperReportWindow,
+        source_fills: list[PaperSourceFill],
+    ) -> dict[str, object]:
+        """Return totals only when the complete report window is post-cutover."""
+        boundary = report_window.payload()
+        if report_window.status != "READY":
+            return {
+                **boundary,
+                "matched": None,
+                "total": None,
+                "paper_pct": "",
+                "real_pct": "",
+                "rows": [],
+                "halt_suppression": {
+                    "status": "COULD_NOT_TELL",
+                    "suppressed_triggers": None,
+                    "confirmed_halts": None,
+                    "denominator": None,
+                },
+            }
+        grades = self.mirror_grades(
+            start=report_window.start,
+            end=report_window.end,
+            source_fills=source_fills,
+        )
+        halt_suppression = self.halt_suppression_grade(
+            start=report_window.start,
+            end=report_window.end,
+        )
+        gradable = [row for row in grades if bool(row.get("gradable"))]
+        return {
+            **boundary,
+            "matched": len(gradable),
+            "total": len(grades),
+            "paper_pct": str(
+                sum((Decimal(str(row["paper_pct"])) for row in gradable), Decimal("0"))
+            ),
+            "real_pct": str(
+                sum((Decimal(str(row["real_pct"])) for row in gradable), Decimal("0"))
+            ),
+            "rows": grades,
+            "halt_suppression": halt_suppression,
+        }
+
+    def halt_suppression_grade(self, *, start: datetime, end: datetime) -> dict[str, object]:
+        """Report trigger suppression against confirmed halt windows, never as a pass."""
+        with self.session_factory() as session:
+            event_types = list(
+                session.scalars(
+                    select(PaperExitEvent.event_type).where(
+                        PaperExitEvent.observed_at >= start,
+                        PaperExitEvent.observed_at <= end,
+                        PaperExitEvent.event_type.in_(
+                            ("HALT_CONFIRMED", "HALT_TRIGGER_SUPPRESSED")
+                        ),
+                    )
+                )
+            )
+        confirmed = event_types.count("HALT_CONFIRMED")
+        suppressed = event_types.count("HALT_TRIGGER_SUPPRESSED")
+        return {
+            "status": "MEASURED" if confirmed else "UNEXERCISED",
+            "suppressed_triggers": suppressed,
+            "confirmed_halts": confirmed,
+            "denominator": confirmed,
+        }
 
     def ensure_initial_config(
         self,
@@ -188,7 +320,8 @@ class PaperExitStore:
             .where(
                 Strategy.code == "schwab_1m_v2",
                 BrokerAccount.provider.in_(LIVE_VENUES),
-                BrokerAccount.environment == "live",
+                BrokerAccount.name.in_(LIVE_ACCOUNT_NAMES),
+                BrokerAccount.environment.in_(LIVE_ACCOUNT_ENVIRONMENTS),
                 Fill.side == "buy",
                 BrokerOrder.side == "buy",
                 Fill.filled_at >= start,
@@ -210,11 +343,8 @@ class PaperExitStore:
                 **dict(order_payload.get("metadata") or order_payload),
                 **dict(payload.get("metadata") or {}),
             }
-            eligible, source = resting_fill_classification(metadata)
+            eligible, source = mirrored_fill_classification(metadata)
             if not eligible:
-                slot = str(metadata.get("cw_entry_slot", "")).strip().lower()
-                if slot == "reclaim":
-                    continue
                 venue = "schwab" if account.provider == "schwab" else "webull"
                 refused.append(
                     PaperDecision(
@@ -264,6 +394,7 @@ class PaperExitStore:
                 continue
             broker_fill_id = str(fill.broker_fill_id or "").strip()
             slot_id = str(metadata.get("fanout_slot_id", "") or "").strip()
+            entry_slot = str(metadata.get("cw_entry_slot", "")).strip().lower()
             venue = "schwab" if account.provider == "schwab" else "webull"
             if not broker_fill_id or not slot_id:
                 detail = "missing broker_fill_id" if not broker_fill_id else "missing fanout_slot_id"
@@ -297,6 +428,7 @@ class PaperExitStore:
                     price=fill.price,
                     filled_at=filled_at,
                     fanout_slot_id=slot_id,
+                    entry_slot=entry_slot,  # type: ignore[arg-type]
                     source=source,
                 )
             )
@@ -337,14 +469,19 @@ class PaperExitStore:
                 )
             )
 
-        mirror_groups: dict[tuple[object, str, str], list[PaperSourceFill]] = defaultdict(list)
+        mirror_groups: dict[tuple[object, str, str, str], list[PaperSourceFill]] = defaultdict(list)
         for source in source_fills:
-            key = (source.session_date, source.symbol.upper(), source.fanout_slot_id)
+            key = (
+                source.session_date,
+                source.symbol.upper(),
+                source.fanout_slot_id,
+                source.entry_slot,
+            )
             mirror_groups[key].append(source)
-        independent_groups: dict[tuple[object, str, str], list[PaperExitEvent]] = defaultdict(list)
+        independent_groups: dict[tuple[object, str, str, str], list[PaperExitEvent]] = defaultdict(list)
         for event in independent_entries:
             attempt_id = str((event.payload or {}).get("independent_attempt_id", "")).strip()
-            key = (event.session_date, event.symbol.upper(), attempt_id)
+            key = (event.session_date, event.symbol.upper(), attempt_id, "first")
             independent_groups[key].append(event)
 
         rows: list[dict[str, object]] = []
@@ -381,6 +518,7 @@ class PaperExitStore:
                     "session_date": str(key[0]),
                     "symbol": key[1],
                     "fanout_slot_id": key[2] or "missing",
+                    "entry_slot": key[3],
                     "mirror_fill_price": str(mirror_price) if mirror_price is not None else "",
                     "mirror_first_fill_at": (
                         min(leg.filled_at for leg in mirror_legs).isoformat()
@@ -432,7 +570,8 @@ class PaperExitStore:
                     .where(
                         Strategy.code == "schwab_1m_v2",
                         BrokerAccount.provider.in_(LIVE_VENUES),
-                        BrokerAccount.environment == "live",
+                        BrokerAccount.name.in_(LIVE_ACCOUNT_NAMES),
+                        BrokerAccount.environment.in_(LIVE_ACCOUNT_ENVIRONMENTS),
                         Fill.symbol.in_(symbols),
                         Fill.filled_at <= end,
                     )
