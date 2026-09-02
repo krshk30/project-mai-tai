@@ -59,18 +59,38 @@ esac
 # least as far as 1 does.
 SEED_OUT="$OUT/seed_exposure_latest.txt"
 REPO=/home/trader/project-mai-tai
-if [ -x "$REPO/.venv/bin/python" ] && [ -f "$REPO/scripts/seed_exposure_detector.py" ]; then
-  ( cd "$REPO" && ./.venv/bin/python scripts/seed_exposure_detector.py --assert-constants )     > "$SEED_OUT" 2>&1
+# ⛔⭐⭐ THIS CALLER NEEDS THE SERVICE ENV TOO — it is a SECOND, INDEPENDENT invocation of the same
+# detector, and it was blind for the same reason and the same ten sessions (2026-08-20..09-02):
+# without MAI_TAI_DATABASE_URL the detector refuses with "no DSN", which is what pinned this
+# routine's verdict at AMBER every single day. Fixing only the 5-minute seed-exposure cron would
+# have left this slot broken and the daily AMBER intact.
+# ⛔ Runs as ROOT from ROOT's crontab; the env file is root-readable only.
+SEED_ENV_FILE=/etc/project-mai-tai/project-mai-tai.env
+if [ ! -r "$SEED_ENV_FILE" ]; then
+  printf '  ⛔ CANNOT SEE — REFUSING: service env NOT READABLE at %s\n' "$SEED_ENV_FILE" > "$SEED_OUT"
+  SEED_CODE=2   # ⛔ unreadable env = CANNOT SEE, never GREEN
+elif [ -x "$REPO/.venv/bin/python" ] && [ -f "$REPO/scripts/seed_exposure_detector.py" ]; then
+  # Sourced INSIDE the subshell so this wrapper's own variables are untouched.
+  ( set -a
+    # shellcheck disable=SC1091
+    . "$SEED_ENV_FILE"
+    set +a
+    cd "$REPO" && ./.venv/bin/python scripts/seed_exposure_detector.py --assert-constants ) \
+    > "$SEED_OUT" 2>&1
   SEED_CODE=$?
 else
-  echo "seed-exposure detector NOT FOUND at $REPO/scripts/seed_exposure_detector.py" > "$SEED_OUT"
+  printf '  ⛔ CANNOT SEE — REFUSING: detector NOT FOUND at %s\n' \
+    "$REPO/scripts/seed_exposure_detector.py" > "$SEED_OUT"
   SEED_CODE=2   # ⛔ missing tool = CANNOT SEE, never GREEN
 fi
 SEED_LINE=$(grep -E '^\s+(VERDICT|⛔ CANNOT SEE)' "$SEED_OUT" | head -1)
 echo "$STAMP  seed-exposure exit=$SEED_CODE  $SEED_LINE" >> "$OUT/cron.log"
 
 case "$SEED_CODE" in
-  2) [ "$LEVEL" = "GREEN" ] && LEVEL=RED   ; VERDICT="$VERDICT | SEED-EXPOSURE: CANNOT SEE" ;;
+  # ⛔⭐ CARRY THE REASON, not just the level. This read "SEED-EXPOSURE: CANNOT SEE" — with no cause —
+  # every day for ten sessions, and a reasonless repeat is what turns an alarm into wallpaper. The
+  # actual cause ("no DSN") was sitting in $SEED_LINE the whole time and was being thrown away.
+  2) [ "$LEVEL" = "GREEN" ] && LEVEL=RED   ; VERDICT="$VERDICT | SEED-EXPOSURE: CANNOT SEE${SEED_LINE:+ —${SEED_LINE#*REFUSING:}}" ;;
   1) [ "$LEVEL" = "GREEN" ] && LEVEL=AMBER ; VERDICT="$VERDICT | $SEED_LINE" ;;
   0) VERDICT="$VERDICT | seed-exposure: none" ;;
   *) [ "$LEVEL" = "GREEN" ] && LEVEL=RED   ; VERDICT="$VERDICT | SEED-EXPOSURE: crashed" ;;

@@ -59,11 +59,21 @@ touch "$SEEN"
 # ⛔ Runs as ROOT from ROOT's crontab; the env file is root-readable only.
 ENV_FILE=/etc/project-mai-tai/project-mai-tai.env
 
+# ⛔⭐ A WRAPPER-SIDE REFUSAL MUST SPEAK THE DETECTOR'S OWN DIALECT.
+# The summary/dedup key below is `grep -E '^\s+(VERDICT|⛔ CANNOT SEE)'` — two leading spaces then
+# one of those tokens. A refusal written in any other shape greps to the EMPTY STRING, which makes
+# the alert body blank AND collapses the per-session dedup key, so every wrapper-side failure would
+# either alert with no reason or dedup against an unrelated one. Emit refusals through this helper
+# so they match the detector's format exactly. (The pre-existing "detector NOT FOUND" branch had
+# this same latent defect; it is routed through here too.)
+refuse() {
+  printf '  ⛔ CANNOT SEE — REFUSING: %s\n' "$1" > "$OUTFILE"
+}
+
 if [ ! -r "$ENV_FILE" ]; then
   # ⛔ An unreadable env is CANNOT SEE, never quiet — the same rule as a missing tool. This is the
   # branch that would have caught the defect above on day one instead of on day ten.
-  echo "seed-exposure: service env NOT READABLE at $ENV_FILE (must run as root from root's crontab)" \
-    > "$OUTFILE"
+  refuse "service env NOT READABLE at $ENV_FILE (must run as root from root's crontab)"
   CODE=2
 elif [ -x "$REPO/.venv/bin/python" ] && [ -f "$REPO/scripts/seed_exposure_detector.py" ]; then
   # Sourced INSIDE the subshell so the wrapper's own `set -u` string handling below is untouched.
@@ -75,7 +85,7 @@ elif [ -x "$REPO/.venv/bin/python" ] && [ -f "$REPO/scripts/seed_exposure_detect
     > "$OUTFILE" 2>&1
   CODE=$?
 else
-  echo "seed-exposure detector NOT FOUND at $REPO/scripts/seed_exposure_detector.py" > "$OUTFILE"
+  refuse "detector NOT FOUND at $REPO/scripts/seed_exposure_detector.py"
   CODE=2   # ⛔ a missing tool is CANNOT SEE, never quiet
 fi
 
