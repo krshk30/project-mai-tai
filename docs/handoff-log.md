@@ -3095,3 +3095,49 @@ never-fired (`OMS-P0A-HOLD=0`, re-verified) + the approved 08-18 Webull Parts 1/
 (marker absent everywhere, re-verified). Operator approved building Parts 1/2/4. §3: ruled approved-with-a-floor and then
 **CONFIRMED later the same day** (formula + one-shot lifetime + below-floor paging) — the
 "stays open" wording this entry first carried is superseded by that confirmation.
+
+## 2026-09-01 (close-out) — two deploy windows, four measurements, the day the denominators paid
+
+**Deploys.** Window 1 (16:26/16:29 ET, box `77ae556`→`1f5da81`): the 11-PR batch; the #869 fence's
+FIRST live invocation said GO; boot-hold released 16:29:59; checklist clean; #860 crontab verified
+on the repo path and its 17:00 tick ran the provenance classifier. Window 2 (~17:45 ET,
+`e24913b`, operator-ordered no-hold): #870 arm-guard + #871 clock policy, v2-only, OMS correctly
+untouched. Flat at both windows; the first window WAITED for flat (FLYE exited 16:24:49).
+
+**Measurements (all PRE-FIX labeled, windows split at the deploys).**
+- **M1 bar-source (10 sessions, 171 symbol-sessions, gap-stratified):** the disagreement's largest
+  cause is OUR OWN GAPS — 64.5% agreement at zero gaps → 30.3% at >20, the schwab series
+  manufacturing phantom flips when gapped; vendor residual ~35%; **massive flips LATER 3:1** —
+  the production feed leads, so "moves already spent" is NOT feed lag.
+- **M2 reclaim P&L (17 clean closed cycles):** median **+1.92%, 76% win** — indistinguishable
+  from first entries; the old 38%/−4.98% lives in the unanswerable pre-08-27 era. No basis to
+  switch reclaim off. Operator ruled **both paths stay ON**.
+- **M3 flip→fill (227/228 stamped):** resting-family fills ON the line (173 fills, median ≤0.09%);
+  the chase is the REACTIVE path (median +5.8–5.9%, tails filling 15–63 min after arm — a stale
+  trigger, not a feed). The rth_resting outliers were the #858 defect wearing a strategy costume.
+- **M4 fill-rate gap:** an ADMISSION gap, not execution — mirror rejected at placement 12.5% vs
+  6.2% (`TICKER_ID_CAN_NOT_TRADE` dominant); booked orders fill at the same rate; latency and
+  churn have the wrong sign. ⛔ The 12.5%→28% trend claim was REGIME-MIXED and is retracted —
+  the reading becomes an accumulating watch, split at fix dates.
+- **Reactive 3-question follow-up (both-paths-ON ruling):** chase is a PATH property (6/10
+  reactive in the tail, 0/122 resting, 5 symbols); reactive earns the resting median (+1.92,
+  n=7, mean=noise); distance does NOT predict outcome (flat buckets; structural caveat:
+  %-from-entry exits travel with the entry). ⭐ The #858 duplicate CRITERION caught three
+  pre-08-31 legs (YYGH+CRE 08-26, PPCB 08-27 — codex's original D20 case): the defect's window
+  extends back to at least 08-26.
+
+**Retractions/corrections, applied everywhere:** the 16-edge control withdrawn (4 of 16 edges
+observer-inferred; three signers, none derived it → "verifying inputs is not deriving the
+reduction"); my "#859 replay can't go red" was a VOID control (moving-ref baseline → pin by SHA);
+my "12 unpatched files" came from `head -12` (truncated count quoted as a census).
+
+**Reviews:** #865 def705cc (the author refused their own number — no constant remains) ·
+#867/#868 re-pins (tree equality) · #869 (fence = the BUILT-BUT-NEVER-INVOKED class closed) ·
+#870 (arm guard; within-window residual named; guard-dropped mutant red) · #871 findings→amend→pin
+(clock policy widened until MY un-injection falsifiers went red; enforcement population now equals
+fix population).
+
+**Board:** B25 + B33 closed ANSWERED on one look each; 11 stubs retired (resurface-with-evidence
+standard); D21/D23/sawtooth/census closed earlier in the batch; clock-sweep row closed by #871.
+
+**Tomorrow:** run the reading. One regime, pre-stated denominators, zeros say which kind they are.
