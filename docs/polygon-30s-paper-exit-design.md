@@ -59,9 +59,9 @@ That identity handles both cross-broker pairs and same-broker duplicate fills wi
 transitivity. The reviewed historical `106 -> 82` replay uses an immutable audited mapping only for
 legacy fills that predate the slot stamp; the live runtime has no time-only fallback. An A-B-C timing
 chain can therefore never merge separate entries. The reference contains 20 cross-broker pairs and
-four duplicate Webull fills. The logical identity is derived from the slot plus sorted source fill
-IDs; it retains every leg rather than synthesizing a fill, and grades the per-leg rule results with
-actual-quantity weighting.
+four duplicate Webull fills. The logical identity is derived from session, symbol, and the stamped
+slot; every immutable source fill ID is retained, the entry basis is actual-quantity weighted, and
+arrival order cannot change the result.
 
 A read-only fill-table census is authoritative for the live denominator and runs independently of
 Redis, whose consumer begins at `$` and can silently lose an event. It detects a dropped stream
@@ -73,20 +73,23 @@ mirror row must reference actual live broker fills, so an unmatched paper entry 
 Webull and Schwab, then logical matched/expected entries after collapse; report phantom paper rows
 separately.
 
-The **independent arm** receives the same promoted watchlist and bars, arms from the scanner, and
-models a resting fill only from timestamped executable asks. It measures refused names and orders
-that never caught, but entry and exit both differ from live and are therefore confounded. Its rows
-are labelled `INDEPENDENT`; they never contribute to the mirror comparison.
+The **independent arm** receives each stamped V2 first/resting attempt from the strategy-intent
+stream, keyed by its non-empty `fanout_slot_id`, and models a resting fill only from timestamped
+executable asks crossing the stamped `cw_flip_level`. Reclaim, reactive, missing, unknown, or
+contradictory stamps refuse the arm. This measures refused names and orders that never caught, but
+entry and exit both differ from live and are therefore confounded. Its filled/armed denominator is
+reported separately under `INDEPENDENT`; it never contributes to the mirror comparison.
 
 ## 4. Structural No-Order Boundary
 
-Replace the whole `polygon_30s` `StrategyBotRuntime`, not merely `Polygon30sEntryEngine`, with a
-dedicated paper runtime whose methods return only `PaperDecision` or paper state. It does not own
-the generic runtime's `ExitEngine`, `PositionTracker`, or any method whose return type is
-`TradeIntentEvent`. Give it only read-only market/fill repositories plus the dedicated paper writer.
-It has no broker-adapter import, broker credential object, strategy-intent publisher, or dynamic
-provider dispatch. At the enclosing service boundary, an allowlist accepts paper writes only to
-the two paper tables and rejects any `polygon_30s` attempt to publish to
+The installed `polygon_30s` object is a standalone paper facade, not a `StrategyBotRuntime`. The
+retired Polygon entry engine is replaced by an engine whose entry method always returns `None`.
+The facade exposes only the scanner/bar/history methods needed to preserve the existing harness;
+it hides position, exit-engine, emergency-close, and order APIs, consumes any legacy order-shaped
+return before it can escape, and returns only `PaperDecision` or paper state. The dedicated
+`paper_exit` package has no broker-adapter import, broker credential object, strategy-intent
+publisher, or dynamic provider dispatch. At the enclosing service boundary, a second refusal
+rejects any `polygon_30s` attempt to publish to
 `mai_tai:strategy-intents`. The OMS independently rejects every intent whose
 `strategy_code=polygon_30s`, regardless of account name, provider, or execution mode, before order
 creation or adapter dispatch. CI uses AST
@@ -116,8 +119,10 @@ are the only shared machinery.
 `/bot/30s-polygon` shows Mirror and Independent panels. Each entry displays source identity, entry,
 first-trigger decision, paper exit, live realized exit when available, return delta, and evidence
 status. The daily Mirror line is `matched and gradable / live resting fills`, followed by paper-rule
-and live-realized totals on those same matched entries; missing, phantom, and unanswerable counts are
-never folded into P&L. Independent gets its own denominator and no live comparison. Logs emit one
+and live-realized totals on those same matched entries. Realized exits are joined read-only by
+account and symbol with FIFO fill allocation; partial or unmatched closes are `UNGRADABLE`, never
+folded into P&L. Missing, phantom, and unanswerable counts are likewise excluded. Independent gets
+its own filled/armed denominator and no live comparison. Logs emit one
 entry and one exit marker per paper identity, plus a daily reconciliation marker. Before the first
 paper fill, the page renders `WAITING FOR FIRST LIVE RESTING FILL`, service/feed/scanner health,
 Webull and Schwab live-fill denominators at zero, Mirror as `UNEXERCISED`, Independent's current

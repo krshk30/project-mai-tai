@@ -19,6 +19,7 @@ from project_mai_tai.db.models import (
     BrokerOrder,
     DashboardSnapshot,
     Fill,
+    PaperExitRuleConfig,
     ReconciliationFinding,
     ReconciliationRun,
     Strategy,
@@ -71,6 +72,11 @@ class FakeRedis:
 
     async def aclose(self) -> None:
         return None
+
+    async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
+        del kwargs
+        self.streams.setdefault(stream, []).insert(0, ("config-1", dict(fields)))
+        return "config-1"
 
 
 def test_exchange_schwab_authorization_code_uses_url_request(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -237,6 +243,42 @@ def build_test_session_factory() -> sessionmaker[Session]:
     )
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def test_polygon_paper_exit_rule_updates_without_restart_and_keeps_history() -> None:
+    settings = Settings(redis_stream_prefix="test")
+    session_factory = build_test_session_factory()
+    redis = FakeRedis({})
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/botpolygon/paper-exit/config",
+            json={"target_pct": "5", "stop_pct": "8", "changed_by": "operator"},
+        )
+        second = client.post(
+            "/botpolygon/paper-exit/config",
+            json={"target_pct": "6", "stop_pct": "9", "changed_by": "operator"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    with session_factory() as session:
+        configs = list(
+            session.scalars(
+                select(PaperExitRuleConfig).order_by(PaperExitRuleConfig.created_at)
+            )
+        )
+    assert [(str(row.target_pct), str(row.stop_pct)) for row in configs] == [
+        ("5.0000", "8.0000"),
+        ("6.0000", "9.0000"),
+    ]
+    assert len(redis.streams["test:runtime-controls"]) == 2
 
 
 def seed_database(session_factory: sessionmaker[Session]) -> None:
@@ -2138,12 +2180,12 @@ def test_polygon_bot_legacy_webull_routes_remain_compatible() -> None:
     with TestClient(app) as client:
         legacy_status = client.get("/botwebull")
         assert legacy_status.status_code == 200
-        assert legacy_status.json()["status"] == "live/webull"
+        assert legacy_status.json()["status"] == "paper/webull"
         assert legacy_status.json()["watched_tickers"] == ["AUUD"]
 
         legacy_page = client.get("/bot/30s-webull")
         assert legacy_page.status_code == 200
-        assert "Polygon 30 Sec Bot" in legacy_page.text
+        assert "Polygon Paper Exit Harness" in legacy_page.text
         assert "AUUD" in legacy_page.text
 
 

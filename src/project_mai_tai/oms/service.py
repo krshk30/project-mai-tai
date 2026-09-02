@@ -973,6 +973,13 @@ class OmsRiskService:
             return
 
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
+        if str(event.payload.strategy_code).strip().lower() in {"polygon_30s", "webull_30s"}:
+            self.logger.error(
+                "[PAPER-EXIT-REFUSED] OMS blocked polygon_30s intent before intent/order "
+                "persistence and before broker dispatch event_id=%s",
+                event.event_id,
+            )
+            return []
         # Refresh the operator manual-stop cache BEFORE opening the intent transaction, never inside
         # it: a nested session shares the connection and fights the outer transaction. `_evaluate_risk`
         # then reads a plain in-memory set, so the risk path itself does no DB I/O.

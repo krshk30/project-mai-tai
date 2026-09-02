@@ -410,6 +410,7 @@ async def test_initialize_stream_offsets_anchors_to_latest_ids() -> None:
         "test:order-events": "22-0",
         "test:snapshot-batches": "33-0",
         "test:runtime-controls": "0-0",
+        "test:strategy-intents": "0-0",
     }
 
 
@@ -6036,6 +6037,7 @@ async def test_snapshot_batch_still_publishes_strategy_state_when_subscription_s
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     redis = FakeRedis()
+    session_factory = build_test_session_factory()
     service = StrategyEngineService(
         settings=make_test_settings(
             redis_stream_prefix="test",
@@ -6043,6 +6045,7 @@ async def test_snapshot_batch_still_publishes_strategy_state_when_subscription_s
             strategy_history_persistence_enabled=False,
         ),
         redis_client=redis,
+        session_factory=session_factory,
     )
     service._subscription_sync_timeout_secs = 0.01
 
@@ -6078,6 +6081,7 @@ async def test_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_wit
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     redis = FakeRedis()
+    session_factory = build_test_session_factory()
     service = StrategyEngineService(
         settings=make_test_settings(
             redis_stream_prefix="test",
@@ -6088,6 +6092,7 @@ async def test_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_wit
             strategy_polygon_30s_broker_provider="webull",
         ),
         redis_client=redis,
+        session_factory=session_factory,
     )
     captured: dict[str, object] = {}
 
@@ -6123,6 +6128,7 @@ async def test_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_wit
 @pytest.mark.asyncio
 async def test_live_bar_event_forwards_provider_coverage_timestamp(monkeypatch) -> None:
     redis = FakeRedis()
+    session_factory = build_test_session_factory()
     service = StrategyEngineService(
         settings=make_test_settings(
             redis_stream_prefix="test",
@@ -6133,6 +6139,7 @@ async def test_live_bar_event_forwards_provider_coverage_timestamp(monkeypatch) 
             strategy_polygon_30s_broker_provider="webull",
         ),
         redis_client=redis,
+        session_factory=session_factory,
     )
     captured: dict[str, object] = {}
 

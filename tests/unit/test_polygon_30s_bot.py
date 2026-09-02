@@ -82,9 +82,9 @@ def test_runtime_registry_registers_polygon_30s_as_paper_simulated_by_default() 
     broker_accounts = {item.name: item for item in configured_broker_account_registrations(settings)}
 
     assert registrations["macd_30s"].display_name == "Schwab 30 Sec Bot"
-    assert registrations["polygon_30s"].display_name == "Polygon 30 Sec Bot"
-    assert registrations["polygon_30s"].execution_mode == "shadow"
-    assert registrations["polygon_30s"].metadata["provider"] == "simulated"
+    assert registrations["polygon_30s"].display_name == "Polygon Paper Exit Harness"
+    assert registrations["polygon_30s"].execution_mode == "paper"
+    assert registrations["polygon_30s"].metadata["provider"] == "none"
     assert registrations["polygon_30s"].metadata["market_data_provider"] == "polygon"
     assert broker_accounts[settings.strategy_polygon_30s_account_name].provider == "simulated"
 
@@ -116,7 +116,7 @@ def test_polygon_30s_uses_tick_bar_close_grace_for_late_polygon_trades() -> None
     builder_manager = state.bots["polygon_30s"].builder_manager
 
     assert builder_manager.close_grace_seconds == 2.0
-    assert state.bots["polygon_30s"].definition.display_name == "Polygon 30 Sec Bot"
+    assert state.bots["polygon_30s"].definition.display_name == "Polygon Paper Exit Harness"
     assert state.schwab_stream_strategy_codes() == ("macd_30s",)
 
     state._record_bot_handoff_symbols([{"ticker": "UGRO"}], strategy_codes=["polygon_30s"])
@@ -297,7 +297,7 @@ def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:
 
 def test_control_plane_meta_includes_polygon_and_renamed_schwab_bot() -> None:
     assert BOT_PAGE_META["macd_30s"]["title"] == "Schwab 30 Sec Bot"
-    assert BOT_PAGE_META["polygon_30s"]["title"] == "Polygon 30 Sec Bot"
+    assert BOT_PAGE_META["polygon_30s"]["title"] == "Polygon Paper Exit Harness"
     assert BOT_PAGE_META["polygon_30s"]["path"] == "/bot/30s-polygon"
 
 

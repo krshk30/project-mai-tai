@@ -52,21 +52,17 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
         registrations.append(
             StrategyRegistration(
                 code="polygon_30s",
-                display_name="Polygon 30 Sec Bot",
-                account_name=settings.strategy_polygon_30s_account_name,
+                display_name="Polygon Paper Exit Harness",
+                account_name="paper:polygon_30s",
                 interval_secs=30,
-                runtime_kind="macd",
-                execution_mode=settings.execution_mode_for_provider(
-                    settings.provider_for_strategy("polygon_30s")
-                ),
+                runtime_kind="paper_exit",
+                execution_mode="paper",
                 metadata={
-                    "account_name": settings.strategy_polygon_30s_account_name,
-                    "account_display_name": settings.display_account_name(
-                        settings.strategy_polygon_30s_account_name
-                    ),
+                    "account_name": "paper:polygon_30s",
+                    "account_display_name": "Paper Exit Harness",
                     "interval_secs": 30,
-                    "runtime_kind": "macd",
-                    "provider": settings.provider_for_strategy("polygon_30s"),
+                    "runtime_kind": "paper_exit",
+                    "provider": "none",
                     "market_data_provider": settings.market_data_provider_for_strategy("polygon_30s"),
                 },
             )

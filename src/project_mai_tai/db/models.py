@@ -494,6 +494,53 @@ class StrategyBarHistory(Base):
     )
 
 
+class PaperExitRuleConfig(Base):
+    """Append-only operator configuration for the Polygon paper-exit harness."""
+
+    __tablename__ = "paper_exit_rule_configs"
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    target_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4))
+    stop_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4))
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    changed_by: Mapped[str] = mapped_column(String(128), default="operator")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+
+
+class PaperExitEvent(Base):
+    """Append-only evidence tape; it cannot submit or represent a broker order."""
+
+    __tablename__ = "paper_exit_events"
+    __table_args__ = (
+        UniqueConstraint("event_key", name="uq_paper_exit_events_event_key"),
+        Index("ix_paper_exit_events_session_arm", "session_date", "arm", "observed_at"),
+        Index("ix_paper_exit_events_logical", "logical_id", "observed_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    event_key: Mapped[str] = mapped_column(String(255))
+    logical_id: Mapped[str] = mapped_column(String(255), index=True)
+    arm: Mapped[str] = mapped_column(String(16), index=True)
+    event_type: Mapped[str] = mapped_column(String(32), index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    venue: Mapped[str] = mapped_column(String(16), default="")
+    source_fill_id: Mapped[UUID | None] = mapped_column(Uuid(), nullable=True, index=True)
+    broker_fill_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    config_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("paper_exit_rule_configs.id"), nullable=True, index=True
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+
+
 class MarketTradeTick(Base):
     """Append-only Schwab trade ticks (LEVELONE_EQUITIES) for exit replay.
 

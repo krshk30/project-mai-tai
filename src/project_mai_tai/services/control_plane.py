@@ -14,7 +14,7 @@ from pathlib import Path
 import time
 from typing import Any
 from urllib.error import HTTPError
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode
 from urllib.request import Request as UrlRequest, urlopen
 from zoneinfo import ZoneInfo
 
@@ -33,6 +33,7 @@ from project_mai_tai.db.models import (
     BrokerOrderEvent,
     DashboardSnapshot,
     Fill,
+    PaperExitEvent,
     ReconciliationFinding,
     ReconciliationRun,
     ScannerBlacklistEntry,
@@ -55,6 +56,7 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.broker_adapters.schwab_token_manager import atomic_write_json
 from project_mai_tai.log import configure_logging
+from project_mai_tai.paper_exit_store import PaperExitStore
 from project_mai_tai.runtime_registry import configured_strategy_registrations
 from project_mai_tai.services.schwab_token_refresher import SchwabTokenRefresher
 from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
@@ -949,6 +951,10 @@ class ControlPlaneRepository:
                 str(bot.get("account_name", "") or ""),
             )
             bot["trade_forensics"] = dict(trade_forensics.get(key, {}) or {})
+            if str(bot.get("strategy_code", "")) == "polygon_30s":
+                bot["paper_exit_evidence"] = await asyncio.to_thread(
+                    self.load_paper_exit_evidence
+                )
 
         overall_status = "healthy"
         if db_state["errors"] or stream_state["errors"]:
@@ -979,6 +985,37 @@ class ControlPlaneRepository:
             "legacy_shadow": legacy_shadow,
             "errors": db_state["errors"] + stream_state["errors"],
         }
+
+    def load_paper_exit_evidence(self) -> list[dict[str, Any]]:
+        start = current_eastern_day_start_utc()
+        end = current_eastern_day_end_utc()
+        with self.session_factory() as session:
+            rows = list(
+                session.scalars(
+                    select(PaperExitEvent)
+                    .where(
+                        PaperExitEvent.observed_at >= start,
+                        PaperExitEvent.observed_at < end,
+                    )
+                    .order_by(PaperExitEvent.observed_at.desc())
+                    .limit(500)
+                )
+            )
+        return [
+            {
+                "time": _datetime_str(row.observed_at),
+                "arm": row.arm,
+                "event": row.event_type,
+                "symbol": row.symbol,
+                "venue": row.venue,
+                "price": str(row.price) if row.price is not None else "",
+                "quantity": str(row.quantity) if row.quantity is not None else "",
+                "config_id": str(row.config_id) if row.config_id else "",
+                "reason": str((row.payload or {}).get("reason", "")),
+                "logical_id": row.logical_id,
+            }
+            for row in rows
+        ]
 
     def load_bot_trade_forensics(
         self,
@@ -1956,6 +1993,7 @@ class ControlPlaneRepository:
                     "indicator_snapshots": indicator_snapshots,
                     "bar_counts": bar_counts,
                     "last_tick_at": last_tick_at,
+                    "paper_exit": dict(runtime_bot.get("paper_exit", {}) or {}),
                     "tos_parity": tos_parity,
                     "recent_intents": [
                         item
@@ -3886,6 +3924,54 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "polygon_30s")
 
+    @app.post("/botpolygon/paper-exit/config")
+    async def update_polygon_paper_exit_config(request: FastAPIRequest) -> Response:
+        content_type = str(request.headers.get("content-type", "")).lower()
+        if "application/json" in content_type:
+            values = dict(await request.json())
+        else:
+            parsed = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+            values = {key: items[-1] for key, items in parsed.items() if items}
+        try:
+            target_pct = Decimal(str(values["target_pct"]))
+            stop_pct = Decimal(str(values["stop_pct"]))
+            effective_text = str(values.get("effective_at", "")).strip()
+            effective_at = datetime.fromisoformat(effective_text) if effective_text else utcnow()
+            if effective_at.tzinfo is None:
+                effective_at = effective_at.replace(tzinfo=EASTERN_TZ)
+            changed_by = str(values.get("changed_by", "operator")).strip() or "operator"
+            config = PaperExitStore(active_session_factory).append_config(
+                target_pct=target_pct,
+                stop_pct=stop_pct,
+                effective_at=effective_at.astimezone(UTC),
+                changed_by=changed_by,
+            )
+        except (KeyError, ValueError, ArithmeticError) as exc:
+            return Response(content=f"Invalid paper-exit configuration: {exc}", status_code=400)
+        event = {
+            "event_type": "paper_exit_config_update",
+            "source_service": SERVICE_NAME,
+            "produced_at": utcnow().isoformat(),
+            "config_id": str(config.id),
+        }
+        await app.state.repository.redis.xadd(
+            stream_name(active_settings.redis_stream_prefix, "runtime-controls"),
+            {"data": json.dumps(event)},
+        )
+        if "application/json" in content_type:
+            return Response(
+                content=json.dumps(
+                    {
+                        "id": str(config.id),
+                        "target_pct": str(config.target_pct),
+                        "stop_pct": str(config.stop_pct),
+                        "effective_at": config.effective_at.isoformat(),
+                    }
+                ),
+                media_type="application/json",
+            )
+        return RedirectResponse("/bot/30s-polygon", status_code=303)
+
     @app.get("/botwebull")
     async def bot_webull_status_alias() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
@@ -4341,7 +4427,7 @@ def _compact_bot_route_line(code: str, bot: dict[str, Any]) -> str:
     if code == "schwab_1m_v2":
         return "live · schwab streamer · sole session"
     if code == "polygon_30s":
-        return "live · webull · polygon feed"
+        return "paper exit · mirrored Schwab + Webull fills · Polygon feed"
     if code == "orb":
         account = str(bot.get("account_name") or "-")
         mode = "paper" if account.startswith("paper:") else "live"
@@ -4647,8 +4733,8 @@ BOT_PAGE_META = {
         "path": "/bot/30s",
     },
     "polygon_30s": {
-        "title": "Polygon 30 Sec Bot",
-        "nav_title": "Polygon 30s",
+        "title": "Polygon Paper Exit Harness",
+        "nav_title": "Paper Exit",
         "badge": "PG",
         "color": "#ff8f00",
         "path": "/bot/30s-polygon",
@@ -5697,6 +5783,76 @@ def _render_bot_detail_page(
                 <div class="panel-copy">Scanning for runners... Score≥70, Change≥35%, after 7AM, accelerating, then managed with tiered trails and EMA checks.</div>
             </section>"""
 
+    paper_exit_panel = ""
+    if strategy_code == "polygon_30s":
+        paper_exit = dict(bot.get("paper_exit", {}) or {})
+        paper_config = dict(paper_exit.get("config", {}) or {})
+        acceptance = dict(paper_exit.get("acceptance", {}) or {})
+        grade = dict(acceptance.get("grade", {}) or {})
+        independent = dict(paper_exit.get("independent", {}) or {})
+        verdict = str(acceptance.get("verdict", "UNEXERCISED"))
+        evidence_rows = "".join(
+            "<tr>"
+            f"<td>{escape(str(row.get('time', '')))}</td>"
+            f"<td>{escape(str(row.get('arm', '')))}</td>"
+            f"<td>{escape(str(row.get('symbol', '')))}</td>"
+            f"<td>{escape(str(row.get('venue', '') or '-'))}</td>"
+            f"<td>{escape(str(row.get('event', '')))}</td>"
+            f"<td>{escape(str(row.get('price', '') or '-'))}</td>"
+            f"<td>{escape(str(row.get('reason', '') or '-'))}</td>"
+            "</tr>"
+            for row in list(bot.get("paper_exit_evidence", []))[:100]
+        ) or '<tr><td colspan="7">Waiting for the first paper decision.</td></tr>'
+        grade_rows = "".join(
+            "<tr>"
+            f"<td>{escape(str(row.get('symbol', '')))}</td>"
+            f"<td>{escape(', '.join(str(item) for item in row.get('venues', [])) or '-')}</td>"
+            f"<td>{escape(str(row.get('source_legs', 0)))}</td>"
+            f"<td>{escape(str(row.get('paper_pct', '')) or '-')}</td>"
+            f"<td>{escape(str(row.get('real_pct', '')) or '-')}</td>"
+            f"<td>{'GRADABLE' if row.get('gradable') else escape(str(row.get('reason', 'UNGRADABLE')))}</td>"
+            "</tr>"
+            for row in list(grade.get("rows", []))
+        ) or '<tr><td colspan="6">No completed matched entries yet.</td></tr>'
+        paper_exit_panel = f"""
+            <section class="panel full accent-panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Paper Exit Harness</h2>
+                        <div class="sub">Mirror and independent results stay separate. This harness cannot place broker orders.</div>
+                    </div>
+                    <span class="count accent">{escape(verdict)}</span>
+                </div>
+                <div class="hero-grid">
+                    <div class="hero-card"><span>Mirror entries</span><strong>{int(acceptance.get("matched", 0) or 0)} / {int(acceptance.get("live", 0) or 0)}</strong><small>terminal {int(acceptance.get("terminal", 0) or 0)} / {int(acceptance.get("terminal_expected", 0) or 0)} · missed {int(acceptance.get("missed", 0) or 0)} · phantom {int(acceptance.get("phantom", 0) or 0)}</small></div>
+                    <div class="hero-card"><span>Open mirror</span><strong>{int(paper_exit.get("mirror_open", 0) or 0)}</strong><small>Live resting fills, both venues</small></div>
+                    <div class="hero-card"><span>Independent</span><strong>{int(independent.get("filled", 0) or 0)} / {int(independent.get("armed", 0) or 0)}</strong><small>filled / armed · never pooled</small></div>
+                    <div class="hero-card"><span>Daily grade</span><strong>{int(grade.get("matched", 0) or 0)} / {int(grade.get("total", 0) or 0)}</strong><small>paper {escape(str(grade.get("paper_pct", "0")))}% · live {escape(str(grade.get("real_pct", "0")))}%</small></div>
+                    <div class="hero-card"><span>Active rule</span><strong>+{escape(str(paper_config.get("target_pct", "5")))}% / -{escape(str(paper_config.get("stop_pct", "8")))}%</strong><small>Effective {escape(str(paper_config.get("effective_at", "-")))}</small></div>
+                </div>
+                <div class="panel-copy">
+                    {"Waiting for the first live resting fill; zero entries is UNEXERCISED, never PASS." if verdict == "UNEXERCISED" else "Acceptance is based on the durable live-fill denominator."}
+                    <form method="post" action="/botpolygon/paper-exit/config" style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+                        <label>Target %<br><input name="target_pct" type="number" step="0.01" min="0.01" value="{escape(str(paper_config.get("target_pct", "5")))}" required></label>
+                        <label>Stop %<br><input name="stop_pct" type="number" step="0.01" min="0.01" value="{escape(str(paper_config.get("stop_pct", "8")))}" required></label>
+                        <label>Effective at (optional ET)<br><input name="effective_at" type="datetime-local"></label>
+                        <input name="changed_by" type="hidden" value="operator-screen">
+                        <button type="submit">Record new rule</button>
+                    </form>
+                </div>
+                <div class="table-wrap" style="margin-top:14px">
+                    <table>
+                        <thead><tr><th>Symbol</th><th>Venues</th><th>Legs</th><th>Paper %</th><th>Live %</th><th>Evidence</th></tr></thead>
+                        <tbody>{grade_rows}</tbody>
+                    </table>
+                </div>
+                <div class="table-wrap" style="margin-top:14px">
+                    <table>
+                        <thead><tr><th>Time</th><th>Arm</th><th>Symbol</th><th>Venue</th><th>Decision</th><th>Price</th><th>Reason</th></tr></thead>
+                        <tbody>{evidence_rows}</tbody>
+                    </table>
+                </div>
+            </section>"""
     completed_positions_panel = f"""
             <section class="panel full">
                 <div class="panel-header">
@@ -6326,6 +6482,7 @@ def _render_bot_detail_page(
             {listening_panel}
             {data_health_panel}
             {runner_status_panel}
+            {paper_exit_panel}
 
             <section class="panel full">
                 <div class="panel-header">

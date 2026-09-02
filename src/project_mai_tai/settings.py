@@ -151,6 +151,10 @@ class Settings(BaseSettings):
         "strategy_polygon_30s_trade_stream_service",
         "strategy_webull_30s_trade_stream_service",
     )
+    # Bootstrap values only. Once the append-only DB row exists, operators update the
+    # paper rule through the control plane without restarting or redeploying this service.
+    strategy_polygon_30s_paper_target_pct: float = 5.0
+    strategy_polygon_30s_paper_stop_pct: float = 8.0
     strategy_macd_30s_massive_indicator_overlay_enabled: bool = True
     strategy_macd_30s_probe_enabled: bool = False
     strategy_macd_30s_reclaim_enabled: bool = False

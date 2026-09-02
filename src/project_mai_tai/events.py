@@ -193,6 +193,7 @@ class StrategyBotStatePayload(BaseModel):
     entries_held: bool = False
     restoration_complete: bool = False
     warmup_pending_symbols: list[str] = Field(default_factory=list)
+    paper_exit: dict[str, Any] = Field(default_factory=dict)
 
 
 class StrategyStateSnapshotPayload(BaseModel):
