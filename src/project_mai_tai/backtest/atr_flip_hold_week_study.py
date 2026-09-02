@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
-from dataclasses import asdict
-from datetime import date, datetime
+from collections import defaultdict
+from dataclasses import asdict, dataclass
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 from project_mai_tai.backtest.atr_bracket_study import trading_sessions
@@ -21,10 +22,29 @@ from project_mai_tai.backtest.atr_flip_hold_study import (
     _write_csv,
     run_study,
 )
+from project_mai_tai.backtest.data import Quote
 from project_mai_tai.settings import Settings
 
 SCALE_NAME = "scale0.5@+5_rest@+8_no_floor_stop-10"
 TRAIL_NAME = "scale0.5@+5_trail2_floor+0_stop-10"
+BASELINE_NAME = "hold_stop-10"
+
+
+@dataclass(frozen=True)
+class ScaleInOutcome:
+    session_day_et: str
+    symbol: str
+    buy_signal_ts: datetime
+    first_fill_px: float
+    added: bool
+    second_fill_ts: datetime | None
+    second_fill_px: float | None
+    blended_entry_px: float
+    stop_px: float
+    exit_ts: datetime
+    exit_px: float
+    exit_reason: str
+    return_pct_on_intended_notional: float
 
 
 def _et(value: datetime | None, *, seconds: bool = False) -> str:
@@ -74,6 +94,340 @@ def _simple_rows(
             }
         )
     return rows
+
+
+def simulate_scale_in(
+    candidate: FlipCandidate,
+    quotes: list[Quote],
+    session_end: datetime,
+    *,
+    stop_pct: float = -10.0,
+) -> ScaleInOutcome:
+    """Half at the flip, half at +5%, then ATR SELL / stop / 16:00.
+
+    The stop is anchored to the first fill before the add and to the blended average after the add.
+    P&L is normalized to the original intended full-size notional (one share at the first fill), so
+    it compares directly with buying the full intended share count at the flip.
+    """
+    first_px = candidate.entry_px
+    add_px = first_px * 1.05
+    blended_px = first_px
+    stop_px = first_px * (1.0 + stop_pct / 100.0)
+    added = False
+    add_ts: datetime | None = None
+    pending_stop = False
+    last_quote = quotes[candidate.entry_quote_index]
+
+    def finish(quote: Quote, reason: str) -> ScaleInOutcome:
+        exit_px = float(quote.bid)
+        pnl = 0.5 * (exit_px - first_px)
+        if added:
+            pnl += 0.5 * (exit_px - add_px)
+        return ScaleInOutcome(
+            session_day_et=candidate.session_day_et,
+            symbol=candidate.symbol,
+            buy_signal_ts=candidate.buy_signal_ts,
+            first_fill_px=first_px,
+            added=added,
+            second_fill_ts=add_ts,
+            second_fill_px=add_px if added else None,
+            blended_entry_px=blended_px,
+            stop_px=stop_px,
+            exit_ts=quote.ts,
+            exit_px=exit_px,
+            exit_reason=reason,
+            return_pct_on_intended_notional=pnl / first_px * 100.0,
+        )
+
+    for quote in quotes[candidate.entry_quote_index + 1 :]:
+        if quote.ts >= session_end:
+            break
+        if pending_stop:
+            return finish(quote, "hard_stop")
+        if candidate.sell_signal_ts is not None and quote.ts >= candidate.sell_signal_ts:
+            return finish(quote, "atr_sell")
+        last_quote = quote
+        bid = float(quote.bid)
+        if not added and bid >= add_px:
+            added = True
+            add_ts = quote.ts
+            blended_px = (first_px + add_px) / 2.0
+            stop_px = blended_px * (1.0 + stop_pct / 100.0)
+        if bid <= stop_px:
+            pending_stop = True
+    return finish(last_quote, "session_close")
+
+
+def _scale_in_outcomes(source, candidates: list[FlipCandidate]) -> list[ScaleInOutcome]:
+    grouped: dict[tuple[str, str], list[FlipCandidate]] = defaultdict(list)
+    for candidate in candidates:
+        grouped[(candidate.session_day_et, candidate.symbol)].append(candidate)
+    outcomes: list[ScaleInOutcome] = []
+    for (day_text, symbol), group in grouped.items():
+        session_day = date.fromisoformat(day_text)
+        start = datetime.combine(session_day, time(7), EASTERN)
+        end = datetime.combine(session_day, time(16), EASTERN)
+        session_end = end.astimezone(UTC)
+        quotes = source.quotes(symbol, start, end)
+        outcomes.extend(
+            simulate_scale_in(candidate, quotes, session_end) for candidate in group
+        )
+    return outcomes
+
+
+def _hour_bucket(value: datetime) -> str:
+    hour = value.astimezone(EASTERN).hour
+    if 7 <= hour < 9:
+        return "07-09"
+    if hour < 10:
+        return "09-10"
+    if hour < 12:
+        return "10-12"
+    if hour < 14:
+        return "12-14"
+    return "14-16"
+
+
+def _write_operator_report(
+    path: Path,
+    rows: list[dict[str, object]],
+    outcomes: list[PolicyOutcome],
+    scale_in: list[ScaleInOutcome],
+) -> None:
+    ordered = sorted(rows, key=lambda row: row["buy_signal_ts"])
+    outcome_by_policy = {
+        policy: {
+            (row.symbol, row.buy_signal_ts): row
+            for row in outcomes
+            if row.policy == policy
+        }
+        for policy in (
+            BASELINE_NAME,
+            "full_target+5_stop-10",
+            "full_target+8_stop-10",
+            "full_target+10_stop-10",
+            SCALE_NAME,
+            TRAIL_NAME,
+        )
+    }
+    scale_in_by_key = {(row.symbol, row.buy_signal_ts): row for row in scale_in}
+
+    lines = [
+        "# ATR Flip Seven-Session Operator Tables",
+        "",
+        "## 1. Full Trade List and Time Buckets",
+        "",
+        "Maximum down and maximum up include the executable ATR SELL exit quote and exclude every "
+        "quote after that segment boundary.",
+        "",
+        "Scaled-trail is the existing full-size policy: -10% initial stop, sell 50% at +5%, "
+        "then a 2% trail with a 0% floor on the remainder.",
+        "",
+        "| # | Date | Symbol | ATR BUY ET | Max down | Max up | +5 | +8 | +10 | ATR SELL "
+        "return | Scaled-trail return |",
+        "|---:|---|---|---:|---:|---:|:---:|:---:|:---:|---:|---:|",
+    ]
+    for index, row in enumerate(ordered, 1):
+        lines.append(
+            f"| {index} | {row['session_day_et']} | {row['symbol']} | "
+            f"{_et(row['buy_signal_ts'])} | {float(row['max_down_pct']):+.2f}% | "
+            f"{float(row['max_up_pct']):+.2f}% | "
+            f"{'Yes' if row['fixed_5_reached'] else 'No'} | "
+            f"{'Yes' if row['fixed_8_reached'] else 'No'} | "
+            f"{'Yes' if row['fixed_10_reached'] else 'No'} | "
+            f"{float(row['natural_return_pct']):+.2f}% | "
+            f"{float(row['scale_trail_return_pct']):+.2f}% |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "### Entry-Hour Buckets",
+            "",
+            "| Entry bucket ET | Entries | Reached +5 count | Did not reach +5 count | "
+            "Average max-up | Average max-down |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for bucket in ("07-09", "09-10", "10-12", "12-14", "14-16"):
+        group = [row for row in ordered if _hour_bucket(row["buy_signal_ts"]) == bucket]
+        lines.append(
+            f"| {bucket} | {len(group)} | "
+            f"{sum(bool(row['fixed_5_reached']) for row in group)} | "
+            f"{sum(not bool(row['fixed_5_reached']) for row in group)} | "
+            f"{statistics.fmean(float(row['max_up_pct']) for row in group):+.2f}% | "
+            f"{statistics.fmean(float(row['max_down_pct']) for row in group):+.2f}% |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "### Per-Day Population",
+            "",
+            "| Session | Entries | Reached +5 count | Average max-up | Average max-down |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    for day_text in sorted({str(row["session_day_et"]) for row in ordered}):
+        group = [row for row in ordered if row["session_day_et"] == day_text]
+        lines.append(
+            f"| {day_text} | {len(group)} | "
+            f"{sum(bool(row['fixed_5_reached']) for row in group)} | "
+            f"{statistics.fmean(float(row['max_up_pct']) for row in group):+.2f}% | "
+            f"{statistics.fmean(float(row['max_down_pct']) for row in group):+.2f}% |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## 2. Reached +5 Versus Did Not Reach +5",
+            "",
+            "| Population | Count | ATR SELL total | ATR SELL average | Scaled-trail total | "
+            "Scaled-trail average |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for label, reached in (("Reached +5", True), ("Did not reach +5", False)):
+        group = [row for row in ordered if bool(row["fixed_5_reached"]) is reached]
+        lines.append(
+            f"| {label} | {len(group)} | "
+            f"{sum(float(row['natural_return_pct']) for row in group):+.2f} | "
+            f"{statistics.fmean(float(row['natural_return_pct']) for row in group):+.2f}% | "
+            f"{sum(float(row['scale_trail_return_pct']) for row in group):+.2f} | "
+            f"{statistics.fmean(float(row['scale_trail_return_pct']) for row in group):+.2f}% |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "### Max-Down Split",
+            "",
+            "| Population | Count | Average max-down | Median max-down | Worst max-down | "
+            "Count <= -8 | <= -10 | <= -12 | <= -15 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for label, reached in (("Reached +5", True), ("Did not reach +5", False)):
+        group = [row for row in ordered if bool(row["fixed_5_reached"]) is reached]
+        drawdowns = [float(row["max_down_pct"]) for row in group]
+        lines.append(
+            f"| {label} | {len(group)} | {statistics.fmean(drawdowns):+.2f}% | "
+            f"{statistics.median(drawdowns):+.2f}% | {min(drawdowns):+.2f}% | "
+            f"{sum(value <= -8 for value in drawdowns)} | "
+            f"{sum(value <= -10 for value in drawdowns)} | "
+            f"{sum(value <= -12 for value in drawdowns)} | "
+            f"{sum(value <= -15 for value in drawdowns)} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "### The 21 Trades That Reached +10",
+            "",
+            "| Date | Symbol | BUY ET | Max up | ATR SELL | Fixed +5 | Fixed +8 | Fixed +10 | "
+            "50%@5 / 50%@8 | Scaled-trail |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in (item for item in ordered if item["fixed_10_reached"]):
+        key = (row["symbol"], row["buy_signal_ts"])
+        lines.append(
+            f"| {row['session_day_et']} | {row['symbol']} | {_et(row['buy_signal_ts'])} | "
+            f"{float(row['max_up_pct']):+.2f}% | {float(row['natural_return_pct']):+.2f}% | "
+            f"{outcome_by_policy['full_target+5_stop-10'][key].return_pct:+.2f}% | "
+            f"{outcome_by_policy['full_target+8_stop-10'][key].return_pct:+.2f}% | "
+            f"{outcome_by_policy['full_target+10_stop-10'][key].return_pct:+.2f}% | "
+            f"{outcome_by_policy[SCALE_NAME][key].return_pct:+.2f}% | "
+            f"{outcome_by_policy[TRAIL_NAME][key].return_pct:+.2f}% |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "### Reached +5 Split by Day",
+            "",
+            "| Session | Population | Count | Scaled-trail total | Scaled-trail average |",
+            "|---|---|---:|---:|---:|",
+        ]
+    )
+    for day_text in sorted({str(row["session_day_et"]) for row in ordered}):
+        for label, reached in (("Reached +5", True), ("Did not reach +5", False)):
+            group = [
+                row
+                for row in ordered
+                if row["session_day_et"] == day_text
+                and bool(row["fixed_5_reached"]) is reached
+            ]
+            total = sum(float(row["scale_trail_return_pct"]) for row in group)
+            average = (
+                f"{statistics.fmean(float(row['scale_trail_return_pct']) for row in group):+.2f}%"
+                if group
+                else "-"
+            )
+            lines.append(
+                f"| {day_text} | {label} | {len(group)} | {total:+.2f} | {average} |"
+            )
+
+    baseline = outcome_by_policy[BASELINE_NAME]
+    lines.extend(
+        [
+            "",
+            "## 3. Scale-In Measurement",
+            "",
+            "Both populations exit on ATR SELL, 16:00, or a -10% hard stop. Full-size buys the "
+            "entire intended share count at the flip. Scale-in buys half at the flip and half "
+            "exactly at +5% from the first fill. Before the add, the stop is -10% from the first "
+            "fill. After the add, the blended entry is 102.5% of the first fill and the stop resets "
+            "to -10% from that blended average. Scale-in P&L is normalized to the original "
+            "full-size first-fill notional.",
+            "",
+            "| Population | Count | Full-size total | Full-size average | Scale-in total | "
+            "Scale-in average |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for label, selector in (
+        ("All entries", lambda row: True),
+        ("Reached +5", lambda row: bool(row["fixed_5_reached"])),
+        ("Did not reach +5", lambda row: not bool(row["fixed_5_reached"])),
+    ):
+        group = [row for row in ordered if selector(row)]
+        full_returns = [
+            baseline[(row["symbol"], row["buy_signal_ts"])].return_pct for row in group
+        ]
+        scaled_returns = [
+            scale_in_by_key[(row["symbol"], row["buy_signal_ts"])].return_pct_on_intended_notional
+            for row in group
+        ]
+        lines.append(
+            f"| {label} | {len(group)} | {sum(full_returns):+.2f} | "
+            f"{statistics.fmean(full_returns):+.2f}% | {sum(scaled_returns):+.2f} | "
+            f"{statistics.fmean(scaled_returns):+.2f}% |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "### Scale-In by Day",
+            "",
+            "| Session | Entries | Added second half | Full-size total | Scale-in total |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    for day_text in sorted({str(row["session_day_et"]) for row in ordered}):
+        group = [row for row in ordered if row["session_day_et"] == day_text]
+        full_total = sum(
+            baseline[(row["symbol"], row["buy_signal_ts"])].return_pct for row in group
+        )
+        scale_group = [
+            scale_in_by_key[(row["symbol"], row["buy_signal_ts"])] for row in group
+        ]
+        lines.append(
+            f"| {day_text} | {len(group)} | {sum(row.added for row in scale_group)} | "
+            f"{full_total:+.2f} | "
+            f"{sum(row.return_pct_on_intended_notional for row in scale_group):+.2f} |"
+        )
+    path.write_text("\n".join(lines) + "\n")
 
 
 def _write_report(
@@ -247,6 +601,7 @@ def main() -> int:
     sessions, census, candidates, paths, outcomes = run_week(
         source, settings, args.start, args.end
     )
+    scale_in = _scale_in_outcomes(source, candidates)
     summary = _summary_rows(outcomes)
     simple_rows = _simple_rows(candidates, paths, outcomes)
 
@@ -259,6 +614,7 @@ def main() -> int:
     _write_csv(output_dir / f"{stem}-census.csv", census_rows)
     _write_csv(output_dir / f"{stem}-trades.csv", simple_rows)
     _write_csv(output_dir / f"{stem}-summary.csv", summary)
+    _write_csv(output_dir / f"{stem}-scale-in.csv", [asdict(row) for row in scale_in])
     _write_report(
         output_dir / f"{stem}.md",
         args.start,
@@ -267,6 +623,12 @@ def main() -> int:
         census,
         simple_rows,
         summary,
+    )
+    _write_operator_report(
+        output_dir / f"{stem}-operator-questions.md",
+        simple_rows,
+        outcomes,
+        scale_in,
     )
     (output_dir / f"{stem}.json").write_text(
         json.dumps(
@@ -277,15 +639,20 @@ def main() -> int:
                 "census": census_rows,
                 "trades": simple_rows,
                 "summary": summary,
+                "scale_in": scale_in,
             },
-            default=_json_default,
+            default=lambda value: (
+                asdict(value)
+                if hasattr(value, "__dataclass_fields__")
+                else _json_default(value)
+            ),
             indent=2,
         )
         + "\n"
     )
     print(
         f"sessions={len(sessions)} symbol_days={len(census)} trades={len(simple_rows)} "
-        f"outcomes={len(outcomes)} output={output_dir / stem}*"
+        f"outcomes={len(outcomes)} scale_in={len(scale_in)} output={output_dir / stem}*"
     )
     return 0
 

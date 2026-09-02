@@ -11,6 +11,7 @@ from project_mai_tai.backtest.atr_flip_hold_study import (
     policy_grid,
     simulate_policy,
 )
+from project_mai_tai.backtest.atr_flip_hold_week_study import simulate_scale_in
 from project_mai_tai.backtest.data import Quote
 
 BASE = datetime(2026, 9, 1, 14, 0, tzinfo=UTC)
@@ -144,3 +145,39 @@ def test_max_drawdown_stops_at_atr_sell_boundary() -> None:
     assert path.natural_exit_reason == "atr_sell"
     assert path.natural_exit_ts == BASE + timedelta(seconds=2)
     assert path.mae_pct == pytest.approx(-3.0)
+
+
+def test_scale_in_adds_at_five_and_reanchors_stop_to_blended_average() -> None:
+    quotes = [
+        _quote(0, 9.99, 10.0),
+        _quote(1, 10.50),
+        _quote(2, 9.20),
+        _quote(3, 9.10),
+    ]
+
+    outcome = simulate_scale_in(
+        _candidate(quotes),
+        quotes,
+        BASE + timedelta(minutes=1),
+    )
+
+    assert outcome.added is True
+    assert outcome.second_fill_px == pytest.approx(10.50)
+    assert outcome.blended_entry_px == pytest.approx(10.25)
+    assert outcome.stop_px == pytest.approx(9.225)
+    assert outcome.exit_reason == "hard_stop"
+    assert outcome.exit_ts == BASE + timedelta(seconds=3)
+    assert outcome.return_pct_on_intended_notional == pytest.approx(-11.5)
+
+
+def test_scale_in_halves_exposure_when_five_is_never_reached() -> None:
+    quotes = [_quote(0, 9.99, 10.0), _quote(1, 9.80), _quote(2, 9.70)]
+
+    outcome = simulate_scale_in(
+        _candidate(quotes, sell_after=2),
+        quotes,
+        BASE + timedelta(minutes=1),
+    )
+
+    assert outcome.added is False
+    assert outcome.return_pct_on_intended_notional == pytest.approx(-1.5)
