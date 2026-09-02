@@ -66,6 +66,18 @@ from project_mai_tai.market_data.schwab_tick_archive import (
 from project_mai_tai.market_data.schwab_streamer import SchwabStreamerClient
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.paper_exit import (
+    MIRROR_ARM,
+    PaperDecision,
+    PaperExitRuntime,
+    PaperSourceFill,
+    completed_session_acceptance,
+    logical_mirror_id,
+    mirror_acceptance,
+    resting_fill_classification,
+    terminal_evidence_covers,
+)
+from project_mai_tai.paper_exit_store import PaperExitStore
 from project_mai_tai.strategy_core import (
     CatalystAiConfig,
     CatalystAiEvaluator,
@@ -3858,7 +3870,153 @@ class StrategyBotRuntime:
             self._update_symbol_lifecycle(symbol, metrics=metrics)
 
 
-StrategyRuntime = StrategyBotRuntime | RunnerStrategyRuntime
+class PaperDisabledPolygonEntryEngine(Polygon30sEntryEngine):
+    """Keep Polygon bar/indicator state but make the retired entry rules unreachable."""
+
+    def check_entry(
+        self,
+        ticker: str,
+        indicators: dict[str, float | bool],
+        bar_index: int,
+        position_tracker: object = None,
+    ) -> None:
+        del ticker, indicators, bar_index, position_tracker
+        return None
+
+
+class PaperPolygonRuntimeAdapter:
+    """Expose reusable Polygon data machinery without being a trading runtime."""
+
+    _SAFE_DATA_MEMBERS = frozenset(
+        {
+            "builder_manager",
+            "data_health_summary",
+            "definition",
+            "discard_watchlist_symbols",
+            "last_indicators",
+            "lifecycle_states",
+            "monitor_completed_bar_flow",
+            "needs_history_seed",
+            "purge_non_protected_session_state",
+            "rebuild_indicator_state",
+            "refresh_lifecycle",
+            "required_history_bars",
+            "seed_bars",
+            "set_broker_blocked_symbols",
+            "set_entry_blocked_symbols",
+            "set_manual_stop_symbols",
+            "set_prewarm_symbols",
+            "update_market_snapshots",
+            "use_live_aggregate_bars",
+            "live_aggregate_bars_are_final",
+        }
+    )
+
+    def __init__(
+        self,
+        delegate: StrategyBotRuntime,
+        paper_runtime: PaperExitRuntime,
+        *,
+        now_provider: Callable[[], datetime],
+    ) -> None:
+        self._delegate = delegate
+        self.paper_runtime = paper_runtime
+        self.now_provider = now_provider
+        self._decisions: list[PaperDecision] = []
+
+    def __getattr__(self, name: str) -> object:
+        if name not in self._SAFE_DATA_MEMBERS:
+            raise AttributeError(f"paper Polygon runtime does not expose trading member {name!r}")
+        return getattr(self._delegate, name)
+
+    @property
+    def watchlist(self) -> set[str]:
+        return set(self._delegate.watchlist)
+
+    @property
+    def manual_stop_symbols(self) -> set[str]:
+        return set(self._delegate.manual_stop_symbols)
+
+    def apply_execution_fill(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    def apply_order_status(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    def set_watchlist(self, symbols: Iterable[str]) -> None:
+        values = list(symbols)
+        self._delegate.set_watchlist(values)
+        self.paper_runtime.set_watchlist(set(values))
+
+    def _consume_intents(self, intents: Iterable[TradeIntentEvent]) -> None:
+        for intent in intents:
+            logger.error(
+                "[PAPER-EXIT-LEGACY-INTENT-REFUSED] retired polygon rule produced "
+                "an intent that was consumed before publication event_id=%s",
+                intent.event_id,
+            )
+
+    def handle_trade_tick(self, *args: object, **kwargs: object) -> list[TradeIntentEvent]:
+        self._consume_intents(self._delegate.handle_trade_tick(*args, **kwargs))
+        return []
+
+    def handle_quote_tick(
+        self,
+        symbol: str,
+        *,
+        bid_price: float | None,
+        ask_price: float | None,
+    ) -> list[TradeIntentEvent]:
+        self._consume_intents(
+            self._delegate.handle_quote_tick(
+                symbol,
+                bid_price=bid_price,
+                ask_price=ask_price,
+            )
+        )
+        return []
+
+    def handle_live_bar(self, *args: object, **kwargs: object) -> list[TradeIntentEvent]:
+        self._consume_intents(self._delegate.handle_live_bar(*args, **kwargs))
+        return []
+
+    def flush_completed_bars(self) -> tuple[list[TradeIntentEvent], int]:
+        intents, count = self._delegate.flush_completed_bars()
+        self._consume_intents(intents)
+        return [], count
+
+    def drain_paper_decisions(self) -> list[PaperDecision]:
+        decisions, self._decisions = self._decisions, []
+        return decisions
+
+    def active_symbols(self) -> set[str]:
+        return self._delegate.active_symbols() | self.paper_runtime.open_symbols()
+
+    def stream_symbols(self) -> set[str]:
+        return self._delegate.stream_symbols() | self.paper_runtime.open_symbols()
+
+    def _symbol_requires_feed(self, symbol: str) -> bool:
+        return symbol.upper() in self.paper_runtime.open_symbols() or self._delegate._symbol_requires_feed(
+            symbol
+        )
+
+    def summary(self) -> dict[str, object]:
+        summary = self._delegate.summary()
+        paper = self.paper_runtime.summary()
+        summary.update(
+            account_name=paper["account_name"],
+            positions=paper["positions"],
+            pending_open_symbols=paper["pending_open_symbols"],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            daily_pnl=paper["daily_pnl"],
+            closed_today=paper["closed_today"],
+            paper_exit=paper["paper_exit"],
+        )
+        return summary
+
+
+StrategyRuntime = StrategyBotRuntime | RunnerStrategyRuntime | PaperPolygonRuntimeAdapter
 
 
 class StrategyEngineState:
@@ -4180,7 +4338,7 @@ class StrategyEngineState:
                     fill_gap_bars=polygon_use_live_aggregate_bars,
                 ),
                 indicator_engine=Polygon30sIndicatorEngine(default_indicator_config),
-                entry_engine=Polygon30sEntryEngine(
+                entry_engine=PaperDisabledPolygonEntryEngine(
                     polygon_30s_trading,
                     name=registrations["polygon_30s"].display_name,
                     now_provider=resolved_now_provider,
@@ -4814,7 +4972,7 @@ class StrategyEngineState:
         changed = 0
         provider_resolver = market_data_provider_for_strategy or provider_for_strategy
         for code, bot in self.bots.items():
-            if not isinstance(bot, StrategyBotRuntime):
+            if not isinstance(bot, (StrategyBotRuntime, PaperPolygonRuntimeAdapter)):
                 continue
             provider = provider_resolver(code) if provider_resolver is not None else "market data"
             changed += bot.monitor_completed_bar_flow(provider=provider)
@@ -5130,7 +5288,8 @@ class StrategyEngineState:
             symbol
             for symbol in symbols
             if any(
-                isinstance(bot, StrategyBotRuntime) and bot._symbol_requires_feed(symbol)
+                callable(getattr(bot, "_symbol_requires_feed", None))
+                and bot._symbol_requires_feed(symbol)
                 for _code, bot in self._iter_target_bots(strategy_codes=strategy_codes)
             )
         }
@@ -5677,7 +5836,7 @@ class StrategyEngineState:
         priority = {"active": 0, "resume_probe": 1, "cooldown": 2, "dropped": 3}
         aggregated: dict[str, RetainedSymbolState] = {}
         for runtime in self.bots.values():
-            if not isinstance(runtime, StrategyBotRuntime):
+            if not isinstance(runtime, (StrategyBotRuntime, PaperPolygonRuntimeAdapter)):
                 continue
             for symbol, state in runtime.lifecycle_states.items():
                 existing = aggregated.get(symbol)
@@ -5906,11 +6065,12 @@ class StrategyEngineService:
             self.settings.dashboard_snapshot_persistence_enabled
             or self.settings.strategy_history_persistence_enabled
         )
+        paper_durability_required = self.settings.strategy_polygon_30s_enabled
         self.session_factory = (
             session_factory
             if session_factory is not None
             else build_timed_session_factory(self.settings, service="strategy_engine", profile="slow")
-            if persistence_enabled
+            if persistence_enabled or paper_durability_required
             else None
         )
         self.state = StrategyEngineState(
@@ -5919,6 +6079,32 @@ class StrategyEngineService:
             session_factory=self.session_factory,
         )
         self.logger = configure_logging(SERVICE_NAME, self.settings.log_level)
+        self.paper_exit_store: PaperExitStore | None = None
+        self.paper_exit_runtime: PaperExitRuntime | None = None
+        self.paper_polygon_runtime: PaperPolygonRuntimeAdapter | None = None
+        paper_now_provider = now_provider or utcnow
+        if self.settings.strategy_polygon_30s_enabled:
+            if self.session_factory is None:
+                raise RuntimeError("polygon paper-exit requires its durable database store")
+            self.paper_exit_store = PaperExitStore(self.session_factory)
+            config = self.paper_exit_store.ensure_initial_config(
+                target_pct=Decimal(str(self.settings.strategy_polygon_30s_paper_target_pct)),
+                stop_pct=Decimal(str(self.settings.strategy_polygon_30s_paper_stop_pct)),
+                effective_at=datetime(1970, 1, 1, tzinfo=UTC),
+            )
+            configs = self.paper_exit_store.configs()
+            self.paper_exit_runtime = PaperExitRuntime(configs[0] if configs else config)
+            for stored_config in configs[1:]:
+                self.paper_exit_runtime.update_config(stored_config)
+            old_polygon = self.state.bots.get("polygon_30s")
+            if not isinstance(old_polygon, StrategyBotRuntime):
+                raise RuntimeError("polygon paper-exit could not acquire the reusable data runtime")
+            self.paper_polygon_runtime = PaperPolygonRuntimeAdapter(
+                old_polygon,
+                self.paper_exit_runtime,
+                now_provider=paper_now_provider,
+            )
+            self.state.bots["polygon_30s"] = self.paper_polygon_runtime
         self.instance_name = socket.gethostname()
         # Stamped on every heartbeat so the dashboard can suppress STALE states
         # during the first few minutes after a strategy restart, when the
@@ -5929,6 +6115,7 @@ class StrategyEngineService:
             stream_name(self.settings.redis_stream_prefix, "order-events"),
             stream_name(self.settings.redis_stream_prefix, "snapshot-batches"),
             stream_name(self.settings.redis_stream_prefix, "runtime-controls"),
+            stream_name(self.settings.redis_stream_prefix, "strategy-intents"),
         ]
         self._stream_offsets = {
             self._market_data_stream: "$",
@@ -6039,6 +6226,7 @@ class StrategyEngineService:
             0,
             int(getattr(self.settings, "strategy_main_loop_fault_injection_count", 0) or 0),
         )
+        self._reconcile_paper_exit()
 
     async def _initialize_stream_offsets(self) -> None:
         for stream in list(self._stream_offsets):
@@ -6217,6 +6405,241 @@ class StrategyEngineService:
             return
         await asyncio.to_thread(self.state.flush_pending_persists)
 
+    def _persist_paper_decisions(self, decisions: list[PaperDecision] | None = None) -> int:
+        pending = list(decisions or [])
+        if self.paper_polygon_runtime is not None:
+            pending.extend(self.paper_polygon_runtime.drain_paper_decisions())
+        if self.paper_exit_runtime is not None:
+            pending.extend(self.paper_exit_runtime.pending_terminal_decisions())
+        if self.paper_exit_store is None:
+            return 0
+        pending = list({decision.event_key: decision for decision in pending}.values())
+        for decision in pending:
+            self.logger.info(
+                "[PAPER-EXIT-%s] arm=%s sym=%s venue=%s logical_id=%s config_id=%s",
+                decision.event_type,
+                decision.arm,
+                decision.symbol,
+                decision.venue or "-",
+                decision.logical_id,
+                decision.config_id or "-",
+            )
+        inserted = self.paper_exit_store.append_decisions(pending)
+        if self.paper_exit_runtime is not None:
+            self.paper_exit_runtime.acknowledge_decisions(
+                {decision.event_key for decision in pending}
+            )
+        return inserted
+
+    def _reconcile_paper_exit(self, *, live_broker_fill_id: str | None = None) -> bool:
+        if self.paper_exit_store is None or self.paper_exit_runtime is None:
+            return False
+        for config in self.paper_exit_store.configs():
+            self.paper_exit_runtime.update_config(config)
+        now = utcnow()
+        now_et = now.astimezone(EASTERN_TZ)
+        start = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        end = now_et.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(UTC)
+        fills, refused = self.paper_exit_store.live_resting_fills(start=start, end=end)
+        persisted_fill_ids = self.paper_exit_store.event_fill_ids(start=start, end=end)
+        decisions = list(refused)
+        for fill in fills:
+            decisions.extend(
+                self.paper_exit_runtime.add_mirror_fill(
+                    fill,
+                    late=fill.broker_fill_id != str(live_broker_fill_id or ""),
+                    reemit_evidence=fill.fill_id not in persisted_fill_ids,
+                )
+            )
+        self._persist_paper_decisions(decisions)
+        decisions = []
+        persisted_fill_ids = self.paper_exit_store.event_fill_ids(start=start, end=end)
+        session_events = self.paper_exit_store.session_events(start=start, end=end)
+        for event in session_events:
+            observed_at = event.observed_at
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=UTC)
+            if event.event_type == "INDEPENDENT_ARMED" and event.price is not None:
+                attempt_id = str((event.payload or {}).get("attempt_id", "")).strip()
+                if attempt_id:
+                    self.paper_exit_runtime.restore_independent_arm(
+                        attempt_id=attempt_id,
+                        symbol=event.symbol,
+                        level=event.price,
+                        armed_at=observed_at,
+                    )
+                continue
+            if event.event_type == "INDEPENDENT_ENTRY" and event.price is not None:
+                attempt_id = str(
+                    (event.payload or {}).get("independent_attempt_id", "")
+                ).strip()
+                if attempt_id:
+                    self.paper_exit_runtime.restore_independent_entry(
+                        attempt_id=attempt_id,
+                        logical_id=event.logical_id,
+                        symbol=event.symbol,
+                        entered_at=observed_at,
+                        price=event.price,
+                        quantity=event.quantity or Decimal("1"),
+                    )
+                continue
+            if event.event_type not in {"PAPER_EXIT", "UNANSWERABLE"}:
+                continue
+            self.paper_exit_runtime.restore_exit(
+                logical_id=event.logical_id,
+                observed_at=observed_at,
+                price=event.price,
+                reason=str((event.payload or {}).get("reason", "")),
+                force=event.event_type == "UNANSWERABLE",
+            )
+
+        fills_by_logical: dict[str, list[PaperSourceFill]] = {}
+        for fill in fills:
+            fills_by_logical.setdefault(logical_mirror_id(fill), []).append(fill)
+        live_ids = set(fills_by_logical)
+        durable_live_ids = {
+            logical_id
+            for logical_id, logical_fills in fills_by_logical.items()
+            if all(fill.fill_id in persisted_fill_ids for fill in logical_fills)
+        }
+        matched_ids = self.paper_exit_runtime.mirror_logical_ids() & durable_live_ids
+        current_fill_ids = {fill.fill_id for fill in fills}
+        phantom_fill_ids = persisted_fill_ids - current_fill_ids
+        missed_logical_ids = live_ids - matched_ids
+        phantom = len(phantom_fill_ids)
+        missed = len(missed_logical_ids) + len(refused)
+        decisions.extend(
+            PaperDecision(
+                event_key=f"PHANTOM_PAPER_ENTRY:{fill_id}",
+                logical_id=f"phantom:{fill_id}",
+                arm=MIRROR_ARM,
+                event_type="PHANTOM_PAPER_ENTRY",
+                session_date=now_et.date(),
+                symbol="*",
+                observed_at=now,
+                price=None,
+                quantity=None,
+                config_id=None,
+                source_fill_id=fill_id,
+                detail={"reason": "paper source fill absent from authoritative census"},
+            )
+            for fill_id in sorted(phantom_fill_ids, key=str)
+        )
+        decisions.extend(
+            PaperDecision(
+                event_key=f"MISSED_LIVE_ENTRY:{logical_id}",
+                logical_id=logical_id,
+                arm=MIRROR_ARM,
+                event_type="MISSED_LIVE_ENTRY",
+                session_date=now_et.date(),
+                symbol="*",
+                observed_at=now,
+                price=None,
+                quantity=None,
+                config_id=None,
+                detail={"reason": "live resting entry absent from mirror runtime"},
+            )
+            for logical_id in sorted(missed_logical_ids)
+        )
+        decisions.extend(self.paper_exit_runtime.on_clock(now))
+        coupling_verdict = mirror_acceptance(
+            live=len(live_ids) + len(refused),
+            matched=len(matched_ids),
+            missed=missed,
+            phantom=phantom,
+        )
+        terminal_ids: set[str] = set()
+        for logical_id in matched_ids:
+            logical_fills = fills_by_logical[logical_id]
+            final_fill_at = max(fill.filled_at for fill in logical_fills)
+            final_quantity = sum(
+                (fill.quantity for fill in logical_fills), Decimal("0")
+            )
+            if any(
+                event.logical_id == logical_id
+                and event.arm == MIRROR_ARM
+                and event.event_type in {"PAPER_EXIT", "UNANSWERABLE"}
+                and terminal_evidence_covers(
+                    final_fill_at=final_fill_at,
+                    final_quantity=final_quantity,
+                    terminal_at=event.observed_at,
+                    terminal_quantity=event.quantity,
+                )
+                for event in session_events
+            ):
+                terminal_ids.add(logical_id)
+        terminal = len(terminal_ids)
+        session_complete = now_et.hour * 60 + now_et.minute >= 16 * 60 + 1
+        verdict = completed_session_acceptance(
+            coupling_verdict=coupling_verdict,
+            session_complete=session_complete,
+            matched=len(matched_ids),
+            terminal=terminal,
+        )
+        venue_counts = {
+            venue: {
+                "live_legs": sum(fill.venue == venue for fill in fills)
+                + sum(decision.venue == venue for decision in refused),
+                "matched_legs": sum(
+                    fill.venue == venue
+                    and fill.fill_id in persisted_fill_ids
+                    and self.paper_exit_runtime.has_fill(fill.fill_id)
+                    for fill in fills
+                ),
+            }
+            for venue in ("schwab", "webull")
+        }
+        acceptance = {
+            "verdict": verdict,
+            "live": len(live_ids) + len(refused),
+            "matched": len(matched_ids),
+            "missed": missed,
+            "phantom": phantom,
+            "venues": venue_counts,
+            "coupling_verdict": coupling_verdict,
+            "session_complete": session_complete,
+            "terminal": terminal,
+            "terminal_expected": len(matched_ids),
+        }
+        grades = self.paper_exit_store.mirror_grades(start=start, end=end, source_fills=fills)
+        gradable = [row for row in grades if bool(row.get("gradable"))]
+        acceptance["grade"] = {
+            "matched": len(gradable),
+            "total": len(grades),
+            "paper_pct": str(
+                sum((Decimal(str(row["paper_pct"])) for row in gradable), Decimal("0"))
+            ),
+            "real_pct": str(
+                sum((Decimal(str(row["real_pct"])) for row in gradable), Decimal("0"))
+            ),
+            "rows": grades,
+        }
+        acceptance["entry_assumptions"] = self.paper_exit_store.entry_assumption_rows(
+            start=start,
+            end=end,
+            source_fills=fills,
+        )
+        self.paper_exit_runtime.set_acceptance(acceptance)
+        decisions.append(
+            PaperDecision(
+                event_key=(
+                    f"RECONCILIATION:{now_et.date()}:{len(live_ids)}:{len(matched_ids)}:"
+                    f"{missed}:{phantom}:{verdict}:{len(gradable)}:{len(grades)}"
+                ),
+                logical_id=f"reconciliation:{now_et.date()}",
+                arm=MIRROR_ARM,
+                event_type="RECONCILIATION",
+                session_date=now_et.date(),
+                symbol="*",
+                observed_at=now,
+                price=None,
+                quantity=None,
+                config_id=None,
+                detail=acceptance,
+            )
+        )
+        return self._persist_paper_decisions(decisions) > 0
+
     async def _run_main_loop_iteration(
         self,
         *,
@@ -6260,6 +6683,7 @@ class StrategyEngineService:
         # Flush buffered bar persists BEFORE publishing so each bar is committed
         # before its intent reaches OMS (gated; no-op when offload disabled).
         await self._flush_pending_persists()
+        self._persist_paper_decisions()
         for intent in bar_close_intents:
             await self._publish_intent(intent)
         if bar_close_intents:
@@ -6328,6 +6752,7 @@ class StrategyEngineService:
 
         if (utcnow() - last_runtime_db_reconcile_at).total_seconds() >= self._runtime_db_reconcile_interval_secs:
             runtime_changed = self._reconcile_runtime_state_from_database(log_when_changed=False)
+            runtime_changed = self._reconcile_paper_exit() or runtime_changed
             if runtime_changed:
                 await self._sync_subscription_targets()
                 await self._publish_strategy_state_snapshot()
@@ -6666,6 +7091,69 @@ class StrategyEngineService:
 
         payload = json.loads(data)
         event_type = payload.get("event_type")
+        if event_type == "paper_exit_config_update":
+            if self.paper_exit_store is None or self.paper_exit_runtime is None:
+                raise RuntimeError("paper-exit config update received without paper runtime")
+            self.paper_exit_runtime.update_config(self.paper_exit_store.latest_config())
+            await self._publish_strategy_state_snapshot()
+            return
+
+        if event_type == "trade_intent":
+            event = TradeIntentEvent.model_validate(payload)
+            intent = event.payload
+            if (
+                self.paper_exit_runtime is None
+                or normalize_strategy_code(intent.strategy_code) != "schwab_1m_v2"
+                or intent.intent_type != "open"
+                or intent.side != "buy"
+            ):
+                return
+            eligible, refusal = resting_fill_classification(intent.metadata)
+            slot_id = str(intent.metadata.get("fanout_slot_id", "")).strip()
+            try:
+                level = Decimal(str(intent.metadata["cw_flip_level"]))
+            except (KeyError, ArithmeticError, ValueError):
+                level = Decimal("0")
+            if not eligible or not slot_id or level <= 0:
+                self.logger.error(
+                    "[PAPER-EXIT-INDEPENDENT-ARM-REFUSED] sym=%s source=%s slot=%s level=%s",
+                    intent.symbol,
+                    refusal,
+                    slot_id or "missing",
+                    level,
+                )
+                return
+            decision = self.paper_exit_runtime.arm_independent(
+                attempt_id=slot_id,
+                symbol=intent.symbol,
+                level=level,
+                armed_at=event.produced_at,
+            )
+            self._persist_paper_decisions([decision] if decision is not None else [])
+            return
+
+        if event_type == "v2_cw_flip":
+            symbol = str(payload.get("symbol", "")).strip().upper()
+            if symbol and self.paper_exit_runtime is not None:
+                try:
+                    observed_at = datetime.fromtimestamp(
+                        float(str(payload["bar_time_ms"])) / 1000.0,
+                        UTC,
+                    )
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    self.logger.error(
+                        "[PAPER-EXIT-UNANSWERABLE] ATR SELL missing stamped bar_time_ms sym=%s",
+                        symbol,
+                    )
+                    return
+                self._persist_paper_decisions(
+                    self.paper_exit_runtime.on_atr_sell(
+                        symbol=symbol,
+                        observed_at=observed_at,
+                    )
+                )
+            return
+
         if event_type == "snapshot_batch":
             event = SnapshotBatchEvent.model_validate(payload)
             snapshots = [snapshot_from_payload(item) for item in event.payload.snapshots]
@@ -6727,6 +7215,7 @@ class StrategyEngineService:
                 strategy_codes=strategy_codes,
             )
             await self._flush_pending_persists()
+            self._persist_paper_decisions()
             for intent in intents:
                 await self._publish_intent(intent)
             if intents:
@@ -6752,6 +7241,17 @@ class StrategyEngineService:
             )
             for intent in intents:
                 await self._publish_intent(intent)
+            paper_decisions = (
+                self.paper_exit_runtime.on_quote(
+                    symbol=event.payload.symbol,
+                    bid=event.payload.bid_price,
+                    ask=event.payload.ask_price,
+                    observed_at=event.produced_at,
+                )
+                if self.paper_exit_runtime is not None
+                else []
+            )
+            self._persist_paper_decisions(paper_decisions)
             if intents:
                 await self._sync_subscription_targets()
                 await self._publish_strategy_state_snapshot()
@@ -6778,6 +7278,7 @@ class StrategyEngineService:
                 strategy_codes=strategy_codes,
             )
             await self._flush_pending_persists()
+            self._persist_paper_decisions()
             for intent in intents:
                 await self._publish_intent(intent)
             if intents:
@@ -6856,9 +7357,17 @@ class StrategyEngineService:
                 )
 
             await self._sync_subscription_targets()
+            self._reconcile_paper_exit(live_broker_fill_id=order.broker_fill_id)
             await self._publish_strategy_state_snapshot()
 
     async def _publish_intent(self, intent: TradeIntentEvent) -> None:
+        if normalize_strategy_code(intent.payload.strategy_code) == "polygon_30s":
+            self.logger.error(
+                "[PAPER-EXIT-REFUSED] strategy-engine blocked polygon_30s intent "
+                "before Redis publication event_id=%s",
+                intent.event_id,
+            )
+            return
         symbol = str(intent.payload.symbol).strip().upper()
         if symbol and symbol in self.settings.protected_symbol_set:
             self.logger.warning(
@@ -6951,6 +7460,7 @@ class StrategyEngineService:
                     str(symbol).upper(): str(observed_at or "")
                     for symbol, observed_at in dict(bot.get("last_tick_at", {}) or {}).items()
                 },
+                paper_exit=dict(bot.get("paper_exit", {}) or {}),
             )
             for bot in summary["bots"].values()
         ]
@@ -7507,7 +8017,7 @@ class StrategyEngineService:
         valid_codes: list[str] = []
         for code in strategy_codes:
             runtime = self.state.bots.get(code)
-            if not isinstance(runtime, StrategyBotRuntime):
+            if not isinstance(runtime, (StrategyBotRuntime, PaperPolygonRuntimeAdapter)):
                 continue
             if int(runtime.definition.interval_secs) != int(interval_secs):
                 continue
@@ -9584,7 +10094,7 @@ class StrategyEngineService:
         try:
             with self.session_factory() as session:
                 for code, runtime in self.state.bots.items():
-                    if not isinstance(runtime, StrategyBotRuntime):
+                    if not isinstance(runtime, (StrategyBotRuntime, PaperPolygonRuntimeAdapter)):
                         continue
 
                     symbols = sorted(runtime.active_symbols())

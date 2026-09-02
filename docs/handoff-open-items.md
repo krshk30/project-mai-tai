@@ -267,6 +267,11 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **PAPER1 — successor exit question above +5%** *(owner: codex-2; blocked on exercised paper
+  harness evidence)*. Once the v1 paper harness has run forward, measure whether a position that
+  reaches +5% should be sold or released as a runner. This is explicitly outside v1: do not change
+  its locked first-trigger rule, add trailing behavior, or derive a choice from the historical
+  backtest. Denominator and falsifier must be stated from forward harness evidence before design.
 - **Q21 — EH downside protection** *(owner: codex-2, build APPROVED by operator 09-01; design =
   `webull-premarket-protection-decision.md` Parts 1/2/4 exactly as written 08-18)*. RTH-gate the
   pre-market attach · ONE counted `[WEBULL-PREMARKET-UNPROTECTED]` line per fill · OMS-restart
@@ -1035,4 +1040,3 @@ fixture.
 ⭐ **NOTE WHAT CAUGHT INSTANCE 3: a BEHAVIOURAL test that read the emitted log.** A
 source-inspection test asserts the marker is *written* and can never see that a sibling's *line*
 contains it. The lint generalises that catch to every marker, including the ones no test drives.
-

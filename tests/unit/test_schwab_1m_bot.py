@@ -1215,6 +1215,7 @@ def test_schwab_native_bots_use_trade_based_extended_vwap_after_hours(
 
 def test_polygon_30s_bot_does_not_mix_schwab_trade_vwap_after_hours(tmp_path: Path) -> None:
     now = datetime(2026, 4, 30, 20, 16, tzinfo=UTC)
+    session_factory = build_test_session_factory()
     service = StrategyEngineService(
         settings=make_test_settings(
             redis_stream_prefix="test",
@@ -1228,6 +1229,7 @@ def test_polygon_30s_bot_does_not_mix_schwab_trade_vwap_after_hours(tmp_path: Pa
             strategy_macd_1m_enabled=False,
         ),
         redis_client=FakeRedis(),
+        session_factory=session_factory,
         now_provider=lambda: now,
     )
 
