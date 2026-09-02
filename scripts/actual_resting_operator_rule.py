@@ -4,6 +4,9 @@
 The population comes from the reviewed 82-event resting-fill census. Prices are
 timestamped Massive NBBO bids. ATR SELL endpoints are recalculated and are
 therefore explicitly labelled as caveated in every output row that uses one.
+
+A price with no counterparty is not a price: quotes inside a detected print-free
+halt window are excluded from extrema and cannot trigger an exit.
 """
 
 from __future__ import annotations
@@ -36,12 +39,24 @@ TARGET_PCT = Decimal("5")
 TARGET_10_PCT = Decimal("10")
 STOP_PCT = Decimal("8")
 QUOTE_FRESHNESS = timedelta(seconds=10)
+# LULD pauses are nominally five minutes. Allow 15 seconds for feed timestamp jitter while
+# requiring quote activity, so an ordinary absence of both prints and quotes is not a halt.
+HALT_MIN_PRINT_GAP = timedelta(seconds=285)
+HALT_MIN_QUOTE_UPDATES = 2
 
 
 @dataclass(frozen=True)
 class QuotePoint:
     at: datetime
     bid: Decimal
+    observed_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class HaltWindow:
+    last_print_at: datetime
+    reopen_print_at: datetime
+    quote_updates: int
 
 
 @dataclass(frozen=True)
@@ -102,8 +117,158 @@ def _quote(session, sql: str, params: dict) -> QuotePoint | None:
     return QuotePoint(row[1].astimezone(UTC), Decimal(str(row[0])))
 
 
-def quote_points(session_factory, fill: Fill, endpoint: datetime) -> dict[str, QuotePoint | None]:
+def detect_halt_windows(
+    session_factory,
+    symbol: str,
+    session_start: datetime,
+    session_end: datetime,
+) -> list[HaltWindow]:
+    """Find print-free LULD-shaped intervals with a continuing quote stream."""
+    sql = """
+        WITH ordered_prints AS (
+            SELECT event_ts,
+                   lag(event_ts) OVER (ORDER BY event_ts, id) AS prior_event_ts
+            FROM market_capture_trades
+            WHERE symbol=:symbol AND event_ts>=:session_start AND event_ts<=:session_end
+        ), candidate_gaps AS (
+            SELECT prior_event_ts AS last_print_at, event_ts AS reopen_print_at
+            FROM ordered_prints
+            WHERE prior_event_ts IS NOT NULL
+              AND event_ts-prior_event_ts>=:minimum_gap
+        )
+        SELECT gap.last_print_at, gap.reopen_print_at, count(quote.id) AS quote_updates
+        FROM candidate_gaps gap
+        JOIN market_capture_quotes quote
+          ON quote.symbol=:symbol
+         AND quote.event_ts>gap.last_print_at
+         AND quote.event_ts<gap.reopen_print_at
+        GROUP BY gap.last_print_at, gap.reopen_print_at
+        HAVING count(quote.id)>=:minimum_quotes
+        ORDER BY gap.last_print_at
+    """
+    with session_factory() as session:
+        rows = session.execute(
+            text(sql),
+            {
+                "symbol": symbol,
+                "session_start": session_start,
+                "session_end": session_end,
+                "minimum_gap": HALT_MIN_PRINT_GAP,
+                "minimum_quotes": HALT_MIN_QUOTE_UPDATES,
+            },
+        ).all()
+    return [
+        HaltWindow(
+            row[0].astimezone(UTC),
+            row[1].astimezone(UTC),
+            int(row[2]),
+        )
+        for row in rows
+    ]
+
+
+def timestamp_is_halted(at: datetime | None, halts: list[HaltWindow]) -> bool:
+    return at is not None and any(halt.last_print_at < at < halt.reopen_print_at for halt in halts)
+
+
+def halt_exclusion(
+    halts: list[HaltWindow],
+) -> tuple[str, dict[str, datetime]]:
+    clauses = []
+    params = {}
+    for index, halt in enumerate(halts):
+        start_key = f"halt_start_{index}"
+        end_key = f"halt_end_{index}"
+        clauses.append(f"NOT (event_ts>:{start_key} AND event_ts<:{end_key})")
+        params[start_key] = halt.last_print_at
+        params[end_key] = halt.reopen_print_at
+    return (" AND ".join(clauses) if clauses else "TRUE"), params
+
+
+def defer_halted_boundary(
+    sell_at: datetime | None,
+    halts: list[HaltWindow],
+) -> tuple[datetime | None, bool]:
+    if sell_at is None:
+        return None, False
+    for halt in halts:
+        if halt.last_print_at < sell_at < halt.reopen_print_at:
+            return halt.reopen_print_at, True
+    return sell_at, False
+
+
+def window_contains_halt(
+    start: datetime,
+    end: datetime,
+    halts: list[HaltWindow],
+) -> bool:
+    return any(halt.reopen_print_at > start and halt.last_print_at < end for halt in halts)
+
+
+def deferred_threshold_point(
+    session,
+    *,
+    params: dict,
+    halts: list[HaltWindow],
+    threshold_key: str,
+    comparator: str,
+    valid: str,
+    tradable: str,
+) -> tuple[QuotePoint | None, tuple[datetime, datetime] | None]:
+    """Carry a threshold observed while halted to its first executable reopen quote."""
+    if comparator not in {">=", "<="}:
+        raise ValueError(f"unsupported threshold comparator: {comparator}")
+    candidates = []
+    unanswered = []
+    for halt in halts:
+        halt_params = {
+            **params,
+            "active_halt_start": halt.last_print_at,
+            "active_halt_end": halt.reopen_print_at,
+            "active_reopen_end": halt.reopen_print_at + QUOTE_FRESHNESS,
+        }
+        observed = _quote(
+            session,
+            f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
+            f"AND event_ts>=:entry AND event_ts<=:endpoint "
+            f"AND event_ts>:active_halt_start AND event_ts<:active_halt_end "
+            f"AND {valid} AND bid_price{comparator}:{threshold_key} "
+            "ORDER BY event_ts,id LIMIT 1",
+            halt_params,
+        )
+        if observed is None:
+            continue
+        reopened = _quote(
+            session,
+            f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
+            f"AND event_ts>=:active_halt_end AND event_ts<=:active_reopen_end "
+            f"AND {valid} AND {tradable} ORDER BY event_ts,id LIMIT 1",
+            halt_params,
+        )
+        if reopened is None:
+            unanswered.append((halt.reopen_print_at, observed.at))
+            continue
+        candidates.append(QuotePoint(reopened.at, reopened.bid, observed.at))
+    point = min(candidates, key=lambda item: (item.at, item.observed_at)) if candidates else None
+    missing = min(unanswered) if unanswered else None
+    return point, missing
+
+
+def earlier_point(*points: QuotePoint | None) -> QuotePoint | None:
+    present = [point for point in points if point is not None]
+    return (
+        min(present, key=lambda item: (item.at, item.observed_at or item.at)) if present else None
+    )
+
+
+def quote_points(
+    session_factory,
+    fill: Fill,
+    endpoint: datetime,
+    halts: list[HaltWindow] | None = None,
+) -> dict[str, QuotePoint | tuple[datetime, datetime] | None]:
     valid = "bid_price>0 AND ask_price>=bid_price"
+    tradable, halt_params = halt_exclusion(halts or [])
     params = {
         "symbol": fill.symbol,
         "entry": fill.at,
@@ -113,61 +278,63 @@ def quote_points(session_factory, fill: Fill, endpoint: datetime) -> dict[str, Q
         "stop": fill.price * (Decimal("1") - STOP_PCT / Decimal("100")),
         "fresh_end": fill.at + QUOTE_FRESHNESS,
         "exit_end": endpoint + QUOTE_FRESHNESS,
+        **halt_params,
     }
     with session_factory() as session:
         first = _quote(
             session,
             f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
-            f"AND event_ts>=:entry AND event_ts<=:fresh_end AND {valid} "
+            f"AND event_ts>=:entry AND event_ts<=:fresh_end AND {valid} AND {tradable} "
             "ORDER BY event_ts,id LIMIT 1",
             params,
         )
         target = _quote(
             session,
             f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
-            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} "
+            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} AND {tradable} "
             "AND bid_price>=:target ORDER BY event_ts,id LIMIT 1",
             params,
         )
         stop = _quote(
             session,
             f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
-            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} "
+            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} AND {tradable} "
             "AND bid_price<=:stop ORDER BY event_ts,id LIMIT 1",
             params,
         )
         target10 = _quote(
             session,
             f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
-            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} "
+            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} AND {tradable} "
             "AND bid_price>=:target10 ORDER BY event_ts,id LIMIT 1",
             params,
         )
         endpoint_after = _quote(
             session,
             f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
-            f"AND event_ts>=:endpoint AND event_ts<=:exit_end AND {valid} "
+            f"AND event_ts>=:endpoint AND event_ts<=:exit_end AND {valid} AND {tradable} "
             "ORDER BY event_ts,id LIMIT 1",
             params,
         )
         endpoint_before = _quote(
             session,
             f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
-            f"AND event_ts<=:endpoint AND event_ts>=:endpoint-interval '10 seconds' AND {valid} "
+            f"AND event_ts<=:endpoint AND event_ts>=:endpoint-interval '10 seconds' "
+            f"AND {valid} AND {tradable} "
             "ORDER BY event_ts DESC,id DESC LIMIT 1",
             params,
         )
         high = _quote(
             session,
             f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
-            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} "
+            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} AND {tradable} "
             "ORDER BY bid_price DESC,event_ts,id LIMIT 1",
             params,
         )
         low = _quote(
             session,
             f"SELECT bid_price,event_ts FROM market_capture_quotes WHERE symbol=:symbol "
-            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} "
+            f"AND event_ts>=:entry AND event_ts<=:endpoint AND {valid} AND {tradable} "
             "ORDER BY bid_price,event_ts,id LIMIT 1",
             params,
         )
@@ -178,11 +345,41 @@ def quote_points(session_factory, fill: Fill, endpoint: datetime) -> dict[str, Q
             "ORDER BY price DESC,event_ts,id LIMIT 1",
             params,
         )
+        deferred_target, target_unanswerable = deferred_threshold_point(
+            session,
+            params=params,
+            halts=halts or [],
+            threshold_key="target",
+            comparator=">=",
+            valid=valid,
+            tradable=tradable,
+        )
+        deferred_stop, stop_unanswerable = deferred_threshold_point(
+            session,
+            params=params,
+            halts=halts or [],
+            threshold_key="stop",
+            comparator="<=",
+            valid=valid,
+            tradable=tradable,
+        )
+        deferred_target10, target10_unanswerable = deferred_threshold_point(
+            session,
+            params=params,
+            halts=halts or [],
+            threshold_key="target10",
+            comparator=">=",
+            valid=valid,
+            tradable=tradable,
+        )
     return {
         "first": first,
-        "target": target,
-        "stop": stop,
-        "target10": target10,
+        "target": earlier_point(target, deferred_target),
+        "stop": earlier_point(stop, deferred_stop),
+        "target10": earlier_point(target10, deferred_target10),
+        "target_unanswerable": target_unanswerable,
+        "stop_unanswerable": stop_unanswerable,
+        "target10_unanswerable": target10_unanswerable,
         "endpoint_after": endpoint_after,
         "endpoint_before": endpoint_before,
         "high": high,
@@ -207,44 +404,81 @@ def weighted_values(values: list[tuple[Fill, Decimal | None]]) -> Decimal | None
     if any(value is None for _, value in values):
         return None
     total_qty = sum((fill.quantity for fill, _ in values), Decimal("0"))
-    return sum(
-        (fill.quantity * value for fill, value in values if value is not None),
-        Decimal("0"),
-    ) / total_qty
+    return (
+        sum(
+            (fill.quantity * value for fill, value in values if value is not None),
+            Decimal("0"),
+        )
+        / total_qty
+    )
 
 
 def choose_outcome(
     fill: Fill,
     sell_at: datetime | None,
     cutoff: datetime,
-    points: dict[str, QuotePoint | None],
+    points: dict[str, QuotePoint | tuple[datetime, datetime] | None],
+    *,
+    sell_deferred: bool = False,
 ) -> LegResult:
     if points["first"] is None:
-        return LegResult(fill, "UNANSWERABLE", None, None, None, "no valid bid within 10s after fill")
+        return LegResult(
+            fill, "UNANSWERABLE", None, None, None, "no valid bid within 10s after fill"
+        )
 
     target = points["target"]
     stop = points["stop"]
+    assert target is None or isinstance(target, QuotePoint)
+    assert stop is None or isinstance(stop, QuotePoint)
     if target is not None and stop is not None and target.at == stop.at:
-        return LegResult(fill, "UNANSWERABLE", None, None, None, "target/stop timestamp tie")
+        target_observed = target.observed_at or target.at
+        stop_observed = stop.observed_at or stop.at
+        if target_observed == stop_observed:
+            return LegResult(fill, "UNANSWERABLE", None, None, None, "target/stop timestamp tie")
 
     candidates = []
     if target is not None:
-        candidates.append((target.at, 0, "exited at +5%", target))
+        candidates.append((target.at, target.observed_at or target.at, 0, "exited at +5%", target))
     if stop is not None:
-        candidates.append((stop.at, 1, "exited at -8%", stop))
+        candidates.append((stop.at, stop.observed_at or stop.at, 1, "exited at -8%", stop))
+    target_missing = points.get("target_unanswerable")
+    stop_missing = points.get("stop_unanswerable")
+    if isinstance(target_missing, tuple):
+        candidates.append((*target_missing, 0, "UNANSWERABLE", None))
+    if isinstance(stop_missing, tuple):
+        candidates.append((*stop_missing, 1, "UNANSWERABLE", None))
     boundary_outcome = "exited on ATR flip" if sell_at is not None else "still open at 16:00"
-    candidates.append((sell_at or cutoff, 2, boundary_outcome, None))
-    trigger_at, _, outcome, point = min(candidates, key=lambda item: (item[0], item[1]))
+    boundary_at = sell_at or cutoff
+    candidates.append((boundary_at, boundary_at, 2, boundary_outcome, None))
+    trigger_at, _, _, outcome, point = min(candidates, key=lambda item: item[:3])
+
+    if outcome == "UNANSWERABLE":
+        return LegResult(
+            fill,
+            outcome,
+            trigger_at,
+            None,
+            None,
+            "halted threshold had no executable quote within 10s after reopen",
+        )
 
     if point is None:
         point = points["endpoint_after"] if sell_at is not None else points["endpoint_before"]
+        assert point is None or isinstance(point, QuotePoint)
         if point is None:
             where = "recalculated ATR SELL" if sell_at is not None else "16:00"
-            return LegResult(fill, "UNANSWERABLE", trigger_at, None, None, f"no valid bid within 10s of {where}")
+            return LegResult(
+                fill, "UNANSWERABLE", trigger_at, None, None, f"no valid bid within 10s of {where}"
+            )
+        trigger_at = point.at
     result = (point.bid / fill.price - Decimal("1")) * Decimal("100")
     note = "endpoint-independent"
+    if point.observed_at is not None:
+        note = "threshold observed during halt; executed after reopen"
     if outcome == "exited on ATR flip":
         note = "depends on recalculated ATR SELL endpoint"
+        if sell_deferred:
+            note += "; raw flip was halted, executed after reopen"
     elif outcome == "still open at 16:00":
         note = "16:00 backstop"
     return LegResult(fill, outcome, trigger_at, point.bid, result, note)
@@ -254,25 +488,53 @@ def choose_yardstick(
     fill: Fill,
     sell_at: datetime | None,
     cutoff: datetime,
-    points: dict[str, QuotePoint | None],
+    points: dict[str, QuotePoint | tuple[datetime, datetime] | None],
     *,
     target_key: str,
     target_label: str,
+    sell_deferred: bool = False,
 ) -> LegResult:
     if points["first"] is None:
-        return LegResult(fill, "UNANSWERABLE", None, None, None, "no valid bid within 10s after fill")
+        return LegResult(
+            fill, "UNANSWERABLE", None, None, None, "no valid bid within 10s after fill"
+        )
     target = points[target_key]
+    assert target is None or isinstance(target, QuotePoint)
+    missing = points.get(f"{target_key}_unanswerable")
+    target_order = (target.at, target.observed_at or target.at) if target is not None else None
+    if isinstance(missing, tuple) and (target_order is None or missing < target_order):
+        return LegResult(
+            fill,
+            "UNANSWERABLE",
+            missing[0],
+            None,
+            None,
+            "halted threshold had no executable quote within 10s after reopen",
+        )
     if target is not None:
         result = (target.bid / fill.price - Decimal("1")) * Decimal("100")
-        return LegResult(fill, target_label, target.at, target.bid, result, "endpoint-independent")
+        note = "endpoint-independent"
+        if target.observed_at is not None:
+            note = "threshold observed during halt; executed after reopen"
+        return LegResult(fill, target_label, target.at, target.bid, result, note)
     endpoint = points["endpoint_after"] if sell_at is not None else points["endpoint_before"]
+    assert endpoint is None or isinstance(endpoint, QuotePoint)
     if endpoint is None:
         where = "recalculated ATR SELL" if sell_at is not None else "16:00"
-        return LegResult(fill, "UNANSWERABLE", sell_at or cutoff, None, None, f"no valid bid within 10s of {where}")
+        return LegResult(
+            fill,
+            "UNANSWERABLE",
+            sell_at or cutoff,
+            None,
+            None,
+            f"no valid bid within 10s of {where}",
+        )
     result = (endpoint.bid / fill.price - Decimal("1")) * Decimal("100")
     note = "depends on recalculated ATR SELL endpoint" if sell_at is not None else "16:00 backstop"
+    if sell_at is not None and sell_deferred:
+        note += "; raw flip was halted, executed after reopen"
     outcome = "exited on ATR flip" if sell_at is not None else "still open at 16:00"
-    return LegResult(fill, outcome, sell_at or cutoff, endpoint.bid, result, note)
+    return LegResult(fill, outcome, endpoint.at, endpoint.bid, result, note)
 
 
 def event_outcome(results: list[LegResult]) -> tuple[str, Decimal | None, str]:
@@ -291,7 +553,11 @@ def event_outcome(results: list[LegResult]) -> tuple[str, Decimal | None, str]:
         return "UNANSWERABLE", None, f"broker legs disagree: {detail}"
     total_qty = sum((result.fill.quantity for result in results), Decimal("0"))
     weighted = sum(
-        (result.return_pct * result.fill.quantity for result in results if result.return_pct is not None),
+        (
+            result.return_pct * result.fill.quantity
+            for result in results
+            if result.return_pct is not None
+        ),
         Decimal("0"),
     )
     return outcomes.pop(), weighted / total_qty, results[0].note
@@ -301,10 +567,17 @@ def event_return(results: list[LegResult]) -> Decimal | None:
     if any(result.return_pct is None for result in results):
         return None
     total_qty = sum((result.fill.quantity for result in results), Decimal("0"))
-    return sum(
-        (result.return_pct * result.fill.quantity for result in results if result.return_pct is not None),
-        Decimal("0"),
-    ) / total_qty
+    return (
+        sum(
+            (
+                result.return_pct * result.fill.quantity
+                for result in results
+                if result.return_pct is not None
+            ),
+            Decimal("0"),
+        )
+        / total_qty
+    )
 
 
 def render_time(value: datetime | None) -> str:
@@ -322,9 +595,7 @@ def main() -> int:
     parser.add_argument(
         "--legacy-population",
         type=Path,
-        default=Path(
-            "analysis/reports/actual-resting-entry-extrema-2026-08-24-to-2026-09-01.csv"
-        ),
+        default=Path("analysis/reports/actual-resting-entry-extrema-2026-08-24-to-2026-09-01.csv"),
         help="vetted fill IDs for the pre-cw_entry_slot era",
     )
     parser.add_argument("--csv", type=Path, required=True)
@@ -355,27 +626,120 @@ def main() -> int:
         grouped,
     )
 
+    halt_keys = sorted({(legs[0].session_day, legs[0].symbol) for legs in grouped})
+    halts_by_key = {}
+    for day, symbol in halt_keys:
+        session_start, session_end = session_bounds(day)
+        halts_by_key[(day, symbol)] = detect_halt_windows(
+            session_factory,
+            symbol,
+            session_start,
+            session_end,
+        )
+
+    # Measure the exposure using the old, unfiltered quote path before applying the correction.
+    halt_window_events = []
+    halted_sell_boundary_events = []
+    halted_trigger_events = []
+    halted_plus5_events = []
+    halted_plus10_events = []
+    for event_id, legs in events:
+        entry_at = min(fill.at for fill in legs)
+        _, cutoff = session_bounds(legs[0].session_day)
+        raw_sell_at = boundaries[(legs[0].symbol, entry_at.isoformat())]
+        raw_endpoint = measurement_end(raw_sell_at, cutoff)
+        event_halts = halts_by_key[(legs[0].session_day, legs[0].symbol)]
+        label = f"{legs[0].session_day} {legs[0].symbol} event {event_id}"
+        if window_contains_halt(entry_at, raw_endpoint, event_halts):
+            halt_window_events.append(label)
+        if timestamp_is_halted(raw_sell_at, event_halts):
+            halted_sell_boundary_events.append(label)
+        raw_points = [quote_points(session_factory, fill, raw_endpoint, []) for fill in legs]
+        raw_results = [
+            choose_outcome(
+                fill,
+                raw_sell_at,
+                cutoff,
+                points,
+            )
+            for fill, points in zip(legs, raw_points, strict=True)
+        ]
+        raw_plus5_results = [
+            choose_yardstick(
+                fill,
+                raw_sell_at,
+                cutoff,
+                points,
+                target_key="target",
+                target_label="exited at +5%",
+            )
+            for fill, points in zip(legs, raw_points, strict=True)
+        ]
+        raw_plus10_results = [
+            choose_yardstick(
+                fill,
+                raw_sell_at,
+                cutoff,
+                points,
+                target_key="target10",
+                target_label="exited at +10%",
+            )
+            for fill, points in zip(legs, raw_points, strict=True)
+        ]
+        halted_results = [
+            result for result in raw_results if timestamp_is_halted(result.trigger_at, event_halts)
+        ]
+        if halted_results:
+            outcomes = ", ".join(sorted({result.outcome for result in halted_results}))
+            halted_trigger_events.append(f"{label} ({outcomes})")
+        if any(timestamp_is_halted(result.trigger_at, event_halts) for result in raw_plus5_results):
+            halted_plus5_events.append(label)
+        if any(
+            timestamp_is_halted(result.trigger_at, event_halts) for result in raw_plus10_results
+        ):
+            halted_plus10_events.append(label)
+
     rows = []
     for event_id, legs in events:
         legs.sort(key=lambda fill: (fill.at, fill.account, fill.fill_id))
         entry_at = min(fill.at for fill in legs)
         _, cutoff = session_bounds(legs[0].session_day)
-        sell_at = boundaries[(legs[0].symbol, entry_at.isoformat())]
+        raw_sell_at = boundaries[(legs[0].symbol, entry_at.isoformat())]
+        event_halts = halts_by_key[(legs[0].session_day, legs[0].symbol)]
+        sell_at, sell_deferred = defer_halted_boundary(raw_sell_at, event_halts)
         endpoint = measurement_end(sell_at, cutoff)
-        leg_points = [quote_points(session_factory, fill, endpoint) for fill in legs]
+        leg_points = [quote_points(session_factory, fill, endpoint, event_halts) for fill in legs]
         leg_results = [
-            choose_outcome(fill, sell_at, cutoff, points)
+            choose_outcome(
+                fill,
+                sell_at,
+                cutoff,
+                points,
+                sell_deferred=sell_deferred,
+            )
             for fill, points in zip(legs, leg_points, strict=True)
         ]
         plus5_results = [
             choose_yardstick(
-                fill, sell_at, cutoff, points, target_key="target", target_label="exited at +5%"
+                fill,
+                sell_at,
+                cutoff,
+                points,
+                target_key="target",
+                target_label="exited at +5%",
+                sell_deferred=sell_deferred,
             )
             for fill, points in zip(legs, leg_points, strict=True)
         ]
         plus10_results = [
             choose_yardstick(
-                fill, sell_at, cutoff, points, target_key="target10", target_label="exited at +10%"
+                fill,
+                sell_at,
+                cutoff,
+                points,
+                target_key="target10",
+                target_label="exited at +10%",
+                sell_deferred=sell_deferred,
             )
             for fill, points in zip(legs, leg_points, strict=True)
         ]
@@ -391,7 +755,13 @@ def main() -> int:
             target_at = points["target"].at if points["target"] else None
             stop_at = points["stop"].at if points["stop"] else None
             if target_at is not None and stop_at is not None:
-                touch_orders.append("+5 first" if target_at < stop_at else "-8 first" if stop_at < target_at else "tie")
+                touch_orders.append(
+                    "+5 first"
+                    if target_at < stop_at
+                    else "-8 first"
+                    if stop_at < target_at
+                    else "tie"
+                )
             else:
                 touch_orders.append("not both touched")
         rows.append(
@@ -400,7 +770,8 @@ def main() -> int:
                 "date_et": legs[0].session_day,
                 "symbol": legs[0].symbol,
                 "fill_time_et": "; ".join(
-                    f"{account_label(r.fill.account)}: {render_time(r.fill.at)}" for r in leg_results
+                    f"{account_label(r.fill.account)}: {render_time(r.fill.at)}"
+                    for r in leg_results
                 ),
                 "fill_price": "; ".join(
                     f"{account_label(r.fill.account)}: {r.fill.price:.4f}" for r in leg_results
@@ -409,7 +780,17 @@ def main() -> int:
                     f"{account_label(r.fill.account)}: {r.fill.cw_flip_level:.4f}"
                     for r in leg_results
                 ),
-                "recalculated_atr_sell_et": render_time(sell_at) if sell_at else "none; 16:00 backstop",
+                "raw_recalculated_atr_sell_et": (
+                    render_time(raw_sell_at) if raw_sell_at else "none; 16:00 backstop"
+                ),
+                "recalculated_atr_sell_et": render_time(sell_at)
+                if sell_at
+                else "none; 16:00 backstop",
+                "sell_deferred_from_halt": "yes" if sell_deferred else "no",
+                "halt_windows_in_measurement": sum(
+                    halt.reopen_print_at > entry_at and halt.last_print_at < endpoint
+                    for halt in event_halts
+                ),
                 "outcome": outcome,
                 "plus5_touch_et": "; ".join(
                     f"{account_label(fill.account)}: {render_time(points['target'].at if points['target'] else None)}"
@@ -424,10 +805,12 @@ def main() -> int:
                     for fill, order in zip(legs, touch_orders, strict=True)
                 ),
                 "trigger_time_et": "; ".join(
-                    f"{account_label(r.fill.account)}: {render_time(r.trigger_at)}" for r in leg_results
+                    f"{account_label(r.fill.account)}: {render_time(r.trigger_at)}"
+                    for r in leg_results
                 ),
                 "exit_bid": "; ".join(
-                    f"{account_label(r.fill.account)}: {r.exit_bid:.4f}" if r.exit_bid is not None
+                    f"{account_label(r.fill.account)}: {r.exit_bid:.4f}"
+                    if r.exit_bid is not None
                     else f"{account_label(r.fill.account)}: NA"
                     for r in leg_results
                 ),
@@ -435,14 +818,16 @@ def main() -> int:
                     f"{account_label(fill.account)}: "
                     f"{((points['high'].bid / fill.price - Decimal('1')) * Decimal('100')):+.4f}% "
                     f"@ {(points['high'].at - fill.at).total_seconds() / 60:.3f}m"
-                    if points["high"] is not None else f"{account_label(fill.account)}: NA"
+                    if points["high"] is not None
+                    else f"{account_label(fill.account)}: NA"
                     for fill, points in zip(legs, leg_points, strict=True)
                 ),
                 "low_bid_pct_time": "; ".join(
                     f"{account_label(fill.account)}: "
                     f"{((points['low'].bid / fill.price - Decimal('1')) * Decimal('100')):+.4f}% "
                     f"@ {(points['low'].at - fill.at).total_seconds() / 60:.3f}m"
-                    if points["low"] is not None else f"{account_label(fill.account)}: NA"
+                    if points["low"] is not None
+                    else f"{account_label(fill.account)}: NA"
                     for fill, points in zip(legs, leg_points, strict=True)
                 ),
                 "event_return_pct": f"{return_pct:+.4f}" if return_pct is not None else "NA",
@@ -452,7 +837,8 @@ def main() -> int:
                 ),
                 "actual_exit_price": "; ".join(
                     f"{account_label(fill.account)}: {result[2]:.4f}"
-                    if result[2] is not None else f"{account_label(fill.account)}: NA"
+                    if result[2] is not None
+                    else f"{account_label(fill.account)}: NA"
                     for fill, result in zip(legs, actual_results, strict=True)
                 ),
                 "actual_return_pct": f"{actual_return:+.4f}" if actual_return is not None else "NA",
@@ -461,8 +847,12 @@ def main() -> int:
                     for fill, result in zip(legs, actual_results, strict=True)
                 ),
                 "dependency": note,
-                "plus5_no_stop_return_pct": f"{plus5_return:+.4f}" if plus5_return is not None else "NA",
-                "plus10_no_stop_return_pct": f"{plus10_return:+.4f}" if plus10_return is not None else "NA",
+                "plus5_no_stop_return_pct": f"{plus5_return:+.4f}"
+                if plus5_return is not None
+                else "NA",
+                "plus10_no_stop_return_pct": f"{plus10_return:+.4f}"
+                if plus10_return is not None
+                else "NA",
                 "window": "actual resting fill -> recalculated ATR SELL; 16:00 backstop",
                 "bid_print_gate": "; ".join(
                     f"{account_label(fill.account)}: "
@@ -496,8 +886,7 @@ def main() -> int:
     )
     counts = {outcome: sum(row["outcome"] == outcome for row in rows) for outcome in outcomes}
     order_sets = [
-        {part.rsplit(": ", 1)[1] for part in row["touch_order"].split("; ")}
-        for row in rows
+        {part.rsplit(": ", 1)[1] for part in row["touch_order"].split("; ")} for row in rows
     ]
     all_legs_both = sum("not both touched" not in orders for orders in order_sets)
     both_target_first = sum(orders == {"+5 first"} for orders in order_sets)
@@ -514,6 +903,13 @@ def main() -> int:
     )
     summary = [
         "Every result uses `actual resting fill -> recalculated ATR SELL`; `16:00 ET` is backstop only.",
+        f"Halt definition: print gap >= {HALT_MIN_PRINT_GAP.total_seconds():.0f}s with "
+        f">= {HALT_MIN_QUOTE_UPDATES} quote updates continuing inside the gap.",
+        f"PRE-FIX HALT EXPOSURE: windows containing halt {len(halt_window_events)} / {total}; "
+        f"raw ATR SELL boundaries inside halt {len(halted_sell_boundary_events)} / {total}; "
+        f"operator-rule exits inside halt {len(halted_trigger_events)} / {total}; "
+        f"+5 yardstick exits inside halt {len(halted_plus5_events)} / {total}; "
+        f"+10 yardstick exits inside halt {len(halted_plus10_events)} / {total}.",
         sanity_line,
         "",
         f"Gradable: {len(gradable)} / {total}",
@@ -530,12 +926,49 @@ def main() -> int:
         f"(+5 first {both_target_first}, -8 first {both_stop_first}, mixed/tied {both_mixed}).",
     ]
     if sanity_failures:
-        summary.extend(["", "Ledger refused:", *[f"- {item}" for item in sanity_failures]])
+        summary.extend(
+            [
+                "",
+                "Halt-window events:",
+                *[f"- {item}" for item in halt_window_events],
+                "",
+                "Old triggers inside halt:",
+                *[f"- {item}" for item in halted_trigger_events],
+                "",
+                "Ledger refused:",
+                *[f"- {item}" for item in sanity_failures],
+            ]
+        )
         print("\n".join(summary))
         return 2
 
+    plus5_pairs = [
+        row
+        for row in rows
+        if row["event_return_pct"] != "NA" and row["plus5_no_stop_return_pct"] != "NA"
+    ]
+    plus10_pairs = [
+        row
+        for row in rows
+        if row["event_return_pct"] != "NA" and row["plus10_no_stop_return_pct"] != "NA"
+    ]
+    operator_total = sum(gradable, Decimal("0"))
+    plus5_operator = sum((Decimal(row["event_return_pct"]) for row in plus5_pairs), Decimal("0"))
+    plus5_total = sum(
+        (Decimal(row["plus5_no_stop_return_pct"]) for row in plus5_pairs), Decimal("0")
+    )
+    plus10_operator = sum((Decimal(row["event_return_pct"]) for row in plus10_pairs), Decimal("0"))
+    plus10_total = sum(
+        (Decimal(row["plus10_no_stop_return_pct"]) for row in plus10_pairs), Decimal("0")
+    )
     summary.extend(
         [
+            "",
+            f"Operator-rule total: {operator_total:+.4f}% on {len(gradable)} / {total} gradable.",
+            f"Paired with +5 yardstick: operator {plus5_operator:+.4f}% vs "
+            f"+5 {plus5_total:+.4f}% on {len(plus5_pairs)} / {total}.",
+            f"Paired with +10 yardstick: operator {plus10_operator:+.4f}% vs "
+            f"+10 {plus10_total:+.4f}% on {len(plus10_pairs)} / {total}.",
             "",
             "| sym | buy | fill | hi % / hi t | lo % / lo t | exit | px | by | rule % | real % |",
             "|---|---|---|---|---|---|---|---|---:|---:|",

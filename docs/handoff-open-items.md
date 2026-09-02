@@ -1036,3 +1036,12 @@ fixture.
 source-inspection test asserts the marker is *written* and can never see that a sibling's *line*
 contains it. The lint generalises that catch to every marker, including the ones no test drives.
 
+---
+
+## B33. LIVE V2 MAY CONSUME LOCKED QUOTES DURING A LULD HALT
+
+**Boarded, not yet investigated.** Four study readings on DAIC 2026-08-24 came from locked quote
+ladders inside 300.068s, 600.030s, and 300.064s print-free pauses. That is an event, not proof of a
+production defect. Establish whether live v2 can arm, trigger, or reprice from a quote while the
+market is halted. Falsifier: any production decision whose consumed quote timestamp lies strictly
+between the last pre-halt print and reopening print. Do not infer safety from the study-side filter.
