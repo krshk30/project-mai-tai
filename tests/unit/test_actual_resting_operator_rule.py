@@ -10,8 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from actual_resting_entry_extrema import Fill
 from actual_resting_operator_rule import (
+    BACKSTOP_STRATUM,
+    CAVEATED_STRATUM,
     HALT_MIN_PRINT_GAP,
     HALT_MIN_QUOTE_UPDATES,
+    REPORTABLE_STRATUM,
+    UNANSWERABLE_STRATUM,
     HaltWindow,
     LegResult,
     QuotePoint,
@@ -25,6 +29,7 @@ from actual_resting_operator_rule import (
     load_population,
     measurement_end,
     quote_points,
+    result_stratum,
     timestamp_is_halted,
     window_contains_halt,
 )
@@ -364,6 +369,21 @@ def test_sell_before_target_uses_caveated_endpoint() -> None:
     assert result.outcome == "exited on ATR flip"
     assert result.return_pct == Decimal("-2.00")
     assert "recalculated" in result.note
+
+
+def test_operator_ruling_separates_recalculated_sell_results() -> None:
+    assert result_stratum("exited at +5%") == REPORTABLE_STRATUM
+    assert result_stratum("exited at -8%") == REPORTABLE_STRATUM
+    assert result_stratum("exited on ATR flip") == CAVEATED_STRATUM
+    assert result_stratum("still open at 16:00") == BACKSTOP_STRATUM
+    assert result_stratum("UNANSWERABLE") == UNANSWERABLE_STRATUM
+
+    source = inspect.getsource(sys.modules[result_stratum.__module__].main)
+    assert "REPRODUCTION CONTROLS ONLY" in source
+    assert "legacy pooled values are not reportable headlines" in source
+    assert "CAVEATED RECALCULATED ATR SELL" in source
+    assert 'row["stratum_denominator"]' in source
+    assert "Operator-rule total:" not in source
 
 
 def test_no_stop_yardstick_uses_endpoint_when_target_never_trades() -> None:

@@ -50,6 +50,10 @@ QUOTE_FRESHNESS = timedelta(seconds=10)
 DEPTH_DISCLOSURE = (
     "NOT SIZE-QUALIFIED: displayed bid-size contract is unverified; price-level bid only"
 )
+REPORTABLE_STRATUM = "REPORTABLE_ENDPOINT_INDEPENDENT"
+CAVEATED_STRATUM = "CAVEATED_RECALCULATED_ATR_SELL"
+BACKSTOP_STRATUM = "BACKSTOP_16_00"
+UNANSWERABLE_STRATUM = "UNANSWERABLE"
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,16 @@ class LegResult:
     exit_bid: Decimal | None
     return_pct: Decimal | None
     note: str
+
+
+def result_stratum(outcome: str) -> str:
+    if outcome in {"exited at +5%", "exited at -8%"}:
+        return REPORTABLE_STRATUM
+    if outcome == "exited on ATR flip":
+        return CAVEATED_STRATUM
+    if outcome == "still open at 16:00":
+        return BACKSTOP_STRATUM
+    return UNANSWERABLE_STRATUM
 
 
 def _label_values(raw: str) -> list[str]:
@@ -829,6 +843,7 @@ def main() -> int:
                     for halt in event_halts
                 ),
                 "outcome": outcome,
+                "result_stratum": result_stratum(outcome),
                 "plus5_touch_et": "; ".join(
                     f"{account_label(fill.account)}: {render_time(points['target'].at if points['target'] else None)}"
                     for fill, points in zip(legs, leg_points, strict=True)
@@ -945,6 +960,17 @@ def main() -> int:
     both_mixed = all_legs_both - both_target_first - both_stop_first
     gradable = [Decimal(row["event_return_pct"]) for row in rows if row["event_return_pct"] != "NA"]
     total = len(rows)
+    stratum_counts = {
+        stratum: sum(row["result_stratum"] == stratum for row in rows)
+        for stratum in (
+            REPORTABLE_STRATUM,
+            CAVEATED_STRATUM,
+            BACKSTOP_STRATUM,
+            UNANSWERABLE_STRATUM,
+        )
+    }
+    for row in rows:
+        row["stratum_denominator"] = f"{stratum_counts[row['result_stratum']]} / {total}"
     sanity_line = (
         f"BID-VS-PRINT SANITY GATE: PASS ({sanity_gradable} broker legs checked, "
         "0 bid highs above print highs)."
@@ -1014,13 +1040,44 @@ def main() -> int:
         (Decimal(row["plus10_no_stop_return_pct"]) for row in plus10_pairs), Decimal("0")
     )
     operator_rows = [row for row in rows if row["event_return_pct"] != "NA"]
-    realized_pairs = [row for row in operator_rows if row["actual_return_pct"] != "NA"]
-    realized_operator = sum(
-        (Decimal(row["event_return_pct"]) for row in realized_pairs), Decimal("0")
-    )
-    realized_total = sum(
-        (Decimal(row["actual_return_pct"]) for row in realized_pairs), Decimal("0")
-    )
+    reportable_rows = [
+        row for row in operator_rows if row["result_stratum"] == REPORTABLE_STRATUM
+    ]
+    caveated_rows = [
+        row for row in operator_rows if row["result_stratum"] == CAVEATED_STRATUM
+    ]
+    backstop_rows = [
+        row for row in operator_rows if row["result_stratum"] == BACKSTOP_STRATUM
+    ]
+
+    def stratum_total(selected_rows: list[dict[str, object]]) -> Decimal:
+        return sum(
+            (Decimal(str(row["event_return_pct"])) for row in selected_rows),
+            Decimal("0"),
+        )
+
+    def paired_totals(
+        selected_rows: list[dict[str, object]], field: str
+    ) -> tuple[list[dict[str, object]], Decimal, Decimal]:
+        paired = [row for row in selected_rows if row[field] != "NA"]
+        return (
+            paired,
+            stratum_total(paired),
+            sum((Decimal(str(row[field])) for row in paired), Decimal("0")),
+        )
+
+    reportable_total = stratum_total(reportable_rows)
+    caveated_total = stratum_total(caveated_rows)
+    backstop_total = stratum_total(backstop_rows)
+    reportable_plus5 = paired_totals(reportable_rows, "plus5_no_stop_return_pct")
+    caveated_plus5 = paired_totals(caveated_rows, "plus5_no_stop_return_pct")
+    backstop_plus5 = paired_totals(backstop_rows, "plus5_no_stop_return_pct")
+    reportable_plus10 = paired_totals(reportable_rows, "plus10_no_stop_return_pct")
+    caveated_plus10 = paired_totals(caveated_rows, "plus10_no_stop_return_pct")
+    backstop_plus10 = paired_totals(backstop_rows, "plus10_no_stop_return_pct")
+    reportable_realized = paired_totals(reportable_rows, "actual_return_pct")
+    caveated_realized = paired_totals(caveated_rows, "actual_return_pct")
+    backstop_realized = paired_totals(backstop_rows, "actual_return_pct")
     stopped_rows = [row for row in operator_rows if row["outcome"] == "exited at -8%"]
     stopped_counterfactual = [
         row for row in stopped_rows if row["atr_sell_counterfactual_pct"] != "NA"
@@ -1039,15 +1096,54 @@ def main() -> int:
     summary.extend(
         [
             "",
-            f"Operator-rule total: {operator_total:+.4f}% on {len(gradable)} / {total} gradable.",
-            f"Paired with +5 yardstick: operator {plus5_operator:+.4f}% vs "
-            f"+5 {plus5_total:+.4f}% on {len(plus5_pairs)} / {total}.",
-            f"Paired with +10 yardstick: operator {plus10_operator:+.4f}% vs "
-            f"+10 {plus10_total:+.4f}% on {len(plus10_pairs)} / {total}.",
+            "REPRODUCTION CONTROLS ONLY - legacy pooled values are not reportable headlines:",
+            f"- pooled control {operator_total:+.4f}% on {len(gradable)} / {total} gradable",
+            f"- pooled +5 pairing: operator {plus5_operator:+.4f}% vs "
+            f"+5 {plus5_total:+.4f}% on {len(plus5_pairs)} / {total}",
+            f"- pooled +10 pairing: operator {plus10_operator:+.4f}% vs "
+            f"+10 {plus10_total:+.4f}% on {len(plus10_pairs)} / {total}",
             "",
-            f"REALIZED CONTROL: matched {len(realized_pairs)} / {len(operator_rows)}; "
-            f"operator {realized_operator:+.4f}% vs realized {realized_total:+.4f}%.",
-            f"STOPPED COUNTERFACTUAL: all {len(stopped_rows)} stops cost "
+            f"REPORTABLE ENDPOINT-INDEPENDENT: {reportable_total:+.4f}% on "
+            f"{len(reportable_rows)} / {stratum_counts[REPORTABLE_STRATUM]} stratum rows "
+            f"({stratum_counts[REPORTABLE_STRATUM]} / {total} total).",
+            f"CAVEATED RECALCULATED ATR SELL: {caveated_total:+.4f}% on "
+            f"{len(caveated_rows)} / {stratum_counts[CAVEATED_STRATUM]} caveated rows "
+            f"({stratum_counts[CAVEATED_STRATUM]} / {total} total); never pooled into a headline.",
+            f"16:00 BACKSTOP: {backstop_total:+.4f}% on "
+            f"{len(backstop_rows)} / {stratum_counts[BACKSTOP_STRATUM]} backstop rows "
+            f"({stratum_counts[BACKSTOP_STRATUM]} / {total} total).",
+            "",
+            f"REPORTABLE +5 PAIRING: operator {reportable_plus5[1]:+.4f}% vs "
+            f"+5 {reportable_plus5[2]:+.4f}% on {len(reportable_plus5[0])} / "
+            f"{stratum_counts[REPORTABLE_STRATUM]} stratum rows ({len(reportable_plus5[0])} / {total} total).",
+            f"CAVEATED +5 PAIRING: operator {caveated_plus5[1]:+.4f}% vs "
+            f"+5 {caveated_plus5[2]:+.4f}% on {len(caveated_plus5[0])} / "
+            f"{stratum_counts[CAVEATED_STRATUM]} caveated rows ({len(caveated_plus5[0])} / {total} total).",
+            f"BACKSTOP +5 PAIRING: operator {backstop_plus5[1]:+.4f}% vs "
+            f"+5 {backstop_plus5[2]:+.4f}% on {len(backstop_plus5[0])} / "
+            f"{stratum_counts[BACKSTOP_STRATUM]} backstop rows ({len(backstop_plus5[0])} / {total} total).",
+            f"REPORTABLE +10 PAIRING: operator {reportable_plus10[1]:+.4f}% vs "
+            f"+10 {reportable_plus10[2]:+.4f}% on {len(reportable_plus10[0])} / "
+            f"{stratum_counts[REPORTABLE_STRATUM]} stratum rows ({len(reportable_plus10[0])} / {total} total).",
+            f"CAVEATED +10 PAIRING: operator {caveated_plus10[1]:+.4f}% vs "
+            f"+10 {caveated_plus10[2]:+.4f}% on {len(caveated_plus10[0])} / "
+            f"{stratum_counts[CAVEATED_STRATUM]} caveated rows ({len(caveated_plus10[0])} / {total} total).",
+            f"BACKSTOP +10 PAIRING: operator {backstop_plus10[1]:+.4f}% vs "
+            f"+10 {backstop_plus10[2]:+.4f}% on {len(backstop_plus10[0])} / "
+            f"{stratum_counts[BACKSTOP_STRATUM]} backstop rows ({len(backstop_plus10[0])} / {total} total).",
+            "",
+            f"REPORTABLE REALIZED CONTROL: operator {reportable_realized[1]:+.4f}% vs "
+            f"realized {reportable_realized[2]:+.4f}% on {len(reportable_realized[0])} / "
+            f"{stratum_counts[REPORTABLE_STRATUM]} stratum rows ({len(reportable_realized[0])} / {total} total).",
+            f"CAVEATED REALIZED CONTROL: operator {caveated_realized[1]:+.4f}% vs "
+            f"realized {caveated_realized[2]:+.4f}% on {len(caveated_realized[0])} / "
+            f"{stratum_counts[CAVEATED_STRATUM]} caveated rows ({len(caveated_realized[0])} / {total} total).",
+            f"BACKSTOP REALIZED CONTROL: operator {backstop_realized[1]:+.4f}% vs "
+            f"realized {backstop_realized[2]:+.4f}% on {len(backstop_realized[0])} / "
+            f"{stratum_counts[BACKSTOP_STRATUM]} backstop rows ({len(backstop_realized[0])} / {total} total).",
+            f"STOPPED COUNTERFACTUAL: all {len(stopped_rows)} / "
+            f"{stratum_counts[REPORTABLE_STRATUM]} endpoint-independent rows "
+            f"({len(stopped_rows)} / {total} total) cost "
             f"{stopped_paid:+.4f}%; matched {len(stopped_counterfactual)} / "
             f"{len(stopped_rows)} compare -8 rule {stopped_paired_paid:+.4f}% vs "
             f"ATR SELL {stopped_unprotected:+.4f}%.",
@@ -1075,8 +1171,8 @@ def main() -> int:
                 for row in dropped_plus10
             ],
             "",
-            "| sym | buy | fill | hi % / hi t | lo % / lo t | exit | px | by | rule % | real % | depth |",
-            "|---|---|---|---|---|---|---|---|---:|---:|---|",
+            "| sym | buy | fill | hi % / hi t | lo % / lo t | exit | px | by | rule % | real % | stratum | denom | depth |",
+            "|---|---|---|---|---|---|---|---|---:|---:|---|---:|---|",
         ]
     )
     for row in rows:
@@ -1094,7 +1190,8 @@ def main() -> int:
             f"| {row['symbol']} | {row['fill_time_et']} | {row['fill_price']} | "
             f"{row['high_bid_pct_time']} | {row['low_bid_pct_time']} | "
             f"{row['trigger_time_et']} | {row['exit_bid']} | {by} | "
-            f"{row['event_return_pct']}% | {real}% | {row['depth_basis']} |"
+            f"{row['event_return_pct']}% | {real}% | {row['result_stratum']} | "
+            f"{row['stratum_denominator']} | {row['depth_basis']} |"
         )
 
     args.csv.parent.mkdir(parents=True, exist_ok=True)
