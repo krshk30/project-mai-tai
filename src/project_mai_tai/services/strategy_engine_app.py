@@ -3929,6 +3929,14 @@ class PaperPolygonRuntimeAdapter:
             raise AttributeError(f"paper Polygon runtime does not expose trading member {name!r}")
         return getattr(self._delegate, name)
 
+    @property
+    def watchlist(self) -> set[str]:
+        return set(self._delegate.watchlist)
+
+    @property
+    def manual_stop_symbols(self) -> set[str]:
+        return set(self._delegate.manual_stop_symbols)
+
     def apply_execution_fill(self, *args: object, **kwargs: object) -> None:
         del args, kwargs
 
