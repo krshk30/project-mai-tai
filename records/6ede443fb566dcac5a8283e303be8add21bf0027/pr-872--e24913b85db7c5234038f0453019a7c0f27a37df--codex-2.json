@@ -1,0 +1,9 @@
+{
+  "pr_number": 872,
+  "range_base": "e24913b85db7c5234038f0453019a7c0f27a37df",
+  "range_head": "6ede443fb566dcac5a8283e303be8add21bf0027",
+  "reviewed_at": "2026-09-02T09:22:34Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "read all three handoff artifacts; reconciled the 272/272 BALANCED manifest byte-for-byte to the frozen journals; traced deployment, measurement, retraction, denominator, and open-item claims to journal records; verified production main e24913b clean with seven stated service PIDs at zero restarts and the single #860 cron target"
+}
