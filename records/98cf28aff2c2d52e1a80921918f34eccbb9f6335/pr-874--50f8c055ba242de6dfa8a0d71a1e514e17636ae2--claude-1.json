@@ -1,0 +1,9 @@
+{
+  "pr_number": 874,
+  "range_base": "50f8c055ba242de6dfa8a0d71a1e514e17636ae2",
+  "range_head": "98cf28aff2c2d52e1a80921918f34eccbb9f6335",
+  "reviewed_at": "2026-09-02T20:24:40Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Verified gradeability (head contains main tip 50f8c055; all 6 commits carry exactly one OpenAI Codex marker; no server-side merge commit). Read the OMS touch in full: the polygon_30s/webull_30s refusal is a second line of defence, since strategy_engine_app._consume_intents already swallows those intents at source, so it does not fire in normal operation. Confirmed the runtime_registry change hard-codes paper:polygon_30s/execution_mode=paper/provider=none and thereby removes a live-routing failure mode. Verified the migration is additive only (create_table/create_index, no drop or alter on existing tables), chain 20260828_0016 to 20260902_0017, single head across 17 migrations. Verified new tables are append-only with a unique event_key and cannot represent a broker order. Re-derived the test claim rather than accepting it: reviewed head 46 failed / 3048 passed, and a control run on origin/main without the PR reproduced the identical 46 pre-existing macOS shell/installer failures, so this PR introduces zero regressions; touched files 393 passed / 0 failed. Withheld the pin on one docs finding (PAPER1 filed under 'Open, defined, owned' while unowned); codex fixed it to owner codex-2 and the diff-of-diffs between the reviewed head e95e907 and this head is exactly that one line in docs/handoff-open-items.md, nothing else."
+}
