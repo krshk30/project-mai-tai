@@ -19,24 +19,45 @@ hashes before deleting any old rule code.
 
 ## 2. Genuinely Missing
 
-The harness lacks: the operator exit state machine (`+5%`, `-8%`, ATR SELL, then 16:00 in time
-order); a read-only live-fill mirror; an independent resting-fill simulator; executable-bid quote
-handling; duplicate and restart-safe paper identities; an append-only `paper_exit_runs` /
-`paper_exit_positions` store; reconciliation of mirror entries against live fills; explicit
-`MISSED_LIVE_ENTRY`, `PHANTOM_PAPER_ENTRY`, `NO_EXECUTABLE_BID`, and `UNANSWERABLE` markers; and two
-separate dashboard panels with daily comparison rows. These pieces ship together or the strategy
-swap remains documentation only.
+All first-useful-day rows below are required and deploy together; intermediate rows are not useful
+deployments. The estimate is 9-12 engineering days, or roughly two elapsed weeks including review,
+replay, and an operator-approved deployment.
+
+| Missing work | Rough effort | First useful day? |
+|---|---:|---|
+| Archive and hash-restore proof for the old rules | 0.5 day | Required |
+| `PaperDecision` seam, structural no-order boundaries, and policy tests | 1.5-2 days | Required |
+| All-venue fill mirror, exact duplicate collapse, restart recovery, and reconciliation | 1.5-2 days | Required |
+| Operator exit state machine, executable-bid handling, and restart-safe state | 1.5-2 days | Required |
+| Independent scanner/resting-fill arm, kept separate from Mirror | 1-1.5 days | Required |
+| Append-only paper tables, screen panels, empty state, and daily grader | 1.5-2 days | Required |
+| Replays, failure injection, deployment checklist, and first-session acceptance | 1.5-2 days | Required |
+
+Size-qualified quote execution, richer multi-session charts, and alert-threshold tuning are
+follow-ons at about 1-2 days each. They do not block bid-price grading or the first useful day.
 
 ## 3. Entry Coupling Decision
 
-Run both arms, never pooled. The **primary mirror arm** consumes filled `order_event` records for
-`schwab_1m_v2` BUY opens whose stamped metadata says first/resting. Its immutable identity is
-`broker_fill_id`; price, quantity, and timestamp are copied exactly. A read-only fill-table
-reconciler detects a dropped stream event and may restore the same fill later, marked `LATE_MIRROR`,
-but may not invent one. Missing coupling fails closed: a live fill with no mirror creates
-`MISSED_LIVE_ENTRY` and no paper position. The opposite direction is also closed: a mirror row must
-reference an actual live broker fill, so an unmatched paper entry is `PHANTOM_PAPER_ENTRY`, excluded
-and paged. Matched/live, missed/live, and phantom/paper denominators appear separately.
+Run both arms, never pooled. The **primary mirror arm** consumes every filled BUY-open `order_event`
+whose stamped metadata says first/resting, regardless of venue or live account. The reconciled
+82-entry reference population contains 106 broker-fill legs: 71 Webull and 35 Schwab, including two
+sessions with no Schwab resting fill. Restricting Mirror to Schwab would therefore idle it on those
+sessions and omit most fill legs.
+
+Each source leg keeps its immutable `broker_fill_id`, venue, price, quantity, and timestamp. Legs
+become one logical paper position using the same collapse as the 82-entry population: same-session
+and same-symbol cross-broker fills within 10 seconds, or same-broker fills with the same non-empty
+`fanout_slot_id` within 30 seconds. That collapses 20 cross-broker pairs and four duplicate Webull
+fills. The logical identity is derived from the sorted source fill IDs; it retains every leg rather
+than synthesizing a fill, and grades the per-leg rule results with actual-quantity weighting.
+
+A read-only fill-table reconciler detects a dropped stream event and may restore the same fill later,
+marked `LATE_MIRROR`, but may not invent one. Missing coupling fails closed: a live fill with no
+mirror creates `MISSED_LIVE_ENTRY` and no paper position. The opposite direction is also closed: a
+mirror row must reference actual live broker fills, so an unmatched paper entry is
+`PHANTOM_PAPER_ENTRY`, excluded and paged. Report matched/live and missed/live legs separately for
+Webull and Schwab, then logical matched/expected entries after collapse; report phantom paper rows
+separately.
 
 The **independent arm** receives the same promoted watchlist and bars, arms from the scanner, and
 models a resting fill only from timestamped executable asks. It measures refused names and orders
@@ -69,7 +90,10 @@ first-trigger decision, paper exit, live realized exit when available, return de
 status. The daily Mirror line is `matched and gradable / live resting fills`, followed by paper-rule
 and live-realized totals on those same matched entries; missing, phantom, and unanswerable counts are
 never folded into P&L. Independent gets its own denominator and no live comparison. Logs emit one
-entry and one exit marker per paper identity, plus a daily reconciliation marker.
+entry and one exit marker per paper identity, plus a daily reconciliation marker. Before the first
+paper fill, the page renders `WAITING FOR FIRST LIVE RESTING FILL`, service/feed/scanner health,
+Webull and Schwab live-fill denominators at zero, Mirror as `UNEXERCISED`, Independent's current
+watch/arm state, and the last reconciliation time. It never renders an unexplained empty panel.
 
 ## 7. Limits And Falsifiers
 
@@ -81,3 +105,10 @@ silently absent; a paper-only entry appears in the mirror total; either arm reac
 `strategy-intents`, broker code, shared slot/state tables, or the live poller; restart changes an
 existing paper decision; the two arms are pooled; or the screen reports a result without its stated
 denominator and evidence status.
+
+Day-one acceptance is one complete session with `N` live first/resting fill legs reconciled by venue,
+all `N` classified as matched or missed, zero unexplained phantom rows, and a logical expected count
+derived by the stated collapse. Every matched logical entry must have one durable entry marker and,
+by close, an exit or explicit `UNANSWERABLE` state. If `N = 0`, Mirror is `UNEXERCISED`, never
+`PASS`; service, feed, scanner, reconciliation, independent-arm, and structural no-order checks are
+reported separately and cannot turn that zero into an exercised mirror result.
