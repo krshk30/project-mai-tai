@@ -38,21 +38,35 @@ follow-ons at about 1-2 days each. They do not block bid-price grading or the fi
 
 ## 3. Entry Coupling Decision
 
-Run both arms, never pooled. The **primary mirror arm** consumes every filled BUY-open `order_event`
-whose stamped metadata says first/resting, regardless of venue or live account. The reconciled
+Run both arms, never pooled. The **primary mirror arm** intercepts every filled BUY-open
+`order_event` before the existing strategy-code dispatch, because both venue legs retain
+`strategy_code=schwab_1m_v2` and would otherwise never reach `polygon_30s`. A candidate is eligible
+only when its stamped metadata has `cw_entry_slot=first` and one enumerated resting source:
+`CW-v2-resting`, `rth_resting`, `rth_resting_mirror`, or `eh_resting`. `resting_entry=true` alone is
+insufficient because reclaim carries it too; `reactive`, unknown, missing, or contradictory source
+and slot combinations are `UNANSWERABLE`, never inferred. The filter applies regardless of venue
+or live account.
+The reconciled
 82-entry reference population contains 106 broker-fill legs: 71 Webull and 35 Schwab, including two
 sessions with no Schwab resting fill. Restricting Mirror to Schwab would therefore idle it on those
 sessions and omit most fill legs.
 
-Each source leg keeps its immutable `broker_fill_id`, venue, price, quantity, and timestamp. Legs
-become one logical paper position using the same collapse as the 82-entry population: same-session
-and same-symbol cross-broker fills within 10 seconds, or same-broker fills with the same non-empty
-`fanout_slot_id` within 30 seconds. That collapses 20 cross-broker pairs and four duplicate Webull
-fills. The logical identity is derived from the sorted source fill IDs; it retains every leg rather
-than synthesizing a fill, and grades the per-leg rule results with actual-quantity weighting.
+Each source leg keeps its immutable database `fills.id`, nullable `broker_fill_id`, venue, price,
+quantity, and timestamp. A missing `broker_fill_id` cannot be used as identity and is reported
+`UNANSWERABLE`; it is never synthesized. Legs
+become one logical paper position only when session, symbol, and non-empty `fanout_slot_id` match.
+That identity handles both cross-broker pairs and same-broker duplicate fills without temporal
+transitivity. The reviewed historical `106 -> 82` replay uses an immutable audited mapping only for
+legacy fills that predate the slot stamp; the live runtime has no time-only fallback. An A-B-C timing
+chain can therefore never merge separate entries. The reference contains 20 cross-broker pairs and
+four duplicate Webull fills. The logical identity is derived from the slot plus sorted source fill
+IDs; it retains every leg rather than synthesizing a fill, and grades the per-leg rule results with
+actual-quantity weighting.
 
-A read-only fill-table reconciler detects a dropped stream event and may restore the same fill later,
-marked `LATE_MIRROR`, but may not invent one. Missing coupling fails closed: a live fill with no
+A read-only fill-table census is authoritative for the live denominator and runs independently of
+Redis, whose consumer begins at `$` and can silently lose an event. It detects a dropped stream
+event and may restore the same database fill later, marked `LATE_MIRROR`, but may not invent one.
+Missing coupling fails closed: a live fill with no
 mirror creates `MISSED_LIVE_ENTRY` and no paper position. The opposite direction is also closed: a
 mirror row must reference actual live broker fills, so an unmatched paper entry is
 `PHANTOM_PAPER_ENTRY`, excluded and paged. Report matched/live and missed/live legs separately for
@@ -66,14 +80,28 @@ are labelled `INDEPENDENT`; they never contribute to the mirror comparison.
 
 ## 4. Structural No-Order Boundary
 
-Replace `Polygon30sEntryEngine` with a paper engine whose return type is `PaperDecision`, not
-`TradeIntentEvent`, and give it only read-only market/fill repositories plus the dedicated paper
-writer. It has no broker-adapter import, broker credential object, strategy-intent publisher, or
-dynamic provider dispatch. At the enclosing service boundary, an allowlist accepts paper writes
-only to the two paper tables and rejects any `polygon_30s` attempt to publish to
-`mai_tai:strategy-intents`. The OMS allowlist independently rejects the paper identity. CI uses AST
+Replace the whole `polygon_30s` `StrategyBotRuntime`, not merely `Polygon30sEntryEngine`, with a
+dedicated paper runtime whose methods return only `PaperDecision` or paper state. It does not own
+the generic runtime's `ExitEngine`, `PositionTracker`, or any method whose return type is
+`TradeIntentEvent`. Give it only read-only market/fill repositories plus the dedicated paper writer.
+It has no broker-adapter import, broker credential object, strategy-intent publisher, or dynamic
+provider dispatch. At the enclosing service boundary, an allowlist accepts paper writes only to
+the two paper tables and rejects any `polygon_30s` attempt to publish to
+`mai_tai:strategy-intents`. The OMS independently rejects every intent whose
+`strategy_code=polygon_30s`, regardless of account name, provider, or execution mode, before order
+creation or adapter dispatch. CI uses AST
 and dispatch tests to prove the paper package cannot import adapters or construct/publish a trade
 intent. A configuration flag or `paper:` account name is not counted as protection.
+
+The locked v1 exit rule is first trigger in timestamp order: `+target_pct`, `-stop_pct`, ATR SELL,
+then 16:00 ET as the backstop. Initial values are `target_pct=5` and `stop_pct=8`; these are not code
+constants. `paper_exit_rule_configs` is append-only and stores both values, `effective_at`, author,
+and creation time. The operator updates it from the existing Polygon screen; the control plane
+commits the new version and publishes a runtime-control event, so no code change, PR, restart, or
+redeploy is required. The runtime also polls the durable latest-effective version so a dropped
+control event self-heals. Every paper entry pins the exact config row effective at its fill time;
+an already-open measurement window never changes when a later version becomes effective. The
+screen and every decision show the config ID, values, and effective timestamp.
 
 ## 5. Forbidden Shared State
 
@@ -94,6 +122,10 @@ entry and one exit marker per paper identity, plus a daily reconciliation marker
 paper fill, the page renders `WAITING FOR FIRST LIVE RESTING FILL`, service/feed/scanner health,
 Webull and Schwab live-fill denominators at zero, Mirror as `UNEXERCISED`, Independent's current
 watch/arm state, and the last reconciliation time. It never renders an unexplained empty panel.
+Mirror acceptance is a dedicated durable tri-state derived only from the fill-table census:
+`UNEXERCISED` when live=0 and mirror=0, `FAIL` when live>0 and any live fill is unmatched or when any
+phantom exists, and `PASS` only when live>0, every eligible fill is classified, and no phantom
+exists. Service/feed health is displayed separately and cannot promote the acceptance verdict.
 
 ## 7. Limits And Falsifiers
 
