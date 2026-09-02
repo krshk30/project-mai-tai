@@ -26,10 +26,12 @@ from project_mai_tai.paper_exit import (
     PaperRuleConfig,
     PaperSourceFill,
     logical_mirror_id,
-    resting_fill_classification,
+    mirrored_fill_classification,
 )
 
 LIVE_VENUES = frozenset({"schwab", "webull"})
+LIVE_ACCOUNT_NAMES = frozenset({"live:schwab_1m_v2", "live:orb"})
+LIVE_ACCOUNT_ENVIRONMENTS = frozenset({"live", "production"})
 PAPER_EXIT_EVIDENCE_CUTOVER_SHA = "028817d8be8639c8e48aad648ef822a0abd18de5"
 PAPER_EXIT_INITIAL_CONFIG_AUTHOR = "migration-initial-v1"
 
@@ -284,7 +286,8 @@ class PaperExitStore:
             .where(
                 Strategy.code == "schwab_1m_v2",
                 BrokerAccount.provider.in_(LIVE_VENUES),
-                BrokerAccount.environment == "live",
+                BrokerAccount.name.in_(LIVE_ACCOUNT_NAMES),
+                BrokerAccount.environment.in_(LIVE_ACCOUNT_ENVIRONMENTS),
                 Fill.side == "buy",
                 BrokerOrder.side == "buy",
                 Fill.filled_at >= start,
@@ -306,11 +309,8 @@ class PaperExitStore:
                 **dict(order_payload.get("metadata") or order_payload),
                 **dict(payload.get("metadata") or {}),
             }
-            eligible, source = resting_fill_classification(metadata)
+            eligible, source = mirrored_fill_classification(metadata)
             if not eligible:
-                slot = str(metadata.get("cw_entry_slot", "")).strip().lower()
-                if slot == "reclaim":
-                    continue
                 venue = "schwab" if account.provider == "schwab" else "webull"
                 refused.append(
                     PaperDecision(
@@ -360,6 +360,7 @@ class PaperExitStore:
                 continue
             broker_fill_id = str(fill.broker_fill_id or "").strip()
             slot_id = str(metadata.get("fanout_slot_id", "") or "").strip()
+            entry_slot = str(metadata.get("cw_entry_slot", "")).strip().lower()
             venue = "schwab" if account.provider == "schwab" else "webull"
             if not broker_fill_id or not slot_id:
                 detail = "missing broker_fill_id" if not broker_fill_id else "missing fanout_slot_id"
@@ -393,6 +394,7 @@ class PaperExitStore:
                     price=fill.price,
                     filled_at=filled_at,
                     fanout_slot_id=slot_id,
+                    entry_slot=entry_slot,  # type: ignore[arg-type]
                     source=source,
                 )
             )
@@ -433,14 +435,19 @@ class PaperExitStore:
                 )
             )
 
-        mirror_groups: dict[tuple[object, str, str], list[PaperSourceFill]] = defaultdict(list)
+        mirror_groups: dict[tuple[object, str, str, str], list[PaperSourceFill]] = defaultdict(list)
         for source in source_fills:
-            key = (source.session_date, source.symbol.upper(), source.fanout_slot_id)
+            key = (
+                source.session_date,
+                source.symbol.upper(),
+                source.fanout_slot_id,
+                source.entry_slot,
+            )
             mirror_groups[key].append(source)
-        independent_groups: dict[tuple[object, str, str], list[PaperExitEvent]] = defaultdict(list)
+        independent_groups: dict[tuple[object, str, str, str], list[PaperExitEvent]] = defaultdict(list)
         for event in independent_entries:
             attempt_id = str((event.payload or {}).get("independent_attempt_id", "")).strip()
-            key = (event.session_date, event.symbol.upper(), attempt_id)
+            key = (event.session_date, event.symbol.upper(), attempt_id, "first")
             independent_groups[key].append(event)
 
         rows: list[dict[str, object]] = []
@@ -477,6 +484,7 @@ class PaperExitStore:
                     "session_date": str(key[0]),
                     "symbol": key[1],
                     "fanout_slot_id": key[2] or "missing",
+                    "entry_slot": key[3],
                     "mirror_fill_price": str(mirror_price) if mirror_price is not None else "",
                     "mirror_first_fill_at": (
                         min(leg.filled_at for leg in mirror_legs).isoformat()
@@ -528,7 +536,8 @@ class PaperExitStore:
                     .where(
                         Strategy.code == "schwab_1m_v2",
                         BrokerAccount.provider.in_(LIVE_VENUES),
-                        BrokerAccount.environment == "live",
+                        BrokerAccount.name.in_(LIVE_ACCOUNT_NAMES),
+                        BrokerAccount.environment.in_(LIVE_ACCOUNT_ENVIRONMENTS),
                         Fill.symbol.in_(symbols),
                         Fill.filled_at <= end,
                     )

@@ -31,6 +31,7 @@ from project_mai_tai.paper_exit import (
     PaperSourceFill,
     completed_session_acceptance,
     logical_mirror_id,
+    mirrored_fill_classification,
     mirror_acceptance,
     resting_fill_classification,
     terminal_evidence_covers,
@@ -61,6 +62,7 @@ def fill(
     broker_fill_id: str,
     venue: str,
     slot: str = "slot-1",
+    entry_slot: str = "first",
     at: datetime = AT + timedelta(minutes=1),
     quantity: str = "2",
     price: str = "10",
@@ -75,6 +77,7 @@ def fill(
         price=Decimal(price),
         filled_at=at,
         fanout_slot_id=slot,
+        entry_slot=entry_slot,  # type: ignore[arg-type]
         source="rth_resting_mirror" if venue == "webull" else "cw-v2-resting",
     )
 
@@ -86,6 +89,11 @@ def fill(
         {"cw_entry_slot": "first", "fanout_source": "rth_resting"},
         {"cw_entry_slot": "first", "fanout_source": "rth_resting_mirror"},
         {"cw_entry_slot": "first", "fanout_source": "eh_resting"},
+        {
+            "cw_entry_slot": "first",
+            "fanout_source": "eh_resting",
+            "atr_variant": "CW-v2-fanout",
+        },
     ],
 )
 def test_exact_resting_sources_are_accepted(metadata: dict[str, str]) -> None:
@@ -112,6 +120,30 @@ def test_reclaim_missing_and_contradictory_stamps_fail_closed(metadata: dict[str
     assert resting_fill_classification(metadata)[0] is False
 
 
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"cw_entry_slot": "reclaim", "fanout_source": "reactive"},
+        {"cw_entry_slot": "reclaim", "atr_variant": "CW-v2"},
+        {"cw_entry_slot": "reclaim", "fanout_source": "rth_resting"},
+        {
+            "cw_entry_slot": "reclaim",
+            "atr_variant": "CW-v2-resting",
+            "resting_entry": "true",
+        },
+    ],
+)
+def test_mirror_accepts_each_live_reclaim_shape(metadata: dict[str, str]) -> None:
+    assert mirrored_fill_classification(metadata)[0] is True
+
+
+def test_mirror_rejects_unstamped_or_conflicting_reclaim() -> None:
+    assert mirrored_fill_classification({"cw_entry_slot": "reclaim"})[0] is False
+    assert mirrored_fill_classification(
+        {"cw_entry_slot": "reclaim", "fanout_source": "unknown"}
+    )[0] is False
+
+
 def test_both_venues_collapse_only_on_the_stamped_slot() -> None:
     schwab = fill(
         fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -122,6 +154,48 @@ def test_both_venues_collapse_only_on_the_stamped_slot() -> None:
         fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         broker_fill_id="webull-fill",
         venue="webull",
+        at=AT + timedelta(minutes=1, seconds=3),
+    )
+    assert logical_mirror_id(schwab) == logical_mirror_id(webull)
+    runtime = PaperExitRuntime(config())
+    assert runtime.add_mirror_fill(schwab)[0].event_type == "MIRROR_ENTRY"
+    assert runtime.add_mirror_fill(webull)[0].event_type == "MIRROR_LEG_COLLAPSED"
+    assert runtime.summary()["paper_exit"]["mirror_open"] == 1  # type: ignore[index]
+
+
+def test_first_and_reclaim_are_distinct_even_when_live_reuses_the_slot_id() -> None:
+    first = fill(
+        fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        broker_fill_id="first-fill",
+        venue="schwab",
+        entry_slot="first",
+    )
+    reclaim = fill(
+        fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        broker_fill_id="reclaim-fill",
+        venue="schwab",
+        entry_slot="reclaim",
+        at=AT + timedelta(minutes=2),
+    )
+    assert logical_mirror_id(first) != logical_mirror_id(reclaim)
+    runtime = PaperExitRuntime(config())
+    assert runtime.add_mirror_fill(first)[0].event_type == "MIRROR_ENTRY"
+    assert runtime.add_mirror_fill(reclaim)[0].event_type == "MIRROR_ENTRY"
+    assert runtime.summary()["paper_exit"]["mirror_open"] == 2  # type: ignore[index]
+
+
+def test_reclaim_legs_from_both_venues_collapse_to_one_position() -> None:
+    schwab = fill(
+        fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        broker_fill_id="schwab-reclaim",
+        venue="schwab",
+        entry_slot="reclaim",
+    )
+    webull = fill(
+        fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        broker_fill_id="webull-reclaim",
+        venue="webull",
+        entry_slot="reclaim",
         at=AT + timedelta(minutes=1, seconds=3),
     )
     assert logical_mirror_id(schwab) == logical_mirror_id(webull)
@@ -833,8 +907,10 @@ def test_authoritative_fill_census_reads_both_live_venues_and_collapses_the_slot
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as session:
         strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
-        schwab = BrokerAccount(name="live:schwab_1m_v2", provider="schwab", environment="live")
-        webull = BrokerAccount(name="live:v2_webull", provider="webull", environment="live")
+        schwab = BrokerAccount(
+            name="live:schwab_1m_v2", provider="schwab", environment="production"
+        )
+        webull = BrokerAccount(name="live:orb", provider="webull", environment="production")
         session.add_all([strategy, schwab, webull])
         session.flush()
         for index, (account, source) in enumerate(
@@ -985,6 +1061,97 @@ def test_authoritative_fill_census_reads_both_live_venues_and_collapses_the_slot
     assert wrong_quantity["reason"] == "paper exit quantity mismatch (3.00000000/4.00000000)"
 
 
+def test_authoritative_fill_census_keeps_reclaim_distinct_and_collapses_its_venues() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
+        schwab = BrokerAccount(
+            name="live:schwab_1m_v2", provider="schwab", environment="production"
+        )
+        webull = BrokerAccount(name="live:orb", provider="webull", environment="production")
+        session.add_all([strategy, schwab, webull])
+        session.flush()
+        legs = (
+            (schwab, "first", "CW-v2-resting"),
+            (webull, "first", "rth_resting_mirror"),
+            (schwab, "reclaim", "reactive"),
+            (webull, "reclaim", "reactive"),
+        )
+        for index, (account, entry_slot, source) in enumerate(legs, start=1):
+            metadata = {
+                "cw_entry_slot": entry_slot,
+                "fanout_slot_id": "live-reused-slot",
+                "fanout_source": source,
+                "resting_entry": "true",
+            }
+            intent = TradeIntent(
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                symbol="TEST",
+                side="buy",
+                intent_type="open",
+                quantity=Decimal("1"),
+                reason=entry_slot,
+                status="filled",
+                payload={"metadata": metadata},
+            )
+            session.add(intent)
+            session.flush()
+            order = BrokerOrder(
+                intent_id=intent.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id=f"composition-order-{index}",
+                broker_order_id=f"composition-broker-order-{index}",
+                symbol="TEST",
+                side="buy",
+                order_type="stop_limit",
+                time_in_force="day",
+                quantity=Decimal("1"),
+                status="filled",
+                payload={"metadata": metadata},
+            )
+            session.add(order)
+            session.flush()
+            session.add(
+                Fill(
+                    order_id=order.id,
+                    strategy_id=strategy.id,
+                    broker_account_id=account.id,
+                    broker_fill_id=f"composition-fill-{index}",
+                    symbol="TEST",
+                    side="buy",
+                    quantity=Decimal("1"),
+                    price=Decimal("10"),
+                    filled_at=AT + timedelta(minutes=index),
+                    payload={"metadata": metadata},
+                )
+            )
+        session.commit()
+
+    fills, refused = PaperExitStore(factory).live_resting_fills(
+        start=AT,
+        end=AT + timedelta(hours=1),
+    )
+
+    assert refused == []
+    assert len(fills) == 4
+    assert {item.entry_slot for item in fills} == {"first", "reclaim"}
+    grouped: dict[str, list[PaperSourceFill]] = {}
+    for source_fill in fills:
+        grouped.setdefault(logical_mirror_id(source_fill), []).append(source_fill)
+    assert len(grouped) == 2
+    assert {tuple(sorted(item.venue for item in group)) for group in grouped.values()} == {
+        ("schwab", "webull")
+    }
+
+
 def test_malformed_first_slot_fill_is_counted_as_unanswerable_not_dropped() -> None:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -995,7 +1162,7 @@ def test_malformed_first_slot_fill_is_counted_as_unanswerable_not_dropped() -> N
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as session:
         strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
-        account = BrokerAccount(name="live:v2_webull", provider="webull", environment="live")
+        account = BrokerAccount(name="live:orb", provider="webull", environment="production")
         session.add_all([strategy, account])
         session.flush()
         order = BrokerOrder(

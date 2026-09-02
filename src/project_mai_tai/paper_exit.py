@@ -21,6 +21,8 @@ INDEPENDENT_ARM = "independent"
 ACCEPTED_RESTING_SOURCES = frozenset(
     {"cw-v2-resting", "rth_resting", "rth_resting_mirror", "eh_resting"}
 )
+ACCEPTED_RECLAIM_SOURCES = ACCEPTED_RESTING_SOURCES | frozenset({"cw-v2", "reactive"})
+NEUTRAL_FANOUT_VARIANTS = frozenset({"cw-v2-fanout"})
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,7 @@ class PaperSourceFill:
     price: Decimal
     filled_at: datetime
     fanout_slot_id: str
+    entry_slot: Literal["first", "reclaim"]
     source: str
 
     def __post_init__(self) -> None:
@@ -55,6 +58,8 @@ class PaperSourceFill:
             raise ValueError("mirror fill requires a broker_fill_id")
         if not self.fanout_slot_id.strip():
             raise ValueError("mirror fill requires a fanout_slot_id")
+        if self.entry_slot not in {"first", "reclaim"}:
+            raise ValueError("mirror fill requires a first or reclaim entry_slot")
         if self.quantity <= 0 or self.price <= 0:
             raise ValueError("mirror fill quantity and price must be positive")
         if self.filled_at.tzinfo is None:
@@ -117,10 +122,11 @@ def _source_from_metadata(metadata: Mapping[str, object]) -> str:
         for key in ("fanout_source", "atr_variant")
         if str(metadata.get(key, "")).strip()
     }
-    accepted = sources & ACCEPTED_RESTING_SOURCES
-    rejected = sources - ACCEPTED_RESTING_SOURCES
+    classified = sources - NEUTRAL_FANOUT_VARIANTS
+    accepted = classified & ACCEPTED_RESTING_SOURCES
+    rejected = classified - ACCEPTED_RESTING_SOURCES
     if accepted and rejected:
-        return "conflicting:" + ",".join(sorted(sources))
+        return "conflicting:" + ",".join(sorted(classified))
     if accepted:
         return sorted(accepted)[0]
     if rejected:
@@ -141,8 +147,34 @@ def resting_fill_classification(metadata: Mapping[str, object]) -> tuple[bool, s
     return True, source
 
 
+def mirrored_fill_classification(metadata: Mapping[str, object]) -> tuple[bool, str]:
+    """Accept both live composition slots while preserving first-entry strictness."""
+    slot = str(metadata.get("cw_entry_slot", "")).strip().lower()
+    if slot == "first":
+        return resting_fill_classification(metadata)
+    if slot != "reclaim":
+        return False, f"cw_entry_slot={slot or 'missing'}"
+
+    sources = {
+        str(metadata.get(key, "")).strip().lower()
+        for key in ("fanout_source", "atr_variant")
+        if str(metadata.get(key, "")).strip()
+    } - NEUTRAL_FANOUT_VARIANTS
+    if not sources:
+        return False, "reclaim_source=missing"
+    rejected = sources - ACCEPTED_RECLAIM_SOURCES
+    if rejected:
+        return False, "reclaim_source=" + ",".join(sorted(sources))
+    if "cw-v2-resting" in sources and str(metadata.get("resting_entry", "")).lower() != "true":
+        return False, "primary resting_entry stamp missing"
+    return True, sorted(sources)[0]
+
+
 def logical_mirror_id(fill: PaperSourceFill) -> str:
-    raw = f"mirror:{fill.session_date.isoformat()}:{fill.symbol.upper()}:{fill.fanout_slot_id}"
+    raw = (
+        f"mirror:{fill.session_date.isoformat()}:{fill.symbol.upper()}:"
+        f"{fill.fanout_slot_id}:{fill.entry_slot}"
+    )
     return sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -247,6 +279,7 @@ class PaperExitRuntime:
                     detail={
                         "source": fill.source,
                         "fanout_slot_id": fill.fanout_slot_id,
+                        "entry_slot": fill.entry_slot,
                         "reason": "durable entry evidence retry",
                     },
                 )
@@ -291,6 +324,7 @@ class PaperExitRuntime:
                     detail={
                         "source": fill.source,
                         "fanout_slot_id": fill.fanout_slot_id,
+                        "entry_slot": fill.entry_slot,
                         "collapsed_into_fill_id": str(existing.source_fill_id),
                         "logical_quantity": str(existing.quantity),
                         "weighted_entry_price": str(existing.entry_price),
@@ -329,7 +363,11 @@ class PaperExitRuntime:
                 venue=fill.venue,
                 source_fill_id=fill.fill_id,
                 broker_fill_id=fill.broker_fill_id,
-                detail={"source": fill.source, "fanout_slot_id": fill.fanout_slot_id},
+                detail={
+                    "source": fill.source,
+                    "fanout_slot_id": fill.fanout_slot_id,
+                    "entry_slot": fill.entry_slot,
+                },
             )
         ]
 
