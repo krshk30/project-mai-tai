@@ -47,12 +47,45 @@ OUTFILE="$OUT/latest.txt"
 SEEN="$OUT/alerted-$TODAY.txt"      # per-ET-session alert state; old files are harmless
 touch "$SEEN"
 
-if [ -x "$REPO/.venv/bin/python" ] && [ -f "$REPO/scripts/seed_exposure_detector.py" ]; then
-  ( cd "$REPO" && ./.venv/bin/python scripts/seed_exposure_detector.py --assert-constants ) \
+# ⛔⭐⭐ THE DETECTOR NEEDS THE SERVICE ENV — WITHOUT IT THIS WATCH IS BLIND.
+# The detector reads Postgres (MAI_TAI_DATABASE_URL) and Redis, and both live in the service env
+# file. This wrapper never sourced it, so every single run refused with
+#   ⛔ CANNOT SEE — REFUSING: no DSN: pass --dsn or set MAI_TAI_DATABASE_URL
+# on EVERY trading session from 2026-08-20 through 2026-09-02 — 10 days with the 04:00-11:00 ET
+# window unwatched, and a standing RED that also dragged the 09:12 readiness verdict to AMBER daily.
+# The exit-code discipline worked exactly as designed (it refused rather than decaying into a PASS);
+# what was missing was the env. `bar_gap_watch_cron.sh` has always sourced it the same way, under
+# the same `set -u`, every 5 minutes — this is the established pattern, not a new one.
+# ⛔ Runs as ROOT from ROOT's crontab; the env file is root-readable only.
+ENV_FILE=/etc/project-mai-tai/project-mai-tai.env
+
+# ⛔⭐ A WRAPPER-SIDE REFUSAL MUST SPEAK THE DETECTOR'S OWN DIALECT.
+# The summary/dedup key below is `grep -E '^\s+(VERDICT|⛔ CANNOT SEE)'` — two leading spaces then
+# one of those tokens. A refusal written in any other shape greps to the EMPTY STRING, which makes
+# the alert body blank AND collapses the per-session dedup key, so every wrapper-side failure would
+# either alert with no reason or dedup against an unrelated one. Emit refusals through this helper
+# so they match the detector's format exactly. (The pre-existing "detector NOT FOUND" branch had
+# this same latent defect; it is routed through here too.)
+refuse() {
+  printf '  ⛔ CANNOT SEE — REFUSING: %s\n' "$1" > "$OUTFILE"
+}
+
+if [ ! -r "$ENV_FILE" ]; then
+  # ⛔ An unreadable env is CANNOT SEE, never quiet — the same rule as a missing tool. This is the
+  # branch that would have caught the defect above on day one instead of on day ten.
+  refuse "service env NOT READABLE at $ENV_FILE (must run as root from root's crontab)"
+  CODE=2
+elif [ -x "$REPO/.venv/bin/python" ] && [ -f "$REPO/scripts/seed_exposure_detector.py" ]; then
+  # Sourced INSIDE the subshell so the wrapper's own `set -u` string handling below is untouched.
+  ( set -a
+    # shellcheck disable=SC1091
+    . "$ENV_FILE"
+    set +a
+    cd "$REPO" && ./.venv/bin/python scripts/seed_exposure_detector.py --assert-constants ) \
     > "$OUTFILE" 2>&1
   CODE=$?
 else
-  echo "seed-exposure detector NOT FOUND at $REPO/scripts/seed_exposure_detector.py" > "$OUTFILE"
+  refuse "detector NOT FOUND at $REPO/scripts/seed_exposure_detector.py"
   CODE=2   # ⛔ a missing tool is CANNOT SEE, never quiet
 fi
 
