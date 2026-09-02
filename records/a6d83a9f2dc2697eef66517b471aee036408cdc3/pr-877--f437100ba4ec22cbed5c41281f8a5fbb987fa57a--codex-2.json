@@ -1,0 +1,9 @@
+{
+  "pr_number": 877,
+  "range_base": "f437100ba4ec22cbed5c41281f8a5fbb987fa57a",
+  "range_head": "a6d83a9f2dc2697eef66517b471aee036408cdc3",
+  "reviewed_at": "2026-09-02T23:59:25Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed exact three-file handoff diff; verified current-main ancestry, 34/34 balanced manifest byte equality against frozen journals, clean diff, and handoff SHA/service PID/restart claims against the VPS; Validate passed."
+}
