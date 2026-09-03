@@ -22,7 +22,11 @@
 - **C28 — symbols joining after 04:00 arm off yesterday's anchor** — **CLOSED, EXERCISED FOR THE
   LATE-JOINER POPULATION ONLY.** Merged `f1cc597` (#867). Its real observable is
   **`[V2-CW-SEED-CAP]`** (not the guessed `V2-POST-ROLL-JOINER`, which does not exist). It fired
-  **63 times across 12 sessions**, including 2 on 09-01 and 2 on 09-02 — after the merge.
+  **63 times across 12 sessions, measured through 2026-09-02** — including 2 on 09-01 and 2 on
+  09-02, after the merge. ⛔ **The census is bounded on purpose.** This is an append-only log, so an
+  unbounded cumulative count goes stale the moment the marker fires again — as it did on 09-03
+  (GELS), taking the live total to 64/13. A historical entry states what was true through its
+  measurement date; it does not chase a live counter.
   ⛔ **The population matters and the first draft of this closure omitted it** (`codex-2` caught the
   resulting apparent contradiction with C42). **All 63 caps are late joiners** (`watch_start >
   boot`); **zero** are boot-present. C42's blind spot is the boot-present population and remains
