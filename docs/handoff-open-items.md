@@ -267,40 +267,38 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
-- **DUP2 — duplicate ORBONLY entry fills** *(owner: codex-2; ⛔ **CLAIM WITHDRAWN AND RESTATED
-  2026-09-03 — my first assessment reported pre-fix history as a current defect**)*.
-  ⛔⭐ **THE ERROR: I ran a census across a fix boundary.** `#848` (`ddf0f8b`, *consume Webull slot
-  on confirmed fill*, merged 2026-08-29 18:41 ET, deployed 08-30) already added the venue-local
-  machinery — `_fanout_webull_slot_available` / `_taken` / `_consume` and the
-  `[V2-FANOUT-SLOT-CONSUMED]` marker. I proposed building what already exists, and quoted a
-  07-29 → 09-01 range as evidence of a live defect. **That is the "no reading spans a fix date"
-  rule, which I wrote into the handoff myself the day before.**
-  **Split at #848, the picture inverts:**
-  | era | dupe segments | extra entries | sessions | segments total |
-  |---|---|---|---|---|
-  | PRE-#848 (→ 08-29) | 29 | 32 | 23 | 172 |
-  | **POST-#848 (08-30 →)** | **3** | **3** | **3** | **24** |
-  ⇒ **Shape (b), minutes-apart same-slot re-entry, is FIXED.** No post-#848 instance has that
-  shape. My MIMI 08-27 example is pre-fix and is not evidence about current code.
-  **Two further corrections, both codex-2's and both right:** "sub-second" was wrong — the gaps are
-  **2s and 4s**; and **`fanout_attempt_id` cannot deduplicate distinct attempts**, since each
-  attempt is issued its own id by construction, so my proposed next action was incoherent.
-  **What actually remains post-#848 — 3 instances, and they are NOT one thing:**
-  · **1 × same-slot, 2 seconds apart** — NCRA 08-31 `14:46:47`/`14:46:49`, slot `d93b6e2d`. This is
-    the **known #858 mirror/software-cross race**, already identified and owned. Not new.
-  · **2 × DIFFERENT slot, SAME segment, both `reclaim`** — NCRA 08-31 `10:01:16` (`d3fc12d9`) +
-    `11:24:33` (`76260b11`), seg `1788181200000`, 83 min apart; and SSM 09-01 `14:58:19`
-    (`04e6ae5d`) + `15:12:24` (`f118b109`), seg `1788287460000`, 14 min apart.
-    ⚠ **OPEN QUESTION, deliberately NOT asserted as a defect.** The venue-local flag is per
-    **slot**; these are distinct slots, so it is not expected to catch them. Whether **two Webull
-    `reclaim` legs inside one Schwab cross** breaches "exactly one reclaim per cross", or is the
-    intended paired-broker behaviour, is a **design question for the fan-out owner** — I do not
-    know, and after over-claiming once here I am not going to guess.
-  **Next action (codex-2):** answer only that question — is two Webull reclaim legs in one segment
-  intended? If yes, DUP2 closes as fixed by #848 plus the known #858 race. If no, it is a new row
-  with its own denominator. **Do not build anything until that is answered.**
-  Denominator: post-#848 `live:orb` BUY fills per segment — 24 segments, 3 sessions.
-  Falsifier: a post-#848 same-slot duplicate that is not the #858 race.
+- **DUP2 — two Webull `reclaim` legs inside one canonical cross** *(owner: codex-2; **CONFIRMED
+  BREACH — operator ruled 2026-09-03 that this is NOT INTENDED**; mechanism UNCONFIRMED)*.
+  ⛔ **Operator ruling:** the intended pair is **one Schwab reclaim + one Webull reclaim**. Two
+  Webull reclaim legs in one canonical cross is a breach.
+  ⛔⭐ **Two corrections to my own earlier assessment, both codex-2's and both right:**
+  · **The venue-local flag is SEGMENT-scoped, not per-slot** — I had it backwards.
+    `_fanout_webull_slot_taken` reads `state.fanout_webull_reclaim_taken`, a **boolean on
+    `SymbolState` keyed on the slot NAME**, reset only at segment transitions
+    (`_reset_fanout_webull_slots`). ⇒ It **should** have blocked the second reclaim **regardless of
+    differing `fanout_slot_id`**. My "the flag is per-slot, so it is not expected to catch these"
+    was wrong, and it wrongly exonerated #848's control.
+  · **Different deterministic slot IDs cannot represent the same canonical segment without a
+    PROVENANCE MISMATCH.** The two ids are derived, so two of them inside one `cw_arm_bar_ts` means
+    the derivation inputs diverged — the code believed it was in a different segment. That, not a
+    per-slot gap, is the thing to chase.
+  **The population, post-#848 only** (`ddf0f8b`, deployed 08-30 — pre-fix data is not evidence
+  about current code): **2 instances, 2 sessions, 24 segments.**
+  · NCRA 08-31 `10:01:16` (slot `d3fc12d9`) + `11:24:33` (`76260b11`), seg `1788181200000`, 83 min
+  · SSM 09-01 `14:58:19` (`04e6ae5d`) + `15:12:24` (`f118b109`), seg `1788287460000`, 14 min
+  A third post-#848 pair — NCRA `14:46:47`/`14:46:49`, **same** slot `d93b6e2d`, 2s apart — is the
+  **known #858 mirror/software-cross race**, already owned, and is excluded from this row.
+  ⚠ **MECHANISM UNCONFIRMED — I could not trace it.** No `[V2-CW-ARM]`, `[V2-CW-DISARM]`,
+  `[V2-FANOUT-SLOT-BOUND]`, `[V2-FANOUT-SLOT-CONSUMED]` or `[V2-FANOUT-OUTCOME]` line exists for
+  NCRA in the 83-minute window between its two fills, so the log cannot say whether a reset fired
+  or the slot identity diverged. The provenance-mismatch hypothesis is codex-2's structural
+  argument, not something I observed.
+  **Next action (codex-2):** find where a second `fanout_slot_id` is derived inside one canonical
+  segment — that is the provenance mismatch, and it is upstream of the consumed flag.
+  ⛔ Do **not** add a per-slot guard: the segment-scoped flag is the correct control and it is
+  already there; the defect is that the segment identity feeding it diverged.
+  Denominator: post-#848 `live:orb` reclaim fills per canonical cross — 24 segments, 3 sessions.
+  Falsifier: two `live:orb` reclaim fills in one canonical cross after the fix.
 - **DUP3 — 12 exit-side duplicate legs, design-or-defect, UNPROVEN** *(owner: codex-2; sits with
   DUP2)*. Not yet assessed. **Next action:** classify each of the 12 as intended fan-out behaviour
   or duplicate exit, then state which. Denominator: exit legs per closed position.
