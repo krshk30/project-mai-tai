@@ -970,6 +970,7 @@ class SchwabV2BotService:
         reportable = await asyncio.to_thread(self._fetch_reportable_state)
         data_health = dict(self._data_health)
         data_health["confirmation_exit"] = {
+            "enabled": self._confirmation_exit_enabled(),
             "status": "MEASURED" if self._confirmation_evaluated else "UNEXERCISED",
             "evaluated": self._confirmation_evaluated,
             "fired": self._confirmation_fired,
@@ -1301,6 +1302,20 @@ class SchwabV2BotService:
     async def _publish_confirmation_evaluation(
         self, evaluation: ConfirmationEvaluation
     ) -> None:
+        if not self._confirmation_exit_enabled():
+            logger.info(
+                "[V2-CONFIRMATION-EXIT-DARK] sym=%s fill_id=%s should_exit=%s "
+                "action=recorded_not_published",
+                evaluation.entry.symbol,
+                evaluation.entry.fill_id,
+                evaluation.should_exit,
+            )
+            # `published_at` terminalizes the durable outbox row. Without this, enabling CONF1
+            # later in the session would publish stale dark-period evaluations as live exits.
+            await asyncio.to_thread(
+                self._mark_confirmation_published, evaluation.entry.fill_id
+            )
+            return
         if self.intent_emitter is None:
             logger.error(
                 "[V2-CONFIRMATION-EXIT-UNANSWERABLE] sym=%s fill_id=%s reason=no_emitter",
@@ -1354,7 +1369,11 @@ class SchwabV2BotService:
             self._confirmation_evaluated += 1
             if evaluation.should_exit:
                 self._confirmation_fired += 1
-                outcome = "FIRED"
+                outcome = (
+                    "FIRED-UNKNOWN"
+                    if evaluation.atr_state == "unknown"
+                    else "FIRED"
+                )
             else:
                 self._confirmation_long += 1
                 outcome = "STATE_LONG"
@@ -1374,6 +1393,15 @@ class SchwabV2BotService:
             )
             if should_publish:
                 await self._publish_confirmation_evaluation(evaluation)
+
+    def _confirmation_exit_enabled(self) -> bool:
+        return bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_confirmation_exit_enabled",
+                False,
+            )
+        )
 
     async def _position_poll_pass(self) -> None:
         maps = await asyncio.to_thread(self._fetch_position_maps)

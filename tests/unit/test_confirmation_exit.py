@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.confirmation_exit import (
     ConfirmationEntry,
+    ConfirmationEvaluation,
     ConfirmationExitTracker,
     confirmation_bar_start_ms,
     is_first_slot_resting,
@@ -30,6 +32,81 @@ from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.paper_exit import PaperExitRuntime, PaperRuleConfig, PaperSourceFill
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
+
+
+def _evaluation(*, atr_state: str = "short") -> ConfirmationEvaluation:
+    target = int(datetime(2026, 9, 2, 14, 0, tzinfo=UTC).timestamp() * 1000)
+    return ConfirmationEvaluation(
+        entry=ConfirmationEntry(
+            order_id=uuid4(),
+            fill_id=uuid4(),
+            broker_fill_id="fill-1",
+            broker_order_id="order-1",
+            broker_account_name="live:schwab_1m_v2",
+            symbol="LHAI",
+            filled_at=datetime(2026, 9, 2, 13, 59, 30, tzinfo=UTC),
+            evaluation_bar_start_ms=target,
+            confirmation_bars=1,
+            config_id=uuid4(),
+            config_effective_at=datetime(1970, 1, 1, tzinfo=UTC),
+        ),
+        bar_start_ms=target,
+        atr_state=atr_state,
+    )
+
+
+def test_live_confirmation_exit_defaults_dark() -> None:
+    assert Settings().strategy_schwab_1m_v2_confirmation_exit_enabled is False
+
+
+def test_dark_confirmation_records_but_cannot_reach_the_emitter() -> None:
+    evaluation = _evaluation()
+    service = SchwabV2BotService(Settings(), session_factory=None)
+    terminalized = []
+
+    class _NoLiveEmitter:
+        async def emit_confirmation_exit(self, _evaluation) -> None:
+            raise AssertionError("dark CONF1 reached the live emitter")
+
+    service.intent_emitter = _NoLiveEmitter()
+    service._mark_confirmation_published = terminalized.append  # type: ignore[method-assign]
+
+    asyncio.run(service._publish_confirmation_evaluation(evaluation))
+
+    assert terminalized == [evaluation.entry.fill_id]
+
+
+def test_enabled_confirmation_reaches_the_emitter() -> None:
+    evaluation = _evaluation()
+    service = SchwabV2BotService(
+        Settings(strategy_schwab_1m_v2_confirmation_exit_enabled=True),
+        session_factory=None,
+    )
+    emitted = []
+    terminalized = []
+
+    class _CapturingEmitter:
+        async def emit_confirmation_exit(self, item) -> None:
+            emitted.append(item)
+
+    service.intent_emitter = _CapturingEmitter()
+    service._mark_confirmation_published = terminalized.append  # type: ignore[method-assign]
+
+    asyncio.run(service._publish_confirmation_evaluation(evaluation))
+
+    assert emitted == [evaluation]
+    assert terminalized == [evaluation.entry.fill_id]
+
+
+def test_unknown_atr_state_has_a_distinct_fired_marker(caplog) -> None:
+    evaluation = _evaluation(atr_state="unknown")
+    service = SchwabV2BotService(Settings(), session_factory=None)
+    service._record_confirmation_evaluation = lambda _item: (True, False)  # type: ignore[method-assign]
+    caplog.set_level(logging.INFO)
+
+    asyncio.run(service._emit_confirmation_evaluations([evaluation]))
+
+    assert "[V2-CONFIRMATION-EXIT-FIRED-UNKNOWN]" in caplog.text
 
 
 def test_confirmation_bar_is_first_full_bar_after_containing_bar() -> None:
