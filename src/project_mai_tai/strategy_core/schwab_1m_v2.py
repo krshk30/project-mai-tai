@@ -231,6 +231,7 @@ class SymbolState:
     # ⛔ A slot stays consumed after its position EXITS — an exit does not refill it.
     cw_resting_taken: bool = False              # the resting slot for THIS cross is used
     cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
+    cw_resting_suppressed_segment_id: int = 0   # SLOT2 marker dedupe; policy remains cw_resting_taken
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
     cw_rule7_logged_bar_ts: int = 0            # dedupe for [V2-CW-RULE7-BLOCK]: one line per forming
     #                                            bar, never per quote (retry-storm shape otherwise)
@@ -3157,6 +3158,19 @@ class SchwabV2Strategy:
                     ask = float(getattr(state.last_quote, "ask_price", 0.0) or 0.0) if state.last_quote else 0.0
                     if ask > 0.0 and trail <= ask:
                         return
+                if state.cw_resting_taken:
+                    segment_id = int(state.fanout_segment_id or state.cw_arm_bar_ts or 0)
+                    marker_key = segment_id if segment_id > 0 else -1
+                    if state.cw_resting_suppressed_segment_id != marker_key:
+                        state.cw_resting_suppressed_segment_id = marker_key
+                        logger.warning(
+                            "[V2-RESTING-SLOT-CONSUMED] %s segment_id=%d attempted=1 "
+                            "suppressed=1 reason=first_slot_already_consumed status=MEASURED — "
+                            "zero suppressions in a session is UNEXERCISED, never PASS",
+                            state.symbol,
+                            segment_id,
+                        )
+                    return
                 self._queue_resting_place(state, trail)
                 return
             # ⛔⭐ LIQUIDITY RE-CHECK WHILE RESTING (2026-07-30). The arm-time floor above is a STALE

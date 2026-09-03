@@ -512,11 +512,40 @@ def test_PRIMARY_fill_consumes_its_slot_regardless_of_quantity():
 
 
 def test_AN_EXITED_ENTRY_STILL_CONSUMES_ITS_SLOT():
-    """Operator-confirmed: an exit does NOT refill the slot. FUSE 17:03 exited its first entry on
-    its own bracket before entries 2 and 3 fired — that is still a breach."""
+    """The state transition retains the claim; placement enforcement is tested separately below."""
     strat = _strat_reclaim()
     state = strat.watchlist_state("FUSE")
     _arm_to_watch(strat, state)
     _resting_fill(strat, state)
     strat.update_position("FUSE", 0)            # it exits cleanly
     assert state.cw_resting_taken is True, "an exit must not refill the resting slot"
+
+
+def test_LHAI_flat_close_cannot_place_second_first_slot_in_same_segment(caplog):
+    """SLOT2: exercise the live resting manager, not only the retained claim bit.
+
+    LHAI 09-02 filled a first-slot rest, closed flat, then the next eligible bar placed another
+    first-slot order under the same durable segment. The older test above stops after inspecting
+    state, so it remains green even when the placement path never consults that state.
+    """
+    strat = _in_window(
+        _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    )
+    state = strat.watchlist_state("LHAI")
+    state.fanout_segment_id = 1_788_356_940_000
+    state.bars.append(_bar(1.27, vol=25_000, ts=1_788_356_940_000))
+    strat._now_ms = lambda: 1_788_356_970_000
+
+    strat._cw_v2_resting_track(state, _sig(state="short", trail=1.2451, age=4))
+    assert [draft.intent_type for draft in strat._pending_intents] == ["open"]
+    strat._pending_intents.clear()
+
+    _resting_fill(strat, state, qty=2)
+    strat._cw_v2_resting_track(state, _sig(state="short", trail=1.2451, age=4))
+    strat.update_position("LHAI", 0, held_qty=0)
+
+    strat._cw_v2_resting_track(state, _sig(state="short", trail=1.2446, age=5))
+
+    assert not strat._pending_intents, "a consumed first slot must not place another order"
+    assert "[V2-RESTING-SLOT-CONSUMED]" in caplog.text
+    assert "segment_id=1788356940000" in caplog.text

@@ -55,13 +55,16 @@ def _evaluation(*, atr_state: str = "short") -> ConfirmationEvaluation:
     )
 
 
-def test_live_confirmation_exit_defaults_dark() -> None:
-    assert Settings().strategy_schwab_1m_v2_confirmation_exit_enabled is False
+def test_live_confirmation_exit_defaults_enabled_after_operator_go() -> None:
+    assert Settings().strategy_schwab_1m_v2_confirmation_exit_enabled is True
 
 
 def test_dark_confirmation_records_but_cannot_reach_the_emitter() -> None:
     evaluation = _evaluation()
-    service = SchwabV2BotService(Settings(), session_factory=None)
+    service = SchwabV2BotService(
+        Settings(strategy_schwab_1m_v2_confirmation_exit_enabled=False),
+        session_factory=None,
+    )
     terminalized = []
 
     class _NoLiveEmitter:
@@ -100,7 +103,10 @@ def test_enabled_confirmation_reaches_the_emitter() -> None:
 
 def test_unknown_atr_state_has_a_distinct_fired_marker(caplog) -> None:
     evaluation = _evaluation(atr_state="unknown")
-    service = SchwabV2BotService(Settings(), session_factory=None)
+    service = SchwabV2BotService(
+        Settings(strategy_schwab_1m_v2_confirmation_exit_enabled=False),
+        session_factory=None,
+    )
     service._record_confirmation_evaluation = lambda _item: (True, False)  # type: ignore[method-assign]
     caplog.set_level(logging.INFO)
 
