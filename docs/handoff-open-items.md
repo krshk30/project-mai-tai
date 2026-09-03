@@ -267,6 +267,70 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **OVSD1 — SCHWAB OVERSOLD REJECT STORM: the software close fires against shares a working
+  broker OCO still reserves** *(owner: unassigned; **PARKED DELIBERATELY UNFIXED** by operator
+  ruling 2026-09-03 — live money, high priority)*.
+  **The event:** CHPT 2026-09-03, `live:schwab_1m_v2`. **205 oversold refusals + 15 HTTP 429s in
+  ~14 minutes** (13:39–13:53 ET). Entry `1007821354133` filled 13:43; its OCO legs
+  `1007821354135`/`...136` were working at the broker. The position was closed by **manual broker
+  action** — no closing fill exists after 13:45:21.
+  ⛔ **THE RULING AND WHY.** One instance, no proven root cause, and the candidate fixes (WRAP1, a
+  confirmed-cancel gate, order adoption, the `>= 2` redesign) were a large speculative change to the
+  **live exit path** built on a single day's evidence while blaming a rule deployed the day before.
+  ⇒ **Nothing was built. Reopens on a SECOND INSTANCE WITH EVIDENCE.** `RATE1` is the alarm that
+  makes the recurrence cost two minutes instead of an afternoon. [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
+  ⭐⭐ **THE SHARPEST STATEMENT WE HAVE — a guess deletes a broker-confirmed fact.** `oms/service.py:3600`:
+  on `result == "released"` the reconcile does `self._native_oco_armed_confirmed_at.pop((acct, symbol), None)`.
+  That dict is the **stand-down**, fed by `fetch_armed_native_oco_symbols` — real broker truth. So a
+  FALSE `released` does not merely permit the send: **it erases the confirmation that would have
+  blocked it**, then `3669 if protection != "released": return` lets it through and `3671`'s
+  stand-down is already disarmed. Once per tick.
+  ⛔ **Why the release was false:** `schwab.py:255-256` `if not working: return "released"` — returned
+  **before** the DELETE at 258 and the confirm re-read at 265-271. `walk()` reads `orderLegCollection[0]`,
+  but a childless OCO **wrapper has no leg collection**, so `instruction == ""` and the wrapper's own
+  `status` is dead code. A working wrapper holding the shares reads as no protection at all.
+  ⛔ **NO CANCEL WAS EVER SENT, by either route.** `cancel_exit_pair` is implemented **only** in
+  `webull.py:197`; `routing.py:59-60` hits `if fn is None: return []` on Schwab. And `requested = 2`
+  at `service.py:2715` is a **hardcoded constant** — a label meaning "an OCO pair has two legs", not
+  a count of requests. `reports=0 confirmed=0` is that `return []`, **not a silent broker**.
+  ⛔ **A CONCURRENCY GUARD MISTAKEN FOR A REPETITION GUARD.** The reconcile re-enters on **every new
+  quote tick**: `confirmation_inflight` prevents overlap, and `quote_at <= evaluated_at` is satisfied
+  by any new tick. **220 `status=RELEASED` verdicts for one symbol in 14 minutes, ~1 every 3.9s** —
+  and all-time the marker has **221 occurrences, all 2026-09-03, all CHPT**, so this path first ran
+  that day. ⇒ Any future fix that reaches the DELETE **needs a once-per-episode bound**, or it turns
+  220 false releases into 220 DELETE bursts. [[feedback_a_count_is_not_a_gate]]
+  ⚠ **UNEXAMINED, and the most likely real hole:** `fetch_armed_native_oco_symbols` requires
+  **`>= 2` working sell legs**. A bracket with ONE leg left reads **not armed** and the ladder
+  resumes against shares a single working sell still reserves — and a partial cancel is exactly what
+  produces one leg. **Not investigated. Start here on the second instance.**
+  ⛔⭐⭐ **THIS IS OLD, NOT NEW — CONF1 DID NOT INTRODUCE IT.** Answered from `broker_orders`
+  (table spans 2026-03-30 → 2026-09-03): **639 oversold refusals, ALL on `live:schwab_1m_v2`,
+  across 20 ET days from 2026-07-01** — two months before CONF1 existed. **Four storm-scale days:**
+  | ET day | rejects | symbols |
+  |---|---|---|
+  | 2026-07-13 | 127 | AGEN |
+  | 2026-07-31 | 126 | FCUV, KUST |
+  | 2026-08-04 | 115 | AAOG, AMIX |
+  | **2026-09-03** | **205** | **CHPT** |
+  ⇒ The operator's recollection of "something similar about a month ago" is **correct** (08-04).
+  ⚠ **What this does NOT prove:** that the earlier storms share today's mechanism. CONF1 did not
+  exist then, so the *trigger* differed; only the **refusal class** is shown to be old. The
+  "one instance" that was parked is one instance **of the 3600 mechanism**, not of the storm class.
+  ⛔ **Structural facts a future reader should not re-derive:**
+  - A protective OCO leg is **never durably written at placement**. `-ocoexit-` rows: **471 in 30
+    days, every one `filled`; zero working/cancelled/rejected. Zero `-protect-` rows ever.** This is
+    **by design, not a write failure** — `schwab.py:154`: *"OCO child legs are created BY THE BROKER,
+    so they never appear in `broker_orders`."* ⇒ "Is a sell working?" **cannot** be answered from our
+    books; it must be asked of the broker. Related: item 7 (IRE).
+  - **Order ADOPTION does not exist.** The only creator of a `broker_orders` row is
+    `oms/store.py:367 get_or_create_order`, which **requires** `intent: TradeIntent`. The one orphan
+    routine, `_terminalize_orphaned_active_intents`, does the opposite — it gives up on our intents.
+    Adopting would need a synthesized intent per leg. **Attribution gap, not an exit gap:** 471/471
+    `-ocoexit-` legs resolved at the broker unaided. [[project_mai_tai_per_lot_attribution_gap]]
+  ✅ **Shipped and unrelated to this ruling:** `#885`'s `_V2_EXIT_MAX_REJECTS_PER_EPISODE = 20`
+  absolute ceiling (`service.py:433`), merged and deployed 2026-09-03. It bounds the storm; it does
+  not address the cause. **Stays.**
+
 - **DUP2 — `fanout_slot` CLASSIFICATION MISMATCH: a Schwab `reclaim` is fanned out into the Webull
   `resting` slot** *(owner: codex-2; **CONFIRMED BREACH, mechanism now IDENTIFIED**; operator ruled
   2026-09-03 that two Webull reclaim legs in one cross is NOT INTENDED — the intended pair is one
