@@ -24,17 +24,43 @@ this rotation. Needs `codex-2`'s review before merge — the author never review
 | control | 2733285 | 0 | | reconciler | 2202771 | 0 |
 | market-capture | 2202817 | 0 | | | | |
 
-# ⛔ THE FLEET IS ON MIXED CODE — RESOLVE THIS FIRST TOMORROW
+# ✅ MIXED CODE — RULED DELIBERATE, DO NOT "FIX" IT
 
-**`schwab-1m-v2` still holds PID `2531255`, its pre-deploy PID from this morning.** It was never
-restarted across three deploys, so the real-money v2 bot is running **pre-#874 code** while
-oms/strategy/control run `f437100`.
+**`schwab-1m-v2` holds PID `2531255`, its pre-deploy PID.** It was not restarted across today's
+three deploys, so the real-money v2 bot runs **pre-#874 code** while oms/strategy/control run
+`f437100`.
 
-It looks benign — #874's `events.py` change is an additive field with a default and v2 touches none
-of the new tables — and *not* restarting v2 correctly avoids a bar hole. **But nobody has confirmed
-it was a decision rather than an omission.** A fleet on two code versions must never be an accident.
-⇒ Ask `codex-2` to state which, then either restart v2 deliberately (full pre/post checklist,
-outside 07:00–16:00) or record the split as intended.
+⭐ **`codex-2` confirmed 2026-09-03: this was DELIBERATE, to avoid an unrelated bar hole.** The
+question "decision or omission?" is answered — it was a decision.
+
+⛔ **Do NOT restart v2 to bring the fleet onto one version.** A restart >2 min leaves a hole in
+`strategy_bar_history` — and warmup repairs *memory only*, never the stored series, so any backtest,
+parity study or trade-recorder read covering that window is reading a holed series afterwards.
+
+⚠️ **Correction, and it narrows the claim:** the ATR does **not** compute True Range across such a
+hole any more. **`#620`** (`cf41101`, *never compute true range across a bar gap*) guards it — past
+`_ATR_MAX_BAR_GAP_MS` (90s) the bar contributes `tr = hilo`, its own range capped at 1.5× SMA,
+instead of spanning the gap. Verified running in this very process:
+`[V2-ATR-BAR-GAP] CANF … true range NOT spanned across a 4.0-min bar gap` at 11:19:39Z today,
+PID `2531255`. It is not restart-specific — it covers ordinary intraday gaps (CRWU 25 min,
+AXTU 2–13 min) too.
+
+⭐ **`#620` and `#870` are two different guards; do not conflate them** (I did, and `codex-2` caught
+it). `#620` protects the **true-range computation** and emits `[V2-ATR-BAR-GAP]`. `#870`
+(`a660160`) is the later, complementary fix that **refuses the BUY arm** across a non-adjacent bar
+before arm-state mutation, and emits `[V2-ATR-ARM-GAP]`. Quoting one marker as evidence for the
+other's PR number is how a correct behavioural claim ends up with a wrong citation.
+
+So the old "inflated ATR pushes every resting order too high" consequence is **guarded, not live**.
+
+What remains true is the durable data hole plus the ordinary restart hazards, and those are reason
+enough. Restart only when there is an independent reason to, and then only with the full checklist:
+outside 07:00–16:00 ET, account-flat from broker truth, working orders zero or known, then
+`[V2-BOOT-HOLD] released` + warmup spanning the outage + a clean bar-continuity check.
+
+The split is believed benign: #874's `events.py` change is an additive field with a default, and v2
+touches none of the new tables. It resolves on its own at the next restart v2 needs for its own
+reasons.
 
 # ⭐ TOMORROW'S FIRST READ: DOES THE SEED-EXPOSURE WATCH ACTUALLY SPEAK?
 
@@ -75,7 +101,7 @@ runs the old code and the daily AMBER continues.
 
 | item | owner | state |
 |---|---|---|
-| Confirm the v2 non-restart was deliberate; then restart or record the split | codex-2 | **first thing tomorrow** |
+| ~~Confirm the v2 non-restart was deliberate~~ | codex-2 | ✅ **CLOSED** — confirmed deliberate 2026-09-03; do not restart v2 to "fix" it |
 | Prove `#873` — read the seed-exposure verdict after 04:00 ET | claude-1 | scripted; PASS/FAIL stated above |
 | Repoint root's crontab at `ops/health/preopen_readiness_cron.sh` | operator + codex-2 | needs explicit OK; blocks the 09:12 fix |
 | Run the 82-event exit-rule measurement | claude-1 | ⛔ **hard deadline 2026-09-07** — `market_capture_quotes` prunes at 14 days and the 08-24 session leaves the tape then. 80/82 gradable provisionally |
@@ -89,9 +115,15 @@ runs the old code and the daily AMBER continues.
   prior-session anchor with no cap/roll line, killed at 07:01:02 by `session_anchor_reset` — not by
   the 04:00 roll and not by the seed cap. Exposure is mostly structural (04:00–07:00 sits before
   entries open) with a **~62-second residual inside the tradable window**. Accumulating watch.
-- **SEG1 is falsifiable but THIN.** True identity returned 13 on the 09-02 tape and a wrong identity
-  (dropping `entry_slot`) returns 12 — but the discriminator is exercised by **exactly one slot**
-  (BIAF `58f2bc1e`, first + reclaim). Report as n=1, never as "SEG1 verified".
+- **SEG1 — ⛔ SUPERSEDED AND UNEXERCISABLE ONCE #879 MERGES. NEVER GRADE IT.**
+  It was verified falsifiable on the 09-02 tape (true identity 13, dropping `entry_slot` 12), but
+  exercised by **exactly one slot** — BIAF `58f2bc1e`, which carried both a first and a reclaim.
+  **#879 removes precisely that case:** the paper path now keys on the durable fill
+  (`logical_mirror_id = sha256("mirror-fill:{fill_id}")`), excludes reclaims, and drops the Webull
+  venue — so `entry_slot` is a constant filter, not a discriminator, and there is no cross-venue
+  collapse left to govern. Keying on the fill id is the better design; the point is only that the
+  property can no longer fail. ⇒ A SEG1 reading after #879 is **vacuous by construction** and must
+  report **UNEXERCISABLE**, never PASS. A PASS that could not have failed is worse than no reading.
 - **Hold-until-proven 0/82 rests on 4/82.** Only four rows are "still open at 16:00" (CELU −0.94,
   AEHL −0.58, NCRA −0.35, FLYE −2.26). Correct as measured; a small denominator, never evidence that
   holding is free.
