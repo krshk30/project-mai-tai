@@ -38,12 +38,20 @@ question "decision or omission?" is answered — it was a decision.
 parity study or trade-recorder read covering that window is reading a holed series afterwards.
 
 ⚠️ **Correction, and it narrows the claim:** the ATR does **not** compute True Range across such a
-hole any more. `#870` guards it — past `_ATR_MAX_BAR_GAP_MS` (90s) the bar contributes `tr = hilo`,
-its own range capped at 1.5× SMA, instead of spanning the gap. Verified running in this very
-process: `[V2-ATR-BAR-GAP] CANF … true range NOT spanned across a 4.0-min bar gap` at 11:19:39Z
-today, PID `2531255`. The guard is also not restart-specific — it covers ordinary intraday gaps
-(CRWU 25 min, AXTU 2–13 min) too. So the old "inflated ATR pushes every resting order too high"
-consequence is **guarded, not live**.
+hole any more. **`#620`** (`cf41101`, *never compute true range across a bar gap*) guards it — past
+`_ATR_MAX_BAR_GAP_MS` (90s) the bar contributes `tr = hilo`, its own range capped at 1.5× SMA,
+instead of spanning the gap. Verified running in this very process:
+`[V2-ATR-BAR-GAP] CANF … true range NOT spanned across a 4.0-min bar gap` at 11:19:39Z today,
+PID `2531255`. It is not restart-specific — it covers ordinary intraday gaps (CRWU 25 min,
+AXTU 2–13 min) too.
+
+⭐ **`#620` and `#870` are two different guards; do not conflate them** (I did, and `codex-2` caught
+it). `#620` protects the **true-range computation** and emits `[V2-ATR-BAR-GAP]`. `#870`
+(`a660160`) is the later, complementary fix that **refuses the BUY arm** across a non-adjacent bar
+before arm-state mutation, and emits `[V2-ATR-ARM-GAP]`. Quoting one marker as evidence for the
+other's PR number is how a correct behavioural claim ends up with a wrong citation.
+
+So the old "inflated ATR pushes every resting order too high" consequence is **guarded, not live**.
 
 What remains true is the durable data hole plus the ordinary restart hazards, and those are reason
 enough. Restart only when there is an independent reason to, and then only with the full checklist:
