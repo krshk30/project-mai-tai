@@ -34,11 +34,21 @@ three deploys, so the real-money v2 bot runs **pre-#874 code** while oms/strateg
 question "decision or omission?" is answered — it was a decision.
 
 ⛔ **Do NOT restart v2 to bring the fleet onto one version.** A restart >2 min leaves a hole in
-`strategy_bar_history`, and the ATR then computes True Range across it — inflating ATR and pushing
-every resting order too high. That hazard is the whole reason v2 was left alone. Restart it only
-when there is an independent reason to, and then only with the full checklist: outside 07:00–16:00
-ET, account-flat from broker truth, working orders zero or known, then `[V2-BOOT-HOLD] released`
-+ warmup spanning the outage + a clean bar-continuity check.
+`strategy_bar_history` — and warmup repairs *memory only*, never the stored series, so any backtest,
+parity study or trade-recorder read covering that window is reading a holed series afterwards.
+
+⚠️ **Correction, and it narrows the claim:** the ATR does **not** compute True Range across such a
+hole any more. `#870` guards it — past `_ATR_MAX_BAR_GAP_MS` (90s) the bar contributes `tr = hilo`,
+its own range capped at 1.5× SMA, instead of spanning the gap. Verified running in this very
+process: `[V2-ATR-BAR-GAP] CANF … true range NOT spanned across a 4.0-min bar gap` at 11:19:39Z
+today, PID `2531255`. The guard is also not restart-specific — it covers ordinary intraday gaps
+(CRWU 25 min, AXTU 2–13 min) too. So the old "inflated ATR pushes every resting order too high"
+consequence is **guarded, not live**.
+
+What remains true is the durable data hole plus the ordinary restart hazards, and those are reason
+enough. Restart only when there is an independent reason to, and then only with the full checklist:
+outside 07:00–16:00 ET, account-flat from broker truth, working orders zero or known, then
+`[V2-BOOT-HOLD] released` + warmup spanning the outage + a clean bar-continuity check.
 
 The split is believed benign: #874's `events.py` change is an additive field with a default, and v2
 touches none of the new tables. It resolves on its own at the next restart v2 needs for its own
