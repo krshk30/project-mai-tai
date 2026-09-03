@@ -267,6 +267,36 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **DUP2 — duplicate ENTRY fills on ORBONLY symbols, in a path nothing guards**
+  *(owner: codex-2 to build; assessed by claude-1 2026-09-03; ⛔ **URGENT, LIVE MONEY, REPEATING**)*.
+  ⛔ **SLOT2 does NOT cover this path, and the reason is structural.** SLOT2 (`7a726d4`, #880) gates
+  the Schwab resting placement on `state.cw_resting_taken`. That flag is set **Schwab-leg only** —
+  the code says so at the claim-on-fill site: *"SCHWAB LEG ONLY … a Webull fan-out fill does NOT
+  land here."* On an **ORBONLY** symbol (`live:orb` fills, **0** `live:schwab_1m_v2` buys)
+  `position_qty_held` never transitions 0→>0, so `cw_resting_taken` is **never set** and SLOT2's
+  guard **can never fire**. #858 guards the reactive path only. ⇒ **The ORBONLY entry path is
+  unguarded by both fixes.**
+  **It is a REPEATING DEFECT, not an event:** **≥32 duplicate segments across ≥15 sessions**
+  (2026-07-29 → 09-01), **≥35 extra entries**. ⛔ These are **FLOORS with a date range, not rates**
+  (STMP constraint): the census excludes `cw_arm_bar_ts='0'` rows, and many ORB fills carry seg=0 —
+  all three SSM 09-01 first-slot fills do — so the true count is higher and historically unmeasurable.
+  ⚠ **TWO DISTINCT SHAPES — different causes, different fixes. Do not fix them as one.**
+  · **(a) sub-second double-submit.** NCRA 08-31 `12:21:19`/`12:21:23` (4s) and
+    `14:46:47`/`14:46:49` (2s): same `fanout_slot_id`, same `cw_entry_slot`, but **distinct
+    `broker_fill_id`, distinct `fanout_attempt_id`, and different prices** (3.05/3.03, 3.04/3.0499).
+    **Two real orders, two real fills — genuine duplicate exposure**, not a double-report artifact.
+  · **(b) minutes-apart same-slot re-entry.** MIMI 08-27 `13:05:51` → `13:28:25`, 23 minutes, same
+    slot_id and same segment. Shape (b) is the ORBONLY analogue of the SLOT2 defect; shape (a) is a
+    submission-level duplicate that no composition guard would catch.
+  **Next action:** gate the ORBONLY/Webull entry path on a **venue-local** consumed flag — the
+  Schwab-scoped one cannot see it — and treat (a) separately as submission de-duplication on
+  `fanout_attempt_id`. Denominator: `live:orb` BUY fills per segment per session.
+  Falsifier: two `live:orb` entry fills in one segment after the fix.
+- **DUP3 — 12 exit-side duplicate legs, design-or-defect, UNPROVEN** *(owner: codex-2; sits with
+  DUP2)*. Not yet assessed. **Next action:** classify each of the 12 as intended fan-out behaviour
+  or duplicate exit, then state which. Denominator: exit legs per closed position.
+  Falsifier: two exit legs against one lot with no fan-out design that calls for it.
+
 - **RET1 — `market_capture_quotes` prunes at 14 CALENDAR days** *(owner: **operator** — the
   retention decision is theirs; measured 2026-09-03)*. `prune-capture.service` runs
   `prune_market_ticks.py --keep-days 14`; the predicate is
