@@ -43,6 +43,7 @@ from project_mai_tai.events import (
 from project_mai_tai.services.control_plane import (
     _build_bot_decision_rows,
     _build_bot_listening_status,
+    _build_completed_position_rows,
     _build_paper_evidence_rows,
     _build_paper_grade_rows,
     _dedupe_decision_events,
@@ -139,6 +140,112 @@ def test_normalize_closed_today_rows_replaces_raw_broker_payload_reason() -> Non
     assert rows[0]["exit_summary"] == "Final close"
     assert rows[0]["reason"] == "Final close"
     assert rows[0]["exit_reason"] == "Final close"
+
+
+def test_completed_positions_render_durable_v2_path_and_venue() -> None:
+    html, count, _pnl = _build_completed_position_rows(
+        {
+            "strategy_code": "schwab_1m_v2",
+            "account_name": "live:schwab_1m_v2",
+            "closed_today": [],
+        },
+        recent_orders=[],
+        recent_fills=[
+            {
+                "strategy_code": "schwab_1m_v2",
+                "broker_account_name": "live:orb",
+                "broker_provider": "webull",
+                "symbol": "CHPT",
+                "side": "buy",
+                "quantity": "1",
+                "price": "7.72",
+                "entry_slot": "first",
+                "filled_at": "2026-09-03 10:06:11 AM ET",
+            },
+            {
+                "strategy_code": "schwab_1m_v2",
+                "broker_account_name": "live:orb",
+                "broker_provider": "webull",
+                "symbol": "CHPT",
+                "side": "sell",
+                "quantity": "1",
+                "price": "7.80",
+                "filled_at": "2026-09-03 10:12:00 AM ET",
+            },
+        ],
+    )
+
+    assert count == 1
+    assert "Resting / Webull" in html
+    assert "ATR Flip" not in html
+
+
+def test_database_state_preserves_v2_entry_slot_and_broker_provider() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="V2", execution_mode="live")
+        account = BrokerAccount(name="live:schwab_1m_v2", provider="schwab", environment="live")
+        session.add_all([strategy, account])
+        session.flush()
+        intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="CHPT",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("2"),
+            reason="schwab_1m_v2 ATR Flip CW-v2-resting",
+            status="filled",
+            payload={"metadata": {"cw_entry_slot": "first", "path": "ATR Flip"}},
+        )
+        session.add(intent)
+        session.flush()
+        order = BrokerOrder(
+            intent_id=intent.id,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            client_order_id="v2-path-label-chpt",
+            broker_order_id="v2-path-label-chpt-broker",
+            symbol="CHPT",
+            side="buy",
+            order_type="limit",
+            time_in_force="day",
+            quantity=Decimal("2"),
+            status="filled",
+            payload={},
+            submitted_at=datetime.now(UTC),
+        )
+        session.add(order)
+        session.flush()
+        session.add(
+            Fill(
+                order_id=order.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                broker_fill_id="v2-path-label-chpt-fill",
+                symbol="CHPT",
+                side="buy",
+                quantity=Decimal("2"),
+                price=Decimal("7.73"),
+                filled_at=datetime.now(UTC),
+                payload={"metadata": {"cw_entry_slot": "first", "path": "ATR Flip"}},
+            )
+        )
+        session.commit()
+
+    repository = control_plane_module.ControlPlaneRepository(
+        Settings(redis_stream_prefix="test"),
+        session_factory=session_factory,
+        redis=FakeRedis({}),
+    )
+    fill_row = next(
+        row
+        for row in repository._load_database_state()["recent_fills"]
+        if row["strategy_code"] == "schwab_1m_v2"
+    )
+
+    assert fill_row["entry_slot"] == "first"
+    assert fill_row["broker_provider"] == "schwab"
 
 
 def test_select_filled_order_reason_prefers_intent_reason_over_broker_payload() -> None:

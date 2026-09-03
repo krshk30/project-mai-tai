@@ -109,6 +109,97 @@ def test_collect_completed_trade_cycles_separates_account_and_strategy_keys() ->
     assert cycle_a.cycle_key != cycle_b.cycle_key
 
 
+def test_collect_completed_trade_cycles_separates_brokers_in_one_event_stream() -> None:
+    cycles = collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2",
+        broker_account_name="live:schwab_1m_v2",
+        recent_orders=[],
+        recent_fills=[
+            {
+                "broker_account_name": "live:schwab_1m_v2",
+                "broker_provider": "schwab",
+                "symbol": "CHPT",
+                "side": "buy",
+                "quantity": "2",
+                "price": "7.73",
+                "entry_slot": "first",
+                "filled_at": "2026-09-03 10:06:10 AM ET",
+            },
+            {
+                "broker_account_name": "live:orb",
+                "broker_provider": "webull",
+                "symbol": "CHPT",
+                "side": "buy",
+                "quantity": "1",
+                "price": "7.72",
+                "entry_slot": "first",
+                "filled_at": "2026-09-03 10:06:11 AM ET",
+            },
+            {
+                "broker_account_name": "live:orb",
+                "broker_provider": "webull",
+                "symbol": "CHPT",
+                "side": "sell",
+                "quantity": "1",
+                "price": "7.80",
+                "filled_at": "2026-09-03 10:12:00 AM ET",
+            },
+            {
+                "broker_account_name": "live:schwab_1m_v2",
+                "broker_provider": "schwab",
+                "symbol": "CHPT",
+                "side": "sell",
+                "quantity": "2",
+                "price": "7.89",
+                "filled_at": "2026-09-03 10:15:36 AM ET",
+            },
+        ],
+        closed_today=[],
+    )
+
+    assert len(cycles) == 2
+    by_account = {cycle.broker_account_name: cycle for cycle in cycles}
+    assert by_account["live:schwab_1m_v2"].quantity == 2
+    assert by_account["live:schwab_1m_v2"].exit_price == 7.89
+    assert by_account["live:schwab_1m_v2"].path == "Resting / Schwab"
+    assert by_account["live:orb"].quantity == 1
+    assert by_account["live:orb"].exit_price == 7.80
+    assert by_account["live:orb"].path == "Resting / Webull"
+
+
+def test_collect_completed_trade_cycles_labels_v2_reclaim_from_durable_slot() -> None:
+    cycles = collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2",
+        broker_account_name="live:schwab_1m_v2",
+        recent_orders=[],
+        recent_fills=[
+            {
+                "broker_account_name": "live:schwab_1m_v2",
+                "broker_provider": "schwab",
+                "symbol": "CHPT",
+                "side": "buy",
+                "quantity": "2",
+                "price": "7.90",
+                "entry_slot": "reclaim",
+                "filled_at": "2026-09-03 10:16:03 AM ET",
+            },
+            {
+                "broker_account_name": "live:schwab_1m_v2",
+                "broker_provider": "schwab",
+                "symbol": "CHPT",
+                "side": "sell",
+                "quantity": "2",
+                "price": "8.05",
+                "filled_at": "2026-09-03 10:27:37 AM ET",
+            },
+        ],
+        closed_today=[],
+    )
+
+    assert len(cycles) == 1
+    assert cycles[0].path == "Reclaim / Schwab"
+
+
 def test_collect_completed_trade_cycles_falls_back_to_filled_orders_when_needed() -> None:
     cycles = collect_completed_trade_cycles(
         strategy_code="polygon_30s",

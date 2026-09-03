@@ -44,7 +44,7 @@ def collect_completed_trade_cycles(
 ) -> list[CompletedTradeCycle]:
     completed_rows: list[dict[str, Any]] = []
     existing_keys: set[tuple[str, str, str, str]] = set()
-    open_trades_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    open_trades_by_account_symbol: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
     def append_completed_trade(trade: dict[str, Any]) -> None:
         initial_qty = max(float(trade["initial_qty"]), 0.0001)
@@ -55,15 +55,16 @@ def collect_completed_trade_cycles(
         entry_time = str(trade["entry_time"] or "-")
         exit_time = str(trade["exit_time"] or "-")
         symbol = str(trade["ticker"]).upper()
-        existing_keys.add((strategy_code, broker_account_name, symbol, entry_time))
+        trade_account_name = str(trade["broker_account_name"] or broker_account_name)
+        existing_keys.add((strategy_code, trade_account_name, symbol, entry_time))
         completed_rows.append(
             {
                 "strategy_code": strategy_code,
-                "broker_account_name": broker_account_name,
+                "broker_account_name": trade_account_name,
                 "symbol": symbol,
                 "cycle_key": cycle_key(
                     strategy_code=strategy_code,
-                    broker_account_name=broker_account_name,
+                    broker_account_name=trade_account_name,
                     symbol=symbol,
                     entry_time=entry_time,
                     exit_time=exit_time,
@@ -87,9 +88,10 @@ def collect_completed_trade_cycles(
         timestamp_key: str,
         price_key: str,
     ) -> None:
-        open_trades_by_symbol.clear()
+        open_trades_by_account_symbol.clear()
         for item in sorted(events, key=lambda row: parse_et_timestamp(str(row.get(timestamp_key, "") or ""))):
             symbol = str(item.get("symbol", "")).upper()
+            event_account_name = str(item.get("broker_account_name", "") or broker_account_name)
             side = str(item.get("side", "")).lower()
             quantity = as_float(item.get("quantity"))
             if not symbol or quantity <= 0:
@@ -118,9 +120,10 @@ def collect_completed_trade_cycles(
                     reason = ""
 
             if intent_type == "open" and side == "buy":
-                open_trades_by_symbol.setdefault(symbol, []).append(
+                open_trades_by_account_symbol.setdefault((event_account_name, symbol), []).append(
                     {
                         "ticker": symbol,
+                        "broker_account_name": event_account_name,
                         "path": path,
                         "entry_time": event_time,
                         "entry_price": event_price,
@@ -137,7 +140,7 @@ def collect_completed_trade_cycles(
                 continue
 
             remaining_to_apply = quantity
-            open_queue = open_trades_by_symbol.get(symbol, [])
+            open_queue = open_trades_by_account_symbol.get((event_account_name, symbol), [])
             for trade in reversed(open_queue):
                 if remaining_to_apply <= 0:
                     break
@@ -165,6 +168,7 @@ def collect_completed_trade_cycles(
     def find_matching_completed_row(
         *,
         symbol: str,
+        row_account_name: str,
         entry_time: str,
         exit_time: str,
         quantity: float,
@@ -176,7 +180,7 @@ def collect_completed_trade_cycles(
         for row in completed_rows:
             if str(row.get("strategy_code", "") or "") != strategy_code:
                 continue
-            if str(row.get("broker_account_name", "") or "") != broker_account_name:
+            if str(row.get("broker_account_name", "") or "") != row_account_name:
                 continue
             if str(row.get("symbol", "") or "").upper() != symbol:
                 continue
@@ -217,12 +221,13 @@ def collect_completed_trade_cycles(
     )
 
     for item in closed_today or []:
-        symbol = str(item.get("ticker", "") or "").upper()
+        symbol = str(item.get("ticker", "") or item.get("symbol", "") or "").upper()
+        row_account_name = str(item.get("broker_account_name", "") or broker_account_name)
         entry_time = str(item.get("entry_time", "") or "")
         raw_reason = str(item.get("reason", "") or item.get("exit_reason", "") or "").strip()
         if not symbol or not entry_time or looks_like_broker_payload_text(raw_reason):
             continue
-        if (strategy_code, broker_account_name, symbol, entry_time) in existing_keys:
+        if (strategy_code, row_account_name, symbol, entry_time) in existing_keys:
             continue
         exit_time = str(item.get("exit_time", "") or "-")
         raw_path = str(item.get("path", "") or item.get("entry_path", "") or "-").strip() or "-"
@@ -236,6 +241,7 @@ def collect_completed_trade_cycles(
         summary = summarize_closed_today_reason(item)
         matched_row = find_matching_completed_row(
             symbol=symbol,
+            row_account_name=row_account_name,
             entry_time=entry_time,
             exit_time=exit_time,
             quantity=quantity,
@@ -252,11 +258,11 @@ def collect_completed_trade_cycles(
         completed_rows.append(
             {
                 "strategy_code": strategy_code,
-                "broker_account_name": broker_account_name,
+                "broker_account_name": row_account_name,
                 "symbol": symbol,
                 "cycle_key": cycle_key(
                     strategy_code=strategy_code,
-                    broker_account_name=broker_account_name,
+                    broker_account_name=row_account_name,
                     symbol=symbol,
                     entry_time=entry_time,
                     exit_time=exit_time,
@@ -377,6 +383,9 @@ def summarize_closed_today_reason(item: dict[str, Any]) -> str:
 
 
 def display_order_path(item: dict[str, Any]) -> str:
+    v2_path = display_v2_entry_path(item)
+    if v2_path:
+        return v2_path
     path = extract_path_value(item.get("path", ""))
     if not path:
         metadata = item.get("metadata", {})
@@ -402,6 +411,36 @@ def display_order_path(item: dict[str, Any]) -> str:
     if reason.startswith("ENTRY_"):
         return reason.removeprefix("ENTRY_")
     return "-"
+
+
+def display_v2_entry_path(item: dict[str, Any]) -> str:
+    metadata = item.get("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    payload = item.get("payload", {})
+    if isinstance(payload, dict) and isinstance(payload.get("metadata"), dict):
+        payload_metadata = payload["metadata"]
+    else:
+        payload_metadata = {}
+
+    entry_slot = str(
+        item.get("entry_slot", "")
+        or metadata.get("cw_entry_slot", "")
+        or payload_metadata.get("cw_entry_slot", "")
+    ).strip().lower()
+    path_label = {"first": "Resting", "reclaim": "Reclaim"}.get(entry_slot)
+    if not path_label:
+        return ""
+
+    provider = str(item.get("broker_provider", "") or "").strip().lower()
+    account_name = str(item.get("broker_account_name", "") or "").strip().lower()
+    if provider == "schwab" or account_name == "live:schwab_1m_v2":
+        venue_label = "Schwab"
+    elif provider == "webull" or account_name == "live:orb":
+        venue_label = "Webull"
+    else:
+        venue_label = "Unknown venue"
+    return f"{path_label} / {venue_label}"
 
 
 def extract_path_value(value: Any) -> str:
