@@ -276,16 +276,22 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   `fanout_webull_resting_taken` / `fanout_webull_reclaim_taken` are **separate booleans**. When a
   `cw_entry_slot=reclaim` fill is stamped `fanout_slot=resting`, it consumes the **wrong** boolean,
   so a genuine reclaim leg still finds its own flag free and fires. Two Webull legs, one cross.
-  **MEASURED — it is the majority case, not an edge:** across all stamped `live:orb` BUY fills,
-  | `cw_entry_slot` | `fanout_slot` | n |
+  **MEASURED — it is the majority case, not an edge. All three cells are bounded to the SAME
+  window, `2026-08-31 → 2026-09-02`:**
+  | `cw_entry_slot` | `fanout_slot` | n (08-31 → 09-02) |
   |---|---|---|
-  | `first` | `resting` | 41 (correct mapping) |
+  | `first` | `resting` | 39 (correct mapping) |
   | `reclaim` | `reclaim` | 7 (correct) |
   | **`reclaim`** | **`resting`** | **11 — MISCLASSIFIED** |
-  ⇒ **11 of 18 stamped reclaim fan-out legs (61%) are misclassified**, spanning **2026-08-31 →
-  09-02** — current, and after every fix so far. ⛔ Bounded to the stamped window (`cw_entry_slot`
-  begins ~08-28); earlier fills are unstamped, so 11/18 is a **floor for that window, not a rate
-  for all time** (STMP constraint).
+  ⇒ **11 of 18 stamped reclaim fan-out legs (61%) are misclassified** in that window — current,
+  and after every fix so far.
+  ⛔ **An earlier draft printed `41` for the first cell and it was WRONG in two ways** (`codex-2`
+  caught the window mix): it was an **unbounded** count, so it mixed windows — the reclaim cells
+  ended 09-02 while it ran to 09-03 — **and it was a LIVE count taken mid-session**, so it has
+  since moved. Per day: 08-28 `1` · 08-31 `21` · 09-01 `9` · 09-02 `9` · 09-03 `4` — 41 at the
+  moment of reading, 44 now. **A census with no window is not a measurement.**
+  ⛔ Also bounded because `cw_entry_slot` stamping only begins ~08-28: earlier fills are unstamped,
+  so 11/18 is a **floor for this window, not a rate for all time** (STMP constraint).
   **The two confirmed breaches are only where a misclassified reclaim COLLIDED with a correct one
   in the same segment:** NCRA 08-31 `10:01:16` (reclaim/reclaim) + `11:24:33` (reclaim/**resting**),
   seg `1788181200000`; SSM 09-01 `14:58:19` (reclaim/**resting**) + `15:12:24` (reclaim/reclaim),
