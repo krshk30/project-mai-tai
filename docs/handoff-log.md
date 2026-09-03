@@ -15,6 +15,32 @@
 
 ---
 
+## 2026-09-03 — item triage: three closed, one blocker corrected, one control found unmet
+
+**Closed 2026-09-03 — triage by `claude-1`.**
+
+- **C28 — symbols joining after 04:00 arm off yesterday's anchor** — **CLOSED, EXERCISED FOR THE
+  LATE-JOINER POPULATION ONLY.** Merged `f1cc597` (#867). Its real observable is
+  **`[V2-CW-SEED-CAP]`** (not the guessed `V2-POST-ROLL-JOINER`, which does not exist). It fired
+  **63 times across 12 sessions**, including 2 on 09-01 and 2 on 09-02 — after the merge.
+  ⛔ **The population matters and the first draft of this closure omitted it** (`codex-2` caught the
+  resulting apparent contradiction with C42). **All 63 caps are late joiners** (`watch_start >
+  boot`); **zero** are boot-present. C42's blind spot is the boot-present population and remains
+  open — three of its own four 09-01 joiners got no seed-cap line at all. The two rows cover
+  disjoint populations and both claims are true.
+- **PRE — pre-guard observation of a crossed live mirror** — **CLOSED, EXERCISED.** Merged
+  `9c151712` (#863). `[V2-FANOUT-MIRROR-LIVE-CROSS]` fired **27 times on 2026-09-02** — the first
+  real live-mirror up-crosses. ⇒ It has delivered what it exists for: **D20 now has a denominator
+  and is gradeable.** Nothing above it is denominator-blocked any more.
+- **P2 — golden-day replay rebuild** — **CLOSED, RETIRED.** It was blocked and already demoted to
+  backtest-only, and the operator has stopped backtest work, so it has no owner, no next action and
+  no route to evidence. Carrying it costs more than it is worth. ⭐ The standard that closes it is
+  the standard that would reopen it: if it is real it resurfaces with evidence, and then it enters
+  this board as a new row with an owner and a next action.
+
+
+---
+
 ## 2026-09-02 — the day a monitor that refused correctly was still off for ten sessions
 
 **Batch `2026-09-02-blind-watch-day`.** Integrator `claude-1`. Three PRs merged (#873, #874, #875)
