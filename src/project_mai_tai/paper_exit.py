@@ -24,11 +24,9 @@ from project_mai_tai.market_halts import (
 EASTERN = ZoneInfo("America/New_York")
 PAPER_STRATEGY_CODE = "polygon_30s"
 MIRROR_ARM = "mirror"
-INDEPENDENT_ARM = "independent"
 ACCEPTED_RESTING_SOURCES = frozenset(
     {"cw-v2-resting", "rth_resting", "rth_resting_mirror", "eh_resting"}
 )
-ACCEPTED_RECLAIM_SOURCES = ACCEPTED_RESTING_SOURCES | frozenset({"cw-v2", "reactive"})
 NEUTRAL_FANOUT_VARIANTS = frozenset({"cw-v2-fanout"})
 EXIT_REASON_PRIORITY = {
     "TARGET": 0,
@@ -91,7 +89,7 @@ class PaperSourceFill:
 class PaperDecision:
     event_key: str
     logical_id: str
-    arm: Literal["mirror", "independent"]
+    arm: Literal["mirror"]
     event_type: str
     session_date: date
     symbol: str
@@ -109,7 +107,7 @@ class PaperDecision:
 class _PaperLeg:
     identity: str
     logical_id: str
-    arm: Literal["mirror", "independent"]
+    arm: Literal["mirror"]
     symbol: str
     venue: str
     entry_at: datetime
@@ -119,18 +117,9 @@ class _PaperLeg:
     source_fill_id: UUID | None = None
     broker_fill_id: str | None = None
     source_legs: dict[UUID, PaperSourceFill] = field(default_factory=dict)
-    independent_attempt_id: str = ""
     exit_at: datetime | None = None
     exit_price: Decimal | None = None
     exit_reason: str = ""
-
-
-@dataclass
-class _IndependentArm:
-    attempt_id: str
-    symbol: str
-    level: Decimal
-    armed_at: datetime
 
 
 @dataclass(frozen=True)
@@ -170,34 +159,9 @@ def resting_fill_classification(metadata: Mapping[str, object]) -> tuple[bool, s
     return True, source
 
 
-def mirrored_fill_classification(metadata: Mapping[str, object]) -> tuple[bool, str]:
-    """Accept both live composition slots while preserving first-entry strictness."""
-    slot = str(metadata.get("cw_entry_slot", "")).strip().lower()
-    if slot == "first":
-        return resting_fill_classification(metadata)
-    if slot != "reclaim":
-        return False, f"cw_entry_slot={slot or 'missing'}"
-
-    sources = {
-        str(metadata.get(key, "")).strip().lower()
-        for key in ("fanout_source", "atr_variant")
-        if str(metadata.get(key, "")).strip()
-    } - NEUTRAL_FANOUT_VARIANTS
-    if not sources:
-        return False, "reclaim_source=missing"
-    rejected = sources - ACCEPTED_RECLAIM_SOURCES
-    if rejected:
-        return False, "reclaim_source=" + ",".join(sorted(sources))
-    if "cw-v2-resting" in sources and str(metadata.get("resting_entry", "")).lower() != "true":
-        return False, "primary resting_entry stamp missing"
-    return True, sorted(sources)[0]
-
-
 def logical_mirror_id(fill: PaperSourceFill) -> str:
-    raw = (
-        f"mirror:{fill.session_date.isoformat()}:{fill.symbol.upper()}:"
-        f"{fill.fanout_slot_id}:{fill.entry_slot}"
-    )
+    # A slot may be reused after a completed trade; the durable fill remains unique.
+    raw = f"mirror-fill:{fill.fill_id}"
     return sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -226,7 +190,7 @@ def terminal_evidence_covers(
     terminal_at: datetime,
     terminal_quantity: Decimal | None,
 ) -> bool:
-    """Require terminal evidence for the final collapsed position, not an earlier partial leg."""
+    """Require terminal evidence after the source fill for its complete quantity."""
     fill_at = final_fill_at.replace(tzinfo=final_fill_at.tzinfo or UTC).astimezone(UTC)
     exit_at = terminal_at.replace(tzinfo=terminal_at.tzinfo or UTC).astimezone(UTC)
     return exit_at >= fill_at and terminal_quantity == final_quantity
@@ -239,7 +203,6 @@ class PaperExitRuntime:
         self._configs = [config]
         self._legs: dict[str, _PaperLeg] = {}
         self._fill_ids: set[UUID] = set()
-        self._mirror_identity_by_logical_id: dict[str, str] = {}
         self._pending_flip_at: dict[str, datetime] = {}
         self._confirmation_event_fill_ids: set[UUID] = set()
         self._confirmation_evaluated = 0
@@ -252,8 +215,6 @@ class PaperExitRuntime:
         self._halt_event_keys: set[str] = set()
         self._halt_suppression_keys: set[str] = set()
         self._pending_terminal_decisions: dict[str, PaperDecision] = {}
-        self._independent_arms: dict[str, _IndependentArm] = {}
-        self._independent_attempt_ids: set[str] = set()
         self._watchlist: set[str] = set()
         self._acceptance: dict[str, object] = {
             "verdict": "UNEXERCISED",
@@ -289,6 +250,13 @@ class PaperExitRuntime:
         late: bool = False,
         reemit_evidence: bool = False,
     ) -> list[PaperDecision]:
+        if (
+            fill.broker_account_name != "live:schwab_1m_v2"
+            or fill.venue != "schwab"
+            or fill.entry_slot != "first"
+            or fill.source not in ACCEPTED_RESTING_SOURCES
+        ):
+            return []
         if fill.fill_id in self._fill_ids:
             if not reemit_evidence:
                 return []
@@ -320,50 +288,6 @@ class PaperExitRuntime:
         logical_id = logical_mirror_id(fill)
         identity = f"mirror:{fill.fill_id}"
         self._fill_ids.add(fill.fill_id)
-        existing_identity = self._mirror_identity_by_logical_id.get(logical_id)
-        if existing_identity is not None:
-            existing = self._legs[existing_identity]
-            existing.source_legs[fill.fill_id] = fill
-            legs = sorted(existing.source_legs.values(), key=lambda item: (item.filled_at, str(item.fill_id)))
-            total_quantity = sum((item.quantity for item in legs), Decimal("0"))
-            existing.entry_price = (
-                sum((item.price * item.quantity for item in legs), Decimal("0"))
-                / total_quantity
-            )
-            existing.quantity = total_quantity
-            existing.entry_at = legs[0].filled_at.astimezone(UTC)
-            existing.config = self.config_at(existing.entry_at)
-            existing.source_fill_id = legs[0].fill_id
-            existing.broker_fill_id = legs[0].broker_fill_id
-            existing.venue = (
-                legs[0].venue if len({item.venue for item in legs}) == 1 else "both"
-            )
-            return [
-                PaperDecision(
-                    event_key=f"MIRROR_LEG_COLLAPSED:{fill.fill_id}",
-                    logical_id=logical_id,
-                    arm=MIRROR_ARM,
-                    event_type="MIRROR_LEG_COLLAPSED",
-                    session_date=fill.session_date,
-                    symbol=fill.symbol.upper(),
-                    observed_at=fill.filled_at.astimezone(UTC),
-                    price=fill.price,
-                    quantity=fill.quantity,
-                    config_id=existing.config.id,
-                    venue=fill.venue,
-                    source_fill_id=fill.fill_id,
-                    broker_fill_id=fill.broker_fill_id,
-                    detail={
-                        "source": fill.source,
-                        "fanout_slot_id": fill.fanout_slot_id,
-                        "entry_slot": fill.entry_slot,
-                        "collapsed_into_fill_id": str(existing.source_fill_id),
-                        "logical_quantity": str(existing.quantity),
-                        "weighted_entry_price": str(existing.entry_price),
-                        "source_fill_ids": [str(item.fill_id) for item in legs],
-                    },
-                )
-            ]
         self._legs[identity] = _PaperLeg(
             identity=identity,
             logical_id=logical_id,
@@ -378,7 +302,6 @@ class PaperExitRuntime:
             broker_fill_id=fill.broker_fill_id,
             source_legs={fill.fill_id: fill},
         )
-        self._mirror_identity_by_logical_id[logical_id] = identity
         kind = "LATE_MIRROR" if late else "MIRROR_ENTRY"
         return [
             PaperDecision(
@@ -402,81 +325,6 @@ class PaperExitRuntime:
                 },
             )
         ]
-
-    def arm_independent(
-        self, *, attempt_id: str, symbol: str, level: Decimal, armed_at: datetime
-    ) -> PaperDecision | None:
-        normalized = symbol.upper()
-        if not attempt_id.strip() or level <= 0:
-            return None
-        if attempt_id in self._independent_arms:
-            return None
-        if any(
-            leg.arm == INDEPENDENT_ARM and leg.symbol == normalized and leg.exit_at is None
-            for leg in self._legs.values()
-        ):
-            return None
-        if any(arm.symbol == normalized for arm in self._independent_arms.values()):
-            return None
-        at = armed_at.astimezone(UTC)
-        self._independent_arms[attempt_id] = _IndependentArm(
-            attempt_id=attempt_id,
-            symbol=normalized,
-            level=level,
-            armed_at=at,
-        )
-        self._independent_attempt_ids.add(attempt_id)
-        return PaperDecision(
-            event_key=f"INDEPENDENT_ARMED:{attempt_id}",
-            logical_id=f"independent-arm:{attempt_id}",
-            arm=INDEPENDENT_ARM,
-            event_type="INDEPENDENT_ARMED",
-            session_date=at.astimezone(EASTERN).date(),
-            symbol=normalized,
-            observed_at=at,
-            price=level,
-            quantity=None,
-            config_id=None,
-            detail={"attempt_id": attempt_id, "level": str(level)},
-        )
-
-    def restore_independent_arm(
-        self, *, attempt_id: str, symbol: str, level: Decimal, armed_at: datetime
-    ) -> None:
-        self.arm_independent(
-            attempt_id=attempt_id,
-            symbol=symbol,
-            level=level,
-            armed_at=armed_at,
-        )
-
-    def restore_independent_entry(
-        self,
-        *,
-        attempt_id: str,
-        logical_id: str,
-        symbol: str,
-        entered_at: datetime,
-        price: Decimal,
-        quantity: Decimal,
-    ) -> None:
-        identity = f"independent:{attempt_id}"
-        if identity in self._legs:
-            return
-        self._legs[identity] = _PaperLeg(
-            identity=identity,
-            logical_id=logical_id,
-            arm=INDEPENDENT_ARM,
-            symbol=symbol.upper(),
-            venue="modelled",
-            entry_at=entered_at.astimezone(UTC),
-            entry_price=price,
-            quantity=quantity,
-            config=self.config_at(entered_at),
-            independent_attempt_id=attempt_id,
-        )
-        self._independent_attempt_ids.add(attempt_id)
-        self._independent_arms.pop(attempt_id, None)
 
     def mark_atr_sell(self, symbol: str, observed_at: datetime) -> None:
         self._pending_flip_at[symbol.upper()] = observed_at.astimezone(UTC)
@@ -678,30 +526,6 @@ class PaperExitRuntime:
         normalized = symbol.upper()
         at = observed_at.astimezone(UTC)
         decisions: list[PaperDecision] = []
-        if ask is not None and ask > 0:
-            for attempt_id, arm in list(self._independent_arms.items()):
-                if arm.symbol != normalized or ask < arm.level:
-                    continue
-                config = self.config_at(at)
-                identity = f"independent:{attempt_id}"
-                logical_id = sha256(identity.encode("utf-8")).hexdigest()
-                self._legs[identity] = _PaperLeg(
-                    identity=identity,
-                    logical_id=logical_id,
-                    arm=INDEPENDENT_ARM,
-                    symbol=normalized,
-                    venue="modelled",
-                    entry_at=at,
-                    entry_price=ask,
-                    quantity=Decimal("1"),
-                    config=config,
-                    independent_attempt_id=attempt_id,
-                )
-                decisions.append(
-                    self._decision(self._legs[identity], "INDEPENDENT_ENTRY", at, ask)
-                )
-                self._independent_arms.pop(attempt_id, None)
-
         if bid is None or bid <= 0:
             return decisions
         self._last_executable_bid[normalized] = (at, bid)
@@ -937,7 +761,6 @@ class PaperExitRuntime:
                 "stop_pct": str(leg.config.stop_pct),
                 "confirmation_bars": leg.config.confirmation_bars,
                 "config_effective_at": leg.config.effective_at.isoformat(),
-                "independent_attempt_id": leg.independent_attempt_id,
                 **dict(extra_detail or {}),
             },
         )
@@ -975,7 +798,7 @@ class PaperExitRuntime:
                 }
                 for leg in open_legs
             ],
-            "pending_open_symbols": sorted({arm.symbol for arm in self._independent_arms.values()}),
+            "pending_open_symbols": [],
             "pending_close_symbols": [],
             "pending_scale_levels": [],
             "daily_pnl": 0.0,
@@ -999,17 +822,6 @@ class PaperExitRuntime:
             "retention_states": [],
             "paper_exit": {
                 "mirror_open": sum(leg.arm == MIRROR_ARM for leg in open_legs),
-                "independent_open": sum(leg.arm == INDEPENDENT_ARM for leg in open_legs),
-                "independent": {
-                    "armed": len(self._independent_attempt_ids),
-                    "filled": sum(
-                        leg.arm == INDEPENDENT_ARM for leg in self._legs.values()
-                    ),
-                    "pending": len(self._independent_arms),
-                    "closed": sum(
-                        leg.arm == INDEPENDENT_ARM for leg in closed_legs
-                    ),
-                },
                 "halt_suppression": {
                     "status": "MEASURED" if self._halt_event_keys else "UNEXERCISED",
                     "suppressed_triggers": len(self._halt_suppression_keys),
@@ -1035,7 +847,7 @@ class PaperExitRuntime:
         }
 
     def mirror_logical_ids(self) -> set[str]:
-        return set(self._mirror_identity_by_logical_id)
+        return {leg.logical_id for leg in self._legs.values() if leg.arm == MIRROR_ARM}
 
     def has_fill(self, fill_id: UUID) -> bool:
         return fill_id in self._fill_ids

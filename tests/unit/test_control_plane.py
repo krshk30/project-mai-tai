@@ -2225,11 +2225,12 @@ def test_polygon_bot_legacy_webull_routes_remain_compatible() -> None:
         legacy_page = client.get("/bot/30s-webull")
         assert legacy_page.status_code == 200
         assert "Polygon Paper Exit Harness" in legacy_page.text
-        assert "Entry Fill Assumptions" in legacy_page.text
-        assert "Independent assumed" in legacy_page.text
+        assert "Mirrors only live:schwab_1m_v2 first-slot resting fills" in legacy_page.text
+        assert "Entry Fill Assumptions" not in legacy_page.text
+        assert "Independent assumed" not in legacy_page.text
         assert "REFUSED_SPANS_EVIDENCE_CUTOVER" in legacy_page.text
-        assert "WBD1X" in legacy_page.text
-        assert "<td>webull</td>" in legacy_page.text
+        assert "WBD1X" not in legacy_page.text
+        assert "<td>webull</td>" not in legacy_page.text
         assert "AUUD" in legacy_page.text
 
 

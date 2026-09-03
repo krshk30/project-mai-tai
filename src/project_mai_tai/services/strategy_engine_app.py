@@ -75,7 +75,6 @@ from project_mai_tai.paper_exit import (
     completed_session_acceptance,
     logical_mirror_id,
     mirror_acceptance,
-    resting_fill_classification,
     terminal_evidence_covers,
 )
 from project_mai_tai.paper_exit_store import PaperExitStore
@@ -6469,30 +6468,6 @@ class StrategyEngineService:
             observed_at = event.observed_at
             if observed_at.tzinfo is None:
                 observed_at = observed_at.replace(tzinfo=UTC)
-            if event.event_type == "INDEPENDENT_ARMED" and event.price is not None:
-                attempt_id = str((event.payload or {}).get("attempt_id", "")).strip()
-                if attempt_id:
-                    self.paper_exit_runtime.restore_independent_arm(
-                        attempt_id=attempt_id,
-                        symbol=event.symbol,
-                        level=event.price,
-                        armed_at=observed_at,
-                    )
-                continue
-            if event.event_type == "INDEPENDENT_ENTRY" and event.price is not None:
-                attempt_id = str(
-                    (event.payload or {}).get("independent_attempt_id", "")
-                ).strip()
-                if attempt_id:
-                    self.paper_exit_runtime.restore_independent_entry(
-                        attempt_id=attempt_id,
-                        logical_id=event.logical_id,
-                        symbol=event.symbol,
-                        entered_at=observed_at,
-                        price=event.price,
-                        quantity=event.quantity or Decimal("1"),
-                    )
-                continue
             if (
                 event.event_type.startswith("CONFIRMATION_")
                 and event.source_fill_id is not None
@@ -6606,7 +6581,7 @@ class StrategyEngineService:
                     for fill in fills
                 ),
             }
-            for venue in ("schwab", "webull")
+            for venue in ("schwab",)
         }
         acceptance = {
             "verdict": verdict,
@@ -6622,11 +6597,6 @@ class StrategyEngineService:
         }
         acceptance["grade"] = self.paper_exit_store.daily_grade(
             report_window=report_window,
-            source_fills=fills,
-        )
-        acceptance["entry_assumptions"] = self.paper_exit_store.entry_assumption_rows(
-            start=event_start,
-            end=end,
             source_fills=fills,
         )
         self.paper_exit_runtime.set_acceptance(acceptance)
@@ -7108,40 +7078,6 @@ class StrategyEngineService:
                 raise RuntimeError("paper-exit config update received without paper runtime")
             self.paper_exit_runtime.update_config(self.paper_exit_store.latest_config())
             await self._publish_strategy_state_snapshot()
-            return
-
-        if event_type == "trade_intent":
-            event = TradeIntentEvent.model_validate(payload)
-            intent = event.payload
-            if (
-                self.paper_exit_runtime is None
-                or normalize_strategy_code(intent.strategy_code) != "schwab_1m_v2"
-                or intent.intent_type != "open"
-                or intent.side != "buy"
-            ):
-                return
-            eligible, refusal = resting_fill_classification(intent.metadata)
-            slot_id = str(intent.metadata.get("fanout_slot_id", "")).strip()
-            try:
-                level = Decimal(str(intent.metadata["cw_flip_level"]))
-            except (KeyError, ArithmeticError, ValueError):
-                level = Decimal("0")
-            if not eligible or not slot_id or level <= 0:
-                self.logger.error(
-                    "[PAPER-EXIT-INDEPENDENT-ARM-REFUSED] sym=%s source=%s slot=%s level=%s",
-                    intent.symbol,
-                    refusal,
-                    slot_id or "missing",
-                    level,
-                )
-                return
-            decision = self.paper_exit_runtime.arm_independent(
-                attempt_id=slot_id,
-                symbol=intent.symbol,
-                level=level,
-                armed_at=event.produced_at,
-            )
-            self._persist_paper_decisions([decision] if decision is not None else [])
             return
 
         if event_type == "v2_cw_flip":

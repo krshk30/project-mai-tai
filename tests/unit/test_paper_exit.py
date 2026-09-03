@@ -33,7 +33,6 @@ from project_mai_tai.paper_exit import (
     PaperSourceFill,
     completed_session_acceptance,
     logical_mirror_id,
-    mirrored_fill_classification,
     mirror_acceptance,
     resting_fill_classification,
     terminal_evidence_covers,
@@ -144,88 +143,39 @@ def test_reclaim_missing_and_contradictory_stamps_fail_closed(metadata: dict[str
 
 
 @pytest.mark.parametrize(
-    "metadata",
-    [
-        {"cw_entry_slot": "reclaim", "fanout_source": "reactive"},
-        {"cw_entry_slot": "reclaim", "atr_variant": "CW-v2"},
-        {"cw_entry_slot": "reclaim", "fanout_source": "rth_resting"},
-        {
-            "cw_entry_slot": "reclaim",
-            "atr_variant": "CW-v2-resting",
-            "resting_entry": "true",
-        },
-    ],
+    ("venue", "entry_slot"),
+    [("webull", "first"), ("schwab", "reclaim")],
 )
-def test_mirror_accepts_each_live_reclaim_shape(metadata: dict[str, str]) -> None:
-    assert mirrored_fill_classification(metadata)[0] is True
-
-
-def test_mirror_rejects_unstamped_or_conflicting_reclaim() -> None:
-    assert mirrored_fill_classification({"cw_entry_slot": "reclaim"})[0] is False
-    assert mirrored_fill_classification(
-        {"cw_entry_slot": "reclaim", "fanout_source": "unknown"}
-    )[0] is False
-
-
-def test_both_venues_collapse_only_on_the_stamped_slot() -> None:
-    schwab = fill(
-        fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        broker_fill_id="schwab-fill",
-        venue="schwab",
-    )
-    webull = fill(
-        fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        broker_fill_id="webull-fill",
-        venue="webull",
-        at=AT + timedelta(minutes=1, seconds=3),
-    )
-    assert logical_mirror_id(schwab) == logical_mirror_id(webull)
+def test_runtime_cannot_admit_an_excluded_source(venue: str, entry_slot: str) -> None:
     runtime = PaperExitRuntime(config())
-    assert runtime.add_mirror_fill(schwab)[0].event_type == "MIRROR_ENTRY"
-    assert runtime.add_mirror_fill(webull)[0].event_type == "MIRROR_LEG_COLLAPSED"
-    assert runtime.summary()["paper_exit"]["mirror_open"] == 1  # type: ignore[index]
+    source = fill(
+        fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        broker_fill_id="excluded-fill",
+        venue=venue,
+        entry_slot=entry_slot,
+    )
+    assert runtime.add_mirror_fill(source) == []
+    assert runtime.summary()["positions"] == []
 
 
-def test_first_and_reclaim_are_distinct_even_when_live_reuses_the_slot_id() -> None:
+def test_reused_slot_creates_distinct_entries_by_durable_fill_id() -> None:
     first = fill(
         fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         broker_fill_id="first-fill",
         venue="schwab",
-        entry_slot="first",
     )
-    reclaim = fill(
+    reused = fill(
         fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        broker_fill_id="reclaim-fill",
+        broker_fill_id="second-fill",
         venue="schwab",
-        entry_slot="reclaim",
         at=AT + timedelta(minutes=2),
     )
-    assert logical_mirror_id(first) != logical_mirror_id(reclaim)
+    assert first.fanout_slot_id == reused.fanout_slot_id
+    assert logical_mirror_id(first) != logical_mirror_id(reused)
     runtime = PaperExitRuntime(config())
     assert runtime.add_mirror_fill(first)[0].event_type == "MIRROR_ENTRY"
-    assert runtime.add_mirror_fill(reclaim)[0].event_type == "MIRROR_ENTRY"
+    assert runtime.add_mirror_fill(reused)[0].event_type == "MIRROR_ENTRY"
     assert runtime.summary()["paper_exit"]["mirror_open"] == 2  # type: ignore[index]
-
-
-def test_reclaim_legs_from_both_venues_collapse_to_one_position() -> None:
-    schwab = fill(
-        fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        broker_fill_id="schwab-reclaim",
-        venue="schwab",
-        entry_slot="reclaim",
-    )
-    webull = fill(
-        fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        broker_fill_id="webull-reclaim",
-        venue="webull",
-        entry_slot="reclaim",
-        at=AT + timedelta(minutes=1, seconds=3),
-    )
-    assert logical_mirror_id(schwab) == logical_mirror_id(webull)
-    runtime = PaperExitRuntime(config())
-    assert runtime.add_mirror_fill(schwab)[0].event_type == "MIRROR_ENTRY"
-    assert runtime.add_mirror_fill(webull)[0].event_type == "MIRROR_LEG_COLLAPSED"
-    assert runtime.summary()["paper_exit"]["mirror_open"] == 1  # type: ignore[index]
 
 
 def test_missing_durable_marker_is_reemitted_after_runtime_mutation() -> None:
@@ -242,31 +192,30 @@ def test_missing_durable_marker_is_reemitted_after_runtime_mutation() -> None:
     assert retry[0].source_fill_id == source.fill_id
 
 
-def test_collapsed_entry_is_quantity_weighted_and_arrival_order_invariant() -> None:
-    schwab = fill(
+def test_reused_slot_preserves_each_fill_price_and_quantity() -> None:
+    first = fill(
         fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        broker_fill_id="schwab-fill",
+        broker_fill_id="first-fill",
         venue="schwab",
         quantity="2",
         price="10",
     )
-    webull = fill(
+    second = fill(
         fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        broker_fill_id="webull-fill",
-        venue="webull",
+        broker_fill_id="second-fill",
+        venue="schwab",
         quantity="1",
         price="11",
         at=AT + timedelta(minutes=1, seconds=2),
     )
-    entries = []
-    for ordered in ((schwab, webull), (webull, schwab)):
-        runtime = PaperExitRuntime(config())
-        for source in ordered:
-            runtime.add_mirror_fill(source)
-        entries.append(runtime.summary()["positions"][0])
-    assert entries[0]["quantity"] == 3.0
-    assert entries[0]["entry_price"] == pytest.approx(31 / 3)
-    assert entries[0] == entries[1]
+    runtime = PaperExitRuntime(config())
+    runtime.add_mirror_fill(first)
+    runtime.add_mirror_fill(second)
+    positions = runtime.summary()["positions"]
+    assert [(row["quantity"], row["entry_price"]) for row in positions] == [
+        (2.0, 10.0),
+        (1.0, 11.0),
+    ]
 
 
 def test_timing_chain_cannot_merge_different_slots() -> None:
@@ -279,7 +228,7 @@ def test_timing_chain_cannot_merge_different_slots() -> None:
     middle = fill(
         fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         broker_fill_id="b",
-        venue="webull",
+        venue="schwab",
         slot="slot-b",
         at=AT + timedelta(minutes=1, seconds=7),
     )
@@ -644,7 +593,7 @@ def test_config_change_never_changes_an_open_window_and_survives_in_decision() -
     second = fill(
         fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         broker_fill_id="fill-2",
-        venue="webull",
+        venue="schwab",
         slot="slot-2",
         at=AT + timedelta(minutes=4),
     )
@@ -803,7 +752,7 @@ def test_retired_polygon_entry_rules_cannot_construct_an_intent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_independent_arm_uses_stamped_v2_resting_attempt_and_collapses_venues() -> None:
+async def test_trade_intents_cannot_create_paper_entries() -> None:
     service = StrategyEngineService.__new__(StrategyEngineService)
     service.logger = logging.getLogger("paper-test")
     service.paper_exit_runtime = PaperExitRuntime(config())
@@ -818,7 +767,9 @@ async def test_independent_arm_uses_stamped_v2_resting_attempt_and_collapses_ven
     )
 
     summary = service.paper_exit_runtime.summary()
-    assert summary["pending_open_symbols"] == ["TEST"]
+    assert summary["pending_open_symbols"] == []
+    assert summary["positions"] == []
+    assert "independent" not in summary["paper_exit"]
 
 
 @pytest.mark.asyncio
@@ -864,7 +815,7 @@ async def test_market_trade_event_time_reaches_the_live_halt_tracker() -> None:
     ("entry_slot", "source"),
     [("reclaim", "rth_resting"), ("first", "reactive"), ("first", "unknown")],
 )
-async def test_independent_arm_refuses_reclaim_and_unknown_sources(
+async def test_non_fill_intents_never_create_paper_entries(
     entry_slot: str, source: str
 ) -> None:
     service = StrategyEngineService.__new__(StrategyEngineService)
@@ -1078,83 +1029,7 @@ def test_daily_halt_line_counts_confirmed_windows_and_suppressed_triggers() -> N
     }
 
 
-def test_entry_assumptions_keep_modelled_and_actual_fills_separate() -> None:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, expire_on_commit=False)
-    schwab = fill(
-        fill_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        broker_fill_id="schwab-fill",
-        venue="schwab",
-        quantity="2",
-        price="10",
-    )
-    webull = fill(
-        fill_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        broker_fill_id="webull-fill",
-        venue="webull",
-        quantity="1",
-        price="11",
-        at=AT + timedelta(minutes=1, seconds=2),
-    )
-    with factory() as session:
-        session.add_all(
-            [
-                PaperExitEvent(
-                    event_key="independent-entry-matched",
-                    logical_id="independent:slot-1",
-                    arm="independent",
-                    event_type="INDEPENDENT_ENTRY",
-                    session_date=AT.date(),
-                    symbol="TEST",
-                    venue="modelled",
-                    observed_at=AT + timedelta(seconds=30),
-                    price=Decimal("10.5"),
-                    quantity=Decimal("1"),
-                    payload={"independent_attempt_id": "slot-1"},
-                ),
-                PaperExitEvent(
-                    event_key="independent-entry-only",
-                    logical_id="independent:slot-2",
-                    arm="independent",
-                    event_type="INDEPENDENT_ENTRY",
-                    session_date=AT.date(),
-                    symbol="OTHER",
-                    venue="modelled",
-                    observed_at=AT + timedelta(minutes=2),
-                    price=Decimal("4.2"),
-                    quantity=Decimal("1"),
-                    payload={"independent_attempt_id": "slot-2"},
-                ),
-            ]
-        )
-        session.commit()
-
-    rows = PaperExitStore(factory).entry_assumption_rows(
-        start=AT,
-        end=AT + timedelta(hours=1),
-        source_fills=[schwab, webull],
-    )
-
-    matched = next(row for row in rows if row["fanout_slot_id"] == "slot-1")
-    assert matched["status"] == "MATCHED_ASSUMPTION"
-    assert matched["mirror_venues"] == ["schwab", "webull"]
-    assert matched["mirror_legs"] == 2
-    assert Decimal(str(matched["mirror_fill_price"])) == Decimal(31) / Decimal(3)
-    assert Decimal(str(matched["independent_assumed_fill"])) == Decimal("10.5")
-    assert Decimal(str(matched["assumed_vs_actual_pct"])) > 0
-
-    independent_only = next(row for row in rows if row["fanout_slot_id"] == "slot-2")
-    assert independent_only["status"] == "INDEPENDENT_ONLY"
-    assert independent_only["mirror_fill_price"] == ""
-    assert independent_only["independent_assumed_fill"] == "4.20000000"
-
-
-def test_authoritative_fill_census_reads_both_live_venues_and_collapses_the_slot() -> None:
+def test_authoritative_fill_census_reads_only_schwab_v2_first_slot_resting() -> None:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -1229,13 +1104,18 @@ def test_authoritative_fill_census_reads_both_live_venues_and_collapses_the_slot
         end=AT + timedelta(hours=1),
     )
     assert refused == []
-    assert {item.venue for item in fills} == {"schwab", "webull"}
-    assert len({logical_mirror_id(item) for item in fills}) == 1
+    assert len(fills) == 1
+    assert fills[0].venue == "schwab"
+    assert fills[0].broker_account_name == "live:schwab_1m_v2"
 
     logical_id = logical_mirror_id(fills[0])
     with factory() as session:
         strategy = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
-        accounts = list(session.scalars(select(BrokerAccount)))
+        accounts = list(
+            session.scalars(
+                select(BrokerAccount).where(BrokerAccount.name == "live:schwab_1m_v2")
+            )
+        )
         assert strategy is not None
         for index, (account, price) in enumerate(zip(accounts, ("10.2", "10.4")), start=10):
             order = BrokerOrder(
@@ -1275,10 +1155,10 @@ def test_authoritative_fill_census_reads_both_live_venues_and_collapses_the_slot
                 event_type="PAPER_EXIT",
                 session_date=AT.date(),
                 symbol="TEST",
-                venue="both",
+                venue="schwab",
                 observed_at=AT + timedelta(minutes=9),
                 price=Decimal("10.5"),
-                quantity=Decimal("4"),
+                quantity=Decimal("2"),
                 payload={"reason": "TARGET"},
             )
         )
@@ -1288,20 +1168,20 @@ def test_authoritative_fill_census_reads_both_live_venues_and_collapses_the_slot
     )
     assert grades[0]["gradable"] is True
     assert Decimal(str(grades[0]["paper_pct"])) == Decimal("5.00")
-    assert Decimal(str(grades[0]["real_pct"])) == Decimal("3.00")
+    assert Decimal(str(grades[0]["real_pct"])) == Decimal("2.00")
 
     with factory() as session:
         paper = session.scalar(
             select(PaperExitEvent).where(PaperExitEvent.event_key == "paper-exit-grade")
         )
         assert paper is not None
-        paper.observed_at = AT + timedelta(minutes=1, seconds=30)
+        paper.observed_at = AT + timedelta(seconds=30)
         session.commit()
     predates = PaperExitStore(factory).mirror_grades(
         start=AT, end=AT + timedelta(hours=1), source_fills=fills
     )[0]
     assert predates["gradable"] is False
-    assert predates["reason"] == "paper exit predates a collapsed source leg"
+    assert predates["reason"] == "paper exit predates source fill"
 
     with factory() as session:
         paper = session.scalar(
@@ -1315,10 +1195,10 @@ def test_authoritative_fill_census_reads_both_live_venues_and_collapses_the_slot
         start=AT, end=AT + timedelta(hours=1), source_fills=fills
     )[0]
     assert wrong_quantity["gradable"] is False
-    assert wrong_quantity["reason"] == "paper exit quantity mismatch (3.00000000/4.00000000)"
+    assert wrong_quantity["reason"] == "paper exit quantity mismatch (3.00000000/2.00000000)"
 
 
-def test_authoritative_fill_census_keeps_reclaim_distinct_and_collapses_its_venues() -> None:
+def test_authoritative_fill_census_silently_excludes_reclaim_and_webull() -> None:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -1398,15 +1278,9 @@ def test_authoritative_fill_census_keeps_reclaim_distinct_and_collapses_its_venu
     )
 
     assert refused == []
-    assert len(fills) == 4
-    assert {item.entry_slot for item in fills} == {"first", "reclaim"}
-    grouped: dict[str, list[PaperSourceFill]] = {}
-    for source_fill in fills:
-        grouped.setdefault(logical_mirror_id(source_fill), []).append(source_fill)
-    assert len(grouped) == 2
-    assert {tuple(sorted(item.venue for item in group)) for group in grouped.values()} == {
-        ("schwab", "webull")
-    }
+    assert len(fills) == 1
+    assert fills[0].entry_slot == "first"
+    assert fills[0].venue == "schwab"
 
 
 def test_malformed_first_slot_fill_is_counted_as_unanswerable_not_dropped() -> None:
@@ -1419,7 +1293,9 @@ def test_malformed_first_slot_fill_is_counted_as_unanswerable_not_dropped() -> N
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as session:
         strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
-        account = BrokerAccount(name="live:orb", provider="webull", environment="production")
+        account = BrokerAccount(
+            name="live:schwab_1m_v2", provider="schwab", environment="production"
+        )
         session.add_all([strategy, account])
         session.flush()
         order = BrokerOrder(

@@ -26,11 +26,11 @@ from project_mai_tai.paper_exit import (
     PaperRuleConfig,
     PaperSourceFill,
     logical_mirror_id,
-    mirrored_fill_classification,
+    resting_fill_classification,
 )
 
-LIVE_VENUES = frozenset({"schwab", "webull"})
-LIVE_ACCOUNT_NAMES = frozenset({"live:schwab_1m_v2", "live:orb"})
+LIVE_V2_PROVIDER = "schwab"
+LIVE_V2_ACCOUNT_NAME = "live:schwab_1m_v2"
 LIVE_ACCOUNT_ENVIRONMENTS = frozenset({"live", "production"})
 PAPER_EXIT_EVIDENCE_CUTOVER_SHA = "028817d8be8639c8e48aad648ef822a0abd18de5"
 PAPER_EXIT_INITIAL_CONFIG_AUTHOR = "migration-initial-v1"
@@ -303,18 +303,26 @@ class PaperExitStore:
 
     def event_fill_ids(self, *, start: datetime, end: datetime) -> set[UUID]:
         with self.session_factory() as session:
-            return set(
+            rows = list(
                 session.scalars(
-                    select(PaperExitEvent.source_fill_id).where(
+                    select(PaperExitEvent).where(
+                        PaperExitEvent.arm == "mirror",
                         PaperExitEvent.observed_at >= start,
                         PaperExitEvent.observed_at <= end,
                         PaperExitEvent.event_type.in_(
-                            ("MIRROR_ENTRY", "LATE_MIRROR", "MIRROR_LEG_COLLAPSED")
+                            ("MIRROR_ENTRY", "LATE_MIRROR")
                         ),
                         PaperExitEvent.source_fill_id.is_not(None),
                     )
                 )
             )
+        return {
+            row.source_fill_id
+            for row in rows
+            if row.source_fill_id is not None
+            and row.venue == "schwab"
+            and str((row.payload or {}).get("entry_slot", "")).lower() == "first"
+        }
 
     def live_resting_fills(
         self, *, start: datetime, end: datetime
@@ -327,8 +335,8 @@ class PaperExitStore:
             .outerjoin(TradeIntent, TradeIntent.id == BrokerOrder.intent_id)
             .where(
                 Strategy.code == "schwab_1m_v2",
-                BrokerAccount.provider.in_(LIVE_VENUES),
-                BrokerAccount.name.in_(LIVE_ACCOUNT_NAMES),
+                BrokerAccount.provider == LIVE_V2_PROVIDER,
+                BrokerAccount.name == LIVE_V2_ACCOUNT_NAME,
                 BrokerAccount.environment.in_(LIVE_ACCOUNT_ENVIRONMENTS),
                 Fill.side == "buy",
                 BrokerOrder.side == "buy",
@@ -351,9 +359,12 @@ class PaperExitStore:
                 **dict(order_payload.get("metadata") or order_payload),
                 **dict(payload.get("metadata") or {}),
             }
-            eligible, source = mirrored_fill_classification(metadata)
+            # The paper population is exactly v2's stamped first-slot resting fills.
+            # Reclaims and all other paths are outside the denominator, not refusals.
+            if str(metadata.get("cw_entry_slot", "")).strip().lower() != "first":
+                continue
+            eligible, source = resting_fill_classification(metadata)
             if not eligible:
-                venue = "schwab" if account.provider == "schwab" else "webull"
                 refused.append(
                     PaperDecision(
                         event_key=f"UNANSWERABLE:{fill.id}:classification",
@@ -366,7 +377,7 @@ class PaperExitStore:
                         price=fill.price,
                         quantity=fill.quantity,
                         config_id=None,
-                        venue=venue,
+                        venue="schwab",
                         source_fill_id=fill.id,
                         broker_fill_id=fill.broker_fill_id,
                         detail={"reason": source},
@@ -374,7 +385,6 @@ class PaperExitStore:
                 )
                 continue
             if intent is None or intent.intent_type != "open":
-                venue = "schwab" if account.provider == "schwab" else "webull"
                 refused.append(
                     PaperDecision(
                         event_key=f"UNANSWERABLE:{fill.id}:intent-provenance",
@@ -387,7 +397,7 @@ class PaperExitStore:
                         price=fill.price,
                         quantity=fill.quantity,
                         config_id=None,
-                        venue=venue,
+                        venue="schwab",
                         source_fill_id=fill.id,
                         broker_fill_id=fill.broker_fill_id,
                         detail={
@@ -403,7 +413,6 @@ class PaperExitStore:
             broker_fill_id = str(fill.broker_fill_id or "").strip()
             slot_id = str(metadata.get("fanout_slot_id", "") or "").strip()
             entry_slot = str(metadata.get("cw_entry_slot", "")).strip().lower()
-            venue = "schwab" if account.provider == "schwab" else "webull"
             if not broker_fill_id or not slot_id:
                 detail = "missing broker_fill_id" if not broker_fill_id else "missing fanout_slot_id"
                 refused.append(
@@ -418,7 +427,7 @@ class PaperExitStore:
                         price=fill.price,
                         quantity=fill.quantity,
                         config_id=None,
-                        venue=venue,
+                        venue="schwab",
                         source_fill_id=fill.id,
                         broker_fill_id=fill.broker_fill_id,
                         detail={"reason": detail},
@@ -430,7 +439,7 @@ class PaperExitStore:
                     fill_id=fill.id,
                     broker_fill_id=broker_fill_id,
                     broker_account_name=account.name,
-                    venue=venue,
+                    venue="schwab",
                     symbol=fill.symbol,
                     quantity=fill.quantity,
                     price=fill.price,
@@ -448,114 +457,13 @@ class PaperExitStore:
                 session.scalars(
                     select(PaperExitEvent)
                     .where(
+                        PaperExitEvent.arm == "mirror",
                         PaperExitEvent.observed_at >= start,
                         PaperExitEvent.observed_at <= end,
                     )
                     .order_by(PaperExitEvent.observed_at, PaperExitEvent.created_at)
                 )
             )
-
-    def entry_assumption_rows(
-        self,
-        *,
-        start: datetime,
-        end: datetime,
-        source_fills: list[PaperSourceFill],
-    ) -> list[dict[str, object]]:
-        """Put modelled ask fills beside actual mirror fills without pooling the arms."""
-        with self.session_factory() as session:
-            independent_entries = list(
-                session.scalars(
-                    select(PaperExitEvent)
-                    .where(
-                        PaperExitEvent.arm == "independent",
-                        PaperExitEvent.event_type == "INDEPENDENT_ENTRY",
-                        PaperExitEvent.observed_at >= start,
-                        PaperExitEvent.observed_at <= end,
-                    )
-                    .order_by(PaperExitEvent.observed_at, PaperExitEvent.created_at)
-                )
-            )
-
-        mirror_groups: dict[tuple[object, str, str, str], list[PaperSourceFill]] = defaultdict(list)
-        for source in source_fills:
-            key = (
-                source.session_date,
-                source.symbol.upper(),
-                source.fanout_slot_id,
-                source.entry_slot,
-            )
-            mirror_groups[key].append(source)
-        independent_groups: dict[tuple[object, str, str, str], list[PaperExitEvent]] = defaultdict(list)
-        for event in independent_entries:
-            attempt_id = str((event.payload or {}).get("independent_attempt_id", "")).strip()
-            key = (event.session_date, event.symbol.upper(), attempt_id, "first")
-            independent_groups[key].append(event)
-
-        rows: list[dict[str, object]] = []
-        for key in sorted(
-            mirror_groups.keys() | independent_groups.keys(),
-            key=lambda item: (str(item[0]), item[1], item[2]),
-        ):
-            mirror_legs = mirror_groups.get(key, [])
-            independent = independent_groups.get(key, [])
-            mirror_quantity = sum((leg.quantity for leg in mirror_legs), Decimal("0"))
-            mirror_price = (
-                sum((leg.price * leg.quantity for leg in mirror_legs), Decimal("0"))
-                / mirror_quantity
-                if mirror_quantity > 0
-                else None
-            )
-            assumption = independent[0] if len(independent) == 1 else None
-            assumed_price = Decimal(assumption.price) if assumption and assumption.price else None
-            if not mirror_legs:
-                status = "INDEPENDENT_ONLY"
-            elif not independent:
-                status = "NO_INDEPENDENT_FILL"
-            elif len(independent) > 1:
-                status = f"AMBIGUOUS_{len(independent)}_INDEPENDENT_FILLS"
-            else:
-                status = "MATCHED_ASSUMPTION"
-            assumed_vs_actual_pct = (
-                ((assumed_price / mirror_price) - Decimal("1")) * Decimal("100")
-                if assumed_price is not None and mirror_price is not None
-                else None
-            )
-            rows.append(
-                {
-                    "session_date": str(key[0]),
-                    "symbol": key[1],
-                    "fanout_slot_id": key[2] or "missing",
-                    "entry_slot": key[3],
-                    "mirror_fill_price": str(mirror_price) if mirror_price is not None else "",
-                    "mirror_first_fill_at": (
-                        min(leg.filled_at for leg in mirror_legs).isoformat()
-                        if mirror_legs
-                        else ""
-                    ),
-                    "mirror_last_fill_at": (
-                        max(leg.filled_at for leg in mirror_legs).isoformat()
-                        if mirror_legs
-                        else ""
-                    ),
-                    "mirror_venues": sorted({leg.venue for leg in mirror_legs}),
-                    "mirror_legs": len(mirror_legs),
-                    "independent_assumed_fill": (
-                        str(assumed_price) if assumed_price is not None else ""
-                    ),
-                    "independent_assumed_at": (
-                        assumption.observed_at.isoformat() if assumption is not None else ""
-                    ),
-                    "independent_fill_count": len(independent),
-                    "assumed_vs_actual_pct": (
-                        str(assumed_vs_actual_pct)
-                        if assumed_vs_actual_pct is not None
-                        else ""
-                    ),
-                    "status": status,
-                }
-            )
-        return rows
 
     def mirror_grades(
         self,
@@ -577,8 +485,8 @@ class PaperExitStore:
                     .join(Strategy, Strategy.id == Fill.strategy_id)
                     .where(
                         Strategy.code == "schwab_1m_v2",
-                        BrokerAccount.provider.in_(LIVE_VENUES),
-                        BrokerAccount.name.in_(LIVE_ACCOUNT_NAMES),
+                        BrokerAccount.provider == LIVE_V2_PROVIDER,
+                        BrokerAccount.name == LIVE_V2_ACCOUNT_NAME,
                         BrokerAccount.environment.in_(LIVE_ACCOUNT_ENVIRONMENTS),
                         Fill.symbol.in_(symbols),
                         Fill.filled_at <= end,
@@ -671,7 +579,7 @@ class PaperExitStore:
             elif paper.observed_at.replace(tzinfo=paper.observed_at.tzinfo or UTC) < max(
                 leg.filled_at for leg in legs
             ):
-                reason = "paper exit predates a collapsed source leg"
+                reason = "paper exit predates source fill"
             elif paper.quantity is None or Decimal(paper.quantity) != quantity:
                 reason = f"paper exit quantity mismatch ({paper.quantity}/{quantity})"
             elif exited_quantity != quantity:

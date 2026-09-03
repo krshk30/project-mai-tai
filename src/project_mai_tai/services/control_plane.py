@@ -994,6 +994,7 @@ class ControlPlaneRepository:
                 session.scalars(
                     select(PaperExitEvent)
                     .where(
+                        PaperExitEvent.arm == "mirror",
                         PaperExitEvent.observed_at >= start,
                         PaperExitEvent.observed_at < end,
                     )
@@ -1004,7 +1005,6 @@ class ControlPlaneRepository:
         return [
             {
                 "time": _datetime_str(row.observed_at),
-                "arm": row.arm,
                 "event": row.event_type,
                 "symbol": row.symbol,
                 "venue": row.venue,
@@ -1015,6 +1015,8 @@ class ControlPlaneRepository:
                 "logical_id": row.logical_id,
             }
             for row in rows
+            if row.venue != "webull"
+            and str((row.payload or {}).get("entry_slot", "")).lower() != "reclaim"
         ]
 
     def load_bot_trade_forensics(
@@ -5799,14 +5801,12 @@ def _render_bot_detail_page(
         paper_config = dict(paper_exit.get("config", {}) or {})
         acceptance = dict(paper_exit.get("acceptance", {}) or {})
         grade = dict(acceptance.get("grade", {}) or {})
-        independent = dict(paper_exit.get("independent", {}) or {})
         halt_suppression = dict(
             grade.get("halt_suppression", {})
             or paper_exit.get("halt_suppression", {})
             or {}
         )
         confirmation_exit = dict(paper_exit.get("confirmation_exit", {}) or {})
-        assumption_rows = list(acceptance.get("entry_assumptions", []) or [])
         verdict = str(acceptance.get("verdict", "UNEXERCISED"))
         grade_status = str(grade.get("status", "COULD_NOT_TELL"))
         grade_value = (
@@ -5823,7 +5823,6 @@ def _render_bot_detail_page(
         evidence_rows = "".join(
             "<tr>"
             f"<td>{escape(str(row.get('time', '')))}</td>"
-            f"<td>{escape(str(row.get('arm', '')))}</td>"
             f"<td>{escape(str(row.get('symbol', '')))}</td>"
             f"<td>{escape(str(row.get('venue', '') or '-'))}</td>"
             f"<td>{escape(str(row.get('event', '')))}</td>"
@@ -5831,7 +5830,7 @@ def _render_bot_detail_page(
             f"<td>{escape(str(row.get('reason', '') or '-'))}</td>"
             "</tr>"
             for row in list(bot.get("paper_exit_evidence", []))[:100]
-        ) or '<tr><td colspan="7">Waiting for the first paper decision.</td></tr>'
+        ) or '<tr><td colspan="6">Waiting for the first paper decision.</td></tr>'
         grade_rows = "".join(
             "<tr>"
             f"<td>{escape(str(row.get('symbol', '')))}</td>"
@@ -5843,33 +5842,18 @@ def _render_bot_detail_page(
             "</tr>"
             for row in list(grade.get("rows", []))
         ) or '<tr><td colspan="6">No completed matched entries yet.</td></tr>'
-        assumption_table_rows = "".join(
-            "<tr>"
-            f"<td>{escape(str(row.get('symbol', '')))}</td>"
-            f"<td>{escape(str(row.get('fanout_slot_id', '')))}</td>"
-            f"<td>{escape(', '.join(str(item) for item in row.get('mirror_venues', [])) or '-')}</td>"
-            f"<td>{escape(str(row.get('mirror_fill_price', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('mirror_first_fill_at', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('independent_assumed_fill', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('independent_assumed_at', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('assumed_vs_actual_pct', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('status', '')))}</td>"
-            "</tr>"
-            for row in assumption_rows
-        ) or '<tr><td colspan="9">No fill assumptions yet.</td></tr>'
         paper_exit_panel = f"""
             <section class="panel full accent-panel">
                 <div class="panel-header">
                     <div>
                         <h2>Paper Exit Harness</h2>
-                        <div class="sub">Mirror and independent results stay separate. This harness cannot place broker orders.</div>
+                        <div class="sub">Mirrors only live:schwab_1m_v2 first-slot resting fills. This harness cannot place broker orders.</div>
                     </div>
                     <span class="count accent">{escape(verdict)}</span>
                 </div>
                 <div class="hero-grid">
                     <div class="hero-card"><span>Mirror entries</span><strong>{int(acceptance.get("matched", 0) or 0)} / {int(acceptance.get("live", 0) or 0)}</strong><small>terminal {int(acceptance.get("terminal", 0) or 0)} / {int(acceptance.get("terminal_expected", 0) or 0)} · missed {int(acceptance.get("missed", 0) or 0)} · phantom {int(acceptance.get("phantom", 0) or 0)}</small></div>
-                    <div class="hero-card"><span>Open mirror</span><strong>{int(paper_exit.get("mirror_open", 0) or 0)}</strong><small>Live resting fills, both venues</small></div>
-                    <div class="hero-card"><span>Independent</span><strong>{int(independent.get("filled", 0) or 0)} / {int(independent.get("armed", 0) or 0)}</strong><small>filled / armed · never pooled</small></div>
+                    <div class="hero-card"><span>Open mirror</span><strong>{int(paper_exit.get("mirror_open", 0) or 0)}</strong><small>Schwab v2 first-slot resting fills</small></div>
                     <div class="hero-card"><span>Daily grade</span><strong>{escape(grade_value)}</strong><small>{grade_note}</small></div>
                     <div class="hero-card"><span>Halt-suppressed triggers</span><strong>{escape(str(halt_suppression.get("status", "UNEXERCISED")))}</strong><small>{escape(str(halt_suppression.get("suppressed_triggers", 0)))} triggers / {escape(str(halt_suppression.get("denominator", 0)))} confirmed halt windows</small></div>
                     <div class="hero-card"><span>Confirmation exit</span><strong>{escape(str(confirmation_exit.get("status", "UNEXERCISED")))}</strong><small>{escape(str(confirmation_exit.get("fired", 0)))} fired · {escape(str(confirmation_exit.get("state_long", 0)))} continued / {escape(str(confirmation_exit.get("denominator", 0)))} evaluated</small></div>
@@ -5887,14 +5871,6 @@ def _render_bot_detail_page(
                     </form>
                 </div>
                 <div class="table-wrap" style="margin-top:14px">
-                    <h3>Entry Fill Assumptions</h3>
-                    <div class="sub">Independent uses a modelled executable ask. Mirror is the actual quantity-weighted broker fill. Negative delta means the model assumed a cheaper fill.</div>
-                    <table>
-                        <thead><tr><th>Symbol</th><th>Slot</th><th>Mirror venues</th><th>Mirror actual</th><th>Mirror time</th><th>Independent assumed</th><th>Assumed time</th><th>Delta %</th><th>Status</th></tr></thead>
-                        <tbody>{assumption_table_rows}</tbody>
-                    </table>
-                </div>
-                <div class="table-wrap" style="margin-top:14px">
                     <table>
                         <thead><tr><th>Symbol</th><th>Venues</th><th>Legs</th><th>Paper %</th><th>Live %</th><th>Evidence</th></tr></thead>
                         <tbody>{grade_rows}</tbody>
@@ -5902,7 +5878,7 @@ def _render_bot_detail_page(
                 </div>
                 <div class="table-wrap" style="margin-top:14px">
                     <table>
-                        <thead><tr><th>Time</th><th>Arm</th><th>Symbol</th><th>Venue</th><th>Decision</th><th>Price</th><th>Reason</th></tr></thead>
+                        <thead><tr><th>Time</th><th>Symbol</th><th>Venue</th><th>Decision</th><th>Price</th><th>Reason</th></tr></thead>
                         <tbody>{evidence_rows}</tbody>
                     </table>
                 </div>
