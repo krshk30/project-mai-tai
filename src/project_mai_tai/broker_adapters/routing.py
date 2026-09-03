@@ -51,6 +51,15 @@ class RoutingBrokerAdapter:
             return set()
         return await fn(broker_account_name, symbols)
 
+    async def release_native_oco_for_close(
+        self, broker_account_name: str, entry_broker_order_id: str
+    ) -> str:
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "release_native_oco_for_close", None)
+        if fn is None:
+            return "unanswerable"
+        return str(await fn(broker_account_name, entry_broker_order_id))
+
     async def cancel_exit_pair(
         self, *, broker_account_name: str, symbol: str, base_client_order_id: str
     ) -> list[ExecutionReport]:

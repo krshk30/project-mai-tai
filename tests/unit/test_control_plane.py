@@ -260,7 +260,12 @@ def test_polygon_paper_exit_rule_updates_without_restart_and_keeps_history() -> 
     with TestClient(app) as client:
         first = client.post(
             "/botpolygon/paper-exit/config",
-            json={"target_pct": "5", "stop_pct": "8", "changed_by": "operator"},
+            json={
+                "target_pct": "5",
+                "stop_pct": "8",
+                "confirmation_bars": "3",
+                "changed_by": "operator",
+            },
         )
         second = client.post(
             "/botpolygon/paper-exit/config",
@@ -279,6 +284,7 @@ def test_polygon_paper_exit_rule_updates_without_restart_and_keeps_history() -> 
         ("5.0000", "8.0000"),
         ("6.0000", "9.0000"),
     ]
+    assert [row.confirmation_bars for row in configs] == [3, 3]
     assert len(redis.streams["test:runtime-controls"]) == 2
 
 

@@ -3933,18 +3933,27 @@ def build_app(
             parsed = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
             values = {key: items[-1] for key, items in parsed.items() if items}
         try:
+            config_store = PaperExitStore(active_session_factory)
+            try:
+                current_confirmation_bars = config_store.latest_config().confirmation_bars
+            except RuntimeError:
+                current_confirmation_bars = 1
             target_pct = Decimal(str(values["target_pct"]))
             stop_pct = Decimal(str(values["stop_pct"]))
+            confirmation_bars = int(
+                values.get("confirmation_bars", current_confirmation_bars)
+            )
             effective_text = str(values.get("effective_at", "")).strip()
             effective_at = datetime.fromisoformat(effective_text) if effective_text else utcnow()
             if effective_at.tzinfo is None:
                 effective_at = effective_at.replace(tzinfo=EASTERN_TZ)
             changed_by = str(values.get("changed_by", "operator")).strip() or "operator"
-            config = PaperExitStore(active_session_factory).append_config(
+            config = config_store.append_config(
                 target_pct=target_pct,
                 stop_pct=stop_pct,
                 effective_at=effective_at.astimezone(UTC),
                 changed_by=changed_by,
+                confirmation_bars=confirmation_bars,
             )
         except (KeyError, ValueError, ArithmeticError) as exc:
             return Response(content=f"Invalid paper-exit configuration: {exc}", status_code=400)
@@ -3965,6 +3974,7 @@ def build_app(
                         "id": str(config.id),
                         "target_pct": str(config.target_pct),
                         "stop_pct": str(config.stop_pct),
+                        "confirmation_bars": config.confirmation_bars,
                         "effective_at": config.effective_at.isoformat(),
                     }
                 ),
@@ -5795,6 +5805,7 @@ def _render_bot_detail_page(
             or paper_exit.get("halt_suppression", {})
             or {}
         )
+        confirmation_exit = dict(paper_exit.get("confirmation_exit", {}) or {})
         assumption_rows = list(acceptance.get("entry_assumptions", []) or [])
         verdict = str(acceptance.get("verdict", "UNEXERCISED"))
         grade_status = str(grade.get("status", "COULD_NOT_TELL"))
@@ -5861,13 +5872,15 @@ def _render_bot_detail_page(
                     <div class="hero-card"><span>Independent</span><strong>{int(independent.get("filled", 0) or 0)} / {int(independent.get("armed", 0) or 0)}</strong><small>filled / armed · never pooled</small></div>
                     <div class="hero-card"><span>Daily grade</span><strong>{escape(grade_value)}</strong><small>{grade_note}</small></div>
                     <div class="hero-card"><span>Halt-suppressed triggers</span><strong>{escape(str(halt_suppression.get("status", "UNEXERCISED")))}</strong><small>{escape(str(halt_suppression.get("suppressed_triggers", 0)))} triggers / {escape(str(halt_suppression.get("denominator", 0)))} confirmed halt windows</small></div>
-                    <div class="hero-card"><span>Active rule</span><strong>+{escape(str(paper_config.get("target_pct", "5")))}% / -{escape(str(paper_config.get("stop_pct", "8")))}%</strong><small>Effective {escape(str(paper_config.get("effective_at", "-")))}</small></div>
+                    <div class="hero-card"><span>Confirmation exit</span><strong>{escape(str(confirmation_exit.get("status", "UNEXERCISED")))}</strong><small>{escape(str(confirmation_exit.get("fired", 0)))} fired · {escape(str(confirmation_exit.get("state_long", 0)))} continued / {escape(str(confirmation_exit.get("denominator", 0)))} evaluated</small></div>
+                    <div class="hero-card"><span>Active rule</span><strong>+{escape(str(paper_config.get("target_pct", "5")))}% / -{escape(str(paper_config.get("stop_pct", "8")))}%</strong><small>CONF1 after {escape(str(paper_config.get("confirmation_bars", "1")))} full bar · effective {escape(str(paper_config.get("effective_at", "-")))}</small></div>
                 </div>
                 <div class="panel-copy">
                     {"Waiting for the first live resting fill; zero entries is UNEXERCISED, never PASS." if verdict == "UNEXERCISED" else "Acceptance is based on the durable live-fill denominator."}
                     <form method="post" action="/botpolygon/paper-exit/config" style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:end">
                         <label>Target %<br><input name="target_pct" type="number" step="0.01" min="0.01" value="{escape(str(paper_config.get("target_pct", "5")))}" required></label>
                         <label>Stop %<br><input name="stop_pct" type="number" step="0.01" min="0.01" value="{escape(str(paper_config.get("stop_pct", "8")))}" required></label>
+                        <label>Confirmation bars<br><input name="confirmation_bars" type="number" step="1" min="1" value="{escape(str(paper_config.get("confirmation_bars", "1")))}" required></label>
                         <label>Effective at (optional ET)<br><input name="effective_at" type="datetime-local"></label>
                         <input name="changed_by" type="hidden" value="operator-screen">
                         <button type="submit">Record new rule</button>

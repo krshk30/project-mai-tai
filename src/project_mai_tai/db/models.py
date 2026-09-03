@@ -495,13 +495,14 @@ class StrategyBarHistory(Base):
 
 
 class PaperExitRuleConfig(Base):
-    """Append-only operator configuration for the Polygon paper-exit harness."""
+    """Append-only operator configuration shared by paper exit and v2 CONF1."""
 
     __tablename__ = "paper_exit_rule_configs"
 
     id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
     target_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4))
     stop_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4))
+    confirmation_bars: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     changed_by: Mapped[str] = mapped_column(String(128), default="operator")
     created_at: Mapped[datetime] = mapped_column(
@@ -536,6 +537,36 @@ class PaperExitEvent(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+
+
+class V2ConfirmationExitEvaluation(Base):
+    """Durable one-shot v2 ATR decision and Redis outbox, keyed by its source fill."""
+
+    __tablename__ = "v2_confirmation_exit_evaluations"
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    source_fill_id: Mapped[UUID] = mapped_column(
+        ForeignKey("fills.id"), unique=True, nullable=False
+    )
+    source_order_id: Mapped[UUID] = mapped_column(ForeignKey("broker_orders.id"), nullable=False)
+    broker_fill_id: Mapped[str] = mapped_column(String(128), default="")
+    broker_order_id: Mapped[str] = mapped_column(String(128), default="")
+    broker_account_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    evaluation_bar_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    atr_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    should_exit: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    confirmation_bars: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("paper_exit_rule_configs.id"), nullable=True
+    )
+    config_effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, server_default=func.now()
     )

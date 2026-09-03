@@ -226,6 +226,184 @@ async def test_fetch_armed_native_oco_raises_on_broker_error(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
+async def test_confirmation_release_cancels_working_oco_and_confirms_no_sell_remains(
+    monkeypatch,
+) -> None:
+    adapter = _adapter(bracket_enabled=True)
+    before = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "childOrderStrategies": [
+                    {
+                        "orderId": "target-1",
+                        "status": "WORKING",
+                        "orderLegCollection": [{"instruction": "SELL"}],
+                    },
+                    {
+                        "orderId": "stop-1",
+                        "status": "WORKING",
+                        "orderLegCollection": [{"instruction": "SELL"}],
+                    },
+                    {
+                        "orderId": "pending-1",
+                        "status": "AWAITING_PARENT_ORDER",
+                        "orderLegCollection": [{"instruction": "SELL"}],
+                    },
+                ]
+            }
+        ],
+    }
+    after = {
+        **before,
+        "childOrderStrategies": [
+            {
+                "childOrderStrategies": [
+                    {
+                        "orderId": "target-1",
+                        "status": "CANCELED",
+                        "orderLegCollection": [{"instruction": "SELL"}],
+                    },
+                    {
+                        "orderId": "stop-1",
+                        "status": "CANCELED",
+                        "orderLegCollection": [{"instruction": "SELL"}],
+                    },
+                    {
+                        "orderId": "pending-1",
+                        "status": "CANCELED",
+                        "orderLegCollection": [{"instruction": "SELL"}],
+                    },
+                ]
+            }
+        ],
+    }
+    reads = iter((before, after))
+    deletes: list[str] = []
+
+    async def fetch(_account, _order_id):
+        return next(reads)
+
+    async def request(method, path, body=None):
+        assert body is None
+        assert method == "DELETE"
+        deletes.append(path)
+        return 200, {}, {}
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    result = await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+
+    assert result == "released"
+    assert any(path.endswith("/target-1") for path in deletes)
+    assert any(path.endswith("/stop-1") for path in deletes)
+    assert any(path.endswith("/pending-1") for path in deletes)
+
+
+@pytest.mark.asyncio
+async def test_confirmation_release_refuses_when_cancel_cannot_be_confirmed(monkeypatch) -> None:
+    adapter = _adapter(bracket_enabled=True)
+    working = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "orderId": "stop-1",
+                "status": "WORKING",
+                "orderLegCollection": [{"instruction": "SELL"}],
+            }
+        ],
+    }
+
+    async def fetch(_account, _order_id):
+        return working
+
+    async def request(_method, _path, body=None):
+        assert body is None
+        return 200, {}, {}
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    assert (
+        await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+        == "unanswerable"
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirmation_release_reports_filled_child_without_sending_cancel(monkeypatch) -> None:
+    adapter = _adapter(bracket_enabled=True)
+    resolved = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "orderId": "target-1",
+                "status": "FILLED",
+                "orderLegCollection": [{"instruction": "SELL"}],
+            }
+        ],
+    }
+    deletes: list[str] = []
+
+    async def request(method, path, body=None):
+        deletes.append(path)
+        return 200, {}, {}
+
+    async def fetch(*_args):
+        return resolved
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    assert (
+        await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+        == "resolved_by_fill"
+    )
+    assert deletes == []
+
+
+@pytest.mark.asyncio
+async def test_confirmation_release_refuses_a_partially_filled_child(monkeypatch) -> None:
+    adapter = _adapter(bracket_enabled=True)
+    partial = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "orderId": "stop-1",
+                "status": "PARTIAL_FILL",
+                "orderLegCollection": [{"instruction": "SELL"}],
+            }
+        ],
+    }
+    deletes: list[str] = []
+
+    async def fetch(*_args):
+        return partial
+
+    async def request(_method, path, body=None):
+        deletes.append(path)
+        return 200, {}, {}
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    assert (
+        await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+        == "unanswerable"
+    )
+    assert deletes == []
+
+
+@pytest.mark.asyncio
 async def test_fetch_oco_resolved_by_fill_needs_a_recent_filled_sell(monkeypatch) -> None:
     """Resolved-by-fill = a child SELL leg reached FILLED RECENTLY. Recency is the safety hinge:
     it ties the fill to the bracket that JUST cleared, so a STALE filled sell from an earlier

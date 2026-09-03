@@ -492,6 +492,11 @@ class OmsRiskService:
         )
         self._boot_protection_alerts: int = 0
         self._latest_quotes_by_symbol: dict[str, dict[str, object]] = {}
+        # CONF1 decisions are stamped by v2's Schwab 1m process. They remain pending until a quote
+        # strictly after the evaluation point and until broker-native protection is reconciled.
+        self._confirmation_exit_pending: dict[tuple[str, str], dict[str, object]] = {}
+        self._confirmation_exit_inflight: set[tuple[str, str]] = set()
+        self._confirmation_exit_seen_fill_ids: set[str] = set()
         # (broker_account_name, symbol) -> when the broker last CONFIRMED both OCO legs open.
         # Read per quote tick (must stay in-memory: a DB round-trip on that path is the
         # #391-family freeze driver), written only by the periodic broker sync.
@@ -970,6 +975,48 @@ class OmsRiskService:
                         self.logger.info(
                             "[OMS-V2-CW] flip pending armed acct=%s sym=%s", arm_acct, sym
                         )
+            return
+
+        if event_type == "v2_confirmation_exit":
+            acct = (
+                str(payload.get("broker_account_name", "")).strip()
+                or self.settings.strategy_schwab_1m_v2_account_name
+            )
+            symbol = str(payload.get("symbol", "")).strip().upper()
+            if not symbol or str(payload.get("entry_slot", "")).strip().lower() != "first":
+                self.logger.error(
+                    "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s entry_slot=%s reason=scope",
+                    symbol or "-",
+                    payload.get("entry_slot", "missing"),
+                )
+                return
+            source_fill_id = str(payload.get("source_fill_id", "")).strip()
+            if not source_fill_id or source_fill_id in self._confirmation_exit_seen_fill_ids:
+                return
+            self._confirmation_exit_seen_fill_ids.add(source_fill_id)
+            if str(payload.get("atr_state", "unknown")).lower() == "long":
+                self.logger.info(
+                    "[OMS-V2-CONFIRMATION-EXIT-STATE-LONG] sym=%s acct=%s fill_id=%s",
+                    symbol,
+                    acct,
+                    payload.get("source_fill_id", ""),
+                )
+                return
+            if not bool(payload.get("should_exit")):
+                self.logger.error(
+                    "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s reason=inconsistent_stamp",
+                    symbol,
+                )
+                return
+            self._confirmation_exit_pending[(acct, symbol)] = dict(payload)
+            self.logger.info(
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=%s acct=%s fill_id=%s "
+                "evaluated_at_ms=%s status=PENDING_EXECUTABLE_BID",
+                symbol,
+                acct,
+                payload.get("source_fill_id", ""),
+                payload.get("evaluated_at_ms", ""),
+            )
             return
 
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
@@ -3499,6 +3546,64 @@ class OmsRiskService:
             self._fillable_session_end_hour_et(),
         )
 
+    async def _reconcile_confirmation_exit_protection(self, acct: str, symbol: str) -> str:
+        """Return released/resolved_by_fill/unanswerable from fresh broker evidence."""
+        adapter = getattr(self, "broker_adapter", None)
+        release = getattr(adapter, "release_native_oco_for_close", None)
+        if release is None:
+            self.logger.error(
+                "[OMS-V2-CONFIRMATION-EXIT-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=adapter_capability_missing",
+                symbol,
+                acct,
+            )
+            return "unanswerable"
+        pending = self._confirmation_exit_pending.get((acct, symbol), {})
+        broker_order_id = str(pending.get("broker_order_id", "")).strip()
+        if not broker_order_id:
+            self.logger.error(
+                "[OMS-V2-CONFIRMATION-EXIT-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=entry_broker_order_id_missing",
+                symbol,
+                acct,
+            )
+            return "unanswerable"
+        try:
+            result = str(await release(acct, broker_order_id))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - never race an unreadable OCO
+            result = "unanswerable"
+            self.logger.exception(
+                "[OMS-V2-CONFIRMATION-EXIT-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=release_failed",
+                symbol,
+                acct,
+            )
+        if result == "released":
+            self._native_oco_armed_confirmed_at.pop((acct, symbol), None)
+            self._native_oco_resolving.pop((acct, symbol), None)
+            self.logger.info(
+                "[OMS-V2-CONFIRMATION-EXIT-PROTECTION] sym=%s acct=%s status=RELEASED",
+                symbol,
+                acct,
+            )
+        elif result == "resolved_by_fill":
+            self.logger.info(
+                "[OMS-V2-CONFIRMATION-EXIT-PROTECTION] sym=%s acct=%s "
+                "status=ALREADY_RESOLVED_BY_OCO_FILL",
+                symbol,
+                acct,
+            )
+        else:
+            self.logger.error(
+                "[OMS-V2-CONFIRMATION-EXIT-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=release_unconfirmed",
+                symbol,
+                acct,
+            )
+        return result
+
     async def _evaluate_v2_managed_exit(self, acct: str, symbol: str) -> None:
         """Run the v2 exit ladder for one symbol on the latest quote. DECISION uses
         the live bid; FILL reference_price is the leg LEVEL (decision B — stop/floor/
@@ -3515,14 +3620,45 @@ class OmsRiskService:
         (owned by PR-D); it is bounded to ~5s by #391 Fix-1 and fires only on an exit."""
         if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
             return
-        if self._native_oco_stand_down_active(acct, symbol):
+        key = (acct, symbol)
+        confirmation_pending = self.__dict__.setdefault("_confirmation_exit_pending", {})
+        confirmation_inflight = self.__dict__.setdefault("_confirmation_exit_inflight", set())
+        confirmation = confirmation_pending.get(key)
+        quote = self._latest_quotes_by_symbol.get(symbol)
+        if confirmation is not None:
+            if not quote or key in confirmation_inflight:
+                return
+            try:
+                evaluated_at = datetime.fromtimestamp(
+                    float(str(confirmation["evaluated_at_ms"])) / 1000.0,
+                    UTC,
+                )
+            except (KeyError, TypeError, ValueError, OverflowError):
+                self.logger.error(
+                    "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s reason=invalid_evaluation_time",
+                    symbol,
+                )
+                confirmation_pending.pop(key, None)
+                return
+            quote_at = quote.get("received_at")
+            if not isinstance(quote_at, datetime) or quote_at <= evaluated_at:
+                return
+            confirmation_inflight.add(key)
+            protection = await self._reconcile_confirmation_exit_protection(acct, symbol)
+            confirmation_inflight.discard(key)
+            if protection == "resolved_by_fill":
+                confirmation_pending.pop(key, None)
+                await self._close_resolved_oco_managed_row(acct, symbol)
+                return
+            if protection != "released":
+                return
+        elif self._native_oco_stand_down_active(acct, symbol):
             # A broker-native OCO owns this exit: target + stop are ONE broker-arbitrated
             # pair. Running the software ladder here would place a THIRD protective sell
             # against the same shares -- the NXTC oversell, merely relocated. Fail-open
             # lives in the predicate: anything short of fresh broker confirmation runs
             # the ladder instead of skipping it.
             return
-        quote = self._latest_quotes_by_symbol.get(symbol)
         if not quote:
             return
         received_at = quote.get("received_at")
@@ -3547,6 +3683,7 @@ class OmsRiskService:
                 self._cw_flip_pending.discard((acct, symbol))  # no open row -> drop any stale flip
                 self._cw_floor_armed.discard((acct, symbol))  # no open row -> drop any armed floor
                 self._post_exit_stale_held_clear(acct, symbol)
+                confirmation_pending.pop(key, None)
                 return
 
             # C3 — the broker has already sold, but its position view can remain HELD for minutes.
@@ -3574,6 +3711,24 @@ class OmsRiskService:
                         session, acct, symbol, position, write_quantity=False
                     ),
                     commit=True,
+                )
+                # A previously-triggered exit owns the shares and wins the time ordering.
+                confirmation_pending.pop(key, None)
+                return
+
+            if confirmation is not None:
+                position = self._hydrate_v2_position(snapshot)
+                position.update_price(bid)
+                await self._emit_v2_exit_on_loop(
+                    acct,
+                    symbol,
+                    position,
+                    snapshot.entry_price,
+                    kind="HARD",
+                    reference_price=bid,
+                    reason="oms_v2_managed_exit:CONFIRMATION_EXIT",
+                    bid=bid,
+                    close_on_fill=close_on_fill,
                 )
                 return
 

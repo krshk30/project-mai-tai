@@ -6493,6 +6493,15 @@ class StrategyEngineService:
                         quantity=event.quantity or Decimal("1"),
                     )
                 continue
+            if (
+                event.event_type.startswith("CONFIRMATION_")
+                and event.source_fill_id is not None
+            ):
+                self.paper_exit_runtime.restore_confirmation_evidence(
+                    source_fill_id=event.source_fill_id,
+                    atr_state=str((event.payload or {}).get("atr_state", "unknown")),
+                )
+                continue
             if event.event_type not in {"PAPER_EXIT", "UNANSWERABLE"}:
                 continue
             self.paper_exit_runtime.restore_exit(
@@ -7155,6 +7164,48 @@ class StrategyEngineService:
                         observed_at=observed_at,
                     )
                 )
+            return
+
+        if event_type == "v2_confirmation_exit":
+            if self.paper_exit_runtime is None:
+                return
+            # The producer and consumer both enforce first-slot scope. This second fence is what
+            # makes a future producer regression unable to evaluate a reclaim in paper.
+            if str(payload.get("entry_slot", "")).strip().lower() != "first":
+                self.logger.error(
+                    "[PAPER-CONFIRMATION-EXIT-REFUSED] reason=non_first_slot payload=%s",
+                    payload.get("entry_slot"),
+                )
+                return
+            try:
+                source_fill_id = UUID(str(payload["source_fill_id"]))
+                observed_at = datetime.fromtimestamp(
+                    float(str(payload["evaluated_at_ms"])) / 1000.0,
+                    UTC,
+                )
+                effective_at = datetime.fromisoformat(str(payload["config_effective_at"]))
+                if effective_at.tzinfo is None:
+                    effective_at = effective_at.replace(tzinfo=UTC)
+                confirmation_bars = int(payload["confirmation_bars"])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                self.logger.error(
+                    "[PAPER-CONFIRMATION-EXIT-REFUSED] reason=invalid_stamp payload=%s",
+                    payload,
+                )
+                return
+            self._reconcile_paper_exit(
+                live_broker_fill_id=str(payload.get("broker_fill_id", ""))
+            )
+            self._persist_paper_decisions(
+                self.paper_exit_runtime.on_confirmation_exit(
+                    source_fill_id=source_fill_id,
+                    observed_at=observed_at,
+                    atr_state=str(payload.get("atr_state", "unknown")),
+                    confirmation_bars=confirmation_bars,
+                    config_effective_at=effective_at,
+                )
+            )
+            await self._publish_strategy_state_snapshot()
             return
 
         if event_type == "snapshot_batch":

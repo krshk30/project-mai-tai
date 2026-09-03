@@ -32,6 +32,26 @@ class _FakeRedis:
         return b"1-1"
 
 
+class _ConfirmationAdapter(SimulatedBrokerAdapter):
+    def __init__(self, *, armed: bool = False, release_result: str = "released") -> None:
+        super().__init__()
+        self.armed = armed
+        self.release_result = release_result
+        self.release_calls: list[tuple[str, str]] = []
+
+    async def fetch_armed_native_oco_symbols(
+        self, broker_account_name: str, symbols: list[str]
+    ) -> set[str]:
+        del broker_account_name
+        return set(symbols) if self.armed else set()
+
+    async def release_native_oco_for_close(
+        self, broker_account_name: str, entry_broker_order_id: str
+    ) -> str:
+        self.release_calls.append((broker_account_name, entry_broker_order_id))
+        return self.release_result
+
+
 def _make_sf() -> sessionmaker:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:", future=True,
@@ -43,7 +63,13 @@ def _make_sf() -> sessionmaker:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _svc(sf, *, cw: bool = True, floor: bool = False) -> OmsRiskService:
+def _svc(
+    sf,
+    *,
+    cw: bool = True,
+    floor: bool = False,
+    adapter: SimulatedBrokerAdapter | None = None,
+) -> OmsRiskService:
     settings = Settings(
         oms_v2_exit_management_enabled=True,
         oms_v2_exit_close_on_fill_enabled=True,
@@ -52,7 +78,7 @@ def _svc(sf, *, cw: bool = True, floor: bool = False) -> OmsRiskService:
     )
     svc = OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,
-        broker_adapter=SimulatedBrokerAdapter(),
+        broker_adapter=adapter or SimulatedBrokerAdapter(),
     )
     with sf() as s:
         svc.store.ensure_strategy(s, "schwab_1m_v2", name="v2")
@@ -186,6 +212,103 @@ async def test_dispatcher_arms_pending_only_when_cw_enabled():
                              "broker_account_name": ACCT})}
     )
     assert (ACCT, SYM) not in off._cw_flip_pending
+
+
+@pytest.mark.asyncio
+async def test_confirmation_exit_releases_native_oco_before_close() -> None:
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(armed=True)
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_confirmation_exit",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                    "source_fill_id": "fill-1",
+                    "broker_order_id": "entry-order-1",
+                    "evaluated_at_ms": "1",
+                    "atr_state": "short",
+                    "should_exit": True,
+                    "entry_slot": "first",
+                }
+            )
+        }
+    )
+    _quote(svc, bid=9.9)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, "entry-order-1")]
+    intents = _sell_intents(sf)
+    assert len(intents) == 1
+    assert intents[0].reason.endswith("CONFIRMATION_EXIT")
+
+
+@pytest.mark.asyncio
+async def test_confirmation_exit_never_arms_for_reclaim() -> None:
+    sf = _make_sf()
+    svc = _svc(sf, cw=True, adapter=_ConfirmationAdapter())
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_confirmation_exit",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                    "evaluated_at_ms": "1",
+                    "atr_state": "short",
+                    "should_exit": True,
+                    "entry_slot": "reclaim",
+                }
+            )
+        }
+    )
+    assert (ACCT, SYM) not in svc._confirmation_exit_pending
+
+
+@pytest.mark.asyncio
+async def test_confirmation_exit_blocks_when_oco_release_is_unconfirmed() -> None:
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(armed=True, release_result="unanswerable")
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._confirmation_exit_pending[(ACCT, SYM)] = {
+        "evaluated_at_ms": "1",
+        "broker_order_id": "entry-order-1",
+    }
+    _quote(svc, bid=9.9)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert _sell_intents(sf) == []
+    assert (ACCT, SYM) in svc._confirmation_exit_pending
+
+
+@pytest.mark.asyncio
+async def test_confirmation_exit_defers_to_an_oco_leg_that_already_filled() -> None:
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(armed=True, release_result="resolved_by_fill")
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._confirmation_exit_pending[(ACCT, SYM)] = {
+        "source_fill_id": "fill-1",
+        "evaluated_at_ms": "1",
+        "broker_order_id": "entry-order-1",
+    }
+    closed: list[tuple[str, str]] = []
+
+    async def close_resolved(acct: str, symbol: str, *, detail=None) -> None:
+        closed.append((acct, symbol))
+
+    svc._close_resolved_oco_managed_row = close_resolved  # type: ignore[method-assign]
+    _quote(svc, bid=9.9)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, "entry-order-1")]
+    assert closed == [(ACCT, SYM)]
+    assert _sell_intents(sf) == []
+    assert (ACCT, SYM) not in svc._confirmation_exit_pending
 
 
 # --- CW floor exit (2026-07-14): arm at +2%, ride, close on fall-back-to-floor ---

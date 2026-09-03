@@ -208,6 +208,7 @@ class PaperExitStore:
         target_pct: Decimal,
         stop_pct: Decimal,
         effective_at: datetime,
+        confirmation_bars: int = 1,
     ) -> PaperRuleConfig:
         """Create the bootstrap row once; every later change remains append-only."""
         with self.session_factory() as session:
@@ -221,12 +222,15 @@ class PaperExitStore:
             )
             if row is not None:
                 return self._config(row)
-            config = PaperRuleConfig(uuid4(), target_pct, stop_pct, effective_at)
+            config = PaperRuleConfig(
+                uuid4(), target_pct, stop_pct, effective_at, confirmation_bars
+            )
             session.add(
                 PaperExitRuleConfig(
                     id=config.id,
                     target_pct=config.target_pct,
                     stop_pct=config.stop_pct,
+                    confirmation_bars=config.confirmation_bars,
                     effective_at=config.effective_at,
                     changed_by="runtime-bootstrap",
                 )
@@ -241,14 +245,18 @@ class PaperExitStore:
         stop_pct: Decimal,
         effective_at: datetime,
         changed_by: str,
+        confirmation_bars: int = 1,
     ) -> PaperRuleConfig:
-        config = PaperRuleConfig(uuid4(), target_pct, stop_pct, effective_at)
+        config = PaperRuleConfig(
+            uuid4(), target_pct, stop_pct, effective_at, confirmation_bars
+        )
         with self.session_factory() as session:
             session.add(
                 PaperExitRuleConfig(
                     id=config.id,
                     target_pct=config.target_pct,
                     stop_pct=config.stop_pct,
+                    confirmation_bars=config.confirmation_bars,
                     effective_at=config.effective_at,
                     changed_by=changed_by,
                 )
@@ -698,4 +706,10 @@ class PaperExitStore:
         effective_at = row.effective_at
         if effective_at.tzinfo is None:
             effective_at = effective_at.replace(tzinfo=UTC)
-        return PaperRuleConfig(row.id, Decimal(row.target_pct), Decimal(row.stop_pct), effective_at)
+        return PaperRuleConfig(
+            row.id,
+            Decimal(row.target_pct),
+            Decimal(row.stop_pct),
+            effective_at,
+            int(row.confirmation_bars or 1),
+        )

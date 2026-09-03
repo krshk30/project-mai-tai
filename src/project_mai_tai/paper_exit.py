@@ -30,7 +30,13 @@ ACCEPTED_RESTING_SOURCES = frozenset(
 )
 ACCEPTED_RECLAIM_SOURCES = ACCEPTED_RESTING_SOURCES | frozenset({"cw-v2", "reactive"})
 NEUTRAL_FANOUT_VARIANTS = frozenset({"cw-v2-fanout"})
-EXIT_REASON_PRIORITY = {"TARGET": 0, "HARD_STOP": 1, "ATR_SELL": 2, "16:00": 3}
+EXIT_REASON_PRIORITY = {
+    "TARGET": 0,
+    "HARD_STOP": 1,
+    "CONFIRMATION_EXIT": 2,
+    "ATR_SELL": 3,
+    "16:00": 4,
+}
 
 
 @dataclass(frozen=True)
@@ -39,12 +45,15 @@ class PaperRuleConfig:
     target_pct: Decimal
     stop_pct: Decimal
     effective_at: datetime
+    confirmation_bars: int = 1
 
     def __post_init__(self) -> None:
         if self.target_pct <= 0 or self.stop_pct <= 0:
             raise ValueError("paper target and stop percentages must be positive")
         if self.effective_at.tzinfo is None:
             raise ValueError("paper config effective_at must be timezone-aware")
+        if self.confirmation_bars < 1:
+            raise ValueError("confirmation bar count must be at least one")
 
 
 @dataclass(frozen=True)
@@ -232,6 +241,10 @@ class PaperExitRuntime:
         self._fill_ids: set[UUID] = set()
         self._mirror_identity_by_logical_id: dict[str, str] = {}
         self._pending_flip_at: dict[str, datetime] = {}
+        self._confirmation_event_fill_ids: set[UUID] = set()
+        self._confirmation_evaluated = 0
+        self._confirmation_fired = 0
+        self._confirmation_long = 0
         self._last_executable_bid: dict[str, tuple[datetime, Decimal]] = {}
         self._halt_trackers: dict[str, LiveHaltTracker] = {}
         self._pending_halt_exits: dict[str, _PendingExit] = {}
@@ -544,6 +557,88 @@ class PaperExitRuntime:
             )
         return decisions
 
+    def on_confirmation_exit(
+        self,
+        *,
+        source_fill_id: UUID,
+        observed_at: datetime,
+        atr_state: str,
+        confirmation_bars: int,
+        config_effective_at: datetime,
+    ) -> list[PaperDecision]:
+        """Consume v2's stamped Schwab-bar decision without recomputing ATR in paper."""
+        if source_fill_id in self._confirmation_event_fill_ids:
+            return []
+        matching = [
+            (identity, leg, leg.source_legs.get(source_fill_id))
+            for identity, leg in self._legs.items()
+            if source_fill_id in leg.source_legs
+        ]
+        if len(matching) != 1:
+            return []
+        identity, leg, source = matching[0]
+        if source is None or source.entry_slot != "first":
+            # Reclaims are not an eligible population. Do not count, stage, or mutate them.
+            return []
+        self._confirmation_event_fill_ids.add(source_fill_id)
+        at = observed_at.astimezone(UTC)
+        self._confirmation_evaluated += 1
+        detail = {
+            "atr_state": atr_state,
+            "confirmation_bars": confirmation_bars,
+            "config_effective_at": config_effective_at.isoformat(),
+            "source": "v2_schwab_1m_stamped",
+            "denominator": self._confirmation_evaluated,
+        }
+        if leg.exit_at is not None:
+            return [
+                self._decision(
+                    leg,
+                    "CONFIRMATION_SUPERSEDED",
+                    at,
+                    leg.exit_price,
+                    reason=leg.exit_reason,
+                    extra_detail=detail,
+                )
+            ]
+        latest = self._last_executable_bid.get(leg.symbol)
+        if latest is not None and latest[0] > at:
+            leg.exit_at = at
+            leg.exit_reason = "UNANSWERABLE"
+            decision = self._decision(
+                leg,
+                "UNANSWERABLE",
+                at,
+                None,
+                reason="confirmation arrived after quote processing passed its timestamp",
+                extra_detail=detail,
+            )
+            return [decision]
+        if atr_state.lower() == "long":
+            self._confirmation_long += 1
+            return [
+                self._decision(
+                    leg,
+                    "CONFIRMATION_STATE_LONG",
+                    at,
+                    None,
+                    reason="continue",
+                    extra_detail=detail,
+                )
+            ]
+        self._confirmation_fired += 1
+        self._stage_exit(identity, reason="CONFIRMATION_EXIT", observed_at=at)
+        return [
+            self._decision(
+                leg,
+                "CONFIRMATION_EXIT_FIRED",
+                at,
+                None,
+                reason="CONFIRMATION_EXIT",
+                extra_detail=detail,
+            )
+        ]
+
     def restore_exit(
         self,
         *,
@@ -559,6 +654,18 @@ class PaperExitRuntime:
             leg.exit_at = observed_at.astimezone(UTC)
             leg.exit_price = price
             leg.exit_reason = reason
+
+    def restore_confirmation_evidence(
+        self, *, source_fill_id: UUID, atr_state: str
+    ) -> None:
+        if source_fill_id in self._confirmation_event_fill_ids:
+            return
+        self._confirmation_event_fill_ids.add(source_fill_id)
+        self._confirmation_evaluated += 1
+        if atr_state.lower() == "long":
+            self._confirmation_long += 1
+        else:
+            self._confirmation_fired += 1
 
     def on_quote(
         self,
@@ -828,6 +935,7 @@ class PaperExitRuntime:
                 "entry_price": str(leg.entry_price),
                 "target_pct": str(leg.config.target_pct),
                 "stop_pct": str(leg.config.stop_pct),
+                "confirmation_bars": leg.config.confirmation_bars,
                 "config_effective_at": leg.config.effective_at.isoformat(),
                 "independent_attempt_id": leg.independent_attempt_id,
                 **dict(extra_detail or {}),
@@ -908,10 +1016,18 @@ class PaperExitRuntime:
                     "confirmed_halts": len(self._halt_event_keys),
                     "denominator": len(self._halt_event_keys),
                 },
+                "confirmation_exit": {
+                    "status": "MEASURED" if self._confirmation_evaluated else "UNEXERCISED",
+                    "evaluated": self._confirmation_evaluated,
+                    "fired": self._confirmation_fired,
+                    "state_long": self._confirmation_long,
+                    "denominator": self._confirmation_evaluated,
+                },
                 "config": {
                     "id": str(self._configs[-1].id),
                     "target_pct": str(self._configs[-1].target_pct),
                     "stop_pct": str(self._configs[-1].stop_pct),
+                    "confirmation_bars": self._configs[-1].confirmation_bars,
                     "effective_at": self._configs[-1].effective_at.isoformat(),
                 },
                 "acceptance": dict(self._acceptance),
