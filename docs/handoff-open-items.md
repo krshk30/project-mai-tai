@@ -267,6 +267,34 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **D20 — a filled fan-out leg does not consume its slot** *(owner: claude-1; **now GRADEABLE**)*.
+  Its denominator arrived: `PRE` (#863, `9c151712`) emitted `[V2-FANOUT-MIRROR-LIVE-CROSS]`
+  **27 times on 2026-09-02** — the first real live-mirror up-crosses. **Next action:** run the grade
+  against that denominator, and re-derive the control, which came out at **16 edges where 5 were
+  asserted** — that discrepancy is part of the grade, not a footnote. Denominator: 27 observed
+  crosses. Falsifier: a crossed live mirror whose slot is still free afterwards.
+- **STMP — first-slot fills stamp no arm id** *(owner: claude-1; measured, fix undecided)*.
+  ⛔ The reported "PASS on 3 of 15" is **not a pass**. Measured across all v2 resting buy fills:
+  **185 of 248 (74.6%) carry `cw_arm_bar_ts='0'`** and cannot be assigned to a segment at all.
+  Of those 185, **177 also carry no `fanout_slot`** — they come through the plain resting path that
+  binds no fan-out slot; the remaining 8 are `fanout_slot=resting` but still unstamped.
+  **2026-09-02 is the first session at 100% usable stamps.** **Next action:** decide whether the
+  historical gap is backfilled or declared unrecoverable — until then any segment-level count
+  before 09-02 is a floor, not a rate. Denominator: 248 resting fills. Falsifier: a post-09-02
+  first-slot fill with `cw_arm_bar_ts='0'`.
+- **DB2 — the Webull fill erases its own claim** *(owner: codex-2; UNEXERCISED)*. Merged #858
+  (`46a0c87`). **Next action:** census the zero-hold claim markers that actually exist —
+  `[V2-FANOUT-CLAIM-ZERO-HOLD]`, `-VETOED`, `-CANCELLED`, `-EXPIRED` — and state which one is the
+  BLOCK cost marker; a bare `BLOCK` grep returns zero because no such marker exists.
+  Denominator: filled Webull fan-out legs per session. Falsifier: a filled leg whose claim survives
+  when the fix says it should have been erased.
+- **FLR — §3 floor is STALENESS protection, not GAP protection** *(owner: codex-2; confirm
+  post-deploy)*. Design merged in #866 (`1f5da81`) — a **docs** commit; the live observable is
+  `[OMS-V2-CW-FLOOR-ARMED]`. **Next action:** confirm the staleness-vs-gap distinction still holds
+  after the 09-02 deploys and the 09-03 06:12 ET v2 restart. Falsifier: a floor arming that is
+  explicable only as gap protection.
+
+
 - **RT1 — strategy -> OMS -> position roundtrip has no active integration test** *(owner:
   codex-2; boarded, not chased)*. The only cross-service test was introduced 2026-03-29, first
   stopped reaching OMS at `934d5f42` (2026-04-22) when seeded bars became closed history and one
@@ -287,6 +315,16 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   pre-market attach · ONE counted `[WEBULL-PREMARKET-UNPROTECTED]` line per fill · OMS-restart
   fence. Log/fence-only, cannot oversell. Denominator: pre-market `live:orb` fills per session.
   Falsifier: a session with pre-market fills where the counted line ≠ fill count.
+
+  ⛔ **CORRECTION 2026-09-03 — "ORB has been disabled since 07-31" is NOT the blocker, and Parts
+  1/2 are not unreachable.** `live:orb` still receives v2's **Webull fan-out leg**, and v2's entry
+  window opens **07:00 ET**, i.e. pre-market. Measured: pre-market `live:orb` BUY fills occurred on
+  **12 of the last 15 sessions** (3 on 09-01, 5 on 08-14). The trigger is alive and recurring.
+  What is actually true is narrower: **since #869 deployed (09-01 14:37 ET) there have been ZERO
+  pre-market `live:orb` fills**, so Parts 1/2 are **UNEXERCISED — a valid state, not a finding**,
+  and `[WEBULL-PREMARKET-UNPROTECTED]` reading 0 is correct against a denominator of 0.
+  ⇒ Carry as an **accumulating watch**, graded only on a session that actually produces a
+  pre-market `live:orb` fill. **Part 4** was exercised by the deploy's own restart fence.
   Status, one label each: **Parts 1/2/4 = APPROVED-BUILD (codex, unblocked)** · **§3 =
   OPERATOR-CONFIRMED 09-01, buildable** (floor = max(entry×(1−hard_stop_pct), #853 ratcheted
   floor); one-shot; below-floor pages. ⛔ STALENESS protection, not GAP protection — no gain
@@ -309,6 +347,24 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   missing; operator flagged it as still-real)*. The two candidate guards checked 09-01 came back
   healthy (liquidity floor called at 5 live sites; replace-link written at `oms/service.py:9308`) —
   Q4 is a different guard. ⛔ Cannot be specced until the row text is restated.
+
+### Closed 2026-09-03 (evidence in this file; triage by claude-1)
+
+- **C28 — symbols joining after 04:00 arm off yesterday's anchor** — **CLOSED, EXERCISED.** Merged
+  `f1cc597` (#867). Its real observable is **`[V2-CW-SEED-CAP]`** (not the guessed
+  `V2-POST-ROLL-JOINER`, which does not exist). It fired **63 times across 12 sessions**, including
+  **2 on 09-01 and 2 on 09-02 — after the merge** — and the line shows the intended behaviour
+  directly: *"reconstructed armed segment capped — the flip predates our watch (entries→2,
+  resting_taken=1, reclaim_taken=1)"*. The cap is doing its job on real joiners.
+- **PRE — pre-guard observation of a crossed live mirror** — **CLOSED, EXERCISED.** Merged
+  `9c151712` (#863). `[V2-FANOUT-MIRROR-LIVE-CROSS]` fired **27 times on 2026-09-02** — the first
+  real live-mirror up-crosses. ⇒ It has delivered what it exists for: **D20 now has a denominator
+  and is gradeable.** Nothing above it is denominator-blocked any more.
+- **P2 — golden-day replay rebuild** — **CLOSED, RETIRED.** It was blocked and already demoted to
+  backtest-only, and the operator has stopped backtest work, so it has no owner, no next action and
+  no route to evidence. Carrying it costs more than it is worth. ⭐ The standard that closes it is
+  the standard that would reopen it: if it is real it resurfaces with evidence, and then it enters
+  this board as a new row with an owner and a next action.
 
 ### Retired 2026-09-01 (operator ruling)
 
