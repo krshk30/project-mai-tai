@@ -1,0 +1,9 @@
+{
+  "pr_number": 884,
+  "range_base": "a92af043897cda56bd403fbb93581ea278f13e5f",
+  "range_head": "82294a61ab147e1ad804388eab39927d14b98909",
+  "reviewed_at": "2026-09-03T18:36:56Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RE-PIN after rebase onto main a92af043 (#886 merged first and advanced main). Verified independently rather than accepting the stated hash: the head contains the new base, the single commit carries exactly one OpenAI Codex marker, and the diff against the new base is BYTE-IDENTICAL to the diff reviewed at the superseded head 8f8bdd5b - both normalise to SHA-256 764951e57593b2f33fc18f7017d932376ea089a0f87dbed9b3f7b3ede501470a with index lines stripped. That value differs from the 1ff093ed figure codex-2 quoted only because we hash different normalisations; the property asserted - old diff equals new diff - is the one I checked and it holds. The superseded 8f8bdd5b record is deleted in this same commit, because a rebase orphans that head and a ledger record naming an unreachable commit fail-closes the PR. The original review therefore carries over unchanged and this is a re-pin, not a re-review: Trade Coach dormancy only; the systemd ExecStart no longer carries the MAI_TAI_TRADE_COACH_ENABLED=true forced-enable override that produced the 07-30 retry storm; no paper-exit line is touched in control_plane.py; disabled routes raise 404 not 500; the navigation entry degrades to an inert aria-disabled anchor; and the dormancy tests assert behaviour - emitted SQL contains no ai_trade_reviews statement, and the removed panels and the /coach/reviews href are absent from rendered HTML."
+}
