@@ -267,12 +267,29 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
-- **D20 — a filled fan-out leg does not consume its slot** *(owner: claude-1; **now GRADEABLE**)*.
-  Its denominator arrived: `PRE` (#863, `9c151712`) emitted `[V2-FANOUT-MIRROR-LIVE-CROSS]`
-  **27 times on 2026-09-02** — the first real live-mirror up-crosses. **Next action:** run the grade
-  against that denominator, and re-derive the control, which came out at **16 edges where 5 were
-  asserted** — that discrepancy is part of the grade, not a footnote. Denominator: 27 observed
-  crosses. Falsifier: a crossed live mirror whose slot is still free afterwards.
+- **D20 — a filled fan-out leg does not consume its slot** *(owner: claude-1; **GRADED
+  2026-09-03 → COULD_NOT_TELL, by the acceptance doc's own standard**)*.
+  **Live evidence (09-02), per SLOT, which is the unit of the question — not per observation:**
+  27 `[V2-FANOUT-MIRROR-LIVE-CROSS]` observations resolve to **10 distinct crossed slots**.
+  **9 filled; all 9 logged `webull_slot_consumed=1`.** The 10th (NCPL `42780175`) crossed and never
+  filled, so correctly consumed nothing.
+  **Falsifier hunt across ALL 58 filled fan-out outcomes, not just crossed ones: `consumed=0`
+  occurs ZERO times.** The 4 outcomes carrying no `consumed` field are explained and are not
+  counter-examples — one (QNRX 08-28) predates the field and was never crossed; three
+  (NCRA/YDDL/RDAC) are `applied=0 … stale evidence cannot mutate a new segment`, i.e. deliberate
+  refusals for retired segments, which *should* consume nothing.
+  ⛔ **But that is not a PASS, and the doc says so.** `d20-fanout-duplicate-acceptance-grading.md`
+  requires reproducing the **five** 2026-08-31 software crossing attempts and states: *"Until that
+  event exists and reproduces the five 2026-08-31 controls, D20 is `COULD_NOT_TELL`."* The marker
+  fired on **09-02 only — zero occurrences on 08-31** — so the control was never reproduced live,
+  and the derivation returned **16 edges against 5 asserted**. ⭐ A failing control **voids** the
+  probe; it does not make it negative. The reassuring live numbers above are therefore evidence
+  that the defect did not appear on 09-02, not evidence that D20 is fixed.
+  **Next action:** resolve the 16-vs-5 edge derivation against the 08-31 tape before any PASS is
+  claimed — the doc already names the trap, that a mirror-fills denominator yields 18 and a
+  one-minute-bar denominator yields 19, so a wrong unit is the likeliest cause of 16.
+  Denominator: 10 crossed slots (09-02) · 5 asserted control edges (08-31).
+  Falsifier: a crossed live mirror that fills and leaves its slot free — **not observed**.
 - **STMP — first-slot fills stamp no arm id** *(owner: claude-1; measured, fix undecided)*.
   ⛔ The reported "PASS on 3 of 15" is **not a pass**. Measured across all v2 resting buy fills:
   **185 of 248 (74.6%) carry `cw_arm_bar_ts='0'`** and cannot be assigned to a segment at all.
