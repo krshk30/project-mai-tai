@@ -1,0 +1,9 @@
+{
+  "pr_number": 888,
+  "range_base": "bf493d90be9cf6b01787d9e74d372820fdf0bc9d",
+  "range_head": "b72309e00ca1a5f3751892b2b40799a934060210",
+  "reviewed_at": "2026-09-03T20:38:42Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the complete docs-only OVSD1 board change and PR description; verified corrected event windows, parked-section ownership semantics, current-main ancestry, 99-addition/0-deletion diff, no unrelated files, and green validation."
+}
