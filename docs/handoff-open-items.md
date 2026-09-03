@@ -372,10 +372,19 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   `live:orb` fills**, so Parts 1/2 are **UNEXERCISED against a denominator of 0 — valid, not a
   finding** — and `[WEBULL-PREMARKET-UNPROTECTED]` reading 0 is correct. Accumulating watch.
   Part 4 was exercised by the deploy's own restart fence.
-  Status, one label each: **Parts 1/2/4 = APPROVED-BUILD (codex, unblocked)** · **§3 =
-  OPERATOR-CONFIRMED 09-01, buildable** (floor = max(entry×(1−hard_stop_pct), #853 ratcheted
-  floor); one-shot; below-floor pages. ⛔ STALENESS protection, not GAP protection — no gain
-  below the floor, the exposure there only becomes visible). Kin: item 11 above.
+  Status, one label each — **updated 2026-09-03; `APPROVED-BUILD` was stale, the parts are built
+  and deployed**:
+  · **Parts 1/2 = DEPLOYED (#869, 09-01 14:37 ET), UNEXERCISED** — denominator 0 since deploy, so
+    the zero is correct and there is nothing to investigate. Accumulating watch.
+  · **Part 4 = DEPLOYED and EXERCISED** — the deploy's own restart fence ran it.
+  · **§3 = NOT BUILT.** Design OPERATOR-CONFIRMED 09-01 and buildable (floor =
+    max(entry×(1−hard_stop_pct), #853 ratcheted floor); one-shot; below-floor pages), but its
+    marker `[OMS-P0A-REPRICE-BELOW-FLOOR]` has **no implementation in `src/` or `tests/`** — see
+    the **FLR** row, which holds the evidence and the next action.
+    ⛔ "STALENESS protection, not GAP protection" is a statement of the **design intent**, not a
+    verified property: nothing is built to verify it against. No gain below the floor; the exposure
+    there only becomes visible.
+  Kin: item 11 above.
 - **C42 — post-04:00 joiners arm on stale anchors** *(owner: codex-2; replaces C28+C41, one
   question asked twice)*. 09-01: 4 arms on 08-31 anchors (GYGY 04:06 · WETO 04:25 · SSM 04:35 ·
   FLYE 05:49 ET), unrolled AND uncapped — the 04:00 roll ran at `watchlist=0`, and the seed-cap is
