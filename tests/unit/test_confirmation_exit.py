@@ -437,7 +437,7 @@ def test_late_long_confirmation_continues_without_historical_quote_replay() -> N
     assert runtime.summary()["closed_today"] == []
 
 
-def test_late_non_long_confirmation_remains_unanswerable() -> None:
+def test_late_non_long_confirmation_waits_for_next_proven_executable_bid() -> None:
     config = PaperRuleConfig(
         uuid4(), Decimal("5"), Decimal("8"), datetime(1970, 1, 1, tzinfo=UTC), 1
     )
@@ -474,8 +474,27 @@ def test_late_non_long_confirmation_remains_unanswerable() -> None:
         config_effective_at=config.effective_at,
     )
 
-    assert [item.event_type for item in decisions] == ["UNANSWERABLE"]
-    assert runtime.summary()["closed_today"][0]["exit_price"] is None
+    assert [item.event_type for item in decisions] == ["CONFIRMATION_EXIT_FIRED"]
+    assert runtime.summary()["paper_exit"]["mirror_open"] == 1
+    assert runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("9.795"),
+        ask=Decimal("9.805"),
+        observed_at=evaluation_at + timedelta(seconds=2),
+    ) == []
+
+    runtime.on_trade(symbol="TEST", observed_at=evaluation_at + timedelta(seconds=3))
+    exits = runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("9.79"),
+        ask=Decimal("9.80"),
+        observed_at=evaluation_at + timedelta(seconds=4),
+    )
+
+    assert [item.event_type for item in exits] == ["PAPER_EXIT"]
+    assert exits[0].price == Decimal("9.79")
+    assert exits[0].detail["reason"] == "CONFIRMATION_EXIT"
+    assert runtime.summary()["closed_today"][0]["exit_price"] == 9.79
 
 
 def test_confirmation_outbox_makes_evaluation_durable_and_one_shot() -> None:
