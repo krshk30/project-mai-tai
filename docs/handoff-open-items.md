@@ -279,8 +279,32 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   ⛔ **THE RULING AND WHY.** One instance, no proven root cause, and the candidate fixes (WRAP1, a
   confirmed-cancel gate, order adoption, the `>= 2` redesign) were a large speculative change to the
   **live exit path** built on a single day's evidence while blaming a rule deployed the day before.
-  ⇒ **Nothing was built. Reopens on a SECOND INSTANCE WITH EVIDENCE.** `RATE1` is the alarm that
-  makes the recurrence cost two minutes instead of an afternoon. [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
+  ⇒ **Nothing was built. Reopens on a SECOND INSTANCE WITH EVIDENCE.**
+  [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
+  ⛔⭐⭐ **AND `RATE1` — THE ALARM — WAS ALSO DROPPED BY DECISION (operator, 2026-09-03).** An
+  earlier draft of this row said RATE1 would make a recurrence cost two minutes instead of an
+  afternoon. **That is no longer true and the row must not be read that way.**
+  **The reasoning:** the operator already sees a large volume of routine refusals from his platform
+  every day, and **an alarm he learns to ignore is worse than no alarm** — the wallpaper failure,
+  which RATE1 itself avoided one level down by refusing to page on 429s (they occur 1-5 most days).
+  His objection is to **the channel, not the detection**.
+  ⛔ **THE ACCEPTED CONSEQUENCE, stated plainly so the next reader is not misled:** with no alarm, a
+  recurrence is detected **only by the operator noticing**, exactly as on 2026-09-03. Four
+  storm-scale instances since July make a fifth likely. ⇒ This is an **ACCEPTED RISK, not an
+  unnoticed gap** — the distinction is the whole point of this paragraph.
+  ⭐ **WHAT WOULD MAKE IT WORTH REVISITING** (so the work is not lost): page **only on a genuine
+  flood** — order-of-100 refusals within minutes on a **single symbol** — and never on ordinary
+  rejects. The measured thresholds already point that way and are recorded here rather than in code,
+  since the code was not merged. Derived over **12 retained days in 10-minute buckets**:
+  | account | worst-ever bucket | p95 | p99 | proposed threshold |
+  |---|---|---|---|---|
+  | `live:schwab_1m_v2` | 3 | 2 | 3 | 10 |
+  | `live:orb` | 30 | 9 | 17 | 40 |
+  | `paper:polygon_30s` | 9 | 4 | 7 | 25 (default) |
+  Validated against those 12 days these fire on **exactly one bucket** — 2026-09-03,
+  `live:schwab_1m_v2`, **137** — and nothing else reaches half its threshold: **one true positive,
+  zero false positives.** ⛔ A future build must clear the *channel* objection first, not just the
+  detection one. [[feedback_a_watch_that_fails_to_a_false_clean]]
   ⭐⭐ **THE SHARPEST STATEMENT WE HAVE — a guess deletes a broker-confirmed fact.** `oms/service.py:3600`:
   on `result == "released"` the reconcile does `self._native_oco_armed_confirmed_at.pop((acct, symbol), None)`.
   That dict is the **stand-down**, fed by `fetch_armed_native_oco_symbols` — real broker truth. So a
