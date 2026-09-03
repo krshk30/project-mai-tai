@@ -449,6 +449,18 @@ class PaperExitRuntime:
                     extra_detail=detail,
                 )
             ]
+        if atr_state.lower() == "long":
+            self._confirmation_long += 1
+            return [
+                self._decision(
+                    leg,
+                    "CONFIRMATION_STATE_LONG",
+                    at,
+                    None,
+                    reason="continue",
+                    extra_detail=detail,
+                )
+            ]
         latest = self._last_executable_bid.get(leg.symbol)
         if latest is not None and latest[0] > at:
             leg.exit_at = at
@@ -462,18 +474,6 @@ class PaperExitRuntime:
                 extra_detail=detail,
             )
             return [decision]
-        if atr_state.lower() == "long":
-            self._confirmation_long += 1
-            return [
-                self._decision(
-                    leg,
-                    "CONFIRMATION_STATE_LONG",
-                    at,
-                    None,
-                    reason="continue",
-                    extra_detail=detail,
-                )
-            ]
         self._confirmation_fired += 1
         self._stage_exit(identity, reason="CONFIRMATION_EXIT", observed_at=at)
         return [
@@ -807,7 +807,7 @@ class PaperExitRuntime:
                     "ticker": leg.symbol,
                     "path": leg.arm,
                     "entry_price": float(leg.entry_price),
-                    "exit_price": float(leg.exit_price or 0),
+                    "exit_price": float(leg.exit_price) if leg.exit_price is not None else None,
                     "entry_time": leg.entry_at.isoformat(),
                     "exit_time": leg.exit_at.isoformat() if leg.exit_at else "",
                     "reason": leg.exit_reason,

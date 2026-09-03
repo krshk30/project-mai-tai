@@ -395,6 +395,89 @@ def test_paper_confirmation_uses_stamped_first_fill_and_never_reclaim() -> None:
     }
 
 
+def test_late_long_confirmation_continues_without_historical_quote_replay() -> None:
+    config = PaperRuleConfig(
+        uuid4(), Decimal("5"), Decimal("8"), datetime(1970, 1, 1, tzinfo=UTC), 1
+    )
+    runtime = PaperExitRuntime(config)
+    source_fill_id = uuid4()
+    runtime.add_mirror_fill(
+        PaperSourceFill(
+            fill_id=source_fill_id,
+            broker_fill_id="chpt-fill",
+            broker_account_name="live:schwab_1m_v2",
+            venue="schwab",
+            symbol="CHPT",
+            quantity=Decimal("2"),
+            price=Decimal("7.73"),
+            filled_at=datetime(2026, 9, 3, 14, 6, 10, tzinfo=UTC),
+            fanout_slot_id="chpt-first-slot",
+            entry_slot="first",
+            source="cw-v2-resting",
+        )
+    )
+    evaluation_at = datetime(2026, 9, 3, 14, 8, tzinfo=UTC)
+    runtime.on_quote(
+        symbol="CHPT",
+        bid=Decimal("7.80"),
+        ask=Decimal("7.81"),
+        observed_at=evaluation_at + timedelta(seconds=1),
+    )
+
+    decisions = runtime.on_confirmation_exit(
+        source_fill_id=source_fill_id,
+        observed_at=evaluation_at,
+        atr_state="long",
+        confirmation_bars=1,
+        config_effective_at=config.effective_at,
+    )
+
+    assert [item.event_type for item in decisions] == ["CONFIRMATION_STATE_LONG"]
+    assert runtime.summary()["paper_exit"]["mirror_open"] == 1
+    assert runtime.summary()["closed_today"] == []
+
+
+def test_late_non_long_confirmation_remains_unanswerable() -> None:
+    config = PaperRuleConfig(
+        uuid4(), Decimal("5"), Decimal("8"), datetime(1970, 1, 1, tzinfo=UTC), 1
+    )
+    runtime = PaperExitRuntime(config)
+    source_fill_id = uuid4()
+    runtime.add_mirror_fill(
+        PaperSourceFill(
+            fill_id=source_fill_id,
+            broker_fill_id="late-short-fill",
+            broker_account_name="live:schwab_1m_v2",
+            venue="schwab",
+            symbol="TEST",
+            quantity=Decimal("1"),
+            price=Decimal("10"),
+            filled_at=datetime(2026, 9, 3, 14, 6, 10, tzinfo=UTC),
+            fanout_slot_id="late-short-slot",
+            entry_slot="first",
+            source="cw-v2-resting",
+        )
+    )
+    evaluation_at = datetime(2026, 9, 3, 14, 8, tzinfo=UTC)
+    runtime.on_quote(
+        symbol="TEST",
+        bid=Decimal("9.80"),
+        ask=Decimal("9.81"),
+        observed_at=evaluation_at + timedelta(seconds=1),
+    )
+
+    decisions = runtime.on_confirmation_exit(
+        source_fill_id=source_fill_id,
+        observed_at=evaluation_at,
+        atr_state="short",
+        confirmation_bars=1,
+        config_effective_at=config.effective_at,
+    )
+
+    assert [item.event_type for item in decisions] == ["UNANSWERABLE"]
+    assert runtime.summary()["closed_today"][0]["exit_price"] is None
+
+
 def test_confirmation_outbox_makes_evaluation_durable_and_one_shot() -> None:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",

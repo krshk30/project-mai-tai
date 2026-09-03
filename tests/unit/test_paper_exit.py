@@ -1169,6 +1169,10 @@ def test_authoritative_fill_census_reads_only_schwab_v2_first_slot_resting() -> 
     assert grades[0]["gradable"] is True
     assert Decimal(str(grades[0]["paper_pct"])) == Decimal("5.00")
     assert Decimal(str(grades[0]["real_pct"])) == Decimal("2.00")
+    assert grades[0]["paper_status"] == "EXITED"
+    assert grades[0]["entry_price"] == "10.00000000"
+    assert grades[0]["paper_exit_price"] == "10.50000000"
+    assert grades[0]["real_exit_price"] == "10.20000000"
 
     with factory() as session:
         paper = session.scalar(
@@ -1196,6 +1200,36 @@ def test_authoritative_fill_census_reads_only_schwab_v2_first_slot_resting() -> 
     )[0]
     assert wrong_quantity["gradable"] is False
     assert wrong_quantity["reason"] == "paper exit quantity mismatch (3.00000000/2.00000000)"
+
+    with factory() as session:
+        session.add(
+            PaperExitEvent(
+                event_key="paper-unanswerable-grade",
+                logical_id=logical_id,
+                arm="mirror",
+                event_type="UNANSWERABLE",
+                session_date=AT.date(),
+                symbol="TEST",
+                venue="schwab",
+                observed_at=AT + timedelta(minutes=2),
+                price=None,
+                quantity=Decimal("2"),
+                payload={
+                    "reason": "confirmation arrived after quote processing passed its timestamp"
+                },
+            )
+        )
+        session.commit()
+    unanswerable = PaperExitStore(factory).mirror_grades(
+        start=AT, end=AT + timedelta(hours=1), source_fills=fills
+    )[0]
+    assert unanswerable["gradable"] is False
+    assert unanswerable["paper_status"] == "UNGRADABLE"
+    assert unanswerable["paper_exit_price"] == ""
+    assert unanswerable["paper_exit_reason"] == (
+        "confirmation arrived after quote processing passed its timestamp"
+    )
+    assert Decimal(str(unanswerable["real_pct"])) == Decimal("2.00")
 
 
 def test_authoritative_fill_census_silently_excludes_reclaim_and_webull() -> None:
