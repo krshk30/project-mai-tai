@@ -1,0 +1,9 @@
+{
+  "pr_number": 881,
+  "range_base": "f497bf330ab595a57f01ae55db0907ada83f5e7b",
+  "range_head": "9f0dfc7666ddbe41725b5873ef9b49e485e55cbc",
+  "reviewed_at": "2026-09-03T11:36:35Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the complete docs-only diff and all six correction rounds: verified 140 additions/4 intentional Q21 replacements, no missing board rows, bounded C28 census, corrected DB2 falsifier, D20 control status, STMP ruling, FLR not-built status, RET1 calendar-time retention semantics, and deployed Q21 status labels against source and history."
+}
