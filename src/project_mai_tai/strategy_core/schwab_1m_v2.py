@@ -4355,6 +4355,38 @@ class SchwabV2IntentEmitter:
         )
         logger.info("schwab_1m_v2 emitted v2_cw_flip signal symbol=%s", symbol)
 
+    async def emit_confirmation_exit(self, evaluation) -> None:  # type: ignore[no-untyped-def]
+        """Publish v2's canonical one-shot ATR evaluation; consumers never recompute it."""
+        entry = evaluation.entry
+        evaluation_at_ms = evaluation.bar_start_ms + 60_000
+        await self.redis.xadd(
+            self.stream,
+            {
+                "data": json.dumps(
+                    {
+                        "event_type": "v2_confirmation_exit",
+                        "symbol": entry.symbol,
+                        "broker_account_name": entry.broker_account_name,
+                        "source_order_id": str(entry.order_id),
+                        "source_fill_id": str(entry.fill_id),
+                        "broker_fill_id": entry.broker_fill_id,
+                        "broker_order_id": entry.broker_order_id,
+                        "filled_at": entry.filled_at.isoformat(),
+                        "evaluation_bar_start_ms": str(evaluation.bar_start_ms),
+                        "evaluated_at_ms": str(evaluation_at_ms),
+                        "atr_state": evaluation.atr_state,
+                        "should_exit": evaluation.should_exit,
+                        "entry_slot": "first",
+                        "confirmation_bars": entry.confirmation_bars,
+                        "config_id": str(entry.config_id or ""),
+                        "config_effective_at": entry.config_effective_at.isoformat(),
+                    }
+                )
+            },
+            maxlen=self.settings.redis_strategy_intent_stream_maxlen,
+            approximate=True,
+        )
+
 
 def utc_now_isoformat() -> str:
     return datetime.now(UTC).isoformat()

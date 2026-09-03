@@ -994,6 +994,7 @@ class ControlPlaneRepository:
                 session.scalars(
                     select(PaperExitEvent)
                     .where(
+                        PaperExitEvent.arm == "mirror",
                         PaperExitEvent.observed_at >= start,
                         PaperExitEvent.observed_at < end,
                     )
@@ -1004,7 +1005,6 @@ class ControlPlaneRepository:
         return [
             {
                 "time": _datetime_str(row.observed_at),
-                "arm": row.arm,
                 "event": row.event_type,
                 "symbol": row.symbol,
                 "venue": row.venue,
@@ -1015,6 +1015,8 @@ class ControlPlaneRepository:
                 "logical_id": row.logical_id,
             }
             for row in rows
+            if row.venue != "webull"
+            and str((row.payload or {}).get("entry_slot", "")).lower() != "reclaim"
         ]
 
     def load_bot_trade_forensics(
@@ -3933,18 +3935,27 @@ def build_app(
             parsed = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
             values = {key: items[-1] for key, items in parsed.items() if items}
         try:
+            config_store = PaperExitStore(active_session_factory)
+            try:
+                current_confirmation_bars = config_store.latest_config().confirmation_bars
+            except RuntimeError:
+                current_confirmation_bars = 1
             target_pct = Decimal(str(values["target_pct"]))
             stop_pct = Decimal(str(values["stop_pct"]))
+            confirmation_bars = int(
+                values.get("confirmation_bars", current_confirmation_bars)
+            )
             effective_text = str(values.get("effective_at", "")).strip()
             effective_at = datetime.fromisoformat(effective_text) if effective_text else utcnow()
             if effective_at.tzinfo is None:
                 effective_at = effective_at.replace(tzinfo=EASTERN_TZ)
             changed_by = str(values.get("changed_by", "operator")).strip() or "operator"
-            config = PaperExitStore(active_session_factory).append_config(
+            config = config_store.append_config(
                 target_pct=target_pct,
                 stop_pct=stop_pct,
                 effective_at=effective_at.astimezone(UTC),
                 changed_by=changed_by,
+                confirmation_bars=confirmation_bars,
             )
         except (KeyError, ValueError, ArithmeticError) as exc:
             return Response(content=f"Invalid paper-exit configuration: {exc}", status_code=400)
@@ -3965,6 +3976,7 @@ def build_app(
                         "id": str(config.id),
                         "target_pct": str(config.target_pct),
                         "stop_pct": str(config.stop_pct),
+                        "confirmation_bars": config.confirmation_bars,
                         "effective_at": config.effective_at.isoformat(),
                     }
                 ),
@@ -5789,13 +5801,12 @@ def _render_bot_detail_page(
         paper_config = dict(paper_exit.get("config", {}) or {})
         acceptance = dict(paper_exit.get("acceptance", {}) or {})
         grade = dict(acceptance.get("grade", {}) or {})
-        independent = dict(paper_exit.get("independent", {}) or {})
         halt_suppression = dict(
             grade.get("halt_suppression", {})
             or paper_exit.get("halt_suppression", {})
             or {}
         )
-        assumption_rows = list(acceptance.get("entry_assumptions", []) or [])
+        confirmation_exit = dict(paper_exit.get("confirmation_exit", {}) or {})
         verdict = str(acceptance.get("verdict", "UNEXERCISED"))
         grade_status = str(grade.get("status", "COULD_NOT_TELL"))
         grade_value = (
@@ -5812,7 +5823,6 @@ def _render_bot_detail_page(
         evidence_rows = "".join(
             "<tr>"
             f"<td>{escape(str(row.get('time', '')))}</td>"
-            f"<td>{escape(str(row.get('arm', '')))}</td>"
             f"<td>{escape(str(row.get('symbol', '')))}</td>"
             f"<td>{escape(str(row.get('venue', '') or '-'))}</td>"
             f"<td>{escape(str(row.get('event', '')))}</td>"
@@ -5820,7 +5830,7 @@ def _render_bot_detail_page(
             f"<td>{escape(str(row.get('reason', '') or '-'))}</td>"
             "</tr>"
             for row in list(bot.get("paper_exit_evidence", []))[:100]
-        ) or '<tr><td colspan="7">Waiting for the first paper decision.</td></tr>'
+        ) or '<tr><td colspan="6">Waiting for the first paper decision.</td></tr>'
         grade_rows = "".join(
             "<tr>"
             f"<td>{escape(str(row.get('symbol', '')))}</td>"
@@ -5832,54 +5842,33 @@ def _render_bot_detail_page(
             "</tr>"
             for row in list(grade.get("rows", []))
         ) or '<tr><td colspan="6">No completed matched entries yet.</td></tr>'
-        assumption_table_rows = "".join(
-            "<tr>"
-            f"<td>{escape(str(row.get('symbol', '')))}</td>"
-            f"<td>{escape(str(row.get('fanout_slot_id', '')))}</td>"
-            f"<td>{escape(', '.join(str(item) for item in row.get('mirror_venues', [])) or '-')}</td>"
-            f"<td>{escape(str(row.get('mirror_fill_price', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('mirror_first_fill_at', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('independent_assumed_fill', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('independent_assumed_at', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('assumed_vs_actual_pct', '')) or '-')}</td>"
-            f"<td>{escape(str(row.get('status', '')))}</td>"
-            "</tr>"
-            for row in assumption_rows
-        ) or '<tr><td colspan="9">No fill assumptions yet.</td></tr>'
         paper_exit_panel = f"""
             <section class="panel full accent-panel">
                 <div class="panel-header">
                     <div>
                         <h2>Paper Exit Harness</h2>
-                        <div class="sub">Mirror and independent results stay separate. This harness cannot place broker orders.</div>
+                        <div class="sub">Mirrors only live:schwab_1m_v2 first-slot resting fills. This harness cannot place broker orders.</div>
                     </div>
                     <span class="count accent">{escape(verdict)}</span>
                 </div>
                 <div class="hero-grid">
                     <div class="hero-card"><span>Mirror entries</span><strong>{int(acceptance.get("matched", 0) or 0)} / {int(acceptance.get("live", 0) or 0)}</strong><small>terminal {int(acceptance.get("terminal", 0) or 0)} / {int(acceptance.get("terminal_expected", 0) or 0)} · missed {int(acceptance.get("missed", 0) or 0)} · phantom {int(acceptance.get("phantom", 0) or 0)}</small></div>
-                    <div class="hero-card"><span>Open mirror</span><strong>{int(paper_exit.get("mirror_open", 0) or 0)}</strong><small>Live resting fills, both venues</small></div>
-                    <div class="hero-card"><span>Independent</span><strong>{int(independent.get("filled", 0) or 0)} / {int(independent.get("armed", 0) or 0)}</strong><small>filled / armed · never pooled</small></div>
+                    <div class="hero-card"><span>Open mirror</span><strong>{int(paper_exit.get("mirror_open", 0) or 0)}</strong><small>Schwab v2 first-slot resting fills</small></div>
                     <div class="hero-card"><span>Daily grade</span><strong>{escape(grade_value)}</strong><small>{grade_note}</small></div>
                     <div class="hero-card"><span>Halt-suppressed triggers</span><strong>{escape(str(halt_suppression.get("status", "UNEXERCISED")))}</strong><small>{escape(str(halt_suppression.get("suppressed_triggers", 0)))} triggers / {escape(str(halt_suppression.get("denominator", 0)))} confirmed halt windows</small></div>
-                    <div class="hero-card"><span>Active rule</span><strong>+{escape(str(paper_config.get("target_pct", "5")))}% / -{escape(str(paper_config.get("stop_pct", "8")))}%</strong><small>Effective {escape(str(paper_config.get("effective_at", "-")))}</small></div>
+                    <div class="hero-card"><span>Confirmation exit</span><strong>{escape(str(confirmation_exit.get("status", "UNEXERCISED")))}</strong><small>{escape(str(confirmation_exit.get("fired", 0)))} fired · {escape(str(confirmation_exit.get("state_long", 0)))} continued / {escape(str(confirmation_exit.get("denominator", 0)))} evaluated</small></div>
+                    <div class="hero-card"><span>Active rule</span><strong>+{escape(str(paper_config.get("target_pct", "5")))}% / -{escape(str(paper_config.get("stop_pct", "8")))}%</strong><small>CONF1 after {escape(str(paper_config.get("confirmation_bars", "1")))} full bar · effective {escape(str(paper_config.get("effective_at", "-")))}</small></div>
                 </div>
                 <div class="panel-copy">
                     {"Waiting for the first live resting fill; zero entries is UNEXERCISED, never PASS." if verdict == "UNEXERCISED" else "Acceptance is based on the durable live-fill denominator."}
                     <form method="post" action="/botpolygon/paper-exit/config" style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:end">
                         <label>Target %<br><input name="target_pct" type="number" step="0.01" min="0.01" value="{escape(str(paper_config.get("target_pct", "5")))}" required></label>
                         <label>Stop %<br><input name="stop_pct" type="number" step="0.01" min="0.01" value="{escape(str(paper_config.get("stop_pct", "8")))}" required></label>
+                        <label>Confirmation bars<br><input name="confirmation_bars" type="number" step="1" min="1" value="{escape(str(paper_config.get("confirmation_bars", "1")))}" required></label>
                         <label>Effective at (optional ET)<br><input name="effective_at" type="datetime-local"></label>
                         <input name="changed_by" type="hidden" value="operator-screen">
                         <button type="submit">Record new rule</button>
                     </form>
-                </div>
-                <div class="table-wrap" style="margin-top:14px">
-                    <h3>Entry Fill Assumptions</h3>
-                    <div class="sub">Independent uses a modelled executable ask. Mirror is the actual quantity-weighted broker fill. Negative delta means the model assumed a cheaper fill.</div>
-                    <table>
-                        <thead><tr><th>Symbol</th><th>Slot</th><th>Mirror venues</th><th>Mirror actual</th><th>Mirror time</th><th>Independent assumed</th><th>Assumed time</th><th>Delta %</th><th>Status</th></tr></thead>
-                        <tbody>{assumption_table_rows}</tbody>
-                    </table>
                 </div>
                 <div class="table-wrap" style="margin-top:14px">
                     <table>
@@ -5889,7 +5878,7 @@ def _render_bot_detail_page(
                 </div>
                 <div class="table-wrap" style="margin-top:14px">
                     <table>
-                        <thead><tr><th>Time</th><th>Arm</th><th>Symbol</th><th>Venue</th><th>Decision</th><th>Price</th><th>Reason</th></tr></thead>
+                        <thead><tr><th>Time</th><th>Symbol</th><th>Venue</th><th>Decision</th><th>Price</th><th>Reason</th></tr></thead>
                         <tbody>{evidence_rows}</tbody>
                     </table>
                 </div>

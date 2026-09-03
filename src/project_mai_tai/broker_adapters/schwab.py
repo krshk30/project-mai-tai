@@ -198,6 +198,78 @@ class SchwabBrokerAdapter:
             _walk(order)
         return {sym for sym, n in working_sells.items() if n >= 2}
 
+    async def release_native_oco_for_close(
+        self, broker_account_name: str, entry_broker_order_id: str
+    ) -> str:
+        """Cancel and confirm an entry's working OCO sells before a software full close.
+
+        Returns ``released``, ``resolved_by_fill``, or ``unanswerable``. A successful DELETE is
+        never treated as release without a subsequent broker order read proving no sell child is
+        still working.
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        entry_order_id = str(entry_broker_order_id or "").strip()
+        if account is None or not entry_order_id:
+            return "unanswerable"
+        def sell_state(order: dict[str, object]) -> tuple[list[str], bool, bool]:
+            working: list[str] = []
+            filled = False
+            unsafe = False
+
+            def walk(item: dict[str, object]) -> None:
+                nonlocal filled, unsafe
+                legs = item.get("orderLegCollection") or []
+                leg = legs[0] if legs else {}
+                instruction = str(leg.get("instruction") or "").upper()
+                status = str(item.get("status") or "").upper()
+                if instruction == "SELL":
+                    if status == "FILLED":
+                        filled = True
+                    elif status in self.ACCEPTED_STATUSES:
+                        order_id = str(item.get("orderId") or "").strip()
+                        if order_id:
+                            working.append(order_id)
+                        else:
+                            unsafe = True
+                    elif status in self.PARTIAL_FILL_STATUSES:
+                        # Some shares already sold and the remainder may still be live. The
+                        # managed quantity is now stale, so neither cancelling nor closing it is
+                        # safe without a fresh position reconciliation.
+                        unsafe = True
+                    elif status not in self.CANCELLED_STATUSES | self.REJECTED_STATUSES:
+                        unsafe = True
+                for child in item.get("childOrderStrategies") or []:
+                    walk(child)
+
+            walk(order)
+            return working, filled, unsafe
+
+        root = await self._fetch_order(account, entry_order_id)
+        if root is None:
+            return "unanswerable"
+        working, filled, unsafe = sell_state(root)
+        if filled:
+            return "resolved_by_fill"
+        if unsafe:
+            return "unanswerable"
+        if not working:
+            return "released"
+        for order_id in working:
+            status_code, _headers, _body = await self._authorized_request_json(
+                "DELETE",
+                f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"
+                f"{quote(order_id, safe='')}",
+            )
+            if status_code >= 400 and status_code != 404:
+                return "unanswerable"
+        confirmed = await self._fetch_order(account, entry_order_id)
+        if confirmed is None:
+            return "unanswerable"
+        remaining, filled, unsafe = sell_state(confirmed)
+        if filled:
+            return "resolved_by_fill"
+        return "released" if not remaining and not unsafe else "unanswerable"
+
     async def fetch_oco_resolved_by_fill_symbols(
         self,
         broker_account_name: str,

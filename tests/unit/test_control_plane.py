@@ -260,7 +260,12 @@ def test_polygon_paper_exit_rule_updates_without_restart_and_keeps_history() -> 
     with TestClient(app) as client:
         first = client.post(
             "/botpolygon/paper-exit/config",
-            json={"target_pct": "5", "stop_pct": "8", "changed_by": "operator"},
+            json={
+                "target_pct": "5",
+                "stop_pct": "8",
+                "confirmation_bars": "3",
+                "changed_by": "operator",
+            },
         )
         second = client.post(
             "/botpolygon/paper-exit/config",
@@ -279,6 +284,7 @@ def test_polygon_paper_exit_rule_updates_without_restart_and_keeps_history() -> 
         ("5.0000", "8.0000"),
         ("6.0000", "9.0000"),
     ]
+    assert [row.confirmation_bars for row in configs] == [3, 3]
     assert len(redis.streams["test:runtime-controls"]) == 2
 
 
@@ -2219,11 +2225,12 @@ def test_polygon_bot_legacy_webull_routes_remain_compatible() -> None:
         legacy_page = client.get("/bot/30s-webull")
         assert legacy_page.status_code == 200
         assert "Polygon Paper Exit Harness" in legacy_page.text
-        assert "Entry Fill Assumptions" in legacy_page.text
-        assert "Independent assumed" in legacy_page.text
+        assert "Mirrors only live:schwab_1m_v2 first-slot resting fills" in legacy_page.text
+        assert "Entry Fill Assumptions" not in legacy_page.text
+        assert "Independent assumed" not in legacy_page.text
         assert "REFUSED_SPANS_EVIDENCE_CUTOVER" in legacy_page.text
-        assert "WBD1X" in legacy_page.text
-        assert "<td>webull</td>" in legacy_page.text
+        assert "WBD1X" not in legacy_page.text
+        assert "<td>webull</td>" not in legacy_page.text
         assert "AUUD" in legacy_page.text
 
 

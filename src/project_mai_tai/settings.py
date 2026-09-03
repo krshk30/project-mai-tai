@@ -535,6 +535,9 @@ class Settings(BaseSettings):
     # cancel). Independent of the reactive flag; the OMS one-position-per-symbol rule keeps them from
     # both holding the same name. Kill = flag OFF + restart (cancel any resting order first).
     strategy_schwab_1m_v2_cw_v2_resting_entry_enabled: bool = False
+    # CONF1 live-money exit. OFF records the one-shot evaluation but terminalizes its outbox row
+    # without publishing to OMS; a later enable cannot release a stale dark-period exit.
+    strategy_schwab_1m_v2_confirmation_exit_enabled: bool = False
     # The slippage-cap band for the resting buy-stop-limit: limit = line * (1 + band%). 9-day study:
     # 0.5% = best mean / 92% fill (fills the pullback, not the spike). Tunable without code.
     strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct: float = 0.5

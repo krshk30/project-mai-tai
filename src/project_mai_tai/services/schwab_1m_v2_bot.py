@@ -40,12 +40,22 @@ from sqlalchemy.orm import Session, sessionmaker
 from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
+    BrokerOrder,
     Fill,
     OmsManagedPosition,
+    PaperExitRuleConfig,
     Strategy,
     StrategyBarHistory,
     TradeIntent,
+    V2ConfirmationExitEvaluation,
     VirtualPosition,
+)
+from project_mai_tai.confirmation_exit import (
+    ConfirmationEntry,
+    ConfirmationEvaluation,
+    ConfirmationExitTracker,
+    confirmation_bar_start_ms,
+    is_first_slot_resting,
 )
 from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.fanout_outcome_consumer import (
@@ -373,6 +383,15 @@ class SchwabV2BotService:
         # source the extended-hours limit price (mirrors legacy _resolve_routed_price,
         # which routes entries at the live ask). RTH ignores it (order stays market).
         self._last_quote_by_symbol: dict[str, Quote] = {}
+        # CONF1 is keyed by the durable primary entry order. The strategy process owns the
+        # canonical Schwab 1m ATR state, so it stamps each one-shot evaluation for both OMS and
+        # paper rather than asking either consumer to recompute the indicator.
+        self._confirmation_exit = ConfirmationExitTracker()
+        self._confirmation_bar_states: dict[tuple[str, int], str] = {}
+        self._confirmation_last_live_bar_ms: dict[str, int] = {}
+        self._confirmation_evaluated = 0
+        self._confirmation_fired = 0
+        self._confirmation_long = 0
         self._last_data_flow: str | None = None
         self._data_health: dict[str, object] = {
             "status": "starting",
@@ -949,6 +968,16 @@ class SchwabV2BotService:
         await self._release_seeded_boot_warmup_on_timeout()
         self._cw_boot_hold_check()
         reportable = await asyncio.to_thread(self._fetch_reportable_state)
+        data_health = dict(self._data_health)
+        data_health["confirmation_exit"] = {
+            "enabled": self._confirmation_exit_enabled(),
+            "status": "MEASURED" if self._confirmation_evaluated else "UNEXERCISED",
+            "evaluated": self._confirmation_evaluated,
+            "fired": self._confirmation_fired,
+            "state_long": self._confirmation_long,
+            "denominator": self._confirmation_evaluated,
+            "pending": self._confirmation_exit.pending_count,
+        }
         safety_enabled = bool(
             getattr(self.strategy, "_cw_armed_segment_safety_enabled", False)
         )
@@ -957,7 +986,7 @@ class SchwabV2BotService:
             account_name=self.settings.strategy_schwab_1m_v2_account_name,
             watchlist=sorted(self._watchlist),
             prewarm_symbols=[],
-            data_health=dict(self._data_health),
+            data_health=data_health,
             retention_states=[],
             positions=reportable["positions"],
             pending_open_symbols=reportable["pending_open"],
@@ -1051,6 +1080,329 @@ class SchwabV2BotService:
                 self._fanout_outcome_evaluations,
             )
 
+    def _load_confirmation_entries(self) -> list[ConfirmationEntry]:
+        """Read today's authoritative primary fills; never infer an entry from bars."""
+        if self.session_factory is None:
+            return []
+        session_start = _current_scanner_session_start_utc()
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(Fill, BrokerOrder, BrokerAccount, TradeIntent)
+                .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
+                .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
+                .join(Strategy, Strategy.id == Fill.strategy_id)
+                .outerjoin(TradeIntent, TradeIntent.id == BrokerOrder.intent_id)
+                .where(
+                    Strategy.code == STRATEGY_CODE,
+                    BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name,
+                    BrokerAccount.provider == "schwab",
+                    Fill.side == "buy",
+                    Fill.filled_at >= session_start,
+                )
+                .order_by(Fill.filled_at, Fill.id)
+            ).all()
+            entries: list[ConfirmationEntry] = []
+            order_ids: set[object] = set()
+            for fill, order, account, intent in rows:
+                if order.id in order_ids:
+                    continue
+                order_ids.add(order.id)
+                order_payload = dict(order.payload or {})
+                fill_payload = dict(fill.payload or {})
+                metadata = {
+                    **dict(order_payload.get("metadata") or order_payload),
+                    **dict(fill_payload.get("metadata") or {}),
+                }
+                # Load-bearing scope fence: reclaims and every non-resting path are ignored from
+                # their durable stamps. cw_arm_bar_ts is intentionally not consulted.
+                if intent is None or intent.intent_type != "open" or not is_first_slot_resting(metadata):
+                    continue
+                filled_at = fill.filled_at
+                if filled_at.tzinfo is None:
+                    filled_at = filled_at.replace(tzinfo=UTC)
+                config = session.scalar(
+                    select(PaperExitRuleConfig)
+                    .where(PaperExitRuleConfig.effective_at <= filled_at)
+                    .order_by(
+                        PaperExitRuleConfig.effective_at.desc(),
+                        PaperExitRuleConfig.created_at.desc(),
+                    )
+                    .limit(1)
+                )
+                bars = int(config.confirmation_bars or 1) if config is not None else 1
+                effective_at = config.effective_at if config is not None else datetime(1970, 1, 1, tzinfo=UTC)
+                if effective_at.tzinfo is None:
+                    effective_at = effective_at.replace(tzinfo=UTC)
+                entries.append(
+                    ConfirmationEntry(
+                        order_id=order.id,
+                        fill_id=fill.id,
+                        broker_fill_id=str(fill.broker_fill_id or ""),
+                        broker_order_id=str(order.broker_order_id or ""),
+                        broker_account_name=account.name,
+                        symbol=str(fill.symbol).upper(),
+                        filled_at=filled_at.astimezone(UTC),
+                        evaluation_bar_start_ms=confirmation_bar_start_ms(filled_at, bars),
+                        confirmation_bars=bars,
+                        config_id=config.id if config is not None else None,
+                        config_effective_at=effective_at.astimezone(UTC),
+                    )
+                )
+        return entries
+
+    async def _sync_confirmation_entries(self) -> None:
+        try:
+            entries = await asyncio.to_thread(self._load_confirmation_entries)
+        except Exception:  # noqa: BLE001 - a DB fault must not kill position monitoring
+            logger.exception(
+                "[V2-CONFIRMATION-EXIT-ENTRY-READ] status=COULD_NOT_TELL; no entry inferred"
+            )
+            return
+        for entry in entries:
+            if not self._confirmation_exit.add(entry):
+                continue
+            last_bar = self._confirmation_last_live_bar_ms.get(entry.symbol, 0)
+            if last_bar < entry.evaluation_bar_start_ms:
+                continue
+            state = self._confirmation_bar_states.get(
+                (entry.symbol, entry.evaluation_bar_start_ms)
+            )
+            if state is None:
+                self._confirmation_exit.discard(entry.order_id)
+                logger.error(
+                    "[V2-CONFIRMATION-EXIT-UNANSWERABLE] sym=%s fill_id=%s target_bar_ms=%d "
+                    "last_live_bar_ms=%d reason=target_bar_state_not_retained",
+                    entry.symbol,
+                    entry.fill_id,
+                    entry.evaluation_bar_start_ms,
+                    last_bar,
+                )
+                continue
+            await self._emit_confirmation_evaluations(
+                self._confirmation_exit.evaluate_bar(
+                    symbol=entry.symbol,
+                    bar_start_ms=entry.evaluation_bar_start_ms,
+                    atr_state=state,
+                )
+            )
+        await self._publish_unpublished_confirmation_evaluations()
+        try:
+            evaluated, fired = await asyncio.to_thread(self._confirmation_census)
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-CONFIRMATION-EXIT-CENSUS] status=COULD_NOT_TELL")
+        else:
+            self._confirmation_evaluated = evaluated
+            self._confirmation_fired = fired
+            self._confirmation_long = evaluated - fired
+
+    def _confirmation_census(self) -> tuple[int, int]:
+        if self.session_factory is None:
+            return 0, 0
+        start = _current_scanner_session_start_utc()
+        with self.session_factory() as session:
+            rows = list(
+                session.scalars(
+                    select(V2ConfirmationExitEvaluation).where(
+                        V2ConfirmationExitEvaluation.filled_at >= start
+                    )
+                )
+            )
+        return len(rows), sum(bool(row.should_exit) for row in rows)
+
+    def _record_confirmation_evaluation(
+        self, evaluation: ConfirmationEvaluation
+    ) -> tuple[bool, bool]:
+        """Return (created, should_publish) for the durable one-shot row."""
+        if self.session_factory is None:
+            return False, False
+        entry = evaluation.entry
+        with self.session_factory() as session:
+            existing = session.scalar(
+                select(V2ConfirmationExitEvaluation).where(
+                    V2ConfirmationExitEvaluation.source_fill_id == entry.fill_id
+                )
+            )
+            if existing is not None:
+                return False, existing.published_at is None
+            session.add(
+                V2ConfirmationExitEvaluation(
+                    source_fill_id=entry.fill_id,
+                    source_order_id=entry.order_id,
+                    broker_fill_id=entry.broker_fill_id,
+                    broker_order_id=entry.broker_order_id,
+                    broker_account_name=entry.broker_account_name,
+                    symbol=entry.symbol,
+                    filled_at=entry.filled_at,
+                    evaluation_bar_start_ms=evaluation.bar_start_ms,
+                    evaluated_at=datetime.fromtimestamp(
+                        (evaluation.bar_start_ms + INTERVAL_SECS * 1000) / 1000.0,
+                        UTC,
+                    ),
+                    atr_state=evaluation.atr_state,
+                    should_exit=evaluation.should_exit,
+                    confirmation_bars=entry.confirmation_bars,
+                    config_id=entry.config_id,
+                    config_effective_at=entry.config_effective_at,
+                )
+            )
+            session.commit()
+        return True, True
+
+    def _unpublished_confirmation_evaluations(self) -> list[ConfirmationEvaluation]:
+        if self.session_factory is None:
+            return []
+        session_start = _current_scanner_session_start_utc()
+        with self.session_factory() as session:
+            rows = list(
+                session.scalars(
+                    select(V2ConfirmationExitEvaluation)
+                    .where(
+                        V2ConfirmationExitEvaluation.filled_at >= session_start,
+                        V2ConfirmationExitEvaluation.published_at.is_(None),
+                    )
+                    .order_by(V2ConfirmationExitEvaluation.evaluated_at)
+                )
+            )
+            return [
+                ConfirmationEvaluation(
+                    entry=ConfirmationEntry(
+                        order_id=row.source_order_id,
+                        fill_id=row.source_fill_id,
+                        broker_fill_id=row.broker_fill_id,
+                        broker_order_id=row.broker_order_id,
+                        broker_account_name=row.broker_account_name,
+                        symbol=row.symbol,
+                        filled_at=row.filled_at.replace(tzinfo=row.filled_at.tzinfo or UTC),
+                        evaluation_bar_start_ms=row.evaluation_bar_start_ms,
+                        confirmation_bars=row.confirmation_bars,
+                        config_id=row.config_id,
+                        config_effective_at=row.config_effective_at.replace(
+                            tzinfo=row.config_effective_at.tzinfo or UTC
+                        ),
+                    ),
+                    bar_start_ms=row.evaluation_bar_start_ms,
+                    atr_state=row.atr_state,
+                )
+                for row in rows
+            ]
+
+    def _mark_confirmation_published(self, source_fill_id) -> None:  # type: ignore[no-untyped-def]
+        if self.session_factory is None:
+            return
+        with self.session_factory() as session:
+            row = session.scalar(
+                select(V2ConfirmationExitEvaluation).where(
+                    V2ConfirmationExitEvaluation.source_fill_id == source_fill_id
+                )
+            )
+            if row is not None and row.published_at is None:
+                row.published_at = datetime.now(UTC)
+                session.commit()
+
+    async def _publish_confirmation_evaluation(
+        self, evaluation: ConfirmationEvaluation
+    ) -> None:
+        if not self._confirmation_exit_enabled():
+            logger.info(
+                "[V2-CONFIRMATION-EXIT-DARK] sym=%s fill_id=%s should_exit=%s "
+                "action=recorded_not_published",
+                evaluation.entry.symbol,
+                evaluation.entry.fill_id,
+                evaluation.should_exit,
+            )
+            # `published_at` terminalizes the durable outbox row. Without this, enabling CONF1
+            # later in the session would publish stale dark-period evaluations as live exits.
+            await asyncio.to_thread(
+                self._mark_confirmation_published, evaluation.entry.fill_id
+            )
+            return
+        if self.intent_emitter is None:
+            logger.error(
+                "[V2-CONFIRMATION-EXIT-UNANSWERABLE] sym=%s fill_id=%s reason=no_emitter",
+                evaluation.entry.symbol,
+                evaluation.entry.fill_id,
+            )
+            return
+        try:
+            await self.intent_emitter.emit_confirmation_exit(evaluation)
+        except Exception:  # noqa: BLE001 - durable outbox retries on the next position pass
+            logger.exception(
+                "[V2-CONFIRMATION-EXIT-PUBLISH-FAILED] sym=%s fill_id=%s retry=pending",
+                evaluation.entry.symbol,
+                evaluation.entry.fill_id,
+            )
+            return
+        await asyncio.to_thread(
+            self._mark_confirmation_published, evaluation.entry.fill_id
+        )
+
+    async def _publish_unpublished_confirmation_evaluations(self) -> None:
+        try:
+            pending = await asyncio.to_thread(self._unpublished_confirmation_evaluations)
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-CONFIRMATION-EXIT-OUTBOX] status=COULD_NOT_TELL")
+            return
+        for evaluation in pending:
+            await self._publish_confirmation_evaluation(evaluation)
+
+    async def _emit_confirmation_evaluations(
+        self, evaluations: list[ConfirmationEvaluation]
+    ) -> None:
+        for evaluation in evaluations:
+            entry = evaluation.entry
+            try:
+                created, should_publish = await asyncio.to_thread(
+                    self._record_confirmation_evaluation, evaluation
+                )
+            except Exception:  # noqa: BLE001 - no durable row means no live-money event
+                logger.exception(
+                    "[V2-CONFIRMATION-EXIT-UNANSWERABLE] sym=%s fill_id=%s "
+                    "reason=durable_decision_write_failed",
+                    entry.symbol,
+                    entry.fill_id,
+                )
+                continue
+            if not created:
+                if should_publish:
+                    await self._publish_confirmation_evaluation(evaluation)
+                continue
+            self._confirmation_evaluated += 1
+            if evaluation.should_exit:
+                self._confirmation_fired += 1
+                outcome = (
+                    "FIRED-UNKNOWN"
+                    if evaluation.atr_state == "unknown"
+                    else "FIRED"
+                )
+            else:
+                self._confirmation_long += 1
+                outcome = "STATE_LONG"
+            logger.info(
+                "[V2-CONFIRMATION-EXIT-%s] sym=%s fill_id=%s fill_at=%s target_bar_ms=%d "
+                "atr_state=%s evaluated=%d fired=%d long=%d denominator=%d",
+                outcome,
+                entry.symbol,
+                entry.fill_id,
+                entry.filled_at.isoformat(),
+                entry.evaluation_bar_start_ms,
+                evaluation.atr_state,
+                self._confirmation_evaluated,
+                self._confirmation_fired,
+                self._confirmation_long,
+                self._confirmation_evaluated,
+            )
+            if should_publish:
+                await self._publish_confirmation_evaluation(evaluation)
+
+    def _confirmation_exit_enabled(self) -> bool:
+        return bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_confirmation_exit_enabled",
+                False,
+            )
+        )
+
     async def _position_poll_pass(self) -> None:
         maps = await asyncio.to_thread(self._fetch_position_maps)
         if maps is None:
@@ -1070,6 +1422,8 @@ class SchwabV2BotService:
         for symbol in tracked:
             qty = positions.get(symbol, 0)
             self.strategy.update_position(symbol, qty, held_qty=held.get(symbol, 0))
+        if getattr(self, "session_factory", None) is not None:
+            await self._sync_confirmation_entries()
         self._release_entry_state_at_window_close()
         await self._drain_direct_strategy_intents()
         self._roll_stale_session_state(positions, held)
@@ -2821,6 +3175,40 @@ class SchwabV2BotService:
         except Exception:
             logger.exception("schwab_1m_v2 on_bar failed for %s", symbol)
             return
+        if observation_phase == "live":
+            normalized = symbol.upper()
+            atr_state = str(
+                getattr(self.strategy._symbol_states.get(normalized), "atr_state", None)
+                or "unknown"
+            ).lower()
+            self._confirmation_last_live_bar_ms[normalized] = bar.timestamp_ms
+            self._confirmation_bar_states[(normalized, bar.timestamp_ms)] = atr_state
+            cutoff = bar.timestamp_ms - 10 * INTERVAL_SECS * 1000
+            self._confirmation_bar_states = {
+                key: value
+                for key, value in self._confirmation_bar_states.items()
+                if key[0] != normalized or key[1] >= cutoff
+            }
+            for expired in self._confirmation_exit.expire_before(
+                symbol=normalized, bar_start_ms=bar.timestamp_ms
+            ):
+                logger.error(
+                    "[V2-CONFIRMATION-EXIT-UNANSWERABLE] sym=%s fill_id=%s target_bar_ms=%d "
+                    "observed_bar_ms=%d reason=target_bar_missed",
+                    expired.symbol,
+                    expired.fill_id,
+                    expired.evaluation_bar_start_ms,
+                    bar.timestamp_ms,
+                )
+            # Same-close ordering is deliberate: CONF1 is emitted before the existing ATR SELL
+            # draft. Existing quote exits have already won before this bar close.
+            await self._emit_confirmation_evaluations(
+                self._confirmation_exit.evaluate_bar(
+                    symbol=normalized,
+                    bar_start_ms=bar.timestamp_ms,
+                    atr_state=atr_state,
+                )
+            )
         await self._maybe_emit(draft)
         await self._drain_direct_strategy_intents()
         # Dual-broker fan-out: emit any Webull legs the strategy queued this bar (no-op if off).

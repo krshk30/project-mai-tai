@@ -75,7 +75,6 @@ from project_mai_tai.paper_exit import (
     completed_session_acceptance,
     logical_mirror_id,
     mirror_acceptance,
-    resting_fill_classification,
     terminal_evidence_covers,
 )
 from project_mai_tai.paper_exit_store import PaperExitStore
@@ -6469,29 +6468,14 @@ class StrategyEngineService:
             observed_at = event.observed_at
             if observed_at.tzinfo is None:
                 observed_at = observed_at.replace(tzinfo=UTC)
-            if event.event_type == "INDEPENDENT_ARMED" and event.price is not None:
-                attempt_id = str((event.payload or {}).get("attempt_id", "")).strip()
-                if attempt_id:
-                    self.paper_exit_runtime.restore_independent_arm(
-                        attempt_id=attempt_id,
-                        symbol=event.symbol,
-                        level=event.price,
-                        armed_at=observed_at,
-                    )
-                continue
-            if event.event_type == "INDEPENDENT_ENTRY" and event.price is not None:
-                attempt_id = str(
-                    (event.payload or {}).get("independent_attempt_id", "")
-                ).strip()
-                if attempt_id:
-                    self.paper_exit_runtime.restore_independent_entry(
-                        attempt_id=attempt_id,
-                        logical_id=event.logical_id,
-                        symbol=event.symbol,
-                        entered_at=observed_at,
-                        price=event.price,
-                        quantity=event.quantity or Decimal("1"),
-                    )
+            if (
+                event.event_type.startswith("CONFIRMATION_")
+                and event.source_fill_id is not None
+            ):
+                self.paper_exit_runtime.restore_confirmation_evidence(
+                    source_fill_id=event.source_fill_id,
+                    atr_state=str((event.payload or {}).get("atr_state", "unknown")),
+                )
                 continue
             if event.event_type not in {"PAPER_EXIT", "UNANSWERABLE"}:
                 continue
@@ -6597,7 +6581,7 @@ class StrategyEngineService:
                     for fill in fills
                 ),
             }
-            for venue in ("schwab", "webull")
+            for venue in ("schwab",)
         }
         acceptance = {
             "verdict": verdict,
@@ -6613,11 +6597,6 @@ class StrategyEngineService:
         }
         acceptance["grade"] = self.paper_exit_store.daily_grade(
             report_window=report_window,
-            source_fills=fills,
-        )
-        acceptance["entry_assumptions"] = self.paper_exit_store.entry_assumption_rows(
-            start=event_start,
-            end=end,
             source_fills=fills,
         )
         self.paper_exit_runtime.set_acceptance(acceptance)
@@ -7101,40 +7080,6 @@ class StrategyEngineService:
             await self._publish_strategy_state_snapshot()
             return
 
-        if event_type == "trade_intent":
-            event = TradeIntentEvent.model_validate(payload)
-            intent = event.payload
-            if (
-                self.paper_exit_runtime is None
-                or normalize_strategy_code(intent.strategy_code) != "schwab_1m_v2"
-                or intent.intent_type != "open"
-                or intent.side != "buy"
-            ):
-                return
-            eligible, refusal = resting_fill_classification(intent.metadata)
-            slot_id = str(intent.metadata.get("fanout_slot_id", "")).strip()
-            try:
-                level = Decimal(str(intent.metadata["cw_flip_level"]))
-            except (KeyError, ArithmeticError, ValueError):
-                level = Decimal("0")
-            if not eligible or not slot_id or level <= 0:
-                self.logger.error(
-                    "[PAPER-EXIT-INDEPENDENT-ARM-REFUSED] sym=%s source=%s slot=%s level=%s",
-                    intent.symbol,
-                    refusal,
-                    slot_id or "missing",
-                    level,
-                )
-                return
-            decision = self.paper_exit_runtime.arm_independent(
-                attempt_id=slot_id,
-                symbol=intent.symbol,
-                level=level,
-                armed_at=event.produced_at,
-            )
-            self._persist_paper_decisions([decision] if decision is not None else [])
-            return
-
         if event_type == "v2_cw_flip":
             symbol = str(payload.get("symbol", "")).strip().upper()
             if symbol and self.paper_exit_runtime is not None:
@@ -7155,6 +7100,48 @@ class StrategyEngineService:
                         observed_at=observed_at,
                     )
                 )
+            return
+
+        if event_type == "v2_confirmation_exit":
+            if self.paper_exit_runtime is None:
+                return
+            # The producer and consumer both enforce first-slot scope. This second fence is what
+            # makes a future producer regression unable to evaluate a reclaim in paper.
+            if str(payload.get("entry_slot", "")).strip().lower() != "first":
+                self.logger.error(
+                    "[PAPER-CONFIRMATION-EXIT-REFUSED] reason=non_first_slot payload=%s",
+                    payload.get("entry_slot"),
+                )
+                return
+            try:
+                source_fill_id = UUID(str(payload["source_fill_id"]))
+                observed_at = datetime.fromtimestamp(
+                    float(str(payload["evaluated_at_ms"])) / 1000.0,
+                    UTC,
+                )
+                effective_at = datetime.fromisoformat(str(payload["config_effective_at"]))
+                if effective_at.tzinfo is None:
+                    effective_at = effective_at.replace(tzinfo=UTC)
+                confirmation_bars = int(payload["confirmation_bars"])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                self.logger.error(
+                    "[PAPER-CONFIRMATION-EXIT-REFUSED] reason=invalid_stamp payload=%s",
+                    payload,
+                )
+                return
+            self._reconcile_paper_exit(
+                live_broker_fill_id=str(payload.get("broker_fill_id", ""))
+            )
+            self._persist_paper_decisions(
+                self.paper_exit_runtime.on_confirmation_exit(
+                    source_fill_id=source_fill_id,
+                    observed_at=observed_at,
+                    atr_state=str(payload.get("atr_state", "unknown")),
+                    confirmation_bars=confirmation_bars,
+                    config_effective_at=effective_at,
+                )
+            )
+            await self._publish_strategy_state_snapshot()
             return
 
         if event_type == "snapshot_batch":
