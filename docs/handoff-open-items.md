@@ -287,9 +287,12 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   and after every fix so far.
   ⛔ **An earlier draft printed `41` for the first cell and it was WRONG in two ways** (`codex-2`
   caught the window mix): it was an **unbounded** count, so it mixed windows — the reclaim cells
-  ended 09-02 while it ran to 09-03 — **and it was a LIVE count taken mid-session**, so it has
-  since moved. Per day: 08-28 `1` · 08-31 `21` · 09-01 `9` · 09-02 `9` · 09-03 `4` — 41 at the
-  moment of reading, 44 now. **A census with no window is not a measurement.**
+  ended 09-02 while it ran to 09-03 — **and it was a LIVE count taken mid-session**, so it was
+  never a fixed number. Per completed session: 08-28 `1` · 08-31 `21` · 09-01 `9` · 09-02 `9`.
+  09-03 is **excluded: the session was in progress at the reading and is not a bounded figure.**
+  ⭐ **A census with no window is not a measurement** — and the first repair of this row proved the
+  point by quoting a fresh unbounded running total, which `codex-2` also had to reject. Every
+  number here now carries its window.
   ⛔ Also bounded because `cw_entry_slot` stamping only begins ~08-28: earlier fills are unstamped,
   so 11/18 is a **floor for this window, not a rate for all time** (STMP constraint).
   **The two confirmed breaches are only where a misclassified reclaim COLLIDED with a correct one
