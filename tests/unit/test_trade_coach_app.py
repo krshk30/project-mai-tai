@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -52,3 +53,36 @@ def test_trade_coach_review_window_can_be_limited_to_recent_days(
 
     assert review_start == fixed_session_start - timedelta(days=2)
     assert review_end == fixed_session_start + timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_disabled_trade_coach_exits_before_review_scoring_or_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TradeCoachApp(
+        Settings(
+            trade_coach_enabled=False,
+            trade_coach_api_key="test-key",
+        )
+    )
+
+    async def fail_if_called(**kwargs) -> None:
+        del kwargs
+        raise AssertionError("disabled Trade Coach started a review cycle")
+
+    monkeypatch.setattr(app.service, "run_review_cycle", fail_if_called)
+
+    await app.run()
+
+
+def test_trade_coach_unit_does_not_force_enable_switch() -> None:
+    unit_path = (
+        Path(__file__).resolve().parents[2]
+        / "ops"
+        / "systemd"
+        / "project-mai-tai-trade-coach.service"
+    )
+    unit = unit_path.read_text(encoding="utf-8")
+
+    assert "MAI_TAI_TRADE_COACH_ENABLED=true" not in unit
+    assert "EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env" in unit

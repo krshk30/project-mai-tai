@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -2569,7 +2569,11 @@ def test_control_plane_marks_schwab_data_halt_red_on_bot_page() -> None:
 
 
 def test_bot_page_renders_simple_trade_summary_table() -> None:
-    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        trade_coach_enabled=True,
+    )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
     redis = FakeRedis(make_streams(settings.redis_stream_prefix))
@@ -2607,7 +2611,13 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
 
 
 def test_bot_page_renders_trade_forensics_report_from_completed_cycles() -> None:
-    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper", dashboard_trade_forensics_enabled=True, dashboard_trade_forensics_lookback_days=3)
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        trade_coach_enabled=True,
+        dashboard_trade_forensics_enabled=True,
+        dashboard_trade_forensics_lookback_days=3,
+    )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
     today_start = current_scanner_session_start_utc()
@@ -2717,8 +2727,140 @@ def test_bot_page_live_symbols_only_show_current_confirmed_handoff() -> None:
         assert "/bot/symbol/stop?strategy_code=macd_30s&amp;symbol=OLD1" in feed_section
 
 
+def test_trade_coach_dormancy_stops_queries_routes_and_panels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        trade_coach_enabled=False,
+        dashboard_trade_forensics_enabled=True,
+        strategy_polygon_30s_enabled=True,
+        strategy_schwab_1m_v2_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+    sql_statements: list[str] = []
+
+    def record_sql(conn, cursor, statement, parameters, context, executemany) -> None:
+        del conn, cursor, parameters, context, executemany
+        sql_statements.append(str(statement).lower())
+
+    event.listen(session_factory.kw["bind"], "before_cursor_execute", record_sql)
+
+    def fail_if_called(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("dormant Trade Coach touched live dashboard data")
+
+    monkeypatch.setattr(
+        control_plane_module.ControlPlaneRepository,
+        "_serialize_trade_coach_review",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        control_plane_module.ControlPlaneRepository,
+        "load_bot_trade_forensics",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        control_plane_module.ControlPlaneRepository,
+        "load_trade_coach_review_history",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        control_plane_module.ControlPlaneRepository,
+        "load_trade_coach_regime_profiles",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        control_plane_module.ControlPlaneRepository,
+        "load_live_trade_coach_regime_profiles",
+        fail_if_called,
+    )
+    for helper_name in (
+        "_build_trade_coach_live_advisories",
+        "_build_trade_coach_review_rows",
+        "_build_trade_coach_live_advisory_rows",
+        "_build_trade_coach_live_advisory_summary_cards",
+        "_build_trade_coach_live_advisory_spotlight_cards",
+        "_build_trade_forensics_panel",
+    ):
+        monkeypatch.setattr(control_plane_module, helper_name, fail_if_called)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    removed_panels = (
+        "Trade Forensics",
+        "Price Bucket Scoreboard",
+        "Path Scoreboard",
+        "Exit Pattern Scoreboard",
+        "Biggest Drags",
+        "Trade Coach Live Advisory",
+        "Top Live Cautions",
+        "Live Symbol Matrix",
+        "Trade Coach Reviews",
+    )
+    sql_statements.clear()
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        assert all(not bot["recent_trade_coach_reviews"] for bot in bots.json()["bots"])
+        assert not any("ai_trade_reviews" in statement for statement in sql_statements)
+
+        for path in (
+            "/api/coach-reviews",
+            "/api/coach-review?cycle_key=dormant",
+            "/coach/reviews",
+            "/coach/review?cycle_key=dormant",
+        ):
+            assert client.get(path).status_code == 404
+
+        v2_page = client.get("/bot/1m-schwab-v2")
+        paper_page = client.get("/bot/30s-polygon")
+        scanner_page = client.get("/scanner/dashboard")
+        assert v2_page.status_code == 200
+        assert paper_page.status_code == 200
+        assert scanner_page.status_code == 200
+
+        for page in (v2_page, paper_page):
+            assert all(panel not in page.text for panel in removed_panels)
+            assert "Open Positions" in page.text
+            assert "Trade Coach" in page.text
+            assert 'href="/coach/reviews"' not in page.text
+            assert 'aria-disabled="true"' in page.text
+
+        for protected in (
+            "Paper vs Live Exits",
+            "Entries copied",
+            "Paper positions open",
+            "Comparable exits",
+            "Halt handling",
+            "Confirmation checks",
+            "Current paper rule",
+            "Schedule rule change",
+            "Trade Comparison",
+            "Decision Timeline",
+            "Open Positions",
+        ):
+            assert protected in paper_page.text
+
+        assert "Trade Coach" in scanner_page.text
+        assert 'href="/coach/reviews"' not in scanner_page.text
+        assert 'aria-disabled="true"' in scanner_page.text
+
+
 def test_trade_coach_review_center_and_api_filters() -> None:
-    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        trade_coach_enabled=True,
+    )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
     redis = FakeRedis(make_streams(settings.redis_stream_prefix))

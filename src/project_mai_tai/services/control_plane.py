@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, quote, urlencode
 from urllib.request import Request as UrlRequest, urlopen
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Request as FastAPIRequest
+from fastapi import FastAPI, HTTPException, Request as FastAPIRequest
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from redis.asyncio import Redis
 from sqlalchemy import case, desc, func, select, text
@@ -936,14 +936,18 @@ class ControlPlaneRepository:
             open_orders=db_state["open_orders"],
             persisted_snapshots=db_state["dashboard_snapshots"],
         )
-        trade_forensics = await asyncio.to_thread(
-            self.load_bot_trade_forensics,
-            strategy_accounts=[
-                (str(bot.get("strategy_code", "") or ""), str(bot.get("account_name", "") or ""))
-                for bot in bots
-                if str(bot.get("strategy_code", "") or "").strip()
-                and str(bot.get("account_name", "") or "").strip()
-            ],
+        trade_forensics = (
+            await asyncio.to_thread(
+                self.load_bot_trade_forensics,
+                strategy_accounts=[
+                    (str(bot.get("strategy_code", "") or ""), str(bot.get("account_name", "") or ""))
+                    for bot in bots
+                    if str(bot.get("strategy_code", "") or "").strip()
+                    and str(bot.get("account_name", "") or "").strip()
+                ],
+            )
+            if self.settings.trade_coach_enabled
+            else {}
         )
         for bot in bots:
             key = (
@@ -1026,6 +1030,8 @@ class ControlPlaneRepository:
         lookback_days: int | None = None,
         now: datetime | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
+        if not self.settings.trade_coach_enabled:
+            return {}
         if not bool(self.settings.dashboard_trade_forensics_enabled):
             return {}
         normalized_pairs = [
@@ -2773,16 +2779,17 @@ class ControlPlaneRepository:
                         }
                     )
 
-                for review in session.scalars(
-                    select(AiTradeReview)
-                    .where(
-                        AiTradeReview.created_at >= session_start,
-                        AiTradeReview.created_at < session_end,
-                    )
-                    .order_by(desc(AiTradeReview.created_at))
-                    .limit(250)
-                ).all():
-                    recent_trade_coach_reviews.append(self._serialize_trade_coach_review(review))
+                if self.settings.trade_coach_enabled:
+                    for review in session.scalars(
+                        select(AiTradeReview)
+                        .where(
+                            AiTradeReview.created_at >= session_start,
+                            AiTradeReview.created_at < session_end,
+                        )
+                        .order_by(desc(AiTradeReview.created_at))
+                        .limit(250)
+                    ).all():
+                        recent_trade_coach_reviews.append(self._serialize_trade_coach_review(review))
 
                 for bar in session.scalars(
                     select(StrategyBarHistory)
@@ -3477,6 +3484,10 @@ def build_app(
         lifespan=lifespan,
     )
 
+    def require_trade_coach_enabled() -> None:
+        if not active_settings.trade_coach_enabled:
+            raise HTTPException(status_code=404, detail="Not Found")
+
     @app.middleware("http")
     async def disable_dynamic_response_caching(request: FastAPIRequest, call_next):
         response = await call_next(request)
@@ -3606,6 +3617,7 @@ def build_app(
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> dict[str, Any]:
+        require_trade_coach_enabled()
         data = await app.state.repository.load_bot_dashboard_data()
         default_start_text, default_end_text, default_start, default_end = _default_review_filter_dates()
         range_start = _parse_review_filter_date(start_date) or default_start
@@ -3678,6 +3690,7 @@ def build_app(
 
     @app.get("/api/coach-review")
     async def coach_review_api(cycle_key: str) -> dict[str, Any]:
+        require_trade_coach_enabled()
         data = await app.state.repository.load_bot_dashboard_data()
         review_history = app.state.repository.load_trade_coach_review_history()
         regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
@@ -3914,7 +3927,10 @@ def build_app(
     @app.get("/scanner/dashboard", response_class=HTMLResponse)
     async def scanner_dashboard() -> str:
         data = await app.state.repository.load_dashboard_data()
-        return _render_scanner_dashboard(data)
+        return _render_scanner_dashboard(
+            data,
+            trade_coach_enabled=active_settings.trade_coach_enabled,
+        )
 
     @app.get("/bot")
     async def bot_30s_status() -> dict[str, Any]:
@@ -4023,32 +4039,39 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         bot = _find_bot_view(data, strategy_code)
         if bot is None:
-            return _render_bot_detail_page(data, strategy_code)
+            return _render_bot_detail_page(
+                data,
+                strategy_code,
+                trade_coach_enabled=active_settings.trade_coach_enabled,
+            )
 
-        review_history = app.state.repository.load_trade_coach_review_history()
-        regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
-        all_reviews = _apply_trade_coach_regime_profiles(
-            _enrich_trade_coach_reviews(review_history, list(data.get("bots", []))),
-            regime_profiles,
-        )
-        live_regime_profiles = app.state.repository.load_live_trade_coach_regime_profiles(
-            strategy_code=strategy_code,
-            symbols=_trade_coach_live_advisory_symbols(
-                bot,
-                _resolved_bot_recent_decisions(data, bot),
-            ),
-            interval_secs=int(bot.get("interval_secs", 30) or 30),
-        )
-        advisories = _build_trade_coach_live_advisories(
-            bot=bot,
-            recent_decisions=_resolved_bot_recent_decisions(data, bot),
-            all_reviews=all_reviews,
-            live_regime_profiles=live_regime_profiles,
-        )
+        advisories: list[dict[str, Any]] = []
+        if active_settings.trade_coach_enabled:
+            review_history = app.state.repository.load_trade_coach_review_history()
+            regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
+            all_reviews = _apply_trade_coach_regime_profiles(
+                _enrich_trade_coach_reviews(review_history, list(data.get("bots", []))),
+                regime_profiles,
+            )
+            live_regime_profiles = app.state.repository.load_live_trade_coach_regime_profiles(
+                strategy_code=strategy_code,
+                symbols=_trade_coach_live_advisory_symbols(
+                    bot,
+                    _resolved_bot_recent_decisions(data, bot),
+                ),
+                interval_secs=int(bot.get("interval_secs", 30) or 30),
+            )
+            advisories = _build_trade_coach_live_advisories(
+                bot=bot,
+                recent_decisions=_resolved_bot_recent_decisions(data, bot),
+                all_reviews=all_reviews,
+                live_regime_profiles=live_regime_profiles,
+            )
         return _render_bot_detail_page(
             data,
             strategy_code,
             trade_coach_live_advisories=advisories,
+            trade_coach_enabled=active_settings.trade_coach_enabled,
         )
 
     @app.get("/bot/30s", response_class=HTMLResponse)
@@ -4104,6 +4127,7 @@ def build_app(
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> str:
+        require_trade_coach_enabled()
         data = await app.state.repository.load_bot_dashboard_data()
         default_start_text, default_end_text, default_start, default_end = _default_review_filter_dates()
         review_history = app.state.repository.load_trade_coach_review_history()
@@ -4122,6 +4146,7 @@ def build_app(
 
     @app.get("/coach/review", response_class=HTMLResponse)
     async def coach_review_detail_page(cycle_key: str) -> str:
+        require_trade_coach_enabled()
         data = await app.state.repository.load_bot_dashboard_data()
         review_history = app.state.repository.load_trade_coach_review_history()
         return _render_trade_coach_review_detail(
@@ -4135,7 +4160,10 @@ def build_app(
     async def dashboard() -> str:
         data = await app.state.repository.load_dashboard_data()
         _attach_schwab_token_refresher_status(app, data)
-        return _render_dashboard(data)
+        return _render_dashboard(
+            data,
+            trade_coach_enabled=active_settings.trade_coach_enabled,
+        )
 
     return app
 
@@ -4733,7 +4761,12 @@ def _format_lag(seconds: float | None) -> str:
     return f"{minutes / 60:.1f}h"
 
 
-def _render_dashboard(data: dict[str, Any]) -> str:
+def _render_dashboard(
+    data: dict[str, Any],
+    *,
+    trade_coach_enabled: bool = False,
+) -> str:
+    del trade_coach_enabled
     return _render_compact_dashboard(data)
 
 BOT_PAGE_META = {
@@ -4815,11 +4848,22 @@ def _visible_bot_page_meta(available_codes: list[str] | None = None) -> list[tup
     return [(code, BOT_PAGE_META[code]) for code in ordered_codes if code in BOT_PAGE_META]
 
 
-def _build_bot_nav_html(available_codes: list[str]) -> str:
+def _trade_coach_nav_html(*, enabled: bool, active: bool = False) -> str:
+    active_class = ' class="active"' if active else ""
+    if enabled:
+        return f'<a href="/coach/reviews"{active_class}>Trade Coach</a>'
+    return '<a aria-disabled="true" tabindex="-1">Trade Coach</a>'
+
+
+def _build_bot_nav_html(
+    available_codes: list[str],
+    *,
+    trade_coach_enabled: bool = False,
+) -> str:
     links = ["<a href=\"/scanner/dashboard\">Scanner Page</a>"]
     for code, meta in _visible_bot_page_meta(available_codes):
         links.append(f'<a href="{meta["path"]}">{escape(str(meta.get("nav_title", meta["title"])).replace("Mai Tai ", ""))}</a>')
-    links.append('<a href="/coach/reviews">Trade Coach</a>')
+    links.append(_trade_coach_nav_html(enabled=trade_coach_enabled))
     links.extend(
         [
             '<a href="#scanner">Scanner</a>',
@@ -5107,7 +5151,11 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
     }
 
 
-def _render_scanner_dashboard(data: dict[str, Any]) -> str:
+def _render_scanner_dashboard(
+    data: dict[str, Any],
+    *,
+    trade_coach_enabled: bool = False,
+) -> str:
     scanner = data["scanner"]
     bot_views = data["bots"]
     latest_snapshot = data["market_data"]["latest_snapshot_batch"] or {}
@@ -5136,7 +5184,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     )
     scanner_nav_links = [
         '<a href="/scanner/dashboard" class="active">Mai Tai Scanner</a>',
-        '<a href="/coach/reviews">Trade Coach</a>',
+        _trade_coach_nav_html(enabled=trade_coach_enabled),
         '<a href="/">Mai Tai Control Plane</a>',
     ]
     for code, meta in _visible_bot_page_meta([str(bot["strategy_code"]) for bot in bot_views]):
@@ -5603,6 +5651,7 @@ def _render_bot_detail_page(
     strategy_code: str,
     *,
     trade_coach_live_advisories: list[dict[str, Any]] | None = None,
+    trade_coach_enabled: bool = False,
 ) -> str:
     bot = _find_bot_view(data, strategy_code)
     if bot is None:
@@ -5614,22 +5663,28 @@ def _render_bot_detail_page(
     listening_status = _build_bot_listening_status(data, bot, recent_decisions)
     recent_fills = [item for item in data["recent_fills"] if item["strategy_code"] == strategy_code]
     recent_orders = [item for item in data["recent_orders"] if item["strategy_code"] == strategy_code]
-    recent_trade_coach_reviews = list(bot.get("recent_trade_coach_reviews", []))
-    live_trade_coach_advisories = list(trade_coach_live_advisories or [])
-    trade_forensics = dict(bot.get("trade_forensics", {}) or {})
     position_rows = _build_bot_position_rows(data, bot)
     completed_rows, completed_count, completed_pnl = _build_completed_position_rows(bot, recent_orders, recent_fills)
-    trade_coach_rows, trade_coach_count = _build_trade_coach_review_rows(recent_trade_coach_reviews)
-    live_trade_coach_rows, live_trade_coach_count = _build_trade_coach_live_advisory_rows(
-        live_trade_coach_advisories
-    )
-    live_trade_coach_summary_cards = _build_trade_coach_live_advisory_summary_cards(
-        live_trade_coach_advisories,
-        reviewed_count=trade_coach_count,
-    )
-    live_trade_coach_spotlights = _build_trade_coach_live_advisory_spotlight_cards(
-        live_trade_coach_advisories
-    )
+    trade_coach_rows = ""
+    trade_coach_count = 0
+    live_trade_coach_rows = ""
+    live_trade_coach_count = 0
+    live_trade_coach_summary_cards = ""
+    live_trade_coach_spotlights = ""
+    if trade_coach_enabled:
+        recent_trade_coach_reviews = list(bot.get("recent_trade_coach_reviews", []))
+        live_trade_coach_advisories = list(trade_coach_live_advisories or [])
+        trade_coach_rows, trade_coach_count = _build_trade_coach_review_rows(recent_trade_coach_reviews)
+        live_trade_coach_rows, live_trade_coach_count = _build_trade_coach_live_advisory_rows(
+            live_trade_coach_advisories
+        )
+        live_trade_coach_summary_cards = _build_trade_coach_live_advisory_summary_cards(
+            live_trade_coach_advisories,
+            reviewed_count=trade_coach_count,
+        )
+        live_trade_coach_spotlights = _build_trade_coach_live_advisory_spotlight_cards(
+            live_trade_coach_advisories
+        )
     order_rows, order_count = _build_order_history_rows(recent_orders, recent_fills)
     tos_parity = bot.get("tos_parity", {})
     tos_parity_rows = _build_tos_parity_rows(tos_parity)
@@ -5904,7 +5959,11 @@ def _render_bot_detail_page(
                 </table>
             </div>
         </section>"""
-    trade_forensics_panel = _build_trade_forensics_panel(trade_forensics)
+    trade_forensics_panel = (
+        _build_trade_forensics_panel(dict(bot.get("trade_forensics", {}) or {}))
+        if trade_coach_enabled
+        else ""
+    )
 
     live_trade_coach_panel = f"""
             <section class="panel full accent-panel coach-advisory-panel">
@@ -5944,7 +6003,7 @@ def _render_bot_detail_page(
                     </table>
                 </div>
                 <div class="panel-copy">Use this as a pre-trade caution layer only. The review center remains the source of truth for the full post-trade breakdown and operator follow-up.</div>
-            </section>"""
+            </section>""" if trade_coach_enabled else ""
 
     trade_coach_panel = f"""
             <section class="panel full">
@@ -5961,7 +6020,7 @@ def _render_bot_detail_page(
                         <tbody>{trade_coach_rows}</tbody>
                     </table>
                 </div>
-            </section>"""
+            </section>""" if trade_coach_enabled else ""
 
     listening_panel = f"""
             <section class="panel full accent-panel">
@@ -6511,7 +6570,7 @@ def _render_bot_detail_page(
                     </div>
                     <span class="count accent">{escape(bot["display_name"])}</span>
                 </div>
-                <div class="panel-copy">{_render_page_nav(strategy_code, available_codes)}</div>
+                <div class="panel-copy">{_render_page_nav(strategy_code, available_codes, trade_coach_enabled=trade_coach_enabled)}</div>
             </section>
 
             {listening_panel}
@@ -6610,7 +6669,12 @@ def _render_bot_detail_page(
 </html>"""
 
 
-def _render_page_nav(active: str, available_codes: list[str]) -> str:
+def _render_page_nav(
+    active: str,
+    available_codes: list[str],
+    *,
+    trade_coach_enabled: bool = False,
+) -> str:
     links: list[str] = []
     for code, meta in _visible_bot_page_meta(available_codes):
         links.append(
@@ -6620,7 +6684,7 @@ def _render_page_nav(active: str, available_codes: list[str]) -> str:
         '<div class="nav-strip">'
         '<a href="/scanner/dashboard">Mai Tai Scanner</a>'
         + "".join(links)
-        + '<a href="/coach/reviews">Trade Coach</a>'
+        + _trade_coach_nav_html(enabled=trade_coach_enabled)
         + '<a href="/">Mai Tai Control Plane</a>'
         + "</div>"
     )
