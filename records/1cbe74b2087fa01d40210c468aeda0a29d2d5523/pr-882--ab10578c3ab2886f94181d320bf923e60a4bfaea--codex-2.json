@@ -1,0 +1,9 @@
+{
+  "pr_number": 882,
+  "range_base": "ab10578c3ab2886f94181d320bf923e60a4bfaea",
+  "range_head": "1cbe74b2087fa01d40210c468aeda0a29d2d5523",
+  "reviewed_at": "2026-09-03T16:37:41Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified additive docs-only range; re-derived bounded 2026-08-31 through 2026-09-02 VPS fill census as 39 first-to-resting, 7 reclaim-to-reclaim, 11 reclaim-to-resting; confirmed classification mechanism and collision examples against current code and durable fills; checked PR title/body, completed-session bounds, main containment, authorship markers, and diff cleanliness."
+}
