@@ -43,6 +43,8 @@ from project_mai_tai.events import (
 from project_mai_tai.services.control_plane import (
     _build_bot_decision_rows,
     _build_bot_listening_status,
+    _build_paper_evidence_rows,
+    _build_paper_grade_rows,
     _dedupe_decision_events,
     _exchange_schwab_authorization_code,
     _normalize_closed_today_rows,
@@ -2231,7 +2233,59 @@ def test_polygon_bot_legacy_webull_routes_remain_compatible() -> None:
         assert "REFUSED_SPANS_EVIDENCE_CUTOVER" in legacy_page.text
         assert "WBD1X" not in legacy_page.text
         assert "<td>webull</td>" not in legacy_page.text
+        assert "Completed Positions" not in legacy_page.text
         assert "AUUD" in legacy_page.text
+
+
+def test_paper_rows_explain_ungradable_without_inventing_a_zero_exit() -> None:
+    rows = _build_paper_grade_rows(
+        [
+            {
+                "symbol": "CHPT",
+                "quantity": "2",
+                "entry_at": "2026-09-03T14:06:10+00:00",
+                "entry_price": "7.73",
+                "paper_status": "UNGRADABLE",
+                "paper_exit_at": "2026-09-03T14:08:00+00:00",
+                "paper_exit_price": "",
+                "paper_exit_reason": (
+                    "confirmation arrived after quote processing passed its timestamp"
+                ),
+                "paper_pct": "",
+                "real_status": "EXITED",
+                "real_exit_at": "2026-09-03T14:15:36+00:00",
+                "real_exit_price": "7.89",
+                "real_pct": "2.0698",
+                "live_reason": "",
+                "gradable": False,
+            }
+        ]
+    )
+
+    assert "2026-09-03 10:06:10 AM ET" in rows
+    assert "Could not grade" in rows
+    assert "Timing race: no paper exit was calculated." in rows
+    assert "+2.1%" in rows
+    assert "$7.89" in rows
+    assert "$0.00" not in rows
+
+
+def test_paper_timeline_uses_plain_language_and_eastern_time() -> None:
+    rows = _build_paper_evidence_rows(
+        [
+            {
+                "time": "2026-09-03 10:08:00 AM ET",
+                "symbol": "CHPT",
+                "event": "CONFIRMATION_STATE_LONG",
+                "price": "",
+                "reason": "continue",
+            }
+        ]
+    )
+
+    assert "ATR confirmed LONG; kept open" in rows
+    assert "ATR was LONG, so the paper position continued." in rows
+    assert "CONFIRMATION_STATE_LONG" not in rows
 
 
 def test_control_plane_overview_and_dashboard_render() -> None:

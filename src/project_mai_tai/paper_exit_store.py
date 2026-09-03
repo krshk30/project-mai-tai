@@ -506,14 +506,16 @@ class PaperExitStore:
                     .order_by(PaperExitEvent.observed_at, PaperExitEvent.created_at)
                 )
             )
-            unanswerable_ids = set(
+            unanswerable_events = list(
                 session.scalars(
-                    select(PaperExitEvent.logical_id).where(
+                    select(PaperExitEvent)
+                    .where(
                         PaperExitEvent.arm == "mirror",
                         PaperExitEvent.event_type == "UNANSWERABLE",
                         PaperExitEvent.observed_at >= start,
                         PaperExitEvent.observed_at <= end,
                     )
+                    .order_by(PaperExitEvent.observed_at, PaperExitEvent.created_at)
                 )
             )
 
@@ -555,6 +557,7 @@ class PaperExitStore:
                     inventory[key].popleft()
 
         paper_by_logical = {row.logical_id: row for row in paper_exits}
+        unanswerable_by_logical = {row.logical_id: row for row in unanswerable_events}
         grouped: dict[str, list[PaperSourceFill]] = defaultdict(list)
         for source in source_fills:
             grouped[logical_mirror_id(source)].append(source)
@@ -571,29 +574,48 @@ class PaperExitStore:
                 (Decimal(exits[leg.fill_id]["proceeds"]) for leg in legs), Decimal("0")
             )
             paper = paper_by_logical.get(logical_id)
-            reason = ""
-            if logical_id in unanswerable_ids:
-                reason = "paper exit unanswerable"
+            unanswerable = unanswerable_by_logical.get(logical_id)
+            paper_reason = ""
+            if unanswerable is not None:
+                paper_reason = str(
+                    (unanswerable.payload or {}).get("reason", "paper exit unanswerable")
+                )
             elif paper is None or paper.price is None:
-                reason = "paper exit missing"
+                paper_reason = "paper exit missing"
             elif paper.observed_at.replace(tzinfo=paper.observed_at.tzinfo or UTC) < max(
                 leg.filled_at for leg in legs
             ):
-                reason = "paper exit predates source fill"
+                paper_reason = "paper exit predates source fill"
             elif paper.quantity is None or Decimal(paper.quantity) != quantity:
-                reason = f"paper exit quantity mismatch ({paper.quantity}/{quantity})"
-            elif exited_quantity != quantity:
-                reason = f"live exit incomplete ({exited_quantity}/{quantity})"
+                paper_reason = f"paper exit quantity mismatch ({paper.quantity}/{quantity})"
+            live_reason = (
+                f"live exit incomplete ({exited_quantity}/{quantity})"
+                if exited_quantity != quantity
+                else ""
+            )
+            reason = " · ".join(item for item in (paper_reason, live_reason) if item)
             paper_pct = (
                 ((Decimal(paper.price) * quantity / entry_cost) - Decimal("1")) * Decimal("100")
-                if not reason and entry_cost > 0
+                if not paper_reason
+                and paper is not None
+                and paper.price is not None
+                and entry_cost > 0
                 else None
             )
             real_pct = (
                 ((proceeds / entry_cost) - Decimal("1")) * Decimal("100")
-                if not reason and entry_cost > 0
+                if not live_reason and entry_cost > 0
                 else None
             )
+            entry_at = min(leg.filled_at for leg in legs)
+            entry_price = entry_cost / quantity if quantity > 0 else None
+            paper_event = unanswerable or paper
+            exit_times = [
+                exits[leg.fill_id]["exit_at"]
+                for leg in legs
+                if exits[leg.fill_id]["exit_at"] is not None
+            ]
+            real_exit_price = proceeds / exited_quantity if exited_quantity > 0 else None
             grades.append(
                 {
                     "logical_id": logical_id,
@@ -603,6 +625,29 @@ class PaperExitStore:
                     "quantity": str(quantity),
                     "paper_pct": str(paper_pct) if paper_pct is not None else "",
                     "real_pct": str(real_pct) if real_pct is not None else "",
+                    "entry_at": entry_at.isoformat(),
+                    "entry_price": str(entry_price) if entry_price is not None else "",
+                    "paper_status": "UNGRADABLE" if paper_reason else "EXITED",
+                    "paper_exit_at": (
+                        paper_event.observed_at.isoformat() if paper_event is not None else ""
+                    ),
+                    "paper_exit_price": (
+                        str(paper.price)
+                        if not paper_reason and paper is not None and paper.price is not None
+                        else ""
+                    ),
+                    "paper_exit_reason": (
+                        paper_reason
+                        or str((paper.payload or {}).get("reason", ""))
+                        if paper is not None
+                        else paper_reason
+                    ),
+                    "real_status": "EXITED" if not live_reason else "INCOMPLETE",
+                    "real_exit_at": max(exit_times).isoformat() if exit_times else "",
+                    "real_exit_price": (
+                        str(real_exit_price) if real_exit_price is not None else ""
+                    ),
+                    "live_reason": live_reason,
                     "gradable": not reason,
                     "reason": reason,
                 }
