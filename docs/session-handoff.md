@@ -97,9 +97,15 @@ runs the old code and the daily AMBER continues.
   prior-session anchor with no cap/roll line, killed at 07:01:02 by `session_anchor_reset` — not by
   the 04:00 roll and not by the seed cap. Exposure is mostly structural (04:00–07:00 sits before
   entries open) with a **~62-second residual inside the tradable window**. Accumulating watch.
-- **SEG1 is falsifiable but THIN.** True identity returned 13 on the 09-02 tape and a wrong identity
-  (dropping `entry_slot`) returns 12 — but the discriminator is exercised by **exactly one slot**
-  (BIAF `58f2bc1e`, first + reclaim). Report as n=1, never as "SEG1 verified".
+- **SEG1 — ⛔ SUPERSEDED AND UNEXERCISABLE ONCE #879 MERGES. NEVER GRADE IT.**
+  It was verified falsifiable on the 09-02 tape (true identity 13, dropping `entry_slot` 12), but
+  exercised by **exactly one slot** — BIAF `58f2bc1e`, which carried both a first and a reclaim.
+  **#879 removes precisely that case:** the paper path now keys on the durable fill
+  (`logical_mirror_id = sha256("mirror-fill:{fill_id}")`), excludes reclaims, and drops the Webull
+  venue — so `entry_slot` is a constant filter, not a discriminator, and there is no cross-venue
+  collapse left to govern. Keying on the fill id is the better design; the point is only that the
+  property can no longer fail. ⇒ A SEG1 reading after #879 is **vacuous by construction** and must
+  report **UNEXERCISABLE**, never PASS. A PASS that could not have failed is worse than no reading.
 - **Hold-until-proven 0/82 rests on 4/82.** Only four rows are "still open at 16:00" (CELU −0.94,
   AEHL −0.58, NCRA −0.35, FLYE −2.26). Correct as measured; a small denominator, never evidence that
   holding is free.
