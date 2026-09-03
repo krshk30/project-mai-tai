@@ -267,6 +267,56 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **DUP2 — `fanout_slot` CLASSIFICATION MISMATCH: a Schwab `reclaim` is fanned out into the Webull
+  `resting` slot** *(owner: codex-2; **CONFIRMED BREACH, mechanism now IDENTIFIED**; operator ruled
+  2026-09-03 that two Webull reclaim legs in one cross is NOT INTENDED — the intended pair is one
+  Schwab reclaim + one Webull reclaim)*.
+  ⭐ **Mechanism, found by codex-2 in the durable fills and measured here.** `cw_entry_slot` (Schwab
+  composition) and `fanout_slot` (Webull venue) are separate fields, and the venue flags
+  `fanout_webull_resting_taken` / `fanout_webull_reclaim_taken` are **separate booleans**. When a
+  `cw_entry_slot=reclaim` fill is stamped `fanout_slot=resting`, it consumes the **wrong** boolean,
+  so a genuine reclaim leg still finds its own flag free and fires. Two Webull legs, one cross.
+  **MEASURED — it is the majority case, not an edge. All three cells are bounded to the SAME
+  window, `2026-08-31 → 2026-09-02`:**
+  | `cw_entry_slot` | `fanout_slot` | n (08-31 → 09-02) |
+  |---|---|---|
+  | `first` | `resting` | 39 (correct mapping) |
+  | `reclaim` | `reclaim` | 7 (correct) |
+  | **`reclaim`** | **`resting`** | **11 — MISCLASSIFIED** |
+  ⇒ **11 of 18 stamped reclaim fan-out legs (61%) are misclassified** in that window — current,
+  and after every fix so far.
+  ⛔ **An earlier draft printed `41` for the first cell and it was WRONG in two ways** (`codex-2`
+  caught the window mix): it was an **unbounded** count, so it mixed windows — the reclaim cells
+  ended 09-02 while it ran to 09-03 — **and it was a LIVE count taken mid-session**, so it was
+  never a fixed number. Per completed session: 08-28 `1` · 08-31 `21` · 09-01 `9` · 09-02 `9`.
+  09-03 is **excluded: the session was in progress at the reading and is not a bounded figure.**
+  ⭐ **A census with no window is not a measurement** — and the first repair of this row proved the
+  point by quoting a fresh unbounded running total, which `codex-2` also had to reject. Every
+  number here now carries its window.
+  ⛔ Also bounded because `cw_entry_slot` stamping only begins ~08-28: earlier fills are unstamped,
+  so 11/18 is a **floor for this window, not a rate for all time** (STMP constraint).
+  **The two confirmed breaches are only where a misclassified reclaim COLLIDED with a correct one
+  in the same segment:** NCRA 08-31 `10:01:16` (reclaim/reclaim) + `11:24:33` (reclaim/**resting**),
+  seg `1788181200000`; SSM 09-01 `14:58:19` (reclaim/**resting**) + `15:12:24` (reclaim/reclaim),
+  seg `1788287460000`. The other 9 misclassifications did not collide — **so far**.
+  ⚠ **Inverse harm to check, NOT asserted:** a misclassified reclaim consumes
+  `fanout_webull_resting_taken`, so it could also **suppress a later legitimate resting fan-out
+  leg** — a silently missing Webull mirror that would look like the leg simply not firing. Nobody
+  has looked for that direction.
+  ⛔ **Two earlier mechanisms are WITHDRAWN, both wrong:** mine ("the flag is per-slot") and the
+  provenance-mismatch reading. The segment identity is **identical** in both pairs
+  (`1788181200000`, `1788287460000`); the differing `fanout_slot_id`s are a **consequence** of the
+  differing slot name feeding a deterministic derivation, not evidence of divergent segments.
+  **Next action (codex-2):** find where a `cw_entry_slot=reclaim` entry is stamped
+  `fanout_slot=resting`, and fix the classification. ⛔ Do **not** add a guard at the consumed
+  flag — the flag is correct and segment-scoped; it is being fed the wrong slot name.
+  Denominator: stamped `live:orb` reclaim fan-out legs, 08-31 → 09-02 — 18.
+  Falsifier: a `cw_entry_slot=reclaim` fill stamped `fanout_slot=resting` after the fix.
+- **DUP3 — 12 exit-side duplicate legs, design-or-defect, UNPROVEN** *(owner: codex-2; sits with
+  DUP2)*. Not yet assessed. **Next action:** classify each of the 12 as intended fan-out behaviour
+  or duplicate exit, then state which. Denominator: exit legs per closed position.
+  Falsifier: two exit legs against one lot with no fan-out design that calls for it.
+
 - **RET1 — `market_capture_quotes` prunes at 14 CALENDAR days** *(owner: **operator** — the
   retention decision is theirs; measured 2026-09-03)*. `prune-capture.service` runs
   `prune_market_ticks.py --keep-days 14`; the predicate is
