@@ -267,6 +267,30 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **RET1 — `market_capture_quotes` prunes at 14 days, and three consequences follow**
+  *(owner: operator decision pending; measured 2026-09-03)*. `prune-capture.service` runs
+  `prune_market_ticks.py --keep-days 14` over `market_capture_trades, market_capture_quotes,
+  market_capture_bars`. **This is a rolling window, not a start date.**
+  ⭐ **Verified by watching it move, not by reading the config:** on 2026-09-02 the earliest quote
+  day was **2026-08-19**; on 2026-09-03 it is **2026-08-20**. 08-19 was pruned overnight.
+  1. **It explains the unanswered 08-19 boundary.** The "usable NBBO begins 2026-08-19" figure was
+     never a configuration decision and there is nothing to look for — it is **attrition**, and a
+     14-day window measured from the day of that reading lands exactly there. Question closed.
+  2. ⛔ **The 82-entry study's early sessions start expiring within days**, and that window is also
+     the **RST1 hand-classified population**: `08-24 → 09-07` · `08-25 → 09-08` · `08-26 → 09-09` ·
+     `08-27 → 09-10` · `08-28 → 09-11` · `08-31 → 09-14` · `09-01 → 09-15`. Any control anyone
+     later wants to run on that population carries the **same deadline as D20**, and nobody had
+     noticed. `08-24` is **four days out**.
+  3. ⭐⭐ **STANDING CONSTRAINT — every future control that needs historical quotes inherits a
+     two-week clock. A control that depends on quote evidence must be RUN WITHIN 14 DAYS of the
+     event, or it is dead on arrival.** State the expiry date on the row when such a control is
+     specced, the same way D20 now carries 2026-09-14. ⛔ Do not board a quote-dependent control
+     without its deadline — an unmet control that can no longer be met is dead, not pending.
+  **Next action (NOT today, operator's call):** decide whether retention should be extended, given
+  how often this board goes back to re-check. The trade is disk against re-checkability; the
+  evidence for extending is that D20, RST1 and the 82-entry study have all now hit it.
+  Denominator: 14 days. Falsifier: a quote day older than 14 sessions still present in the tape.
+
 - **D20 — a filled fan-out leg does not consume its slot** *(owner: claude-1; **GRADED
   2026-09-03 → COULD_NOT_TELL, by the acceptance doc's own standard**)*.
   **Live evidence (09-02), per SLOT, which is the unit of the question — not per observation:**
