@@ -1,0 +1,9 @@
+{
+  "pr_number": 886,
+  "range_base": "08b4531370a6b13f818740b762abddd946c0923f",
+  "range_head": "450258b418aab1ebad9d133b4621d8ac92057931",
+  "reviewed_at": "2026-09-03T18:19:58Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Late CONF1 confirmation now executes on the next proven executable bid instead of returning UNANSWERABLE. Head contains main tip; single commit with one OpenAI Codex marker; validate green on both runs; 72 touched tests pass. Scope verified as paper-only: the diff touches src/project_mai_tai/paper_exit.py and its test and nothing else, so no live v2 and no OMS path is affected - which matters because CONF1 is currently disabled in live v2 after today's CHPT reject storm. Mechanism checked rather than accepted: instead of refusing when the quote stream has advanced past the confirmation timestamp, it records a delivery_state detail and calls _stage_exit, which reuses the existing halt-deferral queue _pending_halt_exits - that reuse is why halt protection is genuinely preserved rather than merely claimed. Bounded: the staged exit is popped and executed on the next post-print executable bid, and a 16:00 reason exists as the session backstop. UNANSWERABLE is retained for genuinely unresolvable cases (late-atr in paper_exit.py, and classification, provenance and detail cases in paper_exit_store.py), so honest refusal is not lost - only the quote-advanced case is re-routed. The new test is behavioural and proves both halves of the original defect: a quote before a print does not release, and the next quote after a print exits at the real bid 9.79, so the exit now prices itself. Residual recorded on the PR, non-blocking: a staged exit on a symbol that never prints again before 16:00 stays pending and renders as waiting rather than could-not-grade."
+}

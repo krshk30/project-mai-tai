@@ -1,0 +1,9 @@
+{
+  "pr_number": 884,
+  "range_base": "08b4531370a6b13f818740b762abddd946c0923f",
+  "range_head": "8f8bdd5b2c56998223eb527129acaefb9196fa83",
+  "reviewed_at": "2026-09-03T18:19:58Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Trade Coach made fully dormant. Head contains main tip; single commit with one OpenAI Codex marker; validate green on both runs; touched tests 67 passed. The change I cared most about is the systemd one: ExecStart no longer carries MAI_TAI_TRADE_COACH_ENABLED=true, which was the FORCED-ENABLE OVERRIDE that let the service run while the shared env said false - the mechanism behind the 2026-07-30 incident where trade-coach burned 45 percent of a 2-vCPU box in a 429 retry storm against a dead OpenAI key, because the ENABLED check was startup-only. The README now states the flag governs both the service and its control-plane surfaces and that a dormant deployment should also mask the unit so a manual start is refused. Verified the operator-protected claim directly: no paper-exit line is touched in control_plane.py. Disabled Review Center routes raise HTTPException 404 rather than 500, and the navigation entry degrades to an inert aria-disabled tabindex=-1 anchor rather than a dead link. The dormancy tests assert BEHAVIOUR rather than a flag - they capture emitted SQL and assert no statement references ai_trade_reviews, and they assert the removed panels and the /coach/reviews href are absent from the rendered HTML, plus that the systemd unit no longer contains the forced-enable string. That is the right shape and cannot pass vacuously."
+}
