@@ -1,0 +1,9 @@
+{
+  "pr_number": 887,
+  "range_base": "45e068465936ac1e20336ef8bf9882163cbbb874",
+  "range_head": "e3a1cbc386bbb49e4779f77115613f271060c178",
+  "reviewed_at": "2026-09-03T20:03:17Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Reporting-only v2 entry path/venue fix. Implementation byte-identical to cdf7fc6f (src diff empty); delta is tests-only, 9/9 in test_trade_episodes.py, assertion count unchanged 37->37. Both prior findings now mutation-verified RED: collapsing the pairing queue key to a constant fails test_..._separates_brokers_in_one_event_stream (was green at cdf7fc6f); swapping cw_entry_slot->fanout_slot in both metadata lookups fails test_..._labels_v2_reclaim_from_durable_slot (was green at cdf7fc6f). Baseline 74 passed. Cross-pairing prevention independently confirmed by controlled pair: fix yields schwab 2@7.89 / orb 1@7.80 under both sell orderings, shared-queue mutant yields 7.845/7.89 when schwab sells first. fanout_slot absent from both changed files. Scope reporting-only; noted second importer ai_trade_coach/repository.py (dormant, non-trading)."
+}
