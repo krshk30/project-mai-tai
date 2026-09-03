@@ -462,18 +462,11 @@ class PaperExitRuntime:
                 )
             ]
         latest = self._last_executable_bid.get(leg.symbol)
-        if latest is not None and latest[0] > at:
-            leg.exit_at = at
-            leg.exit_reason = "UNANSWERABLE"
-            decision = self._decision(
-                leg,
-                "UNANSWERABLE",
-                at,
-                None,
-                reason="confirmation arrived after quote processing passed its timestamp",
-                extra_detail=detail,
-            )
-            return [decision]
+        detail["delivery_state"] = (
+            "quote_stream_already_advanced"
+            if latest is not None and latest[0] > at
+            else "in_order"
+        )
         self._confirmation_fired += 1
         self._stage_exit(identity, reason="CONFIRMATION_EXIT", observed_at=at)
         return [
