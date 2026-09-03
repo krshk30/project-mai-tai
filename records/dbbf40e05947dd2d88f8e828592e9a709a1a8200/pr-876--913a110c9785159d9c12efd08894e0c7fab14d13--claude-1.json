@@ -1,0 +1,9 @@
+{
+  "pr_number": 876,
+  "range_base": "913a110c9785159d9c12efd08894e0c7fab14d13",
+  "range_head": "dbbf40e05947dd2d88f8e828592e9a709a1a8200",
+  "reviewed_at": "2026-09-03T02:01:09Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RT1 board row recording that the strategy-to-OMS-to-position roundtrip has no active integration test. One file, docs/handoff-open-items.md, +10/-0. Reviewed the content at df866ae and confirmed the rebased diff is BYTE-IDENTICAL, so the review carries. The row meets the intake standard: owner codex-2, an explicit next action, a denominator of 1 active cross-service roundtrip currently 0/1, and a real falsifier - the replacement passes after either the strategy-to-OMS or OMS-to-strategy handoff is disconnected. It is filed under Open, defined, owned and is actually owned. I verified the claims rather than accepting them: both cited SHAs exist and match (934d5f4 2026-04-22 Stabilize bot state and control plane; 3b90c08 2026-06-17 CI triage), 3b90c08 did introduce the non-strict xfail on tests/integration/test_strategy_oms_roundtrip.py and independently records it in its own commit message, and the 0/1 denominator holds because only two test files construct both StrategyEngineService and OmsRiskService - that xfailed integration test and tests/unit/test_paper_exit.py, which since #879 cannot be a live roundtrip because the OMS refuses those intents. Non-blocking note left on the PR: the existing marker is strict=False, so a future xpass would be silent."
+}

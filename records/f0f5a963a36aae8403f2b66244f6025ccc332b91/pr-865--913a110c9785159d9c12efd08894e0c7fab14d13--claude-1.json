@@ -1,0 +1,9 @@
+{
+  "pr_number": 865,
+  "range_base": "913a110c9785159d9c12efd08894e0c7fab14d13",
+  "range_head": "f0f5a963a36aae8403f2b66244f6025ccc332b91",
+  "reviewed_at": "2026-09-03T02:01:09Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RE-PIN after rebase onto main 913a110. Verified the head now contains the main tip, the single commit carries exactly one OpenAI Codex marker, and the diff against the new base is BYTE-IDENTICAL to the diff reviewed at the superseded head def705cc (compared ignoring index lines), so the original review carries over without re-reading the content. The superseded record for def705cc is deleted in this same commit: the rebase orphans that head, and a ledger record naming an unreachable commit fail-closes the PR. Note the local-verify asymmetry that makes this necessary - def705cc is still resolvable in my object store, so a local run would degrade to WARNING and print PASS while CI, which checks out only main and pull/865/head, hard-fails."
+}

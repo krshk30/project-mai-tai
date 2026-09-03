@@ -1,9 +1,0 @@
-{
-  "pr_number": 865,
-  "range_base": "1f5da812dcb3ebf01bdbffc3bc01b1379e0315e5",
-  "range_head": "def705cc3dddef7daf94d35a829b61bc41537dfb",
-  "reviewed_at": "2026-09-01T19:14:40Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "Re-review of the withdrawal re-cut: 16 explicitly withdrawn, 12-group reduction rejected with a derived reason (attempt is not a transition), 27 retained with unit named, denominator forward-only via the deployed marker; D20 COULD_NOT_TELL until exercised. No asserted constant remains."
-}
