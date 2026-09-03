@@ -270,8 +270,10 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 - **OVSD1 — SCHWAB OVERSOLD REJECT STORM: the software close fires against shares a working
   broker OCO still reserves** *(owner: unassigned; **PARKED DELIBERATELY UNFIXED** by operator
   ruling 2026-09-03 — live money, high priority)*.
-  **The event:** CHPT 2026-09-03, `live:schwab_1m_v2`. **205 oversold refusals + 15 HTTP 429s in
-  ~14 minutes** (13:39–13:53 ET). Entry `1007821354133` filled 13:43; its OCO legs
+  **The event:** CHPT 2026-09-03, `live:schwab_1m_v2`. **205 oversold refusals in 8 minutes**
+  (13:45:35 → 13:53:32 ET) plus **14 HTTP 429s in 14 SECONDS** (13:48:45 → 13:48:59). ⛔ Do not
+  confuse windows: the **220 reconcile verdicts** span 13:39:04 → 13:53:31 (~14 min); the *rejects*
+  span 8 min and the *429 burst* 14 s. Entry `1007821354133` filled 13:43; its OCO legs
   `1007821354135`/`...136` were working at the broker. The position was closed by **manual broker
   action** — no closing fill exists after 13:45:21.
   ⛔ **THE RULING AND WHY.** One instance, no proven root cause, and the candidate fixes (WRAP1, a
