@@ -267,6 +267,83 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **RET1 — `market_capture_quotes` prunes at 14 CALENDAR days** *(owner: **operator** — the
+  retention decision is theirs; measured 2026-09-03)*. `prune-capture.service` runs
+  `prune_market_ticks.py --keep-days 14`; the predicate is
+  **`received_at < now() - interval '14 days'`** and the timer is `OnCalendar=*-*-* 09:30 UTC`,
+  `Persistent=true`. ⛔ **It prunes by CALENDAR TIME, not by trading session** — an earlier draft of
+  this row said "14 sessions", which is wrong and made its falsifier invalid.
+  ⭐ **Verified by watching the window MOVE, not by reading the config:** earliest quote day was
+  **2026-08-19** on 09-02 and **2026-08-20** on 09-03 — 08-19 pruned overnight.
+  1. **It answers the unexplained 08-19 NBBO boundary.** Not a configuration decision, nothing to
+     look for: **attrition**. A 14-day window measured from the day of that reading lands there.
+  2. ⛔ **The 82-entry study window — also the RST1 hand-classified population — is expiring.**
+     Because the 09:30 UTC cutoff (05:30 ET) precedes the 07:00–16:00 ET study window, a session's
+     data survives the run on `S+14` and is deleted by the run on **`S+15`**:
+     `08-24` deleted 09-08 · `08-25` 09-09 · `08-26` 09-10 · `08-27` 09-11 · `08-28` 09-12 ·
+     `08-31` 09-15 · `09-01` 09-16. **Last day each session is fully present is `S+14`**, so the
+     safe instruction is *run the control by `S+14`* — for D20's 08-31 tape that is **2026-09-14**.
+  3. ⭐⭐ **STANDING CONSTRAINT: a control that depends on quote evidence must be RUN WITHIN 14
+     CALENDAR DAYS of the event, or it is dead on arrival.** Put the run-by date on the row when
+     the control is specced, the way D20 carries 2026-09-14.
+  **Next action (operator, NOT today):** decide whether retention should be extended. Evidence for:
+  D20, RST1 and the 82-entry study all hit this wall inside one week.
+  Falsifier: a row with `received_at` older than 14 calendar days still present after a completed
+  prune run.
+- **FLR — §3 floor formula** *(owner: codex-2; ⛔ **NOT BUILT — corrected 2026-09-03**)*.
+  ⛔ **An earlier draft of this row certified §3 as "HOLDS structurally" from the wrong mechanism,
+  and that claim is withdrawn.** The marker it cited, `[OMS-V2-CW-FLOOR-ARMED]`, entered in
+  `37fae0e` (*1-bar reclaim gap + floor-at-+2% exit*) and belongs to the **older CW floor path** —
+  it predates the docs-only #866 (`1f5da81`) entirely. Stale quotes being rejected before that
+  older floor logic says nothing about §3's order-staleness-vs-gap behaviour.
+  **§3's own design marker `[OMS-P0A-REPRICE-BELOW-FLOOR]` has NO implementation in `src/` or
+  `tests/`.** ⇒ Status is **NOT BUILT**, therefore necessarily UNEXERCISED — not "holds".
+  **Next action:** build §3, or cite an implemented §3 call path. Until one exists there is nothing
+  to grade. Falsifier: an implemented `[OMS-P0A-REPRICE-BELOW-FLOOR]` call path in `src/`.
+- **DB2 — the Webull fill erases its own claim** *(owner: codex-2; **UNEXERCISED**, measured
+  2026-09-03)*. Merged #858 (`46a0c87`). BLOCK cost marker is
+  **`[V2-FANOUT-RECLAIM-BLOCKED-BY-FILLED-CLAIM]`** — `n=3` on 09-02 against **12 filled Webull
+  fan-out legs**; 09-03 is `0/0` = UNEXERCISED. The 09-01 `0/16` predates the deployed v2 process
+  and is **not gradable**.
+  ⛔ **Falsifier corrected — the earlier wording had the polarity reversed and would have failed
+  the correct behaviour on every future filled leg.** #858 treats a FILLED Webull claim as live
+  venue evidence and **vetoes** the release (`[V2-FANOUT-CLAIM-ZERO-HOLD-VETOED]`,
+  `released=0 held=1`); **erasure is the defect** — it is what happened to all 29 filled legs on
+  08-31. Falsifier: **a filled leg whose claim is ERASED**, the veto failing.
+- **STMP — first-slot fills stamp no arm id** *(owner: claude-1; **RULED 2026-09-03 — history
+  UNRECOVERABLE, count from 09-02 forward, DO NOT BACKFILL**)*.
+  "PASS on 3 of 15" is not a pass: **185 of 248 resting fills (74.6%) carry `cw_arm_bar_ts='0'`**
+  and cannot be assigned to a segment. Of those 185, **177 carry no `fanout_slot` either** — the
+  plain resting path; the other 8 are `fanout_slot=resting` yet unstamped. **2026-09-02 is the
+  first session at 100% coverage.**
+  ⭐⭐ **STANDING CONSTRAINT wherever SEGX or the 82-entry population is cited:** any pre-09-02
+  segment-level figure is quoted as a **FLOOR with its date range attached**, never as a rate —
+  *"≥1 in the 61 groupable segments, 2026-08-11 → 09-02"*, never a percentage. Rates begin 09-02.
+  Falsifier: a post-09-02 first-slot fill with `cw_arm_bar_ts='0'`.
+- **D20 — a filled fan-out leg does not consume its slot** *(owner: claude-1; **GRADED 2026-09-03 →
+  COULD_NOT_TELL**, by the acceptance doc's own standard)*.
+  **Live evidence (09-02), per SLOT — the unit of the question:** 27
+  `[V2-FANOUT-MIRROR-LIVE-CROSS]` observations resolve to **10 distinct crossed slots**; counting
+  observations would have inflated the denominator 2.7×. **9 filled, all 9 `webull_slot_consumed=1`;**
+  the 10th (NCPL) crossed without filling and correctly consumed nothing. Falsifier hunt across
+  **all 58** filled fan-out outcomes: `consumed=0` occurs **zero** times. The 4 without the field
+  are explained, not excluded — one predates the field and was never crossed, three are
+  `applied=0 … stale evidence cannot mutate a new segment`, deliberate refusals for retired segments.
+  ⛔ **Not a PASS, and the doc says so.** `d20-fanout-duplicate-acceptance-grading.md` requires
+  reproducing the **five** 2026-08-31 crossing attempts: *"Until that event exists and reproduces
+  the five 2026-08-31 controls, D20 is COULD_NOT_TELL."* The marker fired **09-02 only, zero on
+  08-31**, and the derivation returned **16 edges against 5**. A failing control **voids** the
+  probe; it does not make it negative.
+  ⭐ **Pending or dead? Pending — by REPLAY, not by waiting.** The 08-31 conditions have not
+  recurred and there is no reason to expect them to, but the control needs no live repeat: the tape
+  exists and the marker can be run against it. **A work item, not an event watch.**
+  ⛔ **Run-by 2026-09-14** (RET1): after that the 08-31 tape is gone and the control becomes
+  genuinely unreproducible — at which point D20 closes as permanently-ungradeable, because a
+  control that can never be met is dead, not pending.
+  **Next action:** resolve 16-vs-5 against the 08-31 tape before 09-14. The doc names the likely
+  trap — a mirror-fills denominator yields 18, a one-minute-bar denominator 19 — so a **wrong unit**
+  is the likeliest cause of 16.
+
 - **RT1 — strategy -> OMS -> position roundtrip has no active integration test** *(owner:
   codex-2; boarded, not chased)*. The only cross-service test was introduced 2026-03-29, first
   stopped reaching OMS at `934d5f42` (2026-04-22) when seeded bars became closed history and one
@@ -287,16 +364,39 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   pre-market attach · ONE counted `[WEBULL-PREMARKET-UNPROTECTED]` line per fill · OMS-restart
   fence. Log/fence-only, cannot oversell. Denominator: pre-market `live:orb` fills per session.
   Falsifier: a session with pre-market fills where the counted line ≠ fill count.
-  Status, one label each: **Parts 1/2/4 = APPROVED-BUILD (codex, unblocked)** · **§3 =
-  OPERATOR-CONFIRMED 09-01, buildable** (floor = max(entry×(1−hard_stop_pct), #853 ratcheted
-  floor); one-shot; below-floor pages. ⛔ STALENESS protection, not GAP protection — no gain
-  below the floor, the exposure there only becomes visible). Kin: item 11 above.
+
+  ⛔ **CORRECTION 2026-09-03 — "ORB disabled since 07-31" is NOT the blocker.** `live:orb` still
+  receives v2's **Webull fan-out leg**, and v2's entry window opens **07:00 ET** — pre-market.
+  Measured: pre-market `live:orb` BUY fills on **12 of the last 15 sessions** (3 on 09-01).
+  What is true is narrower: **since #869 deployed (09-01 14:37 ET) there have been ZERO pre-market
+  `live:orb` fills**, so Parts 1/2 are **UNEXERCISED against a denominator of 0 — valid, not a
+  finding** — and `[WEBULL-PREMARKET-UNPROTECTED]` reading 0 is correct. Accumulating watch.
+  Part 4 was exercised by the deploy's own restart fence.
+  Status, one label each — **updated 2026-09-03; `APPROVED-BUILD` was stale, the parts are built
+  and deployed**:
+  · **Parts 1/2 = DEPLOYED (#869, 09-01 14:37 ET), UNEXERCISED** — denominator 0 since deploy, so
+    the zero is correct and there is nothing to investigate. Accumulating watch.
+  · **Part 4 = DEPLOYED and EXERCISED** — the deploy's own restart fence ran it.
+  · **§3 = NOT BUILT.** Design OPERATOR-CONFIRMED 09-01 and buildable (floor =
+    max(entry×(1−hard_stop_pct), #853 ratcheted floor); one-shot; below-floor pages), but its
+    marker `[OMS-P0A-REPRICE-BELOW-FLOOR]` has **no implementation in `src/` or `tests/`** — see
+    the **FLR** row, which holds the evidence and the next action.
+    ⛔ "STALENESS protection, not GAP protection" is a statement of the **design intent**, not a
+    verified property: nothing is built to verify it against. No gain below the floor; the exposure
+    there only becomes visible.
+  Kin: item 11 above.
 - **C42 — post-04:00 joiners arm on stale anchors** *(owner: codex-2; replaces C28+C41, one
   question asked twice)*. 09-01: 4 arms on 08-31 anchors (GYGY 04:06 · WETO 04:25 · SSM 04:35 ·
   FLYE 05:49 ET), unrolled AND uncapped — the 04:00 roll ran at `watchlist=0`, and the seed-cap is
   blind to post-boot joiners (per-symbol watch_start = boot for boot-present symbols). Spec: apply
   roll/seed-cap logic at watchlist-join time. Denominator: post-04:00 joiners per session with
   pre-04:00 anchors (09-01: 4). Falsifier: a joiner arming on a stale anchor with no cap/roll line.
+  ⭐ **MEASURED 2026-09-03 — this SEPARATES C42 from C28 rather than contradicting it.** All
+  `[V2-CW-SEED-CAP]` lines are **late joiners** (`watch_start > boot`); **zero** are boot-present
+  (`watch_start == boot`). Of C42's own four 09-01 joiners, **three received no seed-cap line at
+  all** (GYGY 0 · SSM 0 · FLYE 0; WETO 1). ⇒ The cap protects the late-joiner population and is
+  **blind to the boot-present population** — exactly as this row claims. C28 is closed for the
+  population the cap reaches; C42 stays open for the one it does not.
 - **S7 — 'first'-slot fills stamp `cw_arm_bar_ts=0`** *(owner: codex-2; found in the S5 re-grade)*.
   Reclaim stamps the segment id; first does not — per-segment 'first'-slot composition grading is
   COULD_NOT_TELL **by construction**. Spec: stamp the resting/'first' path like reclaim.
@@ -319,6 +419,12 @@ it resurfaces with evidence** — and then it enters this board as a new row wit
 next action, like any finding.
 
 ### Closed in batch 2 (evidence in [`handoff-log.md`](handoff-log.md), 2026-09-01 entry)
+
+> ⛔ **REOPENED 2026-09-03 — `D20` and `DB2` below are SUPERSEDED by their rows above.** Batch 2
+> closed them on a *delivered artifact* (a regrade, a merged fix); the 09-03 triage graded them on
+> *evidence* and neither reached a result — D20 `COULD_NOT_TELL`, DB2 `UNEXERCISED`. A permanent ID
+> cannot be both, so **the open row is the live status** and these entries are historical record.
+> ⭐ The rule this exposes: **delivering the instrument is not the same as getting a reading.**
 
 Q16 · S6 · N3 · T22 · S5 · D23(read clean ×2 sessions) · D21 · D20(regrade delivered) · W2B ·
 DB2 · DB3 · G01 · C28/C41(superseded by C42).
