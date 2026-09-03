@@ -8,7 +8,7 @@ control plane on `127.0.0.1:8100`.
 Included assets:
 - `project-mai-tai.target` to start the whole stack
 - one service unit per runtime component
-- `project-mai-tai-trade-coach.service` for manual advisory-only trade review runs
+- `project-mai-tai-trade-coach.service` for recoverable, operator-controlled trade review runs
 - `install_units.sh` to copy units into `/etc/systemd/system/`
 - `status.sh` to inspect all services
 - `restart_all.sh` to restart the application stack without touching legacy
@@ -25,7 +25,7 @@ Operator note:
 - `deploy_main.sh` is also intended for off-hours by default and blocks ET market-hour deploys unless explicitly overridden
 - `deploy_service.sh` is the manual path for service-scoped deploys and uses lower-risk choreography for `control`, `reconciler`, `strategy`, `oms`, and `market-data`
 - `project-mai-tai-trade-coach.service` is intentionally **not** part of `project-mai-tai.target`
-- the trade coach service forces `MAI_TAI_TRADE_COACH_ENABLED=true` only for its own process start while leaving the shared env file disabled by default
+- `MAI_TAI_TRADE_COACH_ENABLED` governs both the service and its control-plane surfaces; when dormant, keep it `false` and mask `project-mai-tai-trade-coach.service` so a manual start is refused
 - during an active trading session, use `docs/live-market-restart-runbook.md` instead of a full-stack restart
 - the live-session scripts in this directory follow that runbook and stop for operator confirmation where automation would be unsafe
 - invoke the helper scripts with `bash ops/systemd/<script>.sh` if the executable bit is not present on your checkout

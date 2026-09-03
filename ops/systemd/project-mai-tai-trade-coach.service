@@ -9,7 +9,7 @@ User=trader
 Group=trader
 WorkingDirectory=/home/trader/project-mai-tai
 EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
-ExecStart=/usr/bin/env MAI_TAI_TRADE_COACH_ENABLED=true MAI_TAI_TRADE_COACH_REQUEST_TIMEOUT_SECONDS=20 MAI_TAI_TRADE_COACH_REVIEW_POLL_SECONDS=15 /home/trader/project-mai-tai/.venv/bin/mai-tai-trade-coach
+ExecStart=/usr/bin/env MAI_TAI_TRADE_COACH_REQUEST_TIMEOUT_SECONDS=20 MAI_TAI_TRADE_COACH_REVIEW_POLL_SECONDS=15 /home/trader/project-mai-tai/.venv/bin/mai-tai-trade-coach
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
