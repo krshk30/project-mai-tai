@@ -1,0 +1,9 @@
+{
+  "pr_number": 878,
+  "range_base": "9473308eb7d904d862d8b8cdda174daefa560694",
+  "range_head": "2b5a82bfbddd4da9c1fe188464fba7373d980808",
+  "reviewed_at": "2026-09-03T01:56:24Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed all four rebased docs commits and the complete session-handoff diff; independently traced #620 cf411015 as the true-range no-span guard and #870 a660160 as the separate arm-adjacency refusal; verified the deliberate v2 non-restart ruling, durable-hole consequence, SEG1 supersession, one-file scope, clean whitespace, and one Claude marker per commit."
+}
