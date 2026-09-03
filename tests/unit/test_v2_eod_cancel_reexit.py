@@ -87,8 +87,16 @@ def _svc(adapter, *, enabled: bool = True) -> OmsRiskService:
     return svc
 
 
-def _track(svc, *, pm_ok: bool, restore_raises: bool = False):
-    """Replace the two leaf actions with recorders so orchestration is what is under test."""
+def _track(svc, *, pm_ok: bool, restore_raises: bool = False, rth: bool = True,
+           monkeypatch=None):
+    """Replace the two leaf actions with recorders so orchestration is what is under test.
+
+    ⛔ `rth` matters: a protective OCO CANNOT be re-armed outside regular hours (Schwab rejects a
+    STOP leg after the close), so the restore path deliberately refuses. Tests that want to
+    observe a restore must say they are in RTH.
+    """
+    import project_mai_tai.oms.service as _svcmod
+    _svcmod._is_regular_market_session = lambda now=None: rth
     calls = {"pm": 0, "restore": 0}
 
     async def _pm(acct, symbol, close_on_fill):
@@ -264,3 +272,108 @@ async def test_pm_exit_goes_through_the_managed_exit_path():
     await svc._v2_eod_place_pm_exit(ACCT, SYM, True)
     assert seen.get("reason") == "V2_EOD_CANCEL_REEXIT"
     assert seen.get("kind") == "EOD_CANCEL_REEXIT"
+
+# ==================================================================================
+# The six findings codex withheld the pin on at 52af4289. One test each; each was
+# checked to go RED with its fix reverted.
+# ==================================================================================
+
+@pytest.mark.asyncio
+async def test_F1_never_sells_when_an_oco_child_has_already_filled():
+    """'No WORKING legs' has two causes: the legs lapsed (we still hold) or one FILLED (already
+    sold). They read identically. Selling on the second is a naked short."""
+    class _A(_LegAdapter):
+        async def fetch_oco_resolved_by_fill_symbols(self, acct, symbols, **kw):
+            return {SYM}
+
+    a = _A([{}, {}])
+    svc = _svc(a)
+    emitted = []
+    svc._emit_v2_exit_on_loop = lambda *ar, **kw: emitted.append(kw)
+    async def _close_row(*ar, **kw):
+        return None
+
+    svc._close_resolved_oco_managed_row = _close_row
+    placed = await svc._v2_eod_place_pm_exit(ACCT, SYM, True)
+    assert emitted == [], "placed a sell after an OCO child had already FILLED"
+    assert placed is True  # nothing to place AND nothing to restore
+
+
+@pytest.mark.asyncio
+async def test_F2_a_partial_cancel_refusal_restores_because_protection_is_now_degraded():
+    """Leg 1 cancelled, leg 2 refused => the pair is HALF a pair. That is not 'nothing happened'."""
+    a = _LegAdapter(
+        [{SYM: ["1", "2"]}],
+        cancel_result={"cancelled": ["1"], "refused": {"order_id": "2", "status_code": 400,
+                                                       "body": "no"}, "untouched": []},
+    )
+    svc = _svc(a)
+    calls = _track(svc, pm_ok=True, rth=True)
+    await svc._v2_eod_cancel_and_reexit()
+    assert calls["pm"] == 0, "placed a PM exit after a refused cancel"
+    assert calls["restore"] == 1, "left the position with HALF a protective pair and did nothing"
+
+
+@pytest.mark.asyncio
+async def test_F3_a_venue_that_cannot_be_asked_is_never_read_as_confirmed_zero():
+    """routing raises for an adapter without the capability; {} would be indistinguishable from
+    'the broker reports no working legs' and would sell into an unasked venue."""
+    class _A(_LegAdapter):
+        async def fetch_working_exit_leg_ids(self, acct, symbols):
+            self.harvest_calls += 1
+            raise RuntimeError("venue cannot be asked")
+
+    a = _A([])
+    svc = _svc(a)
+    calls = _track(svc, pm_ok=True)
+    await svc._v2_eod_cancel_and_reexit()
+    assert calls["pm"] == 0, "sold on a venue whose legs we never actually read"
+    assert a.cancel_calls == []
+
+
+@pytest.mark.asyncio
+async def test_F4_no_bracket_restore_is_attempted_after_the_close():
+    """Schwab rejects a STOP leg outside RTH (measured 2026-08-04), so a post-close 'restore'
+    places nothing. It must not be attempted, and must never log as RESTORED."""
+    a = _LegAdapter([{SYM: ["1"]}, {}])
+    svc = _svc(a)
+    calls = _track(svc, pm_ok=False, rth=False)
+    await svc._v2_eod_cancel_and_reexit()
+    assert calls["restore"] == 0, "tried to re-arm an OCO the broker would certainly reject"
+
+
+def test_F5_the_window_is_closed_not_open_ended():
+    svc = _svc(_LegAdapter([]))
+    del svc._v2_eod_cancel_reexit_due
+    assert svc._v2_eod_cancel_reexit_due(now=_u(2026, 9, 4, 16, 1)) is True
+    assert svc._v2_eod_cancel_reexit_due(now=_u(2026, 9, 4, 16, 14)) is True
+    assert svc._v2_eod_cancel_reexit_due(now=_u(2026, 9, 4, 16, 15)) is False  # window shut
+    assert svc._v2_eod_cancel_reexit_due(now=_u(2026, 9, 4, 19, 30)) is False  # NOT still due
+
+
+@pytest.mark.asyncio
+async def test_F6_a_truncated_order_book_refuses_instead_of_reporting_zero():
+    """maxResults truncation is a FALSE ZERO here, and false-zero means 'sell'."""
+    from project_mai_tai.broker_adapters.schwab import _ORDER_PAGE_LIMIT, SchwabBrokerAdapter
+
+    ad = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
+    ad.accounts_by_name = {ACCT: type("A", (), {"account_hash": "h"})()}
+    ad.ACCEPTED_STATUSES = {"WORKING"}
+
+    async def _req(method, path, **kw):
+        return 200, {}, [{"orderId": str(i)} for i in range(_ORDER_PAGE_LIMIT)]
+
+    ad._authorized_request_json = _req
+    with pytest.raises(RuntimeError, match="TRUNCATED"):
+        await ad.fetch_working_exit_leg_ids(ACCT, [SYM])
+
+
+@pytest.mark.asyncio
+async def test_F3_routing_raises_rather_than_returning_empty_for_an_unsupported_adapter():
+    """The fix lives in routing: {} is indistinguishable from 'the broker reports no legs'."""
+    from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
+
+    r = RoutingBrokerAdapter.__new__(RoutingBrokerAdapter)
+    r._adapter_for_account = lambda name: object()   # an adapter WITHOUT the capability
+    with pytest.raises(RuntimeError, match="cannot be asked"):
+        await r.fetch_working_exit_leg_ids(ACCT, [SYM])

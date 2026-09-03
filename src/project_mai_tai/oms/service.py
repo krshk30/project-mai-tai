@@ -6720,13 +6720,20 @@ class OmsRiskService:
             await self._publish_order_event(ev)
 
     def _v2_eod_cancel_reexit_due(self, now: datetime | None = None) -> bool:
-        """True once the ET clock reaches the cancel-and-reexit time (default 16:01) on a weekday."""
+        """True only INSIDE the cancel-and-reexit window (default 16:01-16:15 ET) on a weekday."""
         et = (now or datetime.now(UTC)).astimezone(SESSION_TZ)
         if et.weekday() >= 5:
             return False
         hh = int(getattr(self.settings, "oms_v2_eod_cancel_reexit_hour_et", 16))
         mm = int(getattr(self.settings, "oms_v2_eod_cancel_reexit_minute_et", 1))
-        return (et.hour, et.minute) >= (hh, mm)
+        end = int(getattr(self.settings, "oms_v2_eod_cancel_reexit_window_minutes", 14))
+        # ⛔⭐ CLOSED WINDOW, NOT AN OPEN-ENDED ">=". The first version stayed due from 16:01 until
+        # midnight, so a position that became managed at 19:30 -- after the 19:55 flatten had begun
+        # to matter -- would have had its legs cancelled and a PM exit placed hours out of context.
+        # This is a 16:01 handoff; outside those minutes it must be INERT.
+        start_min = hh * 60 + mm
+        now_min = et.hour * 60 + et.minute
+        return start_min <= now_min < (start_min + max(1, end))
 
     async def _v2_eod_cancel_and_reexit(self) -> None:
         """16:01 ET: cancel our OWN working SELL legs, CONFIRM zero, then place a PM limit exit.
@@ -6829,6 +6836,11 @@ class OmsRiskService:
             refused = result.get("refused")
             if refused:
                 # ⛔ FAIL SAFE ON ATTEMPT ONE. Verbatim body, no retry, no PM order.
+                # ⛔⭐⭐ BUT A PARTIAL REFUSAL IS NOT "NOTHING HAPPENED". If leg 1 was cancelled and
+                # leg 2 refused, the OCO pair is now HALF a pair -- the stop may be gone while the
+                # target remains. The first version logged and returned, leaving the position with
+                # DEGRADED protection and calling it fail-safe. It is not: we broke it.
+                partly = list(result.get("cancelled") or [])
                 self.logger.error(
                     "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=REFUSED order_id=%s http=%s "
                     "cancelled=%d untouched=%d body=%r — STOPPING. No PM exit was placed and the "
@@ -6837,6 +6849,13 @@ class OmsRiskService:
                     len(result.get("cancelled") or []), len(result.get("untouched") or []),
                     refused.get("body"),
                 )
+                if partly:
+                    self.logger.error(
+                        "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=PARTIAL_CANCEL cancelled=%d — the "
+                        "OCO pair is now INCOMPLETE (one side removed, one refused). Protection is "
+                        "DEGRADED, not intact.", acct, symbol, len(partly),
+                    )
+                    await self._v2_eod_restore_protection(acct, symbol, why="partial_cancel")
                 return
             cancelled_by_us = True
             self.logger.info(
@@ -6902,6 +6921,23 @@ class OmsRiskService:
         pair lands in `broker_orders` and the 19:55 flatten's dedup sees it -- the same constraint
         the PM exit inherits.
         """
+        # ⛔⭐⭐ AFTER 16:00 THERE IS NO BRACKET TO RESTORE. Schwab REJECTS a STOP leg outside the
+        # regular session -- "This order type is not available for this session", measured
+        # 2026-08-04 by Probe P against an accepted session=NORMAL control, and
+        # `_build_exit_only_oco_payload` refuses to construct one for exactly that reason. The
+        # first version called that builder at 16:01, which would have placed nothing and
+        # reported RESTORED. A restore that cannot work must not be attempted and must never be
+        # logged as success. ⇒ Say so, page, and name the backstop that IS real.
+        if not _is_regular_market_session():
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=RESTORE_IMPOSSIBLE why=%s — we cancelled "
+                "the legs and could not place the PM exit, and a protective OCO CANNOT be re-armed "
+                "outside RTH (Schwab rejects a STOP leg after the close). THE POSITION IS UNCOVERED "
+                "until the 19:55 flatten, which retries until filled. Operator action may be "
+                "required NOW; do not wait for 19:55.",
+                acct, symbol, why,
+            )
+            return
         try:
             await self._emit_v2_rth_edge_bracket(
                 acct=acct, symbol=symbol, edge_et=datetime.now(UTC), rearm=True
@@ -6929,6 +6965,31 @@ class OmsRiskService:
         ⛔ Success is CONFIRMED BY READ-BACK, not assumed from the absence of an exception:
         `_emit_v2_exit_on_loop` returns None whether or not the broker took the order.
         """
+        # ⛔⭐⭐ A CHILD MAY HAVE FILLED. "No WORKING legs" has two causes and only one of them is
+        # safe: the legs lapsed (nothing sold), or a leg FILLED and the position is already gone.
+        # Both read identically to a working-leg harvest. Selling on the second is a naked short.
+        # `fetch_oco_resolved_by_fill_symbols` is the existing, production-proven read for exactly
+        # this distinction, and it is recency-bounded so a stale fill from an earlier bracket on
+        # the same symbol cannot false-positive.
+        resolved = getattr(self.broker_adapter, "fetch_oco_resolved_by_fill_symbols", None)
+        if resolved is not None:
+            try:
+                if symbol.upper() in {str(x).upper() for x in await resolved(acct, [symbol])}:
+                    self.logger.error(
+                        "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=RESOLVED_BY_FILL — an OCO child "
+                        "already FILLED, so the position is closed. NO PM exit placed.",
+                        acct, symbol,
+                    )
+                    await self._close_resolved_oco_managed_row(acct, symbol)
+                    return True  # nothing to place and nothing to restore
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - an unreadable broker is not a flat broker
+                self.logger.error(
+                    "[OMS-V2-EOD-CANCEL-REEXIT] %s %s could not check resolved-by-fill — refusing "
+                    "to place a PM exit on an unverified position.", acct, symbol, exc_info=True,
+                )
+                return False
         snapshot = await self._run_db(
             lambda session: self._read_v2_managed_snapshot(session, acct, symbol, close_on_fill),
             commit=False,

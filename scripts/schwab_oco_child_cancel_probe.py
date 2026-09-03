@@ -260,6 +260,10 @@ def cmd_cancel(a) -> None:
     unknown = [k for k in kids if k["status"] not in ACCEPTED | GONE | {"FILLED"}]
     if unknown:
         die(f"unrecognised child status {unknown} — refusing to proceed on a guess")
+    already = [k for k in kids if k["status"] == "FILLED"]
+    if already:
+        die(f"a SELL child has already FILLED {already} — the position is closed. There is nothing "
+            "to cancel and nothing to exit. Stop and check the account.")
     if len(working) != 2:
         die(f"expected exactly 2 working SELL children, saw {len(working)}: {working}. "
             "Refusing — an unexpected leg count is exactly the case to stop on.")
@@ -310,10 +314,18 @@ def cmd_exit_pm(a) -> None:
     code, raw = call("GET", f"/trader/v1/accounts/{quote(h, safe='')}/orders/{quote(a.entry, safe='')}")
     if code != 200:
         die(f"pre-exit re-read HTTP {code}")
-    still = [k for k in sell_children(json.loads(raw)) if k["status"] in ACCEPTED]
+    kids = sell_children(json.loads(raw))
+    still = [k for k in kids if k["status"] in ACCEPTED]
     if still:
         die(f"a SELL leg is STILL WORKING {still} — refusing to place a second sell against "
             "reserved shares. This guard is the whole point.")
+    # ⛔⭐⭐ "NO WORKING LEGS" HAS TWO CAUSES AND ONLY ONE IS SAFE. Either the legs lapsed/cancelled
+    # (we still hold the share) or a leg FILLED (the share is already SOLD). They look identical
+    # to the working-leg check above. Selling on the second is a naked short on a real account.
+    filled = [k for k in kids if k["status"] == "FILLED"]
+    if filled:
+        die(f"a SELL child has already FILLED {filled} — the share is SOLD. Refusing to place "
+            "another sell; that would be a naked short. Check the position before doing anything.")
     # ⛔ Read the book before pricing a REAL sell. Read-only; it only refuses an obviously
     # wrong limit. A fat-fingered --limit on a live sell is the cheap mistake to make impossible.
     bid, ask = quote_px(a.symbol)

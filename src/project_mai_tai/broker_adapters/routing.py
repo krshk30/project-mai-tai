@@ -56,14 +56,22 @@ class RoutingBrokerAdapter:
     ) -> dict[str, list[str]]:
         """Route to the account's adapter. Optional capability.
 
-        ⛔ An adapter without it returns {} meaning "THIS VENUE CANNOT BE ASKED", which is NOT the
-        same as "no legs are working". The caller must treat an unsupported venue as a refusal to
-        proceed, never as a clear reading -- an inferred release is what OVSD1 records.
+        ⛔ An adapter without it RAISES. Returning {} was the original shape and it was wrong:
+        {} is indistinguishable from "the broker reports no working legs", so an unaskable venue
+        read as a clear one. Raising forces the caller onto its UNANSWERABLE branch.
         """
         adapter = self._adapter_for_account(broker_account_name)
         fn = getattr(adapter, "fetch_working_exit_leg_ids", None)
         if fn is None:
-            return {}
+            # ⛔⭐⭐ RAISE, DO NOT RETURN {}. An empty dict is indistinguishable from "the broker
+            # reports no working legs", and the caller's confirmed-zero gate would read an
+            # UNASKABLE venue as a CLEAR one and sell into it. That is precisely the inferred
+            # release this whole path exists to refuse — arriving through the back door.
+            # Raising lands the caller on its UNANSWERABLE branch: no cancel, no PM exit.
+            raise RuntimeError(
+                f"{broker_account_name}: adapter cannot report working exit legs — this venue "
+                "cannot be asked, which is NOT the same as having none."
+            )
         return await fn(broker_account_name, symbols)
 
     async def cancel_exit_leg_ids(

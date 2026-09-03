@@ -95,6 +95,9 @@ class SchwabPositionsUnavailable(Exception):
     """
 
 
+_ORDER_PAGE_LIMIT = 500
+
+
 class SchwabBrokerAdapter:
     FILLED_STATUSES = {"FILLED"}
     PARTIAL_FILL_STATUSES = {"PARTIAL_FILL"}
@@ -238,10 +241,24 @@ class SchwabBrokerAdapter:
         status_code, _headers, body = await self._authorized_request_json(
             "GET",
             f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders"
-            f"?fromEnteredTime={frm}&toEnteredTime={to}&maxResults=500",
+            f"?fromEnteredTime={frm}&toEnteredTime={to}&maxResults={_ORDER_PAGE_LIMIT}",
         )
         if status_code >= 400 or not isinstance(body, list):
             raise RuntimeError(f"Schwab open-orders fetch failed HTTP {status_code}")
+        # ⛔⭐⭐ TRUNCATION IS A FALSE ZERO HERE, AND IT IS THE DANGEROUS DIRECTION.
+        # `fetch_armed_native_oco_symbols` carries the same maxResults cap, but a truncated read
+        # there means "not armed" -> the software ladder resumes, loudly and safely. A truncated
+        # read HERE means "no legs are working" -> we place a sell against shares a leg may still
+        # reserve. Same cap, opposite consequence. The broker returns OCO CHILDREN too, which we
+        # never record, so the broker-side count runs several times our own (peak 240 orders/day
+        # recorded on live:schwab_1m_v2 -> ~3-4x that at the broker). 500 is reachable.
+        # ⇒ Refuse rather than under-report. A chunked query that truncates silently is exactly
+        # the shape that has bitten this project before.
+        if len(body) >= _ORDER_PAGE_LIMIT:
+            raise RuntimeError(
+                f"Schwab order book returned {len(body)} rows at the {_ORDER_PAGE_LIMIT} cap — "
+                "the page may be TRUNCATED, so 'no working legs' cannot be trusted. Refusing."
+            )
 
         found: dict[str, list[str]] = {}
 
