@@ -198,6 +198,108 @@ class SchwabBrokerAdapter:
             _walk(order)
         return {sym for sym, n in working_sells.items() if n >= 2}
 
+    async def fetch_working_exit_leg_ids(
+        self, broker_account_name: str, symbols: list[str]
+    ) -> dict[str, list[str]]:
+        """Working SELL leg ORDER IDS per symbol, read from the broker's own order tree.
+
+        Same endpoint and same walk as ``fetch_armed_native_oco_symbols`` (which has executed
+        continuously in production since 07-21); this returns the IDS instead of the symbol set,
+        so a caller can address the legs. Needed because ``oms_managed_positions`` carries NO
+        entry broker order id -- there is nothing to hang an entry-scoped read off at 16:01.
+
+        ⛔ NO ``>= 2`` THRESHOLD HERE, deliberately. `fetch_armed_native_oco_symbols` requires two
+        working sells because it answers "is a PAIR armed" for the stand-down. This answers a
+        different question -- "does ANYTHING still reserve these shares" -- and for that a single
+        surviving leg matters exactly as much as two. Applying the pair threshold here would report
+        a half-cancelled bracket as clear, which is the reading that must never happen before a
+        software sell goes out.
+
+        ⚠ KNOWN LIMIT, shared with `release_native_oco_for_close` and NOT fixed here (board row
+        OVSD1, parked): the walk reads ``orderLegCollection[0]``, so a CHILDLESS OCO WRAPPER --
+        which carries no leg collection -- is invisible to it. A wrapper that still reserves the
+        shares would read as "no working legs". This method inherits that blindness; it does not
+        widen it, and it must not be described as proof of release until OVSD1 is settled.
+
+        Raises on any broker/HTTP error, matching the fail-open contract of the sibling reads: the
+        caller must be able to tell "the broker said no legs" from "we could not ask".
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None or not symbols:
+            return {}
+        wanted = {str(s).upper() for s in symbols}
+        # ⭐ Same status set as the sibling read: a leg only RESERVES once it is genuinely working
+        # at the exchange. AWAITING_PARENT_ORDER means the entry has not filled, so nothing is held
+        # and nothing is reserved.
+        live = self.ACCEPTED_STATUSES - {"AWAITING_PARENT_ORDER", "AWAITING_RELEASE_TIME"}
+        now = datetime.now(UTC)
+        frm = (now - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        to = (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        status_code, _headers, body = await self._authorized_request_json(
+            "GET",
+            f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders"
+            f"?fromEnteredTime={frm}&toEnteredTime={to}&maxResults=500",
+        )
+        if status_code >= 400 or not isinstance(body, list):
+            raise RuntimeError(f"Schwab open-orders fetch failed HTTP {status_code}")
+
+        found: dict[str, list[str]] = {}
+
+        def _walk(order: dict) -> None:
+            legs = order.get("orderLegCollection") or []
+            leg = legs[0] if legs else {}
+            sym = str((leg.get("instrument") or {}).get("symbol") or "").upper()
+            status = str(order.get("status") or "").upper()
+            instruction = str(leg.get("instruction") or "").upper()
+            if sym in wanted and instruction == "SELL" and status in live:
+                oid = str(order.get("orderId") or "").strip()
+                if oid:
+                    found.setdefault(sym, []).append(oid)
+            for child in order.get("childOrderStrategies") or []:
+                _walk(child)
+
+        for order in body:
+            _walk(order)
+        return found
+
+    async def cancel_exit_leg_ids(
+        self, broker_account_name: str, order_ids: list[str]
+    ) -> dict[str, object]:
+        """DELETE each given leg id ONCE. Stops on the first refusal and reports it verbatim.
+
+        ⛔ NO RETRY AND NO LOOP BEYOND THE GIVEN IDS. One DELETE per id, in order, and the first
+        non-2xx (404 excepted -- already gone is the outcome we want) ends the method with the
+        remaining ids UNTOUCHED. First execution of an unexercised broker write must fail safe on
+        attempt one, not attempt twenty.
+
+        Returns ``{"cancelled": [...], "refused": {...} | None, "untouched": [...]}``; the caller
+        decides what that means. This method NEVER concludes anything about release -- confirming
+        the shares are free is a separate read, by design.
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None:
+            raise RuntimeError(f"unknown broker account {broker_account_name}")
+        cancelled: list[str] = []
+        for index, order_id in enumerate(order_ids):
+            status_code, _headers, body = await self._authorized_request_json(
+                "DELETE",
+                f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"
+                f"{quote(order_id, safe='')}",
+            )
+            if 200 <= status_code < 300 or status_code == 404:
+                cancelled.append(order_id)
+                continue
+            return {
+                "cancelled": cancelled,
+                "refused": {
+                    "order_id": order_id,
+                    "status_code": status_code,
+                    "body": str(body)[:500],
+                },
+                "untouched": list(order_ids[index + 1:]),
+            }
+        return {"cancelled": cancelled, "refused": None, "untouched": []}
+
     async def release_native_oco_for_close(
         self, broker_account_name: str, entry_broker_order_id: str
     ) -> str:

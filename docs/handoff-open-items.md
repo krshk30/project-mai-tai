@@ -267,6 +267,39 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **EOD1601 — 16:01 CANCEL-AND-REEXIT: cancel our own working SELL legs, confirm zero, then place
+  a PM limit exit** *(owner: claude-1; **BUILT, FLAG-GATED OFF**, awaiting codex pin — live exit
+  path. Enable/disable is `MAI_TAI_OMS_V2_EOD_CANCEL_REEXIT_ENABLED`, runtime-configurable.)*
+  **What it does at 16:01 ET, once per position per day:** harvest the working SELL leg ids from the
+  broker's own order tree → `DELETE` each once → **independently re-read and confirm zero** → place a
+  PM limit exit through `_emit_v2_exit_on_loop`.
+  ⚠⚠ **THE 16:01–16:05 UNPROTECTED WINDOW — NAMED, NOT HIDDEN.** Schwab's PM session does not open
+  until ~16:05, so between the cancel and the first fillable moment **the position has nothing
+  working**. This is a **deliberate trade of a bounded four-minute gap against the open-ended one it
+  replaces**. On one share of a cheap name that is cents. **On a real position it is not**, and that
+  is the cost the operator accepted knowingly when he ruled to build ahead of the harness.
+  ⛔ **Fail-safe rules, each mutation-verified (removing the guard turns a test RED):**
+  - **Once per position per day, never once per tick** — the claim is taken *before* the first await.
+    Four consecutive sweeps issue exactly one cancel. ⇒ the 220-in-14-minutes shape cannot recur.
+  - **A refused `DELETE` stops everything** — no retry, no PM exit, remaining legs untouched, verbatim
+    broker body logged. First execution of an unexercised broker write fails safe on attempt one.
+  - **No PM exit on an inferred release** — it requires an *independent* re-read reporting zero
+    working legs. "We sent a cancel" is not evidence the shares are free. [[project_mai_tai_exit_reservation_conflict]]
+  - **Restore, once** — if the PM exit does not go out *after we cancelled*, the bracket is put back
+    via the existing exit-only OCO path. If the restore also fails: stop, mark `RESTORE_FAILED`, page.
+    If we removed nothing, nothing is restored.
+  - **The PM exit goes through the managed-exit path, never a direct POST** — otherwise it is
+    invisible to `get_open_exit_reserved_quantity` and the **19:55 flatten places a second sell**
+    against the same shares. That constraint is pinned by its own test.
+  - **`UNEXERCISED` is never `PASS`** — a day with no position open at 16:01 logs
+    `considered=0 outcome=UNEXERCISED`, explicitly "an untested day against a denominator of zero".
+  ⚠ **INHERITED LIMIT, not fixed here:** the harvest walk reads `orderLegCollection[0]`, so a
+  childless OCO wrapper is invisible to it — the same blindness parked as **OVSD1**. A "no working
+  legs" reading could in principle be blind rather than clear. This is why it ships OFF.
+  ⚠ **The `DELETE` against an OCO child has never executed anywhere.** `scripts/schwab_oco_child_cancel_probe.py`
+  answers that for ~$14 with the operator watching; it is written, deployed and read-only-validated
+  but **not yet run**. Enabling without it means first-ever execution is unattended on a real position.
+
 - **DUP2 — `fanout_slot` CLASSIFICATION MISMATCH: a Schwab `reclaim` is fanned out into the Webull
   `resting` slot** *(owner: codex-2; **CONFIRMED BREACH, mechanism now IDENTIFIED**; operator ruled
   2026-09-03 that two Webull reclaim legs in one cross is NOT INTENDED — the intended pair is one

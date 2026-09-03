@@ -645,6 +645,11 @@ class OmsRiskService:
         # for the rest of the day. Day-scoped key => the latch self-expires next session; empty
         # while the flag is OFF => `_native_oco_stand_down_active` is byte-identical.
         self._v2_eod_oco_transitioned: set[tuple[str, str, str]] = set()
+        # 16:01 cancel-and-reexit: ONE claim per (session_day, account, symbol). Claimed BEFORE
+        # the first await, so a slow broker call can never let the 5s cadence start a second run
+        # for the same position. ⛔ This is the 220-in-14-minutes hole; it does not reopen here.
+        self._v2_eod_cancel_reexit_done: set[tuple[str, str, str]] = set()
+        self._v2_eod_cancel_reexit_summarised: set[str] = set()
         # (session_day, account, symbol) -> attempts so far at arming the RTH-edge bracket. NOT a
         # claim-once latch like the EOD one: this sweep PLACES an order, and a transient broker
         # error must not permanently skip a position that is currently unprotected. Retries are
@@ -806,6 +811,17 @@ class OmsRiskService:
                     raise
                 except Exception:
                     self.logger.exception("[OMS-V2-EOD-OCO-TRANSITION] sweep failed")
+                # 16:01 cancel-and-reexit: cancel our OWN working SELL legs, CONFIRM the broker
+                # reports zero, then place a PM limit exit through the managed-exit path. Same 5s
+                # cadence, but the work is claimed ONCE PER POSITION PER DAY inside the method --
+                # the cadence drives the check, never the action. Flag-gated OFF.
+                # Wrapped so a failure never breaks broker-sync; LOUD on error.
+                try:
+                    await self._v2_eod_cancel_and_reexit()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-V2-EOD-CANCEL-REEXIT] sweep failed")
                 # #646 Part 1, the EOD transition's mirror image: at 09:30 ARM a bracket for any
                 # position still held from a PRE-MARKET entry, which today never gets one for its
                 # entire life. Same 5s cadence, same day-scoped idempotence, flag-gated OFF.
@@ -6702,6 +6718,246 @@ class OmsRiskService:
             session.commit()
         for ev in events:
             await self._publish_order_event(ev)
+
+    def _v2_eod_cancel_reexit_due(self, now: datetime | None = None) -> bool:
+        """True once the ET clock reaches the cancel-and-reexit time (default 16:01) on a weekday."""
+        et = (now or datetime.now(UTC)).astimezone(SESSION_TZ)
+        if et.weekday() >= 5:
+            return False
+        hh = int(getattr(self.settings, "oms_v2_eod_cancel_reexit_hour_et", 16))
+        mm = int(getattr(self.settings, "oms_v2_eod_cancel_reexit_minute_et", 1))
+        return (et.hour, et.minute) >= (hh, mm)
+
+    async def _v2_eod_cancel_and_reexit(self) -> None:
+        """16:01 ET: cancel our OWN working SELL legs, CONFIRM zero, then place a PM limit exit.
+
+        WHY THIS EXISTS. An RTH bracket's legs are session=NORMAL/duration=DAY, so at the bell they
+        stop being able to FILL. Whether they also stop RESERVING is the question board row OVSD1
+        parks. This path removes the ambiguity instead of waiting it out: cancel what we placed,
+        make the broker confirm it is gone, then own the exit in the PM session.
+
+        ⛔ ONCE PER POSITION PER DAY, NOT ONCE PER TICK. The claim is taken BEFORE the first await.
+        ⛔ NO RETRY ANYWHERE. Every failure path ends the attempt for that position for the day.
+        ⛔ A DELETE REFUSAL STOPS EVERYTHING: no further legs, no PM exit, legs left working, and
+           the existing path continues to own the position exactly as it does today.
+        ⛔ THE PM EXIT NEVER GOES OUT ON AN INFERRED RELEASE. It requires an INDEPENDENT re-read
+           reporting zero working SELL legs. "We sent a cancel" is not evidence the shares are free.
+        ⛔ THE PM EXIT GOES THROUGH `_emit_v2_exit_on_loop`, never a direct POST, so it lands in
+           `broker_orders` and `get_open_exit_reserved_quantity` sees it -- which is the ONLY thing
+           stopping the 19:55 flatten from placing a SECOND sell against the same shares.
+
+        ⚠ THE 16:01-16:05 UNPROTECTED WINDOW, NAMED RATHER THAN HIDDEN. Schwab's PM session does
+        not open until ~16:05, so between the cancel and the first fillable moment the position has
+        nothing working. That is a DELIBERATE trade of a bounded four-minute gap against the
+        open-ended one it replaces. On one share it is cents; on a real position it is not, and the
+        operator has seen it named on the board row.
+
+        ⚠ INHERITED LIMIT (OVSD1, parked, NOT fixed here): the harvest walk cannot see a childless
+        OCO wrapper, so "no working legs" could in principle be a blind reading rather than a clear
+        one. Flag-gated OFF until that is settled or the harness answers it.
+        """
+        if not bool(getattr(self.settings, "oms_v2_eod_cancel_reexit_enabled", False)):
+            return
+        if not self._v2_eod_cancel_reexit_due():
+            return
+        session_day = self._session_day_et()
+        close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
+        considered = 0
+        for acct, symbol in list(self._managed_v2_symbols):
+            key = (session_day, acct, symbol)
+            if key in self._v2_eod_cancel_reexit_done:
+                continue
+            self._v2_eod_cancel_reexit_done.add(key)  # claim FIRST -- before any await
+            considered += 1
+            try:
+                await self._v2_eod_cancel_and_reexit_one(acct, symbol, close_on_fill)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - one position must never break the sweep
+                self.logger.exception(
+                    "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=ERROR — attempt abandoned for today "
+                    "(no retry by design). The position keeps whatever protection it still has.",
+                    acct, symbol,
+                )
+        if considered == 0 and session_day not in self._v2_eod_cancel_reexit_summarised:
+            self._v2_eod_cancel_reexit_summarised.add(session_day)
+            # ⛔ UNEXERCISED IS NOT A PASS. A day with no position open at 16:01 tested nothing.
+            self.logger.info(
+                "[OMS-V2-EOD-CANCEL-REEXIT] day=%s considered=0 outcome=UNEXERCISED — no v2 "
+                "position was still open at 16:01, so this path did not run. NOT a pass: it is an "
+                "untested day against a denominator of zero.",
+                session_day,
+            )
+
+    async def _v2_eod_cancel_and_reexit_one(
+        self, acct: str, symbol: str, close_on_fill: bool
+    ) -> None:
+        """One position, one attempt. Every exit from this method is a terminal outcome for today."""
+        key_sym = symbol.upper()
+
+        # --- 1. HARVEST -------------------------------------------------------------------
+        try:
+            before = await self.broker_adapter.fetch_working_exit_leg_ids(acct, [symbol])
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - an unreadable broker is NOT a clear broker
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=UNANSWERABLE_HARVEST — could not read the "
+                "working legs, so nothing was cancelled and NO PM exit was placed. The position "
+                "keeps its existing protection.", acct, symbol, exc_info=True,
+            )
+            return
+        leg_ids = list(before.get(key_sym, []))
+
+        # ⛔ An unsupported venue returns {} from routing, which is indistinguishable HERE from
+        # "no legs". Both are handled identically and SAFELY: we only ever proceed to the PM exit
+        # after an independent confirm read, and on a venue that cannot answer that read is empty
+        # for the same reason -- so the guard below is what actually protects us, not this branch.
+        cancelled_by_us = False
+        if leg_ids:
+            try:
+                result = await self.broker_adapter.cancel_exit_leg_ids(acct, leg_ids)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                self.logger.error(
+                    "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=UNANSWERABLE_CANCEL legs=%d — the "
+                    "cancel call itself failed. NO PM exit. Legs may still be working.",
+                    acct, symbol, len(leg_ids), exc_info=True,
+                )
+                return
+            refused = result.get("refused")
+            if refused:
+                # ⛔ FAIL SAFE ON ATTEMPT ONE. Verbatim body, no retry, no PM order.
+                self.logger.error(
+                    "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=REFUSED order_id=%s http=%s "
+                    "cancelled=%d untouched=%d body=%r — STOPPING. No PM exit was placed and the "
+                    "remaining legs were NOT touched; the existing path still owns this position.",
+                    acct, symbol, refused.get("order_id"), refused.get("status_code"),
+                    len(result.get("cancelled") or []), len(result.get("untouched") or []),
+                    refused.get("body"),
+                )
+                return
+            cancelled_by_us = True
+            self.logger.info(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=CANCELLED legs=%d ids=%s",
+                acct, symbol, len(leg_ids), ",".join(leg_ids),
+            )
+        else:
+            self.logger.info(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=NOTHING_TO_CANCEL — the broker reported "
+                "no working SELL legs at 16:01 (the DAY legs expired at the bell, as on DAIC 08-25 "
+                "and CELU 08-27). Nothing was removed.", acct, symbol,
+            )
+
+        # --- 2. CONFIRM ZERO -- independent re-read, never inferred -----------------------
+        try:
+            after = await self.broker_adapter.fetch_working_exit_leg_ids(acct, [symbol])
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=UNANSWERABLE_CONFIRM cancelled_by_us=%s — "
+                "could not confirm the legs are gone, so NO PM exit was placed.",
+                acct, symbol, cancelled_by_us, exc_info=True,
+            )
+            if cancelled_by_us:
+                await self._v2_eod_restore_protection(acct, symbol, why="confirm_unreadable")
+            return
+        remaining = list(after.get(key_sym, []))
+        if remaining:
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=STILL_WORKING remaining=%d ids=%s — the "
+                "shares are still reserved, so NO PM exit was placed.",
+                acct, symbol, len(remaining), ",".join(remaining),
+            )
+            return
+
+        # --- 3. PM EXIT through the NORMAL path ------------------------------------------
+        placed = await self._v2_eod_place_pm_exit(acct, symbol, close_on_fill)
+        if placed:
+            self.logger.info(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=PM_EXIT_PLACED cancelled_by_us=%s — "
+                "confirmed zero working legs, then placed a PM limit exit via the managed-exit "
+                "path (visible to the 19:55 flatten's dedup).", acct, symbol, cancelled_by_us,
+            )
+            return
+
+        # --- 4. RESTORE -- never leave a position with nothing after removing what it had --
+        if not cancelled_by_us:
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=PM_EXIT_NOT_PLACED cancelled_by_us=False "
+                "— nothing was removed by us, so there is nothing to restore. The position is as it "
+                "was before this ran.", acct, symbol,
+            )
+            return
+        await self._v2_eod_restore_protection(acct, symbol, why="pm_exit_not_placed")
+
+    async def _v2_eod_restore_protection(self, acct: str, symbol: str, *, why: str) -> None:
+        """Put the bracket back ONCE after we cancelled legs and then could not place the exit.
+
+        ⛔ ONCE, NOT A LOOP. If the restore also fails we stop, mark it and page -- cycling here
+        would be the same unbounded-retry shape this whole path is written to avoid.
+        ⭐ Goes through `_emit_v2_rth_edge_bracket`, the existing exit-only OCO path, so the restored
+        pair lands in `broker_orders` and the 19:55 flatten's dedup sees it -- the same constraint
+        the PM exit inherits.
+        """
+        try:
+            await self._emit_v2_rth_edge_bracket(
+                acct=acct, symbol=symbol, edge_et=datetime.now(UTC), rearm=True
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=RESTORE_FAILED why=%s — we cancelled the "
+                "legs, could not place the PM exit, AND could not put protection back. THE POSITION "
+                "IS UNCOVERED; operator action required. Not retrying (once, by design).",
+                acct, symbol, why, exc_info=True,
+            )
+            return
+        self.logger.warning(
+            "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=RESTORED why=%s — PM exit did not go out, so "
+            "the protective pair was put back. The position is covered again.", acct, symbol, why,
+        )
+
+    async def _v2_eod_place_pm_exit(
+        self, acct: str, symbol: str, close_on_fill: bool
+    ) -> bool:
+        """Place the PM limit exit via the managed-exit path. True only if an exit order is working.
+
+        ⛔ Success is CONFIRMED BY READ-BACK, not assumed from the absence of an exception:
+        `_emit_v2_exit_on_loop` returns None whether or not the broker took the order.
+        """
+        snapshot = await self._run_db(
+            lambda session: self._read_v2_managed_snapshot(session, acct, symbol, close_on_fill),
+            commit=False,
+        )
+        if snapshot is None:
+            self._managed_v2_symbols.discard((acct, symbol))
+            return False
+        if snapshot.dedup_active:
+            return True  # an exit already works -- nothing to place, nothing to restore
+        quote = self._latest_quotes_by_symbol.get(symbol) or {}
+        bid = float(quote.get("bid") or 0.0)
+        if bid <= 0.0:
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s NO BID at 16:01 — cannot price a PM limit exit.",
+                acct, symbol,
+            )
+            return False
+        position = self._hydrate_v2_position(snapshot)
+        position.update_price(bid)
+        await self._emit_v2_exit_on_loop(
+            acct, symbol, position, snapshot.entry_price,
+            kind="EOD_CANCEL_REEXIT", reference_price=bid, reason="V2_EOD_CANCEL_REEXIT",
+            bid=bid, close_on_fill=close_on_fill,
+        )
+        after = await self._run_db(
+            lambda session: self._read_v2_managed_snapshot(session, acct, symbol, close_on_fill),
+            commit=False,
+        )
+        return bool(after is not None and after.dedup_active)
 
     def _v2_eod_oco_transition_due(self, now: datetime | None = None) -> bool:
         """True once the ET clock reaches the EOD OCO-transition time (default 16:00) on a weekday.

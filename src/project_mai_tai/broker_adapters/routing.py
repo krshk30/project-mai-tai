@@ -51,6 +51,40 @@ class RoutingBrokerAdapter:
             return set()
         return await fn(broker_account_name, symbols)
 
+    async def fetch_working_exit_leg_ids(
+        self, broker_account_name: str, symbols: list[str]
+    ) -> dict[str, list[str]]:
+        """Route to the account's adapter. Optional capability.
+
+        ⛔ An adapter without it returns {} meaning "THIS VENUE CANNOT BE ASKED", which is NOT the
+        same as "no legs are working". The caller must treat an unsupported venue as a refusal to
+        proceed, never as a clear reading -- an inferred release is what OVSD1 records.
+        """
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "fetch_working_exit_leg_ids", None)
+        if fn is None:
+            return {}
+        return await fn(broker_account_name, symbols)
+
+    async def cancel_exit_leg_ids(
+        self, broker_account_name: str, order_ids: list[str]
+    ) -> dict[str, object]:
+        """Route to the account's adapter. Optional capability.
+
+        ⛔ An adapter without it reports every id as UNTOUCHED and refuses -- it must never look
+        like a successful cancel.
+        """
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "cancel_exit_leg_ids", None)
+        if fn is None:
+            return {
+                "cancelled": [],
+                "refused": {"order_id": "", "status_code": 0,
+                            "body": "adapter does not implement cancel_exit_leg_ids"},
+                "untouched": list(order_ids),
+            }
+        return await fn(broker_account_name, order_ids)
+
     async def release_native_oco_for_close(
         self, broker_account_name: str, entry_broker_order_id: str
     ) -> str:
