@@ -1,0 +1,9 @@
+{
+  "pr_number": 876,
+  "range_base": "f791c120328d48f8990cb46ce075bc5e2304beb4",
+  "range_head": "78d32f5749723568b17ed5464927bdeff0643adb",
+  "reviewed_at": "2026-09-03T09:17:20Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RE-PIN after rebase onto main f791c12 (post #865 merge). Verified the head contains the new main tip, the single commit carries exactly one OpenAI Codex marker, and the diff against the new base is BYTE-IDENTICAL to the diff at the previously pinned head dbbf40e0 (compared ignoring index lines), so the review carries over unchanged; this is a re-pin, not a re-review. The superseded dbbf40e0 record is deleted in this same commit, because the rebase orphans that head and a record naming an unreachable commit fail-closes the PR - the same failure that hit #865 on its first gate run. Underlying content unchanged and previously verified: RT1 board row with owner codex-2, an explicit next action, a denominator of 1 active cross-service roundtrip currently 0/1, and a falsifier requiring the replacement to fail if either handoff seam is disconnected; both cited SHAs (934d5f4, 3b90c08) verified to exist and match, and the 0/1 denominator confirmed by there being only two test files that construct both StrategyEngineService and OmsRiskService."
+}
