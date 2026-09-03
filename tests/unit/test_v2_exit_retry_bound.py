@@ -142,3 +142,35 @@ def test_a_HELD_read_lifts_an_existing_stand_down() -> None:
     svc2._v2_exit_close_failures = svc._v2_exit_close_failures
     _reject(svc2, 1)
     assert KEY not in svc2._v2_exit_stood_down
+
+
+def test_a_HELD_read_must_NOT_clear_the_absolute_reject_ceiling():
+    """⛔⭐⭐ LIVE 2026-09-03, CHPT: ~200 REJECTED market closes in THREE MINUTES.
+
+    Every close was refused "oversold" because our OWN working exit leg reserved the shares, and
+    every reconcile read answered HELD -- truthfully, we did hold it. The consecutive counter is
+    DELIBERATELY reset by a positively-HELD read (see the two tests above, which specify that and
+    must keep passing), so it sawtoothed and could never reach `_V2_EXIT_ABANDON_AFTER_FAILURES`.
+
+    The absolute ceiling is the second, independent bound that closes that hole. Its whole value
+    rests on ONE property: a HELD read must not clear it. If it ever does, the ceiling becomes
+    exactly as unreachable as the consecutive bound was, and the reject storm returns.
+
+    ⭐ Sustained rejected-order volume is a broker API-access risk -- a harm the trading logic
+    cannot see, which is why this bound is not conditional on any position read.
+    """
+    svc = _svc(_PositionRead.HELD)
+    svc._v2_exit_reject_total = {KEY: 17}
+    svc._v2_exit_close_failures = {KEY: 3}
+
+    asyncio.run(svc._v2_close_reconcile_flat(None, ACCT, SYM, object()))
+
+    assert svc._v2_exit_close_failures.get(KEY, 0) == 0, (
+        "the CONSECUTIVE counter must still reset on a positively-HELD read -- that behaviour is "
+        "specified by the tests above and is correct when a jam clears"
+    )
+    assert svc._v2_exit_reject_total[KEY] == 17, (
+        "a HELD read must NOT clear the absolute reject ceiling: in an exit-reservation jam we "
+        "genuinely hold the position for its whole duration, so a read-conditional bound can never "
+        "terminate it -- that is the CHPT defect"
+    )

@@ -416,6 +416,21 @@ class OmsRiskService:
     # running and closes the row when the broker shows the OCO resolved (which is what recovered
     # AMIX on 07-29).
     _V2_EXIT_ABANDON_AFTER_FAILURES = 8
+
+    # ⛔⭐⭐ ABSOLUTE CEILING on rejected closes for one (account, symbol) episode. A SECOND,
+    # INDEPENDENT bound, because the consecutive counter above is DELIBERATELY reset by a
+    # positively-HELD read (see `_v2_close_reconcile_flat` and the tests that specify it). That
+    # reset is correct when a jam clears — but it means the consecutive bound cannot terminate a
+    # jam in which we genuinely hold the position for its whole duration.
+    # LIVE 2026-09-03, CHPT: ~200 rejected market closes in THREE MINUTES. Every one refused
+    # "oversold" because our own working exit leg reserved the shares, and every reconcile read
+    # answered HELD — truthfully — so the consecutive counter sawtoothed and never reached 8.
+    # ⛔ This ceiling counts TOTAL rejected closes in the episode and NOTHING clears it on a broker
+    # read. It clears only on real progress: a close that actually places, a confirmed-flat
+    # reconcile, or the row closing.
+    # ⭐ Sustained rejected-order volume is a BROKER API-ACCESS risk — a harm the trading logic
+    # cannot see, which is why this bound is not conditional on any position read.
+    _V2_EXIT_MAX_REJECTS_PER_EPISODE = 20
     # C3 default for instances constructed via __new__ in focused tests. Production reads the
     # configurable setting. Derived from the measured 11-episode maximum (237.1s) + one complete
     # 5s broker-position sync interval = 242.1s, rounded UP to the next whole sync interval = 245s.
@@ -561,6 +576,7 @@ class OmsRiskService:
         # Phantom-reconcile: consecutive REJECTED v2 full-closes per (acct, symbol). After the
         # threshold, a fresh broker read clears the row iff confirmed flat (see _emit_v2_exit_on_loop).
         self._v2_exit_close_failures: dict[tuple[str, str], int] = {}
+        self._v2_exit_reject_total: dict[tuple[str, str], int] = {}
         # A2: first time this (acct,symbol) was refused as not-sellable, the last probe, and
         # whether we have already paged. Cleared the moment a close PLACES or the row closes.
         self._a2_not_sellable_since: dict[tuple[str, str], datetime] = {}
@@ -4574,6 +4590,7 @@ class OmsRiskService:
             self._cw_flip_pending.discard(key)
             self._cw_floor_armed.discard(key)
             self._v2_exit_close_failures.pop(key, None)
+            getattr(self, "_v2_exit_reject_total", {}).pop(key, None)
             self._v2_exit_stood_down.discard(key)
             self._clear_exit_reservation_release(acct, symbol)
             self._a2_clear(acct, symbol)
@@ -4975,6 +4992,28 @@ class OmsRiskService:
                     rejected = any(
                         str(getattr(ev.payload, "status", "")).lower() == "rejected" for ev in events
                     )
+                    # ⛔⭐⭐ ABSOLUTE CEILING (2026-09-03 CHPT). Independent of the consecutive
+                    # counter, which a truthful HELD read legitimately resets. Nothing clears this
+                    # on a broker read — only real progress does.
+                    if rejected:
+                        totals = getattr(self, "_v2_exit_reject_total", None)
+                        if totals is None:
+                            totals = {}
+                            self._v2_exit_reject_total = totals
+                        totals[key] = totals.get(key, 0) + 1
+                        if (
+                            totals[key] >= self._V2_EXIT_MAX_REJECTS_PER_EPISODE
+                            and key not in self._v2_exit_stood_down
+                        ):
+                            self._v2_exit_stood_down.add(key)
+                            self.logger.error(
+                                "[OMS-V2-EXIT-REJECT-CEILING] sym=%s acct=%s %d REJECTED closes in "
+                                "this episode -> STOPPING the retry loop regardless of the broker "
+                                "read. The managed row and ALL protection are LEFT IN PLACE and the "
+                                "read-only exit poll still resolves it. Sustained rejected-order "
+                                "volume risks broker API access. OPERATOR: check the position.",
+                                symbol, acct, totals[key],
+                            )
                     # Phantom guard: a rejected full-close may mean the broker is already flat
                     # (position closed out-of-band). Without this, close_on_fill waits for a fill
                     # that never comes and the exit churns rejected sells forever (2026-07-13 AGEN).
@@ -5000,6 +5039,7 @@ class OmsRiskService:
                     if not reconciled:
                         if not rejected:
                             self._v2_exit_close_failures.pop(key, None)  # the close placed -> reset counter
+                            getattr(self, "_v2_exit_reject_total", {}).pop(key, None)  # real progress
                             self._a2_clear(acct, symbol)  # A2: the block ended
                         if close_on_fill:
                             # #6: do NOT close on submit — the confirmed fill closes the row.
@@ -5011,6 +5051,7 @@ class OmsRiskService:
                             self.store.close_managed_position(session, row)
                             self._managed_v2_symbols.discard(key)
                             self._v2_exit_stood_down.discard(key)
+                            getattr(self, "_v2_exit_reject_total", {}).pop(key, None)
                             self._clear_exit_reservation_release(acct, symbol)
                             self._a2_clear(acct, symbol)
                 session.commit()
