@@ -24,17 +24,25 @@ this rotation. Needs `codex-2`'s review before merge — the author never review
 | control | 2733285 | 0 | | reconciler | 2202771 | 0 |
 | market-capture | 2202817 | 0 | | | | |
 
-# ⛔ THE FLEET IS ON MIXED CODE — RESOLVE THIS FIRST TOMORROW
+# ✅ MIXED CODE — RULED DELIBERATE, DO NOT "FIX" IT
 
-**`schwab-1m-v2` still holds PID `2531255`, its pre-deploy PID from this morning.** It was never
-restarted across three deploys, so the real-money v2 bot is running **pre-#874 code** while
-oms/strategy/control run `f437100`.
+**`schwab-1m-v2` holds PID `2531255`, its pre-deploy PID.** It was not restarted across today's
+three deploys, so the real-money v2 bot runs **pre-#874 code** while oms/strategy/control run
+`f437100`.
 
-It looks benign — #874's `events.py` change is an additive field with a default and v2 touches none
-of the new tables — and *not* restarting v2 correctly avoids a bar hole. **But nobody has confirmed
-it was a decision rather than an omission.** A fleet on two code versions must never be an accident.
-⇒ Ask `codex-2` to state which, then either restart v2 deliberately (full pre/post checklist,
-outside 07:00–16:00) or record the split as intended.
+⭐ **`codex-2` confirmed 2026-09-03: this was DELIBERATE, to avoid an unrelated bar hole.** The
+question "decision or omission?" is answered — it was a decision.
+
+⛔ **Do NOT restart v2 to bring the fleet onto one version.** A restart >2 min leaves a hole in
+`strategy_bar_history`, and the ATR then computes True Range across it — inflating ATR and pushing
+every resting order too high. That hazard is the whole reason v2 was left alone. Restart it only
+when there is an independent reason to, and then only with the full checklist: outside 07:00–16:00
+ET, account-flat from broker truth, working orders zero or known, then `[V2-BOOT-HOLD] released`
++ warmup spanning the outage + a clean bar-continuity check.
+
+The split is believed benign: #874's `events.py` change is an additive field with a default, and v2
+touches none of the new tables. It resolves on its own at the next restart v2 needs for its own
+reasons.
 
 # ⭐ TOMORROW'S FIRST READ: DOES THE SEED-EXPOSURE WATCH ACTUALLY SPEAK?
 
@@ -75,7 +83,7 @@ runs the old code and the daily AMBER continues.
 
 | item | owner | state |
 |---|---|---|
-| Confirm the v2 non-restart was deliberate; then restart or record the split | codex-2 | **first thing tomorrow** |
+| ~~Confirm the v2 non-restart was deliberate~~ | codex-2 | ✅ **CLOSED** — confirmed deliberate 2026-09-03; do not restart v2 to "fix" it |
 | Prove `#873` — read the seed-exposure verdict after 04:00 ET | claude-1 | scripted; PASS/FAIL stated above |
 | Repoint root's crontab at `ops/health/preopen_readiness_cron.sh` | operator + codex-2 | needs explicit OK; blocks the 09:12 fix |
 | Run the 82-event exit-rule measurement | claude-1 | ⛔ **hard deadline 2026-09-07** — `market_capture_quotes` prunes at 14 days and the 08-24 session leaves the tape then. 80/82 gradable provisionally |
