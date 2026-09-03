@@ -267,38 +267,42 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
-- **DUP2 — two Webull `reclaim` legs inside one canonical cross** *(owner: codex-2; **CONFIRMED
-  BREACH — operator ruled 2026-09-03 that this is NOT INTENDED**; mechanism UNCONFIRMED)*.
-  ⛔ **Operator ruling:** the intended pair is **one Schwab reclaim + one Webull reclaim**. Two
-  Webull reclaim legs in one canonical cross is a breach.
-  ⛔⭐ **Two corrections to my own earlier assessment, both codex-2's and both right:**
-  · **The venue-local flag is SEGMENT-scoped, not per-slot** — I had it backwards.
-    `_fanout_webull_slot_taken` reads `state.fanout_webull_reclaim_taken`, a **boolean on
-    `SymbolState` keyed on the slot NAME**, reset only at segment transitions
-    (`_reset_fanout_webull_slots`). ⇒ It **should** have blocked the second reclaim **regardless of
-    differing `fanout_slot_id`**. My "the flag is per-slot, so it is not expected to catch these"
-    was wrong, and it wrongly exonerated #848's control.
-  · **Different deterministic slot IDs cannot represent the same canonical segment without a
-    PROVENANCE MISMATCH.** The two ids are derived, so two of them inside one `cw_arm_bar_ts` means
-    the derivation inputs diverged — the code believed it was in a different segment. That, not a
-    per-slot gap, is the thing to chase.
-  **The population, post-#848 only** (`ddf0f8b`, deployed 08-30 — pre-fix data is not evidence
-  about current code): **2 instances, 2 sessions, 24 segments.**
-  · NCRA 08-31 `10:01:16` (slot `d3fc12d9`) + `11:24:33` (`76260b11`), seg `1788181200000`, 83 min
-  · SSM 09-01 `14:58:19` (`04e6ae5d`) + `15:12:24` (`f118b109`), seg `1788287460000`, 14 min
-  A third post-#848 pair — NCRA `14:46:47`/`14:46:49`, **same** slot `d93b6e2d`, 2s apart — is the
-  **known #858 mirror/software-cross race**, already owned, and is excluded from this row.
-  ⚠ **MECHANISM UNCONFIRMED — I could not trace it.** No `[V2-CW-ARM]`, `[V2-CW-DISARM]`,
-  `[V2-FANOUT-SLOT-BOUND]`, `[V2-FANOUT-SLOT-CONSUMED]` or `[V2-FANOUT-OUTCOME]` line exists for
-  NCRA in the 83-minute window between its two fills, so the log cannot say whether a reset fired
-  or the slot identity diverged. The provenance-mismatch hypothesis is codex-2's structural
-  argument, not something I observed.
-  **Next action (codex-2):** find where a second `fanout_slot_id` is derived inside one canonical
-  segment — that is the provenance mismatch, and it is upstream of the consumed flag.
-  ⛔ Do **not** add a per-slot guard: the segment-scoped flag is the correct control and it is
-  already there; the defect is that the segment identity feeding it diverged.
-  Denominator: post-#848 `live:orb` reclaim fills per canonical cross — 24 segments, 3 sessions.
-  Falsifier: two `live:orb` reclaim fills in one canonical cross after the fix.
+- **DUP2 — `fanout_slot` CLASSIFICATION MISMATCH: a Schwab `reclaim` is fanned out into the Webull
+  `resting` slot** *(owner: codex-2; **CONFIRMED BREACH, mechanism now IDENTIFIED**; operator ruled
+  2026-09-03 that two Webull reclaim legs in one cross is NOT INTENDED — the intended pair is one
+  Schwab reclaim + one Webull reclaim)*.
+  ⭐ **Mechanism, found by codex-2 in the durable fills and measured here.** `cw_entry_slot` (Schwab
+  composition) and `fanout_slot` (Webull venue) are separate fields, and the venue flags
+  `fanout_webull_resting_taken` / `fanout_webull_reclaim_taken` are **separate booleans**. When a
+  `cw_entry_slot=reclaim` fill is stamped `fanout_slot=resting`, it consumes the **wrong** boolean,
+  so a genuine reclaim leg still finds its own flag free and fires. Two Webull legs, one cross.
+  **MEASURED — it is the majority case, not an edge:** across all stamped `live:orb` BUY fills,
+  | `cw_entry_slot` | `fanout_slot` | n |
+  |---|---|---|
+  | `first` | `resting` | 41 (correct mapping) |
+  | `reclaim` | `reclaim` | 7 (correct) |
+  | **`reclaim`** | **`resting`** | **11 — MISCLASSIFIED** |
+  ⇒ **11 of 18 stamped reclaim fan-out legs (61%) are misclassified**, spanning **2026-08-31 →
+  09-02** — current, and after every fix so far. ⛔ Bounded to the stamped window (`cw_entry_slot`
+  begins ~08-28); earlier fills are unstamped, so 11/18 is a **floor for that window, not a rate
+  for all time** (STMP constraint).
+  **The two confirmed breaches are only where a misclassified reclaim COLLIDED with a correct one
+  in the same segment:** NCRA 08-31 `10:01:16` (reclaim/reclaim) + `11:24:33` (reclaim/**resting**),
+  seg `1788181200000`; SSM 09-01 `14:58:19` (reclaim/**resting**) + `15:12:24` (reclaim/reclaim),
+  seg `1788287460000`. The other 9 misclassifications did not collide — **so far**.
+  ⚠ **Inverse harm to check, NOT asserted:** a misclassified reclaim consumes
+  `fanout_webull_resting_taken`, so it could also **suppress a later legitimate resting fan-out
+  leg** — a silently missing Webull mirror that would look like the leg simply not firing. Nobody
+  has looked for that direction.
+  ⛔ **Two earlier mechanisms are WITHDRAWN, both wrong:** mine ("the flag is per-slot") and the
+  provenance-mismatch reading. The segment identity is **identical** in both pairs
+  (`1788181200000`, `1788287460000`); the differing `fanout_slot_id`s are a **consequence** of the
+  differing slot name feeding a deterministic derivation, not evidence of divergent segments.
+  **Next action (codex-2):** find where a `cw_entry_slot=reclaim` entry is stamped
+  `fanout_slot=resting`, and fix the classification. ⛔ Do **not** add a guard at the consumed
+  flag — the flag is correct and segment-scoped; it is being fed the wrong slot name.
+  Denominator: stamped `live:orb` reclaim fan-out legs, 08-31 → 09-02 — 18.
+  Falsifier: a `cw_entry_slot=reclaim` fill stamped `fanout_slot=resting` after the fix.
 - **DUP3 — 12 exit-side duplicate legs, design-or-defect, UNPROVEN** *(owner: codex-2; sits with
   DUP2)*. Not yet assessed. **Next action:** classify each of the 12 as intended fan-out behaviour
   or duplicate exit, then state which. Denominator: exit legs per closed position.
