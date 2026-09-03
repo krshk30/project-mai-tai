@@ -2728,6 +2728,9 @@ class ControlPlaneRepository:
                                     "path": str(intent_metadata.get("path") or ""),
                                     "metadata": intent_metadata,
                                     "reason": intent_reason,
+                                    "strategy_code": strategy.code if strategy else str(order.strategy_id),
+                                    "broker_account_name": account.name if account else str(order.broker_account_id),
+                                    "broker_provider": account.provider if account else "",
                                 }
                             ),
                             "client_order_id": order.client_order_id,
@@ -2767,6 +2770,12 @@ class ControlPlaneRepository:
                 ).all():
                     strategy = strategy_lookup.get(fill.strategy_id)
                     account = account_lookup.get(fill.broker_account_id)
+                    fill_payload = fill.payload if isinstance(fill.payload, dict) else {}
+                    fill_metadata = (
+                        fill_payload.get("metadata", {})
+                        if isinstance(fill_payload.get("metadata", {}), dict)
+                        else {}
+                    )
                     recent_fills.append(
                         {
                             "strategy_code": strategy.code if strategy else str(fill.strategy_id),
@@ -2776,6 +2785,8 @@ class ControlPlaneRepository:
                             "quantity": _decimal_str(fill.quantity),
                             "price": _decimal_str(fill.price),
                             "filled_at": _datetime_str(fill.filled_at),
+                            "entry_slot": str(fill_metadata.get("cw_entry_slot") or ""),
+                            "broker_provider": account.provider if account else "",
                         }
                     )
 
