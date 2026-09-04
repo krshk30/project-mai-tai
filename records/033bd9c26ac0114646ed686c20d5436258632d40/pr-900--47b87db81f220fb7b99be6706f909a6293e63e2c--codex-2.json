@@ -1,0 +1,9 @@
+{
+  "pr_number": 900,
+  "range_base": "47b87db81f220fb7b99be6706f909a6293e63e2c",
+  "range_head": "033bd9c26ac0114646ed686c20d5436258632d40",
+  "reviewed_at": "2026-09-04T22:28:11Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed docs-only ATR probe handoff correction: exact transient timer and service names, 00:05 UTC trigger, script and report paths, timer inspection command, environment-file state, current-process absence, and reboot behavior match the live box; one-file scope and diff checks pass."
+}
