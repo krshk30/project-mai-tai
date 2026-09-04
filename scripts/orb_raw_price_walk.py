@@ -210,9 +210,9 @@ def replay_atr_at_break(
     break_at: datetime,
     bars: Sequence[AtrBar],
 ) -> AtrSnapshot:
-    """Replay the deployed v2 ATR implementation through the break-minute close."""
+    """Replay v2 through the last completed bar available at the exact break."""
     break_minute = minute_floor(break_at)
-    eligible = [bar for bar in bars if bar.at <= break_minute]
+    eligible = [bar for bar in bars if bar.at < break_minute]
     if not eligible:
         return AtrSnapshot(None, None, "UNAVAILABLE: no persisted Schwab bars")
     strategy = SchwabV2Strategy(settings)
@@ -231,8 +231,6 @@ def replay_atr_at_break(
             ),
             observation_phase="replay",
         )
-    if eligible[-1].at != break_minute:
-        return AtrSnapshot(None, None, "UNAVAILABLE: break-minute Schwab bar missing")
     if signal is None:
         return AtrSnapshot(None, None, "UNAVAILABLE: ATR warmup incomplete")
     sources = "+".join(sorted({bar.source or "unknown" for bar in eligible}))
@@ -240,7 +238,7 @@ def replay_atr_at_break(
         str(signal["state"]).upper(),
         Decimal(str(signal["trail"])),
         "DERIVED: deployed v2 ATR replay on persisted Schwab 1m bars "
-        f"(sources={sources}) at break-bar close",
+        f"(sources={sources}) through last completed bar {clock(eligible[-1].at)} ET",
     )
 
 
@@ -362,9 +360,9 @@ def render(walks: Sequence[SymbolWalk]) -> str:
         DISCLOSURE,
         "Price = final trade print in the minute; bid/ask = final NBBO quote in the minute; "
         "spread % = (ask - bid) / midpoint. Missing minutes are retained.",
-        "ATR = break-bar-close state from the deployed v2 ATR implementation replayed over "
-        "persisted Schwab 1-minute bars; bar provenance is retained and it is the only "
-        "derived field.",
+        "ATR = state known at the exact break, from the deployed v2 ATR implementation "
+        "replayed through the prior completed Schwab 1-minute bar; bar provenance is "
+        "retained and it is the only derived field.",
     ]
     for walk in walks:
         lines.extend(["", walk.symbol])
@@ -382,7 +380,7 @@ def render(walks: Sequence[SymbolWalk]) -> str:
         lines.extend(
             [
                 f"Opening high: {money(walk.opening_high)} | Break: {clock(walk.break_at)} ET "
-                f"({clock(walk.break_at, seconds=True)}) | ATR at break-bar close: {atr_value}",
+                f"({clock(walk.break_at, seconds=True)}) | ATR at break: {atr_value}",
                 "",
                 "| minute | price | % from level | bid | ask | spread % |",
                 "|---|---:|---:|---:|---:|---:|",

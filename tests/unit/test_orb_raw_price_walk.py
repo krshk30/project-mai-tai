@@ -8,6 +8,7 @@ from project_mai_tai.market_halts import HaltWindow
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from orb_raw_price_walk import (  # noqa: E402
+    AtrBar,
     AtrSnapshot,
     MinuteRow,
     QuotePoint,
@@ -17,6 +18,7 @@ from orb_raw_price_walk import (  # noqa: E402
     first_break,
     minute_walk,
     opening_high,
+    replay_atr_at_break,
     render,
     spread_percent,
 )
@@ -118,6 +120,32 @@ def test_spread_uses_quote_midpoint() -> None:
     assert spread_percent(Decimal("1.00"), Decimal("1.10")) == Decimal("0.10") / Decimal("1.05") * 100
 
 
+def test_atr_at_break_excludes_the_still_forming_break_bar(monkeypatch) -> None:
+    observed: list[int] = []
+
+    class FakeStrategy:
+        def __init__(self, settings) -> None:
+            pass
+
+        def watchlist_state(self, symbol):
+            return object()
+
+        def _update_atr_state(self, state, bar, observation_phase):
+            observed.append(bar.timestamp_ms)
+            return {"state": "short", "trail": 2.0}
+
+    monkeypatch.setattr("orb_raw_price_walk.SchwabV2Strategy", FakeStrategy)
+    bars = [
+        AtrBar(at_et(DAY, 9, 29), Decimal("1"), Decimal("2"), Decimal("1"), Decimal("1.5"), 1, "live"),
+        AtrBar(at_et(DAY, 9, 30), Decimal("1.5"), Decimal("3"), Decimal("1"), Decimal("2.5"), 1, "live"),
+    ]
+
+    snapshot = replay_atr_at_break(object(), "DAIC", trade(9, 30, 4, "2.10").at, bars)
+
+    assert observed == [int(at_et(DAY, 9, 29).timestamp() * 1000)]
+    assert snapshot.state == "SHORT"
+
+
 def test_render_names_missing_trade_and_quote_and_halt() -> None:
     walk = SymbolWalk(
         symbol="DAIC",
@@ -143,7 +171,7 @@ def test_render_names_missing_trade_and_quote_and_halt() -> None:
     assert "09:30 HALT" in output
     assert "NO TRADE" in output
     assert "NO QUOTE" in output
-    assert "ATR at break-bar close: SHORT @ $6.4000" in output
+    assert "ATR at break: SHORT @ $6.4000" in output
 
 
 def test_render_contains_no_trade_rule_results() -> None:
