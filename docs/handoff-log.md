@@ -15,6 +15,62 @@
 
 ---
 
+## 2026-09-04 — the day a $2.18 probe found the defect that would have broken EOD1601
+
+Batch `2026-09-04-probe-answered-and-conf1-bound`. Seven merges: #892, #893, #894, #895, #896,
+#897, #898. Box and main both `c1e6357`, flat, all services `NRestarts=0`.
+
+**The probe answered, and the answer was not the one we were waiting for.** The question had always
+been framed as *"will Schwab accept a DELETE against an OCO child?"* It does. The real answer was in
+the second call: cancelling one child cancels its sibling as a unit, and the sibling's DELETE then
+returns **`400 "Order in state CANCELED cannot be canceled"`** — not the 404 our code tolerated. So
+`release_native_oco_for_close` returned `unanswerable` on the very tick both legs were gone, and
+skipped the order-tree reread that would have said `released`. It reported failure **every time it
+succeeded**. EOD1601 could not have worked as written. #898 makes the reread authoritative and
+leaves the fail-closed verdict untouched. Attended cost: entry 2.1657, PM exit 2.1611, about half a
+cent.
+
+**CONF1 sold a position it was never decided for.** IMRN's 11:34:11 fill was exited correctly at
+11:36:09 on an 11:35 `short` read — and the pending confirmation was never popped. Forty-three
+minutes later a *different* position opened at 12:18:03, and that same stale decision fired ~20
+times in 33 seconds against it, into protective legs placed seconds earlier. Twenty refusals, the
+reject ceiling, and 36 minutes with exits suppressed — which is why the genuine 12:54 ATR flip was
+detected on time and could not be acted on. The position was finally closed by the broker's own OCO
+leg. #897 binds a confirmation to the episode it was decided for, makes it one-shot, and drops a
+stale one *before* anything touches broker protection.
+
+⭐ **The reject ceiling earned its keep.** It stopped that storm at 20 where NCRA reached 145 and
+CHPT 205, and it deliberately left the row and its protection in place — which is the only reason
+the OCO leg was still there to close the position. The ceiling merged yesterday as #885 with three
+defects in it; codex's retrospective found all three, #893 fixed them, and the fixed version is what
+ran today.
+
+**Two things were deliberately not built.** The segment slot flags are not released when the ATR
+turns short — IMRN's 15:40 arm inherited the 15:00 segment's slot and entered on `reclaim` instead
+of `first`. A release path already exists and did not run, and with `[V2-ATR-PROBE]` off there was
+no way to tell *"the SELL flip was never emitted"* from *"emitted and skipped"*. Nine of 2,599 arms
+across 14 sessions show the pattern, upper-bounded — rare, not routine. The operator ruled: turn the
+probe on, build nothing, let the next occurrence answer it. Likewise the write amplification #898
+introduces on a stuck path (1 DELETE/tick → N) is boarded and watched, not throttled.
+
+**ORB came back as an observer.** #896 landed it broker-disconnected: no adapter import, no
+`TradeIntentEvent`, no credentials in its unit, two independent refusals, and a paper-only account.
+It is running and its event table is empty — deployed is not working, and Tuesday is its first real
+session.
+
+**Three of my own errors are in the manifest rather than smoothed over.** A mutation run that
+silently tested unfixed `main` because the fix was uncommitted; a number I co-signed without
+checking ("an OCO carries two", which was the whole reason I accepted a change); and a one-shot test
+that passed with its own fix removed, because an *accepted* sell flipped `dedup_active` and hid the
+bug — only a rejecting adapter reproduced the live condition. Each was caught by mutation or by the
+other agent, none by reading.
+
+⭐ **The lesson most likely to recur: a deduped marker's silence is not an absence.**
+`[V2-RESTING-SLOT-CONSUMED]` is deduped by segment key, so when the segment id failed to roll — the
+very defect under investigation — the guard fired silently and read exactly like no guard at all.
+Dedupe keyed on the thing you are hunting is self-concealing.
+
+
 ## 2026-09-03 — batch `2026-09-03-1601-handoff-and-oversold-park`, integrator `claude-1`
 
 **Three merges: #887, #888, #889. Box and main in sync at `b308a594`, fleet flat.**
