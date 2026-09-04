@@ -280,6 +280,12 @@ class _V2ManagedSnapshot:
     `_hydrate_v2_position` works unchanged on this snapshot (duck-typed)."""
 
     symbol: str
+    # ⛔⭐⭐ THE EPISODE'S IDENTITY. `oms_managed_positions.id` is a fresh UUID per episode, so it
+    # is the only value that distinguishes "the position the confirmation exit was decided for"
+    # from "a later position on the same (account, symbol)". Timestamps cannot: a row's
+    # `entry_time` and its fill's `filled_at` differ by a few hundred ms in the SAME episode,
+    # so any tolerance that accepts the real pair also accepts a stale one.
+    managed_row_id: str
     entry_price: float
     current_quantity: int
     entry_time: str
@@ -1049,7 +1055,25 @@ class OmsRiskService:
                     symbol,
                 )
                 return
-            self._confirmation_exit_pending[(acct, symbol)] = dict(payload)
+            # ⛔⭐⭐ BIND THE DECISION TO THE POSITION IT WAS DECIDED FOR (2026-09-04, IMRN).
+            # A pending confirmation used to name only (acct, symbol), which is not a position —
+            # it is a LANE. The IMRN decision taken on the 11:35 bar for the 11:34:11 fill was
+            # still armed 43 minutes later and fired against a DIFFERENT position opened at
+            # 12:18:03, into protective legs placed seconds earlier: 20 refusals in 33s, the
+            # reject ceiling, and a 36-minute exit suppression.
+            # ⛔ If there is no open row to bind to, REFUSE. An unbound confirmation is a decision
+            # looking for a victim; there is nothing to exit, and arming it is how it finds one.
+            bound_row_id = await self._confirmation_bound_managed_row_id(acct, symbol)
+            if not bound_row_id:
+                self.logger.error(
+                    "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s fill_id=%s "
+                    "reason=no_open_position_to_bind",
+                    symbol, acct, payload.get("source_fill_id", ""),
+                )
+                return
+            bound_payload = dict(payload)
+            bound_payload["bound_managed_row_id"] = bound_row_id
+            self._confirmation_exit_pending[(acct, symbol)] = bound_payload
             self.logger.info(
                 "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=%s acct=%s fill_id=%s "
                 "evaluated_at_ms=%s status=PENDING_EXECUTABLE_BID",
@@ -3601,6 +3625,27 @@ class OmsRiskService:
             self._fillable_session_end_hour_et(),
         )
 
+    async def _confirmation_bound_managed_row_id(self, acct: str, symbol: str) -> str:
+        """The id of the managed row open RIGHT NOW for ``(acct, symbol)``, or "" if none.
+
+        ⛔ Fails CLOSED: any read fault returns "", which refuses the confirmation. Not exiting
+        leaves the position under the normal ladder, which still has its stop; selling the WRONG
+        position does not have an equivalent recovery.
+        """
+        try:
+            def _read(session: Session) -> str:
+                row = self.store.get_open_managed_position(
+                    session, broker_account_name=acct, symbol=symbol
+                )
+                return str(row.id) if row is not None else ""
+            return str(await self._run_db(_read, commit=False) or "")
+        except Exception:  # noqa: BLE001 — a DB fault must never arm an unbound confirmation
+            self.logger.exception(
+                "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s reason=bind_read_failed",
+                symbol, acct,
+            )
+            return ""
+
     async def _reconcile_confirmation_exit_protection(self, acct: str, symbol: str) -> str:
         """Return released/resolved_by_fill/unanswerable from fresh broker evidence."""
         adapter = getattr(self, "broker_adapter", None)
@@ -3698,12 +3743,37 @@ class OmsRiskService:
             quote_at = quote.get("received_at")
             if not isinstance(quote_at, datetime) or quote_at <= evaluated_at:
                 return
+            # ⛔⭐⭐ IDENTITY BEFORE PROTECTION (codex-2, #897 R1). Checking the binding only at the
+            # emit was too late: a stale decision still reached
+            # `_reconcile_confirmation_exit_protection`, which RELEASES the native OCO — so a
+            # confirmation for a CLOSED position would strip the broker-side protection off the
+            # position that replaced it, and then refuse to sell. On `resolved_by_fill` it would
+            # close that position's managed row outright. Both are worse than the sell we were
+            # already refusing.
+            # ⇒ Nothing that touches broker protection may run until we know the decision is about
+            # the position currently open.
+            bound_row_id = str(confirmation.get("bound_managed_row_id", "") or "")
+            open_row_id = await self._confirmation_bound_managed_row_id(acct, symbol)
+            if not open_row_id or bound_row_id != open_row_id:
+                self.logger.error(
+                    "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s fill_id=%s bound_row=%s "
+                    "open_row=%s reason=different_position — dropped BEFORE any OCO release",
+                    symbol, acct, confirmation.get("source_fill_id", ""),
+                    bound_row_id or "-", open_row_id or "-",
+                )
+                confirmation_pending.pop(key, None)
+                return
             confirmation_inflight.add(key)
             protection = await self._reconcile_confirmation_exit_protection(acct, symbol)
             confirmation_inflight.discard(key)
             if protection == "resolved_by_fill":
                 confirmation_pending.pop(key, None)
-                await self._close_resolved_oco_managed_row(acct, symbol)
+                # ⛔ Scope the close to the episode the identity check above actually verified.
+                # `_reconcile_confirmation_exit_protection` awaited the broker; B may have replaced
+                # A in the meantime, and B must not be closed by A's OCO fill.
+                await self._close_resolved_oco_managed_row(
+                    acct, symbol, expected_row_id=open_row_id
+                )
                 return
             if protection != "released":
                 return
@@ -3772,6 +3842,25 @@ class OmsRiskService:
                 return
 
             if confirmation is not None:
+                # ⛔⭐⭐ THE DECISION MUST STILL BE ABOUT *THIS* POSITION.
+                bound_row_id = str(confirmation.get("bound_managed_row_id", "") or "")
+                if bound_row_id != snapshot.managed_row_id:
+                    self.logger.error(
+                        "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s fill_id=%s "
+                        "bound_row=%s open_row=%s reason=different_position — the confirmation "
+                        "was decided for a position that is no longer open; DROPPING it rather "
+                        "than selling the one that is",
+                        symbol, acct, confirmation.get("source_fill_id", ""),
+                        bound_row_id or "-", snapshot.managed_row_id,
+                    )
+                    confirmation_pending.pop(key, None)
+                    return
+                # ⛔⭐⭐ ONE-SHOT, AND THE POP MUST HAPPEN *BEFORE* THE EMIT.
+                # The tracker upstream calls itself a one-shot registry; the OMS side was not one.
+                # Nothing here popped the pending entry after emitting, so once it became
+                # executable it re-emitted on EVERY quote tick — 20 sells in 33 seconds on IMRN.
+                # Popping first also means an emit that raises cannot leave it armed to repeat.
+                confirmation_pending.pop(key, None)
                 position = self._hydrate_v2_position(snapshot)
                 position.update_price(bid)
                 await self._emit_v2_exit_on_loop(
@@ -4145,6 +4234,7 @@ class OmsRiskService:
                 dedup_active = True
         return _V2ManagedSnapshot(
             symbol=row.symbol,
+            managed_row_id=str(row.id),
             entry_price=float(row.entry_price),
             current_quantity=int(row.current_quantity),
             entry_time=str(row.entry_time),
@@ -4899,7 +4989,9 @@ class OmsRiskService:
         except Exception:  # noqa: BLE001 - diagnostics must never break the protective sync
             return
 
-    async def _close_resolved_oco_managed_row(self, acct: str, symbol: str, *, detail=None) -> None:
+    async def _close_resolved_oco_managed_row(
+        self, acct: str, symbol: str, *, detail=None, expected_row_id: str | None = None
+    ) -> None:
         """Close the phantom v2 managed row for a symbol whose native OCO resolved BY A FILL.
 
         ⭐ WHY THIS EXISTS (2026-07-22): the broker-created OCO fill closes the position but never
@@ -4946,12 +5038,30 @@ class OmsRiskService:
             self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
 
         def _close(session: Session) -> None:
-            if detail:
-                entry_order = self._find_oco_entry_order(session, acct, symbol)
-                self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
+            # ⛔⭐⭐ THE REPLACEMENT-DURING-AWAIT RACE (codex-2, #897 R2).
+            # Everything above this point awaited a BROKER round trip. An episode can end and a new
+            # one open inside that await, so the row read here need not be the row the caller
+            # checked. Closing by (account, symbol) would then close the REPLACEMENT position on
+            # the strength of the previous position's OCO leg filling.
+            # ⇒ When the caller names the episode it resolved, the close is scoped to that UUID and
+            # refuses anything else. Callers driven by a fresh broker execution record for the
+            # symbol (not by a cached decision) pass nothing and are unchanged.
+            if expected_row_id is not None:
+                current = str(row.id) if row is not None else ""
+                if current != expected_row_id:
+                    self.logger.error(
+                        "[OMS-V2-RESOLVED-CLOSE-REFUSED] sym=%s acct=%s expected_row=%s "
+                        "open_row=%s reason=position_replaced_during_broker_await — NOT closing "
+                        "the replacement position on the previous position's OCO fill",
+                        symbol, acct, expected_row_id, current or "-",
+                    )
+                    return
+            if detail:
+                entry_order = self._find_oco_entry_order(session, acct, symbol)
+                self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             if row is not None:
                 self.store.close_managed_position(session, row)
 

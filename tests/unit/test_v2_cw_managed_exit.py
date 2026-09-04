@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import OmsManagedPosition, TradeIntent
@@ -277,6 +278,8 @@ async def test_confirmation_exit_blocks_when_oco_release_is_unconfirmed() -> Non
     svc._confirmation_exit_pending[(ACCT, SYM)] = {
         "evaluated_at_ms": "1",
         "broker_order_id": "entry-order-1",
+        # production always stamps the episode it was accepted into; the double must too
+        "bound_managed_row_id": _open_row_id(sf),
     }
     _quote(svc, bid=9.9)
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -295,18 +298,22 @@ async def test_confirmation_exit_defers_to_an_oco_leg_that_already_filled() -> N
         "source_fill_id": "fill-1",
         "evaluated_at_ms": "1",
         "broker_order_id": "entry-order-1",
+        "bound_managed_row_id": _open_row_id(sf),
     }
     closed: list[tuple[str, str]] = []
 
-    async def close_resolved(acct: str, symbol: str, *, detail=None) -> None:
-        closed.append((acct, symbol))
+    async def close_resolved(acct: str, symbol: str, *, detail=None, expected_row_id=None) -> None:
+        # the double must accept what production now passes, or it hides a TypeError in the OMS
+        closed.append((acct, symbol, expected_row_id))
 
     svc._close_resolved_oco_managed_row = close_resolved  # type: ignore[method-assign]
     _quote(svc, bid=9.9)
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     assert adapter.release_calls == [(ACCT, "entry-order-1")]
-    assert closed == [(ACCT, SYM)]
+    assert closed == [(ACCT, SYM, _open_row_id(sf))], (
+        "the resolved close must name the episode the identity check verified"
+    )
     assert _sell_intents(sf) == []
     assert (ACCT, SYM) not in svc._confirmation_exit_pending
 
@@ -385,3 +392,335 @@ async def test_cw_floor_off_is_hard_target_byte_identical():
     intents = _sell_intents(sf)
     assert len(intents) == 1 and intents[0].reason.endswith("CW_TARGET")
     assert (ACCT, SYM) not in svc._cw_floor_armed
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# CONF1 — THE DECISION MUST BELONG TO THE POSITION IT SELLS.  Built on the live IMRN trade,
+# 2026-09-04, which is a test with a KNOWN ANSWER.
+#
+# What happened: the confirmation for the 11:34:11 fill read the 11:35 bar (short) and exited
+# that position correctly at 11:36:09. Nothing cleared the pending entry. Forty-three minutes
+# later a NEW position opened at 12:18:03, and the SAME stale decision fired against it ~20
+# times in 33 seconds — into protective legs placed seconds earlier. 20 refusals, the reject
+# ceiling, and 36 minutes with exits suppressed.
+#
+# ⛔ The bar selection was never at fault: every evaluation on 09-03 and 09-04 used a bar whose
+# START was after its fill and read it at that bar's CLOSE. The fault is that a decision had no
+# owner and no expiry.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class _RejectingConfirmationAdapter(_ConfirmationAdapter):
+    """Sells are REFUSED, exactly as IMRN's were.
+
+    ⛔ This is the difference between a test that can fail and one that cannot. When the sell is
+    ACCEPTED it becomes a working exit order, `dedup_active` goes true, and that incidentally pops
+    the pending confirmation — so a missing one-shot pop is invisible. Live, every sell was
+    REJECTED, no working order ever existed, and the stale decision re-fired on every quote tick.
+    """
+
+    async def submit_order(self, request):  # type: ignore[no-untyped-def]
+        if request.intent_type == "close":
+            return [
+                ExecutionReport(
+                    event_type="rejected",
+                    origin="broker",
+                    client_order_id=request.client_order_id,
+                    broker_order_id=None,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason="simulated oversold refusal (IMRN replay)",
+                    metadata=dict(request.metadata),
+                )
+            ]
+        return await super().submit_order(request)
+
+
+def _open_row_id(sf) -> str:
+    with sf() as s:
+        row = s.scalar(
+            select(OmsManagedPosition).where(
+                OmsManagedPosition.symbol == SYM, OmsManagedPosition.status == "open"
+            )
+        )
+        return str(row.id) if row is not None else ""
+
+
+def _match_production_partial_index(sf) -> None:
+    """SQLite cannot express this index's predicate, so the fixture is STRICTER than production.
+
+    ⛔ In Postgres `uq_oms_managed_positions_open_symbol` is PARTIAL —
+    `postgresql_where=text("status = 'open'")` — so a closed row does not block the next episode
+    and every episode gets a FRESH row id. SQLite drops the predicate and enforces a full UNIQUE
+    on (broker_account_name, symbol), which would make the two-episode replay below impossible to
+    write. Dropping the index restores production's semantics; it does not relax a real invariant,
+    it removes one SQLite invented.
+    """
+    from sqlalchemy import text as _text
+    with sf() as s:
+        s.execute(_text("DROP INDEX IF EXISTS uq_oms_managed_positions_open_symbol"))
+        s.commit()
+
+
+def _close_open_row(sf) -> None:
+    """End the episode the way a real close does — the row goes to status=closed."""
+    with sf() as s:
+        row = s.scalar(
+            select(OmsManagedPosition).where(
+                OmsManagedPosition.symbol == SYM, OmsManagedPosition.status == "open"
+            )
+        )
+        row.status = "closed"
+        row.current_quantity = 0
+        s.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_confirmation_decided_for_an_EARLIER_position_must_not_sell_the_next_one():
+    """⛔ THE IMRN DEFECT, with its known answer: position B must NOT be sold.
+
+    Position A is entered and its confirmation is armed against A. A closes. B opens on the same
+    (account, symbol). The stale decision must be DROPPED, not applied to B.
+    """
+    sf = _make_sf()
+    svc = _svc(sf, cw=True, adapter=_ConfirmationAdapter(release_result="released"))
+
+    _arm(svc, sf, entry=10.0, qty=100)          # position A — the 11:34:11 fill
+    row_a = _open_row_id(sf)
+    svc._confirmation_exit_pending[(ACCT, SYM)] = {
+        "source_fill_id": "fill-A",
+        "evaluated_at_ms": "1",
+        "broker_order_id": "entry-order-A",
+        "bound_managed_row_id": row_a,
+    }
+
+    _close_open_row(sf)                          # A exits
+    _match_production_partial_index(sf)
+    _arm(svc, sf, entry=10.0, qty=100)          # position B — the 12:18:03 entry
+    row_b = _open_row_id(sf)
+    assert row_b and row_b != row_a, "the replay needs two distinct episodes"
+
+    _quote(svc, bid=9.9)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert _sell_intents(sf) == [], (
+        "a confirmation decided for a position that has already closed must never sell the "
+        "position that replaced it — this is the IMRN 12:18 sell"
+    )
+    assert (ACCT, SYM) not in svc._confirmation_exit_pending, "the stale decision must be dropped"
+    assert _row_status_open(sf), "position B must still be open"
+    # ⛔⭐⭐ codex-2 #897 R1: refusing the SELL is not enough. Reaching the protection reconcile at
+    # all RELEASES position B's native OCO — stripping its broker-side stop on the strength of a
+    # decision about a position that no longer exists, and then declining to sell it.
+    assert svc.broker_adapter.release_calls == [], (
+        "a stale confirmation must be dropped BEFORE any OCO release; releasing B's protection is "
+        "worse than the sell we were already refusing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stale_confirmation_never_reaches_protection_even_when_it_would_RESOLVE_BY_FILL():
+    """⛔ The other protection outcome, and the more destructive one.
+
+    `resolved_by_fill` does not merely release — it CLOSES the managed row. Reached with a stale
+    decision, it would close position B on the strength of position A's OCO leg having filled.
+    """
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(release_result="resolved_by_fill")
+    svc = _svc(sf, cw=True, adapter=adapter)
+
+    _arm(svc, sf, entry=10.0, qty=100)
+    row_a = _open_row_id(sf)
+    svc._confirmation_exit_pending[(ACCT, SYM)] = {
+        "source_fill_id": "fill-A",
+        "evaluated_at_ms": "1",
+        "broker_order_id": "entry-order-A",
+        "bound_managed_row_id": row_a,
+    }
+    _close_open_row(sf)
+    _match_production_partial_index(sf)
+    _arm(svc, sf, entry=10.0, qty=100)          # position B
+    assert _open_row_id(sf) != row_a
+
+    closed: list[tuple[str, str]] = []
+
+    async def _close_resolved(a: str, s: str, *, detail=None) -> None:
+        closed.append((a, s))
+
+    svc._close_resolved_oco_managed_row = _close_resolved  # type: ignore[method-assign]
+    _quote(svc, bid=9.9)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [], "must not reconcile protection for a closed position"
+    assert closed == [], "must NOT close position B on position A's OCO fill"
+    assert _row_status_open(sf), "position B must still be open"
+    assert (ACCT, SYM) not in svc._confirmation_exit_pending
+
+
+def _row_status_open(sf) -> bool:
+    with sf() as s:
+        return s.scalar(
+            select(OmsManagedPosition).where(
+                OmsManagedPosition.symbol == SYM, OmsManagedPosition.status == "open"
+            )
+        ) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_correctly_bound_confirmation_STILL_exits_its_own_position():
+    """⭐ THE CONTROL. Without this, an implementation that never exits passes every test above.
+
+    Same setup, one difference: the pending decision is bound to the position that is open.
+    """
+    sf = _make_sf()
+    svc = _svc(sf, cw=True, adapter=_ConfirmationAdapter(release_result="released"))
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._confirmation_exit_pending[(ACCT, SYM)] = {
+        "source_fill_id": "fill-A",
+        "evaluated_at_ms": "1",
+        "broker_order_id": "entry-order-A",
+        "bound_managed_row_id": _open_row_id(sf),
+    }
+    _quote(svc, bid=9.9)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    intents = _sell_intents(sf)
+    assert len(intents) == 1, "its own position must still be exited"
+    assert intents[0].reason.endswith("CONFIRMATION_EXIT")
+
+
+@pytest.mark.asyncio
+async def test_the_confirmation_exit_fires_EXACTLY_ONCE_across_many_ticks():
+    """⛔ THE 20-SELL BURST. The pending entry was never popped after emitting, so once it became
+    executable it re-emitted on EVERY quote tick until the reject ceiling stopped it."""
+    sf = _make_sf()
+    svc = _svc(sf, cw=True, adapter=_RejectingConfirmationAdapter(release_result="released"))
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._confirmation_exit_pending[(ACCT, SYM)] = {
+        "source_fill_id": "fill-A",
+        "evaluated_at_ms": "1",
+        "broker_order_id": "entry-order-A",
+        "bound_managed_row_id": _open_row_id(sf),
+    }
+
+    for _ in range(8):                            # eight quote ticks, as a live spread would give
+        _quote(svc, bid=9.9)
+        await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert len(_sell_intents(sf)) == 1, (
+        "the confirmation exit is a ONE-SHOT decision; re-emitting per tick is what produced 20 "
+        "rejected sells in 33 seconds on IMRN"
+    )
+    assert (ACCT, SYM) not in svc._confirmation_exit_pending
+
+
+@pytest.mark.asyncio
+async def test_a_confirmation_with_no_open_position_is_refused_at_accept_not_armed():
+    """⛔ An unbound confirmation is a decision looking for a victim. Refuse it at the door."""
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)                       # no managed row at all
+
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_confirmation_exit",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                    "source_fill_id": "fill-orphan",
+                    "evaluated_at_ms": "1",
+                    "atr_state": "short",
+                    "should_exit": True,
+                    "entry_slot": "first",
+                }
+            )
+        }
+    )
+
+    assert (ACCT, SYM) not in svc._confirmation_exit_pending, (
+        "with no open position there is nothing to exit; arming it is how it finds the NEXT one"
+    )
+
+
+@pytest.mark.asyncio
+async def test_accepting_a_confirmation_binds_it_to_the_open_position():
+    """The accept path must stamp the episode identity, or the check above has nothing to compare."""
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    expected = _open_row_id(sf)
+
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_confirmation_exit",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                    "source_fill_id": "fill-B",
+                    "evaluated_at_ms": "1",
+                    "atr_state": "short",
+                    "should_exit": True,
+                    "entry_slot": "first",
+                }
+            )
+        }
+    )
+
+    pending = svc._confirmation_exit_pending.get((ACCT, SYM))
+    assert pending is not None
+    assert pending["bound_managed_row_id"] == expected
+
+
+@pytest.mark.asyncio
+async def test_a_position_REPLACED_DURING_the_broker_await_is_not_closed_by_the_old_fill():
+    """⛔⭐⭐ codex-2 #897 R2 — the interleaving the identity check alone cannot cover.
+
+    The identity check passes while position A is open. Then
+    `_reconcile_confirmation_exit_protection` awaits a BROKER round trip, and inside that await A
+    closes and B opens. `resolved_by_fill` comes back and the close, scoped only by
+    (account, symbol), would shut B on the strength of A's OCO leg filling.
+
+    This test performs the replacement INSIDE the await, which is the only way to reach it.
+    """
+    sf = _make_sf()
+
+    class _ReplaceDuringAwait(_ConfirmationAdapter):
+        """Ends episode A and opens B while the OMS is awaiting the release result."""
+
+        def __init__(self) -> None:
+            super().__init__(release_result="resolved_by_fill")
+            self.swapped = False
+
+        async def release_native_oco_for_close(self, broker_account_name: str, entry_broker_order_id: str) -> str:
+            self.release_calls.append((broker_account_name, entry_broker_order_id))
+            if not self.swapped:
+                self.swapped = True
+                _close_open_row(sf)                     # A ends
+                _match_production_partial_index(sf)
+                _arm(svc, sf, entry=10.0, qty=100)      # B opens — inside the await
+            return self.release_result
+
+    adapter = _ReplaceDuringAwait()
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)                  # position A
+    row_a = _open_row_id(sf)
+    svc._confirmation_exit_pending[(ACCT, SYM)] = {
+        "source_fill_id": "fill-A",
+        "evaluated_at_ms": "1",
+        "broker_order_id": "entry-order-A",
+        "bound_managed_row_id": row_a,
+    }
+
+    _quote(svc, bid=9.9)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.swapped, "the replacement must have happened inside the await, or this proves nothing"
+    row_b = _open_row_id(sf)
+    assert row_b and row_b != row_a, "B must be a distinct episode"
+    assert _row_status_open(sf), (
+        "position B must still be OPEN — it was closed on position A's OCO fill, which is the "
+        "replacement-during-await race"
+    )
+    assert _sell_intents(sf) == []
