@@ -1,0 +1,9 @@
+{
+  "pr_number": 895,
+  "range_base": "1d7ec05b2d54406982e9d2386dffe6d138ac54c1",
+  "range_head": "18a1e7e1b70a7f8614deea7e823c7a0b4d7941f0",
+  "reviewed_at": "2026-09-04T19:43:25Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Measurement-only scope verified mechanically: 5677 insertions / 0 deletions across 17 files, every one under scripts|tests|analysis|docs, nothing in src/, no alembic migration, 17/17 commits carrying exactly one codex marker. Full unfiltered tests/unit run as a controlled pair against base 1d7ec05: 46 failed / 3215 passed vs base 46 failed / 3156 passed, failure sets diffed BY NAME and identical. ruff check src tests clean. Restored date-range runner is additive and reachable; no strategy, OMS, broker, intent, migration or enablement change is present, so nothing in this PR can reach production behaviour."
+}

@@ -1,0 +1,9 @@
+{
+  "pr_number": 896,
+  "range_base": "1d7ec05b2d54406982e9d2386dffe6d138ac54c1",
+  "range_head": "5225e917329f0c03b013a44b423648a9c2f153eb",
+  "reviewed_at": "2026-09-04T19:43:26Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Verified independently, not accepted from the report. Structural boundary: orb_app.py imports no broker/adapter/schwab/webull/alpaca/oms module and contains no TradeIntentEvent or strategy-intents publication; registration hard-codes the paper account, execution_mode=paper, provider=none. OMS refusal is the FIRST statement in process_trade_intent, before persistence and dispatch, and returns []. Migration 20260904_0019 down_revision 20260902_0018, single linear chain, additive (create_table + indexes up, drop_table down); orb_paper_events carries no broker/account/order/fill/position identity. Re-ran the mutation claims myself, all RED: OMS refusal disabled -> 3 failed across all three forged accounts; service _require_paper_decision neutered -> 1 failed; standard heartbeats publish removed -> 1 failed (test_publish_heartbeat_feeds_service_health_gate_and_isolated_dashboard), confirming the deploy-gate finding is load-bearing. CRITICAL CHECK NOT IN THE CLAIM LIST: live:orb is the account the v2 Webull fan-out routes to, so an account-keyed refusal would have killed a real-money leg; the refusal keys on strategy_code == 'orb', ORB's SERVICE_NAME == 'orb' matches exactly, and fan-out drafts carry the v2 emitter's schwab_1m_v2 code, so the discriminator is correct. Full unfiltered tests/unit: 46 failed / 3157 passed vs base 46 failed / 3156 passed, failure sets diffed BY NAME and identical. ruff clean. Deployment remains separately gated."
+}
