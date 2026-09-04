@@ -1,8 +1,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import http.server
+import socketserver
+import threading
+import time
 
-from project_mai_tai.deploy_preflight import evaluate_live_deploy_preflight, parse_datetime
+import pytest
+
+from project_mai_tai.deploy_preflight import (
+    _PREFLIGHT_HTTP_TIMEOUT_SECONDS,
+    evaluate_live_deploy_preflight,
+    load_json,
+    parse_datetime,
+)
 
 
 def _datetime_str(value: datetime) -> str:
@@ -160,17 +171,6 @@ def test_parse_datetime_accepts_control_plane_eastern_format() -> None:
 # produced the clean message. A gate whose common failure looks like a crash gets retried until
 # it goes green, which is how a safety gate stops being one.
 # ═══════════════════════════════════════════════════════════════════════════════════════════
-import http.server
-import socketserver
-import threading
-import time
-
-import pytest
-
-from project_mai_tai.deploy_preflight import (
-    _PREFLIGHT_HTTP_TIMEOUT_SECONDS,
-    load_json,
-)
 
 
 def _slow_server(delay: float):
