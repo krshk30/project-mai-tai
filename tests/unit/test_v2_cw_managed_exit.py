@@ -302,15 +302,18 @@ async def test_confirmation_exit_defers_to_an_oco_leg_that_already_filled() -> N
     }
     closed: list[tuple[str, str]] = []
 
-    async def close_resolved(acct: str, symbol: str, *, detail=None) -> None:
-        closed.append((acct, symbol))
+    async def close_resolved(acct: str, symbol: str, *, detail=None, expected_row_id=None) -> None:
+        # the double must accept what production now passes, or it hides a TypeError in the OMS
+        closed.append((acct, symbol, expected_row_id))
 
     svc._close_resolved_oco_managed_row = close_resolved  # type: ignore[method-assign]
     _quote(svc, bid=9.9)
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     assert adapter.release_calls == [(ACCT, "entry-order-1")]
-    assert closed == [(ACCT, SYM)]
+    assert closed == [(ACCT, SYM, _open_row_id(sf))], (
+        "the resolved close must name the episode the identity check verified"
+    )
     assert _sell_intents(sf) == []
     assert (ACCT, SYM) not in svc._confirmation_exit_pending
 
@@ -668,3 +671,56 @@ async def test_accepting_a_confirmation_binds_it_to_the_open_position():
     pending = svc._confirmation_exit_pending.get((ACCT, SYM))
     assert pending is not None
     assert pending["bound_managed_row_id"] == expected
+
+
+@pytest.mark.asyncio
+async def test_a_position_REPLACED_DURING_the_broker_await_is_not_closed_by_the_old_fill():
+    """⛔⭐⭐ codex-2 #897 R2 — the interleaving the identity check alone cannot cover.
+
+    The identity check passes while position A is open. Then
+    `_reconcile_confirmation_exit_protection` awaits a BROKER round trip, and inside that await A
+    closes and B opens. `resolved_by_fill` comes back and the close, scoped only by
+    (account, symbol), would shut B on the strength of A's OCO leg filling.
+
+    This test performs the replacement INSIDE the await, which is the only way to reach it.
+    """
+    sf = _make_sf()
+
+    class _ReplaceDuringAwait(_ConfirmationAdapter):
+        """Ends episode A and opens B while the OMS is awaiting the release result."""
+
+        def __init__(self) -> None:
+            super().__init__(release_result="resolved_by_fill")
+            self.swapped = False
+
+        async def release_native_oco_for_close(self, broker_account_name: str, entry_broker_order_id: str) -> str:
+            self.release_calls.append((broker_account_name, entry_broker_order_id))
+            if not self.swapped:
+                self.swapped = True
+                _close_open_row(sf)                     # A ends
+                _match_production_partial_index(sf)
+                _arm(svc, sf, entry=10.0, qty=100)      # B opens — inside the await
+            return self.release_result
+
+    adapter = _ReplaceDuringAwait()
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)                  # position A
+    row_a = _open_row_id(sf)
+    svc._confirmation_exit_pending[(ACCT, SYM)] = {
+        "source_fill_id": "fill-A",
+        "evaluated_at_ms": "1",
+        "broker_order_id": "entry-order-A",
+        "bound_managed_row_id": row_a,
+    }
+
+    _quote(svc, bid=9.9)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.swapped, "the replacement must have happened inside the await, or this proves nothing"
+    row_b = _open_row_id(sf)
+    assert row_b and row_b != row_a, "B must be a distinct episode"
+    assert _row_status_open(sf), (
+        "position B must still be OPEN — it was closed on position A's OCO fill, which is the "
+        "replacement-during-await race"
+    )
+    assert _sell_intents(sf) == []

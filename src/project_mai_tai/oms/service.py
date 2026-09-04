@@ -3768,7 +3768,12 @@ class OmsRiskService:
             confirmation_inflight.discard(key)
             if protection == "resolved_by_fill":
                 confirmation_pending.pop(key, None)
-                await self._close_resolved_oco_managed_row(acct, symbol)
+                # ⛔ Scope the close to the episode the identity check above actually verified.
+                # `_reconcile_confirmation_exit_protection` awaited the broker; B may have replaced
+                # A in the meantime, and B must not be closed by A's OCO fill.
+                await self._close_resolved_oco_managed_row(
+                    acct, symbol, expected_row_id=open_row_id
+                )
                 return
             if protection != "released":
                 return
@@ -4984,7 +4989,9 @@ class OmsRiskService:
         except Exception:  # noqa: BLE001 - diagnostics must never break the protective sync
             return
 
-    async def _close_resolved_oco_managed_row(self, acct: str, symbol: str, *, detail=None) -> None:
+    async def _close_resolved_oco_managed_row(
+        self, acct: str, symbol: str, *, detail=None, expected_row_id: str | None = None
+    ) -> None:
         """Close the phantom v2 managed row for a symbol whose native OCO resolved BY A FILL.
 
         ⭐ WHY THIS EXISTS (2026-07-22): the broker-created OCO fill closes the position but never
@@ -5031,12 +5038,30 @@ class OmsRiskService:
             self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
 
         def _close(session: Session) -> None:
-            if detail:
-                entry_order = self._find_oco_entry_order(session, acct, symbol)
-                self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
+            # ⛔⭐⭐ THE REPLACEMENT-DURING-AWAIT RACE (codex-2, #897 R2).
+            # Everything above this point awaited a BROKER round trip. An episode can end and a new
+            # one open inside that await, so the row read here need not be the row the caller
+            # checked. Closing by (account, symbol) would then close the REPLACEMENT position on
+            # the strength of the previous position's OCO leg filling.
+            # ⇒ When the caller names the episode it resolved, the close is scoped to that UUID and
+            # refuses anything else. Callers driven by a fresh broker execution record for the
+            # symbol (not by a cached decision) pass nothing and are unchanged.
+            if expected_row_id is not None:
+                current = str(row.id) if row is not None else ""
+                if current != expected_row_id:
+                    self.logger.error(
+                        "[OMS-V2-RESOLVED-CLOSE-REFUSED] sym=%s acct=%s expected_row=%s "
+                        "open_row=%s reason=position_replaced_during_broker_await — NOT closing "
+                        "the replacement position on the previous position's OCO fill",
+                        symbol, acct, expected_row_id, current or "-",
+                    )
+                    return
+            if detail:
+                entry_order = self._find_oco_entry_order(session, acct, symbol)
+                self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             if row is not None:
                 self.store.close_managed_position(session, row)
 
