@@ -1,0 +1,9 @@
+{
+  "pr_number": 893,
+  "range_base": "b5ca941bede2820cbb71298a2be5c1edd9ce9a64",
+  "range_head": "0976abcfab93048f0f2943c555420fd72061a47d",
+  "reviewed_at": "2026-09-04T11:07:26Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed all six episode-ending paths, positive-progress semantics, and the deliberate HELD-read asymmetry; ran 19 focused and 27 affected tests plus Ruff; independently mutated the mixed-report rejection disqualifier (3 tests red) and empty-event positive-evidence guard (1 test red); confirmed accepted-to-rejected cannot clear the ceiling and clean accepted-to-filled still can."
+}
