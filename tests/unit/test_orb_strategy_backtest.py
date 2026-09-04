@@ -1,222 +1,185 @@
-import inspect
 import sys
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from orb_strategy_backtest import (
-    DISCLOSURE,
-    EntryPlan,
+    BreakSignal,
+    DayResult,
     QuotePoint,
     TradePoint,
-    choose_entry_population,
+    assumed_entry_ask,
     detect_halts,
-    evaluate_entry,
+    first_break,
+    movement_after_entry,
     render,
-    replay_simulated_symbol,
-    stamped_trail_pct,
 )
-from project_mai_tai.market_halts import HALT_MIN_PRINT_GAP, HALT_MIN_QUOTE_UPDATES
-from project_mai_tai.settings import Settings
 
 
 DAY = date(2026, 9, 3)
 
 
-def _at(hour: int, minute: int, second: int = 0) -> datetime:
+def at(hour: int, minute: int, second: int = 0) -> datetime:
     return datetime(2026, 9, 3, hour, minute, second, tzinfo=UTC)
 
 
-def _entry(*, price: str = "100", trail: str = "5", source: str = "SIMULATED") -> EntryPlan:
-    return EntryPlan(
-        symbol="TEST",
-        at=_at(13, 31),
-        price=Decimal(price),
-        metadata={"trail_pct": trail, "orb_intended_break_level": price},
-        source=source,
-        note="ASSUMED ASK FILL" if source == "SIMULATED" else "READ FROM DURABLE FILL",
-    )
+def trade(hour: int, minute: int, second: int, price: str) -> TradePoint:
+    return TradePoint(at(hour, minute, second), Decimal(price), 100)
 
 
-def _settings(**overrides) -> Settings:
-    values = {
-        "orb_running_high_enabled": True,
-        "orb_intrabar_reclaim_enabled": False,
-        "orb_oms_quote_priced_entry_enabled": True,
-        "orb_resting_entry_enabled": False,
-        "orb_reclaim_trail_pct": 5.0,
-        "orb_reclaim_quantity": 1,
-        "orb_running_high_gap_cap_pct": 1.5,
-        "orb_running_high_window_minutes": 30,
-        "orb_window_flatten_enabled": True,
-        "orb_window_flatten_hour_et": 10,
-        "orb_window_flatten_minute_et": 0,
-    }
-    values.update(overrides)
-    return Settings(**values)
+def quote(hour: int, minute: int, second: int, bid: str, ask: str) -> QuotePoint:
+    return QuotePoint(at(hour, minute, second), Decimal(bid), Decimal(ask))
 
 
-def test_shared_halt_contract_is_the_deployed_285_second_rule() -> None:
-    assert HALT_MIN_PRINT_GAP == timedelta(seconds=285)
-    assert HALT_MIN_QUOTE_UPDATES == 2
-    assert "confirmed_halt_window" in inspect.getsource(detect_halts)
+def signal() -> BreakSignal:
+    return BreakSignal("TEST", Decimal("10"), at(13, 31), at(13, 31, 10))
 
 
-def test_halted_bid_cannot_fire_an_exit() -> None:
-    entry = _entry()
-    last_print = _at(13, 31, 5)
-    reopen = _at(13, 36, 5)
+def test_fixed_opening_high_uses_0925_through_0929_and_first_break_bar() -> None:
     trades = [
-        TradePoint(last_print, Decimal("100"), 1),
-        TradePoint(reopen, Decimal("99"), 1),
+        trade(13, 25, 5, "9.90"),
+        trade(13, 26, 5, "10.00"),
+        trade(13, 29, 50, "9.95"),
+        trade(13, 30, 10, "10.00"),
+        trade(13, 31, 2, "9.99"),
+        trade(13, 31, 10, "10.01"),
+        trade(13, 32, 0, "10.20"),
+    ]
+
+    found = first_break(DAY, "TEST", trades)
+
+    assert found is not None
+    assert found.opening_high == Decimal("10.0")
+    assert found.bar_at == at(13, 31)
+    assert found.crossed_at == at(13, 31, 10)
+
+
+def test_equal_high_is_not_a_break() -> None:
+    trades = [
+        trade(13, 25, 5, "10.00"),
+        trade(13, 30, 5, "10.00"),
+        trade(13, 31, 0, "10.00"),
+    ]
+    assert first_break(DAY, "TEST", trades) is None
+
+
+def test_fill_uses_latest_visible_ask_and_never_looks_forward() -> None:
+    quotes = [
+        quote(13, 31, 9, "10.00", "10.05"),
+        quote(13, 31, 11, "10.10", "10.15"),
+    ]
+    assert assumed_entry_ask(signal(), quotes, []) == Decimal("10.05")
+
+
+def test_stale_or_nonpositive_latest_ask_is_unanswerable() -> None:
+    stale = [quote(13, 31, 7, "10.00", "10.05")]
+    zero_latest = [
+        quote(13, 31, 9, "10.00", "10.05"),
+        quote(13, 31, 10, "10.00", "0"),
+    ]
+    assert assumed_entry_ask(signal(), stale, []) is None
+    assert assumed_entry_ask(signal(), zero_latest, []) is None
+
+
+def test_extrema_use_executable_bid_not_ask() -> None:
+    quotes = [
+        quote(13, 31, 10, "10.20", "10.30"),
+        quote(13, 32, 0, "9.80", "19.00"),
+        quote(14, 0, 0, "30.00", "31.00"),
+    ]
+    row = movement_after_entry(
+        day=DAY,
+        symbol="TEST",
+        signal=signal(),
+        entry_price=Decimal("10"),
+        quotes=quotes,
+        halts=[],
+    )
+    assert row.high_bid == Decimal("10.20")
+    assert row.high_pct == Decimal("2.00")
+    assert row.low_bid == Decimal("9.80")
+    assert row.low_pct == Decimal("-2.00")
+    assert row.reached_five is False
+
+
+def test_halted_quotes_are_excluded_from_extrema_and_plus_five() -> None:
+    last_print = at(13, 31, 5)
+    reopen = at(13, 36, 5)
+    trades = [
+        TradePoint(last_print, Decimal("10"), 1),
+        TradePoint(reopen, Decimal("10"), 1),
     ]
     quotes = [
-        QuotePoint(_at(13, 32), Decimal("90"), Decimal("91")),
-        QuotePoint(_at(13, 33), Decimal("91"), Decimal("92")),
-        QuotePoint(reopen, Decimal("99"), Decimal("100")),
-        QuotePoint(_at(13, 37), Decimal("98"), Decimal("99")),
+        quote(13, 32, 0, "12", "12.1"),
+        quote(13, 33, 0, "8", "8.1"),
+        quote(13, 36, 5, "10.1", "10.2"),
     ]
     halts = detect_halts(trades, quotes)
-
-    row = evaluate_entry(entry, quotes, halts, _at(13, 37))
-
+    row = movement_after_entry(
+        day=DAY,
+        symbol="TEST",
+        signal=signal(),
+        entry_price=Decimal("10"),
+        quotes=quotes,
+        halts=halts,
+    )
     assert len(halts) == 1
-    assert row.exit_rule == "WINDOW_FLATTEN"
-    assert row.exit_price == Decimal("98")
-    assert row.low_bid == Decimal("98")
+    assert row.high_bid == Decimal("10.1")
+    assert row.low_bid == Decimal("10.1")
+    assert row.reached_five is False
 
 
-def test_extrema_and_trailing_exit_use_bid_not_trade_print_or_ask() -> None:
-    entry = _entry()
-    quotes = [
-        QuotePoint(_at(13, 31, 1), Decimal("104"), Decimal("120")),
-        QuotePoint(_at(13, 32), Decimal("98"), Decimal("119")),
-    ]
-
-    row = evaluate_entry(entry, quotes, [], _at(13, 32))
-
-    assert row.high_bid == Decimal("104")
-    assert row.high_pct == Decimal("4.00")
-    assert row.exit_price == Decimal("98")
-
-
-def test_zero_bid_is_not_executable() -> None:
-    entry = _entry()
-    quotes = [
-        QuotePoint(_at(13, 31, 1), Decimal("0"), Decimal("120")),
-        QuotePoint(_at(13, 32), Decimal("99"), Decimal("100")),
-    ]
-
-    row = evaluate_entry(entry, quotes, [], _at(13, 32))
-
-    assert row.high_bid == Decimal("99")
-    assert row.low_bid == Decimal("99")
-    assert row.exit_price == Decimal("99")
-
-
-def test_real_fill_population_replaces_simulation_for_the_whole_session() -> None:
-    real = _entry(price="7.73", source="REAL_FILL")
-    simulated = _entry(price="8.20")
-
-    selected = choose_entry_population([real], [simulated])
-
-    assert selected == [real]
-    assert selected[0].price == Decimal("7.73")
-
-
-def test_stamped_trail_level_controls_exit_without_config_fallback() -> None:
-    entry = _entry(trail="10")
-    quotes = [
-        QuotePoint(_at(13, 31, 1), Decimal("93"), Decimal("94")),
-        QuotePoint(_at(13, 32), Decimal("94"), Decimal("95")),
-    ]
-
-    row = evaluate_entry(entry, quotes, [], _at(13, 32))
-
-    assert stamped_trail_pct(entry.metadata) == Decimal("10")
-    assert row.exit_rule == "WINDOW_FLATTEN"
-    assert row.exit_at == _at(13, 32)
-
-
-def test_missing_stamped_trail_is_unanswerable_not_recomputed() -> None:
-    entry = EntryPlan("TEST", _at(13, 31), Decimal("100"), {}, "REAL_FILL", "")
-    row = evaluate_entry(entry, [], [], _at(14, 0))
-    assert row.exit_rule == "UNANSWERABLE"
-    assert "stamped trail_pct" in row.note
-
-
-def test_deployed_running_high_signal_and_quote_pricing_drive_simulated_fill() -> None:
-    trades = [
-        TradePoint(_at(13, 25, 10), Decimal("10.00"), 100),
-        TradePoint(_at(13, 26, 10), Decimal("10.10"), 100),
-        TradePoint(_at(13, 30, 10), Decimal("10.20"), 100),
-        TradePoint(_at(13, 30, 30), Decimal("10.30"), 100),
-        TradePoint(_at(13, 31, 0), Decimal("10.20"), 100),
-        TradePoint(_at(13, 32, 0), Decimal("10.00"), 100),
-    ]
-    quotes = [
-        QuotePoint(_at(13, 30, 59), Decimal("10.12"), Decimal("10.15")),
-        QuotePoint(_at(13, 31, 1), Decimal("9.60"), Decimal("9.65")),
-    ]
-
-    result = replay_simulated_symbol(
+def test_plus_five_is_inclusive() -> None:
+    row = movement_after_entry(
         day=DAY,
         symbol="TEST",
-        trades=trades,
-        quotes=quotes,
-        settings=_settings(),
-        universe={"TEST"},
+        signal=signal(),
+        entry_price=Decimal("10"),
+        quotes=[quote(13, 31, 10, "10.50", "10.60")],
+        halts=[],
     )
-
-    assert len(result.rows) == 1
-    row = result.rows[0]
-    assert row.entry.at == _at(13, 31)
-    assert row.entry.price == Decimal("10.1500")
-    assert row.entry.metadata["orb_intended_break_level"] == "10.2000"
-    assert row.entry.metadata["trail_pct"] == "5.0"
-    assert row.exit_rule == "TRAIL-5%"
-    assert row.exit_price == Decimal("9.60")
+    assert row.reached_five is True
 
 
-def test_quote_priced_entry_abandons_stale_ask() -> None:
-    trades = [
-        TradePoint(_at(13, 25, 10), Decimal("10.00"), 100),
-        TradePoint(_at(13, 26, 10), Decimal("10.10"), 100),
-        TradePoint(_at(13, 30, 10), Decimal("10.20"), 100),
-        TradePoint(_at(13, 30, 30), Decimal("10.30"), 100),
-        TradePoint(_at(13, 31), Decimal("10.20"), 100),
-    ]
-    quotes = [QuotePoint(_at(13, 30, 50), Decimal("10.12"), Decimal("10.15"))]
-
-    result = replay_simulated_symbol(
+def test_missing_fill_quote_is_reported_unanswerable() -> None:
+    row = movement_after_entry(
         day=DAY,
         symbol="TEST",
-        trades=trades,
-        quotes=quotes,
-        settings=_settings(),
-        universe={"TEST"},
+        signal=signal(),
+        entry_price=None,
+        quotes=[],
+        halts=[],
     )
+    assert row.reached_five is None
+    assert row.entry_price is None
+    assert "UNANSWERABLE" in row.assumption
 
-    assert result.rows == []
-    assert result.abandoned == {"NO_FRESH_QUOTE": 1}
 
-
-def test_render_states_simulation_and_assumption_once() -> None:
-    row = evaluate_entry(
-        _entry(),
-        [QuotePoint(_at(13, 32), Decimal("99"), Decimal("100"))],
-        [],
-        _at(13, 32),
+def test_report_has_no_exit_or_verdict_columns() -> None:
+    row = movement_after_entry(
+        day=DAY,
+        symbol="TEST",
+        signal=signal(),
+        entry_price=Decimal("10"),
+        quotes=[quote(13, 31, 10, "10.50", "10.60")],
+        halts=[],
     )
-    report = render([row], {})
-    assert report.count(DISCLOSURE) == 1
-    assert "ASSUMED ASK FILL" in report
-    assert "1/1 gradable" in report
+    report = render([DayResult(DAY, 3, 1, [row])])
+    header = next(line for line in report.splitlines() if line.startswith("| day"))
+    assert "exit" not in header.lower()
+    assert "verdict" not in report.lower()
+    assert "1/3 watched stocks broke" in report
 
 
-def test_runner_sql_is_read_only() -> None:
+def test_incomplete_session_is_named_not_silently_dropped() -> None:
+    result = DayResult(DAY, 0, 0, unavailable_reason="09:30-10:00 window not complete")
+    report = render([result])
+    assert "2026-09-03: NOT REACHABLE" in report
+
+
+def test_runner_is_read_only() -> None:
     source = (
         Path(__file__).resolve().parents[2].joinpath("scripts/orb_strategy_backtest.py").read_text()
     )
