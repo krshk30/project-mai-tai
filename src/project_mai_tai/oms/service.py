@@ -1061,7 +1061,16 @@ class OmsRiskService:
             return
 
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
-        if str(event.payload.strategy_code).strip().lower() in {"polygon_30s", "webull_30s"}:
+        strategy_code = str(event.payload.strategy_code).strip().lower()
+        if strategy_code == "orb":
+            self.logger.error(
+                "[OMS-ORB-PAPER-REFUSED] OMS blocked ORB intent before intent/order "
+                "persistence and before broker dispatch event_id=%s account=%s",
+                event.event_id,
+                event.payload.broker_account_name,
+            )
+            return []
+        if strategy_code in {"polygon_30s", "webull_30s"}:
             self.logger.error(
                 "[PAPER-EXIT-REFUSED] OMS blocked polygon_30s intent before intent/order "
                 "persistence and before broker dispatch event_id=%s",

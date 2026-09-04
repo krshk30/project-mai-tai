@@ -1,4 +1,40 @@
-# ORB Opening-Range Breakout (P6 "OPEN") — research COMPLETE, settled config
+# ORB Opening-Range Breakout
+
+## 2026-09-04 operator disposition: forward paper observation
+
+The durable runners from PR #895 remain measurement tools only. They do not enable ORB or alter a
+strategy path. The operator stopped the backwards scoring exercise and retained the following rule
+language for forward observation, with each entry rule to be introduced and checked one at a time:
+
+1. Judge only information visible at the entry minute; later state cannot qualify an earlier entry.
+2. ATR is blue at 09:30 and stays blue; below the line at 09:30 skips the name for the day.
+3. Never enter on a red candle.
+4. Candle direction, MACD direction, entry-bar volume, RSI, and Stoch K agree.
+5. The breaking candle has a real body covering at least 45% of its range.
+6. Four red candles among the five beginning at 09:25 disqualify the name.
+7. Do not enter a choppy setup.
+8. Take at most two trades per name between 09:30 and 10:00.
+
+The retained exit language is a +5% target, a -8% stop, and the ATR-flip/hard-stop backstops. This
+PR does not implement that entry set or exit rule; forward rules are deliberately added one at a
+time so a disagreement has one cause.
+
+The backwards scoring translation is not accepted. It retained 5 of 20 name-days where the
+operator retained 9, with only 3 agreements. It rejected DAIC 2026-08-25, the operator's best name
+at +37.2%, as "choppy", while accepting BIAF 2026-09-01 and PPBT 2026-09-02, which the operator had
+explicitly refused. Three translation faults are preserved with the tooling:
+
+- The coded "choppy" score rejects a clean 37.2% runner.
+- The ATR predicate demands blue at 09:30, rejecting SSM and YDDL when they flip purple-to-blue
+  during the entry window even though that transition is the setup the operator said to trade.
+- "First candle red means skip the name for the day" is absent; the code can reject the first break
+  and accept a later break in the same name.
+
+**Conclusion:** the operator's rule language survives; the backwards score does not. ORB moves to
+live paper observation. The historical research below is retained for provenance, not as a current
+verdict or implementation instruction.
+
+# Historical Research Record
 
 > **Status: RESEARCH COMPLETE → deployment-readiness scoping.** The entry and exit are settled below.
 > This is a **leading candidate for live, NOT a proven verdict** — it still needs intrabar execution and

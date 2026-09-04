@@ -5,4 +5,5 @@ Wants=project-mai-tai-strategy.service
 Wants=project-mai-tai-oms.service
 Wants=project-mai-tai-reconciler.service
 Wants=project-mai-tai-control.service
+Wants=project-mai-tai-orb.service
 After=postgresql.service redis-server.service network-online.target

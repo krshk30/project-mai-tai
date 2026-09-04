@@ -249,6 +249,7 @@ def test_deploy_service_maps_every_restartable_unit_to_a_health_identity() -> No
         "oms-risk",
         "market-data-gateway",
         "schwab-1m-v2",
+        "orb",
     ):
         assert f'echo "{service_name}"' in deploy_script
 

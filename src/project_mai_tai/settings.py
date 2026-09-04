@@ -170,12 +170,8 @@ class Settings(BaseSettings):
     # OAuth token but has a dedicated REST-poll client, bar builder, strategy
     # body, and service process. Strategy body is a placeholder until the
     # operator's spec arrives.
-    # ORB (P6 "OPEN") — opening-range breakout, default OFF / flag-gated / inert.
-    # Settled config: ENTRY 5-min OR from 09:30 (close>OR_high, vol>=1.5x, >VWAP,
-    # >EMA9, width<12%, cutoff 10:30, one/symbol, ONLY pre-09:25-confirmed names);
-    # EXIT TRAIL-8% (ratchets from HWM). Logic in strategy_core/orb_intrabar.py;
-    # see docs/orb-intrabar-production-wiring-design.md. With orb_enabled=False the
-    # wiring is never reached (backward-compatible by construction; parity EXACT).
+    # ORB paper observer. The switch starts or stops market-data observation only;
+    # broker routing is structurally absent regardless of this value.
     orb_enabled: bool = False
     orb_execution_mode: str = "bar_close"   # "bar_close" (parity) | "intrabar"
     orb_or_minutes: int = 5
@@ -187,48 +183,32 @@ class Settings(BaseSettings):
     orb_universe_lead_minutes: int = 5      # confirmed by open - 5m = 09:25
     orb_broker_account_name: str = "paper:orb"
     orb_quantity: int = 10
-    # Broker provider for the ORB account. None -> resolved_broker_provider (default,
-    # behaviour-identical to pre-wiring). Set to "webull" + flip orb_broker_account_name
-    # to the live account to route ORB to the real Webull account.
+    # Retained for rollback/config compatibility only. The ORB paper observer ignores
+    # both broker fields; its runtime registration is hard-coded to provider=none.
     orb_broker_provider: str | None = None
-    # --- Intrabar-reclaim live test (cap-off + 3% trail), flag-gated, default OFF ---
+    # --- Intrabar-reclaim observation (cap-off + 3% trail metadata), default OFF ---
     # When True: entry is the intrabar reclaim-of-OR_high (price crosses OR_high and
-    # HOLDS for orb_reclaim_hold_secs) placed as a RESTING LIMIT at OR_high; the 12%
-    # width cap is removed (any width arms); exit trail = orb_reclaim_trail_pct; size
-    # = orb_reclaim_quantity. With it False, ORB is byte-identical to the settled
-    # bar-close/TRAIL-8%/12%-cap path above. See docs/orb-reclaim-capoff-trail-design.md.
+    # HOLDS for orb_reclaim_hold_secs) observed at OR_high; the 12% width cap is removed.
+    # The historical price/order fields are evidence only and cannot be dispatched.
     orb_intrabar_reclaim_enabled: bool = False
     orb_reclaim_trail_pct: float = 3.0
     orb_reclaim_quantity: int = 5
     orb_reclaim_hold_secs: int = 25
-    # --- Running-high breakout mode (operator-validated 2026-06-24), flag-gated, default OFF ---
+    # --- Running-high breakout observation, flag-gated, default OFF ---
     # When True (and reclaim OFF): observe from 09:25, reference = running highest 1-min
     # bar-high since 09:25; from 09:30 to (open + orb_running_high_window_minutes), enter when a
-    # bar's high breaks the running high, at the breakout level, only if the fill is within
-    # orb_running_high_gap_cap_pct of the broken high (else skip = don't chase). Exit = OMS
-    # trail orb_reclaim_trail_pct; size = orb_reclaim_quantity. v1 = SINGLE entry per symbol
-    # (re-entry is a follow-up needing OMS position-sync). With False, ORB is byte-identical to
-    # the bar-close/reclaim paths above. See ORB_RULES.md.
+    # bar's high breaks the running high, at the breakout level, only if the observed price is
+    # within orb_running_high_gap_cap_pct of the broken high. No order or exit is produced.
     orb_running_high_enabled: bool = False
     orb_running_high_window_minutes: int = 30   # entries only 09:30 .. open+30 = 10:00 ET
     orb_running_high_gap_cap_pct: float = 1.5
 
-    # OMS-quote-priced ORB entry (Piece 1 of the OMS-pricing port; see
-    # docs/orb-oms-quote-priced-entry-design.md). With it False, ORB is byte-identical:
-    # the bot ships its signal-time break-level limit and the OMS passes it through.
-    # With it True, the bot OMITS limit_price/reference_price (fail-closed: a stale price
-    # is structurally unshippable) and the OMS re-prices the entry from its OWN live quote
-    # (Polygon NBBO) at placement: limit = min(ask + 1 tick, break_level*(1+gap_cap)); it
-    # ABANDONS (no submit) on no-fresh-quote / ask-past-gap-cap / missing-bound. ORB-only,
-    # entry-side only; the exit/stop path and other bots are untouched. NOTE: requires BOTH
-    # the orb AND oms services restarted together when toggled (cross-process flag).
+    # Historical quote-pricing selector, retained for rollback and evidence compatibility.
+    # The paper observer records the selected policy but never invokes the OMS pricing path.
     orb_oms_quote_priced_entry_enabled: bool = False
     orb_oms_quote_priced_max_age_ms: int = 2000   # tunable: max ask staleness to price off
-    # Resting stop-buy entry (2026-07-13 R&D): instead of a reactive limit at the break, ORB
-    # emits a RESTING native BUY STOP_LIMIT at the break level (stop=level, limit=level*(1+gap_cap)).
-    # It fills AT the break (not the faded ask ~3-14s late — the honest-fill leak). Running-high
-    # mode only; supersedes the quote-priced limit when on. Default OFF = current behavior.
-    # ⛔ GATE: needs the Webull BUY-stop plumbing validated (validate_buy_stop.py, RTH) before enable.
+    # Historical resting-entry selector. The paper observer records the stop/limit shape as
+    # evidence only; it has no Webull or other broker route.
     orb_resting_entry_enabled: bool = False
     # P0.6 WINDOW FLATTEN (docs: P0.6-eod-flatten-design). ORB trades 09:30-10:00. AFTER 10:00 IT
     # SHOULD BE FLAT -- that is the rule, not a safety net. This enforces it.
@@ -1320,6 +1300,8 @@ class Settings(BaseSettings):
 
     def provider_for_strategy(self, strategy_code: str) -> str:
         normalized_code = str(strategy_code).strip().lower()
+        if normalized_code == "orb":
+            return "none"
         if normalized_code == "macd_30s":
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
             if override is not None:
@@ -1340,14 +1322,15 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_tos_broker_provider)
             if override is not None:
                 return override
-        if normalized_code == "orb":
-            override = self._normalize_provider_name(self.orb_broker_provider)
-            if override is not None:
-                return override
         return self.resolved_broker_provider
 
     def provider_for_account(self, account_name: str) -> str:
         normalized_account = str(account_name).strip()
+        if (
+            self.strategy_schwab_1m_v2_dual_broker_fanout_enabled
+            and normalized_account == self.strategy_schwab_1m_v2_webull_account_name
+        ):
+            return "webull"
         if normalized_account == self.strategy_macd_30s_account_name:
             return self.provider_for_strategy("macd_30s")
         if normalized_account == self.strategy_polygon_30s_account_name:
@@ -1359,7 +1342,7 @@ class Settings(BaseSettings):
         if normalized_account == self.strategy_tos_account_name:
             return self.provider_for_strategy("tos")
         if normalized_account == self.orb_broker_account_name:
-            return self.provider_for_strategy("orb")
+            return "none"
         return self.resolved_broker_provider
 
     def display_account_name(self, account_name: str) -> str:

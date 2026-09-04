@@ -542,6 +542,31 @@ class PaperExitEvent(Base):
     )
 
 
+class OrbPaperEvent(Base):
+    """Append-only ORB observations with no order, account, or broker identity."""
+
+    __tablename__ = "orb_paper_events"
+    __table_args__ = (
+        UniqueConstraint("event_key", name="uq_orb_paper_events_event_key"),
+        Index("ix_orb_paper_events_session_symbol", "session_date", "symbol", "observed_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    event_key: Mapped[str] = mapped_column(String(255))
+    event_type: Mapped[str] = mapped_column(String(32), index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    attempt: Mapped[int] = mapped_column(Integer)
+    mode: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+
+
 class V2ConfirmationExitEvaluation(Base):
     """Durable one-shot v2 ATR decision and Redis outbox, keyed by its source fill."""
 

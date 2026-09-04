@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from project_mai_tai.orb_paper_store import ORB_PAPER_ACCOUNT_NAME
 from project_mai_tai.settings import Settings
 
 
@@ -116,21 +117,18 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
         registrations.append(
             StrategyRegistration(
                 code="orb",
-                display_name="Mai Tai ORB Bot (P6 OPEN)",
-                account_name=settings.orb_broker_account_name,
+                display_name="Mai Tai ORB Paper Observer",
+                account_name=ORB_PAPER_ACCOUNT_NAME,
                 interval_secs=60,
-                runtime_kind="orb",
-                execution_mode=settings.execution_mode_for_provider(
-                    settings.provider_for_strategy("orb")
-                ),
+                runtime_kind="orb_paper",
+                execution_mode="paper",
                 metadata={
-                    "account_name": settings.orb_broker_account_name,
-                    # ORB routes to a paper account; show the raw name so the
-                    # dashboard does not flip "paper:" -> "live:" (schwab rule).
-                    "account_display_name": settings.orb_broker_account_name,
+                    "account_name": ORB_PAPER_ACCOUNT_NAME,
+                    "account_display_name": "ORB Paper Observer",
                     "interval_secs": 60,
-                    "runtime_kind": "orb",
-                    "provider": settings.provider_for_strategy("orb"),
+                    "runtime_kind": "orb_paper",
+                    "provider": "none",
+                    "market_data_provider": settings.market_data_provider_for_strategy("orb"),
                     # Isolated process (project-mai-tai-orb); the strategy-engine
                     # must not run it. Registered here only so the control-plane
                     # dashboard renders its card + detail page.
@@ -261,6 +259,8 @@ def strategy_registration_map(settings: Settings) -> dict[str, StrategyRegistrat
 def configured_broker_account_registrations(settings: Settings) -> tuple[BrokerAccountRegistration, ...]:
     registrations: dict[str, BrokerAccountRegistration] = {}
     for strategy in configured_strategy_registrations(settings):
+        if strategy.code == "orb":
+            continue
         registrations.setdefault(
             strategy.account_name,
             BrokerAccountRegistration(
@@ -269,4 +269,15 @@ def configured_broker_account_registrations(settings: Settings) -> tuple[BrokerA
                 environment=settings.environment,
             ),
         )
+    if settings.strategy_schwab_1m_v2_dual_broker_fanout_enabled:
+        account_name = str(settings.strategy_schwab_1m_v2_webull_account_name).strip()
+        if account_name:
+            registrations.setdefault(
+                account_name,
+                BrokerAccountRegistration(
+                    name=account_name,
+                    provider="webull",
+                    environment=settings.environment,
+                ),
+            )
     return tuple(registrations.values())

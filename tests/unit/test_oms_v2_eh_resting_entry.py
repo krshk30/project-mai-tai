@@ -305,15 +305,15 @@ async def test_non_v2_untouched(eh):
     service = _oms(**{_FLAG: True})
     _set_quote(service, "BAR", ask=9.52, bid=9.50)
     event = TradeIntentEvent(
-        source_service="orb",
+        source_service="macd_30s",
         payload=TradeIntentPayload(
-            strategy_code="orb",
-            broker_account_name="paper:orb",
+            strategy_code="macd_30s",
+            broker_account_name="paper:macd_30s",
             symbol="BAR",
             side="buy",
             quantity=Decimal("5"),
             intent_type="open",
-            reason="ORB_OPEN",
+            reason="MACD_OPEN",
             metadata={"order_type": "limit", "session": "AM", "extended_hours": "true",
                       "limit_price": "9.50", "reference_price": "9.50", "eh_resting": "true",
                       "resting_level": "9.50"},   # even with the tag, non-v2 is excluded
