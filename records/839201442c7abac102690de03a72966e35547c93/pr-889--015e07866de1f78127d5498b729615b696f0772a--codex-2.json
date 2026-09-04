@@ -1,0 +1,9 @@
+{
+  "pr_number": 889,
+  "range_base": "015e07866de1f78127d5498b729615b696f0772a",
+  "range_head": "839201442c7abac102690de03a72966e35547c93",
+  "reviewed_at": "2026-09-04T00:54:16Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Exact-head review passed: entry-scoped OCO tree reads replace unprovable account-wide absence; unknown and partial leg states fail closed; standalone probe refuses unknown statuses and requires broker-confirmed long quantity; full GitHub validation and 22 focused tests pass; flag defaults off."
+}
