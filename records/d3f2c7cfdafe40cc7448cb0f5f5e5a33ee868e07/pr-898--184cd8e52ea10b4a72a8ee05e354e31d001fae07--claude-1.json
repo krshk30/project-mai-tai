@@ -1,0 +1,9 @@
+{
+  "pr_number": 898,
+  "range_base": "184cd8e52ea10b4a72a8ee05e354e31d001fae07",
+  "range_head": "d3f2c7cfdafe40cc7448cb0f5f5e5a33ee868e07",
+  "reviewed_at": "2026-09-04T21:03:29Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Fixes the defect the PLUG probe exposed: DELETE 200 then 400 'Order in state CANCELED cannot be canceled', which the old 404-only tolerance turned into unanswerable on the very tick both legs were gone. The early return is removed; the non-2xx is logged with its verbatim body under [SCHWAB-NATIVE-OCO-DELETE-NON2XX] and control always falls through to the authoritative order-tree reread. Verified the fail-closed tail is UNCHANGED: confirmed is None -> unanswerable; filled -> resolved_by_fill; released ONLY if not remaining and not unsafe. Re-derived codex's control claim by mutation rather than accepting it: restoring the pre-fix early return turns BOTH new tests RED (the exact PLUG 200->400->both-CANCELED case, and the 500 -> leg still WORKING -> unanswerable case). Full unfiltered tests/unit as a controlled pair: base 184cd8e 46 failed / 3223 passed, head 46 failed / 3225 passed, failure sets DIFFED BY NAME and identical, +2 = the new tests. ruff check src tests clean. NOTE ON THE COUNTS: codex reported 55 failed / 3216 on this branch and 55 / 3214 on main; my totals are 46/3225 and 46/3223. Both sides total 3271, so the delta is 9 environment-sensitive tests, not a code difference, and the identical-sets result holds independently in both environments. BEHAVIOUR CHANGE NOT IN THE CLAIM LIST, reviewed and accepted: previously a non-2xx returned immediately and left the remaining stamped children UNTOUCHED; now the loop continues and attempts each once. Bounded at one DELETE per stamped working child with no retry (an OCO carries two), so the write pattern stays bounded and is arguably more correct, but it is a change and is recorded here rather than left implicit."
+}
