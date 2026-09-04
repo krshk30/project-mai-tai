@@ -278,6 +278,8 @@ async def test_confirmation_exit_blocks_when_oco_release_is_unconfirmed() -> Non
     svc._confirmation_exit_pending[(ACCT, SYM)] = {
         "evaluated_at_ms": "1",
         "broker_order_id": "entry-order-1",
+        # production always stamps the episode it was accepted into; the double must too
+        "bound_managed_row_id": _open_row_id(sf),
     }
     _quote(svc, bid=9.9)
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -296,6 +298,7 @@ async def test_confirmation_exit_defers_to_an_oco_leg_that_already_filled() -> N
         "source_fill_id": "fill-1",
         "evaluated_at_ms": "1",
         "broker_order_id": "entry-order-1",
+        "bound_managed_row_id": _open_row_id(sf),
     }
     closed: list[tuple[str, str]] = []
 
@@ -504,6 +507,52 @@ async def test_a_confirmation_decided_for_an_EARLIER_position_must_not_sell_the_
     )
     assert (ACCT, SYM) not in svc._confirmation_exit_pending, "the stale decision must be dropped"
     assert _row_status_open(sf), "position B must still be open"
+    # ⛔⭐⭐ codex-2 #897 R1: refusing the SELL is not enough. Reaching the protection reconcile at
+    # all RELEASES position B's native OCO — stripping its broker-side stop on the strength of a
+    # decision about a position that no longer exists, and then declining to sell it.
+    assert svc.broker_adapter.release_calls == [], (
+        "a stale confirmation must be dropped BEFORE any OCO release; releasing B's protection is "
+        "worse than the sell we were already refusing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stale_confirmation_never_reaches_protection_even_when_it_would_RESOLVE_BY_FILL():
+    """⛔ The other protection outcome, and the more destructive one.
+
+    `resolved_by_fill` does not merely release — it CLOSES the managed row. Reached with a stale
+    decision, it would close position B on the strength of position A's OCO leg having filled.
+    """
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(release_result="resolved_by_fill")
+    svc = _svc(sf, cw=True, adapter=adapter)
+
+    _arm(svc, sf, entry=10.0, qty=100)
+    row_a = _open_row_id(sf)
+    svc._confirmation_exit_pending[(ACCT, SYM)] = {
+        "source_fill_id": "fill-A",
+        "evaluated_at_ms": "1",
+        "broker_order_id": "entry-order-A",
+        "bound_managed_row_id": row_a,
+    }
+    _close_open_row(sf)
+    _match_production_partial_index(sf)
+    _arm(svc, sf, entry=10.0, qty=100)          # position B
+    assert _open_row_id(sf) != row_a
+
+    closed: list[tuple[str, str]] = []
+
+    async def _close_resolved(a: str, s: str, *, detail=None) -> None:
+        closed.append((a, s))
+
+    svc._close_resolved_oco_managed_row = _close_resolved  # type: ignore[method-assign]
+    _quote(svc, bid=9.9)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [], "must not reconcile protection for a closed position"
+    assert closed == [], "must NOT close position B on position A's OCO fill"
+    assert _row_status_open(sf), "position B must still be open"
+    assert (ACCT, SYM) not in svc._confirmation_exit_pending
 
 
 def _row_status_open(sf) -> bool:

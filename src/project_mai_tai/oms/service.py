@@ -3743,6 +3743,26 @@ class OmsRiskService:
             quote_at = quote.get("received_at")
             if not isinstance(quote_at, datetime) or quote_at <= evaluated_at:
                 return
+            # ⛔⭐⭐ IDENTITY BEFORE PROTECTION (codex-2, #897 R1). Checking the binding only at the
+            # emit was too late: a stale decision still reached
+            # `_reconcile_confirmation_exit_protection`, which RELEASES the native OCO — so a
+            # confirmation for a CLOSED position would strip the broker-side protection off the
+            # position that replaced it, and then refuse to sell. On `resolved_by_fill` it would
+            # close that position's managed row outright. Both are worse than the sell we were
+            # already refusing.
+            # ⇒ Nothing that touches broker protection may run until we know the decision is about
+            # the position currently open.
+            bound_row_id = str(confirmation.get("bound_managed_row_id", "") or "")
+            open_row_id = await self._confirmation_bound_managed_row_id(acct, symbol)
+            if not open_row_id or bound_row_id != open_row_id:
+                self.logger.error(
+                    "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s fill_id=%s bound_row=%s "
+                    "open_row=%s reason=different_position — dropped BEFORE any OCO release",
+                    symbol, acct, confirmation.get("source_fill_id", ""),
+                    bound_row_id or "-", open_row_id or "-",
+                )
+                confirmation_pending.pop(key, None)
+                return
             confirmation_inflight.add(key)
             protection = await self._reconcile_confirmation_exit_protection(acct, symbol)
             confirmation_inflight.discard(key)
