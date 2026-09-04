@@ -7,22 +7,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from orb_strategy_backtest import (
     BreakSignal,
+    EntryQuote,
     QuotePoint,
     TradePoint,
     assumed_entry_ask,
+    break_attempts,
     detect_halts,
     evaluate_attempt,
     fixed_opening_high,
-    next_break,
-    simulate_symbol,
+    load_attempts_csv,
 )
 
 
 DAY = date(2026, 9, 3)
 
 
-def at(hour: int, minute: int, second: int = 0) -> datetime:
-    return datetime(2026, 9, 3, hour, minute, second, tzinfo=UTC)
+def at(hour: int, minute: int, second: int = 0, micros: int = 0) -> datetime:
+    return datetime(2026, 9, 3, hour, minute, second, micros, tzinfo=UTC)
 
 
 def trade(hour: int, minute: int, second: int, price: str) -> TradePoint:
@@ -35,7 +36,7 @@ def quote(hour: int, minute: int, second: int, bid: str, ask: str) -> QuotePoint
 
 def signal(crossed_at: datetime | None = None) -> BreakSignal:
     crossed = crossed_at or at(13, 31, 10)
-    return BreakSignal("TEST", Decimal("10"), crossed.replace(second=0), crossed)
+    return BreakSignal("TEST", Decimal("10"), 1, crossed.replace(second=0), crossed)
 
 
 def test_opening_high_is_fixed_to_0925_through_0929() -> None:
@@ -49,138 +50,142 @@ def test_opening_high_is_fixed_to_0925_through_0929() -> None:
     assert fixed_opening_high(DAY, trades) == Decimal("10.0")
 
 
-def test_first_break_is_first_post_open_print_strictly_above_level() -> None:
+def test_break_attempts_emit_every_later_bar_rebreak() -> None:
     trades = [
-        trade(13, 30, 1, "10.00"),
-        trade(13, 31, 5, "9.99"),
-        trade(13, 31, 10, "10.01"),
+        trade(13, 30, 5, "10.01"),
+        trade(13, 30, 6, "9.99"),
+        trade(13, 30, 7, "10.02"),
+        trade(13, 31, 0, "10.03"),
+        trade(13, 31, 5, "9.98"),
+        trade(13, 32, 0, "10.04"),
     ]
-    found = next_break(
+    found = break_attempts(
         day=DAY,
         symbol="TEST",
         opening_high=Decimal("10"),
         trades=trades,
-        after=None,
     )
-    assert found is not None
-    assert found.crossed_at == at(13, 31, 10)
+    assert [item.crossed_at for item in found] == [at(13, 30, 5), at(13, 31), at(13, 32)]
+    assert [item.attempt for item in found] == [1, 2, 3]
 
 
-def test_reentry_requires_a_new_below_to_above_break_after_stop() -> None:
-    trades = [
-        trade(13, 31, 11, "10.20"),
-        trade(13, 32, 0, "10.10"),
-        trade(13, 33, 0, "10.00"),
-        trade(13, 34, 0, "10.01"),
-    ]
-    found = next_break(
-        day=DAY,
-        symbol="TEST",
-        opening_high=Decimal("10"),
-        trades=trades,
-        after=at(13, 31, 10),
+def test_frozen_population_preserves_all_98_prior_attempts() -> None:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "analysis/reports/orb-strategy-attempts-2026-08-24-to-2026-09-04.csv"
     )
-    assert found is not None
-    assert found.crossed_at == at(13, 34)
+    attempts = load_attempts_csv(path)
+    assert sum(len(rows) for rows in attempts.values()) == 98
 
 
-def test_reentry_cannot_repeat_inside_the_stop_bar() -> None:
-    trades = [
-        trade(13, 31, 11, "9.99"),
-        trade(13, 31, 12, "10.01"),
-        trade(13, 31, 13, "9.98"),
-        trade(13, 31, 14, "10.02"),
-        trade(13, 32, 0, "10.03"),
-    ]
-    found = next_break(
-        day=DAY,
-        symbol="TEST",
-        opening_high=Decimal("10"),
-        trades=trades,
-        after=at(13, 31, 10),
-    )
-    assert found is not None
-    assert found.crossed_at == at(13, 32)
-
-
-def test_fill_uses_latest_visible_ask_not_a_future_quote() -> None:
+def test_fill_uses_first_post_break_ask_not_a_stale_pre_break_quote() -> None:
     quotes = [
-        quote(13, 31, 9, "10.00", "10.05"),
-        quote(13, 31, 11, "10.10", "10.15"),
+        quote(13, 31, 9, "9.80", "9.90"),
+        quote(13, 31, 10, "10.00", "10.05"),
     ]
-    assert assumed_entry_ask(signal(), quotes, []) == Decimal("10.05")
+    result = assumed_entry_ask(signal(), quotes, [])
+    assert result.price == Decimal("10.05")
+    assert result.at == at(13, 31, 10)
 
 
-def test_breakeven_stop_fills_at_bid_and_charges_spread() -> None:
+def test_fill_can_wait_within_two_seconds_for_ask_to_enter_valid_band() -> None:
+    quotes = [
+        quote(13, 31, 10, "9.80", "9.90"),
+        quote(13, 31, 11, "10.00", "10.05"),
+    ]
+    result = assumed_entry_ask(signal(), quotes, [])
+    assert result.price == Decimal("10.05")
+    assert result.at == at(13, 31, 11)
+
+
+def test_fill_below_trigger_is_unanswerable() -> None:
+    result = assumed_entry_ask(signal(), [quote(13, 31, 10, "9.80", "9.90")], [])
+    assert result.price is None
+    assert "below" in result.reason
+
+
+def test_fill_past_deployed_one_point_five_percent_cap_is_unanswerable() -> None:
+    result = assumed_entry_ask(signal(), [quote(13, 31, 10, "10.19", "10.20")], [])
+    assert result.price is None
+    assert "+1.5% fill band" in result.reason
+
+
+def test_fill_at_deployed_cap_is_accepted() -> None:
+    result = assumed_entry_ask(signal(), [quote(13, 31, 10, "10.14", "10.15")], [])
+    assert result.price == Decimal("10.15")
+
+
+def test_no_stop_allows_drawdown_then_later_target() -> None:
     row = evaluate_attempt(
         day=DAY,
         target_pct=Decimal("3"),
-        attempt=1,
         signal=signal(),
-        entry_price=Decimal("10.05"),
-        quotes=[quote(13, 31, 10, "10.00", "10.05")],
-        halts=[],
-    )
-    assert row.exit_rule == "STOP 0%"
-    assert row.exit_price == Decimal("10.00")
-    assert row.return_pct == Decimal("10.00") / Decimal("10.05") * 100 - 100
-
-
-def test_target_wins_when_its_bid_arrives_before_stop() -> None:
-    row = evaluate_attempt(
-        day=DAY,
-        target_pct=Decimal("3"),
-        attempt=1,
-        signal=signal(),
-        entry_price=Decimal("10"),
+        entry=EntryQuote(Decimal("10"), at(13, 31, 10)),
         quotes=[
-            quote(13, 31, 10, "10.10", "10.20"),
-            quote(13, 31, 20, "10.31", "10.40"),
-            quote(13, 31, 30, "9.90", "10.00"),
+            quote(13, 31, 10, "9.80", "9.90"),
+            quote(13, 32, 0, "9.50", "9.60"),
+            quote(13, 34, 0, "10.30", "10.40"),
         ],
         halts=[],
     )
-    assert row.exit_rule == "+3%"
-    assert row.exit_at == at(13, 31, 20)
-    assert row.max_down == Decimal("0")
+    assert row.reached is True
+    assert row.target_at == at(13, 34)
+    assert row.max_down == Decimal("-5.00")
+    assert row.max_down_at == at(13, 32)
 
 
-def test_target_triggers_on_bid_not_ask() -> None:
+def test_drawdown_stops_at_first_target_not_later_low() -> None:
     row = evaluate_attempt(
         day=DAY,
         target_pct=Decimal("3"),
-        attempt=1,
         signal=signal(),
-        entry_price=Decimal("10"),
+        entry=EntryQuote(Decimal("10"), at(13, 31, 10)),
         quotes=[
-            quote(13, 31, 10, "10.10", "10.40"),
-            quote(13, 31, 20, "9.90", "10.00"),
-        ],
-        halts=[],
-    )
-    assert row.exit_rule == "STOP 0%"
-    assert row.exit_at == at(13, 31, 20)
-
-
-def test_max_down_stops_at_target_not_later_window_low() -> None:
-    row = evaluate_attempt(
-        day=DAY,
-        target_pct=Decimal("3"),
-        attempt=1,
-        signal=signal(),
-        entry_price=Decimal("10"),
-        quotes=[
-            quote(13, 31, 10, "10.10", "10.20"),
-            quote(13, 31, 20, "10.30", "10.40"),
+            quote(13, 31, 10, "9.90", "10.00"),
+            quote(13, 32, 0, "10.30", "10.40"),
             quote(13, 40, 0, "8.00", "8.10"),
         ],
         halts=[],
     )
-    assert row.max_down == Decimal("0")
-    assert row.max_up == Decimal("3.00")
+    assert row.reached is True
+    assert row.max_down == Decimal("-1.00")
 
 
-def test_halted_target_and_stop_quotes_cannot_fire() -> None:
+def test_never_reached_uses_drawdown_through_1000() -> None:
+    row = evaluate_attempt(
+        day=DAY,
+        target_pct=Decimal("3"),
+        signal=signal(),
+        entry=EntryQuote(Decimal("10"), at(13, 31, 10)),
+        quotes=[
+            quote(13, 31, 10, "9.90", "10.00"),
+            quote(13, 59, 59, "8.00", "8.10"),
+            quote(14, 0, 0, "7.00", "7.10"),
+        ],
+        halts=[],
+    )
+    assert row.reached is False
+    assert row.max_down == Decimal("-20.0")
+    assert row.max_down_at == at(13, 59, 59)
+
+
+def test_target_uses_executable_bid_not_ask() -> None:
+    row = evaluate_attempt(
+        day=DAY,
+        target_pct=Decimal("3"),
+        signal=signal(),
+        entry=EntryQuote(Decimal("10"), at(13, 31, 10)),
+        quotes=[
+            quote(13, 31, 10, "10.10", "10.40"),
+            quote(13, 59, 0, "10.20", "10.50"),
+        ],
+        halts=[],
+    )
+    assert row.reached is False
+    assert row.target_at is None
+
+
+def test_halted_quotes_are_excluded_from_target_and_drawdown() -> None:
     last_print = at(13, 31, 5)
     reopen = at(13, 36, 5)
     trades = [
@@ -196,53 +201,26 @@ def test_halted_target_and_stop_quotes_cannot_fire() -> None:
     row = evaluate_attempt(
         day=DAY,
         target_pct=Decimal("3"),
-        attempt=1,
         signal=signal(),
-        entry_price=Decimal("10"),
+        entry=EntryQuote(Decimal("10"), at(13, 31, 10)),
         quotes=quotes,
         halts=halts,
     )
     assert len(halts) == 1
-    assert row.exit_rule == "+3%"
-    assert row.exit_at == reopen
+    assert row.reached is True
+    assert row.target_at == reopen
     assert row.max_down == Decimal("0")
 
 
-def test_simulation_emits_every_stop_and_reentry_attempt() -> None:
-    trades = [
-        trade(13, 25, 0, "10.00"),
-        trade(13, 30, 5, "10.01"),
-        trade(13, 31, 0, "9.99"),
-        trade(13, 31, 5, "10.01"),
-        trade(13, 32, 0, "9.98"),
-        trade(13, 32, 5, "10.02"),
-    ]
-    quotes = [
-        quote(13, 30, 4, "10.00", "10.01"),
-        quote(13, 30, 6, "10.00", "10.01"),
-        quote(13, 31, 4, "10.00", "10.01"),
-        quote(13, 31, 6, "10.00", "10.01"),
-        quote(13, 32, 4, "10.00", "10.01"),
-        quote(13, 32, 6, "10.00", "10.01"),
-    ]
-    rows = simulate_symbol(
-        day=DAY,
-        target_pct=Decimal("3"),
-        symbol="TEST",
-        trades=trades,
-        quotes=quotes,
-    )
-    assert [row.attempt for row in rows] == [1, 2, 3]
-    assert [row.exit_rule for row in rows] == ["STOP 0%", "STOP 0%", "STOP 0%"]
-
-
-def test_runner_is_read_only_and_has_no_trailing_stop() -> None:
+def test_runner_is_read_only_and_has_no_exit_or_stop_simulation() -> None:
     source = (
         Path(__file__).resolve().parents[2].joinpath("scripts/orb_strategy_backtest.py").read_text()
     )
     upper = source.upper()
     assert "BROKER_ADAPTER" not in upper
     assert "TRAILING" not in upper
+    assert "STOP 0%" not in upper
+    assert "EXIT_RULE" not in upper
     assert " INSERT " not in upper
     assert " UPDATE " not in upper
     assert " DELETE " not in upper

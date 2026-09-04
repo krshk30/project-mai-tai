@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Simulate fixed-high ORB targets with breakeven-stop re-entry."""
+"""Measure uninterrupted ORB drawdown through first target or 10:00 ET."""
 
 from __future__ import annotations
 
@@ -10,11 +10,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
+from statistics import median
 from typing import Iterable, Sequence
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
+from project_mai_tai.backtest.orb_entry import DEFAULT_GAP_CAP_PCT
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.market_halts import (
     HALT_MIN_PRINT_GAP,
@@ -29,17 +31,17 @@ from project_mai_tai.strategy_core.orb_tick_aggregator import OrbTickAggregator
 EASTERN = ZoneInfo("America/New_York")
 DISCLOSURE = "SIMULATED | NO REALISED CONTROL | NOT SIZE-QUALIFIED"
 TARGETS = (Decimal("3"), Decimal("5"))
-ASK_MAX_AGE = timedelta(seconds=2)
+ENTRY_QUOTE_MAX_DELAY = timedelta(seconds=2)
+ENTRY_GAP_CAP_PCT = Decimal(str(DEFAULT_GAP_CAP_PCT))
 FILL_RULE = (
-    "fixed level is the highest 1-minute trade bar from 09:25 through 09:29; the first "
-    "09:30-09:59 print strictly above it is the break, filled at the latest NBBO ask already "
-    "visible then if positive and no more than 2 seconds old; after a stop, re-entry cannot "
-    "occur in the same 1-minute bar and requires another print at or below the fixed level "
-    "before a later-bar print breaks it again"
+    "entry time is the break print; entry price is the first positive NBBO ask in the band "
+    "from the fixed trigger through "
+    f"trigger +{ENTRY_GAP_CAP_PCT.normalize()}%, at or within 2 seconds after the break; "
+    "otherwise UNANSWERABLE"
 )
-STOP_RULE = (
-    "breakeven triggers on the first executable bid at or below entry and fills at that bid; "
-    "the spread and any gap through entry are charged"
+PATH_RULE = (
+    "no stop and no early exit; executable bids are observed until the first target touch or "
+    "10:00 ET, with shared confirmed-halt windows excluded"
 )
 
 
@@ -63,8 +65,16 @@ class QuotePoint:
 class BreakSignal:
     symbol: str
     opening_high: Decimal
+    attempt: int
     bar_at: datetime
     crossed_at: datetime
+
+
+@dataclass(frozen=True)
+class EntryQuote:
+    price: Decimal | None
+    at: datetime | None
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -78,12 +88,9 @@ class AttemptRow:
     entry_price: Decimal | None
     slip_pct: Decimal | None
     max_down: Decimal | None
-    max_up: Decimal | None
-    max_up_at: datetime | None
-    exit_rule: str
-    exit_at: datetime | None
-    exit_price: Decimal | None
-    return_pct: Decimal | None
+    max_down_at: datetime | None
+    target_at: datetime | None
+    reached: bool | None
     note: str
 
 
@@ -101,6 +108,10 @@ def utc(value: datetime) -> datetime:
 
 def at_et(day: date, hour: int, minute: int) -> datetime:
     return datetime.combine(day, time(hour, minute), EASTERN).astimezone(UTC)
+
+
+def minute_floor(value: datetime) -> datetime:
+    return value.replace(second=0, microsecond=0)
 
 
 def percent(value: Decimal | None, basis: Decimal | None) -> Decimal | None:
@@ -159,60 +170,74 @@ def fixed_opening_high(day: date, trades: Sequence[TradePoint]) -> Decimal | Non
     return Decimal(str(max(bar.high for bar in bars))) if bars else None
 
 
-def next_break(
+def break_attempts(
     *,
     day: date,
     symbol: str,
     opening_high: Decimal,
     trades: Sequence[TradePoint],
-    after: datetime | None,
-) -> BreakSignal | None:
+) -> list[BreakSignal]:
+    """Return one crossing per bar; later attempts require a fresh reset below the level."""
     start = at_et(day, 9, 30)
     end = at_et(day, 10, 0)
-    candidates = [trade for trade in trades if start <= trade.at < end]
-    if after is None:
-        crossing = next((trade for trade in candidates if trade.price > opening_high), None)
-    else:
+    armed = True
+    last_break_bar: datetime | None = None
+    signals: list[BreakSignal] = []
+    for trade in trades:
+        if not start <= trade.at < end:
+            continue
+        bar_at = minute_floor(trade.at)
+        if trade.price <= opening_high:
+            armed = True
+            continue
+        if not armed or (last_break_bar is not None and bar_at <= last_break_bar):
+            continue
+        signals.append(
+            BreakSignal(
+                symbol=symbol,
+                opening_high=opening_high,
+                attempt=len(signals) + 1,
+                bar_at=bar_at,
+                crossed_at=trade.at,
+            )
+        )
         armed = False
-        crossing = None
-        first_reentry_bar = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
-        for trade in candidates:
-            if trade.at <= after:
-                continue
-            if trade.price <= opening_high:
-                armed = True
-            elif armed and trade.at >= first_reentry_bar:
-                crossing = trade
-                break
-    if crossing is None:
-        return None
-    return BreakSignal(
-        symbol=symbol,
-        opening_high=opening_high,
-        bar_at=crossing.at.replace(second=0, microsecond=0),
-        crossed_at=crossing.at,
-    )
+        last_break_bar = bar_at
+    return signals
 
 
 def assumed_entry_ask(
     signal: BreakSignal,
     quotes: Sequence[QuotePoint],
     halts: Sequence[HaltWindow],
-) -> Decimal | None:
-    eligible = [quote for quote in quotes if quote.at <= signal.crossed_at]
-    if not eligible:
-        return None
-    latest = eligible[-1]
-    if (
-        latest.ask <= 0
-        or signal.crossed_at - latest.at > ASK_MAX_AGE
-        or timestamp_is_halted(latest.at, list(halts))
-    ):
-        return None
-    return latest.ask
+) -> EntryQuote:
+    latest = signal.crossed_at + ENTRY_QUOTE_MAX_DELAY
+    candidates = [
+        item
+        for item in quotes
+        if signal.crossed_at <= item.at <= latest
+        and item.ask > 0
+        and not timestamp_is_halted(item.at, list(halts))
+    ]
+    if not candidates:
+        return EntryQuote(None, None, "no positive post-break ask within 2 seconds")
+    bound = signal.opening_high * (Decimal("1") + ENTRY_GAP_CAP_PCT / Decimal("100"))
+    quote = next(
+        (item for item in candidates if signal.opening_high <= item.ask <= bound),
+        None,
+    )
+    if quote is None:
+        if all(item.ask < signal.opening_high for item in candidates):
+            return EntryQuote(None, candidates[-1].at, "post-break asks remain below the fixed trigger")
+        return EntryQuote(
+            None,
+            candidates[0].at,
+            f"post-break asks do not enter the trigger-to-+{ENTRY_GAP_CAP_PCT}% fill band",
+        )
+    return EntryQuote(quote.ask, quote.at)
 
 
-def _executable_quotes(
+def executable_quotes(
     quotes: Sequence[QuotePoint],
     *,
     start: datetime,
@@ -228,32 +253,21 @@ def _executable_quotes(
     ]
 
 
-def max_drawdown(quotes: Sequence[QuotePoint], entry_price: Decimal) -> Decimal | None:
-    if not quotes:
-        return None
-    return min(
-        Decimal("0"),
-        *(percent(quote.bid, entry_price) for quote in quotes),
-    )
-
-
 def evaluate_attempt(
     *,
     day: date,
     target_pct: Decimal,
-    attempt: int,
     signal: BreakSignal,
-    entry_price: Decimal | None,
+    entry: EntryQuote,
     quotes: Sequence[QuotePoint],
     halts: Sequence[HaltWindow],
 ) -> AttemptRow:
-    slip = percent(entry_price, signal.opening_high)
-    if entry_price is None:
+    if entry.price is None or entry.at is None:
         return AttemptRow(
             day,
             target_pct,
             signal.symbol,
-            attempt,
+            signal.attempt,
             signal.opening_high,
             signal.crossed_at,
             None,
@@ -261,75 +275,56 @@ def evaluate_attempt(
             None,
             None,
             None,
-            "UNANSWERABLE",
             None,
-            None,
-            None,
-            "no fresh positive ask at the break",
+            entry.reason,
         )
-    ten = at_et(day, 10, 0)
-    path = _executable_quotes(quotes, start=signal.crossed_at, end=ten, halts=halts)
-    observed: list[QuotePoint] = []
-    target_price = entry_price * (Decimal("1") + target_pct / Decimal("100"))
-    exit_quote: QuotePoint | None = None
-    exit_rule = ""
-    for quote in path:
-        observed.append(quote)
-        if quote.bid >= target_price:
-            exit_quote = quote
-            exit_rule = f"+{target_pct.normalize()}%"
-            break
-        if quote.bid <= entry_price:
-            exit_quote = quote
-            exit_rule = "STOP 0%"
-            break
-    if exit_quote is None:
-        close_quotes = [
-            quote
-            for quote in quotes
-            if quote.at >= ten and quote.bid > 0 and not timestamp_is_halted(quote.at, list(halts))
-        ]
-        if not close_quotes:
-            return AttemptRow(
-                day,
-                target_pct,
-                signal.symbol,
-                attempt,
-                signal.opening_high,
-                signal.crossed_at,
-                entry_price,
-                slip,
-                max_drawdown(observed, entry_price),
-                max((percent(item.bid, entry_price) for item in observed), default=None),
-                max(observed, key=lambda item: item.bid).at if observed else None,
-                "UNANSWERABLE",
-                None,
-                None,
-                None,
-                "no executable bid for the 10:00 close",
-            )
-        exit_quote = close_quotes[0]
-        observed.append(exit_quote)
-        exit_rule = "10:00"
-    max_quote = max(observed, key=lambda item: item.bid)
-    min_quote = min(observed, key=lambda item: item.bid)
+    path = executable_quotes(
+        quotes,
+        start=entry.at,
+        end=at_et(day, 10, 0),
+        halts=halts,
+    )
+    if not path:
+        return AttemptRow(
+            day,
+            target_pct,
+            signal.symbol,
+            signal.attempt,
+            signal.opening_high,
+            signal.crossed_at,
+            entry.price,
+            percent(entry.price, signal.opening_high),
+            None,
+            None,
+            None,
+            None,
+            "no executable bid from entry through 10:00",
+        )
+    target_price = entry.price * (Decimal("1") + target_pct / Decimal("100"))
+    target_quote = next((quote for quote in path if quote.bid >= target_price), None)
+    measured = path if target_quote is None else path[: path.index(target_quote) + 1]
+    low_quote = min(measured, key=lambda item: item.bid)
+    low_pct = percent(low_quote.bid, entry.price)
+    if low_pct is None or low_pct >= 0:
+        drawdown = Decimal("0")
+        drawdown_at = signal.crossed_at
+    else:
+        drawdown = low_pct
+        drawdown_at = low_quote.at
     return AttemptRow(
         day,
         target_pct,
         signal.symbol,
-        attempt,
+        signal.attempt,
         signal.opening_high,
         signal.crossed_at,
-        entry_price,
-        slip,
-        min(Decimal("0"), percent(min_quote.bid, entry_price) or Decimal("0")),
-        percent(max_quote.bid, entry_price),
-        max_quote.at,
-        exit_rule,
-        exit_quote.at,
-        exit_quote.bid,
-        percent(exit_quote.bid, entry_price),
-        "ASSUMED ASK FILL",
+        entry.price,
+        percent(entry.price, signal.opening_high),
+        drawdown,
+        drawdown_at,
+        target_quote.at if target_quote is not None else None,
+        target_quote is not None,
+        "ASSUMED POST-BREAK ASK FILL",
     )
 
 
@@ -340,38 +335,56 @@ def simulate_symbol(
     symbol: str,
     trades: Sequence[TradePoint],
     quotes: Sequence[QuotePoint],
+    signals: Sequence[BreakSignal] | None = None,
 ) -> list[AttemptRow]:
     opening_high = fixed_opening_high(day, trades)
     if opening_high is None:
         return []
     halts = detect_halts(trades, quotes)
-    rows: list[AttemptRow] = []
-    after: datetime | None = None
-    while True:
-        signal = next_break(
-            day=day,
-            symbol=symbol,
-            opening_high=opening_high,
-            trades=trades,
-            after=after,
-        )
-        if signal is None:
-            break
-        entry_price = assumed_entry_ask(signal, quotes, halts)
-        row = evaluate_attempt(
+    return [
+        evaluate_attempt(
             day=day,
             target_pct=target_pct,
-            attempt=len(rows) + 1,
             signal=signal,
-            entry_price=entry_price,
+            entry=assumed_entry_ask(signal, quotes, halts),
             quotes=quotes,
             halts=halts,
         )
-        rows.append(row)
-        if row.exit_rule != "STOP 0%" or row.exit_at is None:
-            break
-        after = row.exit_at
-    return rows
+        for signal in (
+            signals
+            if signals is not None
+            else break_attempts(
+                day=day,
+                symbol=symbol,
+                opening_high=opening_high,
+                trades=trades,
+            )
+        )
+    ]
+
+
+def load_attempts_csv(path: Path) -> dict[tuple[date, str], list[BreakSignal]]:
+    attempts: dict[tuple[date, str], list[BreakSignal]] = {}
+    with path.open(newline="") as handle:
+        for row in csv.DictReader(handle):
+            day = date.fromisoformat(row["day"])
+            symbol = row["symbol"].upper()
+            crossed_et = datetime.combine(
+                day,
+                time.fromisoformat(row["entry_time_et"]),
+                EASTERN,
+            )
+            crossed_at = crossed_et.astimezone(UTC)
+            attempts.setdefault((day, symbol), []).append(
+                BreakSignal(
+                    symbol=symbol,
+                    opening_high=Decimal(row["opening_high"]),
+                    attempt=int(row["attempt"]),
+                    bar_at=minute_floor(crossed_at),
+                    crossed_at=crossed_at,
+                )
+            )
+    return attempts
 
 
 def load_universe(session_factory, day: date) -> set[str]:
@@ -396,7 +409,7 @@ def load_market(
     session_factory, day: date, symbol: str
 ) -> tuple[list[TradePoint], list[QuotePoint]]:
     start = at_et(day, 9, 25)
-    end = at_et(day, 10, 1)
+    end = at_et(day, 10, 0)
     with session_factory() as session:
         trades = [
             TradePoint(
@@ -409,7 +422,7 @@ def load_market(
             for row in session.execute(
                 text(
                     "SELECT event_ts,price,size,exchange,conditions FROM market_capture_trades "
-                    "WHERE symbol=:symbol AND event_ts>=:start AND event_ts<=:end "
+                    "WHERE symbol=:symbol AND event_ts>=:start AND event_ts<:end "
                     "ORDER BY event_ts,id"
                 ),
                 {"symbol": symbol, "start": start, "end": end},
@@ -421,7 +434,7 @@ def load_market(
             for row in session.execute(
                 text(
                     "SELECT event_ts,bid_price,ask_price FROM market_capture_quotes "
-                    "WHERE symbol=:symbol AND event_ts>=:start AND event_ts<=:end "
+                    "WHERE symbol=:symbol AND event_ts>=:start AND event_ts<:end "
                     "AND bid_price IS NOT NULL AND ask_price IS NOT NULL ORDER BY event_ts,id"
                 ),
                 {"symbol": symbol, "start": start, "end": end},
@@ -430,12 +443,24 @@ def load_market(
     return dedupe_trades(trades), quotes
 
 
-def run_day(session_factory, day: date, target_pct: Decimal, now: datetime | None = None) -> DayRun:
+def run_day(
+    session_factory,
+    day: date,
+    target_pct: Decimal,
+    now: datetime | None = None,
+    attempts: dict[tuple[date, str], list[BreakSignal]] | None = None,
+) -> DayRun:
     if utc(now or datetime.now(UTC)) < at_et(day, 10, 0):
         return DayRun(day, target_pct, unavailable_reason="09:30-10:00 window not complete")
     rows: list[AttemptRow] = []
-    for symbol in sorted(load_universe(session_factory, day)):
+    symbols = (
+        {symbol for attempt_day, symbol in attempts if attempt_day == day}
+        if attempts is not None
+        else load_universe(session_factory, day)
+    )
+    for symbol in sorted(symbols):
         trades, quotes = load_market(session_factory, day, symbol)
+        day_signals = attempts.get((day, symbol), []) if attempts is not None else None
         rows.extend(
             simulate_symbol(
                 day=day,
@@ -443,6 +468,7 @@ def run_day(session_factory, day: date, target_pct: Decimal, now: datetime | Non
                 symbol=symbol,
                 trades=trades,
                 quotes=quotes,
+                signals=day_signals,
             )
         )
     return DayRun(day, target_pct, rows)
@@ -464,23 +490,43 @@ def pct(value: Decimal | None) -> str:
     return "-" if value is None else f"{value:+.2f}%"
 
 
+def target_result(row: AttemptRow) -> str:
+    if row.reached is None:
+        return "UNANSWERABLE"
+    return minute(row.target_at) if row.reached else "NEVER REACHED"
+
+
+def drawdown_band(value: Decimal) -> str:
+    if value >= Decimal("-1"):
+        return "0 to -1%"
+    if value >= Decimal("-2"):
+        return "-1 to -2%"
+    if value >= Decimal("-3"):
+        return "-2 to -3%"
+    if value >= Decimal("-5"):
+        return "-3 to -5%"
+    return "worse than -5%"
+
+
 def render(runs: Sequence[DayRun]) -> str:
-    lines = [DISCLOSURE, f"Fill rule: {FILL_RULE}", f"Stop fill: {STOP_RULE}"]
+    lines = [DISCLOSURE, f"Fill rule: {FILL_RULE}", f"Path: {PATH_RULE}"]
     for target in TARGETS:
         lines.extend(
             [
                 "",
                 f"Target +{target.normalize()}%",
                 "",
-                "| day | sym | attempt | opening high | entry | px | slip % | pre-run down | max up | up at | exit | exit at | exit px | return |",
-                "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|",
+                "| day | sym | attempt | opening high | entry | entry px | slip % | max down | down at | target at |",
+                "|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
             ]
         )
         target_runs = sorted(
             (run for run in runs if run.target_pct == target),
             key=lambda run: run.day,
         )
+        all_rows: list[AttemptRow] = []
         for run in target_runs:
+            all_rows.extend(run.rows)
             totals: dict[str, int] = {}
             for row in run.rows:
                 totals[row.symbol] = totals.get(row.symbol, 0) + 1
@@ -500,34 +546,56 @@ def render(runs: Sequence[DayRun]) -> str:
                             money(row.entry_price),
                             pct(row.slip_pct),
                             pct(row.max_down),
-                            pct(row.max_up),
-                            minute(row.max_up_at),
-                            row.exit_rule,
-                            clock(row.exit_at),
-                            money(row.exit_price),
-                            pct(row.return_pct),
+                            minute(row.max_down_at),
+                            target_result(row),
                         ]
                     )
                     + " |"
                 )
-        lines.append("")
+        gradable = [row for row in all_rows if row.reached is not None]
+        reached = [row for row in gradable if row.reached and row.max_down is not None]
+        lines.extend(
+            [
+                "",
+                f"Target +{target.normalize()}% summary",
+                "",
+                "| reached | median down | worst down | 0 to -1% | -1 to -2% | -2 to -3% | -3 to -5% | worse than -5% |",
+                "|---:|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        if reached:
+            downs = [row.max_down for row in reached if row.max_down is not None]
+            labels = (
+                "0 to -1%",
+                "-1 to -2%",
+                "-2 to -3%",
+                "-3 to -5%",
+                "worse than -5%",
+            )
+            bands = {label: sum(drawdown_band(value) == label for value in downs) for label in labels}
+            denominator = len(reached)
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        f"{denominator}/{len(gradable)}",
+                        pct(median(downs)),
+                        pct(min(downs)),
+                        f"{bands['0 to -1%']}/{denominator}",
+                        f"{bands['-1 to -2%']}/{denominator}",
+                        f"{bands['-2 to -3%']}/{denominator}",
+                        f"{bands['-3 to -5%']}/{denominator}",
+                        f"{bands['worse than -5%']}/{denominator}",
+                    ]
+                )
+                + " |"
+            )
+        else:
+            lines.append(f"| 0/{len(gradable)} | - | - | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |")
+        lines.append(f"UNANSWERABLE: {len(all_rows) - len(gradable)}/{len(all_rows)} attempts.")
         for run in target_runs:
             if run.unavailable_reason:
                 lines.append(f"{run.day}: NOT REACHABLE - {run.unavailable_reason}.")
-                continue
-            attempts = len(run.rows)
-            wins = sum(row.exit_rule == f"+{target.normalize()}%" for row in run.rows)
-            stops = sum(row.exit_rule == "STOP 0%" for row in run.rows)
-            closes = sum(row.exit_rule == "10:00" for row in run.rows)
-            unanswerable = sum(row.exit_rule == "UNANSWERABLE" for row in run.rows)
-            total_return = sum(
-                (row.return_pct for row in run.rows if row.return_pct is not None), Decimal("0")
-            )
-            lines.append(
-                f"{run.day}: attempts {attempts}; wins {wins}/{attempts}; stops {stops}/{attempts}; "
-                f"10:00 {closes}/{attempts}; UNANSWERABLE {unanswerable}/{attempts}; "
-                f"total {pct(total_return)}."
-            )
     return "\n".join(lines)
 
 
@@ -542,13 +610,10 @@ def write_csv(path: Path, runs: Sequence[DayRun]) -> None:
             "entry_time_et",
             "entry_price",
             "slip_pct",
-            "max_down_before_exit",
-            "max_up_before_exit",
-            "max_up_at_et",
-            "exit_rule",
-            "exit_time_et",
-            "exit_price",
-            "return_pct",
+            "max_down_to_target_or_1000",
+            "max_down_at_et",
+            "target_at_et",
+            "target_result",
             "note",
             "qualification",
         ]
@@ -569,13 +634,12 @@ def write_csv(path: Path, runs: Sequence[DayRun]) -> None:
                         "entry_time_et": clock(row.entry_at),
                         "entry_price": row.entry_price or "",
                         "slip_pct": row.slip_pct if row.slip_pct is not None else "",
-                        "max_down_before_exit": row.max_down if row.max_down is not None else "",
-                        "max_up_before_exit": row.max_up if row.max_up is not None else "",
-                        "max_up_at_et": minute(row.max_up_at),
-                        "exit_rule": row.exit_rule,
-                        "exit_time_et": clock(row.exit_at),
-                        "exit_price": row.exit_price or "",
-                        "return_pct": row.return_pct if row.return_pct is not None else "",
+                        "max_down_to_target_or_1000": (
+                            row.max_down if row.max_down is not None else ""
+                        ),
+                        "max_down_at_et": minute(row.max_down_at),
+                        "target_at_et": minute(row.target_at),
+                        "target_result": target_result(row),
                         "note": row.note,
                         "qualification": DISCLOSURE,
                     }
@@ -587,6 +651,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", required=True, type=date.fromisoformat)
     parser.add_argument("--end-date", type=date.fromisoformat)
     parser.add_argument("--csv", type=Path)
+    parser.add_argument(
+        "--attempts-csv",
+        type=Path,
+        help="optional frozen entry-attempt population to replay without reselection",
+    )
     return parser.parse_args()
 
 
@@ -596,12 +665,13 @@ def main() -> int:
     if end_day < args.start_date:
         raise SystemExit("--end-date must not precede --start-date")
     session_factory = build_session_factory(get_settings())
+    attempts = load_attempts_csv(args.attempts_csv) if args.attempts_csv else None
     runs: list[DayRun] = []
     for target in TARGETS:
         day = args.start_date
         while day <= end_day:
             if day.weekday() < 5:
-                runs.append(run_day(session_factory, day, target))
+                runs.append(run_day(session_factory, day, target, attempts=attempts))
             day += timedelta(days=1)
     print(render(runs))
     if args.csv:
