@@ -22,8 +22,9 @@ CELU 08-27 submitted 16:04:56 -> filled 16:05:00) and 31 filled session=PM order
   5. `cancel` STOPS on the first non-2xx and refuses to touch the second leg.
   6. `exit-pm` RE-VERIFIES the legs are gone itself and refuses to place if any leg still works --
      so a mistaken invocation cannot sell shares an exit leg still reserves.
-  7. Any unexpected shape -- wrong qty, unexpected child count, unrecognised status -- aborts.
-  8. Raw broker status code + body are printed for every call. No summarising.
+  7. `exit-pm` binds the requested symbol to the filled one-share entry tree before selling.
+  8. Any unexpected shape -- wrong qty, unexpected child count, unrecognised status -- aborts.
+  9. Raw broker status code + body are printed for every call. No summarising.
 
 RUN ON THE VPS as a user that can read the token store.
 
@@ -32,7 +33,7 @@ RUN ON THE VPS as a user that can read the token store.
   python3 schwab_oco_child_cancel_probe.py status     --entry <entryOrderId>
   python3 schwab_oco_child_cancel_probe.py cancel     --entry <entryOrderId> --i-have-go  # 16:01 ET
   python3 schwab_oco_child_cancel_probe.py verify     --entry <entryOrderId>
-  python3 schwab_oco_child_cancel_probe.py exit-pm    --symbol F --limit <px> --i-have-go
+  python3 schwab_oco_child_cancel_probe.py exit-pm    --entry <entryOrderId> --symbol F --limit <px> --i-have-go
   python3 schwab_oco_child_cancel_probe.py order      --order <exitOrderId>
 """
 
@@ -171,6 +172,25 @@ def sell_children(tree: dict) -> list[dict]:
 
     walk(tree)
     return out
+
+
+def require_matching_filled_entry(tree: dict, symbol: str) -> None:
+    """Bind the PM sell to the probe entry instead of trusting two CLI values."""
+    if float(tree.get("filledQuantity") or 0) != QTY:
+        die(f"entry filledQuantity={tree.get('filledQuantity')}, expected {QTY} — refusing to sell")
+    buy_legs = [
+        leg
+        for leg in tree.get("orderLegCollection") or []
+        if str(leg.get("instruction") or "").upper() == "BUY"
+    ]
+    if len(buy_legs) != 1:
+        die(f"expected exactly one BUY leg on the entry, saw {len(buy_legs)} — refusing to guess")
+    entry_symbol = str((buy_legs[0].get("instrument") or {}).get("symbol") or "").upper()
+    if entry_symbol != symbol.upper():
+        die(
+            f"entry belongs to {entry_symbol or '(missing symbol)'}, not {symbol.upper()} — "
+            "refusing to sell a different holding"
+        )
 
 
 # ----------------------------------------------------------------- subcommands
@@ -326,7 +346,9 @@ def cmd_exit_pm(a) -> None:
     code, raw = call("GET", f"/trader/v1/accounts/{quote(h, safe='')}/orders/{quote(a.entry, safe='')}")
     if code != 200:
         die(f"pre-exit re-read HTTP {code}")
-    kids = sell_children(json.loads(raw))
+    tree = json.loads(raw)
+    require_matching_filled_entry(tree, a.symbol)
+    kids = sell_children(tree)
     still = [k for k in kids if k["status"] in ACCEPTED]
     if still:
         die(f"a SELL leg is STILL WORKING {still} — refusing to place a second sell against "
@@ -395,7 +417,7 @@ def main() -> None:
         ("status", cmd_status, ("entry",)),
         ("cancel", cmd_cancel, ("entry", "go")),
         ("verify", cmd_verify, ("entry",)),
-        ("exit-pm", cmd_exit_pm, ("symbol", "limit", "go")),
+        ("exit-pm", cmd_exit_pm, ("symbol", "entry", "limit", "go")),
         ("order", cmd_order, ("order",)),
     ):
         s = sub.add_parser(name)
