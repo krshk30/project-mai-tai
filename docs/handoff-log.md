@@ -15,6 +15,81 @@
 
 ---
 
+## 2026-09-03 — batch `2026-09-03-1601-handoff-and-oversold-park`, integrator `claude-1`
+
+**Three merges: #887, #888, #889. Box and main in sync at `b308a594`, fleet flat.**
+
+### A storm, and the operator stopped it before we did
+CHPT took **205 oversold refusals in eight minutes** (13:45:35→13:53:32) plus **14 HTTP 429s inside
+fourteen seconds**. Nothing in the fleet noticed; the operator saw rejection pop-ups on his laptop.
+CONF1 was disabled mid-session, the OMS and v2 restarted, and #885's absolute reject ceiling shipped
+and deployed to bound any recurrence. The position was closed by hand — established from broker fill
+records, not from a positions read, after an earlier claim that it "closed out during the deploy"
+turned out to be wrong.
+
+**The mechanism, and it is the sharpest sentence of the day:** `oms/service.py:3600` — on a false
+`released` the reconcile runs `_native_oco_armed_confirmed_at.pop(...)`. That dict *is* the
+stand-down, fed by real broker truth. So the guess did not merely permit the send: **it deleted the
+confirmed fact that would have blocked it**, once per quote tick.
+
+**And it is not new.** `broker_orders` spans 2026-03-30→09-03: **639 oversold refusals, all
+`live:schwab_1m_v2`, across 20 ET days from 07-01**, with four storm days — 07-13 AGEN 127, 07-31
+FCUV/KUST 126, 08-04 AAOG 115, 09-03 CHPT 205. The operator's recollection of "something similar
+about a month ago" was exactly right. ⚠️ That establishes the **class** is old; it does **not**
+establish the earlier storms share the 3600 mechanism.
+⇒ **Parked deliberately unfixed (OVSD1)**: one instance of *that mechanism*, no proven root cause,
+and every candidate fix was a large speculative change to the live exit path.
+
+### RATE1: built, validated, and dropped on the channel
+The reject-rate alarm fired on **exactly one** bucket across twelve retained days with zero false
+positives — and was dropped anyway, because *an alarm the operator learns to ignore is worse than no
+alarm*. The irony is instructive: RATE1 itself refused to page on 429s for that very reason, and the
+operator applied the same test one level up, to the whole channel. **A detection result does not
+earn a channel.** Recorded as an **accepted risk**, with the consequence written down — a recurrence
+is now detected only by the operator noticing.
+
+### The 16:01 handoff, and nine findings
+`#889` built the 16:01 cancel-and-reexit: harvest the working SELL legs, DELETE each, **confirm
+zero**, then a PM limit exit. It ships **flag-off** and has never run.
+`codex-2` withheld the pin **three times, on nine findings, and every one was real.** The recurring
+shape was **an absence read as evidence**: no working legs, no refusal, no unknown status, no
+failures in the filtered set. Two are worth carrying:
+- **A truncation guard that could never fire.** Measured live, `maxResults=500` and `maxResults=1000`
+  both return the *same* 224 rows, so a row-count check against the cap is unfalsifiable. The fix was
+  not a better threshold — the account-wide sweep was **deleted**, because an absence cannot be
+  inferred from a list whose completeness cannot be established. The path now reads one entry's own
+  order tree.
+- **A naked-sell hole.** Every guard reasoned about *orders*; none established the *shares* existed.
+  The probe now reads `longQuantity` and refuses unless the broker confirms it holds them.
+
+### Two things established by reading rather than guessing
+- **The 16:00 EOD transition was disabled on 08-04 by the operator as a deliberate jam mitigation**,
+  and the reason **is** recorded in two documents. AAOG's 113 rejects began **three seconds** after
+  the transition marker. D1 was designed and never built; D2 was incidentally fixed by #885.
+- **Schwab OCO legs are sent `duration=DAY, session=NORMAL` and do expire at the bell** — DAIC 08-25
+  at 16:00:03 and CELU 08-27 at 16:00:15, both unfilled, with no cancel path of ours able to have
+  run. ⚠️ The broker's *echo* is not retained, so the field is verified in our builder and the
+  behaviour is verified twice, but not the stored value at Schwab. FLYE 09-01 is **not** evidence —
+  it resolved by fill.
+
+### ⛔ A ruling that turned out not to be executable
+The operator ruled that a refused PM exit must **restore the bracket**. Schwab **rejects a STOP leg
+outside RTH** (measured 08-04), so after 16:00 there is nothing to restore. The path logs
+`RESTORE_IMPOSSIBLE` and pages rather than placing an order that would certainly be rejected and
+calling it `RESTORED`. **Stated rather than papered over; the operator still needs to rule on it.**
+
+### My own wrong turns, recorded because that is what this file is for
+- **I compared `-k`-filtered test runs** and reported "identical failure sets" while a module-global
+  patch in my own test leaked and broke **deselected** modules (full suite 46→59). *The control must
+  cover the population the change can reach.*
+- **A `perl` mutation replaced the first of eight identical guard lines**, not the one under test, so
+  a covered guard read as uncovered. *Assert the mutation landed where you think it did.*
+- **I let a PR body lag its commits five times**, including an hour after widening the rule against
+  it. Replaced the reminder with a mechanism: the body check now runs *inside* the push command.
+- **I acked the freeze before logging the day**, and `log.sh` refused every entry — correctly. My
+  journal held only carried-claim notes, so the manifest would have shipped with none of the day's
+  work in it. **Log first, ack second.**
+
 ## 2026-09-03 — item triage: three closed, one blocker corrected, one control found unmet
 
 **Closed 2026-09-03 — triage by `claude-1`.**
