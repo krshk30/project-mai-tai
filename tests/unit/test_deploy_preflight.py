@@ -149,3 +149,85 @@ def test_parse_datetime_accepts_control_plane_eastern_format() -> None:
 
     assert parsed is not None
     assert parsed == datetime(2026, 3, 30, 11, 10, 7, tzinfo=UTC)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# 2026-09-04 deploy: the fail-closed gate refused on LATENCY, not on a safety predicate.
+# A cold /api/overview measured 5.5-6.7s against a 5.0s budget, so the deploy could only be made
+# to pass by warming the endpoint by hand and re-running.
+# ⛔ Both failures below still FAIL CLOSED — that was never in doubt. What was wrong is that the
+# ROUTINE failure (slow) escaped as an unhandled TimeoutError while the SERIOUS one (unreachable)
+# produced the clean message. A gate whose common failure looks like a crash gets retried until
+# it goes green, which is how a safety gate stops being one.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+import http.server
+import socketserver
+import threading
+import time
+
+import pytest
+
+from project_mai_tai.deploy_preflight import (
+    _PREFLIGHT_HTTP_TIMEOUT_SECONDS,
+    load_json,
+)
+
+
+def _slow_server(delay: float):
+    class _H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            time.sleep(delay)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_a):
+            pass
+
+    srv = socketserver.TCPServer(("127.0.0.1", 0), _H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_a_slow_control_plane_raises_a_CLEAN_timeout_message_not_a_traceback() -> None:
+    """⛔ A read timeout is NOT a URLError. Before the fix it escaped unhandled."""
+    srv = _slow_server(2.0)
+    try:
+        url = f"http://127.0.0.1:{srv.server_address[1]}/api/overview"
+        with pytest.raises(SystemExit) as exc:
+            load_json(url, timeout_seconds=0.5)
+        msg = str(exc.value)
+        assert "TIMED OUT" in msg
+        assert "not the same as it being" in msg.lower() or "NOT the same" in msg
+    finally:
+        srv.shutdown()
+
+
+def test_an_unreachable_control_plane_says_UNREACHABLE_not_slow() -> None:
+    """⛔ The two must never collapse into one message: 'slow' invites a retry, 'down' must not."""
+    with pytest.raises(SystemExit) as exc:
+        load_json("http://127.0.0.1:9/api/overview", timeout_seconds=0.5)
+    msg = str(exc.value)
+    assert "UNREACHABLE" in msg
+    assert "TIMED OUT" not in msg
+
+
+def test_the_timeout_budget_covers_the_measured_cold_latency() -> None:
+    """PINNED. Cold /api/overview measured 5.5-6.7s on 2026-09-04; the old budget was 5.0s.
+
+    ⛔ If anyone lowers this back under the measured cold worst case, the gate starts refusing on
+    latency again and the hand-warming workaround comes back with it.
+    """
+    assert _PREFLIGHT_HTTP_TIMEOUT_SECONDS >= 10.0, (
+        "the budget must clear the measured 6.7s cold read with headroom"
+    )
+
+
+def test_a_healthy_endpoint_still_loads() -> None:
+    """The control: the gate must still READ the overview, not just fail politely."""
+    srv = _slow_server(0.0)
+    try:
+        url = f"http://127.0.0.1:{srv.server_address[1]}/api/overview"
+        assert load_json(url, timeout_seconds=5.0) == {}
+    finally:
+        srv.shutdown()

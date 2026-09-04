@@ -57,12 +57,35 @@ def parse_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def load_json(url: str, *, timeout_seconds: float = 5.0) -> dict[str, Any]:
+# ⛔⭐⭐ MEASURED 2026-09-04: a COLD `/api/overview` takes 5.5-6.7s (codex-2, at deploy time) while
+# a warm one is ~0.01s. The old 5.0s budget sat INSIDE that spread, so the fail-closed deploy gate
+# refused on latency alone and the operator had to warm the endpoint by hand and re-run.
+# ⛔ That workaround is the actual hazard: it trains "preflight failed -> poke it and retry" on a
+# SAFETY gate. 20s covers the measured cold worst case with headroom while still bounding a hang.
+_PREFLIGHT_HTTP_TIMEOUT_SECONDS = 20.0
+
+
+def load_json(url: str, *, timeout_seconds: float = _PREFLIGHT_HTTP_TIMEOUT_SECONDS) -> dict[str, Any]:
     try:
         with urlopen(url, timeout=timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
+    except TimeoutError as exc:
+        # ⛔ A READ timeout does NOT raise URLError — it escapes as a bare TimeoutError, so before
+        # this it surfaced as an unhandled traceback while a genuinely DEAD control plane produced
+        # a clean message. The routine failure had the worst diagnostics of the two.
+        # ⛔ The distinction is load-bearing: "slow" invites a retry, "unreachable" must NOT. Never
+        # collapse these two into one message.
+        raise SystemExit(
+            f"preflight TIMED OUT after {timeout_seconds:.0f}s loading {url}. The control plane "
+            "ANSWERED THE CONNECTION but did not finish in time — this is NOT the same as it being "
+            "down. Check control-plane latency/load before assuming it is safe to retry, and do "
+            "NOT simply warm the endpoint to make this pass."
+        ) from exc
     except URLError as exc:
-        raise SystemExit(f"failed to load preflight data from {url}: {exc}") from exc
+        raise SystemExit(
+            f"failed to load preflight data from {url}: {exc}. The control plane is UNREACHABLE "
+            "(not merely slow) — do not deploy until it is serving."
+        ) from exc
 
 
 def evaluate_live_deploy_preflight(
