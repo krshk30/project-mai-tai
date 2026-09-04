@@ -34,6 +34,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from project_mai_tai.db.models import DashboardSnapshot
 from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.events import (
+    HeartbeatEvent,
+    HeartbeatPayload,
     IsolatedBotStateEvent,
     MarketDataSubscriptionEvent,
     MarketDataSubscriptionPayload,
@@ -702,7 +704,7 @@ class OrbService:
                 decision.event_key,
             )
 
-    # ----- observability: isolated heartbeat (dashboard renders ORB from this stream) -----
+    # ----- observability: service health plus isolated dashboard state -----
     def _build_heartbeat_payload(self) -> StrategyBotStatePayload:
         decisions: list[dict] = []
         bar_counts: dict[str, int] = {}
@@ -744,12 +746,32 @@ class OrbService:
         )
 
     async def _publish_heartbeat(self) -> None:
-        event = IsolatedBotStateEvent(
+        heartbeat = HeartbeatEvent(
+            source_service=SERVICE_NAME,
+            payload=HeartbeatPayload(
+                service_name=SERVICE_NAME,
+                instance_name=SERVICE_NAME,
+                status="healthy",
+                details={
+                    "execution_mode": "paper",
+                    "broker_route": "none",
+                    "universe_size": str(len(self._universe)),
+                },
+            ),
+        )
+        await self.redis.xadd(
+            stream_name(self.settings.redis_stream_prefix, "heartbeats"),
+            {"data": heartbeat.model_dump_json()},
+            maxlen=self.settings.redis_heartbeat_stream_maxlen,
+            approximate=True,
+        )
+
+        state = IsolatedBotStateEvent(
             source_service=SERVICE_NAME, payload=self._build_heartbeat_payload()
         )
         await self.redis.xadd(
             stream_name(self.settings.redis_stream_prefix, "strategy-state-isolated"),
-            {"data": event.model_dump_json()},
+            {"data": state.model_dump_json()},
             maxlen=self.settings.redis_strategy_state_isolated_stream_maxlen,
             approximate=True,
         )
