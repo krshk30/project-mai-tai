@@ -1,4 +1,4 @@
-"""ORB (P6 "OPEN") isolated bot — scaffold + gateway data (3a) + entry brain (3b) + heartbeat (3c).
+"""Broker-disconnected ORB live-paper observer.
 
 Runs as its OWN process/event loop (escapes the shared strategy-engine 1 Hz-loop
 contention by construction) and consumes the EXISTING market-data gateway as a
@@ -7,8 +7,11 @@ registered consumer (no new Schwab streamer session, no credential collision).
 Loop: read the pre-09:25 confirmed universe (the binding rule) → register those
 symbols as a gateway consumer → drain their trade ticks → aggregate to 1-min bars →
 per symbol, build the 5-min OR, apply the breakout filter (orb_intrabar leaf),
-arm-on-window-open, and emit one open intent with stop_guard_enabled / stop_loss_pct
-/ trail_pct (the OMS TRAIL-8% ratchet, #340, then drives the exit).
+arm-on-window-open, and append a paper entry decision to the dedicated evidence tape.
+
+The service cannot construct a trade intent or import broker routing. The OMS also
+refuses any forged ORB intent before persistence, giving the paper boundary two
+independent enforcement points.
 
 Default OFF: with ``orb_enabled=False`` ``run()`` returns immediately — no DB read,
 no consumer, no drain, no intent (byte-identical to today).
@@ -28,18 +31,21 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Strategy
+from project_mai_tai.db.models import DashboardSnapshot
 from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.events import (
     IsolatedBotStateEvent,
     MarketDataSubscriptionEvent,
     MarketDataSubscriptionPayload,
     StrategyBotStatePayload,
-    TradeIntentEvent,
-    TradeIntentPayload,
     stream_name,
 )
-from project_mai_tai.settings import Settings, get_settings
+from project_mai_tai.orb_paper_store import (
+    ORB_PAPER_ACCOUNT_NAME,
+    OrbPaperDecision,
+    OrbPaperStore,
+)
+from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.orb_intrabar import (
     ExecutionMode,
     OpeningRange,
@@ -92,32 +98,28 @@ class _SymbolState:
     or_bars: list[OrbBar] = field(default_factory=list)
     or_evaluated: bool = False
     opening_range: OpeningRange | None = None
-    # 2026-06-30 phantom-fix: entry state reflects CONFIRMED FILLS, not emits.
-    #   attempts   = entry tries this window (cap 2 = original + reclaim, then suppressed),
-    #   pending    = an emit is in flight awaiting the OMS fill/abandon outcome,
-    #   traded     = holding a confirmed fill,
-    #   entry_price= the REAL fill price, set on the fill event (NOT on emit).
-    # An OMS-abandoned try leaves NO phantom + re-enters (until the cap), instead of the
-    # old traded=True-on-emit that suppressed re-entry + showed a phantom vs a flat broker.
-    # Reconciled by _reconcile_orders off broker_order_events (DB); held_qty mirrors traded.
+    # Entry observations retain the strategy's existing two-attempt cap. ``pending`` is
+    # true only while the durable paper row is being written; it is never a broker order.
     attempts: int = 0
     pending: bool = False
-    traded: bool = False
-    entry_price: float | None = None
-    # held_qty tracks the REAL position from broker fills (buy adds, sell reduces). traded
-    # mirrors held_qty>0 so it clears on a flat exit -> a re-break can reclaim (the CANF case).
-    held_qty: float = 0.0
-    # when the current pending emit went out — used to time out a stuck pending if the OMS
-    # abandons pre-order (e.g. ASK_PAST_GAP_CAP) and emits NO terminal broker_order_events row.
-    pending_since: datetime | None = None
+    paper_entries: int = 0
+    last_paper_entry_price: float | None = None
     last_bar_at: str = ""
     # intrabar-reclaim mode only: start (ms UTC) of the current uninterrupted hold
     # above OR_high; reset to None whenever a tick prints back below OR_high.
     reclaim_cross_ms: int | None = None
-    # ms UTC of the reclaim-confirm (entry emit) — fill-instrumentation timestamp.
+    # ms UTC of the reclaim confirmation, retained as decision provenance.
     reclaim_emit_ms: int | None = None
     # running-high mode only: highest 1-min bar-high seen since 09:25 (the breakout level).
     running_high: float | None = None
+
+
+@dataclass(frozen=True)
+class _PendingPaperEntry:
+    symbol: str
+    entry_price: float
+    observed_at: datetime
+    attempt: int
 
 
 class OrbService:
@@ -135,33 +137,29 @@ class OrbService:
     _MARKET_DATA_DRAIN_BUDGET: int = 20_000
     _UNIVERSE_REFRESH_SECS: float = 5.0
     _HEARTBEAT_SECS: float = 5.0
-    # Max entry tries per symbol per 09:30-10:00 window (original break + one reclaim),
-    # then suppressed — whether they filled or abandoned. The same fill-counted state the
-    # future bracket's 2-entry cap will key on.
+    # Max entry observations per symbol per 09:30-10:00 window (original break + one reclaim).
     _ENTRY_ATTEMPT_CAP: int = 2
-    # Clear a stuck pending if no terminal broker_order_events row arrives within this window.
-    # Some OMS abandons (ASK_PAST_GAP_CAP pre-order) emit NO DB row, so without this a
-    # pending emit would block re-entry forever. Set above oms_intent_max_age_seconds (30).
-    _PENDING_ABANDON_TIMEOUT_SECS: float = 45.0
-
     def __init__(
         self,
         settings: Settings | None = None,
         redis_client: Redis | None = None,
         session_factory: sessionmaker[Session] | None = None,
+        paper_store: OrbPaperStore | None = None,
     ) -> None:
-        self.settings = settings or get_settings()
+        # Do not read a checkout-local .env. Production supplies the broker-free
+        # systemd environment generated specifically for this process.
+        self.settings = settings or Settings(_env_file=None)
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.session_factory = session_factory  # built lazily when enabled (no DB connect when off)
         self._aggregators: dict[str, OrbTickAggregator] = {}
         self._last_gateway_symbols: list[str] = []
         self._md_offset: str = "$"  # tail new ticks only
-        # Order reconcile reads broker_order_events (DB) — the redis order-events stream is
-        # unfed in prod. Cursor starts at boot so we only process events from now forward.
-        self._oe_cursor: datetime = datetime.now(UTC)
         self._states: dict[str, _SymbolState] = {}
         self._universe: set[str] = set()
-        self._pending_intents: list[tuple[str, float]] = []
+        self._pending_paper_entries: list[_PendingPaperEntry] = []
+        self.paper_store = paper_store or (
+            OrbPaperStore(session_factory) if session_factory is not None else None
+        )
         # Flag-gated intrabar-reclaim live test: cap-off + reclaim@OR_high + N% trail.
         # Default False -> every reclaim branch is skipped and ORB is byte-identical.
         self._reclaim_mode = bool(getattr(self.settings, "orb_intrabar_reclaim_enabled", False))
@@ -173,15 +171,13 @@ class OrbService:
         ) and not self._reclaim_mode
         self._rh_gap_cap_pct = float(getattr(self.settings, "orb_running_high_gap_cap_pct", 1.5))
         self._rh_window_min = int(getattr(self.settings, "orb_running_high_window_minutes", 30))
-        # OMS-quote-priced entry (Piece 1). When True, the bot OMITS limit_price/reference_price
-        # from open intents (fail-closed: a stale signal-time price is structurally unshippable)
-        # and hands the OMS the bound (orb_intended_break_level) + gap_cap + price_source so the
-        # OMS re-prices off its live quote at placement. Default False -> byte-identical emit.
+        # Preserve the selected historical pricing policy on the paper evidence row. It is
+        # descriptive only: this service cannot publish an order or invoke an adapter.
         self._oms_quote_priced = bool(
             getattr(self.settings, "orb_oms_quote_priced_entry_enabled", False)
         )
-        # Resting stop-buy entry: emit a native BUY STOP_LIMIT at the break level (fills AT the
-        # break, not the faded ask). Running-high mode only; supersedes the quote-priced limit.
+        # Preserve the historical resting stop-buy pricing choice on the evidence row.
+        # Running-high mode only; supersedes the quote-priced limit description.
         self._resting_entry = bool(getattr(self.settings, "orb_resting_entry_enabled", False))
         self._cfg = OrbConfig(
             or_minutes=int(self.settings.orb_or_minutes),
@@ -198,7 +194,7 @@ class OrbService:
         self._last_universe_refresh_at: datetime | None = None
         self._last_heartbeat_at: datetime | None = None
         # ET session date — when it rolls, per-symbol state + aggregators are reset so the
-        # next session starts clean (running_high re-seeds from 09:25, traded flags clear,
+        # next session starts clean (running_high re-seeds from 09:25, decision state clears,
         # aggregators rebuild with the new session anchor). Without this, a bot left running
         # across midnight carries the prior day's state into the new session.
         self._session_date = datetime.now(_ET).date()
@@ -210,7 +206,9 @@ class OrbService:
             return
         if self.session_factory is None:
             self.session_factory = build_timed_session_factory(self.settings, service="orb", profile="fast")
-        logger.info("[ORB] starting — isolated bot, market-data gateway consumer")
+        if self.paper_store is None:
+            self.paper_store = OrbPaperStore(self.session_factory)
+        logger.info("[ORB] starting — broker-disconnected paper observer, market-data gateway consumer")
         try:
             while True:
                 self._maybe_roll_session()
@@ -224,8 +222,7 @@ class OrbService:
                     await self._sync_gateway_subscription(self._refresh_universe())
                     self._last_universe_refresh_at = now
                 processed = await self._drain_market_data()
-                await self._reconcile_orders()  # DB reconcile: fills/exits/abandons (phantom-fix)
-                await self._publish_pending_intents()
+                await self._record_pending_paper_entries()
                 if (
                     self._last_heartbeat_at is None
                     or (now - self._last_heartbeat_at).total_seconds() >= self._HEARTBEAT_SECS
@@ -252,7 +249,6 @@ class OrbService:
         self._session_date = today
         self._states.clear()
         self._aggregators.clear()
-        self._oe_cursor = datetime.now(UTC)  # don't replay yesterday's order events into fresh state
         logger.info("[ORB] day-roll reset %s -> %s: cleared per-symbol state + aggregators", prior, today)
 
     # ----- universe: pre-09:25 confirmed names (the binding rule) -----
@@ -366,7 +362,7 @@ class OrbService:
         except (ValueError, TypeError):
             return
         if obj.get("event_type") != "trade_tick":
-            return  # quotes/bars not used by the ORB entry path (quotes drive the OMS exit)
+            return  # quotes are not used by the current ORB entry path
         payload = obj.get("payload") or {}
         symbol = str(payload.get("symbol", "")).upper()
         if not symbol or symbol not in self._last_gateway_symbols:
@@ -391,128 +387,10 @@ class OrbService:
         if self._reclaim_mode:
             self._check_reclaim(symbol, price, ts)
 
-    # ----- entry-state gate + fill/abandon reconciliation (2026-06-30 phantom-fix) -----
+    # ----- entry-state gate -----
     def _can_enter(self, st: _SymbolState) -> bool:
-        """May we emit an entry for this symbol now? No emit while one is in flight
-        (``pending``) or while holding a confirmed fill (``traded``), and only up to the
-        per-symbol per-window attempt cap (original + reclaim)."""
-        return not st.pending and not st.traded and st.attempts < self._ENTRY_ATTEMPT_CAP
-
-    async def _reconcile_orders(self) -> None:
-        """Reconcile ORB's per-symbol entry state against CONFIRMED broker outcomes recorded
-        in ``broker_order_events`` (the DB path — the redis order-events stream is unfed in
-        prod, so #388's stream consumer was DOA). Tracks held qty across BUY (open) and SELL
-        (close) fills so ``traded`` mirrors a REAL position and CLEARS on a flat exit, which is
-        what re-enables a reclaim after a filled-then-exited entry (the CANF case). Abandons
-        clear ``pending`` without a fill. ``attempts`` is NEVER touched here — only ORB emits
-        burn attempts — so OMS quote-drift-cancel churn cannot exhaust the cap. Sparse; polled
-        off the hot path (sync DB read, mirrors the universe-snapshot read)."""
-        if self.session_factory is None:
-            return
-        try:
-            rows = self._fetch_order_events_since(self._oe_cursor)
-        except Exception:
-            logger.exception("[ORB] order-event reconcile query failed")
-            rows = []
-        for event_at, event_type, symbol, side, quantity, payload in rows:
-            self._oe_cursor = event_at
-            self._apply_order_event(
-                symbol=str(symbol or "").upper(),
-                side=str(side or ""),
-                event_type=str(event_type or ""),
-                quantity=float(quantity or 0.0),
-                payload=payload if isinstance(payload, dict) else {},
-            )
-        self._expire_stale_pending()
-
-    def _fetch_order_events_since(self, cursor: datetime) -> list:
-        """ORB order-events after ``cursor``, joined to broker_orders for symbol/side/qty."""
-        with self.session_factory() as session:
-            return session.execute(
-                select(
-                    BrokerOrderEvent.event_at,
-                    BrokerOrderEvent.event_type,
-                    BrokerOrder.symbol,
-                    BrokerOrder.side,
-                    BrokerOrder.quantity,
-                    BrokerOrderEvent.payload,
-                )
-                .join(BrokerOrder, BrokerOrder.id == BrokerOrderEvent.order_id)
-                .join(Strategy, Strategy.id == BrokerOrder.strategy_id)
-                .where(Strategy.code == SERVICE_NAME)
-                .where(BrokerOrderEvent.event_at > cursor)
-                .order_by(BrokerOrderEvent.event_at)
-            ).all()
-
-    def _apply_order_event(
-        self, *, symbol: str, side: str, event_type: str, quantity: float, payload: dict
-    ) -> None:
-        st = self._states.get(symbol)
-        if st is None:
-            return  # symbol not tracked this session (e.g. cleared post day-roll)
-        is_open = side.lower() == "buy"   # ORB is long-only: buy=entry/open, sell=exit/close
-        filled = event_type in ("filled", "partially_filled")
-        abandoned = event_type in ("rejected", "cancelled")
-        if is_open and filled:
-            st.held_qty += quantity
-            st.traded = True                     # confirmed fill -> holding (OMS owns the exit)
-            st.pending = False
-            st.pending_since = None
-            fill_px = self._fill_price_from_payload(payload)
-            if fill_px is not None:
-                st.entry_price = fill_px
-            logger.info("[ORB-ENTRY-FILLED] %s qty=%.0f held=%.0f entry=%s attempt=%d/%d",
-                        symbol, quantity, st.held_qty, st.entry_price,
-                        st.attempts, self._ENTRY_ATTEMPT_CAP)
-        elif is_open and abandoned:
-            # NOT a fill -> clear the (never-held) pending; re-enterable until the cap.
-            st.pending = False
-            st.pending_since = None
-            reason = (payload.get("metadata") or {}).get("abandon_reason_code") or payload.get("reason") or event_type
-            logger.info("[ORB-ENTRY-RESET] %s reason=%s attempt=%d/%d -> %s",
-                        symbol, reason, st.attempts, self._ENTRY_ATTEMPT_CAP,
-                        "re-enterable" if st.attempts < self._ENTRY_ATTEMPT_CAP else "suppressed(cap)")
-        elif (not is_open) and filled:
-            # exit fill -> reduce held; when flat, clear traded so a re-break can RECLAIM.
-            st.held_qty = max(0.0, st.held_qty - quantity)
-            if st.held_qty <= 1e-9:
-                st.traded = False
-                st.entry_price = None
-                logger.info("[ORB-POSITION-FLAT] %s exited; re-enterable=%s attempt=%d/%d",
-                            symbol, st.attempts < self._ENTRY_ATTEMPT_CAP,
-                            st.attempts, self._ENTRY_ATTEMPT_CAP)
-        # 'accepted' / a rejected EXIT / anything else -> no entry-state change (conservative)
-
-    def _expire_stale_pending(self) -> None:
-        """Clear a pending emit that never got a terminal broker_order_events row (some OMS
-        abandons, e.g. ASK_PAST_GAP_CAP pre-order, emit none). Without this, that symbol would
-        block re-entry for the rest of the window. Re-enterable until the attempt cap."""
-        now = datetime.now(UTC)
-        for sym, st in self._states.items():
-            if (
-                st.pending
-                and st.pending_since is not None
-                and (now - st.pending_since).total_seconds() > self._PENDING_ABANDON_TIMEOUT_SECS
-            ):
-                st.pending = False
-                st.pending_since = None
-                logger.info("[ORB-ENTRY-RESET] %s reason=pending_timeout attempt=%d/%d -> %s",
-                            sym, st.attempts, self._ENTRY_ATTEMPT_CAP,
-                            "re-enterable" if st.attempts < self._ENTRY_ATTEMPT_CAP else "suppressed(cap)")
-
-    @staticmethod
-    def _fill_price_from_payload(payload: dict) -> float | None:
-        """Best-effort entry price for display (the OMS owns the real position/exit)."""
-        meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-        for src in (payload, meta):
-            for key in ("fill_price", "limit_price", "reference_price"):
-                v = src.get(key)
-                if v not in (None, ""):
-                    try:
-                        return float(v)
-                    except (TypeError, ValueError):
-                        pass
-        return None
+        """May we record another paper entry decision for this symbol?"""
+        return not st.pending and st.attempts < self._ENTRY_ATTEMPT_CAP
 
     @staticmethod
     def _session_open_utc() -> datetime:
@@ -528,8 +406,8 @@ class OrbService:
     def _on_bar_running_high(self, symbol: str, bar: OrbBar) -> None:
         """Running-high breakout entry (operator-validated). Reference = highest 1-min
         bar-high since 09:25; enter when a bar breaks it within 09:30..open+window, at the
-        breakout level, only if the fill is within gap_cap% of the broken high. v1 = one
-        entry per symbol (re-entry is a follow-up). Exit = OMS trail orb_reclaim_trail_pct."""
+        breakout level, only if the observed price is within gap_cap% of the broken high. v1 = one
+        entry per symbol (re-entry is a follow-up)."""
         observe_open = self._observe_open_utc()
         if bar.timestamp < observe_open:
             return
@@ -549,9 +427,11 @@ class OrbService:
             level = st.running_high
             fill = level if bar.open <= level else bar.open   # gap-up fills at the open
             if fill <= level * (1.0 + self._rh_gap_cap_pct / 100.0):
-                st.pending = True              # emit in flight; confirmed on the fill event
+                st.pending = True  # durable paper write in flight
                 st.attempts += 1
-                self._pending_intents.append((symbol, fill))
+                self._pending_paper_entries.append(
+                    _PendingPaperEntry(symbol, fill, datetime.now(UTC), st.attempts)
+                )
                 logger.info(
                     "[ORB-RH-ENTRY] %s entry=%.4f broke_high=%.4f gap=%.2f%% attempt=%d/%d",
                     symbol, fill, level, (fill / level - 1.0) * 100.0,
@@ -559,7 +439,7 @@ class OrbService:
                 )
         st.running_high = max(st.running_high, bar.high)
 
-    # ----- the entry brain: OR build -> breakout -> arm-on-window-open -> open intent -----
+    # ----- the entry brain: OR build -> breakout -> arm-on-window-open -> paper decision -----
     def _on_bar(self, symbol: str, bar: OrbBar) -> None:
         if self._running_high_mode:
             self._on_bar_running_high(symbol, bar)
@@ -600,9 +480,11 @@ class OrbService:
             return
         if bar_confirms_breakout(st.opening_range, bar, self._cfg):
             entry = entry_fill_price(st.opening_range, bar, self._mode)
-            st.pending = True  # emit in flight; confirmed on the fill event
+            st.pending = True  # durable paper write in flight
             st.attempts += 1
-            self._pending_intents.append((symbol, entry))
+            self._pending_paper_entries.append(
+                _PendingPaperEntry(symbol, entry, datetime.now(UTC), st.attempts)
+            )
             logger.info(
                 "[ORB-BREAKOUT] %s entry=%.4f OR_high=%.4f mode=%s",
                 symbol, entry, st.opening_range.high, self._mode.value,
@@ -622,7 +504,7 @@ class OrbService:
     def _check_reclaim(self, symbol: str, price: float, ts: datetime) -> None:
         """Intrabar reclaim entry (cap-off mode). Once the OR is armed, a tick at/above
         OR_high starts a hold timer; if price stays >= OR_high for orb_reclaim_hold_secs,
-        emit ONE open intent as a resting LIMIT at OR_high. A tick back below OR_high
+        record ONE paper decision at OR_high. A tick back below OR_high
         resets the timer (a pullback before the reclaim is fine — the sustained reclaim
         is the confirmation). Entries only in (OR-end, cutoff]."""
         st = self._states.get(symbol)
@@ -640,10 +522,12 @@ class OrbService:
                 st.reclaim_cross_ms = ts_ms
                 logger.info("[ORB-RECLAIM-CROSS] %s price=%.4f OR_high=%.4f", symbol, price, or_high)
             elif ts_ms - st.reclaim_cross_ms >= self._reclaim_hold_ms:
-                st.pending = True  # emit in flight; confirmed on the fill event
+                st.pending = True  # durable paper write in flight
                 st.attempts += 1
-                st.reclaim_emit_ms = ts_ms  # fill-instrumentation: confirm time
-                self._pending_intents.append((symbol, or_high))
+                st.reclaim_emit_ms = ts_ms  # decision provenance: confirmation time
+                self._pending_paper_entries.append(
+                    _PendingPaperEntry(symbol, or_high, ts, st.attempts)
+                )
                 logger.info(
                     "[ORB-RECLAIM-ENTRY] %s intended=%.4f held=%.0fs",
                     symbol, or_high, self._reclaim_hold_ms / 1000,
@@ -653,24 +537,31 @@ class OrbService:
 
     def _active_trail_pct(self) -> float:
         """Trailing-stop % the CURRENT entry mode arms — MUST mirror the pct
-        ``_build_open_intent`` puts in the intent (running-high + intrabar-reclaim use
+        ``_build_paper_entry_decision`` records (running-high + intrabar-reclaim use
         ``orb_reclaim_trail_pct``; the classic-OR path uses ``orb_trail_pct``). Single
         source for the ``[ORB-OPEN]`` log + heartbeat so the DISPLAY can never drift from
-        what the OMS actually enforces. (Pre-2026-07-14 bug: the display keyed on
+        the observed strategy decision. (Pre-2026-07-14 bug: the display keyed on
         ``_reclaim_mode`` only, so a running-high entry SHOWED ``orb_trail_pct`` while the
-        OMS armed ``orb_reclaim_trail_pct`` — an 8%-vs-3% mislabel on every RH trade.)"""
+        recorded decision used ``orb_reclaim_trail_pct`` — an 8%-vs-3% mislabel.)"""
         if self._running_high_mode or self._reclaim_mode:
             return float(self.settings.orb_reclaim_trail_pct)
         return float(self.settings.orb_trail_pct)
 
-    def _build_open_intent(self, symbol: str, entry_price: float) -> TradeIntentEvent:
+    def _build_paper_entry_decision(
+        self,
+        symbol: str,
+        entry_price: float,
+        *,
+        observed_at: datetime,
+        attempt: int | None = None,
+    ) -> OrbPaperDecision:
         if self._running_high_mode:
             pct = str(self.settings.orb_reclaim_trail_pct)   # 3% trail (shared setting)
             qty = int(self.settings.orb_reclaim_quantity)     # qty 5 (shared setting)
             metadata = {
                 "stop_guard_enabled": "true",
                 "stop_loss_pct": pct,
-                "trail_pct": pct,                 # OMS trailing stop (#340)
+                "trail_pct": pct,
                 "stop_guard_quote_max_age_ms": "2000",
                 "stop_guard_initial_panic_buffer_pct": "1.5",
                 "orb_entry": "true",
@@ -679,21 +570,14 @@ class OrbService:
                 "orb_intended_break_level": f"{entry_price:.4f}",
             }
             if self._resting_entry:
-                # RESTING native BUY STOP_LIMIT at the break level: trigger (stop) = the broken
-                # level, limit bounds the fill at level*(1+gap_cap) (the gap-cap — never chase a
-                # gap-through). It rests at the broker and fills AT the break, not the faded ask
-                # ~3-14s late. Supersedes the quote-priced limit; the OMS places it as-is
-                # (order_type != limit -> _orb_quote_priced_entry_applies is False -> no reprice).
+                # Preserve the historical stop-limit parameters as decision evidence only.
                 limit_cap = entry_price * (1.0 + self._rh_gap_cap_pct / 100.0)
                 metadata["order_type"] = "STOP_LIMIT"
                 metadata["stop_price"] = f"{entry_price:.4f}"
                 metadata["limit_price"] = f"{limit_cap:.4f}"
                 metadata["reference_price"] = f"{entry_price:.4f}"
             elif self._oms_quote_priced:
-                # Fail-closed: omit limit_price/reference_price so a stale signal-time price
-                # cannot be shipped even if the OMS path is bypassed (the adapter falls back
-                # to reference_price, so it too must be absent). The OMS re-prices off its live
-                # quote at placement, bounded by orb_intended_break_level + gap_cap.
+                # Retain the selected pricing policy as evidence without invoking it.
                 metadata["price_source"] = "ask"
                 metadata["orb_gap_cap_pct"] = f"{self._rh_gap_cap_pct}"
             else:
@@ -708,7 +592,7 @@ class OrbService:
             metadata = {
                 "stop_guard_enabled": "true",
                 "stop_loss_pct": pct,   # initial stop = trail% below entry
-                "trail_pct": pct,       # ratchet — drives the OMS trailing stop (#340)
+                "trail_pct": pct,
                 "stop_guard_quote_max_age_ms": "2000",
                 "stop_guard_initial_panic_buffer_pct": "1.5",
                 "orb_entry": "true",
@@ -717,8 +601,7 @@ class OrbService:
                 "order_type": "limit",
                 "limit_price": f"{entry_price:.4f}",
                 "reference_price": f"{entry_price:.4f}",
-                # fill instrumentation: intended price + reclaim-confirm time, so
-                # slippage (actual fill - OR_high) and time-to-fill are recoverable.
+                # Preserve intended price and confirmation time as decision provenance.
                 "orb_intended_or_high": f"{entry_price:.4f}",
                 "orb_reclaim_emit_ms": str(emit_ms) if emit_ms is not None else "",
             }
@@ -728,46 +611,95 @@ class OrbService:
             metadata = {
                 "stop_guard_enabled": "true",
                 "stop_loss_pct": pct,   # initial stop = trail% below entry
-                "trail_pct": pct,       # ratchet — drives the OMS TRAIL-8% trailing stop (#340)
+                "trail_pct": pct,
                 "stop_guard_quote_max_age_ms": "2000",
                 "stop_guard_initial_panic_buffer_pct": "1.5",
                 "orb_entry": "true",
                 "execution_mode": self._mode.value,
             }
-        return TradeIntentEvent(
-            source_service=SERVICE_NAME,
-            payload=TradeIntentPayload(
-                strategy_code=SERVICE_NAME,
-                broker_account_name=str(self.settings.orb_broker_account_name),
-                symbol=symbol,
-                side="buy",
-                quantity=Decimal(str(qty)),
-                intent_type="open",
-                reason="ORB_OPEN",
-                metadata=metadata,
+        st = self._states.get(symbol)
+        decision_attempt = attempt if attempt is not None else (st.attempts if st is not None else 0)
+        event_key = (
+            f"orb-paper:{observed_at.astimezone(_ET).date().isoformat()}:{symbol}:"
+            f"{decision_attempt}:{int(observed_at.timestamp() * 1_000_000)}"
+        )
+        return OrbPaperDecision(
+            event_key=event_key,
+            session_date=observed_at.astimezone(_ET).date(),
+            symbol=symbol,
+            observed_at=observed_at,
+            entry_price=Decimal(str(entry_price)),
+            quantity=Decimal(str(qty)),
+            attempt=decision_attempt,
+            mode=(
+                "running_high_breakout"
+                if self._running_high_mode
+                else "intrabar_reclaim"
+                if self._reclaim_mode
+                else self._mode.value
             ),
+            detail={
+                "reason": "ORB_OPEN",
+                "classification": "SIMULATED_NO_REALISED_CONTROL_NOT_SIZE_QUALIFIED",
+                "metadata": metadata,
+            },
         )
 
-    async def _publish_pending_intents(self) -> None:
-        if not self._pending_intents:
-            return
-        pending, self._pending_intents = self._pending_intents, []
-        for symbol, entry_price in pending:
-            st = self._states.get(symbol)
-            if st is not None:
-                st.pending_since = datetime.now(UTC)  # start the stuck-pending timeout clock
-            event = self._build_open_intent(symbol, entry_price)
-            await self.redis.xadd(
-                stream_name(self.settings.redis_stream_prefix, "strategy-intents"),
-                {"data": event.model_dump_json()},
-                maxlen=self.settings.redis_strategy_intent_stream_maxlen,
-                approximate=True,
+    @staticmethod
+    def _require_paper_decision(decision: object) -> OrbPaperDecision:
+        """Service-side refusal: only the non-order paper type may leave the entry brain."""
+        if not isinstance(decision, OrbPaperDecision):
+            logger.error(
+                "[ORB-PAPER-REFUSED] service blocked non-paper output type=%s",
+                type(decision).__name__,
             )
+            raise RuntimeError("ORB is broker-disconnected; only OrbPaperDecision is accepted")
+        return decision
+
+    async def _record_pending_paper_entries(self) -> None:
+        if not self._pending_paper_entries:
+            return
+        if self.paper_store is None:
+            raise RuntimeError("ORB paper store is unavailable; refusing to discard a decision")
+        pending, self._pending_paper_entries = self._pending_paper_entries, []
+        for index, item in enumerate(pending):
+            symbol = item.symbol
+            entry_price = item.entry_price
+            st = self._states.get(symbol)
+            decision = self._require_paper_decision(
+                self._build_paper_entry_decision(
+                    symbol,
+                    entry_price,
+                    observed_at=item.observed_at,
+                    attempt=item.attempt,
+                )
+            )
+            try:
+                self.paper_store.append(decision)
+            except Exception:
+                self._pending_paper_entries = pending[index:] + self._pending_paper_entries
+                logger.exception(
+                    "[ORB-PAPER-WRITE-FAILED] %s decision retained; no broker fallback",
+                    symbol,
+                )
+                raise
+            if st is not None:
+                st.pending = False
+                st.paper_entries += 1
+                st.last_paper_entry_price = entry_price
             trail = self._active_trail_pct()
             logger.info(
                 "[ORB-OPEN] %s entry=%.4f trail_pct=%s mode=%s",
                 symbol, entry_price, trail,
                 "intrabar_reclaim" if self._reclaim_mode else self._mode.value,
+            )
+            logger.info(
+                "[ORB-PAPER-ENTRY] %s entry=%.4f attempt=%d event_key=%s "
+                "status=RECORDED_NOT_A_FILL",
+                symbol,
+                entry_price,
+                decision.attempt,
+                decision.event_key,
             )
 
     # ----- observability: isolated heartbeat (dashboard renders ORB from this stream) -----
@@ -775,13 +707,12 @@ class OrbService:
         decisions: list[dict] = []
         bar_counts: dict[str, int] = {}
         last_tick: dict[str, str] = {}
-        positions: list[dict] = []
         for sym, st in sorted(self._states.items()):
             bar_counts[sym] = len(st.or_bars)
             if st.last_bar_at:
                 last_tick[sym] = st.last_bar_at
-            if st.traded:
-                status = "entered"
+            if st.paper_entries:
+                status = "paper_entry_recorded"
             elif self._running_high_mode:
                 status = "watching" if st.running_high is not None else "building_or"
             elif not st.or_evaluated:
@@ -796,23 +727,18 @@ class OrbService:
                 row["or_low"] = st.opening_range.low
                 row["or_width_pct"] = round(st.opening_range.width_pct, 2)
             decisions.append(row)
-            if st.traded and st.entry_price is not None:
-                trail = self._active_trail_pct()
-                positions.append({
-                    "symbol": sym,
-                    "entry_price": st.entry_price,
-                    "stop_loss_pct": trail,
-                    "trail_pct": trail,
-                    # the OMS owns the live trailing stop (8% legacy / 3% reclaim test)
-                    "exit_owner": f"oms_trail{int(trail)}",
-                })
         return StrategyBotStatePayload(
             strategy_code=SERVICE_NAME,
-            account_name=str(self.settings.orb_broker_account_name),
+            account_name=ORB_PAPER_ACCOUNT_NAME,
             watchlist=sorted(self._universe),
-            data_health={"status": "healthy", "universe_size": len(self._universe)},
+            data_health={
+                "status": "healthy",
+                "universe_size": len(self._universe),
+                "execution_mode": "paper",
+                "broker_route": "none",
+            },
             recent_decisions=decisions,
-            positions=positions,
+            positions=[],
             bar_counts=bar_counts,
             last_tick_at=last_tick,
         )

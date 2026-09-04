@@ -1,5 +1,5 @@
 [Unit]
-Description=Project Mai Tai ORB (P6 OPEN) isolated bot
+Description=Project Mai Tai ORB broker-disconnected paper observer
 After=network-online.target postgresql.service redis-server.service project-mai-tai-market-data.service
 Wants=network-online.target
 PartOf=project-mai-tai.target
@@ -9,7 +9,7 @@ Type=simple
 User=trader
 Group=trader
 WorkingDirectory=/home/trader/project-mai-tai
-EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+EnvironmentFile=/etc/project-mai-tai/orb-paper.env
 ExecStart=/home/trader/project-mai-tai/.venv/bin/mai-tai-orb
 Restart=always
 RestartSec=5

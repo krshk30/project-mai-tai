@@ -38,7 +38,7 @@ def test_disabled_is_inert_never_touches_redis():
     # run() must return immediately and never register a consumer / drain / read the DB.
     asyncio.run(svc.run())
     assert svc._last_gateway_symbols == []
-    assert svc._pending_intents == []
+    assert svc._pending_paper_entries == []
 
 
 def test_pre_open_universe_empty_without_db():

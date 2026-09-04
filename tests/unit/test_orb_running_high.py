@@ -3,7 +3,7 @@
 Gates: (a) flag OFF -> mode inactive, byte-identical; (b) reference seeds from 09:25 and
 entry fires when a bar breaks the running high inside 09:30-10:00; (c) gap-cap skips a
 spike >1.5% above the broken high; (d) window-bound (no entry <09:30 or >10:00);
-(e) single entry per symbol (v1); (f) intent = limit at break level, 3% trail, qty 5;
+(e) single entry per symbol (v1); (f) decision records limit at break level, 3% trail, qty 5;
 (g) reclaim takes precedence (mutually exclusive).
 """
 from __future__ import annotations
@@ -38,6 +38,10 @@ def _feed_seed(svc):
     svc._on_bar("FOO", _bar(svc, -1, 10.30, 10.40))
 
 
+def _pending(svc: OrbService) -> list[tuple[str, float]]:
+    return [(item.symbol, item.entry_price) for item in svc._pending_paper_entries]
+
+
 def test_flag_off_mode_inactive():
     svc = _svc()                       # default
     assert svc._running_high_mode is False
@@ -46,13 +50,12 @@ def test_flag_off_mode_inactive():
 def test_entry_on_break_of_running_high():
     svc = _rh_svc()
     _feed_seed(svc)
-    assert not svc._states["FOO"].traded
+    assert svc._states["FOO"].attempts == 0
     # 09:30 bar breaks 10.50 (open below the level -> fill AT the breakout level 10.50)
     svc._on_bar("FOO", _bar(svc, 0, 10.40, 11.00))
     st = svc._states["FOO"]
-    assert st.pending is True and st.attempts == 1   # emitted; confirmed on the fill event
-    assert st.traded is False and st.entry_price is None  # no phantom position until a real fill
-    assert svc._pending_intents == [("FOO", 10.50)]  # intent fired at the broken high
+    assert st.pending is True and st.attempts == 1
+    assert _pending(svc) == [("FOO", 10.50)]
 
 
 def test_gap_cap_skips_a_spike_too_far_above():
@@ -60,17 +63,17 @@ def test_gap_cap_skips_a_spike_too_far_above():
     _feed_seed(svc)                                   # running high 10.50
     # bar opens 10.80 (+2.9% above 10.50) -> beyond 1.5% gap cap -> skip
     svc._on_bar("FOO", _bar(svc, 1, 10.80, 11.20))
-    assert svc._states["FOO"].traded is False
-    assert svc._pending_intents == []
+    assert svc._states["FOO"].attempts == 0
+    assert _pending(svc) == []
 
 
 def test_no_entry_before_0930_or_after_1000():
     svc = _rh_svc()
     _feed_seed(svc)
     svc._on_bar("FOO", _bar(svc, -2, 10.40, 12.00))   # pre-09:30: seeds only, no trade
-    assert svc._states["FOO"].traded is False
+    assert svc._states["FOO"].attempts == 0
     svc._on_bar("FOO", _bar(svc, 31, 10.40, 99.00))   # 10:01 (>10:00 cutoff): no trade
-    assert svc._states["FOO"].traded is False
+    assert svc._states["FOO"].attempts == 0
 
 
 def test_single_entry_per_symbol():
@@ -78,7 +81,7 @@ def test_single_entry_per_symbol():
     _feed_seed(svc)
     svc._on_bar("FOO", _bar(svc, 0, 10.40, 11.00))    # entry
     svc._on_bar("FOO", _bar(svc, 3, 11.50, 12.00))    # would break the new high -> no re-entry (v1)
-    assert len(svc._pending_intents) == 1
+    assert len(svc._pending_paper_entries) == 1
 
 
 def test_not_in_universe_no_entry():
@@ -86,18 +89,20 @@ def test_not_in_universe_no_entry():
     svc._universe = set()                              # not pre-09:25 qualified
     _feed_seed(svc)
     svc._on_bar("FOO", _bar(svc, 0, 10.40, 11.00))
-    assert svc._states["FOO"].traded is False
+    assert svc._states["FOO"].attempts == 0
 
 
-def test_intent_shape_limit_trail3_qty5():
+def test_paper_decision_shape_records_limit_trail3_qty5():
     svc = _rh_svc()
-    ev = svc._build_open_intent("FOO", 10.50)
-    md = ev.payload.metadata
+    ev = svc._build_paper_entry_decision(
+        "FOO", 10.50, observed_at=svc._session_open_utc()
+    )
+    md = ev.detail["metadata"]
     assert md["order_type"] == "limit"
     assert md["limit_price"] == "10.5000"
     assert md["execution_mode"] == "running_high_breakout"
     assert md["trail_pct"] == str(svc.settings.orb_reclaim_trail_pct)   # 3.0
-    assert int(ev.payload.quantity) == svc.settings.orb_reclaim_quantity  # 5
+    assert int(ev.quantity) == svc.settings.orb_reclaim_quantity  # 5
 
 
 def test_reclaim_takes_precedence():
@@ -106,18 +111,17 @@ def test_reclaim_takes_precedence():
     assert svc._reclaim_mode is True
 
 
-def test_resting_entry_emits_buy_stop_limit_at_break():
-    """Resting entry (flag ON): a native BUY STOP_LIMIT at the break level — stop=level,
-    limit=level*(1+gap_cap) — NOT the quote-priced limit. Fills AT the break, not the faded ask."""
+def test_resting_entry_records_stop_limit_policy_at_break():
     svc = _rh_svc(orb_resting_entry_enabled=True)
-    ev = svc._build_open_intent("FOO", 10.50)
-    md = ev.payload.metadata
+    ev = svc._build_paper_entry_decision(
+        "FOO", 10.50, observed_at=svc._session_open_utc()
+    )
+    md = ev.detail["metadata"]
     assert md["order_type"] == "STOP_LIMIT"
     assert md["stop_price"] == "10.5000"                          # trigger = the broken level
     assert md["limit_price"] == f"{10.50 * 1.015:.4f}"           # capped at level*(1+gap_cap 1.5%)
     assert md["reference_price"] == "10.5000"
     assert md["execution_mode"] == "running_high_breakout"
-    assert ev.payload.side == "buy"
     assert "price_source" not in md                              # NOT quote-priced
     assert md["trail_pct"] == str(svc.settings.orb_reclaim_trail_pct)  # exit unchanged (Phase-1)
 
@@ -125,7 +129,9 @@ def test_resting_entry_emits_buy_stop_limit_at_break():
 def test_resting_entry_supersedes_quote_priced():
     """When both flags are on, resting wins (STOP_LIMIT, not the quote-priced ask limit)."""
     svc = _rh_svc(orb_resting_entry_enabled=True, orb_oms_quote_priced_entry_enabled=True)
-    md = svc._build_open_intent("FOO", 10.50).payload.metadata
+    md = svc._build_paper_entry_decision(
+        "FOO", 10.50, observed_at=svc._session_open_utc()
+    ).detail["metadata"]
     assert md["order_type"] == "STOP_LIMIT"
     assert "price_source" not in md
 
@@ -144,9 +150,11 @@ def test_active_trail_pct_classic_uses_orb_trail_setting():
     assert svc._active_trail_pct() == 8.0
 
 
-def test_display_trail_matches_intent_trail_for_running_high():
-    # The bug: display showed 8% while the intent/OMS used 3%. Now they must agree.
+def test_display_trail_matches_paper_decision_for_running_high():
     svc = _svc(orb_running_high_enabled=True, orb_reclaim_trail_pct=5.0, orb_trail_pct=8.0)
-    event = svc._build_open_intent("ABC", 10.0)
-    assert event.payload.metadata["trail_pct"] == str(svc.settings.orb_reclaim_trail_pct)
-    assert float(event.payload.metadata["trail_pct"]) == svc._active_trail_pct()
+    event = svc._build_paper_entry_decision(
+        "ABC", 10.0, observed_at=svc._session_open_utc()
+    )
+    metadata = event.detail["metadata"]
+    assert metadata["trail_pct"] == str(svc.settings.orb_reclaim_trail_pct)
+    assert float(metadata["trail_pct"]) == svc._active_trail_pct()

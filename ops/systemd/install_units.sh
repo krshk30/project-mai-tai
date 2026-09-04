@@ -5,6 +5,8 @@ REPO_DIR="${1:-/home/trader/project-mai-tai}"
 SYSTEMD_DIR="/etc/systemd/system"
 SOURCE_DIR="$REPO_DIR/ops/systemd"
 
+sudo "$SOURCE_DIR/build_orb_paper_env.sh"
+
 for unit in \
   project-mai-tai-control.service \
   project-mai-tai-market-data.service \
@@ -13,6 +15,7 @@ for unit in \
   project-mai-tai-reconciler.service \
   project-mai-tai-trade-coach.service \
   project-mai-tai-schwab-1m-v2.service \
+  project-mai-tai-orb.service \
   project-mai-tai.target
 do
   sudo cp "$SOURCE_DIR/$unit" "$SYSTEMD_DIR/$unit"

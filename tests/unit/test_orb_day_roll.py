@@ -1,6 +1,4 @@
-"""ORB day-roll reset: per-symbol state + aggregators clear when the ET date changes,
-so a bot left running across midnight starts the new session clean (no carryover of
-running_high / traded flag / prior-day symbols). No-op within the same session."""
+"""ORB day-roll reset clears prior-session paper observation state."""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -17,7 +15,7 @@ def _svc() -> OrbService:
 def _seed_state(svc):
     st = _SymbolState()
     st.running_high = 13.0
-    st.traded = True
+    st.paper_entries = 1
     svc._states["PLSM"] = st
     svc._aggregators["PLSM"] = object()
 

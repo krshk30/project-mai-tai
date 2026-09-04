@@ -284,19 +284,19 @@ async def test_resting_entry_excluded(eh):
 
 @pytest.mark.asyncio
 async def test_non_v2_untouched(eh):
-    """Flag ON but a non-v2 strategy is never re-priced (ORB/others untouched)."""
+    """Flag ON but a non-v2 trading strategy is never re-priced."""
     service = _oms(oms_v2_eh_entry_enabled=True)
     _set_quote(service, "BAR", ask=1.92, bid=1.90)
     event = TradeIntentEvent(
-        source_service="orb",
+        source_service="macd_30s",
         payload=TradeIntentPayload(
-            strategy_code="orb",
-            broker_account_name="paper:orb",
+            strategy_code="macd_30s",
+            broker_account_name="paper:macd_30s",
             symbol="BAR",
             side="buy",
             quantity=Decimal("5"),
             intent_type="open",
-            reason="ORB_OPEN",
+            reason="MACD_OPEN",
             metadata={"order_type": "limit", "session": "AM", "extended_hours": "true",
                       "limit_price": "1.92", "reference_price": "1.92", "entry_price": "1.90"},
         ),

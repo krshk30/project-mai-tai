@@ -12,6 +12,18 @@ if [[ ! -f "$APP_ENV_FILE" ]]; then
   exit 1
 fi
 
+# ORB receives only its database, Redis, and strategy settings. In particular, the
+# service never inherits the fleet env file that contains live broker credentials.
+"$REPO_DIR/ops/systemd/build_orb_paper_env.sh" "$APP_ENV_FILE"
+install -m 0644 \
+  "$REPO_DIR/ops/systemd/project-mai-tai-orb.service" \
+  /etc/systemd/system/project-mai-tai-orb.service
+install -m 0644 \
+  "$REPO_DIR/ops/systemd/project-mai-tai.target" \
+  /etc/systemd/system/project-mai-tai.target
+systemctl daemon-reload
+systemctl enable project-mai-tai-orb.service
+
 cd "$REPO_DIR"
 
 sudo -u trader "$PYTHON_BIN" -m venv "$VENV_DIR"

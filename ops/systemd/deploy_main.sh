@@ -41,7 +41,8 @@ for _attempt in {1..45}; do
     project-mai-tai-market-data.service \
     project-mai-tai-strategy.service \
     project-mai-tai-oms.service \
-    project-mai-tai-reconciler.service; then
+    project-mai-tai-reconciler.service \
+    project-mai-tai-orb.service; then
     if curl -fsS "$APP_HEALTH_URL" > "$HEALTH_OUTPUT_FILE"; then
       if python3 - <<'PY'
 import json
