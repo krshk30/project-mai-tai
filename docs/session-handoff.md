@@ -136,11 +136,28 @@ refusal keyed on *account* would have silently killed a real-money leg. It keys 
 
 `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS=*` is written to the env file (line 211,
 backup `.bak-20260904-atrprobe`). **The running v2 process does not have it** — it is read once at
-`__init__`. A fence-gated restart is armed for **20:05 ET**; it re-runs `preflight_v2_restart.sh` and
-**aborts without restarting** unless that is GO.
+`__init__`.
 
-⛔ **VERIFY THIS FIRST NEXT SESSION.** If the job did not fire or the fence refused, the probe is
-still off and the segment-flag defect stays undiagnosable.
+A fence-gated restart is scheduled **on the box**, not from any agent session, so it runs whether or
+not anyone is connected. It re-runs `preflight_v2_restart.sh` and **aborts without restarting**
+unless that is GO, then writes a full checklist and pushes one ntfy either way.
+
+| | |
+|---|---|
+| unit | `mai-tai-atr-probe-enable.timer` → `.service` (transient) |
+| fires | 2026-09-05 **00:05 UTC** = Fri **20:05 ET** |
+| script | `/home/trader/atr_probe_enable.sh` |
+| **report** | **`/home/trader/atr_probe_enable.log`** |
+| did it fire? | `systemctl list-timers mai-tai-atr-probe-enable --all` |
+
+⛔ **VERIFY THIS FIRST NEXT SESSION — read that log.** If the fence refused, the probe is still off
+and the segment-flag defect stays undiagnosable. ⚠️ **Expect ZERO `[V2-ATR-PROBE]` lines in tonight's
+report**: bars stop at 20:00 ET, so there is nothing to sample. The proof it worked is step 4 of the
+log — the variable present in the RUNNING process environment. The first real `state=` / `flip=`
+lines arrive with Tuesday's session.
+
+⚠️ The timer is transient and would not survive a reboot — but a reboot restarts v2 and picks up the
+env var anyway, so either path ends with the probe on.
 - 20:05 rather than 18:00 deliberately: **bars stop at 20:00 ET**, so the restart leaves no hole in
   `strategy_bar_history`.
 - The fence blocked at 16:53 on its **clock proxy only** (all three substantive gates green). Its
