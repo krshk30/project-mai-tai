@@ -433,14 +433,18 @@ def render_exit(result: ExitResult) -> str:
     return f"{result.rule} {clock(result.exit_at)} {money(result.exit_price)} {pct(result.return_pct)}"
 
 
-def render(rows: Sequence[ComparisonRow]) -> str:
-    lines = [
-        DISCLOSURE,
-        "Minute price = final positive NBBO bid in that minute. Halted quotes are shown but never "
-        "trigger or price an exit. A 10:00 close uses the first executable bid at or after 10:00.",
-        "Floor trigger execution = first observed executable bid at or below the active floor; "
-        "a gap through the floor is priced at that lower bid.",
-    ]
+def render(rows: Sequence[ComparisonRow], *, include_header: bool = True) -> str:
+    lines = (
+        [
+            DISCLOSURE,
+            "Minute price = final positive NBBO bid in that minute. Halted quotes are shown but never "
+            "trigger or price an exit. A 10:00 close uses the first executable bid at or after 10:00.",
+            "Floor trigger execution = first observed executable bid at or below the active floor; "
+            "a gap through the floor is priced at that lower bid.",
+        ]
+        if include_header
+        else []
+    )
     for row in rows:
         lines.extend(
             [
@@ -602,7 +606,7 @@ def main() -> int:
     print(render(primary))
     print("\n\n" + render_summary(primary, "Nine-name summary"))
     print("\n\nPPCB separate\n")
-    print(render(separate))
+    print(render(separate, include_header=False))
     print("\n\n" + render_summary(separate, "PPCB separate summary"))
     if args.csv:
         write_csv(args.csv, rows)
