@@ -1,0 +1,3 @@
+session_date,symbol,entry_time_et,entry_price,high_pct,high_at_et,low_pct,low_at_et,exit_time_et,exit_price,exit_rule,return_pct,source,assumption,qualification
+2026-09-03,MIMI,09:31:00,1.0700,5.6075,09:31,-0.9346,09:31,09:31:11,1.070000,TRAIL-5%,0.0000,SIMULATED,ASSUMED ASK FILL,SIMULATED | NO REALISED CONTROL | NOT SIZE-QUALIFIED
+2026-09-03,GELS,09:38:00,1.0300,-0.9709,09:38,-5.0000,09:38,09:38:03,0.978500,TRAIL-5%,-5.0000,SIMULATED,ASSUMED ASK FILL,SIMULATED | NO REALISED CONTROL | NOT SIZE-QUALIFIED
