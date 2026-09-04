@@ -278,6 +278,15 @@ class Settings(BaseSettings):
     oms_v2_eod_oco_transition_hour_et: int = 16
     oms_v2_eod_oco_transition_minute_et: int = 0
 
+    # 16:01 CANCEL-AND-REEXIT (board row OVSD1's sibling; the 16:00 handoff done properly).
+    # Cancel our own working SELL legs, CONFIRM the broker reports zero, then place a PM limit
+    # exit through the normal emit path. Default OFF; runtime-configurable.
+    oms_v2_eod_cancel_reexit_enabled: bool = False
+    oms_v2_eod_cancel_reexit_hour_et: int = 16
+    oms_v2_eod_cancel_reexit_minute_et: int = 1
+    # ⛔ CLOSED window: inert outside 16:01-16:15 ET. An open-ended '>=' stayed due to midnight.
+    oms_v2_eod_cancel_reexit_window_minutes: int = 14
+
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0
     strategy_schwab_1m_v2_quote_poll_interval_seconds: float = 5.0

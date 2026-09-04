@@ -198,6 +198,103 @@ class SchwabBrokerAdapter:
             _walk(order)
         return {sym for sym, n in working_sells.items() if n >= 2}
 
+    async def fetch_exit_legs_for_entry(
+        self, broker_account_name: str, entry_broker_order_id: str
+    ) -> dict[str, object]:
+        """Working SELL leg ids for ONE entry, read from that entry's OWN order tree.
+
+        ⛔⭐⭐ WHY THIS REPLACED AN ACCOUNT-WIDE SWEEP. The first version listed the account's
+        orders and inferred "no working legs" from an empty result. That inference is unsound
+        because the listing is PAGINATED and its completeness cannot be established: measured on
+        the live account, `maxResults=500` and `maxResults=1000` both return the SAME 224 rows for
+        a 12h window, so a row-count guard against the cap can NEVER FIRE. A truncated page and a
+        genuinely empty one are indistinguishable, and here that difference decides whether we
+        place a sell. ⇒ Do not infer an absence from a list you cannot prove is complete.
+
+        `GET /orders/{id}` returns ONE order tree in full -- no page, no cap, nothing to truncate.
+        Same read `release_native_oco_for_close` has always used.
+
+        Returns {"working": [ids], "filled": bool, "unsafe": bool}. `unsafe` is set for a partial
+        fill or any status this adapter does not recognise: the caller must treat it as "do not
+        act", never as "nothing there".
+
+        ⚠ INHERITED LIMIT (OVSD1, parked): the walk reads `orderLegCollection[0]`, so a childless
+        OCO wrapper is invisible. Unchanged by this method and not widened by it.
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None:
+            raise RuntimeError(f"unknown broker account {broker_account_name}")
+        root = await self._fetch_order(account, entry_broker_order_id)
+        if root is None:
+            raise RuntimeError(
+                f"could not read entry order {entry_broker_order_id} — refusing to guess at its legs"
+            )
+        working: list[str] = []
+        filled = False
+        unsafe = False
+        live = self.ACCEPTED_STATUSES - {"AWAITING_PARENT_ORDER", "AWAITING_RELEASE_TIME"}
+
+        def walk(item: dict) -> None:
+            nonlocal filled, unsafe
+            legs = item.get("orderLegCollection") or []
+            leg = legs[0] if legs else {}
+            if str(leg.get("instruction") or "").upper() == "SELL":
+                status = str(item.get("status") or "").upper()
+                if status == "FILLED":
+                    filled = True
+                elif status in live:
+                    oid = str(item.get("orderId") or "").strip()
+                    working.append(oid) if oid else None
+                    if not oid:
+                        unsafe = True
+                elif status in self.PARTIAL_FILL_STATUSES:
+                    unsafe = True
+                elif status not in self.CANCELLED_STATUSES | self.REJECTED_STATUSES:
+                    unsafe = True  # an unrecognised status is NOT a harmless one
+            for child in item.get("childOrderStrategies") or []:
+                walk(child)
+
+        walk(root)
+        return {"working": working, "filled": filled, "unsafe": unsafe}
+
+    async def cancel_exit_leg_ids(
+        self, broker_account_name: str, order_ids: list[str]
+    ) -> dict[str, object]:
+        """DELETE each given leg id ONCE. Stops on the first refusal and reports it verbatim.
+
+        ⛔ NO RETRY AND NO LOOP BEYOND THE GIVEN IDS. One DELETE per id, in order, and the first
+        non-2xx (404 excepted -- already gone is the outcome we want) ends the method with the
+        remaining ids UNTOUCHED. First execution of an unexercised broker write must fail safe on
+        attempt one, not attempt twenty.
+
+        Returns ``{"cancelled": [...], "refused": {...} | None, "untouched": [...]}``; the caller
+        decides what that means. This method NEVER concludes anything about release -- confirming
+        the shares are free is a separate read, by design.
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None:
+            raise RuntimeError(f"unknown broker account {broker_account_name}")
+        cancelled: list[str] = []
+        for index, order_id in enumerate(order_ids):
+            status_code, _headers, body = await self._authorized_request_json(
+                "DELETE",
+                f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"
+                f"{quote(order_id, safe='')}",
+            )
+            if 200 <= status_code < 300 or status_code == 404:
+                cancelled.append(order_id)
+                continue
+            return {
+                "cancelled": cancelled,
+                "refused": {
+                    "order_id": order_id,
+                    "status_code": status_code,
+                    "body": str(body)[:500],
+                },
+                "untouched": list(order_ids[index + 1:]),
+            }
+        return {"cancelled": cancelled, "refused": None, "untouched": []}
+
     async def release_native_oco_for_close(
         self, broker_account_name: str, entry_broker_order_id: str
     ) -> str:

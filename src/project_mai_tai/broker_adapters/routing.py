@@ -51,6 +51,43 @@ class RoutingBrokerAdapter:
             return set()
         return await fn(broker_account_name, symbols)
 
+    async def fetch_exit_legs_for_entry(
+        self, broker_account_name: str, entry_broker_order_id: str
+    ) -> dict[str, object]:
+        """Route to the account's adapter. Optional capability.
+
+        ⛔ An adapter without it RAISES. Returning an empty result would be indistinguishable from
+        "the broker reports no working legs", so an unaskable venue would read as a clear one and
+        be sold into. Raising forces the caller onto its UNANSWERABLE branch.
+        """
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "fetch_exit_legs_for_entry", None)
+        if fn is None:
+            raise RuntimeError(
+                f"{broker_account_name}: adapter cannot report exit legs — this venue cannot be "
+                "asked, which is NOT the same as having none."
+            )
+        return await fn(broker_account_name, entry_broker_order_id)
+
+    async def cancel_exit_leg_ids(
+        self, broker_account_name: str, order_ids: list[str]
+    ) -> dict[str, object]:
+        """Route to the account's adapter. Optional capability.
+
+        ⛔ An adapter without it reports every id as UNTOUCHED and refuses -- it must never look
+        like a successful cancel.
+        """
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "cancel_exit_leg_ids", None)
+        if fn is None:
+            return {
+                "cancelled": [],
+                "refused": {"order_id": "", "status_code": 0,
+                            "body": "adapter does not implement cancel_exit_leg_ids"},
+                "untouched": list(order_ids),
+            }
+        return await fn(broker_account_name, order_ids)
+
     async def release_native_oco_for_close(
         self, broker_account_name: str, entry_broker_order_id: str
     ) -> str:
