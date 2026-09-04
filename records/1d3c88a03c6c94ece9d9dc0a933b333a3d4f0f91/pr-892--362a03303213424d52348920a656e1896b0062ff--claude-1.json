@@ -1,0 +1,9 @@
+{
+  "pr_number": 892,
+  "range_base": "362a03303213424d52348920a656e1896b0062ff",
+  "range_head": "1d3c88a03c6c94ece9d9dc0a933b333a3d4f0f91",
+  "reviewed_at": "2026-09-04T09:50:29Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Verified both codex refusals are closed. Blocker 1: --entry is now required=True on exit-pm; ran the CLI without it and got argparse exit 2, no AttributeError, and the guard chain is reached. Blocker 2: require_matching_filled_entry binds the PM sell to the filled one-share BUY leg of the named entry tree; ran the mismatch --entry PLUG_ENTRY --symbol CHPT as input and it refuses with no POST. Mutation-tested four guards (binding call, required=True, symbol comparison, S8 held<QTY) - every one goes red in my suite. Confirmed S1-S12 all still hold; S8 is reachable and load-bearing (matched symbol, legs canceled, broker longQuantity=0 refuses a naked short) and is NOT dominated by the new guard, which reads the order tree only. Full unfiltered unit suite base vs head: identical 46-failure sets by name, +3 passed."
+}
