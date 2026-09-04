@@ -1,0 +1,9 @@
+{
+  "pr_number": 897,
+  "range_base": "b1769e5df2a6c554912cb29b0d198ddcbf5b3b3e",
+  "range_head": "cd35d631b7b5643fc660d884c715bd3a5d084695",
+  "reviewed_at": "2026-09-04T20:35:44Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the episode binding, pre-protection stale refusal, one-shot emit, and replacement-during-broker-await close. Rebase range-diff preserved all four commits exactly. Ran 21 focused tests and ruff clean; controlled mutation removing the expected-row refusal made the replacement-during-await regression fail while asserting the swap occurred."
+}
