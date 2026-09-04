@@ -328,7 +328,8 @@ def summarize(name: PopulationName, rows: Sequence[IndicatorRow]) -> NameReport:
     low = min(after_high, key=lambda row: row.close, default=None)
     cross = next((row for row in available if row.macd_cross_down), None)
     atr_flip = next((row for row in available if row.atr_sell_flip), None)
-    complete = bool(rows and rows[-1].close is not None)
+    assessed = [row for row in rows if row.minute >= entry_minute]
+    complete = bool(assessed) and all(row.close is not None or row.halted for row in assessed)
     return NameReport(
         name=name,
         rows=tuple(rows),
@@ -346,7 +347,8 @@ def summarize(name: PopulationName, rows: Sequence[IndicatorRow]) -> NameReport:
 def load_data(session_factory, name: PopulationName):
     bars_start = at_et(name.day, time(4, 0))
     market_start = at_et(name.day, time(9, 20))
-    end = at_et(name.day, time(10, 1))
+    bars_end = at_et(name.day, time(10, 1))
+    market_end = at_et(name.day, time(16, 1))
     with session_factory() as session:
         seed_newest_first = [
             BarPoint(
@@ -390,7 +392,7 @@ def load_data(session_factory, name: PopulationName):
                     "AND symbol=:symbol AND interval_secs=60 AND bar_time>=:start "
                     "AND bar_time<:end ORDER BY bar_time"
                 ),
-                {"symbol": name.symbol, "start": bars_start, "end": end},
+                {"symbol": name.symbol, "start": bars_start, "end": bars_end},
             )
         ]
         trades = [
@@ -400,7 +402,7 @@ def load_data(session_factory, name: PopulationName):
                     "SELECT event_ts,price FROM market_capture_trades WHERE symbol=:symbol "
                     "AND event_ts>=:start AND event_ts<:end AND price>0 ORDER BY event_ts,id"
                 ),
-                {"symbol": name.symbol, "start": market_start, "end": end},
+                {"symbol": name.symbol, "start": market_start, "end": market_end},
             )
         ]
         quotes = [
@@ -411,7 +413,7 @@ def load_data(session_factory, name: PopulationName):
                     "AND event_ts>=:start AND event_ts<:end AND bid_price IS NOT NULL "
                     "ORDER BY event_ts,id"
                 ),
-                {"symbol": name.symbol, "start": market_start, "end": end},
+                {"symbol": name.symbol, "start": market_start, "end": market_end},
             )
         ]
     return seed + bars, trades, quotes
