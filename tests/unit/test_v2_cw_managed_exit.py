@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import OmsManagedPosition, TradeIntent
@@ -402,6 +403,34 @@ async def test_cw_floor_off_is_hard_target_byte_identical():
 # owner and no expiry.
 # ═══════════════════════════════════════════════════════════════════════════════════════════
 
+class _RejectingConfirmationAdapter(_ConfirmationAdapter):
+    """Sells are REFUSED, exactly as IMRN's were.
+
+    ⛔ This is the difference between a test that can fail and one that cannot. When the sell is
+    ACCEPTED it becomes a working exit order, `dedup_active` goes true, and that incidentally pops
+    the pending confirmation — so a missing one-shot pop is invisible. Live, every sell was
+    REJECTED, no working order ever existed, and the stale decision re-fired on every quote tick.
+    """
+
+    async def submit_order(self, request):  # type: ignore[no-untyped-def]
+        if request.intent_type == "close":
+            return [
+                ExecutionReport(
+                    event_type="rejected",
+                    origin="broker",
+                    client_order_id=request.client_order_id,
+                    broker_order_id=None,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason="simulated oversold refusal (IMRN replay)",
+                    metadata=dict(request.metadata),
+                )
+            ]
+        return await super().submit_order(request)
+
+
 def _open_row_id(sf) -> str:
     with sf() as s:
         row = s.scalar(
@@ -514,7 +543,7 @@ async def test_the_confirmation_exit_fires_EXACTLY_ONCE_across_many_ticks():
     """⛔ THE 20-SELL BURST. The pending entry was never popped after emitting, so once it became
     executable it re-emitted on EVERY quote tick until the reject ceiling stopped it."""
     sf = _make_sf()
-    svc = _svc(sf, cw=True, adapter=_ConfirmationAdapter(release_result="released"))
+    svc = _svc(sf, cw=True, adapter=_RejectingConfirmationAdapter(release_result="released"))
     _arm(svc, sf, entry=10.0, qty=100)
     svc._confirmation_exit_pending[(ACCT, SYM)] = {
         "source_fill_id": "fill-A",
