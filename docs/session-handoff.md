@@ -3,8 +3,8 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-09-02 19:25 ET.** Batch `2026-09-02-blind-watch-day`. Integrator for
-this rotation. Needs `codex-2`'s review before merge — the author never reviews.
+**Written by `claude-1`, 2026-09-03 21:05 ET.** Batch `2026-09-03-1601-handoff-and-oversold-park`.
+Integrator for this rotation. Needs `codex-2`'s review before merge — the author never reviews.
 
 ---
 
@@ -12,119 +12,115 @@ this rotation. Needs `codex-2`'s review before merge — the author never review
 
 | | |
 |---|---|
-| box (deployed) | **`f437100ba4ec22cbed5c41281f8a5fbb987fa57a`** — verified ON THE BOX 19:25 ET, checkout clean |
-| main | `f437100` — identical. Three merges today: #873 (`50f8c055`), #874 (`028817d`), #875 (`f437100`) |
-| open PRs | today's handoff PR only |
-| exposure (19:25 ET) | virtual **0** · account **0** · managed **0** · non-terminal intents **0** · working orders **0** — FLAT |
+| box (deployed) | **`b308a59460bb239bfe747da007db5d2316878c68`** — verified ON THE BOX 21:02 ET, checkout clean |
+| main | `b308a594` — **identical**. Three merges today: #887 (`bf493d90`), #888 (`015e0786`), #889 (`b308a594`) |
+| open PRs | **none** except this handoff PR |
+| exposure (21:02 ET) | virtual **0** · account **0** · managed **0** · non-terminal intents **0** · working orders **0** — **FLAT** |
 
 | service | pid | NRestarts | | service | pid | NRestarts |
 |---|---|---|---|---|---|---|
-| schwab-1m-v2 | **2531255** | 0 | | strategy | 2732881 | 0 |
-| oms | 2710560 | 0 | | market-data | 2202865 | 0 |
-| control | 2733285 | 0 | | reconciler | 2202771 | 0 |
+| schwab-1m-v2 | 2897273 | 0 | | strategy | 2928192 | 0 |
+| oms | 2928180 | 0 | | market-data | 2202865 | 0 |
+| control | 2928441 | 0 | | reconciler | 2202771 | 0 |
 | market-capture | 2202817 | 0 | | | | |
 
-# ✅ MIXED CODE — RULED DELIBERATE, DO NOT "FIX" IT
+# ⚠️ TWO FLAG CHANGES TODAY — one ON, one deliberately OFF
 
-**`schwab-1m-v2` holds PID `2531255`, its pre-deploy PID.** It was not restarted across today's
-three deploys, so the real-money v2 bot runs **pre-#874 code** while oms/strategy/control run
-`f437100`.
-
-⭐ **`codex-2` confirmed 2026-09-03: this was DELIBERATE, to avoid an unrelated bar hole.** The
-question "decision or omission?" is answered — it was a decision.
-
-⛔ **Do NOT restart v2 to bring the fleet onto one version.** A restart >2 min leaves a hole in
-`strategy_bar_history` — and warmup repairs *memory only*, never the stored series, so any backtest,
-parity study or trade-recorder read covering that window is reading a holed series afterwards.
-
-⚠️ **Correction, and it narrows the claim:** the ATR does **not** compute True Range across such a
-hole any more. **`#620`** (`cf41101`, *never compute true range across a bar gap*) guards it — past
-`_ATR_MAX_BAR_GAP_MS` (90s) the bar contributes `tr = hilo`, its own range capped at 1.5× SMA,
-instead of spanning the gap. Verified running in this very process:
-`[V2-ATR-BAR-GAP] CANF … true range NOT spanned across a 4.0-min bar gap` at 11:19:39Z today,
-PID `2531255`. It is not restart-specific — it covers ordinary intraday gaps (CRWU 25 min,
-AXTU 2–13 min) too.
-
-⭐ **`#620` and `#870` are two different guards; do not conflate them** (I did, and `codex-2` caught
-it). `#620` protects the **true-range computation** and emits `[V2-ATR-BAR-GAP]`. `#870`
-(`a660160`) is the later, complementary fix that **refuses the BUY arm** across a non-adjacent bar
-before arm-state mutation, and emits `[V2-ATR-ARM-GAP]`. Quoting one marker as evidence for the
-other's PR number is how a correct behavioural claim ends up with a wrong citation.
-
-So the old "inflated ATR pushes every resting order too high" consequence is **guarded, not live**.
-
-What remains true is the durable data hole plus the ordinary restart hazards, and those are reason
-enough. Restart only when there is an independent reason to, and then only with the full checklist:
-outside 07:00–16:00 ET, account-flat from broker truth, working orders zero or known, then
-`[V2-BOOT-HOLD] released` + warmup spanning the outage + a clean bar-continuity check.
-
-The split is believed benign: #874's `events.py` change is an additive field with a default, and v2
-touches none of the new tables. It resolves on its own at the next restart v2 needs for its own
-reasons.
-
-# ⭐ TOMORROW'S FIRST READ: DOES THE SEED-EXPOSURE WATCH ACTUALLY SPEAK?
-
-`#873` is merged and deployed but **UNPROVEN**. The watch was blind for **ten consecutive sessions**
-(2026-08-20 → 09-02), refusing `⛔ CANNOT SEE — REFUSING: no DSN` on every 5-minute tick. Its window
-is **04:00–11:00 ET**, so the first live verdict lands tomorrow morning.
-
-- **PASS** = a real `swept N of N` / `VERDICT` line in `/home/trader/seed_exposure_out/latest.txt`.
-- **FAIL** = another `CANNOT SEE`, or a `09:12` readiness verdict that is still AMBER.
-- ⛔ Do not mark `#873` verified on the strength of the merge. Merged ≠ deployed ≠ proven.
-
-# ⛔ STILL BROKEN AFTER THE DEPLOY — the 09:12 readiness path
-
-`git pull` does **not** fix it. Root's crontab runs `/home/trader/preopen_readiness_cron.sh`, a
-**separate unversioned copy** (inode `524437`) of `ops/health/preopen_readiness_cron.sh`
-(inode `1861068`). Contents were identical, so it *reads* as versioned and is not.
-
-⇒ Fix by **repointing root's crontab at the repo path**, never by re-copying (a re-copy recreates
-the drift). Operator-visible change to root's crontab; needs explicit OK. Until then the 09:12 slot
-runs the old code and the daily AMBER continues.
-
-# STANDING RULES SET TODAY
-
-1. **A REPEATING alert is a DEAD alert.** Same level + same string N days running is not N warnings,
-   it is one unfixed defect plus N−1 desensitising events. `⛔ CANNOT SEE` ten days running meant the
-   watch was OFF. A refusal is only half the contract; the other half is that somebody acts on it.
-2. **An alarm must name itself.** The readiness line said `SEED-EXPOSURE: CANNOT SEE` with no cause
-   for ten days while the cause (`no DSN`) sat unused in `$SEED_LINE`.
-3. **When one wrapper in a family misbehaves, diff it against the family, not against its own spec.**
-   The defect was invisible in the check's logic and obvious in one grep across siblings.
-4. **Check the ACCOUNT before reading any v2 timeline.** Fills that look like direct hits were
-   `paper:polygon_30s`, a different bot. Resolving `broker_account_id` dissolved a false hit *and*
-   confirmed a prior trace.
-5. **A count of attempts is not a count of events.** Suppression markers fire once per reprice cycle,
-   not once per lost entry.
-
-# OPEN / OWED
-
-| item | owner | state |
+| flag | state | note |
 |---|---|---|
-| ~~Confirm the v2 non-restart was deliberate~~ | codex-2 | ✅ **CLOSED** — confirmed deliberate 2026-09-03; do not restart v2 to "fix" it |
-| Prove `#873` — read the seed-exposure verdict after 04:00 ET | claude-1 | scripted; PASS/FAIL stated above |
-| Repoint root's crontab at `ops/health/preopen_readiness_cron.sh` | operator + codex-2 | needs explicit OK; blocks the 09:12 fix |
-| Run the 82-event exit-rule measurement | claude-1 | ⛔ **hard deadline 2026-09-07** — `market_capture_quotes` prunes at 14 days and the 08-24 session leaves the tape then. 80/82 gradable provisionally |
-| `[PAPER-EXIT-REFUSED]` marker has no consumer | unowned — needs an owner | detects-but-nobody-listens class; a bare zero cannot separate "never fired" from "nobody looked" |
-| Webull reclaim-slot asymmetry | unowned — needs an owner | Schwab may take 2 entries per segment, Webull 1; the Webull slot is not released when its leg exits. Denominator not yet derived |
-| PAPER1 — successor exit question above +5% | codex-2 | blocked on exercised paper-harness evidence |
+| `..._CONFIRMATION_EXIT_ENABLED` (CONF1) | **`true`** — **CHANGED TODAY** | operator ruling. Verified present in BOTH process environments, not just the env file |
+| `oms_v2_eod_cancel_reexit_enabled` (EOD1601) | **`False`** (code default; **not set in env**) | shipped OFF by design — see below |
 
-# ⛔ WATCH ITEMS
+⛔ **CONF1 was disabled mid-session and re-enabled after the close.** It is ON going into 09-04.
+Its own protection reconcile first executed today and produced **221 marker lines, all CHPT**.
 
-- **C42 stale-anchor residual.** WETO satisfied C42's falsifier on 09-01: a joiner armed on a
-  prior-session anchor with no cap/roll line, killed at 07:01:02 by `session_anchor_reset` — not by
-  the 04:00 roll and not by the seed cap. Exposure is mostly structural (04:00–07:00 sits before
-  entries open) with a **~62-second residual inside the tradable window**. Accumulating watch.
-- **SEG1 — ⛔ SUPERSEDED AND UNEXERCISABLE ONCE #879 MERGES. NEVER GRADE IT.**
-  It was verified falsifiable on the 09-02 tape (true identity 13, dropping `entry_slot` 12), but
-  exercised by **exactly one slot** — BIAF `58f2bc1e`, which carried both a first and a reclaim.
-  **#879 removes precisely that case:** the paper path now keys on the durable fill
-  (`logical_mirror_id = sha256("mirror-fill:{fill_id}")`), excludes reclaims, and drops the Webull
-  venue — so `entry_slot` is a constant filter, not a discriminator, and there is no cross-venue
-  collapse left to govern. Keying on the fill id is the better design; the point is only that the
-  property can no longer fail. ⇒ A SEG1 reading after #879 is **vacuous by construction** and must
-  report **UNEXERCISABLE**, never PASS. A PASS that could not have failed is worse than no reading.
-- **Hold-until-proven 0/82 rests on 4/82.** Only four rows are "still open at 16:00" (CELU −0.94,
-  AEHL −0.58, NCRA −0.35, FLYE −2.26). Correct as measured; a small denominator, never evidence that
-  holding is free.
-- **A7 reject alarm:** GREEN = no new real-money class and no ≥2-day streak — **NOT zero refusals.**
+---
+
+# 🆕 EOD1601 — 16:01 cancel-and-reexit is DEPLOYED AND INERT
+
+`#889` merged and deployed. At 16:01 ET, once per position per day, it would: harvest the working
+SELL leg ids from that entry's **own order tree** → `DELETE` each once → **independently re-read and
+confirm zero** → place a PM limit exit through `_emit_v2_exit_on_loop`.
+
+⛔ **IT HAS NEVER RUN. The flag is off and `UNEXERCISED` is not `PASS`.** A day with no position
+open at 16:01 logs `considered=0 outcome=UNEXERCISED` — an untested day against a denominator of
+zero. Do not read the absence of alarms as evidence it works.
+
+⚠️ **THE 16:01–16:05 UNPROTECTED WINDOW IS REAL AND DELIBERATE.** Schwab's PM session does not open
+until ~16:05, so between the cancel and the first fillable moment the position has **nothing
+working**. It trades a bounded four-minute gap for the open-ended one it replaces. Cents on one
+share; **not cents on a real position.** The operator accepted this knowingly.
+
+⛔ **THE DELETE AGAINST AN OCO CHILD HAS NEVER EXECUTED ANYWHERE.** That is the one unknown the
+whole design rests on. `scripts/schwab_oco_child_cancel_probe.py` answers it for ~$2.11 attended
+(operator chose PLUG, place 15:50, cancel 16:01). It is deployed at
+`/home/trader/schwab_oco_child_cancel_probe.py`, md5 `1d085fc4a31a`, identical to the copy in the
+repo. **🛑 ITS WRITE SEQUENCE IS STOOD DOWN pending `codex-2` clearing it.**
+
+⛔ **RESTORE IS IMPOSSIBLE AFTER 16:00 — this contradicts an operator ruling and is not papered
+over.** He ruled "if the PM exit is refused, re-place the bracket". Schwab **rejects a STOP leg
+outside RTH** ("This order type is not available for this session", measured 2026-08-04), and
+`_build_exit_only_oco_payload` refuses to build one. So the path logs `RESTORE_IMPOSSIBLE`, pages,
+and names the 19:55 flatten as the real backstop rather than placing an order that would certainly
+be rejected and calling it `RESTORED`.
+
+# 🅿 OVSD1 — Schwab oversold storm, PARKED DELIBERATELY UNFIXED
+
+CHPT 2026-09-03: **205 oversold refusals in 8 minutes** (13:45:35→13:53:32) plus **14 HTTP 429s in
+14 seconds**. Closed by manual broker action.
+⛔ Three different windows — the **220 reconcile verdicts** span ~14 min (13:39:04→13:53:31). Do not
+quote one for another.
+
+**Mechanism (sharpest statement we have):** `oms/service.py:3600` — a false `released` runs
+`_native_oco_armed_confirmed_at.pop(...)`, so **a guess deletes the broker-confirmed fact** that
+would have stood the ladder down. Then `3669` waves the send through and `3671`'s stand-down is
+already disarmed. Once per tick.
+
+⛔ **THE CLASS IS OLD — CONF1 DID NOT INTRODUCE IT.** `broker_orders` spans 2026-03-30→09-03:
+**639 oversold refusals, all `live:schwab_1m_v2`, across 20 ET days from 07-01.** Four storm days:
+**07-13 AGEN 127 · 07-31 FCUV/KUST 126 · 08-04 AAOG 115 · 09-03 CHPT 205.**
+⚠️ That shows the **refusal class** is old. It does **not** show the earlier storms share the 3600
+mechanism — CONF1 did not exist then.
+
+**Reopens on a second instance with evidence.** Start at the unexamined `>= 2` working-leg threshold
+in `fetch_armed_native_oco_symbols`, not at a rewrite. Board row **OVSD1**.
+
+# ⛔ RATE1 DROPPED BY DECISION — an accepted risk, not an unnoticed gap
+
+The broker-reject-rate alarm was built and validated (12 retained days, 10-minute buckets, firing on
+**exactly one** bucket — 09-03 `live:schwab_1m_v2` 137 — zero false positives) and then **dropped**:
+the operator already sees a large volume of routine refusals daily, and *an alarm he learns to
+ignore is worse than no alarm*. The objection is to the **channel**, not the detection.
+⇒ **With no alarm, a recurrence is detected only by the operator noticing, as on 09-03.** Four
+storm-scale instances since July make a fifth likely. Thresholds and the revisit bar are preserved
+in the board row; the code was not merged.
+
+---
+
+# ▶ NEXT SESSION
+
+1. **`codex-2` to clear (or refuse) the probe's write sequence.** Until then it does not run.
+   If cleared: PLUG, place 15:50, cancel 16:01. **Friday 09-04 is the last window before Tuesday**
+   (09-07 is Labor Day).
+2. **CONF1 is ON and unproven at scale** — its reconcile has one day of history, all one symbol.
+3. **EOD1601 stays OFF** until the probe answers, or the operator rules otherwise.
+
+# ⚠️ TWO VERIFICATION FAILURES OF MINE, RECORDED SO THEY ARE NOT REPEATED
+
+1. **I compared `-k`-FILTERED test runs and reported "identical failure sets"** while a module-global
+   patch in my own test leaked and broke **deselected** modules (full suite 46 → 59). A filtered
+   control cannot see a leak into what it filtered out. ⇒ **The control must cover the population
+   the change can reach.**
+2. **A `perl` mutation replaced the FIRST of eight identical guard lines**, not the one under test,
+   so a covered guard read as **uncovered**. ⇒ **Assert the mutation landed where you think it did.**
+
+⚠️ Across three review rounds, `codex-2` withheld the pin on **nine** findings and every one was
+real. The recurring shape: **an absence read as evidence** — no working legs, no refusal, no unknown
+status, no failures in the filtered set.
+
+# ⚠️ Watch items live here, not in [`handoff-open-items.md`](handoff-open-items.md)
+
+- **`bar_gap_watch_cron.sh` exits 0 by ET-GUARD SKIP after 16:00.** A clean exit from it in the
+  evening is **not** a pass. Confirm bar continuity by direct read.
+- **`broker_order_events` stores our own aborts as rejects** — every reject count is contaminated
+  unless keyed on the broker's verbatim reason string.
