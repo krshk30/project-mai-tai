@@ -408,3 +408,71 @@ def test_a_HELD_read_still_must_not_end_the_episode() -> None:
 
     assert KEY not in svc._v2_exit_stood_down, "a HELD read may resume the loop"
     assert svc._v2_exit_reject_total[KEY] == 17, "but it must NOT clear the absolute ceiling"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# codex-2 R1 on PR #893: ONE close can return MULTIPLE broker reports, and Schwab can answer
+# `accepted` THEN `rejected` for the same order. The first fix tested "any positive status",
+# which sees the `accepted` and clears the ceiling on the very tick that incremented it.
+# ⛔ That is the ORIGINAL defect wearing a new mask: the total rises to N and is popped straight
+# back, so the bound is unreachable exactly when a real storm is running.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+def test_accepted_then_rejected_on_ONE_close_is_not_progress() -> None:
+    """⛔ A single close answering [accepted, rejected] must COUNT, not reset."""
+    svc = _emit_svc(statuses=["accepted", "rejected"], close_on_fill=True)
+
+    _drive_close(svc, 3)
+
+    assert svc._v2_exit_reject_total.get(KEY) == 3, (
+        "a close that ended REJECTED is not progress just because the broker also emitted an "
+        "`accepted` report for it — any rejection in the batch disqualifies the whole close"
+    )
+
+
+def test_the_ceiling_is_still_reachable_under_mixed_status_reports() -> None:
+    """THE STORM SHAPE. The bound must terminate the loop even when every close reports
+    `accepted` alongside its `rejected` — otherwise the ceiling is decorative in exactly the
+    case it exists for."""
+    svc = _emit_svc(statuses=["accepted", "rejected"], close_on_fill=True)
+    n = OmsRiskService._V2_EXIT_MAX_REJECTS_PER_EPISODE
+
+    _drive_close(svc, n - 1)
+    assert KEY not in svc._v2_exit_stood_down, "must not stand down one short of the bound"
+
+    _drive_close(svc, 1)
+    assert svc._v2_exit_reject_total[KEY] == n
+    assert KEY in svc._v2_exit_stood_down, (
+        "mixed accepted/rejected reports must still reach the ceiling and stop the hammering"
+    )
+
+
+def test_rejected_then_accepted_ordering_is_also_not_progress() -> None:
+    """Order of the reports must not matter — the disqualifier is the REJECTION's presence."""
+    svc = _emit_svc(statuses=["rejected", "accepted"], close_on_fill=True)
+
+    _drive_close(svc, 3)
+
+    assert svc._v2_exit_reject_total.get(KEY) == 3
+
+
+def test_a_multi_report_close_with_NO_rejection_is_still_progress() -> None:
+    """The control: a genuinely clean close reporting [accepted, filled] MUST still reset.
+
+    ⛔ Without this, "never reset" would pass every test above while failing CLOSED — the loop
+    would stand down on a position that is exiting perfectly well.
+    """
+    svc = _emit_svc(statuses=["rejected"], close_on_fill=True)
+    _drive_close(svc, 5)
+    assert svc._v2_exit_reject_total[KEY] == 5
+
+    svc._emit_v2_managed_sell = lambda *_a, **_k: _accepted_filled()
+    _drive_close(svc, 1)
+
+    assert KEY not in svc._v2_exit_reject_total, (
+        "a clean multi-report close is real progress and must clear the ceiling"
+    )
+
+
+async def _accepted_filled():
+    return [_Ev("accepted"), _Ev("filled")]

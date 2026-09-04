@@ -5095,7 +5095,15 @@ class OmsRiskService:
                         # strategy/broker-account lookup misses, so a call that emitted NO ORDER AT
                         # ALL was booked as "the close placed" and wiped the ceiling. Progress now
                         # needs positive evidence of a recorded, non-refused order event.
-                        progressed = any(
+                        # ⛔⭐⭐ codex-2, #893 R1: ONE close can return MULTIPLE reports, and Schwab
+                        # can answer `accepted` THEN `rejected` for the same order. A bare
+                        # "any positive status" test sees the `accepted` and clears the ceiling on
+                        # the very tick that just incremented it — the counter rises to N and is
+                        # popped straight back, which is the ORIGINAL defect wearing a new mask.
+                        # ⇒ ANY rejection in the batch disqualifies the whole close from counting as
+                        # progress. `not rejected` is the load-bearing half; the positive test is
+                        # what keeps an EMPTY list (finding 2) from reading as success.
+                        progressed = not rejected and any(
                             str(getattr(ev.payload, "status", "")).strip().lower()
                             not in self._V2_EXIT_NON_PROGRESS_STATUSES
                             for ev in events
