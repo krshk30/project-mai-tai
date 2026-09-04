@@ -1,0 +1,9 @@
+{
+  "pr_number": 894,
+  "range_base": "073a331b7347718742de9b30202533921e29b701",
+  "range_head": "6ff47a5a2dc53afe431b1f0fdb5bc01649b8a6ba",
+  "reviewed_at": "2026-09-04T14:38:01Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed exact timeout-budget and timeout-vs-unreachable diagnostics; ran 12 focused tests, full src/tests ruff, whitespace check, and verified healthy endpoint control plus fail-closed timeout and unreachable paths."
+}
