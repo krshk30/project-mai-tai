@@ -51,28 +51,23 @@ class RoutingBrokerAdapter:
             return set()
         return await fn(broker_account_name, symbols)
 
-    async def fetch_working_exit_leg_ids(
-        self, broker_account_name: str, symbols: list[str]
-    ) -> dict[str, list[str]]:
+    async def fetch_exit_legs_for_entry(
+        self, broker_account_name: str, entry_broker_order_id: str
+    ) -> dict[str, object]:
         """Route to the account's adapter. Optional capability.
 
-        ⛔ An adapter without it RAISES. Returning {} was the original shape and it was wrong:
-        {} is indistinguishable from "the broker reports no working legs", so an unaskable venue
-        read as a clear one. Raising forces the caller onto its UNANSWERABLE branch.
+        ⛔ An adapter without it RAISES. Returning an empty result would be indistinguishable from
+        "the broker reports no working legs", so an unaskable venue would read as a clear one and
+        be sold into. Raising forces the caller onto its UNANSWERABLE branch.
         """
         adapter = self._adapter_for_account(broker_account_name)
-        fn = getattr(adapter, "fetch_working_exit_leg_ids", None)
+        fn = getattr(adapter, "fetch_exit_legs_for_entry", None)
         if fn is None:
-            # ⛔⭐⭐ RAISE, DO NOT RETURN {}. An empty dict is indistinguishable from "the broker
-            # reports no working legs", and the caller's confirmed-zero gate would read an
-            # UNASKABLE venue as a CLEAR one and sell into it. That is precisely the inferred
-            # release this whole path exists to refuse — arriving through the back door.
-            # Raising lands the caller on its UNANSWERABLE branch: no cancel, no PM exit.
             raise RuntimeError(
-                f"{broker_account_name}: adapter cannot report working exit legs — this venue "
-                "cannot be asked, which is NOT the same as having none."
+                f"{broker_account_name}: adapter cannot report exit legs — this venue cannot be "
+                "asked, which is NOT the same as having none."
             )
-        return await fn(broker_account_name, symbols)
+        return await fn(broker_account_name, entry_broker_order_id)
 
     async def cancel_exit_leg_ids(
         self, broker_account_name: str, order_ids: list[str]

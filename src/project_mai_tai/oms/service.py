@@ -6719,6 +6719,30 @@ class OmsRiskService:
         for ev in events:
             await self._publish_order_event(ev)
 
+    def _latest_filled_entry_order_id(self, session, acct: str, symbol: str) -> str | None:
+        """The most recent FILLED buy's broker order id for this position.
+
+        ⛔ `oms_managed_positions` carries no entry broker order id, which is why the first version
+        swept the account's whole order list. It is derivable exactly from `broker_orders`, and
+        having it lets the confirm read one order TREE instead of a paginated list.
+        """
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == acct))
+        if account is None:
+            return None
+        row = session.scalars(
+            select(BrokerOrder)
+            .where(
+                BrokerOrder.broker_account_id == account.id,
+                BrokerOrder.symbol == symbol,
+                BrokerOrder.side == "buy",
+                BrokerOrder.status == "filled",
+            )
+            .order_by(BrokerOrder.submitted_at.desc())
+            .limit(1)
+        ).first()
+        oid = str(getattr(row, "broker_order_id", "") or "") if row is not None else ""
+        return oid or None
+
     def _v2_eod_cancel_reexit_due(self, now: datetime | None = None) -> bool:
         """True only INSIDE the cancel-and-reexit window (default 16:01-16:15 ET) on a weekday."""
         et = (now or datetime.now(UTC)).astimezone(SESSION_TZ)
@@ -6800,21 +6824,44 @@ class OmsRiskService:
         self, acct: str, symbol: str, close_on_fill: bool
     ) -> None:
         """One position, one attempt. Every exit from this method is a terminal outcome for today."""
-        key_sym = symbol.upper()
-
         # --- 1. HARVEST -------------------------------------------------------------------
+        entry_id = await self._run_db(
+            lambda session: self._latest_filled_entry_order_id(session, acct, symbol),
+            commit=False,
+        )
+        if not entry_id:
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=NO_ENTRY_ORDER_ID — cannot address this "
+                "position's own order tree, so nothing was cancelled and NO PM exit was placed.",
+                acct, symbol,
+            )
+            return
         try:
-            before = await self.broker_adapter.fetch_working_exit_leg_ids(acct, [symbol])
+            before = await self.broker_adapter.fetch_exit_legs_for_entry(acct, entry_id)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - an unreadable broker is NOT a clear broker
             self.logger.error(
-                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=UNANSWERABLE_HARVEST — could not read the "
-                "working legs, so nothing was cancelled and NO PM exit was placed. The position "
-                "keeps its existing protection.", acct, symbol, exc_info=True,
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=UNANSWERABLE_HARVEST entry=%s — could not "
+                "read the legs, so nothing was cancelled and NO PM exit was placed.",
+                acct, symbol, entry_id, exc_info=True,
             )
             return
-        leg_ids = list(before.get(key_sym, []))
+        if before.get("unsafe"):
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=UNSAFE_LEG_STATE entry=%s — a partial fill "
+                "or an unrecognised leg status. Refusing to act on a state we do not understand.",
+                acct, symbol, entry_id,
+            )
+            return
+        if before.get("filled"):
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=RESOLVED_BY_FILL entry=%s — an OCO child "
+                "already FILLED; the position is closed. NO PM exit.", acct, symbol, entry_id,
+            )
+            await self._close_resolved_oco_managed_row(acct, symbol)
+            return
+        leg_ids = list(before.get("working") or [])
 
         # ⛔ An unsupported venue returns {} from routing, which is indistinguishable HERE from
         # "no legs". Both are handled identically and SAFELY: we only ever proceed to the PM exit
@@ -6871,7 +6918,7 @@ class OmsRiskService:
 
         # --- 2. CONFIRM ZERO -- independent re-read, never inferred -----------------------
         try:
-            after = await self.broker_adapter.fetch_working_exit_leg_ids(acct, [symbol])
+            after = await self.broker_adapter.fetch_exit_legs_for_entry(acct, entry_id)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -6883,7 +6930,13 @@ class OmsRiskService:
             if cancelled_by_us:
                 await self._v2_eod_restore_protection(acct, symbol, why="confirm_unreadable")
             return
-        remaining = list(after.get(key_sym, []))
+        if after.get("unsafe") or after.get("filled"):
+            self.logger.error(
+                "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=CONFIRM_NOT_CLEAN unsafe=%s filled=%s — "
+                "NO PM exit.", acct, symbol, after.get("unsafe"), after.get("filled"),
+            )
+            return
+        remaining = list(after.get("working") or [])
         if remaining:
             self.logger.error(
                 "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=STILL_WORKING remaining=%d ids=%s — the "

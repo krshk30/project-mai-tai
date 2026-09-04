@@ -46,11 +46,14 @@ class _LegAdapter(SimulatedBrokerAdapter):
         self.harvest_calls = 0
         self.cancel_calls: list[list[str]] = []
 
-    async def fetch_working_exit_leg_ids(self, broker_account_name, symbols):
+    async def fetch_exit_legs_for_entry(self, broker_account_name, entry_broker_order_id):
         self.harvest_calls += 1
         if self._raise_on_harvest:
             raise RuntimeError("broker unreadable")
-        return self._harvests.pop(0) if self._harvests else {}
+        nxt = self._harvests.pop(0) if self._harvests else {}
+        if isinstance(nxt, dict) and ("working" in nxt or "filled" in nxt or "unsafe" in nxt):
+            return {"working": [], "filled": False, "unsafe": False, **nxt}
+        return {"working": list(nxt.get(SYM, [])), "filled": False, "unsafe": False}
 
     async def cancel_exit_leg_ids(self, broker_account_name, order_ids):
         self.cancel_calls.append(list(order_ids))
@@ -84,11 +87,27 @@ def _svc(adapter, *, enabled: bool = True) -> OmsRiskService:
         s.commit()
     svc._managed_v2_symbols.add((ACCT, SYM))
     svc._v2_eod_cancel_reexit_due = lambda now=None: True
+    # the position's own entry order id -- the path reads ONE order tree, not a paginated list
+    svc._latest_filled_entry_order_id = lambda session, a, sym: "entry-1"
     return svc
 
 
-def _track(svc, *, pm_ok: bool, restore_raises: bool = False, rth: bool = True,
-           monkeypatch=None):
+@pytest.fixture(autouse=True)
+def _no_global_leak(monkeypatch):
+    """⛔⭐⭐ EVERY patch in this module goes through monkeypatch so pytest UNDOES it.
+
+    The first version assigned `project_mai_tai.oms.service._is_regular_market_session` directly
+    and never restored it. It leaked into every later test in the session: the full suite went
+    55 -> 59 failures, hitting modules this file has nothing to do with
+    (test_webull_protect_retry_horizon and others). My `-k`-filtered control could not see it,
+    because the victims were DESELECTED -- I compared a filtered set to a filtered set and called
+    them identical. ⇒ A module-global patch can reach the WHOLE suite, so its control must be the
+    whole suite.
+    """
+    yield
+
+
+def _track(svc, monkeypatch, *, pm_ok: bool, restore_raises: bool = False, rth: bool = True):
     """Replace the two leaf actions with recorders so orchestration is what is under test.
 
     ⛔ `rth` matters: a protective OCO CANNOT be re-armed outside regular hours (Schwab rejects a
@@ -96,7 +115,7 @@ def _track(svc, *, pm_ok: bool, restore_raises: bool = False, rth: bool = True,
     observe a restore must say they are in RTH.
     """
     import project_mai_tai.oms.service as _svcmod
-    _svcmod._is_regular_market_session = lambda now=None: rth
+    monkeypatch.setattr(_svcmod, "_is_regular_market_session", lambda now=None: rth)
     calls = {"pm": 0, "restore": 0}
 
     async def _pm(acct, symbol, close_on_fill):
@@ -129,10 +148,10 @@ def test_due_gate_pins_1601_and_refuses_weekends():
 
 
 @pytest.mark.asyncio
-async def test_flag_off_does_nothing_at_all():
+async def test_flag_off_does_nothing_at_all(monkeypatch):
     a = _LegAdapter([{SYM: ["1", "2"]}])
     svc = _svc(a, enabled=False)
-    _track(svc, pm_ok=True)
+    _track(svc, monkeypatch, pm_ok=True)
     await svc._v2_eod_cancel_and_reexit()
     assert a.harvest_calls == 0 and a.cancel_calls == []
 
@@ -140,10 +159,10 @@ async def test_flag_off_does_nothing_at_all():
 # --- 1. once per position, NOT once per tick ---------------------------------------
 
 @pytest.mark.asyncio
-async def test_claims_once_per_position_not_once_per_tick():
+async def test_claims_once_per_position_not_once_per_tick(monkeypatch):
     a = _LegAdapter([{SYM: ["1"]}, {}, {SYM: ["1"]}, {}])
     svc = _svc(a)
-    calls = _track(svc, pm_ok=True)
+    calls = _track(svc, monkeypatch, pm_ok=True)
     for _ in range(4):                      # four 5s ticks after 16:01
         await svc._v2_eod_cancel_and_reexit()
     assert a.cancel_calls == [["1"]], "cancelled more than once — the per-tick hole is back"
@@ -153,7 +172,7 @@ async def test_claims_once_per_position_not_once_per_tick():
 # --- 2. a refused DELETE stops everything ------------------------------------------
 
 @pytest.mark.asyncio
-async def test_a_refused_delete_places_no_pm_exit_and_does_not_retry():
+async def test_a_refused_delete_places_no_pm_exit_and_does_not_retry(monkeypatch):
     a = _LegAdapter(
         [{SYM: ["1", "2"]}],
         cancel_result={"cancelled": [], "refused": {"order_id": "1", "status_code": 400,
@@ -161,7 +180,7 @@ async def test_a_refused_delete_places_no_pm_exit_and_does_not_retry():
                        "untouched": ["2"]},
     )
     svc = _svc(a)
-    calls = _track(svc, pm_ok=True)
+    calls = _track(svc, monkeypatch, pm_ok=True)
     await svc._v2_eod_cancel_and_reexit()
     await svc._v2_eod_cancel_and_reexit()
     assert calls["pm"] == 0, "placed a PM exit after a REFUSED cancel"
@@ -172,27 +191,27 @@ async def test_a_refused_delete_places_no_pm_exit_and_does_not_retry():
 # --- 3. no PM exit without a confirmed-zero re-read --------------------------------
 
 @pytest.mark.asyncio
-async def test_no_pm_exit_when_the_confirm_read_still_shows_a_working_leg():
+async def test_no_pm_exit_when_the_confirm_read_still_shows_a_working_leg(monkeypatch):
     # cancel "succeeds", but the independent re-read still sees leg 2 working.
     a = _LegAdapter([{SYM: ["1", "2"]}, {SYM: ["2"]}])
     svc = _svc(a)
-    calls = _track(svc, pm_ok=True)
+    calls = _track(svc, monkeypatch, pm_ok=True)
     await svc._v2_eod_cancel_and_reexit()
     assert calls["pm"] == 0, "sold against shares a working leg still reserves"
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_confirm_blocks_the_pm_exit_and_restores():
+async def test_an_unreadable_confirm_blocks_the_pm_exit_and_restores(monkeypatch):
     class _A(_LegAdapter):
-        async def fetch_working_exit_leg_ids(self, acct, symbols):
+        async def fetch_exit_legs_for_entry(self, acct, entry_id):
             self.harvest_calls += 1
             if self.harvest_calls == 1:
-                return {SYM: ["1"]}
+                return {"working": ["1"], "filled": False, "unsafe": False}
             raise RuntimeError("unreadable on the confirm")
 
     a = _A([])
     svc = _svc(a)
-    calls = _track(svc, pm_ok=True)
+    calls = _track(svc, monkeypatch, pm_ok=True)
     await svc._v2_eod_cancel_and_reexit()
     assert calls["pm"] == 0, "placed a PM exit without confirming the legs are gone"
     assert calls["restore"] == 1, "cancelled legs and left the position with nothing"
@@ -201,10 +220,10 @@ async def test_an_unreadable_confirm_blocks_the_pm_exit_and_restores():
 # --- the common case: DAY legs already expired at the bell -------------------------
 
 @pytest.mark.asyncio
-async def test_nothing_to_cancel_still_places_the_pm_exit():
+async def test_nothing_to_cancel_still_places_the_pm_exit(monkeypatch):
     a = _LegAdapter([{}, {}])               # no legs at 16:01 (DAIC 08-25 / CELU 08-27 shape)
     svc = _svc(a)
-    calls = _track(svc, pm_ok=True)
+    calls = _track(svc, monkeypatch, pm_ok=True)
     await svc._v2_eod_cancel_and_reexit()
     assert a.cancel_calls == [], "cancelled something when there was nothing to cancel"
     assert calls["pm"] == 1
@@ -213,30 +232,30 @@ async def test_nothing_to_cancel_still_places_the_pm_exit():
 # --- 4. restore, exactly once ------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_a_failed_pm_exit_after_a_real_cancel_restores_exactly_once():
+async def test_a_failed_pm_exit_after_a_real_cancel_restores_exactly_once(monkeypatch):
     a = _LegAdapter([{SYM: ["1", "2"]}, {}])
     svc = _svc(a)
-    calls = _track(svc, pm_ok=False)
+    calls = _track(svc, monkeypatch, pm_ok=False)
     await svc._v2_eod_cancel_and_reexit()
     await svc._v2_eod_cancel_and_reexit()   # a second tick must not restore again
     assert calls["restore"] == 1, "restore did not happen exactly once"
 
 
 @pytest.mark.asyncio
-async def test_a_failed_restore_is_marked_and_not_retried():
+async def test_a_failed_restore_is_marked_and_not_retried(monkeypatch):
     a = _LegAdapter([{SYM: ["1"]}, {}])
     svc = _svc(a)
-    calls = _track(svc, pm_ok=False, restore_raises=True)
+    calls = _track(svc, monkeypatch, pm_ok=False, restore_raises=True)
     await svc._v2_eod_cancel_and_reexit()   # must not raise out of the sweep
     await svc._v2_eod_cancel_and_reexit()
     assert calls["restore"] == 1, "cycled on a failed restore"
 
 
 @pytest.mark.asyncio
-async def test_nothing_removed_means_nothing_restored():
+async def test_nothing_removed_means_nothing_restored(monkeypatch):
     a = _LegAdapter([{}, {}])
     svc = _svc(a)
-    calls = _track(svc, pm_ok=False)        # PM exit fails, but we cancelled NOTHING
+    calls = _track(svc, monkeypatch, pm_ok=False)        # PM exit fails, but we cancelled NOTHING
     await svc._v2_eod_cancel_and_reexit()
     assert calls["restore"] == 0, "restored a bracket we never removed"
 
@@ -244,7 +263,7 @@ async def test_nothing_removed_means_nothing_restored():
 # --- 5. the PM exit uses the managed-exit path, never a direct POST ----------------
 
 @pytest.mark.asyncio
-async def test_pm_exit_goes_through_the_managed_exit_path():
+async def test_pm_exit_goes_through_the_managed_exit_path(monkeypatch):
     """If this ever becomes a direct broker POST, the order is invisible to
     get_open_exit_reserved_quantity and the 19:55 flatten places a SECOND sell."""
     a = _LegAdapter([])
@@ -279,7 +298,7 @@ async def test_pm_exit_goes_through_the_managed_exit_path():
 # ==================================================================================
 
 @pytest.mark.asyncio
-async def test_F1_never_sells_when_an_oco_child_has_already_filled():
+async def test_F1_never_sells_when_an_oco_child_has_already_filled(monkeypatch):
     """'No WORKING legs' has two causes: the legs lapsed (we still hold) or one FILLED (already
     sold). They read identically. Selling on the second is a naked short."""
     class _A(_LegAdapter):
@@ -300,7 +319,7 @@ async def test_F1_never_sells_when_an_oco_child_has_already_filled():
 
 
 @pytest.mark.asyncio
-async def test_F2_a_partial_cancel_refusal_restores_because_protection_is_now_degraded():
+async def test_F2_a_partial_cancel_refusal_restores_because_protection_is_now_degraded(monkeypatch):
     """Leg 1 cancelled, leg 2 refused => the pair is HALF a pair. That is not 'nothing happened'."""
     a = _LegAdapter(
         [{SYM: ["1", "2"]}],
@@ -308,36 +327,36 @@ async def test_F2_a_partial_cancel_refusal_restores_because_protection_is_now_de
                                                        "body": "no"}, "untouched": []},
     )
     svc = _svc(a)
-    calls = _track(svc, pm_ok=True, rth=True)
+    calls = _track(svc, monkeypatch, pm_ok=True, rth=True)
     await svc._v2_eod_cancel_and_reexit()
     assert calls["pm"] == 0, "placed a PM exit after a refused cancel"
     assert calls["restore"] == 1, "left the position with HALF a protective pair and did nothing"
 
 
 @pytest.mark.asyncio
-async def test_F3_a_venue_that_cannot_be_asked_is_never_read_as_confirmed_zero():
+async def test_F3_a_venue_that_cannot_be_asked_is_never_read_as_confirmed_zero(monkeypatch):
     """routing raises for an adapter without the capability; {} would be indistinguishable from
     'the broker reports no working legs' and would sell into an unasked venue."""
     class _A(_LegAdapter):
-        async def fetch_working_exit_leg_ids(self, acct, symbols):
+        async def fetch_exit_legs_for_entry(self, acct, entry_id):
             self.harvest_calls += 1
             raise RuntimeError("venue cannot be asked")
 
     a = _A([])
     svc = _svc(a)
-    calls = _track(svc, pm_ok=True)
+    calls = _track(svc, monkeypatch, pm_ok=True)
     await svc._v2_eod_cancel_and_reexit()
     assert calls["pm"] == 0, "sold on a venue whose legs we never actually read"
     assert a.cancel_calls == []
 
 
 @pytest.mark.asyncio
-async def test_F4_no_bracket_restore_is_attempted_after_the_close():
+async def test_F4_no_bracket_restore_is_attempted_after_the_close(monkeypatch):
     """Schwab rejects a STOP leg outside RTH (measured 2026-08-04), so a post-close 'restore'
     places nothing. It must not be attempted, and must never log as RESTORED."""
     a = _LegAdapter([{SYM: ["1"]}, {}])
     svc = _svc(a)
-    calls = _track(svc, pm_ok=False, rth=False)
+    calls = _track(svc, monkeypatch, pm_ok=False, rth=False)
     await svc._v2_eod_cancel_and_reexit()
     assert calls["restore"] == 0, "tried to re-arm an OCO the broker would certainly reject"
 
@@ -352,28 +371,85 @@ def test_F5_the_window_is_closed_not_open_ended():
 
 
 @pytest.mark.asyncio
-async def test_F6_a_truncated_order_book_refuses_instead_of_reporting_zero():
-    """maxResults truncation is a FALSE ZERO here, and false-zero means 'sell'."""
-    from project_mai_tai.broker_adapters.schwab import _ORDER_PAGE_LIMIT, SchwabBrokerAdapter
+async def test_F6_absence_is_no_longer_inferred_from_a_paginated_list(monkeypatch):
+    """The paginated account sweep is GONE. Measured on the live account, maxResults=500 and 1000
+    both return the SAME 224 rows, so a row-count guard against the cap could never fire -- a
+    check that cannot come out false. The path now reads ONE entry's order tree instead."""
+    from project_mai_tai.broker_adapters import schwab as _sch
+
+    assert not hasattr(_sch.SchwabBrokerAdapter, "fetch_working_exit_leg_ids"), \
+        "the unprovable account-wide sweep is back"
+    assert not hasattr(_sch, "_ORDER_PAGE_LIMIT"), "the unfireable page-cap guard is back"
+    assert hasattr(_sch.SchwabBrokerAdapter, "fetch_exit_legs_for_entry")
+
+
+@pytest.mark.asyncio
+async def test_F6b_an_unrecognised_leg_status_is_unsafe_not_absent(monkeypatch):
+    """An unknown status must NOT read as 'no working leg'."""
+    from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 
     ad = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
     ad.accounts_by_name = {ACCT: type("A", (), {"account_hash": "h"})()}
     ad.ACCEPTED_STATUSES = {"WORKING"}
+    ad.PARTIAL_FILL_STATUSES = {"PARTIALLY_FILLED"}
+    ad.CANCELLED_STATUSES = {"CANCELED"}
+    ad.REJECTED_STATUSES = {"REJECTED"}
 
-    async def _req(method, path, **kw):
-        return 200, {}, [{"orderId": str(i)} for i in range(_ORDER_PAGE_LIMIT)]
+    async def _fo(account, oid):
+        return {"orderLegCollection": [{"instruction": "SELL"}], "status": "SOME_NEW_STATUS"}
 
-    ad._authorized_request_json = _req
-    with pytest.raises(RuntimeError, match="TRUNCATED"):
-        await ad.fetch_working_exit_leg_ids(ACCT, [SYM])
+    ad._fetch_order = _fo
+    out = await ad.fetch_exit_legs_for_entry(ACCT, "entry-1")
+    assert out["unsafe"] is True, "an unrecognised status read as harmless"
+    assert out["working"] == []
 
 
 @pytest.mark.asyncio
-async def test_F3_routing_raises_rather_than_returning_empty_for_an_unsupported_adapter():
+async def test_F3_routing_raises_rather_than_returning_empty_for_an_unsupported_adapter(monkeypatch):
     """The fix lives in routing: {} is indistinguishable from 'the broker reports no legs'."""
     from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 
     r = RoutingBrokerAdapter.__new__(RoutingBrokerAdapter)
     r._adapter_for_account = lambda name: object()   # an adapter WITHOUT the capability
     with pytest.raises(RuntimeError, match="cannot be asked"):
-        await r.fetch_working_exit_leg_ids(ACCT, [SYM])
+        await r.fetch_exit_legs_for_entry(ACCT, "entry-1")
+
+
+@pytest.mark.asyncio
+async def test_an_unsafe_leg_state_stops_the_whole_path(monkeypatch):
+    """A partial fill or an unrecognised status means we do NOT understand the position.
+    'Do not act' must win over 'nothing there'."""
+    a = _LegAdapter([{"working": [], "filled": False, "unsafe": True}])
+    svc = _svc(a)
+    calls = _track(svc, monkeypatch, pm_ok=True)
+    await svc._v2_eod_cancel_and_reexit()
+    assert a.cancel_calls == [], "cancelled while the leg state was not understood"
+    assert calls["pm"] == 0, "sold while the leg state was not understood"
+
+
+@pytest.mark.asyncio
+async def test_a_filled_leg_found_at_harvest_closes_the_row_and_never_sells(monkeypatch):
+    a = _LegAdapter([{"working": [], "filled": True, "unsafe": False}])
+    svc = _svc(a)
+    calls = _track(svc, monkeypatch, pm_ok=True)
+    closed = []
+
+    async def _close(acct, symbol):
+        closed.append(symbol)
+
+    svc._close_resolved_oco_managed_row = _close
+    await svc._v2_eod_cancel_and_reexit()
+    assert calls["pm"] == 0, "sold after an OCO child had already filled"
+    assert closed == [SYM]
+
+
+@pytest.mark.asyncio
+async def test_without_an_entry_order_id_the_path_refuses(monkeypatch):
+    """No addressable entry => no exact order tree => no trustworthy reading => do nothing."""
+    a = _LegAdapter([{SYM: ["1"]}, {}])
+    svc = _svc(a)
+    svc._latest_filled_entry_order_id = lambda session, acct, symbol: None
+    calls = _track(svc, monkeypatch, pm_ok=True)
+    await svc._v2_eod_cancel_and_reexit()
+    assert a.harvest_calls == 0, "asked the broker without an addressable entry"
+    assert a.cancel_calls == [] and calls["pm"] == 0

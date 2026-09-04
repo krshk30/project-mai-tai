@@ -140,6 +140,18 @@ def quote_px(symbol: str) -> tuple[float, float]:
     return bid, ask
 
 
+def held_quantity(h: str, symbol: str) -> float:
+    """LONG quantity the BROKER says we hold. Positive confirmation, not inference."""
+    code, raw = call("GET", f"/trader/v1/accounts/{quote(h, safe='')}?fields=positions")
+    if code != 200:
+        die(f"positions read HTTP {code} — cannot confirm what we hold; refusing to sell")
+    positions = (json.loads(raw).get("securitiesAccount") or {}).get("positions") or []
+    for p in positions:
+        if str((p.get("instrument") or {}).get("symbol") or "").upper() == symbol.upper():
+            return float(p.get("longQuantity") or 0.0)
+    return 0.0
+
+
 def sell_children(tree: dict) -> list[dict]:
     """Every SELL leg in the tree, with its own orderId and status."""
     out: list[dict] = []
@@ -326,6 +338,22 @@ def cmd_exit_pm(a) -> None:
     if filled:
         die(f"a SELL child has already FILLED {filled} — the share is SOLD. Refusing to place "
             "another sell; that would be a naked short. Check the position before doing anything.")
+    # ⛔⭐⭐ AN UNRECOGNISED STATUS IS NOT A SAFE STATUS. The two checks above only recognise
+    # ACCEPTED and FILLED; anything else (PENDING_CANCEL, a status Schwab adds later, a typo in
+    # our own constant) fell through BOTH and reached the sell. Absence from two known-good lists
+    # is not evidence of a third thing being harmless.
+    unknown = [k for k in kids if k["status"] not in ACCEPTED | GONE | {"FILLED"}]
+    if unknown:
+        die(f"unrecognised SELL child status {unknown} — refusing to sell on a status this script "
+            "does not understand. Read the order at the broker before doing anything.")
+    # ⛔⭐⭐ AND THE DECISIVE ONE: ASK WHAT WE ACTUALLY HOLD. Every check above reasons about
+    # ORDERS. None of them establishes that the shares exist. A sell placed without this is a
+    # naked short on a real account if any assumption above is wrong.
+    held = held_quantity(h, a.symbol)
+    if held < QTY:
+        die(f"broker reports longQuantity={held} for {a.symbol}, need >= {QTY} — refusing to sell "
+            "stock we cannot confirm we hold. THIS is the guard that makes a naked short impossible.")
+    print(f"  ✅ broker confirms longQuantity={held} — safe to sell {QTY}")
     # ⛔ Read the book before pricing a REAL sell. Read-only; it only refuses an obviously
     # wrong limit. A fat-fingered --limit on a live sell is the cheap mistake to make impossible.
     bid, ask = quote_px(a.symbol)

@@ -95,9 +95,6 @@ class SchwabPositionsUnavailable(Exception):
     """
 
 
-_ORDER_PAGE_LIMIT = 500
-
-
 class SchwabBrokerAdapter:
     FILLED_STATUSES = {"FILLED"}
     PARTIAL_FILL_STATUSES = {"PARTIAL_FILL"}
@@ -201,83 +198,64 @@ class SchwabBrokerAdapter:
             _walk(order)
         return {sym for sym, n in working_sells.items() if n >= 2}
 
-    async def fetch_working_exit_leg_ids(
-        self, broker_account_name: str, symbols: list[str]
-    ) -> dict[str, list[str]]:
-        """Working SELL leg ORDER IDS per symbol, read from the broker's own order tree.
+    async def fetch_exit_legs_for_entry(
+        self, broker_account_name: str, entry_broker_order_id: str
+    ) -> dict[str, object]:
+        """Working SELL leg ids for ONE entry, read from that entry's OWN order tree.
 
-        Same endpoint and same walk as ``fetch_armed_native_oco_symbols`` (which has executed
-        continuously in production since 07-21); this returns the IDS instead of the symbol set,
-        so a caller can address the legs. Needed because ``oms_managed_positions`` carries NO
-        entry broker order id -- there is nothing to hang an entry-scoped read off at 16:01.
+        ⛔⭐⭐ WHY THIS REPLACED AN ACCOUNT-WIDE SWEEP. The first version listed the account's
+        orders and inferred "no working legs" from an empty result. That inference is unsound
+        because the listing is PAGINATED and its completeness cannot be established: measured on
+        the live account, `maxResults=500` and `maxResults=1000` both return the SAME 224 rows for
+        a 12h window, so a row-count guard against the cap can NEVER FIRE. A truncated page and a
+        genuinely empty one are indistinguishable, and here that difference decides whether we
+        place a sell. ⇒ Do not infer an absence from a list you cannot prove is complete.
 
-        ⛔ NO ``>= 2`` THRESHOLD HERE, deliberately. `fetch_armed_native_oco_symbols` requires two
-        working sells because it answers "is a PAIR armed" for the stand-down. This answers a
-        different question -- "does ANYTHING still reserve these shares" -- and for that a single
-        surviving leg matters exactly as much as two. Applying the pair threshold here would report
-        a half-cancelled bracket as clear, which is the reading that must never happen before a
-        software sell goes out.
+        `GET /orders/{id}` returns ONE order tree in full -- no page, no cap, nothing to truncate.
+        Same read `release_native_oco_for_close` has always used.
 
-        ⚠ KNOWN LIMIT, shared with `release_native_oco_for_close` and NOT fixed here (board row
-        OVSD1, parked): the walk reads ``orderLegCollection[0]``, so a CHILDLESS OCO WRAPPER --
-        which carries no leg collection -- is invisible to it. A wrapper that still reserves the
-        shares would read as "no working legs". This method inherits that blindness; it does not
-        widen it, and it must not be described as proof of release until OVSD1 is settled.
+        Returns {"working": [ids], "filled": bool, "unsafe": bool}. `unsafe` is set for a partial
+        fill or any status this adapter does not recognise: the caller must treat it as "do not
+        act", never as "nothing there".
 
-        Raises on any broker/HTTP error, matching the fail-open contract of the sibling reads: the
-        caller must be able to tell "the broker said no legs" from "we could not ask".
+        ⚠ INHERITED LIMIT (OVSD1, parked): the walk reads `orderLegCollection[0]`, so a childless
+        OCO wrapper is invisible. Unchanged by this method and not widened by it.
         """
         account = self.accounts_by_name.get(broker_account_name)
-        if account is None or not symbols:
-            return {}
-        wanted = {str(s).upper() for s in symbols}
-        # ⭐ Same status set as the sibling read: a leg only RESERVES once it is genuinely working
-        # at the exchange. AWAITING_PARENT_ORDER means the entry has not filled, so nothing is held
-        # and nothing is reserved.
-        live = self.ACCEPTED_STATUSES - {"AWAITING_PARENT_ORDER", "AWAITING_RELEASE_TIME"}
-        now = datetime.now(UTC)
-        frm = (now - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        to = (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        status_code, _headers, body = await self._authorized_request_json(
-            "GET",
-            f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders"
-            f"?fromEnteredTime={frm}&toEnteredTime={to}&maxResults={_ORDER_PAGE_LIMIT}",
-        )
-        if status_code >= 400 or not isinstance(body, list):
-            raise RuntimeError(f"Schwab open-orders fetch failed HTTP {status_code}")
-        # ⛔⭐⭐ TRUNCATION IS A FALSE ZERO HERE, AND IT IS THE DANGEROUS DIRECTION.
-        # `fetch_armed_native_oco_symbols` carries the same maxResults cap, but a truncated read
-        # there means "not armed" -> the software ladder resumes, loudly and safely. A truncated
-        # read HERE means "no legs are working" -> we place a sell against shares a leg may still
-        # reserve. Same cap, opposite consequence. The broker returns OCO CHILDREN too, which we
-        # never record, so the broker-side count runs several times our own (peak 240 orders/day
-        # recorded on live:schwab_1m_v2 -> ~3-4x that at the broker). 500 is reachable.
-        # ⇒ Refuse rather than under-report. A chunked query that truncates silently is exactly
-        # the shape that has bitten this project before.
-        if len(body) >= _ORDER_PAGE_LIMIT:
+        if account is None:
+            raise RuntimeError(f"unknown broker account {broker_account_name}")
+        root = await self._fetch_order(account, entry_broker_order_id)
+        if root is None:
             raise RuntimeError(
-                f"Schwab order book returned {len(body)} rows at the {_ORDER_PAGE_LIMIT} cap — "
-                "the page may be TRUNCATED, so 'no working legs' cannot be trusted. Refusing."
+                f"could not read entry order {entry_broker_order_id} — refusing to guess at its legs"
             )
+        working: list[str] = []
+        filled = False
+        unsafe = False
+        live = self.ACCEPTED_STATUSES - {"AWAITING_PARENT_ORDER", "AWAITING_RELEASE_TIME"}
 
-        found: dict[str, list[str]] = {}
-
-        def _walk(order: dict) -> None:
-            legs = order.get("orderLegCollection") or []
+        def walk(item: dict) -> None:
+            nonlocal filled, unsafe
+            legs = item.get("orderLegCollection") or []
             leg = legs[0] if legs else {}
-            sym = str((leg.get("instrument") or {}).get("symbol") or "").upper()
-            status = str(order.get("status") or "").upper()
-            instruction = str(leg.get("instruction") or "").upper()
-            if sym in wanted and instruction == "SELL" and status in live:
-                oid = str(order.get("orderId") or "").strip()
-                if oid:
-                    found.setdefault(sym, []).append(oid)
-            for child in order.get("childOrderStrategies") or []:
-                _walk(child)
+            if str(leg.get("instruction") or "").upper() == "SELL":
+                status = str(item.get("status") or "").upper()
+                if status == "FILLED":
+                    filled = True
+                elif status in live:
+                    oid = str(item.get("orderId") or "").strip()
+                    working.append(oid) if oid else None
+                    if not oid:
+                        unsafe = True
+                elif status in self.PARTIAL_FILL_STATUSES:
+                    unsafe = True
+                elif status not in self.CANCELLED_STATUSES | self.REJECTED_STATUSES:
+                    unsafe = True  # an unrecognised status is NOT a harmless one
+            for child in item.get("childOrderStrategies") or []:
+                walk(child)
 
-        for order in body:
-            _walk(order)
-        return found
+        walk(root)
+        return {"working": working, "filled": filled, "unsafe": unsafe}
 
     async def cancel_exit_leg_ids(
         self, broker_account_name: str, order_ids: list[str]
