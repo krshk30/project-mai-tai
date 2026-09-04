@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure raw post-break movement for the fixed 09:25-09:30 ORB setup."""
+"""Simulate fixed-high ORB targets with breakeven-stop re-entry."""
 
 from __future__ import annotations
 
@@ -28,11 +28,18 @@ from project_mai_tai.strategy_core.orb_tick_aggregator import OrbTickAggregator
 
 EASTERN = ZoneInfo("America/New_York")
 DISCLOSURE = "SIMULATED | NO REALISED CONTROL | NOT SIZE-QUALIFIED"
+TARGETS = (Decimal("3"), Decimal("5"))
 ASK_MAX_AGE = timedelta(seconds=2)
 FILL_RULE = (
-    "first 1-minute trade bar from 09:30 through 09:59 whose high is strictly above the "
-    "fixed 09:25-09:29 high; entry time is its first crossing print, with an assumed fill "
-    "at the latest NBBO ask already visible then if positive and no more than 2 seconds old"
+    "fixed level is the highest 1-minute trade bar from 09:25 through 09:29; the first "
+    "09:30-09:59 print strictly above it is the break, filled at the latest NBBO ask already "
+    "visible then if positive and no more than 2 seconds old; after a stop, re-entry cannot "
+    "occur in the same 1-minute bar and requires another print at or below the fixed level "
+    "before a later-bar print breaks it again"
+)
+STOP_RULE = (
+    "breakeven triggers on the first executable bid at or below entry and fills at that bid; "
+    "the spread and any gap through entry are charged"
 )
 
 
@@ -61,33 +68,30 @@ class BreakSignal:
 
 
 @dataclass(frozen=True)
-class MovementRow:
+class AttemptRow:
     day: date
+    target_pct: Decimal
     symbol: str
+    attempt: int
+    opening_high: Decimal
     entry_at: datetime
     entry_price: Decimal | None
-    high_bid: Decimal | None
-    high_at: datetime | None
-    low_bid: Decimal | None
-    low_at: datetime | None
-    reached_five: bool | None
-    assumption: str
-
-    @property
-    def high_pct(self) -> Decimal | None:
-        return percent_from_entry(self.high_bid, self.entry_price)
-
-    @property
-    def low_pct(self) -> Decimal | None:
-        return percent_from_entry(self.low_bid, self.entry_price)
+    slip_pct: Decimal | None
+    max_down: Decimal | None
+    max_up: Decimal | None
+    max_up_at: datetime | None
+    exit_rule: str
+    exit_at: datetime | None
+    exit_price: Decimal | None
+    return_pct: Decimal | None
+    note: str
 
 
 @dataclass
-class DayResult:
+class DayRun:
     day: date
-    watched: int
-    broke: int
-    rows: list[MovementRow] = field(default_factory=list)
+    target_pct: Decimal
+    rows: list[AttemptRow] = field(default_factory=list)
     unavailable_reason: str = ""
 
 
@@ -99,10 +103,10 @@ def at_et(day: date, hour: int, minute: int) -> datetime:
     return datetime.combine(day, time(hour, minute), EASTERN).astimezone(UTC)
 
 
-def percent_from_entry(value: Decimal | None, entry: Decimal | None) -> Decimal | None:
-    if value is None or entry is None or entry <= 0:
+def percent(value: Decimal | None, basis: Decimal | None) -> Decimal | None:
+    if value is None or basis is None or basis <= 0:
         return None
-    return (value / entry - Decimal("1")) * Decimal("100")
+    return (value / basis - Decimal("1")) * Decimal("100")
 
 
 def dedupe_trades(rows: Iterable[TradePoint]) -> list[TradePoint]:
@@ -117,7 +121,6 @@ def dedupe_trades(rows: Iterable[TradePoint]) -> list[TradePoint]:
 
 
 def detect_halts(trades: Sequence[TradePoint], quotes: Sequence[QuotePoint]) -> list[HaltWindow]:
-    """Use the shared halt classifier; never hand-list a symbol or session."""
     quote_times = [quote.at for quote in quotes]
     windows: list[HaltWindow] = []
     for previous, current in zip(trades, trades[1:], strict=False):
@@ -137,45 +140,58 @@ def detect_halts(trades: Sequence[TradePoint], quotes: Sequence[QuotePoint]) -> 
 
 
 def build_bars(day: date, trades: Sequence[TradePoint]) -> list[OrbBar]:
-    """Build the same sparse one-minute trade bars as the deployed ORB aggregator."""
     aggregator = OrbTickAggregator(session_open=at_et(day, 9, 25))
     bars: list[OrbBar] = []
     for trade in trades:
-        bar = aggregator.add_tick(trade.at, float(trade.price), float(trade.size))
-        if bar is not None:
-            bars.append(bar)
+        completed = aggregator.add_tick(trade.at, float(trade.price), float(trade.size))
+        if completed is not None:
+            bars.append(completed)
     final = aggregator.flush()
     if final is not None:
         bars.append(final)
     return bars
 
 
-def first_break(day: date, symbol: str, trades: Sequence[TradePoint]) -> BreakSignal | None:
-    observe = at_et(day, 9, 25)
-    market_open = at_et(day, 9, 30)
-    window_end = at_et(day, 10, 0)
-    bars = build_bars(day, trades)
-    opening_bars = [bar for bar in bars if observe <= bar.timestamp < market_open]
-    if not opening_bars:
+def fixed_opening_high(day: date, trades: Sequence[TradePoint]) -> Decimal | None:
+    start = at_et(day, 9, 25)
+    end = at_et(day, 9, 30)
+    bars = [bar for bar in build_bars(day, trades) if start <= bar.timestamp < end]
+    return Decimal(str(max(bar.high for bar in bars))) if bars else None
+
+
+def next_break(
+    *,
+    day: date,
+    symbol: str,
+    opening_high: Decimal,
+    trades: Sequence[TradePoint],
+    after: datetime | None,
+) -> BreakSignal | None:
+    start = at_et(day, 9, 30)
+    end = at_et(day, 10, 0)
+    candidates = [trade for trade in trades if start <= trade.at < end]
+    if after is None:
+        crossing = next((trade for trade in candidates if trade.price > opening_high), None)
+    else:
+        armed = False
+        crossing = None
+        first_reentry_bar = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        for trade in candidates:
+            if trade.at <= after:
+                continue
+            if trade.price <= opening_high:
+                armed = True
+            elif armed and trade.at >= first_reentry_bar:
+                crossing = trade
+                break
+    if crossing is None:
         return None
-    opening_high = Decimal(str(max(bar.high for bar in opening_bars)))
-    break_bar = next(
-        (
-            bar
-            for bar in bars
-            if market_open <= bar.timestamp < window_end and Decimal(str(bar.high)) > opening_high
-        ),
-        None,
+    return BreakSignal(
+        symbol=symbol,
+        opening_high=opening_high,
+        bar_at=crossing.at.replace(second=0, microsecond=0),
+        crossed_at=crossing.at,
     )
-    if break_bar is None:
-        return None
-    crossed_at = next(
-        trade.at
-        for trade in trades
-        if trade.at.replace(second=0, microsecond=0) == break_bar.timestamp
-        and trade.price > opening_high
-    )
-    return BreakSignal(symbol, opening_high, break_bar.timestamp, crossed_at)
 
 
 def assumed_entry_ask(
@@ -183,78 +199,179 @@ def assumed_entry_ask(
     quotes: Sequence[QuotePoint],
     halts: Sequence[HaltWindow],
 ) -> Decimal | None:
-    """Use the quote visible at the crossing; never look forward or skip a bad latest quote."""
     eligible = [quote for quote in quotes if quote.at <= signal.crossed_at]
     if not eligible:
         return None
-    quote = eligible[-1]
+    latest = eligible[-1]
     if (
-        quote.ask <= 0
-        or signal.crossed_at - quote.at > ASK_MAX_AGE
-        or timestamp_is_halted(quote.at, list(halts))
+        latest.ask <= 0
+        or signal.crossed_at - latest.at > ASK_MAX_AGE
+        or timestamp_is_halted(latest.at, list(halts))
     ):
         return None
-    return quote.ask
+    return latest.ask
 
 
-def movement_after_entry(
+def _executable_quotes(
+    quotes: Sequence[QuotePoint],
+    *,
+    start: datetime,
+    end: datetime,
+    halts: Sequence[HaltWindow],
+) -> list[QuotePoint]:
+    return [
+        quote
+        for quote in quotes
+        if start <= quote.at < end
+        and quote.bid > 0
+        and not timestamp_is_halted(quote.at, list(halts))
+    ]
+
+
+def max_drawdown(quotes: Sequence[QuotePoint], entry_price: Decimal) -> Decimal | None:
+    if not quotes:
+        return None
+    return min(
+        Decimal("0"),
+        *(percent(quote.bid, entry_price) for quote in quotes),
+    )
+
+
+def evaluate_attempt(
     *,
     day: date,
-    symbol: str,
+    target_pct: Decimal,
+    attempt: int,
     signal: BreakSignal,
     entry_price: Decimal | None,
     quotes: Sequence[QuotePoint],
     halts: Sequence[HaltWindow],
-) -> MovementRow:
+) -> AttemptRow:
+    slip = percent(entry_price, signal.opening_high)
     if entry_price is None:
-        return MovementRow(
+        return AttemptRow(
             day,
-            symbol,
+            target_pct,
+            signal.symbol,
+            attempt,
+            signal.opening_high,
             signal.crossed_at,
             None,
             None,
             None,
             None,
             None,
+            "UNANSWERABLE",
             None,
-            "UNANSWERABLE: no fresh positive ask at the crossing",
+            None,
+            None,
+            "no fresh positive ask at the break",
         )
-    end = at_et(day, 10, 0)
-    executable = [
-        quote
-        for quote in quotes
-        if signal.crossed_at <= quote.at < end
-        and quote.bid > 0
-        and not timestamp_is_halted(quote.at, list(halts))
-    ]
-    if not executable:
-        return MovementRow(
-            day,
-            symbol,
-            signal.crossed_at,
-            entry_price,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "UNANSWERABLE: no executable bid from entry through 10:00",
-        )
-    high = max(executable, key=lambda quote: quote.bid)
-    low = min(executable, key=lambda quote: quote.bid)
-    high_pct = percent_from_entry(high.bid, entry_price)
-    return MovementRow(
+    ten = at_et(day, 10, 0)
+    path = _executable_quotes(quotes, start=signal.crossed_at, end=ten, halts=halts)
+    observed: list[QuotePoint] = []
+    target_price = entry_price * (Decimal("1") + target_pct / Decimal("100"))
+    exit_quote: QuotePoint | None = None
+    exit_rule = ""
+    for quote in path:
+        observed.append(quote)
+        if quote.bid >= target_price:
+            exit_quote = quote
+            exit_rule = f"+{target_pct.normalize()}%"
+            break
+        if quote.bid <= entry_price:
+            exit_quote = quote
+            exit_rule = "STOP 0%"
+            break
+    if exit_quote is None:
+        close_quotes = [
+            quote
+            for quote in quotes
+            if quote.at >= ten and quote.bid > 0 and not timestamp_is_halted(quote.at, list(halts))
+        ]
+        if not close_quotes:
+            return AttemptRow(
+                day,
+                target_pct,
+                signal.symbol,
+                attempt,
+                signal.opening_high,
+                signal.crossed_at,
+                entry_price,
+                slip,
+                max_drawdown(observed, entry_price),
+                max((percent(item.bid, entry_price) for item in observed), default=None),
+                max(observed, key=lambda item: item.bid).at if observed else None,
+                "UNANSWERABLE",
+                None,
+                None,
+                None,
+                "no executable bid for the 10:00 close",
+            )
+        exit_quote = close_quotes[0]
+        observed.append(exit_quote)
+        exit_rule = "10:00"
+    max_quote = max(observed, key=lambda item: item.bid)
+    min_quote = min(observed, key=lambda item: item.bid)
+    return AttemptRow(
         day,
-        symbol,
+        target_pct,
+        signal.symbol,
+        attempt,
+        signal.opening_high,
         signal.crossed_at,
         entry_price,
-        high.bid,
-        high.at,
-        low.bid,
-        low.at,
-        high_pct is not None and high_pct >= Decimal("5"),
+        slip,
+        min(Decimal("0"), percent(min_quote.bid, entry_price) or Decimal("0")),
+        percent(max_quote.bid, entry_price),
+        max_quote.at,
+        exit_rule,
+        exit_quote.at,
+        exit_quote.bid,
+        percent(exit_quote.bid, entry_price),
         "ASSUMED ASK FILL",
     )
+
+
+def simulate_symbol(
+    *,
+    day: date,
+    target_pct: Decimal,
+    symbol: str,
+    trades: Sequence[TradePoint],
+    quotes: Sequence[QuotePoint],
+) -> list[AttemptRow]:
+    opening_high = fixed_opening_high(day, trades)
+    if opening_high is None:
+        return []
+    halts = detect_halts(trades, quotes)
+    rows: list[AttemptRow] = []
+    after: datetime | None = None
+    while True:
+        signal = next_break(
+            day=day,
+            symbol=symbol,
+            opening_high=opening_high,
+            trades=trades,
+            after=after,
+        )
+        if signal is None:
+            break
+        entry_price = assumed_entry_ask(signal, quotes, halts)
+        row = evaluate_attempt(
+            day=day,
+            target_pct=target_pct,
+            attempt=len(rows) + 1,
+            signal=signal,
+            entry_price=entry_price,
+            quotes=quotes,
+            halts=halts,
+        )
+        rows.append(row)
+        if row.exit_rule != "STOP 0%" or row.exit_at is None:
+            break
+        after = row.exit_at
+    return rows
 
 
 def load_universe(session_factory, day: date) -> set[str]:
@@ -279,7 +396,7 @@ def load_market(
     session_factory, day: date, symbol: str
 ) -> tuple[list[TradePoint], list[QuotePoint]]:
     start = at_et(day, 9, 25)
-    end = at_et(day, 10, 0)
+    end = at_et(day, 10, 1)
     with session_factory() as session:
         trades = [
             TradePoint(
@@ -313,32 +430,22 @@ def load_market(
     return dedupe_trades(trades), quotes
 
 
-def run_day(session_factory, day: date, now: datetime | None = None) -> DayResult:
-    now_utc = utc(now or datetime.now(UTC))
-    if now_utc < at_et(day, 10, 0):
-        return DayResult(day, 0, 0, unavailable_reason="09:30-10:00 window not complete")
-    universe = load_universe(session_factory, day)
-    rows: list[MovementRow] = []
-    broke = 0
-    for symbol in sorted(universe):
+def run_day(session_factory, day: date, target_pct: Decimal, now: datetime | None = None) -> DayRun:
+    if utc(now or datetime.now(UTC)) < at_et(day, 10, 0):
+        return DayRun(day, target_pct, unavailable_reason="09:30-10:00 window not complete")
+    rows: list[AttemptRow] = []
+    for symbol in sorted(load_universe(session_factory, day)):
         trades, quotes = load_market(session_factory, day, symbol)
-        signal = first_break(day, symbol, trades)
-        if signal is None:
-            continue
-        broke += 1
-        halts = detect_halts(trades, quotes)
-        entry_price = assumed_entry_ask(signal, quotes, halts)
-        rows.append(
-            movement_after_entry(
+        rows.extend(
+            simulate_symbol(
                 day=day,
+                target_pct=target_pct,
                 symbol=symbol,
-                signal=signal,
-                entry_price=entry_price,
+                trades=trades,
                 quotes=quotes,
-                halts=halts,
             )
         )
-    return DayResult(day, len(universe), broke, rows)
+    return DayRun(day, target_pct, rows)
 
 
 def clock(value: datetime | None) -> str:
@@ -357,83 +464,122 @@ def pct(value: Decimal | None) -> str:
     return "-" if value is None else f"{value:+.2f}%"
 
 
-def render(results: Sequence[DayResult]) -> str:
-    rows = sorted(
-        (row for result in results for row in result.rows),
-        key=lambda row: (row.day, row.entry_at),
-    )
-    lines = [DISCLOSURE, f"Fill rule: {FILL_RULE}", ""]
-    lines.append("| day | sym | entry | px | hi % | hi at | lo % | lo at | +5% | note |")
-    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---|---|")
-    for row in rows:
-        reached = "YES" if row.reached_five is True else "NO" if row.reached_five is False else "-"
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    row.day.isoformat(),
-                    row.symbol,
-                    clock(row.entry_at),
-                    money(row.entry_price),
-                    pct(row.high_pct),
-                    minute(row.high_at),
-                    pct(row.low_pct),
-                    minute(row.low_at),
-                    reached,
-                    row.assumption,
-                ]
-            )
-            + " |"
+def render(runs: Sequence[DayRun]) -> str:
+    lines = [DISCLOSURE, f"Fill rule: {FILL_RULE}", f"Stop fill: {STOP_RULE}"]
+    for target in TARGETS:
+        lines.extend(
+            [
+                "",
+                f"Target +{target.normalize()}%",
+                "",
+                "| day | sym | attempt | level | entry | px | slip % | max down | max up | up at | exit | exit at | exit px | return |",
+                "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|",
+            ]
         )
-    lines.append("")
-    for result in results:
-        if result.unavailable_reason:
-            lines.append(f"{result.day.isoformat()}: NOT REACHABLE - {result.unavailable_reason}.")
-        else:
+        target_runs = sorted(
+            (run for run in runs if run.target_pct == target),
+            key=lambda run: run.day,
+        )
+        for run in target_runs:
+            totals: dict[str, int] = {}
+            for row in run.rows:
+                totals[row.symbol] = totals.get(row.symbol, 0) + 1
+            for row in sorted(
+                run.rows,
+                key=lambda item: (item.entry_at, item.symbol, item.attempt),
+            ):
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            row.day.isoformat(),
+                            row.symbol,
+                            f"{row.attempt}/{totals[row.symbol]}",
+                            money(row.opening_high),
+                            clock(row.entry_at),
+                            money(row.entry_price),
+                            pct(row.slip_pct),
+                            pct(row.max_down),
+                            pct(row.max_up),
+                            minute(row.max_up_at),
+                            row.exit_rule,
+                            clock(row.exit_at),
+                            money(row.exit_price),
+                            pct(row.return_pct),
+                        ]
+                    )
+                    + " |"
+                )
+        lines.append("")
+        for run in target_runs:
+            if run.unavailable_reason:
+                lines.append(f"{run.day}: NOT REACHABLE - {run.unavailable_reason}.")
+                continue
+            attempts = len(run.rows)
+            wins = sum(row.exit_rule == f"+{target.normalize()}%" for row in run.rows)
+            stops = sum(row.exit_rule == "STOP 0%" for row in run.rows)
+            closes = sum(row.exit_rule == "10:00" for row in run.rows)
+            unanswerable = sum(row.exit_rule == "UNANSWERABLE" for row in run.rows)
+            total_return = sum(
+                (row.return_pct for row in run.rows if row.return_pct is not None), Decimal("0")
+            )
             lines.append(
-                f"{result.day.isoformat()}: {result.broke}/{result.watched} watched stocks broke the opening high."
+                f"{run.day}: attempts {attempts}; wins {wins}/{attempts}; stops {stops}/{attempts}; "
+                f"10:00 {closes}/{attempts}; UNANSWERABLE {unanswerable}/{attempts}; "
+                f"total {pct(total_return)}."
             )
     return "\n".join(lines)
 
 
-def write_csv(path: Path, results: Sequence[DayResult]) -> None:
+def write_csv(path: Path, runs: Sequence[DayRun]) -> None:
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "day",
-                "symbol",
-                "entry_time_et",
-                "entry_price",
-                "high_pct",
-                "high_at_et",
-                "low_pct",
-                "low_at_et",
-                "reached_5pct",
-                "note",
-                "qualification",
-            ],
-        )
+        fields = [
+            "day",
+            "target_pct",
+            "symbol",
+            "attempt",
+            "opening_high",
+            "entry_time_et",
+            "entry_price",
+            "slip_pct",
+            "max_down_before_exit",
+            "max_up_before_exit",
+            "max_up_at_et",
+            "exit_rule",
+            "exit_time_et",
+            "exit_price",
+            "return_pct",
+            "note",
+            "qualification",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
-        for row in sorted(
-            (row for result in results for row in result.rows),
-            key=lambda item: (item.day, item.entry_at),
-        ):
-            writer.writerow(
-                {
-                    "day": row.day,
-                    "symbol": row.symbol,
-                    "entry_time_et": clock(row.entry_at),
-                    "entry_price": row.entry_price or "",
-                    "high_pct": f"{row.high_pct:.4f}" if row.high_pct is not None else "",
-                    "high_at_et": minute(row.high_at),
-                    "low_pct": f"{row.low_pct:.4f}" if row.low_pct is not None else "",
-                    "low_at_et": minute(row.low_at),
-                    "reached_5pct": row.reached_five,
-                    "note": row.assumption,
-                    "qualification": DISCLOSURE,
-                }
-            )
+        for run in sorted(runs, key=lambda item: (item.target_pct, item.day)):
+            for row in sorted(
+                run.rows,
+                key=lambda item: (item.entry_at, item.symbol, item.attempt),
+            ):
+                writer.writerow(
+                    {
+                        "day": row.day,
+                        "target_pct": row.target_pct,
+                        "symbol": row.symbol,
+                        "attempt": row.attempt,
+                        "opening_high": row.opening_high,
+                        "entry_time_et": clock(row.entry_at),
+                        "entry_price": row.entry_price or "",
+                        "slip_pct": row.slip_pct if row.slip_pct is not None else "",
+                        "max_down_before_exit": row.max_down if row.max_down is not None else "",
+                        "max_up_before_exit": row.max_up if row.max_up is not None else "",
+                        "max_up_at_et": minute(row.max_up_at),
+                        "exit_rule": row.exit_rule,
+                        "exit_time_et": clock(row.exit_at),
+                        "exit_price": row.exit_price or "",
+                        "return_pct": row.return_pct if row.return_pct is not None else "",
+                        "note": row.note,
+                        "qualification": DISCLOSURE,
+                    }
+                )
 
 
 def parse_args() -> argparse.Namespace:
@@ -450,15 +596,16 @@ def main() -> int:
     if end_day < args.start_date:
         raise SystemExit("--end-date must not precede --start-date")
     session_factory = build_session_factory(get_settings())
-    results: list[DayResult] = []
-    day = args.start_date
-    while day <= end_day:
-        if day.weekday() < 5:
-            results.append(run_day(session_factory, day))
-        day += timedelta(days=1)
-    print(render(results))
+    runs: list[DayRun] = []
+    for target in TARGETS:
+        day = args.start_date
+        while day <= end_day:
+            if day.weekday() < 5:
+                runs.append(run_day(session_factory, day, target))
+            day += timedelta(days=1)
+    print(render(runs))
     if args.csv:
-        write_csv(args.csv, results)
+        write_csv(args.csv, runs)
     return 0
 
 
