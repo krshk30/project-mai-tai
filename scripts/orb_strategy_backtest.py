@@ -472,7 +472,7 @@ def render(runs: Sequence[DayRun]) -> str:
                 "",
                 f"Target +{target.normalize()}%",
                 "",
-                "| day | sym | attempt | level | entry | px | slip % | max down | max up | up at | exit | exit at | exit px | return |",
+                "| day | sym | attempt | opening high | entry | px | slip % | pre-run down | max up | up at | exit | exit at | exit px | return |",
                 "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|",
             ]
         )
