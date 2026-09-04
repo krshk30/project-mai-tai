@@ -304,6 +304,120 @@ async def test_confirmation_release_cancels_working_oco_and_confirms_no_sell_rem
 
 
 @pytest.mark.asyncio
+async def test_confirmation_release_rereads_after_oco_sibling_cancel_returns_400(
+    monkeypatch,
+) -> None:
+    """PLUG 2026-09-04: cancelling one child cancelled the OCO pair as a unit.
+
+    Schwab returned 200 for the first DELETE and 400 "already CANCELED" for the sibling.
+    The DELETE response cannot establish whether protection remains; the fresh order-tree
+    read can, and must be the authority.
+    """
+    adapter = _adapter(bracket_enabled=True)
+    before = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "orderId": "target-1",
+                "status": "WORKING",
+                "orderLegCollection": [{"instruction": "SELL"}],
+            },
+            {
+                "orderId": "stop-1",
+                "status": "WORKING",
+                "orderLegCollection": [{"instruction": "SELL"}],
+            },
+        ],
+    }
+    after = {
+        **before,
+        "childOrderStrategies": [
+            {
+                "orderId": "target-1",
+                "status": "CANCELED",
+                "orderLegCollection": [{"instruction": "SELL"}],
+            },
+            {
+                "orderId": "stop-1",
+                "status": "CANCELED",
+                "orderLegCollection": [{"instruction": "SELL"}],
+            },
+        ],
+    }
+    reads = iter((before, after))
+    responses = iter(
+        (
+            (200, {}, {}),
+            (400, {}, {"error": "Order in state CANCELED cannot be canceled"}),
+        )
+    )
+    fetches: list[str] = []
+    deletes: list[str] = []
+
+    async def fetch(_account, order_id):
+        fetches.append(order_id)
+        return next(reads)
+
+    async def request(method, path, body=None):
+        assert method == "DELETE"
+        assert body is None
+        deletes.append(path)
+        return next(responses)
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    result = await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+
+    assert result == "released"
+    assert fetches == ["entry-1", "entry-1"], (
+        "a DELETE response must not skip the authoritative post-cancel order-tree read"
+    )
+    assert len(deletes) == 2
+
+
+@pytest.mark.asyncio
+async def test_confirmation_release_still_refuses_when_reread_finds_a_working_leg(
+    monkeypatch,
+) -> None:
+    """A non-2xx DELETE is harmless only when the confirming read proves release."""
+    adapter = _adapter(bracket_enabled=True)
+    working = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "orderId": "stop-1",
+                "status": "WORKING",
+                "orderLegCollection": [{"instruction": "SELL"}],
+            }
+        ],
+    }
+    fetches: list[str] = []
+
+    async def fetch(_account, order_id):
+        fetches.append(order_id)
+        return working
+
+    async def request(_method, _path, body=None):
+        assert body is None
+        return 500, {}, {"error": "cancel outcome unknown"}
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    result = await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+
+    assert result == "unanswerable"
+    assert fetches == ["entry-1", "entry-1"], (
+        "the confirming read, not the DELETE status, must prove protection remains"
+    )
+
+
+@pytest.mark.asyncio
 async def test_confirmation_release_refuses_when_cancel_cannot_be_confirmed(monkeypatch) -> None:
     adapter = _adapter(bracket_enabled=True)
     working = {

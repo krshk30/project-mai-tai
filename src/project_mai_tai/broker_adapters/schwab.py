@@ -300,9 +300,10 @@ class SchwabBrokerAdapter:
     ) -> str:
         """Cancel and confirm an entry's working OCO sells before a software full close.
 
-        Returns ``released``, ``resolved_by_fill``, or ``unanswerable``. A successful DELETE is
-        never treated as release without a subsequent broker order read proving no sell child is
-        still working.
+        Returns ``released``, ``resolved_by_fill``, or ``unanswerable``. DELETE responses are not
+        release evidence: cancelling one Schwab OCO child can cancel its sibling as a unit, making
+        the sibling DELETE return a non-2xx response even though protection is fully gone. Only the
+        subsequent broker order read may prove that no sell child is still working.
         """
         account = self.accounts_by_name.get(broker_account_name)
         entry_order_id = str(entry_broker_order_id or "").strip()
@@ -352,13 +353,20 @@ class SchwabBrokerAdapter:
         if not working:
             return "released"
         for order_id in working:
-            status_code, _headers, _body = await self._authorized_request_json(
+            status_code, _headers, body = await self._authorized_request_json(
                 "DELETE",
                 f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"
                 f"{quote(order_id, safe='')}",
             )
-            if status_code >= 400 and status_code != 404:
-                return "unanswerable"
+            if not 200 <= status_code < 300 and status_code != 404:
+                logger.warning(
+                    "[SCHWAB-NATIVE-OCO-DELETE-NON2XX] entry_order_id=%s child_order_id=%s "
+                    "status_code=%s body=%s outcome=DEFERRED_TO_ORDER_TREE_REREAD",
+                    entry_order_id,
+                    order_id,
+                    status_code,
+                    str(body)[:500],
+                )
         confirmed = await self._fetch_order(account, entry_order_id)
         if confirmed is None:
             return "unanswerable"
