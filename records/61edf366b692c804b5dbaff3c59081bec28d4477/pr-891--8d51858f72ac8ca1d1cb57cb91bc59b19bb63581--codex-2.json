@@ -1,0 +1,9 @@
+{
+  "pr_number": 891,
+  "range_base": "8d51858f72ac8ca1d1cb57cb91bc59b19bb63581",
+  "range_head": "61edf366b692c804b5dbaff3c59081bec28d4477",
+  "reviewed_at": "2026-09-04T01:12:54Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Exact-head docs review passed: the missing batch narrative is a 75-line additive-only insertion at the top of handoff-log.md; prior history is byte-preserved; storm, EOD1601, RATE1, review-finding, and operator-ruling statements reconcile with the independently reviewed handoff and manifest."
+}
