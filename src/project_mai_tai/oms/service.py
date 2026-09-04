@@ -280,6 +280,12 @@ class _V2ManagedSnapshot:
     `_hydrate_v2_position` works unchanged on this snapshot (duck-typed)."""
 
     symbol: str
+    # ⛔⭐⭐ THE EPISODE'S IDENTITY. `oms_managed_positions.id` is a fresh UUID per episode, so it
+    # is the only value that distinguishes "the position the confirmation exit was decided for"
+    # from "a later position on the same (account, symbol)". Timestamps cannot: a row's
+    # `entry_time` and its fill's `filled_at` differ by a few hundred ms in the SAME episode,
+    # so any tolerance that accepts the real pair also accepts a stale one.
+    managed_row_id: str
     entry_price: float
     current_quantity: int
     entry_time: str
@@ -1049,7 +1055,25 @@ class OmsRiskService:
                     symbol,
                 )
                 return
-            self._confirmation_exit_pending[(acct, symbol)] = dict(payload)
+            # ⛔⭐⭐ BIND THE DECISION TO THE POSITION IT WAS DECIDED FOR (2026-09-04, IMRN).
+            # A pending confirmation used to name only (acct, symbol), which is not a position —
+            # it is a LANE. The IMRN decision taken on the 11:35 bar for the 11:34:11 fill was
+            # still armed 43 minutes later and fired against a DIFFERENT position opened at
+            # 12:18:03, into protective legs placed seconds earlier: 20 refusals in 33s, the
+            # reject ceiling, and a 36-minute exit suppression.
+            # ⛔ If there is no open row to bind to, REFUSE. An unbound confirmation is a decision
+            # looking for a victim; there is nothing to exit, and arming it is how it finds one.
+            bound_row_id = await self._confirmation_bound_managed_row_id(acct, symbol)
+            if not bound_row_id:
+                self.logger.error(
+                    "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s fill_id=%s "
+                    "reason=no_open_position_to_bind",
+                    symbol, acct, payload.get("source_fill_id", ""),
+                )
+                return
+            bound_payload = dict(payload)
+            bound_payload["bound_managed_row_id"] = bound_row_id
+            self._confirmation_exit_pending[(acct, symbol)] = bound_payload
             self.logger.info(
                 "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=%s acct=%s fill_id=%s "
                 "evaluated_at_ms=%s status=PENDING_EXECUTABLE_BID",
@@ -3601,6 +3625,27 @@ class OmsRiskService:
             self._fillable_session_end_hour_et(),
         )
 
+    async def _confirmation_bound_managed_row_id(self, acct: str, symbol: str) -> str:
+        """The id of the managed row open RIGHT NOW for ``(acct, symbol)``, or "" if none.
+
+        ⛔ Fails CLOSED: any read fault returns "", which refuses the confirmation. Not exiting
+        leaves the position under the normal ladder, which still has its stop; selling the WRONG
+        position does not have an equivalent recovery.
+        """
+        try:
+            def _read(session: Session) -> str:
+                row = self.store.get_open_managed_position(
+                    session, broker_account_name=acct, symbol=symbol
+                )
+                return str(row.id) if row is not None else ""
+            return str(await self._run_db(_read, commit=False) or "")
+        except Exception:  # noqa: BLE001 — a DB fault must never arm an unbound confirmation
+            self.logger.exception(
+                "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s reason=bind_read_failed",
+                symbol, acct,
+            )
+            return ""
+
     async def _reconcile_confirmation_exit_protection(self, acct: str, symbol: str) -> str:
         """Return released/resolved_by_fill/unanswerable from fresh broker evidence."""
         adapter = getattr(self, "broker_adapter", None)
@@ -3772,6 +3817,25 @@ class OmsRiskService:
                 return
 
             if confirmation is not None:
+                # ⛔⭐⭐ THE DECISION MUST STILL BE ABOUT *THIS* POSITION.
+                bound_row_id = str(confirmation.get("bound_managed_row_id", "") or "")
+                if bound_row_id != snapshot.managed_row_id:
+                    self.logger.error(
+                        "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s fill_id=%s "
+                        "bound_row=%s open_row=%s reason=different_position — the confirmation "
+                        "was decided for a position that is no longer open; DROPPING it rather "
+                        "than selling the one that is",
+                        symbol, acct, confirmation.get("source_fill_id", ""),
+                        bound_row_id or "-", snapshot.managed_row_id,
+                    )
+                    confirmation_pending.pop(key, None)
+                    return
+                # ⛔⭐⭐ ONE-SHOT, AND THE POP MUST HAPPEN *BEFORE* THE EMIT.
+                # The tracker upstream calls itself a one-shot registry; the OMS side was not one.
+                # Nothing here popped the pending entry after emitting, so once it became
+                # executable it re-emitted on EVERY quote tick — 20 sells in 33 seconds on IMRN.
+                # Popping first also means an emit that raises cannot leave it armed to repeat.
+                confirmation_pending.pop(key, None)
                 position = self._hydrate_v2_position(snapshot)
                 position.update_price(bid)
                 await self._emit_v2_exit_on_loop(
@@ -4145,6 +4209,7 @@ class OmsRiskService:
                 dedup_active = True
         return _V2ManagedSnapshot(
             symbol=row.symbol,
+            managed_row_id=str(row.id),
             entry_price=float(row.entry_price),
             current_quantity=int(row.current_quantity),
             entry_time=str(row.entry_time),
