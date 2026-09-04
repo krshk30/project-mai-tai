@@ -39,8 +39,9 @@ EASTERN = ZoneInfo("America/New_York")
 DISCLOSURE = "SIMULATED | NO REALISED CONTROL | NOT SIZE-QUALIFIED"
 REAL_DISCLOSURE = "REAL FILL | NO REALISED CONTROL | NOT SIZE-QUALIFIED"
 FILL_RULE = (
-    "latest positive NBBO ask at the signal time, no older than the deployed OMS freshness "
-    "limit and no higher than the stamped breakout cap; assumed immediately filled at that ask"
+    "latest NBBO ask at the signal time; it must be positive, no older than the deployed OMS "
+    "freshness limit, and no higher than the stamped breakout cap; assumed immediately filled "
+    "at that ask"
 )
 
 
