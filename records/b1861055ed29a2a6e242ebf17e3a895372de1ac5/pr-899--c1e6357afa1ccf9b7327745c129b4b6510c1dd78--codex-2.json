@@ -1,0 +1,9 @@
+{
+  "pr_number": 899,
+  "range_base": "c1e6357afa1ccf9b7327745c129b4b6510c1dd78",
+  "range_head": "b1861055ed29a2a6e242ebf17e3a895372de1ac5",
+  "reviewed_at": "2026-09-04T22:03:39Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed docs-only closeout: manifest is byte-identical to the frozen 35-entry journals; handoff log is append-only; production SHA, eight service identities, migration 0019, flat exposure, ORB broker-disconnected state, CONF1/EOD1601 flags, open-PR count, and inactive-until-restart ATR probe claim match current evidence; commit marker, scope, and diff checks pass."
+}
