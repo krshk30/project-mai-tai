@@ -37,6 +37,7 @@ from project_mai_tai.strategy_core.orb_tick_aggregator import OrbTickAggregator
 
 EASTERN = ZoneInfo("America/New_York")
 DISCLOSURE = "SIMULATED | NO REALISED CONTROL | NOT SIZE-QUALIFIED"
+REAL_DISCLOSURE = "REAL FILL | NO REALISED CONTROL | NOT SIZE-QUALIFIED"
 FILL_RULE = (
     "latest positive NBBO ask at the signal time, no older than the deployed OMS freshness "
     "limit and no higher than the stamped breakout cap; assumed immediately filled at that ask"
@@ -581,11 +582,16 @@ def _percent(value: Decimal | None) -> str:
     return "-" if value is None else f"{value:+.2f}%"
 
 
+def qualification(entry: EntryPlan) -> str:
+    return REAL_DISCLOSURE if entry.source == "REAL_FILL" else DISCLOSURE
+
+
 def render(rows: Sequence[LedgerRow], abandoned: dict[str, int]) -> str:
     ordered = sorted(rows, key=lambda row: row.entry.at)
     total = len(ordered)
     multiple_days = len({row.entry.at.astimezone(EASTERN).date() for row in ordered}) > 1
-    lines = [DISCLOSURE, f"Fill rule: {FILL_RULE}", ""]
+    disclosures = list(dict.fromkeys(qualification(row.entry) for row in ordered)) or [DISCLOSURE]
+    lines = [" / ".join(disclosures), f"Fill rule: {FILL_RULE}", ""]
     date_header = " date |" if multiple_days else ""
     lines.append(
         f"|{date_header} sym | entry time (ET) | entry price | high % / minute | low % / minute | exit time | exit price | exit rule | return | assumption |"
@@ -676,7 +682,7 @@ def write_csv(path: Path, rows: Sequence[LedgerRow]) -> None:
                     "return_pct": (f"{row.return_pct:.4f}" if row.return_pct is not None else ""),
                     "source": row.entry.source,
                     "assumption": row.note or row.entry.note,
-                    "qualification": DISCLOSURE,
+                    "qualification": qualification(row.entry),
                 }
             )
 
