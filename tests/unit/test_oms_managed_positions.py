@@ -62,11 +62,18 @@ class _Harness:
         self._exit_reservation_released: set[tuple[str, str]] = set()
         # P12: the fill path now runs the born-triggered bracket check, which logs.
         self.logger = logging.getLogger("test-oms-managed-positions")
+        # #885 finding 1: a confirmed SELL fill now ENDS the exit episode, so the hook clears the
+        # per-episode retry counters. These are the containers `_v2_exit_end_episode` mutates.
+        self._v2_exit_close_failures: dict[tuple[str, str], int] = {}
+        self._v2_exit_stood_down: set[tuple[str, str]] = set()
+        self._v2_exit_reject_total: dict[tuple[str, str], int] = {}
 
     _clear_exit_reservation_release = OmsRiskService._clear_exit_reservation_release
     # ⛔ Kept in step with production, per this class's own rule: the real method is borrowed rather
     # than stubbed, and the production call site is NOT guarded with getattr.
     _check_bracket_born_triggered = OmsRiskService._check_bracket_born_triggered
+    # #885 finding 1: borrowed, not stubbed — same rule as the two above.
+    _v2_exit_end_episode = OmsRiskService._v2_exit_end_episode
 
 
 def _apply(harness: _Harness, session: Session, **kw):
