@@ -1,0 +1,9 @@
+{
+  "pr_number": 890,
+  "range_base": "b308a59460bb239bfe747da007db5d2316878c68",
+  "range_head": "b9c6ff75c226cc65fb83b9cf3c8d664de46f8ad9",
+  "reviewed_at": "2026-09-04T01:09:12Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Exact-head docs review passed: current production SHA, fleet state, service PIDs, CONF1 enabled and EOD1601 disabled were re-derived on the VPS; the handoff is docs-only; the machine-generated manifest is byte-identical and reconciles all 51 journal entries with zero duplicates or malformed rows."
+}
