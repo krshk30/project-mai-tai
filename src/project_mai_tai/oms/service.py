@@ -431,6 +431,15 @@ class OmsRiskService:
     # ⭐ Sustained rejected-order volume is a BROKER API-ACCESS risk — a harm the trading logic
     # cannot see, which is why this bound is not conditional on any position read.
     _V2_EXIT_MAX_REJECTS_PER_EPISODE = 20
+    # ⛔⭐⭐ WHAT COUNTS AS "THE CLOSE PLACED" (#885 retrospective finding 2, 2026-09-04).
+    # `not rejected` is NOT evidence of progress: `_emit_v2_managed_sell` returns [] when the
+    # strategy/broker-account lookup misses, and an EMPTY list has no rejected event in it, so the
+    # absence of a refusal was clearing the ceiling while NO ORDER WAS EMITTED AT ALL. Progress now
+    # requires POSITIVE evidence — at least one recorded order event that is not itself a refusal.
+    # ⛔ Deliberately a NEGATIVE list, not a whitelist of good statuses: an unrecognised-but-healthy
+    # broker status must not read as "no progress", because that direction fails CLOSED (the loop
+    # would stand down while we still hold the position). Statuses are `report.event_type`.
+    _V2_EXIT_NON_PROGRESS_STATUSES = frozenset({"", "rejected", "cancelled", "canceled", "expired"})
     # C3 default for instances constructed via __new__ in focused tests. Production reads the
     # configurable setting. Derived from the measured 11-episode maximum (237.1s) + one complete
     # 5s broker-position sync interval = 242.1s, rounded UP to the next whole sync interval = 245s.
@@ -3307,6 +3316,11 @@ class OmsRiskService:
             if row.current_quantity <= 0:
                 self.store.close_managed_position(session, row)
                 self._managed_v2_symbols.discard((broker_account_name, symbol))  # slice-3: disarm eval
+                # #885 finding 1: a confirmed SELL fill ENDS the episode. Before this it cleared
+                # neither the reject total nor the stand-down, so a symbol that jammed once stayed
+                # stood down into its NEXT position — exits suppressed on a position that never
+                # rejected anything.
+                self._v2_exit_end_episode((broker_account_name, symbol))
                 self._clear_exit_reservation_release(broker_account_name, symbol)
                 logger.info("[OMS-V2-MANAGED-CLOSE] sym=%s acct=%s flat", symbol, broker_account_name)
             else:
@@ -4049,8 +4063,8 @@ class OmsRiskService:
         self._managed_v2_symbols.discard(key)
         self._cw_flip_pending.discard(key)
         self._cw_floor_armed.discard(key)
-        self._v2_exit_close_failures.pop(key, None)
-        self._v2_exit_stood_down.discard(key)
+        # #885 finding 1: this cleared the stand-down but NOT the reject total that produced it.
+        self._v2_exit_end_episode(key)
         self._clear_exit_reservation_release(acct, symbol)
         self._a2_clear(acct, symbol)
         self._post_exit_stale_held_clear(acct, symbol)
@@ -4566,6 +4580,27 @@ class OmsRiskService:
             getattr(state, "value", state),
         )
 
+    def _v2_exit_end_episode(self, key: tuple[str, str]) -> None:
+        """THE EPISODE IS OVER — drop every per-episode exit-retry counter for ``key``.
+
+        ⛔⭐⭐ #885 retrospective finding 1 (2026-09-04). The absolute reject ceiling is documented
+        as "per episode", but only TWO of the paths that end an episode actually cleared it. A
+        position could accrue 17 rejected closes, close perfectly legitimately (a confirmed SELL
+        fill, an OCO fill resolving the row, the post-exit stale-held close, or the emitter finding
+        the row already gone), and the NEXT position on the same (account, symbol) would inherit
+        those 17 and stand down after only 3 of its own. That is not a per-episode bound.
+
+        ⛔ CALL THIS ONLY WHERE THE EPISODE GENUINELY ENDS — i.e. the managed row is closed or is
+        already absent. It must NEVER be called from a broker READ. `_v2_close_reconcile_flat`
+        deliberately lifts the stand-down on a positively-HELD read while LEAVING the total intact:
+        in an exit-reservation jam we truthfully hold the position for the jam's whole duration, so
+        a read-conditional ceiling can never terminate it. That asymmetry is the CHPT fix, not an
+        oversight — do not "tidy" it into symmetry.
+        """
+        self._v2_exit_close_failures.pop(key, None)
+        getattr(self, "_v2_exit_reject_total", {}).pop(key, None)
+        self._v2_exit_stood_down.discard(key)
+
     async def _v2_close_reconcile_flat(self, session, acct: str, symbol: str, row) -> bool:
         """Phantom guard for the v2 CW full-close: count consecutive REJECTED closes; at the
         threshold, confirm against the broker. If FLAT (position closed out-of-band), close the
@@ -4605,9 +4640,7 @@ class OmsRiskService:
             self._managed_v2_symbols.discard(key)
             self._cw_flip_pending.discard(key)
             self._cw_floor_armed.discard(key)
-            self._v2_exit_close_failures.pop(key, None)
-            getattr(self, "_v2_exit_reject_total", {}).pop(key, None)
-            self._v2_exit_stood_down.discard(key)
+            self._v2_exit_end_episode(key)  # confirmed FLAT + row closed — the episode ended
             self._clear_exit_reservation_release(acct, symbol)
             self._a2_clear(acct, symbol)
             self.logger.info(
@@ -4918,10 +4951,11 @@ class OmsRiskService:
         self._managed_v2_symbols.discard(key)
         self._cw_flip_pending.discard(key)
         self._cw_floor_armed.discard(key)
-        self._v2_exit_close_failures.pop(key, None)
         # ⛔ MUST clear: this is the RECOVERY path a stand-down relies on. Leaving it set would
         # silently suppress exits for the NEXT position on this symbol.
-        self._v2_exit_stood_down.discard(key)
+        # #885 finding 1: the reject TOTAL that produced the stand-down was missing from this very
+        # block — clearing the flag while keeping its counter just rebuilds the stand-down at 3.
+        self._v2_exit_end_episode(key)
         self._clear_exit_reservation_release(acct, symbol)
         self._a2_clear(acct, symbol)  # same reason: a stale A2 episode would defer the NEXT position
         self.logger.info(
@@ -4963,7 +4997,10 @@ class OmsRiskService:
                 )
                 if row is None:
                     self._managed_v2_symbols.discard((acct, symbol))
-                    self._v2_exit_stood_down.discard((acct, symbol))
+                    # #885 finding 1: no open row means the episode is already over. This lifted
+                    # the stand-down but left its counter, so the next position started part-way
+                    # to the ceiling.
+                    self._v2_exit_end_episode((acct, symbol))
                     return
                 if kind == "SCALE":
                     events = await self._emit_v2_managed_sell(
@@ -5053,7 +5090,17 @@ class OmsRiskService:
                     if a2_hit and not reconciled:
                         await self._a2_maybe_escalate(acct, symbol)
                     if not reconciled:
-                        if not rejected:
+                        # ⛔ #885 finding 2: this was `if not rejected`, and an EMPTY event list has
+                        # no rejected event in it. `_emit_v2_managed_sell` returns [] when the
+                        # strategy/broker-account lookup misses, so a call that emitted NO ORDER AT
+                        # ALL was booked as "the close placed" and wiped the ceiling. Progress now
+                        # needs positive evidence of a recorded, non-refused order event.
+                        progressed = any(
+                            str(getattr(ev.payload, "status", "")).strip().lower()
+                            not in self._V2_EXIT_NON_PROGRESS_STATUSES
+                            for ev in events
+                        )
+                        if progressed:
                             self._v2_exit_close_failures.pop(key, None)  # the close placed -> reset counter
                             getattr(self, "_v2_exit_reject_total", {}).pop(key, None)  # real progress
                             self._a2_clear(acct, symbol)  # A2: the block ended
@@ -5066,8 +5113,7 @@ class OmsRiskService:
                         else:
                             self.store.close_managed_position(session, row)
                             self._managed_v2_symbols.discard(key)
-                            self._v2_exit_stood_down.discard(key)
-                            getattr(self, "_v2_exit_reject_total", {}).pop(key, None)
+                            self._v2_exit_end_episode(key)  # row closed — the episode ended
                             self._clear_exit_reservation_release(acct, symbol)
                             self._a2_clear(acct, symbol)
                 session.commit()

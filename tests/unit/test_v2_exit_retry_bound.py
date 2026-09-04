@@ -174,3 +174,237 @@ def test_a_HELD_read_must_NOT_clear_the_absolute_reject_ceiling():
         "genuinely hold the position for its whole duration, so a read-conditional bound can never "
         "terminate it -- that is the CHPT defect"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# #885 RETROSPECTIVE (codex-2, 2026-09-04). Three findings against the merged ceiling, all real.
+#
+# ⛔ Finding 3 is why this block exists: the ceiling test above proves only that a HELD read
+# LEAVES 17 intact. It never drives `_emit_v2_exit_on_loop`, never reaches 20, and never asserts
+# the stand-down — so mutating the ceiling branch to `if False:` left the whole file GREEN (8
+# passed). A bound nothing exercises is not a bound. These tests drive the REAL emit path with
+# only the persistence stubbed.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class _Payload:
+    def __init__(self, status: str) -> None:
+        self.status = status
+
+
+class _Ev:
+    def __init__(self, status: str) -> None:
+        self.payload = _Payload(status)
+
+
+class _Sess:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+    def commit(self):
+        pass
+
+
+class _Pos:
+    quantity = 10
+
+
+def _emit_svc(*, statuses, close_on_fill=False, row=object()):
+    """The REAL `_emit_v2_exit_on_loop` with only persistence/broker stubbed.
+
+    `statuses` is what `_emit_v2_managed_sell` returns for each call — e.g. ["rejected"] for a
+    refused close, [] for the missing strategy/account case that returns no events at all.
+    """
+    svc = OmsRiskService.__new__(OmsRiskService)
+    svc.logger = logging.getLogger("test-ceiling")
+    svc._v2_exit_close_failures = {}
+    svc._v2_exit_stood_down = set()
+    svc._v2_exit_reject_total = {}
+    svc._managed_v2_symbols = {KEY}
+    svc._cw_flip_pending = set()
+    svc._cw_floor_armed = set()
+    svc._oco_exit_fetch_deferrals = {}
+    svc.closed_rows = []
+
+    svc.session_factory = _Sess
+
+    class _Store:
+        def get_open_managed_position(self, *_a, **_k):
+            return row
+
+        def update_managed_position_from_position(self, *_a, **_k):
+            pass
+
+        def close_managed_position(self, _s, r):
+            svc.closed_rows.append(r)
+
+    svc.store = _Store()
+
+    async def _sell(*_a, **_k):
+        return [_Ev(s) for s in statuses]
+    svc._emit_v2_managed_sell = _sell
+
+    async def _reconcile(*_a, **_k):
+        return False  # broker does NOT confirm flat — the storm case
+    svc._v2_close_reconcile_flat = _reconcile
+
+    svc._a2_should_defer = lambda *_a, **_k: False
+    svc._a2_enabled_for = lambda *_a, **_k: False
+    svc._a2_note_reject = lambda *_a, **_k: None
+    svc._a2_clear = lambda *_a, **_k: None
+    svc._is_exit_refused_not_sellable = lambda *_a, **_k: False
+
+    async def _escalate(*_a, **_k):
+        return None
+    svc._a2_maybe_escalate = _escalate
+
+    svc._clear_exit_reservation_release = lambda *_a, **_k: None
+
+    async def _publish(*_a, **_k):
+        return None
+    svc._publish_order_event = _publish
+
+    svc._close_on_fill = close_on_fill
+    return svc
+
+
+def _drive_close(svc, n=1):
+    """n HARD closes through the REAL on-loop emit path."""
+    for _ in range(n):
+        asyncio.run(
+            svc._emit_v2_exit_on_loop(
+                ACCT, SYM, _Pos(), 1.0,
+                kind="HARD", reference_price=1.0, reason="hard_stop", bid=1.0,
+                close_on_fill=svc._close_on_fill,
+            )
+        )
+
+
+# ------------------------------------------------------- FINDING 3: the ceiling, actually driven
+def test_the_absolute_ceiling_stands_the_loop_down_at_the_bound() -> None:
+    """⛔ THE BOUND ITSELF. Rejected closes must accumulate to the ceiling and STOP the loop.
+
+    This is the test whose absence let `if False:` on the ceiling branch pass 8/8.
+    """
+    svc = _emit_svc(statuses=["rejected"], close_on_fill=True)
+    n = OmsRiskService._V2_EXIT_MAX_REJECTS_PER_EPISODE
+
+    _drive_close(svc, n - 1)
+    assert svc._v2_exit_reject_total[KEY] == n - 1
+    assert KEY not in svc._v2_exit_stood_down, "must NOT stand down one short of the bound"
+
+    _drive_close(svc, 1)
+    assert svc._v2_exit_reject_total[KEY] == n
+    assert KEY in svc._v2_exit_stood_down, (
+        "at the ceiling the retry loop MUST stand down regardless of the broker read — this is "
+        "the CHPT 2026-09-03 defect (205 rejected closes in 8 minutes)"
+    )
+
+
+def test_the_ceiling_does_not_delete_the_row_or_its_protection() -> None:
+    """Standing down stops the HAMMERING. It must never abandon the position."""
+    svc = _emit_svc(statuses=["rejected"], close_on_fill=True)
+    _drive_close(svc, OmsRiskService._V2_EXIT_MAX_REJECTS_PER_EPISODE)
+    assert KEY in svc._v2_exit_stood_down
+    assert svc.closed_rows == [], "the managed row must be LEFT IN PLACE for the exit poll"
+
+
+# ------------------------------------------- FINDING 2: absence of a refusal is not progress
+def test_an_empty_event_list_is_NOT_progress_and_must_not_clear_the_ceiling() -> None:
+    """⛔ `_emit_v2_managed_sell` returns [] when the strategy/broker-account lookup misses.
+
+    An empty list contains no rejected event, so `if not rejected` classified "we emitted NOTHING"
+    as "the close placed" and wiped the ceiling. A counter that a no-op erases cannot bound a
+    storm: alternate one failed lookup with one rejected close and the total never grows.
+    """
+    svc = _emit_svc(statuses=["rejected"], close_on_fill=True)
+    _drive_close(svc, 5)
+    assert svc._v2_exit_reject_total[KEY] == 5
+
+    svc._emit_v2_managed_sell = lambda *_a, **_k: _empty()
+    _drive_close(svc, 1)
+
+    assert svc._v2_exit_reject_total.get(KEY) == 5, (
+        "a call that emitted NO ORDER AT ALL must not count as real progress"
+    )
+
+
+async def _empty():
+    return []
+
+
+def test_a_placed_close_DOES_still_clear_the_ceiling() -> None:
+    """The control for the test above: real progress must still reset, or the bound fails CLOSED.
+
+    ⛔ Without this, a fix for finding 2 that simply never resets would look identical.
+    """
+    svc = _emit_svc(statuses=["rejected"], close_on_fill=True)
+    _drive_close(svc, 5)
+    assert svc._v2_exit_reject_total[KEY] == 5
+
+    svc._emit_v2_managed_sell = lambda *_a, **_k: _accepted()
+    _drive_close(svc, 1)
+
+    assert KEY not in svc._v2_exit_reject_total, (
+        "an accepted close IS progress — the ceiling must reset, otherwise a healthy position "
+        "accumulates toward a stand-down it never earned"
+    )
+
+
+async def _accepted():
+    return [_Ev("accepted")]
+
+
+# --------------------------------------------- FINDING 1: the total must not outlive its episode
+def test_a_closed_episode_clears_the_total_so_the_NEXT_position_starts_clean() -> None:
+    """⛔ THE POISON. 17 rejects + a legitimate close ⇒ the next position stands down after 3.
+
+    `_v2_exit_end_episode` is the single place that ends an episode; every path that closes the
+    managed row must go through it.
+    """
+    svc = _emit_svc(statuses=["rejected"])
+    svc._v2_exit_reject_total = {KEY: 17}
+    svc._v2_exit_close_failures = {KEY: 3}
+    svc._v2_exit_stood_down = {KEY}
+
+    svc._v2_exit_end_episode(KEY)
+
+    assert KEY not in svc._v2_exit_reject_total
+    assert KEY not in svc._v2_exit_close_failures
+    assert KEY not in svc._v2_exit_stood_down
+
+
+def test_the_emitter_finding_no_open_row_ends_the_episode() -> None:
+    """The row is already gone — the episode is over, so its counters must go with it."""
+    svc = _emit_svc(statuses=["rejected"], row=None)
+    svc._v2_exit_reject_total = {KEY: 17}
+    svc._v2_exit_stood_down = {KEY}
+
+    _drive_close(svc, 1)
+
+    assert KEY not in svc._v2_exit_reject_total, (
+        "no open managed row means no episode; carrying 17 into the next position is the defect"
+    )
+    assert KEY not in svc._v2_exit_stood_down
+
+
+def test_a_HELD_read_still_must_not_end_the_episode() -> None:
+    """⛔ THE ASYMMETRY IS DELIBERATE — do not 'tidy' it away.
+
+    `_v2_close_reconcile_flat` lifts the stand-down on a positively-HELD read but must LEAVE the
+    absolute total, because in an exit-reservation jam we truthfully hold the position for the
+    jam's whole duration. Making the total symmetric with the stand-down would rebuild the exact
+    CHPT hole this ceiling exists to close.
+    """
+    svc = _svc(_PositionRead.HELD)
+    svc._v2_exit_reject_total = {KEY: 17}
+    svc._v2_exit_stood_down = {KEY}
+    # reach the HELD branch: the reconcile returns early below its own threshold
+    svc._v2_exit_close_failures = {KEY: OmsRiskService._V2_EXIT_RECONCILE_AFTER_FAILURES}
+
+    asyncio.run(svc._v2_close_reconcile_flat(None, ACCT, SYM, object()))
+
+    assert KEY not in svc._v2_exit_stood_down, "a HELD read may resume the loop"
+    assert svc._v2_exit_reject_total[KEY] == 17, "but it must NOT clear the absolute ceiling"
