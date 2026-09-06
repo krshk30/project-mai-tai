@@ -32,6 +32,7 @@ from project_mai_tai.db.models import (
     Fill,
     Strategy,
     StrategyBarHistory,
+    SystemIncident,
     TradeIntent,
 )
 from project_mai_tai.exit_logic.config import TradingConfig
@@ -307,6 +308,14 @@ class _V2ManagedSnapshot:
     broker_provider: str | None
 
 
+@dataclass(frozen=True)
+class _V2ExitRejectAlarm:
+    key: tuple[str, str]
+    alarm_count: int
+    alarm_threshold: int
+    ceiling_count: int
+
+
 @dataclass
 class _PostExitStaleHeldEpisode:
     """In-memory C3 observation state for one durable post-exit sell fill.
@@ -437,6 +446,13 @@ class OmsRiskService:
     # ⭐ Sustained rejected-order volume is a BROKER API-ACCESS risk — a harm the trading logic
     # cannot see, which is why this bound is not conditional on any position read.
     _V2_EXIT_MAX_REJECTS_PER_EPISODE = 20
+    # SIL1 is an OBSERVABILITY threshold, not an exit bound. It has its own counter and does not
+    # alter `_V2_EXIT_MAX_REJECTS_PER_EPISODE`: paging at 8 must never abandon a live exit 12
+    # rejects early. The measured Schwab population supports 8 (benign episodes end at 3; all five
+    # known storms exceed 8). live:orb is EXPLICITLY UNCOVERED: its scoped benign band reaches 19
+    # across 80 retained episodes, so no alarm threshold below the unchanged ceiling of 20 is
+    # measured or defensible. Do not infer Webull coverage from SIL1 existing.
+    _V2_EXIT_REJECT_ALARM_THRESHOLD_SCHWAB = 8
     # ⛔⭐⭐ WHAT COUNTS AS "THE CLOSE PLACED" (#885 retrospective finding 2, 2026-09-04).
     # `not rejected` is NOT evidence of progress: `_emit_v2_managed_sell` returns [] when the
     # strategy/broker-account lookup misses, and an EMPTY list has no rejected event in it, so the
@@ -591,6 +607,10 @@ class OmsRiskService:
         # Phantom-reconcile: consecutive REJECTED v2 full-closes per (acct, symbol). After the
         # threshold, a fresh broker read clears the row iff confirmed flat (see _emit_v2_exit_on_loop).
         self._v2_exit_close_failures: dict[tuple[str, str], int] = {}
+        # SIL1: independent operator-alarm count. It is deliberately not an alias for either the
+        # consecutive close-failure counter (3/8) or the terminating rejection ceiling (20).
+        self._v2_exit_reject_alarm_count: dict[tuple[str, str], int] = {}
+        self._v2_exit_reject_alarm_announced: set[tuple[str, str]] = set()
         self._v2_exit_reject_total: dict[tuple[str, str], int] = {}
         # A2: first time this (acct,symbol) was refused as not-sellable, the last probe, and
         # whether we have already paged. Cleared the moment a close PLACES or the row closes.
@@ -3353,7 +3373,7 @@ class OmsRiskService:
                 # neither the reject total nor the stand-down, so a symbol that jammed once stayed
                 # stood down into its NEXT position — exits suppressed on a position that never
                 # rejected anything.
-                self._v2_exit_end_episode((broker_account_name, symbol))
+                self._v2_exit_end_episode((broker_account_name, symbol), session=session)
                 self._clear_exit_reservation_release(broker_account_name, symbol)
                 logger.info("[OMS-V2-MANAGED-CLOSE] sym=%s acct=%s flat", symbol, broker_account_name)
             else:
@@ -4155,6 +4175,7 @@ class OmsRiskService:
             )
             if row is not None:
                 self.store.close_managed_position(session, row)
+            self._close_v2_exit_reject_alarm_incident(session, (acct, symbol))
 
         await self._run_db(_close, commit=True)
         key = (acct, symbol)
@@ -4679,7 +4700,173 @@ class OmsRiskService:
             getattr(state, "value", state),
         )
 
-    def _v2_exit_end_episode(self, key: tuple[str, str]) -> None:
+    def _v2_exit_reject_alarm_threshold(self, acct: str) -> int | None:
+        """Return the measured SIL1 threshold, or None for an explicitly uncovered account."""
+        settings = getattr(self, "settings", None)
+        schwab_account = str(
+            getattr(settings, "strategy_schwab_1m_v2_account_name", "") or ""
+        ).strip()
+        if schwab_account and acct == schwab_account:
+            return self._V2_EXIT_REJECT_ALARM_THRESHOLD_SCHWAB
+        # live:orb is intentionally UNSET. Its benign scoped population reaches 19, so choosing a
+        # lower value would manufacture pages rather than measure a storm. The 20-reject safety
+        # ceiling remains active for both accounts; absence of a SIL1 page is not Webull coverage.
+        return None
+
+    @staticmethod
+    def _v2_exit_reject_alarm_incident(
+        session: Session, key: tuple[str, str]
+    ) -> SystemIncident | None:
+        acct, symbol = key
+        incidents = session.scalars(
+            select(SystemIncident).where(
+                SystemIncident.service_name == SERVICE_NAME,
+                SystemIncident.status != "closed",
+            )
+        ).all()
+        return next(
+            (
+                incident
+                for incident in incidents
+                if isinstance(incident.payload, dict)
+                and incident.payload.get("source") == "oms_v2_exit_reject_alarm"
+                and incident.payload.get("broker_account_name") == acct
+                and incident.payload.get("symbol") == symbol
+            ),
+            None,
+        )
+
+    def _write_v2_exit_reject_alarm(
+        self,
+        session: Session,
+        *,
+        key: tuple[str, str],
+        alarm_count: int,
+        alarm_threshold: int,
+        ceiling_count: int,
+    ) -> bool:
+        """Write or refresh SIL1 in an isolated, post-exit transaction; return whether it is new."""
+        acct, symbol = key
+        created = False
+        incident = self._v2_exit_reject_alarm_incident(session, key)
+        payload = {
+            "source": "oms_v2_exit_reject_alarm",
+            "broker_account_name": acct,
+            "symbol": symbol,
+            "alarm_count": alarm_count,
+            "alarm_threshold": alarm_threshold,
+            "ceiling_count": ceiling_count,
+            "ceiling_threshold": self._V2_EXIT_MAX_REJECTS_PER_EPISODE,
+        }
+        if incident is None:
+            created = True
+            session.add(
+                SystemIncident(
+                    service_name=SERVICE_NAME,
+                    severity="critical",
+                    title=f"SIL1: {symbol} exit rejects reached {alarm_threshold} on {acct}",
+                    status="open",
+                    payload=payload,
+                    opened_at=utcnow(),
+                )
+            )
+        else:
+            incident.severity = "critical"
+            incident.status = "open"
+            incident.closed_at = None
+            incident.payload = payload
+        return created
+
+    async def _publish_v2_exit_reject_alarm(self, alarm: _V2ExitRejectAlarm) -> None:
+        """Commit SIL1 after the live exit transaction so observability cannot roll it back."""
+        acct, symbol = alarm.key
+
+        def _write(session: Session) -> bool:
+            return self._write_v2_exit_reject_alarm(
+                session,
+                key=alarm.key,
+                alarm_count=alarm.alarm_count,
+                alarm_threshold=alarm.alarm_threshold,
+                ceiling_count=alarm.ceiling_count,
+            )
+
+        try:
+            created = await self._run_db(_write, commit=True)
+        except Exception:  # noqa: BLE001 - an alarm write must never alter the live exit outcome
+            self.logger.exception(
+                "[OMS-V2-EXIT-REJECT-ALARM-WRITE-FAILED] sym=%s acct=%s alarm_count=%d — "
+                "the operator incident was NOT persisted; the broker exit result is unchanged",
+                symbol,
+                acct,
+                alarm.alarm_count,
+            )
+            return
+
+        self.__dict__.setdefault("_v2_exit_reject_alarm_announced", set()).add(alarm.key)
+        if created:
+            self.logger.error(
+                "[OMS-V2-EXIT-REJECT-ALARM] sym=%s acct=%s alarm_count=%d "
+                "alarm_threshold=%d ceiling_count=%d ceiling_threshold=%d — the symbol is "
+                "visible in the operator incident panel; SIL1 does NOT lower the exit ceiling",
+                symbol,
+                acct,
+                alarm.alarm_count,
+                alarm.alarm_threshold,
+                alarm.ceiling_count,
+                self._V2_EXIT_MAX_REJECTS_PER_EPISODE,
+            )
+
+    def _note_v2_exit_reject_alarm(
+        self,
+        *,
+        key: tuple[str, str],
+        ceiling_count: int,
+    ) -> _V2ExitRejectAlarm | None:
+        """Count one rejected close on SIL1's broker-agnostic event path."""
+        alarm_threshold = self._v2_exit_reject_alarm_threshold(key[0])
+        if alarm_threshold is None:
+            return None
+        counts = self.__dict__.setdefault("_v2_exit_reject_alarm_count", {})
+        counts[key] = counts.get(key, 0) + 1
+        announced = self.__dict__.setdefault("_v2_exit_reject_alarm_announced", set())
+        if counts[key] < alarm_threshold or key in announced:
+            return None
+        return _V2ExitRejectAlarm(
+            key=key,
+            alarm_count=counts[key],
+            alarm_threshold=alarm_threshold,
+            ceiling_count=ceiling_count,
+        )
+
+    def _close_v2_exit_reject_alarm_incident(
+        self, session: Session, key: tuple[str, str]
+    ) -> None:
+        """Close SIL1's durable incident when real progress or episode completion proves it over."""
+        try:
+            with session.begin_nested():
+                incident = self._v2_exit_reject_alarm_incident(session, key)
+                if incident is not None:
+                    incident.status = "closed"
+                    incident.closed_at = utcnow()
+        except Exception:  # noqa: BLE001 - observability must not poison the live exit transaction
+            self.logger.exception(
+                "[OMS-V2-EXIT-REJECT-ALARM-CLOSE-FAILED] sym=%s acct=%s — the incident may "
+                "remain visible after the exit episode ended",
+                key[1],
+                key[0],
+            )
+
+    def _reset_v2_exit_reject_alarm(
+        self, key: tuple[str, str], *, session: Session | None = None
+    ) -> None:
+        self.__dict__.setdefault("_v2_exit_reject_alarm_count", {}).pop(key, None)
+        self.__dict__.setdefault("_v2_exit_reject_alarm_announced", set()).discard(key)
+        if session is not None:
+            self._close_v2_exit_reject_alarm_incident(session, key)
+
+    def _v2_exit_end_episode(
+        self, key: tuple[str, str], *, session: Session | None = None
+    ) -> None:
         """THE EPISODE IS OVER — drop every per-episode exit-retry counter for ``key``.
 
         ⛔⭐⭐ #885 retrospective finding 1 (2026-09-04). The absolute reject ceiling is documented
@@ -4697,6 +4884,7 @@ class OmsRiskService:
         oversight — do not "tidy" it into symmetry.
         """
         self._v2_exit_close_failures.pop(key, None)
+        self._reset_v2_exit_reject_alarm(key, session=session)
         getattr(self, "_v2_exit_reject_total", {}).pop(key, None)
         self._v2_exit_stood_down.discard(key)
 
@@ -4739,7 +4927,9 @@ class OmsRiskService:
             self._managed_v2_symbols.discard(key)
             self._cw_flip_pending.discard(key)
             self._cw_floor_armed.discard(key)
-            self._v2_exit_end_episode(key)  # confirmed FLAT + row closed — the episode ended
+            self._v2_exit_end_episode(
+                key, session=session
+            )  # confirmed FLAT + row closed — the episode ended
             self._clear_exit_reservation_release(acct, symbol)
             self._a2_clear(acct, symbol)
             self.logger.info(
@@ -5064,6 +5254,7 @@ class OmsRiskService:
                 self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             if row is not None:
                 self.store.close_managed_position(session, row)
+            self._close_v2_exit_reject_alarm_incident(session, (acct, symbol))
 
         await self._run_db(_close, commit=True)
         key = (acct, symbol)
@@ -5109,6 +5300,7 @@ class OmsRiskService:
         # Everything downstream (session open, intent write, submit, record) trails this.
         decided_at = datetime.now(UTC)
         events: list = []
+        pending_reject_alarm: _V2ExitRejectAlarm | None = None
         try:
             with self.session_factory() as session:
                 row = self.store.get_open_managed_position(
@@ -5119,7 +5311,7 @@ class OmsRiskService:
                     # #885 finding 1: no open row means the episode is already over. This lifted
                     # the stand-down but left its counter, so the next position started part-way
                     # to the ceiling.
-                    self._v2_exit_end_episode((acct, symbol))
+                    self._v2_exit_end_episode((acct, symbol), session=session)
                     return
                 if kind == "SCALE":
                     events = await self._emit_v2_managed_sell(
@@ -5173,6 +5365,10 @@ class OmsRiskService:
                             totals = {}
                             self._v2_exit_reject_total = totals
                         totals[key] = totals.get(key, 0) + 1
+                        pending_reject_alarm = self._note_v2_exit_reject_alarm(
+                            key=key,
+                            ceiling_count=totals[key],
+                        )
                         if (
                             totals[key] >= self._V2_EXIT_MAX_REJECTS_PER_EPISODE
                             and key not in self._v2_exit_stood_down
@@ -5229,6 +5425,7 @@ class OmsRiskService:
                         )
                         if progressed:
                             self._v2_exit_close_failures.pop(key, None)  # the close placed -> reset counter
+                            self._reset_v2_exit_reject_alarm(key, session=session)
                             getattr(self, "_v2_exit_reject_total", {}).pop(key, None)  # real progress
                             self._a2_clear(acct, symbol)  # A2: the block ended
                         if close_on_fill:
@@ -5240,13 +5437,24 @@ class OmsRiskService:
                         else:
                             self.store.close_managed_position(session, row)
                             self._managed_v2_symbols.discard(key)
-                            self._v2_exit_end_episode(key)  # row closed — the episode ended
+                            self._v2_exit_end_episode(
+                                key, session=session
+                            )  # row closed — the episode ended
                             self._clear_exit_reservation_release(acct, symbol)
                             self._a2_clear(acct, symbol)
                 session.commit()
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
             self.logger.warning("v2 managed-exit emit failed for %s: %s", symbol, exc)
             return
+        if pending_reject_alarm is not None:
+            alarm_counts = self.__dict__.setdefault("_v2_exit_reject_alarm_count", {})
+            announced = self.__dict__.setdefault("_v2_exit_reject_alarm_announced", set())
+            if (
+                alarm_counts.get(pending_reject_alarm.key, 0)
+                >= pending_reject_alarm.alarm_count
+                and pending_reject_alarm.key not in announced
+            ):
+                await self._publish_v2_exit_reject_alarm(pending_reject_alarm)
         for ev in events:
             await self._publish_order_event(ev)
 

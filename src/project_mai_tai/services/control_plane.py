@@ -2962,7 +2962,25 @@ class ControlPlaneRepository:
                     )
 
                 for incident in session.scalars(
-                    select(SystemIncident).order_by(desc(SystemIncident.opened_at)).limit(10)
+                    select(SystemIncident)
+                    # Active alerts must not disappear behind newer closed history while the
+                    # condition still holds. SIL1 relies on this to keep the affected symbol on
+                    # the operator's main screen for the whole exit stand-down, even if more than
+                    # ten unrelated incidents are also open.
+                    .order_by(
+                        case(
+                            (
+                                (SystemIncident.status != "closed")
+                                & (SystemIncident.service_name == "oms-risk")
+                                & SystemIncident.title.like("SIL1:%"),
+                                0,
+                            ),
+                            (SystemIncident.status != "closed", 1),
+                            else_=2,
+                        ),
+                        desc(SystemIncident.opened_at),
+                    )
+                    .limit(10)
                 ).all():
                     payload = incident.payload if isinstance(incident.payload, dict) else {}
                     incident_account_name = str(

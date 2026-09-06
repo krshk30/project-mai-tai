@@ -21,7 +21,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from project_mai_tai.db.models import OmsManagedPosition
+from project_mai_tai.db.models import OmsManagedPosition, SystemIncident
 from project_mai_tai.exit_logic.config import TradingConfig
 from project_mai_tai.exit_logic.position import Position
 from project_mai_tai.oms.service import OmsRiskService
@@ -40,6 +40,7 @@ def _session_factory() -> sessionmaker[Session]:
     )
     # ONLY our table — avoid the market_trade_ticks JSONB-on-SQLite landmine.
     OmsManagedPosition.__table__.create(engine)
+    SystemIncident.__table__.create(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
@@ -66,6 +67,8 @@ class _Harness:
         # per-episode retry counters. These are the containers `_v2_exit_end_episode` mutates.
         self._v2_exit_close_failures: dict[tuple[str, str], int] = {}
         self._v2_exit_stood_down: set[tuple[str, str]] = set()
+        self._v2_exit_reject_alarm_count: dict[tuple[str, str], int] = {}
+        self._v2_exit_reject_alarm_announced: set[tuple[str, str]] = set()
         self._v2_exit_reject_total: dict[tuple[str, str], int] = {}
 
     _clear_exit_reservation_release = OmsRiskService._clear_exit_reservation_release
@@ -73,6 +76,11 @@ class _Harness:
     # than stubbed, and the production call site is NOT guarded with getattr.
     _check_bracket_born_triggered = OmsRiskService._check_bracket_born_triggered
     # #885 finding 1: borrowed, not stubbed — same rule as the two above.
+    _v2_exit_reject_alarm_incident = staticmethod(
+        OmsRiskService._v2_exit_reject_alarm_incident
+    )
+    _close_v2_exit_reject_alarm_incident = OmsRiskService._close_v2_exit_reject_alarm_incident
+    _reset_v2_exit_reject_alarm = OmsRiskService._reset_v2_exit_reject_alarm
     _v2_exit_end_episode = OmsRiskService._v2_exit_end_episode
 
 
