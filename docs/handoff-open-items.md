@@ -269,9 +269,16 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 - **CONF3 — THE CONFIRMATION EXIT CLOSES SCHWAB ONLY; THE WEBULL FAN-OUT LEG IS NEVER ARMED**
   *(owner: **codex-2**; **OPEN, live money, highest priority — it blocks the operator's +5%/−8%
-  settings change.** ⛔ **NEXT ACTION: reprotect root cause first — NOT A BUILD ITEM UNTIL THEN.**
-  *(root cause found 2026-09-06, below; the intended design shape is now stated, so what remains is
-  codex accepting or arguing it, then building.)* ⛔ **A merged docs PR is not a green light.**
+  settings change.** ✅ **BUILT 2026-09-06 in PR #902 @ `fc377ea7`; content-reviewed by claude-1
+  (fan-out, per-account binding, single decision, no new flag, release gating, UNKNOWN terminating in
+  reprotected-or-UNCOVERED, and both false log lines corrected — all re-derived, plus an independent
+  mutation). ⛔ NOT PINNED, NOT MERGED, NOT DEPLOYED.** `#902` and `#903` modify the same file from
+  the same base and **conflict on trial merge**, so `#902` is being rebased onto the new main and
+  re-verified; **its old head will not be merged and this row's pin does not carry to the new one.**
+  ⛔ **NEXT ACTION: fresh head from codex-2, re-review, re-pin.**
+  *(The reprotect root cause below was the gate on starting the build and is ANSWERED. The
+  historical diagnosis is kept in full — it is the reason for the design shape, not stale text.)*
+  ⛔ **A merged docs PR is not a green light for deploy.**
   Measured by claude-1 2026-09-06, market closed.)*.
   `oms/service.py:1076` keys `_confirmation_exit_pending` on ONE account — whatever the event
   stamped, always `live:schwab_1m_v2`. ⭐ **The template is 50 lines above in the same function:**
@@ -389,11 +396,16 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   down, but it is not an open choice handed to the merging agent.
   [[feedback_something_else_was_covering_for_it]] [[feedback_a_failing_control_voids_the_probe]]
 
-- **SIL1 — ALARM WHEN THE REJECT CEILING FIRES** *(owner: **codex-2**; **RELEASED 2026-09-06**;
-  **THRESHOLD DECIDED 2026-09-06 — operator, final. READY TO BUILD.** WRAP1 is answered and does not
-  redirect it.)*.
-  Fire when the **per-episode reject ceiling fires**, not on individual rejects (the operator refuses
-  those as noise), and the symbol must be **visible on his screen while its exits are stood down**.
+- **SIL1 — SCHWAB REJECT-STORM ALARM, KEYED BESIDE THE REJECT-CEILING EVENT** *(owner: **codex-2**;
+  ✅ **BUILT 2026-09-06 in PR #903 @ `e9b10d34`. Independently reviewed and PINNED by claude-1;
+  NOT merged, NOT deployed.** Threshold decided by the operator the same day, final.)*.
+  ⛔ **The alarm is an INDEPENDENT COUNT at 8 on its own counter, keyed on the rejected-event path
+  BESIDE `[OMS-V2-EXIT-REJECT-CEILING]` — it is NOT "the ceiling firing".** The terminating ceiling
+  stays at **20** and is untouched. An earlier draft of this row described it as firing *when the
+  ceiling fires*; that wording is superseded and must not be re-quoted. Keying on the event path
+  rather than on broker wording is what keeps it per-account and broker-agnostic.
+  Not on individual rejects (the operator refuses those as noise), and the symbol must be **visible
+  on his screen while its exits are stood down**.
   ⭐ **Verified it covers the case that prompted it:** `[OMS-V2-EXIT-REJECT-CEILING]` fired for IMRN
   **09-04 12:18:37 ET** at exactly 20 — at the **start** of the 36-minute suppression, 36 min before
   the OCO leg resolved it at 12:57:53. **No gap in the requirement.**

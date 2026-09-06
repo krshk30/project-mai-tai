@@ -24,9 +24,15 @@ Integrator for this rotation. Needs `codex-2`'s review before merge — the auth
 > [`handoff-log.md`](handoff-log.md).
 > ⛔ **CONF1 POST-FIX HAS NOT FIRED ONCE.** All three fires ran pre-#897 and the OMS restarted 09-04
 > 17:50 ET, after the last one. The window is clean with no straddle — and that is not a pass.
-> ⛔ The main checkout is parked on `codex/atr-bracket-grid` with a dirty tree; everything this
-> session was read from `origin/main` and written in a separate worktree. **No deploy runs against
-> that tree.**
+> ✅ **The main checkout is CLEAN again** — it was parked on `codex/atr-bracket-grid` with a dirty
+> tree earlier today; `codex-2` preserved the tracked and untracked work in
+> `stash@{Sun Sep 6 12:32:15 2026}: On codex/atr-bracket-grid: codex preserve dirty atr-bracket-grid
+> before CONF3 2026-09-06`. **That deploy blocker is RESOLVED — do not carry it forward as current.**
+> Everything in this session was still read from `origin/main` and written in separate worktrees.
+> ⏩ **Later the same day:** CONF3 was built in **PR #902 @ `fc377ea7`** (content-reviewed, not
+> pinned, being rebased — it conflicts with #903 in `oms/service.py`) and SIL1 in **PR #903 @
+> `e9b10d34`** (independently reviewed and **PINNED**; `independent-review-pin` PASS). **Neither is
+> merged and nothing is deployed.**
 
 ---
 

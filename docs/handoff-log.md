@@ -17,8 +17,13 @@
 
 ## 2026-09-06 — a measurement Sunday: the fan-out leg the confirmation exit never closes, and the storms answered
 
-Market closed 09-06 and 09-07 (Labor Day). Operator-directed investigation session, no build, no
-deploy, no merge. Three questions in, three answered, one of my own claims falsified on the way.
+Market closed 09-06 and 09-07 (Labor Day). Three questions in, three answered, one of my own claims
+falsified on the way.
+
+> ⚠ **Scope of this entry: the MEASUREMENT phase of 09-06 only** — no build, no deploy, no merge
+> *within it*. **Later the same day `codex-2` built both**: CONF3 in PR #902 @ `fc377ea7` and SIL1 in
+> PR #903 @ `e9b10d34` (independently reviewed and pinned). Still nothing merged and nothing
+> deployed. This paragraph is bounded so it does not contradict the same-day record.
 
 **CONF3 — the confirmation exit closes Schwab only.** `oms/service.py:1076` keys the pending exit on
 one account. The `v2_cw_flip` handler **50 lines above in the same function** had the identical
