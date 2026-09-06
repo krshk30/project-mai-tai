@@ -365,6 +365,44 @@ async def test_released_webull_pair_fresh_flat_preserves_interval_in_summary(
 
 
 @pytest.mark.asyncio
+async def test_recovery_flat_finalizes_released_unprotected_interval(monkeypatch) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    clock = {"now": datetime(2026, 9, 6, 14, 0, tzinfo=UTC)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+    adapter = _FanoutAdapter(reject_accounts={WEBULL})
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+
+    async def _flat_after_recovery_read(*args, **kwargs):
+        clock["now"] += timedelta(seconds=4)
+        return service_module._PositionRead.FLAT_CONFIRMED
+
+    monkeypatch.setattr(service, "_broker_symbol_position_state", _flat_after_recovery_read)
+    await _arm_decision(service)
+    service._latest_quotes_by_symbol[SYMBOL]["received_at"] = clock["now"]
+
+    await service._evaluate_v2_managed_exit(SCHWAB, SYMBOL)
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    await service._confirmation_exit_recovery_tasks.pop()
+
+    assert _sell_accounts(sf) == [SCHWAB, WEBULL]
+    assert (WEBULL, SYMBOL) not in service._confirmation_unprotected_since
+    with sf() as session:
+        webull_row = service.store.get_open_managed_position(
+            session, broker_account_name=WEBULL, symbol=SYMBOL
+        )
+    assert webull_row is None
+    text = "\n".join(service.logger.lines)
+    assert "[OMS-V2-CONFIRMATION-EXIT-COVERAGE-RESTORED]" in text
+    assert "resolution=managed_episode_closed" in text
+    assert "released_unprotected_seconds=4.000" in text
+    assert "live:orb:flat" in text
+    assert "released_unprotected_seconds_max=4.000" in text
+    assert "released_unprotected_current=0" in text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("fanout", "expected_accounts"),
     [(False, [SCHWAB]), (True, [SCHWAB, WEBULL])],
