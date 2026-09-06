@@ -21,9 +21,12 @@ Market closed 09-06 and 09-07 (Labor Day). Three questions in, three answered, o
 falsified on the way.
 
 > ⚠ **Scope of this entry: the MEASUREMENT phase of 09-06 only** — no build, no deploy, no merge
-> *within it*. **Later the same day `codex-2` built both**: CONF3 in PR #902 @ `fc377ea7` and SIL1 in
-> PR #903 @ `e9b10d34` (independently reviewed and pinned). Still nothing merged and nothing
-> deployed. This paragraph is bounded so it does not contradict the same-day record.
+> *within it*. **Later the same day `codex-2` built both, and all three landed:** SIL1 merged as
+> **`fd3e31dd`** (PR #903, pinned @ `e9b10d34`), CONF3 as **`0b9d16b7`** (PR #902, re-reviewed and
+> pinned @ `eb44cb35` after a rebase), and CONF3's regression control as **`9a5a813c`** (PR #904,
+> pinned @ `72bc9db8`) — the control for the recovery-flat branch that my #902 review found inert to
+> mutation. ⛔ **NONE OF THE THREE IS DEPLOYED**, so main now leads the box on runtime code.
+> This paragraph is bounded so it does not contradict the same-day record.
 
 **CONF3 — the confirmation exit closes Schwab only.** `oms/service.py:1076` keys the pending exit on
 one account. The `v2_cw_flip` handler **50 lines above in the same function** had the identical

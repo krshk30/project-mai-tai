@@ -269,13 +269,18 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 - **CONF3 — THE CONFIRMATION EXIT CLOSES SCHWAB ONLY; THE WEBULL FAN-OUT LEG IS NEVER ARMED**
   *(owner: **codex-2**; **OPEN, live money, highest priority — it blocks the operator's +5%/−8%
-  settings change.** ✅ **BUILT 2026-09-06 in PR #902 @ `fc377ea7`; content-reviewed by claude-1
-  (fan-out, per-account binding, single decision, no new flag, release gating, UNKNOWN terminating in
-  reprotected-or-UNCOVERED, and both false log lines corrected — all re-derived, plus an independent
-  mutation). ⛔ NOT PINNED, NOT MERGED, NOT DEPLOYED.** `#902` and `#903` modify the same file from
-  the same base and **conflict on trial merge**, so `#902` is being rebased onto the new main and
-  re-verified; **its old head will not be merged and this row's pin does not carry to the new one.**
-  ⛔ **NEXT ACTION: fresh head from codex-2, re-review, re-pin.**
+  settings change.** ✅ **BUILT, PINNED AND MERGED 2026-09-06 — PR #902, pinned @ `eb44cb35`, merged
+  as `0b9d16b7`; plus its regression control PR #904, pinned @ `72bc9db8`, merged as `9a5a813c`.
+  ⛔ NOT DEPLOYED.** The pinned review re-derived every claim on the rebased head: fan-out via
+  `_v2_accounts()`, per-account row binding, one decision keyed on the Schwab `source_fill_id`, no
+  new flag, release gated by the 20-ceiling and by RTH, UNKNOWN terminating in
+  reprotected-or-UNCOVERED, both false log lines corrected — with independent mutations and a full
+  controlled pair whose failure sets matched by name. #902 originally conflicted with #903 in
+  `oms/service.py`; it was **rebased (never Update-branch)**, re-reviewed from scratch on the new
+  base, and re-pinned — the `fc377ea7` review did **not** carry.
+  ⛔ **NEXT ACTION: DEPLOY under the operator's gate, then OBSERVE.** The box is behind main on
+  runtime code, so none of this is running yet. ⛔ **The live close stays UNEXERCISED until a real
+  confirmation fire closes both legs — merged is not proven and deployed is not proven.**
   *(The reprotect root cause below was the gate on starting the build and is ANSWERED. The
   historical diagnosis is kept in full — it is the reason for the design shape, not stale text.)*
   ⛔ **A merged docs PR is not a green light for deploy.**
@@ -397,8 +402,9 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   [[feedback_something_else_was_covering_for_it]] [[feedback_a_failing_control_voids_the_probe]]
 
 - **SIL1 — SCHWAB REJECT-STORM ALARM, KEYED BESIDE THE REJECT-CEILING EVENT** *(owner: **codex-2**;
-  ✅ **BUILT 2026-09-06 in PR #903 @ `e9b10d34`. Independently reviewed and PINNED by claude-1;
-  NOT merged, NOT deployed.** Threshold decided by the operator the same day, final.)*.
+  ✅ **BUILT, PINNED AND MERGED 2026-09-06 — PR #903, pinned @ `e9b10d34`, merged as `fd3e31dd`.
+  ⛔ NOT DEPLOYED.** Threshold decided by the operator the same day, final. **NEXT ACTION: deploy
+  under the operator's gate; the alarm is not live until then.**)*.
   ⛔ **The alarm is an INDEPENDENT COUNT at 8 on its own counter, keyed on the rejected-event path
   BESIDE `[OMS-V2-EXIT-REJECT-CEILING]` — it is NOT "the ceiling firing".** The terminating ceiling
   stays at **20** and is untouched. An earlier draft of this row described it as firing *when the
@@ -418,11 +424,14 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   **judgment, not measurement**, and must not be written up as measured.
   ⚠ **Sensitivity is partly by construction:** only **4 of 5** storms are uncensored; IMRN's 20 **is**
   the clip level, not its natural size.
-  **claude-1 proposes 8** — 2.67× the structural benign cap, and it is already
+  📜 **HISTORICAL — PRE-DECISION, SUPERSEDED. Kept for the reasoning, NOT a live question.** At the
+  time this read: *"claude-1 proposes 8 — 2.67× the structural benign cap, and it is already
   `_V2_EXIT_ABANDON_AFTER_FAILURES`, so it mints no new number and makes the two bounds agree instead
-  of disagreeing at 8 vs 20; 5/5 storms, 0/43 benign on this population. **Decoupling option:** alarm
-  at 8, leave the ceiling at 20 — *lowering the ceiling changes live exit behaviour*, so that is the
-  operator's call, not codex's.
+  of disagreeing at 8 vs 20; 5/5 storms, 0/43 benign on this population. Decoupling option: alarm at
+  8, leave the ceiling at 20 — lowering the ceiling changes live exit behaviour, so that is the
+  operator's call."* ⇒ **The operator decided the same day (below): 8 on its own counter, ceiling
+  unchanged at 20, `live:orb` UNSET. That decision is FINAL and is BUILT.** ⛔ Do not read the
+  paragraph above as an open choice.
   ⛔⛔ **THE REFUSAL IS NEVER LOGGED.** The verbatim string occurs **0 times in every retained log
   file**; it exists only at `broker_orders.payload->>'reject_reason'` (and
   `broker_order_events.payload->>'reason'`). **This alarm cannot be a log grep** — hook the reject
