@@ -6,17 +6,54 @@
 **Written by `claude-1`, 2026-09-04 17:57 ET.** Batch `2026-09-04-probe-answered-and-conf1-bound`.
 Integrator for this rotation. Needs `codex-2`'s review before merge — the author never reviews.
 
+> **⏩ UPDATED `claude-1`, 2026-09-06 ~12:40 ET — measurement Sunday, no build, no deploy, no merge.**
+> Market closed 09-06 and 09-07 (Labor Day); next session **Tuesday 2026-09-08**.
+> ✅ **THE ATR PROBE IS LIVE.** `/home/trader/atr_probe_enable.log`: fence **GO** (all four gates
+> green), v2 stopped 20:05:03 / ready 20:05:34, pid 3135615, **step 4 proof present** —
+> `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS=*` in the RUNNING process env. 0 tracebacks,
+> warmup 850 bars for IMRN. Probe lines 0 as predicted (bars stop 20:00 ET). The transient timer has
+> since expired and lists none — expected, it was one-shot.
+> ✅ **CONF3 MEASURED, BUILT, PINNED AND MERGED — `0b9d16b7` (PR #902, pinned @ `eb44cb35`), plus
+> its regression control `9a5a813c` (PR #904, pinned @ `72bc9db8`). ⛔ NOT DEPLOYED.** The
+> confirmation exit closed Schwab only; 3 of 3 fires orphaned the fan-out leg. ⛔ Its supposed safe
+> branch, `[OMS-EXIT-REPROTECT]`, was **0-for-8** — #904 supplies the control for the recovery-flat
+> branch that was previously inert to mutation.
+> ✅ **SIL1 DECIDED, BUILT, PINNED AND MERGED — `fd3e31dd` (PR #903, pinned @ `e9b10d34`). ⛔ NOT
+> DEPLOYED.** Operator decision 09-06, final: Schwab **8** on its own counter; ceiling stays **20**
+> on both accounts; ⛔ **`live:orb` alarm UNSET — EXPLICITLY UNCOVERED**, because its benign band
+> genuinely reaches 19 across 80 episodes and no threshold under 20 is defensible. **live:orb reject
+> storms are not alarmed, deliberately.** ✅ **WRAP1 answered** (two
+> triggers, one shared behaviour) and ✅ **CONF2 closed** (#897 is the whole answer). All four rows,
+> with the numbers, are in [`handoff-open-items.md`](handoff-open-items.md); the narrative is in
+> [`handoff-log.md`](handoff-log.md).
+> ⛔ **CONF1 POST-FIX HAS NOT FIRED ONCE.** All three fires ran pre-#897 and the OMS restarted 09-04
+> 17:50 ET, after the last one. The window is clean with no straddle — and that is not a pass.
+> ✅ **The main checkout is CLEAN again** — it was parked on `codex/atr-bracket-grid` with a dirty
+> tree earlier today; `codex-2` preserved the tracked and untracked work in
+> `stash@{Sun Sep 6 12:32:15 2026}: On codex/atr-bracket-grid: codex preserve dirty atr-bracket-grid
+> before CONF3 2026-09-06`. **That deploy blocker is RESOLVED — do not carry it forward as current.**
+> Everything in this session was still read from `origin/main` and written in separate worktrees.
+> ⏩ **Later the same day, all three landed — see the PRODUCTION block for the deploy gap:**
+> SIL1 **#903** pinned @ `e9b10d34` → merged **`fd3e31dd`**; CONF3 **#902** (first head `fc377ea7`
+> conflicted with #903 in `oms/service.py`, so it was **rebased, never Update-branch**, re-reviewed
+> from scratch and re-pinned @ `eb44cb35`) → merged **`0b9d16b7`**; CONF3's regression control
+> **#904** pinned @ `72bc9db8` → merged **`9a5a813c`**. ⛔ **ALL THREE ARE MERGED AND NONE IS
+> DEPLOYED.**
+
 ---
 
-# PRODUCTION — main and box IN SYNC
+# ⛔ PRODUCTION — main is AHEAD of the box ON RUNTIME CODE. NOT IN SYNC.
 
 | | |
 |---|---|
-| box (deployed) | **`c1e6357afa1ccf9b7327745c129b4b6510c1dd78`** — verified ON THE BOX 17:56 ET, checkout clean |
-| main | `c1e6357` — **identical** |
-| merges today | **seven**: #892 `b5ca941` · #893 `073a331` · #894 `1d7ec05` · #895 `b1769e5` · #896 `660bafa` · #897 `184cd8e` · #898 `c1e6357` |
-| open PRs | **none** except this handoff PR |
-| exposure (17:56 ET) | Schwab positions **0** · working orders **0** — **FLAT** (broker truth, not our books) |
+| box (deployed) | **`c1e6357afa1ccf9b7327745c129b4b6510c1dd78`** — re-derived from the box 2026-09-06, unchanged since 09-04 |
+| main | **`9a5a813cc2e72f08b07a39119f6c4b474dad055d`** |
+| **split** | ⛔ **NOT docs-only.** `git diff --name-only c1e6357 origin/main` outside `docs/`: **`src/project_mai_tai/oms/service.py`** and **`src/project_mai_tai/services/control_plane.py`**, plus five test files. Runtime diffstat: **899 insertions / 43 deletions across 2 source files.** |
+| merges 09-04 | **seven**: #892 `b5ca941` · #893 `073a331` · #894 `1d7ec05` · #895 `b1769e5` · #896 `660bafa` · #897 `184cd8e` · #898 `c1e6357` — **these ARE on the box** |
+| merges 09-06 | **three, NONE DEPLOYED**: #903 SIL1 `fd3e31dd` · #902 CONF3 `0b9d16b7` · #904 CONF3 test-only control `9a5a813c` |
+| ⇒ consequence | **Nothing merged on 09-06 is running.** CONF3's fan-out and SIL1's alarm exist in `main` only. Do not read Tuesday's live behaviour as containing either until a deploy happens under the operator's gate. |
+| open PRs | **this handoff PR** (#901) |
+| exposure | last verified **09-04 17:56 ET**: Schwab positions 0 · working orders 0 — FLAT. ⚠ Market has been closed since; **re-verify before any deploy**, do not quote this as current. |
 
 | service | pid | NRestarts | | service | pid | NRestarts |
 |---|---|---|---|---|---|---|
@@ -164,6 +201,15 @@ env var anyway, so either path ends with the probe on.
   `--clock-override` was **not** used — the change gains nothing from the hour.
 
 # ▶ NEXT SESSION — Tuesday 2026-09-08 (Monday is Labor Day)
+
+> ⏩ **09-06 update — item 1 is DONE.** The probe is confirmed live (see the header block); on
+> Tuesday just verify it is *emitting* `state=` / `flip=` per bar.
+> ⛔ **CONF3 AND SIL1 ARE BUILT, PINNED AND MERGED — THERE IS NOTHING TO BUILD.** #903 `fd3e31dd`,
+> #902 `0b9d16b7`, #904 `9a5a813c`. **None is deployed**, so Tuesday's job is **deploy and observe
+> under the operator's gate**, not build. ⛔ **The box is BEHIND main on runtime code** (see the
+> PRODUCTION block) — until a deploy happens, live behaviour contains neither change.
+> ⛔ **CONF3's live close stays UNEXERCISED even after deploying**: it is proven only when a real
+> confirmation fire closes both legs. Merged is not proven, and deployed is not proven either.
 
 1. **Confirm the ATR probe is live** and emitting `state=` / `flip=` per bar. Expect ~1.6 MB/session
    at the 9-symbol maximum; `maxsize 200M` gives ~59× headroom, so retention is unaffected.

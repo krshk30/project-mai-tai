@@ -267,6 +267,253 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **CONF3 — THE CONFIRMATION EXIT CLOSES SCHWAB ONLY; THE WEBULL FAN-OUT LEG IS NEVER ARMED**
+  *(owner: **codex-2**; **OPEN, live money, highest priority — it blocks the operator's +5%/−8%
+  settings change.** ✅ **BUILT, PINNED AND MERGED 2026-09-06 — PR #902, pinned @ `eb44cb35`, merged
+  as `0b9d16b7`; plus its regression control PR #904, pinned @ `72bc9db8`, merged as `9a5a813c`.
+  ⛔ NOT DEPLOYED.** The pinned review re-derived every claim on the rebased head: fan-out via
+  `_v2_accounts()`, per-account row binding, one decision keyed on the Schwab `source_fill_id`, no
+  new flag, release gated by the 20-ceiling and by RTH, UNKNOWN terminating in
+  reprotected-or-UNCOVERED, both false log lines corrected — with independent mutations and a full
+  controlled pair whose failure sets matched by name. #902 originally conflicted with #903 in
+  `oms/service.py`; it was **rebased (never Update-branch)**, re-reviewed from scratch on the new
+  base, and re-pinned — the `fc377ea7` review did **not** carry.
+  ⛔ **NEXT ACTION: DEPLOY under the operator's gate, then OBSERVE.** The box is behind main on
+  runtime code, so none of this is running yet. ⛔ **The live close stays UNEXERCISED until a real
+  confirmation fire closes both legs — merged is not proven and deployed is not proven.**
+  *(The reprotect root cause below was the gate on starting the build and is ANSWERED. The
+  historical diagnosis is kept in full — it is the reason for the design shape, not stale text.)*
+  ⛔ **A merged docs PR is not a green light for deploy.**
+  Measured by claude-1 2026-09-06, market closed.)*.
+  `oms/service.py:1076` keys `_confirmation_exit_pending` on ONE account — whatever the event
+  stamped, always `live:schwab_1m_v2`. ⭐ **The template is 50 lines above in the same function:**
+  the `v2_cw_flip` handler had this identical defect and was fixed 2026-08-07 by iterating
+  `_v2_accounts()` (`:3364`). CW_HARD_STOP / CW_FLOOR reach the Webull leg for free because they are
+  STATE-driven (they iterate managed ROWS). **CW_FLIP and CONFIRMATION_EXIT are the only two
+  EVENT-driven per-account paths; CW_FLIP was fixed and CONFIRMATION_EXIT was missed.** No new flag —
+  `_v2_accounts()` collapses to Schwab-only when the fan-out flag is off.
+  **The population, not a sample** (`v2_confirmation_exit_evaluations`, authoritative — do not
+  log-grep this): CONF1 has run **two ET sessions only** (09-03, 09-04): **7 evaluations · 3 fires ·
+  4 `atr_state=long` · 0 refusals**. ⚠ The 09-04 handoff says "6 evaluations, 2 fires" — understated
+  by one each. **3 of 3 fires had a live fan-out leg; 3 of 3 left it open**, median **44m06s**.
+  | fire (ET) | sym | Schwab | Webull leg | spread |
+  |---|---|---|---|---|
+  | 09-03 13:39 | CHPT | 9.0550 −0.17% | ~9.2616 *[inferred]* +2.00% | **+2.17 pp** |
+  | 09-04 11:36 | IMRN | 1.6901 −1.16% | 1.7400 +1.81% | **+2.98 pp** |
+  | 09-04 15:14 | IMRN | 1.7601 −0.84% | 1.6901 −5.05% | **−4.21 pp** |
+  ⛔⛔ **THE SPREAD IS NOT THE COST — the sign was assumed and it is wrong.** The orphaned leg **BEAT**
+  the confirmation exit in **2 of 3**, median **+2.17 pp**. Same shape as OVSD1: *count says urgent,
+  cost says no*. ⭐ **The argument that survives is DISPERSION** — two legs of ONE decision diverging
+  2–4 pp, unmanaged and unbounded, widened by the move to +5%/−8%. **Never sell this as a P&L fix.**
+  ⛔ **ACCEPTANCE EVIDENCE CANNOT COME FROM THE PAPER COMPARISON.** `paper_exit.py:254` hardcodes
+  `broker_account_name != "live:schwab_1m_v2" or venue != "schwab" -> return []`. It does **not** read
+  `_v2_accounts()`. The harness is blind to the fan-out leg on **two independent conditions**.
+  Evidence must be the controlled pair + mutation.
+  ⛔ **WINDOW INTEGRITY — clean, no straddle:** all three fires ran on **pre-#897** code; the OMS
+  restarted **2026-09-04 17:50 ET**, after the last fire (15:14). ⇒ **The post-fix confirmation exit
+  has not fired once. That is not a pass.** [[feedback_unexercised_is_not_a_result]]
+  ⛔ **THE FAILURE BRANCH IT MUST NOT INHERIT** (read from deployed code, box `c1e6357`; constants
+  `_V2_EXIT_RECONCILE_AFTER_FAILURES=3` `:410`, `_V2_EXIT_ABANDON_AFTER_FAILURES=8` `:424`,
+  `_V2_EXIT_MAX_REJECTS_PER_EPISODE=20` `:439`). On cancel-OK → sell-refused,
+  `_v2_close_reconcile_flat` (`:4703`) counts to 3 then takes ONE broker read:
+  **HELD** → `_exit_reservation_released` (`:4768`) → `[OMS-EXIT-REPROTECT]` →
+  `_reprotect_after_failed_release` (`:2826`) → the pair **IS re-placed**;
+  **FLAT** → row closed. ⛔ **UNKNOWN → nothing is re-placed** — the latch is read at only two sites
+  (`:2756`, `:4768`) and `:4768` is *inside* the HELD block. At 8 it emits
+  `[OMS-V2-EXIT-STAND-DOWN]` asserting *"any protection are LEFT IN PLACE"*, and the ceiling line at
+  20 asserts *"ALL protection are LEFT IN PLACE"* — **both false on a released position.**
+  ⛔ **Second hole: the re-protect is RTH-GATED** (`_spawn_webull_protection` →
+  `[WEBULL-PROTECT-RTH-GATED]`, "the software ladder remains the only cover" — the ladder is exactly
+  what is failing). v2 entry runs 07:00–16:00 ET, so a pre-market position here **cannot be
+  re-protected at all**. **Bounded?** Yes, but by `_v2_exit_reject_total`, NOT by
+  `_v2_exit_close_failures`, which still resets to 0 on HELD (`:4777`) — the unreachable shape,
+  unchanged. **Marker with a denominator?** No, and **the naked interval is never measured.**
+  ⇒ Build requirements F1–F5 are in the 2026-09-06 relay: terminal state must be re-protected OR
+  positively flat on **every** branch; fix the false log text; refuse to RELEASE outside RTH rather
+  than release-and-hope; bound per EPISODE; marker with `legs_released/reprotected/uncovered` on the
+  line. [[project_mai_tai_confirmation_exit_schwab_only]]
+  🔴🔴 **V1 — THE RE-PROTECT IS 0-FOR-8. CONF3 HAS NO SAFE BRANCH.** (verified 2026-09-06 on the
+  operator's challenge; "it exists" is not "it works".) `[OMS-EXIT-REPROTECT]` has fired **8 times**
+  in the whole retained window — 08-19 YJ ×3, 08-19 ZSTK, 08-20 BTCT, 08-21 JUNS ×2, 08-25 AIXI —
+  across **5 episodes**, with **0 skipped and 0 failed** at the wrapper. **Every single one is
+  followed ~30 s later by `[WEBULL-PROTECT-FAILED]`, and NOT ONE produced a
+  `[WEBULL-EXIT-PAIR-PLACED]` of its own.** 0 of 5 episodes had a pair placed between the reprotect
+  and its failure.
+  ⭐ **The contrast is what makes it damning:** the *fill-path* attach succeeds routinely —
+  `[WEBULL-EXIT-PAIR-PLACED]` + `[WEBULL-PROTECT-ATTACHED]` fire together many times on 08-25 (DAIC,
+  BTCT, AIXI ×3, PMI). So the adapter works; **the reprotect-triggered attach is the one that never
+  lands.** ⚠ Honest limit: JUNS and AIXI each had a fill-path pair placed 5 s and 6 min *before*
+  their reprotect, and `_spawn_webull_protection` coalesces, so those two positions may not have been
+  bare. **3 of 5 (YJ, ZSTK, BTCT) had no pair anywhere near and were definitely uncovered.**
+  ⇒ **The HELD branch — the ONE branch that looked safe — has never once been observed to restore
+  protection.** CONF3 cannot rest its safety argument on it. **This must be fixed or explicitly
+  bounded in the same PR**, or CONF3 trades one naked-position class for another.
+  [[feedback_unexercised_is_not_a_result]] [[project_mai_tai_reprotect_chain_uncovered_window]]
+  ⛔ **FOUR ADDITIONS THAT RIDE WITH THE BUILD — none as a follow-up** (operator, 2026-09-06):
+  **(1) UNKNOWN must not fall through.** An inconclusive read on a *released* position is not a
+  reason to do nothing. Re-place protection on inconclusive, or raise with the symbol named — the
+  release flag has to be consulted **outside** the HELD block.
+  **(2) The RTH gate.** `_spawn_webull_protection` cannot re-protect outside regular hours and v2
+  entry runs 07:00–16:00 ET. State what happens to a pre-market released position. ⛔ "The software
+  ladder covers it" is **not** an answer here — the ladder failing is this branch's precondition.
+  **(3) Both log lines are false on a released position.** `[OMS-V2-EXIT-STAND-DOWN]` and
+  `[OMS-V2-EXIT-REJECT-CEILING]` both claim protection is left in place. Fix the text **in the same
+  PR** — the state they misdescribe becomes routine the moment CONF3 lands.
+  [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
+  **(4) Measure the naked interval.** Duration of released-but-unprotected, plus a count of positions
+  currently in that state. That is the missing denominator and what makes the state visible instead
+  of inferred. [[feedback_an_absence_is_evidence_only_against_a_known_denominator]]
+  ⭐ **ACCEPTANCE WITHOUT WAITING FOR A FIRE** (operator): the paper harness is blind by construction
+  and post-#897 the confirmation exit has not fired once. So **emit the intended leg set on EVERY
+  evaluation, not only on fires** — all **7** rows of the population, not 3. That gives coverage
+  against a real denominator (*evaluations with a fan-out leg / evaluations where every leg was
+  named*) without depending on a live fire. ⛔ A live fire remains the only proof of the **close**
+  itself; until one arrives the row stays **UNEXERCISED**.
+  ⭐⭐ **ROOT CAUSE OF THE 0-FOR-8 — FOUND 2026-09-06, AND IT IS NEITHER CANDIDATE.**
+  ⛔ **Session tag: RULED OUT BY CONSTRUCTION.** `_reprotect_after_failed_release` calls
+  `_spawn_webull_protection` → `_attach_webull_protection` — **the exact same function the fill path
+  uses**, so it builds its payload through the same builder with the same session conditional. There
+  is no second construction path to stamp CORE. The failing lines also read `session=RTH`, not
+  EXTENDED. This is not the #710 pre-market class.
+  ⛔ **Coalescing: RULED OUT for the clean cases.** Every failure logs *"COULD NOT ATTACH … **after 5
+  attempts**"*, so a real attach sequence ran — a coalesced call returns early and logs no FAILED.
+  For YJ/ZSTK/BTCT there was no in-flight sequence to coalesce into.
+  ⭐⭐ **THE ACTUAL CAUSE: THE RECOVERY PATH SHARES ITS FAILURE MODE WITH THE THING IT IS RECOVERING
+  FROM.** The reprotect windows are saturated with
+  `ERROR [webull.core.client] ServerException occurred. Host:api.webull.com`.
+  **Controlled comparison, ~40 s windows:**
+  | window | ServerExceptions |
+  |---|---|
+  | ZSTK reprotect (FAILED) | **16** |
+  | BTCT reprotect (FAILED) | **12** |
+  | AIXI reprotect (FAILED) | **21** |
+  | **control — DAIC 08-25 15:37, fill-path attach that SUCCEEDED** | **2** |
+  The YJ trace shows the whole collapse inside **259 ms**: `[OMS-EXIT-RELEASE] … legs=2` at
+  15:48:34.946, three `CW_HARD_STOP` closes at .117/.248/.376, `[OMS-EXIT-REPROTECT]` at .377 — three
+  "refused closes" in a quarter of a second, which is not a market condition, it is the API failing
+  instantly. ⇒ **The closes fail because Webull is erroring, and the re-attach then fails for exactly
+  the same reason.** The 5 attempts are consumed inside the same storm.
+  ⇒ ⛔ **THIS IS NOT A SMALL REPAIR AND THE PAYLOAD IS NOT THE LEVER.** A recovery that can only run
+  when the broker is healthy cannot cover a branch entered *because* the broker is unhealthy.
+  ⇒ ⭐ **IT CONFIRMS THE OPERATOR'S PREFERRED SHAPE (2026-09-06):** **do not release protection
+  unless the close is going to succeed, and treat a failed close as a reason to STOP RELEASING, not
+  a reason to recover.** That is the intended design for CONF3's fan-out leg; codex may argue it
+  down, but it is not an open choice handed to the merging agent.
+  [[feedback_something_else_was_covering_for_it]] [[feedback_a_failing_control_voids_the_probe]]
+
+- **SIL1 — SCHWAB REJECT-STORM ALARM, KEYED BESIDE THE REJECT-CEILING EVENT** *(owner: **codex-2**;
+  ✅ **BUILT, PINNED AND MERGED 2026-09-06 — PR #903, pinned @ `e9b10d34`, merged as `fd3e31dd`.
+  ⛔ NOT DEPLOYED.** Threshold decided by the operator the same day, final. **NEXT ACTION: deploy
+  under the operator's gate; the alarm is not live until then.**)*.
+  ⛔ **The alarm is an INDEPENDENT COUNT at 8 on its own counter, keyed on the rejected-event path
+  BESIDE `[OMS-V2-EXIT-REJECT-CEILING]` — it is NOT "the ceiling firing".** The terminating ceiling
+  stays at **20** and is untouched. An earlier draft of this row described it as firing *when the
+  ceiling fires*; that wording is superseded and must not be re-quoted. Keying on the event path
+  rather than on broker wording is what keeps it per-account and broker-agnostic.
+  Not on individual rejects (the operator refuses those as noise), and the symbol must be **visible
+  on his screen while its exits are stood down**.
+  ⭐ **Verified it covers the case that prompted it:** `[OMS-V2-EXIT-REJECT-CEILING]` fired for IMRN
+  **09-04 12:18:37 ET** at exactly 20 — at the **start** of the 36-minute suppression, 36 min before
+  the OCO leg resolved it at 12:57:53. **No gap in the requirement.**
+  **Episode distribution** (48 episodes; contiguous per account+symbol, 60 s gap; `live:schwab_1m_v2`;
+  2026-07-01 → 09-04): size 1 → **27** · 2 → **5** · 3 → **11** · **4–19 → ZERO** · 20 → 1 *(clipped)*
+  · 112 / 125 / 127 / 205 → 1 each.
+  ⭐ **The 3-cap is STRUCTURAL, not luck** — `_V2_EXIT_RECONCILE_AFTER_FAILURES = 3` resolves benign
+  episodes at exactly 3, which is why eleven sit precisely there.
+  ⚠ **Band 4–19 is empty, so the data cannot discriminate any threshold in 4..20** — that choice is
+  **judgment, not measurement**, and must not be written up as measured.
+  ⚠ **Sensitivity is partly by construction:** only **4 of 5** storms are uncensored; IMRN's 20 **is**
+  the clip level, not its natural size.
+  📜 **HISTORICAL — PRE-DECISION, SUPERSEDED. Kept for the reasoning, NOT a live question.** At the
+  time this read: *"claude-1 proposes 8 — 2.67× the structural benign cap, and it is already
+  `_V2_EXIT_ABANDON_AFTER_FAILURES`, so it mints no new number and makes the two bounds agree instead
+  of disagreeing at 8 vs 20; 5/5 storms, 0/43 benign on this population. Decoupling option: alarm at
+  8, leave the ceiling at 20 — lowering the ceiling changes live exit behaviour, so that is the
+  operator's call."* ⇒ **The operator decided the same day (below): 8 on its own counter, ceiling
+  unchanged at 20, `live:orb` UNSET. That decision is FINAL and is BUILT.** ⛔ Do not read the
+  paragraph above as an open choice.
+  ⛔⛔ **THE REFUSAL IS NEVER LOGGED.** The verbatim string occurs **0 times in every retained log
+  file**; it exists only at `broker_orders.payload->>'reject_reason'` (and
+  `broker_order_events.payload->>'reason'`). **This alarm cannot be a log grep** — hook the reject
+  path in-process or read the DB. A log-based watch here fails to a false clean.
+  [[feedback_a_watch_that_fails_to_a_false_clean]]
+  🔴 **V2 — THE ALARM AS I FIRST SPECIFIED IT WOULD HAVE SHIPPED CONF3'S OWN BUG** (verified
+  2026-09-06 on the operator's challenge). ✅ The counter itself is fine: `_v2_exit_reject_total` is
+  keyed **`(acct, symbol)`** and `_emit_v2_exit_on_loop` runs per account, so the *ceiling* is
+  already per-account and fires on `live:orb` too. ⛔ **But my 48-episode distribution — and a
+  reason-keyed alarm — are `live:schwab_1m_v2`-ONLY.** The `oversold` string is Schwab's wording;
+  Webull refuses the same reservation class as `NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K`
+  / `ORDER_NOT_SUPPORT_REVERSE_OPTION`. Measured 2026-07-01 → 09-04: **`live:orb` carries 11,930
+  refusals of this class across 92 symbols — 18× Schwab's 659 — and ZERO of them match an `oversold`
+  key.** A rule computed once and applied to one account is precisely the defect CONF3 exists to fix.
+  ⛔⛔ **AND live:orb HAS NO EMPTY BAND.** Its episode distribution is nothing like Schwab's:
+  | bucket | 1 | 2 | 3 | 4–7 | 8–19 | 20+ |
+  |---|---|---|---|---|---|---|
+  | episodes | 104 | 40 | 46 | **42** | **38** | 14 |
+  | refusals | 104 | 80 | 138 | 228 | 403 | **10,977** *(largest single episode **9,274**)* |
+  ⇒ **A single threshold of 8 fires ~52 times on `live:orb` over the window — roughly one page per
+  trading day. That is exactly the noise the operator refuses.** Schwab's benign cap is 3 and
+  structural; Webull's benign behaviour runs to 19 routinely. **One number cannot serve both.**
+  ⭐ **THE FIX THAT AVOIDS CONF3'S BUG BY CONSTRUCTION: key the alarm on the
+  `[OMS-V2-EXIT-REJECT-CEILING]` EVENT, not on any reason string.** The ceiling is already
+  per-account and broker-agnostic, so an event-keyed alarm covers `live:orb` for free and can never
+  drift Schwab-only. Then the only open question is the threshold, and it is **per account**:
+  claude-1's 8 applies to Schwab; `live:orb` needs its own number and its own measurement.
+  ⚠ **NOT INVESTIGATED, and deliberately NOT a new workstream** (operator scope fence 2026-09-06):
+  the `live:orb` reservation class is 18× larger than Schwab's and has never been boarded at this
+  scale. Recorded as a number only.
+  ⛔ **THE SCOPING HYPOTHESIS WAS TESTED AND IS NOT SUPPORTED** (operator's, 2026-09-06: *"the
+  11,930 is probably dominated by refusals against positions we never held; properly scoped, Webull
+  may look like Schwab and one threshold may serve"*). Re-run restricted to the **same population as
+  the Schwab distribution** — `-close-` orders with `oms_v2_managed_exit='true'`, i.e. positions we
+  held and were trying to exit. The shape barely moved:
+  | bucket | 1 | 2 | 3 | 4–7 | 8–19 | 20+ |
+  |---|---|---|---|---|---|---|
+  | raw | 104 | 40 | 46 | 42 | 38 | 14 |
+  | **scoped** | **96** | **40** | **46** | **42** | **38** | **12** |
+  Only the size-1 bucket lost 8 episodes and 20+ lost 2. **The 4–19 band is genuinely populated on
+  `live:orb` — 80 episodes — and it is not a scoping artefact.** An alarm at 8 still fires ~50 times.
+  ⇒ **One threshold does not serve both. It must be per account.** The hypothesis was worth testing
+  and the answer is no; recording it so nobody re-tests it.
+  ⛔⭐ **AND A CONSEQUENCE OF KEYING ON THE CEILING EVENT** (operator, 2026-09-06): if the alarm *is*
+  the ceiling event, then "alarm at 8, ceiling at 20" **requires the alarm to be its own separate
+  count** — not the ceiling firing early. Otherwise *decouple* quietly becomes *lower the ceiling*,
+  which is the exact thing the operator's decision exists to prevent. Build two counters, not one
+  with a lower bound. [[feedback_a_count_is_not_a_gate]]
+  ═══ **✅ DECISION — OPERATOR, 2026-09-06. FINAL. THIS IS THE SPEC.** ═══
+  **1 · `live:schwab_1m_v2` alarm threshold = 8.** Benign episodes cap at exactly **3** and the cap is
+  **structural** (`_V2_EXIT_RECONCILE_AFTER_FAILURES = 3` resolves them there). 8 gives margin above
+  it, catches **all 5 known storms**, and produces **0 false positives** on the 48-episode population.
+  **2 · ⛔ `live:orb` alarm = UNSET — EXPLICITLY UNCOVERED, WITH THE REASON.**
+  ⛔ **This is NOT "done" and NOT "deferred".** `live:orb`'s benign band genuinely reaches **19 across
+  80 episodes** — confirmed *after* scoping to the same population as Schwab (`-close-` +
+  `oms_v2_managed_exit='true'`), so it is not a scoping artefact. **No threshold under 20 is
+  defensible**, and a defensible one has not been measured. ⇒ **`live:orb` reject storms are NOT
+  alarmed, deliberately, and anyone reading this row must know that.** Do not let a future reader
+  infer coverage from SIL1's existence. [[feedback_an_absence_is_evidence_only_against_a_known_denominator]]
+  **3 · Ceiling stays 20 on BOTH accounts.** `_V2_EXIT_MAX_REJECTS_PER_EPISODE` is **unchanged**. The
+  alarm does not lower it.
+  **BUILD CONSTRAINTS — as agreed:**
+  **(a)** Key the alarm on the **`[OMS-V2-EXIT-REJECT-CEILING]` event path**, not on any reject-reason
+  string. Per-account and broker-agnostic, so it **cannot drift Schwab-only** — the defect CONF3
+  exists to fix.
+  **(b) ⛔ TWO COUNTERS, NOT ONE WITH A LOWER BOUND.** The alarm carries **its own count**;
+  `_v2_exit_reject_total` keeps its bound of **20** for the ceiling. If it ships as one counter with a
+  lower bound, *decouple* silently becomes *lower the ceiling* — the single thing this decision exists
+  to prevent. **The ceiling's failure mode is abandoning a live exit twelve rejects early; the
+  alarm's is a false page.** Those are not interchangeable.
+  **(c)** ⛔ **Name the two counters distinctly in the PR.** `_v2_exit_close_failures` (resets on HELD,
+  **unreachable**, bound 8) is **NOT** the alarm counter. **The value 8 will now appear on both** and a
+  future reader will assume fixing one moves the other.
+  **(d)** ⛔ **Not a log grep.** The refusal string appears **zero times in every retained log**; it
+  lives only in `broker_orders.payload->>'reject_reason'`. A log-based watch fails to a false clean.
+  **(e)** **The symbol must be visible on the operator's screen while its exits are stood down.** That
+  is the requirement — **not just the page.**
+  ✅ **ITEM 5 CLOSES ON THIS ROW — no separate row, no gap in the requirement.** The 36-minute
+  unsellable position (IMRN 09-04): `[OMS-V2-EXIT-REJECT-CEILING]` fired at **12:18:37 ET**, at the
+  **start** of the suppression, **36 minutes before** the OCO leg resolved it at 12:57:53.
+
+
 - **EOD1601 — 16:01 CANCEL-AND-REEXIT: cancel our own working SELL legs, confirm zero, then place
   a PM limit exit** *(owner: claude-1; **BUILT, FLAG-GATED OFF**, awaiting codex pin — live exit
   path. Enable/disable is `MAI_TAI_OMS_V2_EOD_CANCEL_REEXIT_ENABLED`, runtime-configurable.)*
@@ -576,6 +823,48 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   ⚠ **What this does NOT prove:** that the earlier storms share today's mechanism. CONF1 did not
   exist then, so the *trigger* differed; only the **refusal class** is shown to be old. The
   "one instance" that was parked is one instance **of the 3600 mechanism**, not of the storm class.
+  ⭐⭐ **WRAP1 ANSWERED — 2026-09-06 (claude-1). TWO TRIGGERS, ONE SHARED BEHAVIOUR.** The
+  discriminator is **`trade_intents.reason`, joined through `broker_orders.intent_id`** — it survives
+  log rotation, so it reaches the July storms whose logs are gone (retention starts 2026-08-19).
+  | ET day | symbol | exit rule driving the refused sells | n | window (ET) |
+  |---|---|---|---|---|
+  | 2026-07-13 | AGEN | `CW_HARD_STOP` | 127 | 14:15:26→14:19:33 |
+  | 2026-07-31 | KUST | `CW_HARD_STOP` | 123 | 09:33:59→09:39:09 |
+  | 2026-08-04 | AAOG | `CW_HARD_STOP` | 112 | 16:01:29→16:08:03 |
+  | 2026-09-03 | CHPT | `CONFIRMATION_EXIT` | 205 | 13:45:34→13:53:31 |
+  | 2026-09-04 | IMRN | `CONFIRMATION_EXIT` | 20 | 12:18:03→12:18:36 |
+  ⇒ **07-13 matches 07-31 and 08-04 exactly. 09-03 is the odd one out, not 07-13.** One older trigger
+  (three storms, `CW_HARD_STOP`, predating CONF1 by two months) and one newer (`CONFIRMATION_EXIT`,
+  the stale pending #897 fixed). **Shared behaviour:** a per-tick re-entrant exit rule re-firing every
+  ~2 s into shares the broker will not let us sell. The rule that is stuck differs; the loop does not.
+  ⚠ **AGGREGATION ARTIFACT — the table above this one pairs two unrelated things.** "07-31
+  FCUV/KUST 126" is KUST **125 in one burst** plus an unrelated FCUV 1 at 10:42; "08-04 AAOG/AMIX
+  115" is AAOG **113** plus two unrelated AMIX. **Every storm is ONE symbol, ONE episode, ONE
+  unbroken burst of 4–8 minutes.** [[feedback_aggregation_masked_the_event]]
+  ⛔ **CORRECTION OF MINE:** I wrote that the shared mechanism was *"shares reserved by our own
+  resting protection."* **That is FALSE for 07-13.** The first `-ocoexit-` row in the entire system is
+  **2026-07-29**, and there are **zero `-ocoexit-` and zero `-protect-` rows on or before 07-13** — no
+  protective leg of ours existed anywhere that day, yet 127 sells were refused. ⇒ The reserving order
+  on 07-13 was **not ours**, which is exactly why the operator's ROOT1 wording is right for never
+  saying whose it was. [[feedback_the_brokers_book_is_shared]]
+  **ROOT1 status — SUPPORTED, NOT PROVEN:** **1 PINNED** (09-04 IMRN, taken out by its own
+  `-ocoexit-` leg @1.631 while the pair reserved throughout) **+ 2 CONSISTENT** (07-31 KUST close
+  fills **+31 s** after the last refusal; 08-04 AAOG **+2 s**) **+ 2 UNEXPLAINED** — 09-03 CHPT's
+  storm ended at an **OMS REBOOT** (`[OMS-BOOT-PROTECTION]` 13:53:37 ET, +5 s; the only
+  intra-market-hours boot in the retained window), and 07-13 AGEN has **no close fill ever**. Both
+  reach `account_positions = 0` today with **no captured sell fill on any account**.
+  ⚠ **Two hypotheses KILLED by measurement:** **429s** are all Webull, **zero Schwab**, and the
+  highest-429 days are **clean** days; **volatility is INVERTED** — the storm symbols are the calmest
+  measured (AAOG 0.53 %, CHPT 0.88 % avg bar range vs 2.5–5.7 % on clean days).
+  📌 **OBSERVATION — NOT VERIFIED, NOT CHASED** *(operator ruling 2026-09-06: dropped as drift)*:
+  reconciliation showed Schwab holding **1000 AGEN against our 0** on 07-13 at 08:35 ET, 5 h 40 m
+  before the storm. The order tag is **unreadable from our books for a July date** — 0 payloads carry
+  a tag field, 0 `API_TOS` anywhere, and 0 `broker_orders` rows exist without an intent, because we
+  only ever persist our own orders. ⚠ **Narrow claim, deliberately:** the tag *is* readable from
+  **Schwab's own order book**, where it discriminates `TA_krshk30gmailcom*` (ours) from `API_TOS:*`
+  (the operator's). It does not help here only because 2026-07-13 is far outside Schwab's retention
+  window. Nobody should inherit a broader claim than that. **Reopens only on a second instance WITH evidence.** ⛔ This is not a door into a
+  general shared-book investigation; that class has its own board history.
   ⛔ **Structural facts a future reader should not re-derive:**
   - A protective OCO leg is **never durably written at placement**. `-ocoexit-` rows: **471 in 30
     days, every one `filled`; zero working/cancelled/rejected. Zero `-protect-` rows ever.** This is
