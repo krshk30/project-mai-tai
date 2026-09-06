@@ -18,8 +18,11 @@
 `2026-09-04-probe-answered-and-conf1-bound`; merged as PR #901.
 
 **Updated by `codex-2`, 2026-09-06 16:49 ET.** Operator-authorized OMS + control deploy; values
-below were read from the VPS after both post-restart gates passed. This update needs independent
-`claude-1` review before merge; the author does not review it.
+below were read from the VPS after both post-restart gates passed. Reviewed and pinned by
+`claude-1` @ `6606c7c9` (verified against the box, not the PR text) and **merged as `ed7e62f4`**.
+
+**Closed out by `claude-1`, 2026-09-06 evening.** Batch `2026-09-06-conf3-sil1-deployed`; this
+close-out needs `codex-2`'s review before merge — the author does not review it.
 
 > **⏩ UPDATED `claude-1`, 2026-09-06 ~12:40 ET — measurement Sunday, no build, no deploy, no merge.**
 > Market closed 09-06 and 09-07 (Labor Day); next session **Tuesday 2026-09-08**.
@@ -70,7 +73,7 @@ below were read from the VPS after both post-restart gates passed. This update n
 | merges 09-06 | #903 SIL1 `fd3e31dd` · #902 CONF3 `0b9d16b7` · #904 CONF3 test-only control `9a5a813c` · #901 docs `8b05ed42`; **all on the box** |
 | deploy 09-06 | **operator-authorized, after close; OMS + control only; migrations OFF** |
 | ⇒ consequence | CONF3 fan-out and SIL1 alarm are running, but both remain **UNEXERCISED**. Released-leg recovery is also **UNEXERCISED**. Deployed clean is not proven live. |
-| open PRs | **zero** at the 16:49 ET post-deploy check; this docs-only deploy-record PR opened afterwards |
+| open PRs | **#906 only** — the close-out handoff PR. #905 merged as `ed7e62f4`; #901/#902/#903/#904 all merged. Exposure row below is the 16:49 ET post-deploy read |
 | exposure | **16:49 ET post-restart:** zero open managed rows; `live:schwab_1m_v2` and `live:orb` both flat with broker truth 6 seconds old; overview also reports zero pending intents and zero open virtual/account positions |
 
 | service | pid | NRestarts | | service | pid | NRestarts |
