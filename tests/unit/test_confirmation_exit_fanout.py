@@ -263,6 +263,72 @@ async def test_state_long_reports_one_decision_without_arming_per_account_exits(
 
 
 @pytest.mark.asyncio
+async def test_inconsistent_non_fire_still_names_every_intended_leg() -> None:
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+
+    await service._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_confirmation_exit",
+                    "symbol": SYMBOL,
+                    "broker_account_name": SCHWAB,
+                    "source_fill_id": "schwab-inconsistent-decision-fill",
+                    "broker_order_id": "schwab-entry-1",
+                    "evaluated_at_ms": "1",
+                    "atr_state": "unknown",
+                    "should_exit": False,
+                    "entry_slot": "first",
+                }
+            )
+        }
+    )
+
+    assert service._confirmation_exit_pending == {}
+    assert _sell_accounts(sf) == []
+    lines = [
+        line
+        for line in service.logger.lines
+        if "[OMS-V2-CONFIRMATION-EXIT-FANOUT]" in line
+    ]
+    assert len(lines) == 1
+    assert "legs_total=2" in lines[0]
+    assert "legs_refused=2" in lines[0]
+    assert "live:schwab_1m_v2:evaluation_refused" in lines[0]
+    assert "live:orb:evaluation_refused" in lines[0]
+
+
+def test_released_unprotected_interval_tracks_duration_and_current_count(monkeypatch) -> None:
+    adapter = _FanoutAdapter()
+    service, _sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    decision = service_module._ConfirmationFanoutDecision(
+        symbol=SYMBOL,
+        source_fill_id="measured-interval",
+        accounts=(WEBULL,),
+    )
+    clock = {"now": datetime(2026, 9, 6, 14, 0, tzinfo=UTC)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+
+    service._start_confirmation_unprotected_interval(decision, WEBULL, SYMBOL)
+    clock["now"] += timedelta(seconds=3.25)
+
+    assert service._observe_confirmation_unprotected_interval(
+        decision, WEBULL, SYMBOL
+    ) == pytest.approx(3.25)
+    assert len(service._confirmation_unprotected_since) == 1
+
+    assert service._end_confirmation_unprotected_interval(
+        decision, WEBULL, SYMBOL, resolution="reprotected"
+    ) == pytest.approx(3.25)
+    assert service._confirmation_unprotected_since == {}
+    assert "released_unprotected_seconds=3.250" in "\n".join(service.logger.lines)
+    assert "released_unprotected_current=0" in "\n".join(service.logger.lines)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("fanout", "expected_accounts"),
     [(False, [SCHWAB]), (True, [SCHWAB, WEBULL])],
@@ -416,6 +482,7 @@ async def test_released_webull_leg_that_rejects_is_reprotected(monkeypatch) -> N
     assert "legs_released=2 legs_reprotected=1 legs_uncovered=0" in "\n".join(
         service.logger.lines
     )
+    assert "released_unprotected_current=0" in "\n".join(service.logger.lines)
 
 
 @pytest.mark.asyncio
@@ -482,6 +549,8 @@ async def test_unknown_after_released_rejected_sell_is_explicitly_uncovered(
 
     text = "\n".join(service.logger.lines)
     assert "[OMS-V2-CONFIRMATION-EXIT-UNCOVERED]" in text
+    assert "released_unprotected_seconds=" in text
+    assert "released_unprotected_current=1" in text
     assert "legs_released=2 legs_reprotected=0 legs_uncovered=1" in text
 
 

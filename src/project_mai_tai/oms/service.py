@@ -327,6 +327,8 @@ class _ConfirmationFanoutDecision:
     released: set[str] = field(default_factory=set)
     reprotected: set[str] = field(default_factory=set)
     uncovered: set[str] = field(default_factory=set)
+    released_at: dict[str, datetime] = field(default_factory=dict)
+    unprotected_seconds: dict[str, float] = field(default_factory=dict)
     reported: bool = False
 
 
@@ -558,6 +560,7 @@ class OmsRiskService:
         self._confirmation_exit_inflight: set[tuple[str, str]] = set()
         self._confirmation_exit_seen_fill_ids: set[str] = set()
         self._confirmation_exit_recovery_tasks: set[asyncio.Task[None]] = set()
+        self._confirmation_unprotected_since: dict[tuple[str, str], datetime] = {}
         # (broker_account_name, symbol) -> when the broker last CONFIRMED both OCO legs open.
         # Read per quote tick (must stay in-memory: a DB round-trip on that path is the
         # #391-family freeze driver), written only by the periodic broker sync.
@@ -1098,6 +1101,9 @@ class OmsRiskService:
                     "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s reason=inconsistent_stamp",
                     symbol,
                 )
+                for decision_acct in accounts:
+                    decision.outcomes[decision_acct] = "evaluation_refused"
+                self._report_confirmation_fanout(decision)
                 return
             # ⛔⭐⭐ BIND THE DECISION TO THE POSITION IT WAS DECIDED FOR (2026-09-04, IMRN).
             # A pending confirmation used to name only (acct, symbol), which is not a position —
@@ -2912,6 +2918,19 @@ class OmsRiskService:
         key = (broker_account_name, symbol.upper())
         self._exit_reservation_released.discard(key)
         self._webull_protect_base.pop(key, None)
+        intervals = self.__dict__.setdefault("_confirmation_unprotected_since", {})
+        started_at = intervals.pop(key, None)
+        if started_at is not None:
+            elapsed = max(0.0, (utcnow() - started_at).total_seconds())
+            self.logger.info(
+                "[OMS-V2-CONFIRMATION-EXIT-COVERAGE-RESTORED] sym=%s acct=%s "
+                "resolution=managed_episode_closed released_unprotected_seconds=%.3f "
+                "released_unprotected_current=%d",
+                key[1],
+                key[0],
+                elapsed,
+                len(intervals),
+            )
 
     def _record_internal_risk_pass(
         self,
@@ -3689,7 +3708,7 @@ class OmsRiskService:
             outcome == "close_submitted" for outcome in decision.outcomes.values()
         )
         refused = sum(
-            outcome in {"refused", "uncovered"}
+            outcome in {"evaluation_refused", "refused", "uncovered"}
             for outcome in decision.outcomes.values()
         )
         no_open = sum(outcome == "no_open_row" for outcome in decision.outcomes.values())
@@ -3697,12 +3716,16 @@ class OmsRiskService:
         accounts = ",".join(
             f"{acct}:{decision.outcomes.get(acct, 'pending')}" for acct in decision.accounts
         )
+        unprotected_max = max(decision.unprotected_seconds.values(), default=0.0)
+        currently_unprotected = len(
+            self.__dict__.setdefault("_confirmation_unprotected_since", {})
+        )
         self.logger.info(
             "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=%s decision_fill_id=%s "
             "legs_total=%d legs_closed=%d legs_close_submitted=%d legs_refused=%d "
             "legs_no_open_row=%d "
             "legs_state_long=%d legs_released=%d legs_reprotected=%d legs_uncovered=%d "
-            "accounts=%s",
+            "released_unprotected_seconds_max=%.3f released_unprotected_current=%d accounts=%s",
             decision.symbol,
             decision.source_fill_id,
             len(decision.accounts),
@@ -3714,6 +3737,8 @@ class OmsRiskService:
             len(decision.released),
             len(decision.reprotected),
             len(decision.uncovered),
+            unprotected_max,
+            currently_unprotected,
             accounts,
         )
 
@@ -3749,6 +3774,52 @@ class OmsRiskService:
         return bool(acct) and acct == str(
             getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
         ).strip()
+
+    def _start_confirmation_unprotected_interval(
+        self, decision: _ConfirmationFanoutDecision, acct: str, symbol: str
+    ) -> None:
+        started_at = utcnow()
+        decision.released_at.setdefault(acct, started_at)
+        self.__dict__.setdefault("_confirmation_unprotected_since", {}).setdefault(
+            (acct, symbol), started_at
+        )
+
+    def _end_confirmation_unprotected_interval(
+        self,
+        decision: _ConfirmationFanoutDecision,
+        acct: str,
+        symbol: str,
+        *,
+        resolution: str,
+    ) -> float:
+        key = (acct, symbol)
+        intervals = self.__dict__.setdefault("_confirmation_unprotected_since", {})
+        was_current = key in intervals
+        started_at = intervals.pop(key, None) or decision.released_at.get(acct)
+        elapsed = max(0.0, (utcnow() - started_at).total_seconds()) if started_at else 0.0
+        decision.unprotected_seconds[acct] = elapsed
+        if was_current:
+            self.logger.info(
+                "[OMS-V2-CONFIRMATION-EXIT-COVERAGE-RESTORED] sym=%s acct=%s "
+                "resolution=%s released_unprotected_seconds=%.3f "
+                "released_unprotected_current=%d",
+                symbol,
+                acct,
+                resolution,
+                elapsed,
+                len(intervals),
+            )
+        return elapsed
+
+    def _observe_confirmation_unprotected_interval(
+        self, decision: _ConfirmationFanoutDecision, acct: str, symbol: str
+    ) -> float:
+        started_at = self.__dict__.setdefault("_confirmation_unprotected_since", {}).get(
+            (acct, symbol)
+        ) or decision.released_at.get(acct)
+        elapsed = max(0.0, (utcnow() - started_at).total_seconds()) if started_at else 0.0
+        decision.unprotected_seconds[acct] = elapsed
+        return elapsed
 
     async def _prepare_confirmation_webull_leg(
         self, acct: str, symbol: str, *, expected_row_id: str
@@ -3907,6 +3978,9 @@ class OmsRiskService:
             if state is _PositionRead.FLAT_CONFIRMED and await self._close_confirmation_flat_leg(
                 acct, symbol, expected_row_id=expected_row_id
             ):
+                self._end_confirmation_unprotected_interval(
+                    decision, acct, symbol, resolution="flat"
+                )
                 self._finish_confirmation_fanout_leg(
                     decision, acct, outcome="flat", released=True
                 )
@@ -3925,6 +3999,9 @@ class OmsRiskService:
                 )
                 if protected:
                     self._exit_reservation_released.discard((acct, symbol))
+                    self._end_confirmation_unprotected_interval(
+                        decision, acct, symbol, resolution="reprotected"
+                    )
                     self._finish_confirmation_fanout_leg(
                         decision,
                         acct,
@@ -3933,13 +4010,22 @@ class OmsRiskService:
                         reprotected=True,
                     )
                     return
+            elapsed = self._observe_confirmation_unprotected_interval(
+                decision, acct, symbol
+            )
+            currently_unprotected = len(
+                self.__dict__.setdefault("_confirmation_unprotected_since", {})
+            )
             self.logger.error(
                 "[OMS-V2-CONFIRMATION-EXIT-UNCOVERED] sym=%s acct=%s state=%s "
-                "released=1 reprotected=0 uncovered=1 — confirmation sell failed after "
-                "the pair was cancelled; operator protection is required",
+                "released=1 reprotected=0 uncovered=1 released_unprotected_seconds=%.3f "
+                "released_unprotected_current=%d — confirmation sell failed after the pair "
+                "was cancelled; operator protection is required",
                 symbol,
                 acct,
                 state.value,
+                elapsed,
+                currently_unprotected,
             )
             self._finish_confirmation_fanout_leg(
                 decision,
@@ -3951,11 +4037,20 @@ class OmsRiskService:
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - terminal marker must expose failed recovery
+            elapsed = self._observe_confirmation_unprotected_interval(
+                decision, acct, symbol
+            )
+            currently_unprotected = len(
+                self.__dict__.setdefault("_confirmation_unprotected_since", {})
+            )
             self.logger.exception(
                 "[OMS-V2-CONFIRMATION-EXIT-UNCOVERED] sym=%s acct=%s released=1 "
-                "reprotected=0 uncovered=1 reason=recovery_failed",
+                "reprotected=0 uncovered=1 released_unprotected_seconds=%.3f "
+                "released_unprotected_current=%d reason=recovery_failed",
                 symbol,
                 acct,
+                elapsed,
+                currently_unprotected,
             )
             self._finish_confirmation_fanout_leg(
                 decision,
@@ -4005,6 +4100,10 @@ class OmsRiskService:
                 expected_row_id=expected_row_id,
             )
             return
+        if self._is_v2_webull_account(acct) and protection == "released":
+            self._end_confirmation_unprotected_interval(
+                decision, acct, symbol, resolution=outcome
+            )
         self._finish_confirmation_fanout_leg(
             decision,
             acct,
@@ -4191,6 +4290,14 @@ class OmsRiskService:
                     protection = await self._reconcile_confirmation_exit_protection(acct, symbol)
             finally:
                 confirmation_inflight.discard(key)
+            if (
+                protection == "released"
+                and fanout_decision is not None
+                and self._is_v2_webull_account(acct)
+            ):
+                self._start_confirmation_unprotected_interval(
+                    fanout_decision, acct, symbol
+                )
             if protection == "resolved_by_fill":
                 confirmation_pending.pop(key, None)
                 # ⛔ Scope the close to the episode the identity check above actually verified.
