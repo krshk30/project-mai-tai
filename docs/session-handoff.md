@@ -3,8 +3,12 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-09-04 17:57 ET.** Batch `2026-09-04-probe-answered-and-conf1-bound`.
-Integrator for this rotation. Needs `codex-2`'s review before merge — the author never reviews.
+**Originally written by `claude-1`, 2026-09-04 17:57 ET.** Batch
+`2026-09-04-probe-answered-and-conf1-bound`; merged as PR #901.
+
+**Updated by `codex-2`, 2026-09-06 16:49 ET.** Operator-authorized OMS + control deploy; values
+below were read from the VPS after both post-restart gates passed. This update needs independent
+`claude-1` review before merge; the author does not review it.
 
 > **⏩ UPDATED `claude-1`, 2026-09-06 ~12:40 ET — measurement Sunday, no build, no deploy, no merge.**
 > Market closed 09-06 and 09-07 (Labor Day); next session **Tuesday 2026-09-08**.
@@ -14,12 +18,14 @@ Integrator for this rotation. Needs `codex-2`'s review before merge — the auth
 > warmup 850 bars for IMRN. Probe lines 0 as predicted (bars stop 20:00 ET). The transient timer has
 > since expired and lists none — expected, it was one-shot.
 > ✅ **CONF3 MEASURED, BUILT, PINNED AND MERGED — `0b9d16b7` (PR #902, pinned @ `eb44cb35`), plus
-> its regression control `9a5a813c` (PR #904, pinned @ `72bc9db8`). ⛔ NOT DEPLOYED.** The
+> its regression control `9a5a813c` (PR #904, pinned @ `72bc9db8`). ✅ DEPLOYED CLEAN 2026-09-06
+> 16:48 ET. ⛔ LIVE CLOSE STILL UNEXERCISED.** The
 > confirmation exit closed Schwab only; 3 of 3 fires orphaned the fan-out leg. ⛔ Its supposed safe
 > branch, `[OMS-EXIT-REPROTECT]`, was **0-for-8** — #904 supplies the control for the recovery-flat
 > branch that was previously inert to mutation.
-> ✅ **SIL1 DECIDED, BUILT, PINNED AND MERGED — `fd3e31dd` (PR #903, pinned @ `e9b10d34`). ⛔ NOT
-> DEPLOYED.** Operator decision 09-06, final: Schwab **8** on its own counter; ceiling stays **20**
+> ✅ **SIL1 DECIDED, BUILT, PINNED AND MERGED — `fd3e31dd` (PR #903, pinned @ `e9b10d34`). ✅
+> DEPLOYED CLEAN 2026-09-06 16:48 ET. ⛔ UNEXERCISED.** Operator decision 09-06, final: Schwab
+> **8** on its own counter; ceiling stays **20**
 > on both accounts; ⛔ **`live:orb` alarm UNSET — EXPLICITLY UNCOVERED**, because its benign band
 > genuinely reaches 19 across 80 episodes and no threshold under 20 is defensible. **live:orb reject
 > storms are not alarmed, deliberately.** ✅ **WRAP1 answered** (two
@@ -37,42 +43,43 @@ Integrator for this rotation. Needs `codex-2`'s review before merge — the auth
 > SIL1 **#903** pinned @ `e9b10d34` → merged **`fd3e31dd`**; CONF3 **#902** (first head `fc377ea7`
 > conflicted with #903 in `oms/service.py`, so it was **rebased, never Update-branch**, re-reviewed
 > from scratch and re-pinned @ `eb44cb35`) → merged **`0b9d16b7`**; CONF3's regression control
-> **#904** pinned @ `72bc9db8` → merged **`9a5a813c`**. ⛔ **ALL THREE ARE MERGED AND NONE IS
-> DEPLOYED.**
+> **#904** pinned @ `72bc9db8` → merged **`9a5a813c`**. ✅ **ALL THREE ARE MERGED AND ON THE BOX;
+> #902/#903 RUNTIME CODE WAS DEPLOYED CLEAN, WHILE #904 IS TEST-ONLY. NONE IS PROVEN LIVE.**
 
 ---
 
-# ⛔ PRODUCTION — main is AHEAD of the box ON RUNTIME CODE. NOT IN SYNC.
+# ✅ PRODUCTION — runtime code IN SYNC at `8b05ed42`
 
 | | |
 |---|---|
-| box (deployed) | **`c1e6357afa1ccf9b7327745c129b4b6510c1dd78`** — re-derived from the box 2026-09-06, unchanged since 09-04 |
-| main | **`9a5a813cc2e72f08b07a39119f6c4b474dad055d`** |
-| **split** | ⛔ **NOT docs-only.** `git diff --name-only c1e6357 origin/main` outside `docs/`: **`src/project_mai_tai/oms/service.py`** and **`src/project_mai_tai/services/control_plane.py`**, plus five test files. Runtime diffstat: **899 insertions / 43 deletions across 2 source files.** |
+| box (deployed) | **`8b05ed42520db71bd0eae78934bfe84f547c955b`** — re-derived from the box 2026-09-06 16:49 ET; checkout clean |
+| GitHub main at deploy | **`8b05ed42520db71bd0eae78934bfe84f547c955b`** — local `origin/main`, GitHub and VPS `origin/main` agreed before this docs-only follow-up |
+| **runtime split** | **none** after the deploy; OMS and control restarted only after the exact checkout and runtime refresh. Both post-restart gates proved fresh healthy process identities; the heartbeat schema does **not** independently attest the SHA. |
 | merges 09-04 | **seven**: #892 `b5ca941` · #893 `073a331` · #894 `1d7ec05` · #895 `b1769e5` · #896 `660bafa` · #897 `184cd8e` · #898 `c1e6357` — **these ARE on the box** |
-| merges 09-06 | **three, NONE DEPLOYED**: #903 SIL1 `fd3e31dd` · #902 CONF3 `0b9d16b7` · #904 CONF3 test-only control `9a5a813c` |
-| ⇒ consequence | **Nothing merged on 09-06 is running.** CONF3's fan-out and SIL1's alarm exist in `main` only. Do not read Tuesday's live behaviour as containing either until a deploy happens under the operator's gate. |
-| open PRs | **this handoff PR** (#901) |
-| exposure | last verified **09-04 17:56 ET**: Schwab positions 0 · working orders 0 — FLAT. ⚠ Market has been closed since; **re-verify before any deploy**, do not quote this as current. |
+| merges 09-06 | #903 SIL1 `fd3e31dd` · #902 CONF3 `0b9d16b7` · #904 CONF3 test-only control `9a5a813c` · #901 docs `8b05ed42`; **all on the box** |
+| deploy 09-06 | **operator-authorized, after close; OMS + control only; migrations OFF** |
+| ⇒ consequence | CONF3 fan-out and SIL1 alarm are running, but both remain **UNEXERCISED**. Released-leg recovery is also **UNEXERCISED**. Deployed clean is not proven live. |
+| open PRs | **zero** at the 16:49 ET post-deploy check; this docs-only deploy-record PR opened afterwards |
+| exposure | **16:49 ET post-restart:** zero open managed rows; `live:schwab_1m_v2` and `live:orb` both flat with broker truth 6 seconds old; overview also reports zero pending intents and zero open virtual/account positions |
 
 | service | pid | NRestarts | | service | pid | NRestarts |
 |---|---|---|---|---|---|---|
-| oms | 3109734 | 0 | | schwab-1m-v2 | 2897273 | 0 |
+| oms | **3508410** | 0 | | schwab-1m-v2 | **3135615** | 0 |
 | strategy | 3109745 | 0 | | market-data | 2202865 | 0 |
-| control | 2928441 | 0 | | reconciler | 2202771 | 0 |
+| control | **3508437** | 0 | | reconciler | 2202771 | 0 |
 | **orb (NEW)** | 3110306 | 0 | | market-capture | 2202817 | 0 |
 
-⚠️ **`schwab-1m-v2` was NOT restarted today** (pid unchanged since 09-03). That matters for the ATR
-probe below.
+✅ **`schwab-1m-v2` was NOT restarted by this deploy.** PID stayed `3135615`, and its running
+environment still contains `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS=*`.
 
 # FLAGS
 
 | flag | state | note |
 |---|---|---|
-| `..._CONFIRMATION_EXIT_ENABLED` (CONF1) | **`true`** | ON since 09-03. Its one live fire today was the defect below |
+| `..._CONFIRMATION_EXIT_ENABLED` (CONF1) | **`true`** | ON since 09-03; post-#897 live fire denominator remains zero |
 | `oms_v2_eod_cancel_reexit_enabled` (EOD1601) | **`False`** | still OFF, still **UNEXERCISED** |
 | ORB paper observer | **LIVE** | broker-disconnected, `paper:orb`, provider=none |
-| `..._ATR_FLIP_PROBE_SYMBOLS` | **set to `*` in the env file, NOT yet active** | needs a v2 restart — see IN FLIGHT |
+| `..._ATR_FLIP_PROBE_SYMBOLS` | **`*`, active** | confirmed in running v2 PID `3135615`; this deploy did not restart it |
 
 ---
 
@@ -205,10 +212,9 @@ env var anyway, so either path ends with the probe on.
 > ⏩ **09-06 update — item 1 is DONE.** The probe is confirmed live (see the header block); on
 > Tuesday just verify it is *emitting* `state=` / `flip=` per bar.
 > ⛔ **CONF3 AND SIL1 ARE BUILT, PINNED AND MERGED — THERE IS NOTHING TO BUILD.** #903 `fd3e31dd`,
-> #902 `0b9d16b7`, #904 `9a5a813c`. **None is deployed**, so Tuesday's job is **deploy and observe
-> under the operator's gate**, not build. ⛔ **The box is BEHIND main on runtime code** (see the
-> PRODUCTION block) — until a deploy happens, live behaviour contains neither change.
-> ⛔ **CONF3's live close stays UNEXERCISED even after deploying**: it is proven only when a real
+> #902 `0b9d16b7`, #904 `9a5a813c`. **The runtime changes are deployed clean and the box is in sync.**
+> Tuesday's job is **observe, not build or deploy**.
+> ⛔ **CONF3's live close stays UNEXERCISED**: it is proven only when a real
 > confirmation fire closes both legs. Merged is not proven, and deployed is not proven either.
 
 1. **Confirm the ATR probe is live** and emitting `state=` / `flip=` per bar. Expect ~1.6 MB/session

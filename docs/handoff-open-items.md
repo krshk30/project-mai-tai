@@ -267,20 +267,21 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
-- **CONF3 — THE CONFIRMATION EXIT CLOSES SCHWAB ONLY; THE WEBULL FAN-OUT LEG IS NEVER ARMED**
-  *(owner: **codex-2**; **OPEN, live money, highest priority — it blocks the operator's +5%/−8%
-  settings change.** ✅ **BUILT, PINNED AND MERGED 2026-09-06 — PR #902, pinned @ `eb44cb35`, merged
+- **CONF3 — CONFIRMATION-EXIT FAN-OUT DEPLOYED; LIVE CLOSE UNEXERCISED**
+  *(owner: **codex-2**; **OPEN ACCEPTANCE, live money — only a real fan-out close can prove it.**
+  ✅ **BUILT, PINNED AND MERGED 2026-09-06 — PR #902, pinned @ `eb44cb35`, merged
   as `0b9d16b7`; plus its regression control PR #904, pinned @ `72bc9db8`, merged as `9a5a813c`.
-  ⛔ NOT DEPLOYED.** The pinned review re-derived every claim on the rebased head: fan-out via
+  ✅ DEPLOYED CLEAN 2026-09-06 16:48 ET; LIVE CLOSE STILL UNEXERCISED.** The pinned review
+  re-derived every claim on the rebased head: fan-out via
   `_v2_accounts()`, per-account row binding, one decision keyed on the Schwab `source_fill_id`, no
   new flag, release gated by the 20-ceiling and by RTH, UNKNOWN terminating in
   reprotected-or-UNCOVERED, both false log lines corrected — with independent mutations and a full
   controlled pair whose failure sets matched by name. #902 originally conflicted with #903 in
   `oms/service.py`; it was **rebased (never Update-branch)**, re-reviewed from scratch on the new
   base, and re-pinned — the `fc377ea7` review did **not** carry.
-  ⛔ **NEXT ACTION: DEPLOY under the operator's gate, then OBSERVE.** The box is behind main on
-  runtime code, so none of this is running yet. ⛔ **The live close stays UNEXERCISED until a real
-  confirmation fire closes both legs — merged is not proven and deployed is not proven.**
+  ⛔ **NEXT ACTION: OBSERVE Tuesday's first live denominator.** The box is in sync on runtime code.
+  ⛔ **The live close stays UNEXERCISED until a real confirmation fire closes both legs — merged is
+  not proven and deployed is not proven.**
   *(The reprotect root cause below was the gate on starting the build and is ANSWERED. The
   historical diagnosis is kept in full — it is the reason for the design shape, not stale text.)*
   ⛔ **A merged docs PR is not a green light for deploy.**
@@ -403,8 +404,8 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 - **SIL1 — SCHWAB REJECT-STORM ALARM, KEYED BESIDE THE REJECT-CEILING EVENT** *(owner: **codex-2**;
   ✅ **BUILT, PINNED AND MERGED 2026-09-06 — PR #903, pinned @ `e9b10d34`, merged as `fd3e31dd`.
-  ⛔ NOT DEPLOYED.** Threshold decided by the operator the same day, final. **NEXT ACTION: deploy
-  under the operator's gate; the alarm is not live until then.**)*.
+  ✅ DEPLOYED CLEAN 2026-09-06 16:48 ET; UNEXERCISED.** Threshold decided by the operator the same
+  day, final. **NEXT ACTION: observe the first genuine Schwab reject episode.**)*.
   ⛔ **The alarm is an INDEPENDENT COUNT at 8 on its own counter, keyed on the rejected-event path
   BESIDE `[OMS-V2-EXIT-REJECT-CEILING]` — it is NOT "the ceiling firing".** The terminating ceiling
   stays at **20** and is untouched. An earlier draft of this row described it as firing *when the
