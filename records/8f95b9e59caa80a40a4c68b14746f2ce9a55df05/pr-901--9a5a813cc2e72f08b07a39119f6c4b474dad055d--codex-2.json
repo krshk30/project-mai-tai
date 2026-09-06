@@ -1,0 +1,9 @@
+{
+  "pr_number": 901,
+  "range_base": "9a5a813cc2e72f08b07a39119f6c4b474dad055d",
+  "range_head": "8f95b9e59caa80a40a4c68b14746f2ce9a55df05",
+  "reviewed_at": "2026-09-06T20:38:10Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed all three docs plus GitHub title/body; independently verified VPS c1e6357 versus main 9a5a813 source split 899/43; checked six deletions only replace the stale production sync statement; confirmed #903/#902/#904 merged-not-deployed and CONF3 live close UNEXERCISED."
+}
