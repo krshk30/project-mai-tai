@@ -6,7 +6,7 @@ import logging
 import re
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from enum import Enum
@@ -317,6 +317,20 @@ class _V2ExitRejectAlarm:
 
 
 @dataclass
+class _ConfirmationFanoutDecision:
+    """One Schwab-derived confirmation decision and its per-account execution outcomes."""
+
+    symbol: str
+    source_fill_id: str
+    accounts: tuple[str, ...]
+    outcomes: dict[str, str] = field(default_factory=dict)
+    released: set[str] = field(default_factory=set)
+    reprotected: set[str] = field(default_factory=set)
+    uncovered: set[str] = field(default_factory=set)
+    reported: bool = False
+
+
+@dataclass
 class _PostExitStaleHeldEpisode:
     """In-memory C3 observation state for one durable post-exit sell fill.
 
@@ -543,6 +557,7 @@ class OmsRiskService:
         self._confirmation_exit_pending: dict[tuple[str, str], dict[str, object]] = {}
         self._confirmation_exit_inflight: set[tuple[str, str]] = set()
         self._confirmation_exit_seen_fill_ids: set[str] = set()
+        self._confirmation_exit_recovery_tasks: set[asyncio.Task[None]] = set()
         # (broker_account_name, symbol) -> when the broker last CONFIRMED both OCO legs open.
         # Read per quote tick (must stay in-memory: a DB round-trip on that path is the
         # #391-family freeze driver), written only by the periodic broker sync.
@@ -1061,6 +1076,12 @@ class OmsRiskService:
             if not source_fill_id or source_fill_id in self._confirmation_exit_seen_fill_ids:
                 return
             self._confirmation_exit_seen_fill_ids.add(source_fill_id)
+            accounts = tuple(dict.fromkeys([*self._v2_accounts(), acct]))
+            decision = _ConfirmationFanoutDecision(
+                symbol=symbol,
+                source_fill_id=source_fill_id,
+                accounts=accounts,
+            )
             if str(payload.get("atr_state", "unknown")).lower() == "long":
                 self.logger.info(
                     "[OMS-V2-CONFIRMATION-EXIT-STATE-LONG] sym=%s acct=%s fill_id=%s",
@@ -1068,6 +1089,9 @@ class OmsRiskService:
                     acct,
                     payload.get("source_fill_id", ""),
                 )
+                for decision_acct in accounts:
+                    decision.outcomes[decision_acct] = "state_long"
+                self._report_confirmation_fanout(decision)
                 return
             if not bool(payload.get("should_exit")):
                 self.logger.error(
@@ -1083,25 +1107,31 @@ class OmsRiskService:
             # reject ceiling, and a 36-minute exit suppression.
             # ⛔ If there is no open row to bind to, REFUSE. An unbound confirmation is a decision
             # looking for a victim; there is nothing to exit, and arming it is how it finds one.
-            bound_row_id = await self._confirmation_bound_managed_row_id(acct, symbol)
-            if not bound_row_id:
-                self.logger.error(
-                    "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s fill_id=%s "
-                    "reason=no_open_position_to_bind",
-                    symbol, acct, payload.get("source_fill_id", ""),
+            for arm_acct in accounts:
+                bound_row_id = await self._confirmation_bound_managed_row_id(arm_acct, symbol)
+                if not bound_row_id:
+                    self.logger.error(
+                        "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s fill_id=%s "
+                        "reason=no_open_position_to_bind",
+                        symbol, arm_acct, payload.get("source_fill_id", ""),
+                    )
+                    self._finish_confirmation_fanout_leg(
+                        decision, arm_acct, outcome="no_open_row"
+                    )
+                    continue
+                bound_payload = dict(payload)
+                bound_payload["bound_managed_row_id"] = bound_row_id
+                bound_payload["_fanout_decision"] = decision
+                self._confirmation_exit_pending[(arm_acct, symbol)] = bound_payload
+                self.logger.info(
+                    "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=%s acct=%s fill_id=%s "
+                    "evaluated_at_ms=%s status=PENDING_EXECUTABLE_BID",
+                    symbol,
+                    arm_acct,
+                    payload.get("source_fill_id", ""),
+                    payload.get("evaluated_at_ms", ""),
                 )
-                return
-            bound_payload = dict(payload)
-            bound_payload["bound_managed_row_id"] = bound_row_id
-            self._confirmation_exit_pending[(acct, symbol)] = bound_payload
-            self.logger.info(
-                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=%s acct=%s fill_id=%s "
-                "evaluated_at_ms=%s status=PENDING_EXECUTABLE_BID",
-                symbol,
-                acct,
-                payload.get("source_fill_id", ""),
-                payload.get("evaluated_at_ms", ""),
-            )
+            self._report_confirmation_fanout(decision)
             return
 
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
@@ -2481,7 +2511,7 @@ class OmsRiskService:
         )
         return self._webull_premarket_unprotected_count
 
-    def _spawn_webull_protection(self, **kw) -> "asyncio.Task[None] | None":
+    def _spawn_webull_protection(self, **kw) -> "asyncio.Task[bool] | None":
         """Run the attach OFF the fill path -- it retries with sleeps and must never stall a fill.
 
         ⛔⭐ ONE ATTACH PER POSITION AT A TIME (2026-08-17). The reprotect trigger can fire again
@@ -2535,7 +2565,7 @@ class OmsRiskService:
     async def _attach_webull_protection(
         self, *, broker_account_name: str, symbol: str, quantity: int,
         entry_price: float, strategy_code: str, entry_client_order_id: str = "",
-    ) -> None:
+    ) -> bool:
         """Put a real target+stop pair at Webull for a position that filled BARE.
 
         ⛔ THE FAILURE THAT MATTERS: if this never lands we are HOLDING with nothing protecting us
@@ -2563,7 +2593,7 @@ class OmsRiskService:
                 symbol,
                 broker_account_name,
             )
-            return
+            return False
         target_pct = float(getattr(self.settings, "oms_v2_cw_target_pct", 2.0))
         stop_pct = float(getattr(self.settings, "oms_v2_cw_hard_stop_pct", 5.0))
         target = entry_price * (1.0 + target_pct / 100.0)
@@ -2611,7 +2641,7 @@ class OmsRiskService:
                     "position, so there is nothing to protect. Stopping at attempt %d/%d.",
                     symbol, broker_account_name, attempt, attempts,
                 )
-                return
+                return False
             # ⛔ Do not send a pair the broker has already told us it will refuse. Our levels are
             # anchored to the ENTRY, so once price runs past either one that leg is unplaceable and
             # the WHOLE combo is 417-rejected -- live 08-14 CGTL 15:14 sent target 5.2173 against
@@ -2674,7 +2704,7 @@ class OmsRiskService:
                     symbol, broker_account_name, quantity, entry_price, target, protect,
                     session_hint, attempt, int(persisted),
                 )
-                return
+                return True
             reason = "; ".join(str(getattr(r, "reason", "")) for r in reports) or "no report"
             # ⛔⭐ DO NOT TRUNCATE THE BROKER'S OWN WORDS. At 200 chars the reject read
             # `...should be lower than the cu` — cut off exactly where it stopped being useful,
@@ -2697,6 +2727,7 @@ class OmsRiskService:
             symbol, broker_account_name, quantity, entry_price, session_hint,
             target, protect, attempts,
         )
+        return False
 
     async def _webull_protect_unplaceable_reason(
         self, *, broker_account_name: str, symbol: str, target: float, protect: float,
@@ -3645,6 +3676,342 @@ class OmsRiskService:
             self._fillable_session_end_hour_et(),
         )
 
+    def _report_confirmation_fanout(self, decision: _ConfirmationFanoutDecision) -> None:
+        """Emit exactly one denominator-bearing outcome line for one stamped decision."""
+        if decision.reported or len(decision.outcomes) < len(decision.accounts):
+            return
+        decision.reported = True
+        closed = sum(
+            outcome in {"closed", "flat", "resolved_by_fill"}
+            for outcome in decision.outcomes.values()
+        )
+        submitted = sum(
+            outcome == "close_submitted" for outcome in decision.outcomes.values()
+        )
+        refused = sum(
+            outcome in {"refused", "uncovered"}
+            for outcome in decision.outcomes.values()
+        )
+        no_open = sum(outcome == "no_open_row" for outcome in decision.outcomes.values())
+        state_long = sum(outcome == "state_long" for outcome in decision.outcomes.values())
+        accounts = ",".join(
+            f"{acct}:{decision.outcomes.get(acct, 'pending')}" for acct in decision.accounts
+        )
+        self.logger.info(
+            "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=%s decision_fill_id=%s "
+            "legs_total=%d legs_closed=%d legs_close_submitted=%d legs_refused=%d "
+            "legs_no_open_row=%d "
+            "legs_state_long=%d legs_released=%d legs_reprotected=%d legs_uncovered=%d "
+            "accounts=%s",
+            decision.symbol,
+            decision.source_fill_id,
+            len(decision.accounts),
+            closed,
+            submitted,
+            refused,
+            no_open,
+            state_long,
+            len(decision.released),
+            len(decision.reprotected),
+            len(decision.uncovered),
+            accounts,
+        )
+
+    def _finish_confirmation_fanout_leg(
+        self,
+        decision: _ConfirmationFanoutDecision,
+        acct: str,
+        *,
+        outcome: str,
+        released: bool = False,
+        reprotected: bool = False,
+        uncovered: bool = False,
+    ) -> None:
+        """Record one terminal leg result; repeated ticks cannot rewrite the decision."""
+        if acct in decision.outcomes:
+            return
+        decision.outcomes[acct] = outcome
+        if released:
+            decision.released.add(acct)
+        if reprotected:
+            decision.reprotected.add(acct)
+        if uncovered:
+            decision.uncovered.add(acct)
+        self._report_confirmation_fanout(decision)
+
+    def _confirmation_fanout_decision(
+        self, confirmation: dict[str, object]
+    ) -> _ConfirmationFanoutDecision | None:
+        value = confirmation.get("_fanout_decision")
+        return value if isinstance(value, _ConfirmationFanoutDecision) else None
+
+    def _is_v2_webull_account(self, acct: str) -> bool:
+        return bool(acct) and acct == str(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+        ).strip()
+
+    async def _prepare_confirmation_webull_leg(
+        self, acct: str, symbol: str, *, expected_row_id: str
+    ) -> str:
+        """Return ``released``, ``no_pair``, or ``refused`` before a Webull CONF3 sell.
+
+        This is deliberately stricter than the generic software-ladder release: CONF3 is a
+        one-shot decision, so an uncertain cancel cannot be recovered by another quote tick.
+        """
+        def _read_base(session: Session) -> tuple[bool, str]:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != expected_row_id:
+                return False, ""
+            entry = self._find_oco_entry_order(session, acct, symbol)
+            return True, self._oco_exit_base_for_entry(
+                entry, broker_account_name=acct, symbol=symbol
+            )
+
+        try:
+            same_row, base = await self._run_db(_read_base, commit=False)
+        except Exception:  # noqa: BLE001 - an unreadable pair must remain untouched
+            self.logger.exception(
+                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s "
+                "reason=pair_lookup_failed",
+                symbol,
+                acct,
+            )
+            return "refused"
+        if not same_row:
+            self.logger.error(
+                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s "
+                "reason=different_position_before_pair_release",
+                symbol,
+                acct,
+            )
+            return "refused"
+        base = str(base or "")
+        if not base:
+            self.logger.info(
+                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-NO-PAIR] sym=%s acct=%s "
+                "status=BARE_POSITION_PROCEEDING",
+                symbol,
+                acct,
+            )
+            return "no_pair"
+        if not _is_regular_market_session():
+            self.logger.error(
+                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s "
+                "reason=outside_rth_pair_release_would_be_irreversible",
+                symbol,
+                acct,
+            )
+            return "refused"
+        try:
+            reports = await self.broker_adapter.cancel_exit_pair(
+                broker_account_name=acct,
+                symbol=symbol,
+                base_client_order_id=base,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - never sell into an uncertain reservation
+            self.logger.exception(
+                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s base=%s "
+                "reason=pair_cancel_failed",
+                symbol,
+                acct,
+                base,
+            )
+            return "refused"
+        confirmed = sum(
+            str(getattr(report, "event_type", "")).lower() == "cancelled"
+            for report in reports
+        )
+        if len(reports) != 2 or confirmed != 2:
+            self.logger.error(
+                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s base=%s "
+                "reason=pair_cancel_unconfirmed reports=%d confirmed=%d",
+                symbol,
+                acct,
+                base,
+                len(reports),
+                confirmed,
+            )
+            return "refused"
+        self._exit_reservation_released.add((acct, symbol))
+        self.logger.info(
+            "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED] sym=%s acct=%s base=%s "
+            "requested=2 confirmed=2",
+            symbol,
+            acct,
+            base,
+        )
+        return "released"
+
+    async def _confirmation_reprotect_spec(
+        self, acct: str, symbol: str, *, expected_row_id: str
+    ) -> dict[str, object] | None:
+        def _read(session: Session) -> dict[str, object] | None:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != expected_row_id:
+                return None
+            entry = self._find_oco_entry_order(session, acct, symbol)
+            return {
+                "quantity": int(row.current_quantity),
+                "entry_price": float(row.entry_price),
+                "strategy_code": str(row.strategy_code),
+                "entry_client_order_id": str(getattr(entry, "client_order_id", "") or ""),
+            }
+
+        try:
+            return await self._run_db(_read, commit=False)
+        except Exception:  # noqa: BLE001 - recovery reports uncovered rather than guessing
+            return None
+
+    async def _close_confirmation_flat_leg(
+        self, acct: str, symbol: str, *, expected_row_id: str
+    ) -> bool:
+        def _close(session: Session) -> bool:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None:
+                return True
+            if str(row.id) != expected_row_id:
+                return False
+            self.store.close_managed_position(session, row)
+            return True
+
+        closed = bool(await self._run_db(_close, commit=True))
+        if closed:
+            key = (acct, symbol)
+            self._managed_v2_symbols.discard(key)
+            self._cw_flip_pending.discard(key)
+            self._cw_floor_armed.discard(key)
+            self._v2_exit_end_episode(key)
+            self._clear_exit_reservation_release(acct, symbol)
+            self._a2_clear(acct, symbol)
+        return closed
+
+    async def _recover_released_confirmation_webull_leg(
+        self,
+        decision: _ConfirmationFanoutDecision,
+        acct: str,
+        symbol: str,
+        *,
+        expected_row_id: str,
+    ) -> None:
+        """After a refused sell, prove flat or restore the pair; never claim hidden protection."""
+        try:
+            state = await self._broker_symbol_position_state(acct, symbol)
+            if state is _PositionRead.FLAT_CONFIRMED and await self._close_confirmation_flat_leg(
+                acct, symbol, expected_row_id=expected_row_id
+            ):
+                self._finish_confirmation_fanout_leg(
+                    decision, acct, outcome="flat", released=True
+                )
+                return
+            spec = await self._confirmation_reprotect_spec(
+                acct, symbol, expected_row_id=expected_row_id
+            )
+            if spec is not None and _is_regular_market_session():
+                protected = await self._attach_webull_protection(
+                    broker_account_name=acct,
+                    symbol=symbol,
+                    quantity=int(spec["quantity"]),
+                    entry_price=float(spec["entry_price"]),
+                    strategy_code=str(spec["strategy_code"]),
+                    entry_client_order_id=str(spec["entry_client_order_id"]),
+                )
+                if protected:
+                    self._exit_reservation_released.discard((acct, symbol))
+                    self._finish_confirmation_fanout_leg(
+                        decision,
+                        acct,
+                        outcome="refused",
+                        released=True,
+                        reprotected=True,
+                    )
+                    return
+            self.logger.error(
+                "[OMS-V2-CONFIRMATION-EXIT-UNCOVERED] sym=%s acct=%s state=%s "
+                "released=1 reprotected=0 uncovered=1 — confirmation sell failed after "
+                "the pair was cancelled; operator protection is required",
+                symbol,
+                acct,
+                state.value,
+            )
+            self._finish_confirmation_fanout_leg(
+                decision,
+                acct,
+                outcome="uncovered",
+                released=True,
+                uncovered=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - terminal marker must expose failed recovery
+            self.logger.exception(
+                "[OMS-V2-CONFIRMATION-EXIT-UNCOVERED] sym=%s acct=%s released=1 "
+                "reprotected=0 uncovered=1 reason=recovery_failed",
+                symbol,
+                acct,
+            )
+            self._finish_confirmation_fanout_leg(
+                decision,
+                acct,
+                outcome="uncovered",
+                released=True,
+                uncovered=True,
+            )
+
+    def _spawn_confirmation_webull_recovery(
+        self,
+        decision: _ConfirmationFanoutDecision,
+        acct: str,
+        symbol: str,
+        *,
+        expected_row_id: str,
+    ) -> None:
+        task = asyncio.create_task(
+            self._recover_released_confirmation_webull_leg(
+                decision, acct, symbol, expected_row_id=expected_row_id
+            )
+        )
+        tasks = self.__dict__.setdefault("_confirmation_exit_recovery_tasks", set())
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    def _finish_or_recover_confirmation_leg(
+        self,
+        decision: _ConfirmationFanoutDecision,
+        acct: str,
+        symbol: str,
+        *,
+        expected_row_id: str,
+        outcome: str,
+        protection: str,
+    ) -> None:
+        """Never terminalize a released Webull leg without restoring cover or proving flat."""
+        if (
+            self._is_v2_webull_account(acct)
+            and protection == "released"
+            and outcome not in {"closed", "close_submitted", "flat", "resolved_by_fill"}
+        ):
+            self._spawn_confirmation_webull_recovery(
+                decision,
+                acct,
+                symbol,
+                expected_row_id=expected_row_id,
+            )
+            return
+        self._finish_confirmation_fanout_leg(
+            decision,
+            acct,
+            outcome=outcome,
+            released=protection == "released",
+        )
+
     async def _confirmation_bound_managed_row_id(self, acct: str, symbol: str) -> str:
         """The id of the managed row open RIGHT NOW for ``(acct, symbol)``, or "" if none.
 
@@ -3744,8 +4111,12 @@ class OmsRiskService:
         confirmation_pending = self.__dict__.setdefault("_confirmation_exit_pending", {})
         confirmation_inflight = self.__dict__.setdefault("_confirmation_exit_inflight", set())
         confirmation = confirmation_pending.get(key)
+        fanout_decision: _ConfirmationFanoutDecision | None = None
+        protection = ""
+        bound_row_id = ""
         quote = self._latest_quotes_by_symbol.get(symbol)
         if confirmation is not None:
+            fanout_decision = self._confirmation_fanout_decision(confirmation)
             if not quote or key in confirmation_inflight:
                 return
             try:
@@ -3759,9 +4130,18 @@ class OmsRiskService:
                     symbol,
                 )
                 confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_confirmation_fanout_leg(
+                        fanout_decision, acct, outcome="refused"
+                    )
                 return
             quote_at = quote.get("received_at")
             if not isinstance(quote_at, datetime) or quote_at <= evaluated_at:
+                return
+            age_ms = (utcnow() - quote_at).total_seconds() * 1000.0
+            if age_ms > float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
+                return
+            if float(quote.get("bid") or 0.0) <= 0:
                 return
             # ⛔⭐⭐ IDENTITY BEFORE PROTECTION (codex-2, #897 R1). Checking the binding only at the
             # emit was too late: a stale decision still reached
@@ -3782,10 +4162,35 @@ class OmsRiskService:
                     bound_row_id or "-", open_row_id or "-",
                 )
                 confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_confirmation_fanout_leg(
+                        fanout_decision, acct, outcome="refused"
+                    )
+                return
+            if self._v2_exit_reject_total.get(key, 0) >= self._V2_EXIT_MAX_REJECTS_PER_EPISODE:
+                self.logger.error(
+                    "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s fill_id=%s "
+                    "reason=episode_reject_ceiling",
+                    symbol,
+                    acct,
+                    confirmation.get("source_fill_id", ""),
+                )
+                confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_confirmation_fanout_leg(
+                        fanout_decision, acct, outcome="refused"
+                    )
                 return
             confirmation_inflight.add(key)
-            protection = await self._reconcile_confirmation_exit_protection(acct, symbol)
-            confirmation_inflight.discard(key)
+            try:
+                if self._is_v2_webull_account(acct):
+                    protection = await self._prepare_confirmation_webull_leg(
+                        acct, symbol, expected_row_id=bound_row_id
+                    )
+                else:
+                    protection = await self._reconcile_confirmation_exit_protection(acct, symbol)
+            finally:
+                confirmation_inflight.discard(key)
             if protection == "resolved_by_fill":
                 confirmation_pending.pop(key, None)
                 # ⛔ Scope the close to the episode the identity check above actually verified.
@@ -3794,8 +4199,17 @@ class OmsRiskService:
                 await self._close_resolved_oco_managed_row(
                     acct, symbol, expected_row_id=open_row_id
                 )
+                if fanout_decision is not None:
+                    self._finish_confirmation_fanout_leg(
+                        fanout_decision, acct, outcome="resolved_by_fill"
+                    )
                 return
-            if protection != "released":
+            if protection not in {"released", "no_pair"}:
+                confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_confirmation_fanout_leg(
+                        fanout_decision, acct, outcome="refused"
+                    )
                 return
         elif self._native_oco_stand_down_active(acct, symbol):
             # A broker-native OCO owns this exit: target + stop are ONE broker-arbitrated
@@ -3829,6 +4243,15 @@ class OmsRiskService:
                 self._cw_floor_armed.discard((acct, symbol))  # no open row -> drop any armed floor
                 self._post_exit_stale_held_clear(acct, symbol)
                 confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_or_recover_confirmation_leg(
+                        fanout_decision,
+                        acct,
+                        symbol,
+                        expected_row_id=bound_row_id,
+                        outcome="no_open_row",
+                        protection=protection,
+                    )
                 return
 
             # C3 — the broker has already sold, but its position view can remain HELD for minutes.
@@ -3838,8 +4261,26 @@ class OmsRiskService:
             c3_action = self._post_exit_stale_held_action(acct, symbol, snapshot)
             if c3_action == "fresh_flat":
                 await self._close_post_exit_stale_held_row(acct, symbol)
+                confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_confirmation_fanout_leg(
+                        fanout_decision,
+                        acct,
+                        outcome="flat",
+                        released=protection == "released",
+                    )
                 return
             if c3_action not in ("not_applicable", "fresh_held_retry"):
+                confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_or_recover_confirmation_leg(
+                        fanout_decision,
+                        acct,
+                        symbol,
+                        expected_row_id=bound_row_id,
+                        outcome="refused",
+                        protection=protection,
+                    )
                 return
 
             # Phase 2 — DECIDE (on-loop, pure): hydrate + ratchet off the snapshot.
@@ -3859,6 +4300,15 @@ class OmsRiskService:
                 )
                 # A previously-triggered exit owns the shares and wins the time ordering.
                 confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_or_recover_confirmation_leg(
+                        fanout_decision,
+                        acct,
+                        symbol,
+                        expected_row_id=bound_row_id,
+                        outcome="refused",
+                        protection=protection,
+                    )
                 return
 
             if confirmation is not None:
@@ -3874,6 +4324,15 @@ class OmsRiskService:
                         bound_row_id or "-", snapshot.managed_row_id,
                     )
                     confirmation_pending.pop(key, None)
+                    if fanout_decision is not None:
+                        self._finish_or_recover_confirmation_leg(
+                            fanout_decision,
+                            acct,
+                            symbol,
+                            expected_row_id=bound_row_id,
+                            outcome="refused",
+                            protection=protection,
+                        )
                     return
                 # ⛔⭐⭐ ONE-SHOT, AND THE POP MUST HAPPEN *BEFORE* THE EMIT.
                 # The tracker upstream calls itself a one-shot registry; the OMS side was not one.
@@ -3883,7 +4342,7 @@ class OmsRiskService:
                 confirmation_pending.pop(key, None)
                 position = self._hydrate_v2_position(snapshot)
                 position.update_price(bid)
-                await self._emit_v2_exit_on_loop(
+                emit_outcome = await self._emit_v2_exit_on_loop(
                     acct,
                     symbol,
                     position,
@@ -3894,6 +4353,19 @@ class OmsRiskService:
                     bid=bid,
                     close_on_fill=close_on_fill,
                 )
+                if fanout_decision is not None:
+                    self._finish_or_recover_confirmation_leg(
+                        fanout_decision,
+                        acct,
+                        symbol,
+                        expected_row_id=bound_row_id,
+                        outcome=(
+                            emit_outcome
+                            if emit_outcome in {"closed", "close_submitted", "no_open_row"}
+                            else "refused"
+                        ),
+                        protection=protection,
+                    )
                 return
 
             # Confirmed-window (variant CW) exit: when on, this REPLACES the scale/floor/
@@ -3995,6 +4467,17 @@ class OmsRiskService:
                 )
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
             self.logger.warning("v2 managed-exit eval failed for %s: %s", symbol, exc)
+            if confirmation is not None:
+                confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_or_recover_confirmation_leg(
+                        fanout_decision,
+                        acct,
+                        symbol,
+                        expected_row_id=bound_row_id,
+                        outcome="refused",
+                        protection=protection,
+                    )
             return
 
     def _post_exit_stale_held_clear(self, acct: str, symbol: str) -> None:
@@ -4978,12 +5461,22 @@ class OmsRiskService:
         if self._v2_exit_close_failures[key] >= self._V2_EXIT_ABANDON_AFTER_FAILURES:
             if key not in self._v2_exit_stood_down:
                 self._v2_exit_stood_down.add(key)
+                protection_text = (
+                    "broker-side protection was RELEASED before this failed close and may not "
+                    "have been restored"
+                    if key in self._exit_reservation_released
+                    else "broker-side protection was not released by this path"
+                )
                 self.logger.error(
                     "[OMS-V2-EXIT-STAND-DOWN] sym=%s acct=%s %d rejected closes with an "
                     "INCONCLUSIVE broker read (state=%s) -> STOPPING the retry loop. The managed "
-                    "row and any protection are LEFT IN PLACE; the exit poll will close it when the "
+                    "row stays in place; %s. The exit poll will close it when the "
                     "broker shows the OCO resolved. OPERATOR: check the position by hand.",
-                    symbol, acct, self._v2_exit_close_failures[key], getattr(state, "value", state),
+                    symbol,
+                    acct,
+                    self._v2_exit_close_failures[key],
+                    getattr(state, "value", state),
+                    protection_text,
                 )
         return False
 
@@ -5288,7 +5781,7 @@ class OmsRiskService:
         close_on_fill: bool,
         sell_qty: int | None = None,
         level: str | None = None,
-    ) -> None:
+    ) -> str:
         """The RARE v2 exit-emit, kept ON-LOOP (single session, one commit) exactly as
         before PR-A: it reaches the shared ``_record_order_reports``, which mutates
         ``_armed_hard_stops`` and awaits a broker submit, so it must not run in a worker
@@ -5301,6 +5794,7 @@ class OmsRiskService:
         decided_at = datetime.now(UTC)
         events: list = []
         pending_reject_alarm: _V2ExitRejectAlarm | None = None
+        emit_outcome = "refused"
         try:
             with self.session_factory() as session:
                 row = self.store.get_open_managed_position(
@@ -5312,7 +5806,7 @@ class OmsRiskService:
                     # the stand-down but left its counter, so the next position started part-way
                     # to the ceiling.
                     self._v2_exit_end_episode((acct, symbol), session=session)
-                    return
+                    return "no_open_row"
                 if kind == "SCALE":
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="scale", quantity=int(sell_qty or 0),
@@ -5325,6 +5819,17 @@ class OmsRiskService:
                     self.store.update_managed_position_from_position(
                         session, row, position, write_quantity=not close_on_fill
                     )
+                    statuses = {
+                        str(getattr(event.payload, "status", "")).strip().lower()
+                        for event in events
+                    }
+                    emit_outcome = (
+                        "closed"
+                        if "filled" in statuses
+                        else "close_submitted"
+                        if statuses - self._V2_EXIT_NON_PROGRESS_STATUSES
+                        else "refused"
+                    )
                 elif self._a2_should_defer(acct, symbol):
                     # A2 backoff. The broker is refusing this exit as not-sellable; the block is
                     # broker-side ACCOUNT STATE and re-emitting at the 1-2s ladder cadence provably
@@ -5336,7 +5841,7 @@ class OmsRiskService:
                         "exit as not-sellable; probing every %.0fs",
                         symbol, acct, kind, self._A2_BACKOFF_SECONDS,
                     )
-                    return
+                    return "refused"
                 elif (acct, symbol) in self._v2_exit_stood_down:
                     # ⛔ Retry loop stood down (see _V2_EXIT_ABANDON_AFTER_FAILURES). Emitting again
                     # would just re-reject: 145 times on NCRA 2026-07-29. The row and any protection
@@ -5345,7 +5850,7 @@ class OmsRiskService:
                         "[OMS-V2-EXIT-STAND-DOWN] sym=%s acct=%s suppressing a %s close — the retry "
                         "loop is stood down pending an operator check", symbol, acct, kind,
                     )
-                    return
+                    return "refused"
                 else:  # HARD / FLOOR — full close
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
@@ -5374,13 +5879,19 @@ class OmsRiskService:
                             and key not in self._v2_exit_stood_down
                         ):
                             self._v2_exit_stood_down.add(key)
+                            protection_text = (
+                                "broker-side protection was RELEASED before this failed close; "
+                                "re-protection or an explicit UNCOVERED marker is required"
+                                if key in self._exit_reservation_released
+                                else "broker-side protection was not released by this path"
+                            )
                             self.logger.error(
                                 "[OMS-V2-EXIT-REJECT-CEILING] sym=%s acct=%s %d REJECTED closes in "
                                 "this episode -> STOPPING the retry loop regardless of the broker "
-                                "read. The managed row and ALL protection are LEFT IN PLACE and the "
+                                "read. The managed row stays in place; %s. The "
                                 "read-only exit poll still resolves it. Sustained rejected-order "
                                 "volume risks broker API access. OPERATOR: check the position.",
-                                symbol, acct, totals[key],
+                                symbol, acct, totals[key], protection_text,
                             )
                     # Phantom guard: a rejected full-close may mean the broker is already flat
                     # (position closed out-of-band). Without this, close_on_fill waits for a fill
@@ -5404,6 +5915,8 @@ class OmsRiskService:
                     reconciled = rejected and await self._v2_close_reconcile_flat(session, acct, symbol, row)
                     if a2_hit and not reconciled:
                         await self._a2_maybe_escalate(acct, symbol)
+                    if reconciled:
+                        emit_outcome = "closed"
                     if not reconciled:
                         # ⛔ #885 finding 2: this was `if not rejected`, and an EMPTY event list has
                         # no rejected event in it. `_emit_v2_managed_sell` returns [] when the
@@ -5428,6 +5941,13 @@ class OmsRiskService:
                             self._reset_v2_exit_reject_alarm(key, session=session)
                             getattr(self, "_v2_exit_reject_total", {}).pop(key, None)  # real progress
                             self._a2_clear(acct, symbol)  # A2: the block ended
+                            statuses = {
+                                str(getattr(event.payload, "status", "")).strip().lower()
+                                for event in events
+                            }
+                            emit_outcome = (
+                                "closed" if "filled" in statuses else "close_submitted"
+                            )
                         if close_on_fill:
                             # #6: do NOT close on submit — the confirmed fill closes the row.
                             # Persist price-state only; keep the position monitored/protected.
@@ -5445,7 +5965,7 @@ class OmsRiskService:
                 session.commit()
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
             self.logger.warning("v2 managed-exit emit failed for %s: %s", symbol, exc)
-            return
+            return "refused"
         if pending_reject_alarm is not None:
             alarm_counts = self.__dict__.setdefault("_v2_exit_reject_alarm_count", {})
             announced = self.__dict__.setdefault("_v2_exit_reject_alarm_announced", set())
@@ -5457,6 +5977,7 @@ class OmsRiskService:
                 await self._publish_v2_exit_reject_alarm(pending_reject_alarm)
         for ev in events:
             await self._publish_order_event(ev)
+        return emit_outcome
 
     async def _emit_v2_managed_sell(
         self,

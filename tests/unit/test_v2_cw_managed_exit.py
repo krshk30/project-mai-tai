@@ -270,7 +270,7 @@ async def test_confirmation_exit_never_arms_for_reclaim() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirmation_exit_blocks_when_oco_release_is_unconfirmed() -> None:
+async def test_confirmation_exit_refuses_once_when_oco_release_is_unconfirmed() -> None:
     sf = _make_sf()
     adapter = _ConfirmationAdapter(armed=True, release_result="unanswerable")
     svc = _svc(sf, cw=True, adapter=adapter)
@@ -285,7 +285,9 @@ async def test_confirmation_exit_blocks_when_oco_release_is_unconfirmed() -> Non
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     assert _sell_intents(sf) == []
-    assert (ACCT, SYM) in svc._confirmation_exit_pending
+    assert (ACCT, SYM) not in svc._confirmation_exit_pending, (
+        "an unanswerable one-shot must fail closed without polling the broker on every quote"
+    )
 
 
 @pytest.mark.asyncio
