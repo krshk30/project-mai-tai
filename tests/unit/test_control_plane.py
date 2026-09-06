@@ -3381,6 +3381,61 @@ def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() ->
         assert "thinkorswim_1m" not in dashboard.text
 
 
+def test_active_sil1_symbol_stays_on_main_screen_ahead_of_other_active_incidents() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            SystemIncident(
+                service_name="oms-risk",
+                severity="critical",
+                title="SIL1: IMRN exit rejects reached 8 on live:schwab_1m_v2",
+                status="open",
+                payload={
+                    "source": "oms_v2_exit_reject_alarm",
+                    "symbol": "IMRN",
+                    "broker_account_name": "live:schwab_1m_v2",
+                },
+                opened_at=now - timedelta(hours=1),
+            )
+        )
+        # Without explicit SIL1-first ordering these newer active rows evict the still-actionable
+        # SIL1 symbol from the ten-row operator panel.
+        for index in range(12):
+            session.add(
+                SystemIncident(
+                    service_name="test-history",
+                    severity="warning",
+                    title=f"Other active incident {index}",
+                    status="open",
+                    payload={"symbol": f"OLD{index}"},
+                    opened_at=now - timedelta(seconds=index),
+                )
+            )
+        session.commit()
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=FakeRedis(make_streams(settings.redis_stream_prefix)),
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        assert any(
+            incident["status"] == "open" and "IMRN" in incident["title"]
+            for incident in overview.json()["incidents"]
+        )
+
+        dashboard = client.get("/")
+        assert dashboard.status_code == 200
+        assert "SIL1: IMRN exit rejects reached 8" in dashboard.text
+
+
 def test_compact_control_plane_renders_only_active_bots_with_current_theme() -> None:
     observed_at = datetime.now(UTC)
     html = control_plane_module._render_dashboard(

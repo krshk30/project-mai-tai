@@ -18,11 +18,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from project_mai_tai.db.models import SystemIncident
 from project_mai_tai.oms.service import OmsRiskService, _PositionRead
 
 ACCT, SYM = "live:orb", "NCRA"
 KEY = (ACCT, SYM)
+SCHWAB_ACCT = "live:schwab_1m_v2"
+SCHWAB_KEY = (SCHWAB_ACCT, SYM)
 
 
 def _svc(state: _PositionRead):
@@ -221,6 +229,8 @@ def _emit_svc(*, statuses, close_on_fill=False, row=object()):
     svc.logger = logging.getLogger("test-ceiling")
     svc._v2_exit_close_failures = {}
     svc._v2_exit_stood_down = set()
+    svc._v2_exit_reject_alarm_count = {}
+    svc._v2_exit_reject_alarm_announced = set()
     svc._v2_exit_reject_total = {}
     svc._managed_v2_symbols = {KEY}
     svc._cw_flip_pending = set()
@@ -270,12 +280,12 @@ def _emit_svc(*, statuses, close_on_fill=False, row=object()):
     return svc
 
 
-def _drive_close(svc, n=1):
+def _drive_close(svc, n=1, *, acct=ACCT, symbol=SYM):
     """n HARD closes through the REAL on-loop emit path."""
     for _ in range(n):
         asyncio.run(
             svc._emit_v2_exit_on_loop(
-                ACCT, SYM, _Pos(), 1.0,
+                acct, symbol, _Pos(), 1.0,
                 kind="HARD", reference_price=1.0, reason="hard_stop", bid=1.0,
                 close_on_fill=svc._close_on_fill,
             )
@@ -476,3 +486,191 @@ def test_a_multi_report_close_with_NO_rejection_is_still_progress() -> None:
 
 async def _accepted_filled():
     return [_Ev("accepted"), _Ev("filled")]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# SIL1 — an operator alarm at 8 Schwab rejections, separate from all trading bounds.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+def _schwab_alarm_svc(*, statuses=("rejected",)):
+    svc = _emit_svc(statuses=list(statuses), close_on_fill=True)
+    svc.settings = SimpleNamespace(strategy_schwab_1m_v2_account_name=SCHWAB_ACCT)
+    svc.opened_alarms = []
+    svc.closed_alarms = []
+
+    async def _publish(alarm):
+        svc.opened_alarms.append(
+            {
+                "key": alarm.key,
+                "alarm_count": alarm.alarm_count,
+                "alarm_threshold": alarm.alarm_threshold,
+                "ceiling_count": alarm.ceiling_count,
+            }
+        )
+        svc._v2_exit_reject_alarm_announced.add(alarm.key)
+
+    def _close(_session, key):
+        svc.closed_alarms.append(key)
+
+    svc._publish_v2_exit_reject_alarm = _publish
+    svc._close_v2_exit_reject_alarm_incident = _close
+    return svc
+
+
+def test_sil1_pages_schwab_at_8_without_lowering_the_20_reject_ceiling() -> None:
+    """The event-status branch is the source; `_Ev` deliberately carries no reject reason."""
+    svc = _schwab_alarm_svc()
+
+    _drive_close(svc, 7, acct=SCHWAB_ACCT)
+    assert svc._v2_exit_reject_alarm_count[SCHWAB_KEY] == 7
+    assert svc.opened_alarms == []
+    assert SCHWAB_KEY not in svc._v2_exit_stood_down
+
+    _drive_close(svc, 1, acct=SCHWAB_ACCT)
+    assert svc._V2_EXIT_REJECT_ALARM_THRESHOLD_SCHWAB == 8
+    assert svc._V2_EXIT_MAX_REJECTS_PER_EPISODE == 20
+    assert svc._v2_exit_reject_alarm_count is not svc._v2_exit_reject_total
+    assert svc._v2_exit_reject_alarm_count[SCHWAB_KEY] == 8
+    assert svc._v2_exit_reject_total[SCHWAB_KEY] == 8
+    assert svc.opened_alarms == [
+        {
+            "key": SCHWAB_KEY,
+            "alarm_count": 8,
+            "alarm_threshold": 8,
+            "ceiling_count": 8,
+        }
+    ]
+    assert SCHWAB_KEY not in svc._v2_exit_stood_down, (
+        "SIL1 is a page, not permission to abandon the live exit twelve rejects early"
+    )
+
+    _drive_close(svc, 12, acct=SCHWAB_ACCT)
+    assert svc._v2_exit_reject_total[SCHWAB_KEY] == 20
+    assert SCHWAB_KEY in svc._v2_exit_stood_down
+    assert len(svc.opened_alarms) == 1, "one episode must produce one operator alarm"
+
+
+def test_sil1_alarm_count_is_not_derived_from_the_ceiling_total() -> None:
+    svc = _schwab_alarm_svc()
+    svc._v2_exit_reject_total[SCHWAB_KEY] = 6
+
+    _drive_close(svc, 1, acct=SCHWAB_ACCT)
+
+    assert svc._v2_exit_reject_total[SCHWAB_KEY] == 7
+    assert svc._v2_exit_reject_alarm_count[SCHWAB_KEY] == 1
+    assert svc.opened_alarms == []
+
+
+def test_sil1_leaves_live_orb_explicitly_unalarmed() -> None:
+    svc = _schwab_alarm_svc()
+
+    _drive_close(svc, 19, acct=ACCT)
+    assert KEY not in svc._v2_exit_reject_alarm_count
+    assert svc.opened_alarms == []
+    assert KEY not in svc._v2_exit_stood_down
+
+    _drive_close(svc, 1, acct=ACCT)
+    assert KEY in svc._v2_exit_stood_down, "the unchanged 20-reject ceiling still covers live:orb"
+    assert svc.opened_alarms == [], "UNSET means no SIL1 alarm, not a guessed Webull threshold"
+
+
+def test_real_progress_clears_the_sil1_episode_and_closes_its_incident() -> None:
+    svc = _schwab_alarm_svc()
+    _drive_close(svc, 8, acct=SCHWAB_ACCT)
+    assert SCHWAB_KEY in svc._v2_exit_reject_alarm_announced
+
+    svc._emit_v2_managed_sell = lambda *_a, **_k: _accepted()
+    _drive_close(svc, 1, acct=SCHWAB_ACCT)
+
+    assert SCHWAB_KEY not in svc._v2_exit_reject_alarm_count
+    assert SCHWAB_KEY not in svc._v2_exit_reject_alarm_announced
+    assert svc.closed_alarms == [SCHWAB_KEY]
+
+
+def test_sil1_incident_write_failure_cannot_change_the_live_exit_result() -> None:
+    svc = _emit_svc(statuses=["rejected"], close_on_fill=True)
+    svc.settings = SimpleNamespace(strategy_schwab_1m_v2_account_name=SCHWAB_ACCT)
+
+    async def _failed_db_write(*_a, **_k):
+        raise RuntimeError("incident database unavailable")
+
+    svc._run_db = _failed_db_write
+    _drive_close(svc, 8, acct=SCHWAB_ACCT)
+
+    assert svc._v2_exit_reject_total[SCHWAB_KEY] == 8
+    assert svc._v2_exit_reject_alarm_count[SCHWAB_KEY] == 8
+    assert SCHWAB_KEY not in svc._v2_exit_reject_alarm_announced
+    assert svc.closed_rows == [], "a failed page must not close or otherwise alter the position"
+
+    published = []
+
+    async def _publish(alarm):
+        published.append(alarm)
+        svc._v2_exit_reject_alarm_announced.add(alarm.key)
+
+    svc._publish_v2_exit_reject_alarm = _publish
+    _drive_close(svc, 1, acct=SCHWAB_ACCT)
+    assert len(published) == 1, "the next rejection must retry a previously failed alarm write"
+    assert published[0].alarm_count == 9
+
+
+def _incident_session_factory():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SystemIncident.__table__.create(engine)
+    return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def test_sil1_persists_the_symbol_and_closes_only_when_the_episode_ends() -> None:
+    sf = _incident_session_factory()
+    svc = OmsRiskService.__new__(OmsRiskService)
+    svc.logger = logging.getLogger("test-sil1-incident")
+    svc.settings = SimpleNamespace(strategy_schwab_1m_v2_account_name=SCHWAB_ACCT)
+    svc._v2_exit_close_failures = {}
+    svc._v2_exit_reject_alarm_count = {SCHWAB_KEY: 8}
+    svc._v2_exit_reject_alarm_announced = {SCHWAB_KEY}
+    svc._v2_exit_reject_total = {SCHWAB_KEY: 8}
+    svc._v2_exit_stood_down = set()
+
+    with sf() as session:
+        assert svc._write_v2_exit_reject_alarm(
+            session,
+            key=SCHWAB_KEY,
+            alarm_count=8,
+            alarm_threshold=8,
+            ceiling_count=8,
+        )
+        session.commit()
+
+    with sf() as session:
+        incident = session.scalar(select(SystemIncident))
+        assert incident is not None
+        assert incident.status == "open"
+        assert "NCRA" in incident.title
+        assert incident.payload["symbol"] == "NCRA"
+        assert incident.payload["broker_account_name"] == SCHWAB_ACCT
+        assert not svc._write_v2_exit_reject_alarm(
+            session,
+            key=SCHWAB_KEY,
+            alarm_count=9,
+            alarm_threshold=8,
+            ceiling_count=9,
+        ), "a restart/retry must refresh the durable incident rather than create a second page"
+        session.commit()
+        assert len(session.scalars(select(SystemIncident)).all()) == 1
+        assert incident.payload["alarm_count"] == 9
+
+        svc._v2_exit_end_episode(SCHWAB_KEY, session=session)
+        session.commit()
+
+    with sf() as session:
+        incident = session.scalar(select(SystemIncident))
+        assert incident is not None
+        assert incident.status == "closed"
+        assert incident.closed_at is not None
+    assert SCHWAB_KEY not in svc._v2_exit_reject_alarm_count
+    assert SCHWAB_KEY not in svc._v2_exit_reject_total
