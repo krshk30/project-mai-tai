@@ -4370,11 +4370,13 @@ class OmsRiskService:
                 await self._close_post_exit_stale_held_row(acct, symbol)
                 confirmation_pending.pop(key, None)
                 if fanout_decision is not None:
-                    self._finish_confirmation_fanout_leg(
+                    self._finish_or_recover_confirmation_leg(
                         fanout_decision,
                         acct,
+                        symbol,
+                        expected_row_id=bound_row_id,
                         outcome="flat",
-                        released=protection == "released",
+                        protection=protection,
                     )
                 return
             if c3_action not in ("not_applicable", "fresh_held_retry"):

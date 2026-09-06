@@ -329,6 +329,42 @@ def test_released_unprotected_interval_tracks_duration_and_current_count(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_released_webull_pair_fresh_flat_preserves_interval_in_summary(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    clock = {"now": datetime(2026, 9, 6, 14, 0, tzinfo=UTC)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+    adapter = _FanoutAdapter()
+    service, _sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    await _arm_decision(service)
+    service._latest_quotes_by_symbol[SYMBOL]["received_at"] = clock["now"]
+
+    await service._evaluate_v2_managed_exit(SCHWAB, SYMBOL)
+
+    def _fresh_flat_after_broker_refresh(*args, **kwargs) -> str:
+        clock["now"] += timedelta(seconds=4)
+        return "fresh_flat"
+
+    monkeypatch.setattr(
+        service, "_post_exit_stale_held_action", _fresh_flat_after_broker_refresh
+    )
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    summaries = [
+        line
+        for line in service.logger.lines
+        if "[OMS-V2-CONFIRMATION-EXIT-FANOUT]" in line
+    ]
+    assert len(summaries) == 1
+    assert "live:orb:flat" in summaries[0]
+    assert "released_unprotected_seconds_max=4.000" in summaries[0]
+    assert "released_unprotected_current=0" in summaries[0]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("fanout", "expected_accounts"),
     [(False, [SCHWAB]), (True, [SCHWAB, WEBULL])],
