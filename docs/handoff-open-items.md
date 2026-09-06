@@ -269,7 +269,9 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 - **CONF3 — THE CONFIRMATION EXIT CLOSES SCHWAB ONLY; THE WEBULL FAN-OUT LEG IS NEVER ARMED**
   *(owner: **codex-2**; **OPEN, live money, highest priority — it blocks the operator's +5%/−8%
-  settings change.** **NEXT ACTION: the failure-branch spec lands with codex, THEN build.**
+  settings change.** ⛔ **NEXT ACTION: reprotect root cause first — NOT A BUILD ITEM UNTIL THEN.**
+  *(root cause found 2026-09-06, below; the intended design shape is now stated, so what remains is
+  codex accepting or arguing it, then building.)* ⛔ **A merged docs PR is not a green light.**
   Measured by claude-1 2026-09-06, market closed.)*.
   `oms/service.py:1076` keys `_confirmation_exit_pending` on ONE account — whatever the event
   stamped, always `live:schwab_1m_v2`. ⭐ **The template is 50 lines above in the same function:**
@@ -355,6 +357,37 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   against a real denominator (*evaluations with a fan-out leg / evaluations where every leg was
   named*) without depending on a live fire. ⛔ A live fire remains the only proof of the **close**
   itself; until one arrives the row stays **UNEXERCISED**.
+  ⭐⭐ **ROOT CAUSE OF THE 0-FOR-8 — FOUND 2026-09-06, AND IT IS NEITHER CANDIDATE.**
+  ⛔ **Session tag: RULED OUT BY CONSTRUCTION.** `_reprotect_after_failed_release` calls
+  `_spawn_webull_protection` → `_attach_webull_protection` — **the exact same function the fill path
+  uses**, so it builds its payload through the same builder with the same session conditional. There
+  is no second construction path to stamp CORE. The failing lines also read `session=RTH`, not
+  EXTENDED. This is not the #710 pre-market class.
+  ⛔ **Coalescing: RULED OUT for the clean cases.** Every failure logs *"COULD NOT ATTACH … **after 5
+  attempts**"*, so a real attach sequence ran — a coalesced call returns early and logs no FAILED.
+  For YJ/ZSTK/BTCT there was no in-flight sequence to coalesce into.
+  ⭐⭐ **THE ACTUAL CAUSE: THE RECOVERY PATH SHARES ITS FAILURE MODE WITH THE THING IT IS RECOVERING
+  FROM.** The reprotect windows are saturated with
+  `ERROR [webull.core.client] ServerException occurred. Host:api.webull.com`.
+  **Controlled comparison, ~40 s windows:**
+  | window | ServerExceptions |
+  |---|---|
+  | ZSTK reprotect (FAILED) | **16** |
+  | BTCT reprotect (FAILED) | **12** |
+  | AIXI reprotect (FAILED) | **21** |
+  | **control — DAIC 08-25 15:37, fill-path attach that SUCCEEDED** | **2** |
+  The YJ trace shows the whole collapse inside **259 ms**: `[OMS-EXIT-RELEASE] … legs=2` at
+  15:48:34.946, three `CW_HARD_STOP` closes at .117/.248/.376, `[OMS-EXIT-REPROTECT]` at .377 — three
+  "refused closes" in a quarter of a second, which is not a market condition, it is the API failing
+  instantly. ⇒ **The closes fail because Webull is erroring, and the re-attach then fails for exactly
+  the same reason.** The 5 attempts are consumed inside the same storm.
+  ⇒ ⛔ **THIS IS NOT A SMALL REPAIR AND THE PAYLOAD IS NOT THE LEVER.** A recovery that can only run
+  when the broker is healthy cannot cover a branch entered *because* the broker is unhealthy.
+  ⇒ ⭐ **IT CONFIRMS THE OPERATOR'S PREFERRED SHAPE (2026-09-06):** **do not release protection
+  unless the close is going to succeed, and treat a failed close as a reason to STOP RELEASING, not
+  a reason to recover.** That is the intended design for CONF3's fan-out leg; codex may argue it
+  down, but it is not an open choice handed to the merging agent.
+  [[feedback_something_else_was_covering_for_it]] [[feedback_a_failing_control_voids_the_probe]]
 
 - **SIL1 — ALARM WHEN THE REJECT CEILING FIRES** *(owner: **codex-2**; **RELEASED 2026-09-06** —
   WRAP1 is answered and does not redirect it. **BLOCKED ON THRESHOLD: the operator picks the
@@ -408,6 +441,24 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   ⚠ **NOT INVESTIGATED, and deliberately NOT a new workstream** (operator scope fence 2026-09-06):
   the `live:orb` reservation class is 18× larger than Schwab's and has never been boarded at this
   scale. Recorded as a number only.
+  ⛔ **THE SCOPING HYPOTHESIS WAS TESTED AND IS NOT SUPPORTED** (operator's, 2026-09-06: *"the
+  11,930 is probably dominated by refusals against positions we never held; properly scoped, Webull
+  may look like Schwab and one threshold may serve"*). Re-run restricted to the **same population as
+  the Schwab distribution** — `-close-` orders with `oms_v2_managed_exit='true'`, i.e. positions we
+  held and were trying to exit. The shape barely moved:
+  | bucket | 1 | 2 | 3 | 4–7 | 8–19 | 20+ |
+  |---|---|---|---|---|---|---|
+  | raw | 104 | 40 | 46 | 42 | 38 | 14 |
+  | **scoped** | **96** | **40** | **46** | **42** | **38** | **12** |
+  Only the size-1 bucket lost 8 episodes and 20+ lost 2. **The 4–19 band is genuinely populated on
+  `live:orb` — 80 episodes — and it is not a scoping artefact.** An alarm at 8 still fires ~50 times.
+  ⇒ **One threshold does not serve both. It must be per account.** The hypothesis was worth testing
+  and the answer is no; recording it so nobody re-tests it.
+  ⛔⭐ **AND A CONSEQUENCE OF KEYING ON THE CEILING EVENT** (operator, 2026-09-06): if the alarm *is*
+  the ceiling event, then "alarm at 8, ceiling at 20" **requires the alarm to be its own separate
+  count** — not the ceiling firing early. Otherwise *decouple* quietly becomes *lower the ceiling*,
+  which is the exact thing the operator's decision exists to prevent. Build two counters, not one
+  with a lower bound. [[feedback_a_count_is_not_a_gate]]
 
 
 - **EOD1601 — 16:01 CANCEL-AND-REEXIT: cancel our own working SELL legs, confirm zero, then place
