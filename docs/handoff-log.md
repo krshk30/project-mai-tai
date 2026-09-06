@@ -15,6 +15,69 @@
 
 ---
 
+## 2026-09-06 — a measurement Sunday: the fan-out leg the confirmation exit never closes, and the storms answered
+
+Market closed 09-06 and 09-07 (Labor Day). Operator-directed investigation session, no build, no
+deploy, no merge. Three questions in, three answered, one of my own claims falsified on the way.
+
+**CONF3 — the confirmation exit closes Schwab only.** `oms/service.py:1076` keys the pending exit on
+one account. The `v2_cw_flip` handler **50 lines above in the same function** had the identical
+defect and was fixed on 2026-08-07 by iterating `_v2_accounts()`; CONF1 was simply never given the
+same treatment. Measured on the full population rather than a sample —
+`v2_confirmation_exit_evaluations` holds **7 evaluations, 3 fires, 4 `atr_state=long`, 0 refusals**
+across the only two sessions CONF1 has ever run. **All three fires had a live fan-out leg and all
+three left it open**, median 44m06s.
+
+⛔ **And the cost is not the sign anyone assumed.** The operator framed the leg-vs-leg spread as
+*the* cost. It is +2.17, +2.98 and −4.21 pp — **the orphaned leg beat the confirmation exit in two of
+three, median +2.17 pp**. This is the OVSD1 shape again: the count screams and the money shrugs. The
+argument that survives is **dispersion**, not edge: two legs of one decision diverging 2–4 pp,
+unbounded, invisible to a paper harness that `paper_exit.py:254` hardcodes to
+`live:schwab_1m_v2` **and** `venue == "schwab"`, and widened by the coming +5%/−8%.
+
+**WRAP1 — two triggers, one shared behaviour.** The discriminator turned out to be
+`trade_intents.reason` joined through `broker_orders.intent_id`, which survives log rotation and so
+reaches the July storms whose logs are long gone. 07-13 AGEN, 07-31 KUST and 08-04 AAOG are all
+`CW_HARD_STOP`; 09-03 CHPT and 09-04 IMRN are `CONFIRMATION_EXIT`. **07-13 matches the other two
+July/August storms exactly — it is 09-03 that is the odd one out**, which is the opposite of what the
+deciding question anticipated.
+
+⛔ **I had to correct myself.** I wrote that the shared mechanism was *"shares reserved by our own
+resting protection."* The first `-ocoexit-` row in the entire system is **2026-07-29**, and there are
+**zero `-ocoexit-` and zero `-protect-` rows on or before 07-13** — no protective leg of ours existed
+anywhere that day, and 127 sells were still refused. The reserving order on 07-13 was **not ours**.
+The operator's own ROOT1 wording never said whose it was, and that is exactly why it survived and my
+narrowing did not. ROOT1 now stands at **1 pinned + 2 consistent + 2 unexplained** — 09-03 CHPT's
+storm ended at an **OMS reboot** five seconds after the last refusal, not at a resolution, so it
+supports nothing either way.
+
+Two hypotheses died on measurement: the 429s are **all Webull, zero Schwab**, and the highest-429
+days are *clean* days; and volatility is **inverted** — the storm symbols are the calmest measured.
+
+**CONF2 — closed, and the DB closed it without needing the logs.**
+`v2_confirmation_exit_evaluations` has rows at 09:18, 11:36, 13:35 and 15:14 on 09-04 and **none at
+12:18**. There was no decision at 12:18:04; the 11:36 pending re-fired 43 minutes later against a
+different position. #897 is the whole answer.
+
+**SIL1 — released, with the threshold left to the operator.** The episode distribution (48 episodes)
+is 27/5/11 at sizes 1/2/3, **nothing at all between 4 and 19**, then the clipped 20 and the four
+storms. The 3-cap is structural — `_V2_EXIT_RECONCILE_AFTER_FAILURES = 3`. ⚠ Because 4–19 is empty
+the data **cannot** discriminate any threshold in that range; the choice is judgment and was written
+up as such rather than dressed as measured.
+
+**Two process notes worth keeping.** The relay went to codex before the operator had agreed the
+group, and then needed correcting — so codex has seen two versions of one brief and had to be told
+in writing which file state is authoritative and that the earlier read is void. The standing 08-27
+rule is that the full group goes at once, agreed first. And an early sweep of the logs returned zero
+for every marker: the files are `root:root 640` and the ssh user is `trader`, so every count was a
+**permission failure reading as an absence**. The tell was a marker that could not possibly be zero.
+
+⛔ **Window integrity, stated plainly:** all three CONF1 fires ran on pre-#897 code, and the OMS
+restarted 2026-09-04 17:50 ET, after the last one. The window is clean with no straddle — and the
+consequence is that **the post-fix confirmation exit has not fired once. That is not a pass.**
+
+---
+
 ## 2026-09-04 — the day a $2.18 probe found the defect that would have broken EOD1601
 
 Batch `2026-09-04-probe-answered-and-conf1-bound`. Seven merges: #892, #893, #894, #895, #896,

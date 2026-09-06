@@ -6,6 +6,26 @@
 **Written by `claude-1`, 2026-09-04 17:57 ET.** Batch `2026-09-04-probe-answered-and-conf1-bound`.
 Integrator for this rotation. Needs `codex-2`'s review before merge — the author never reviews.
 
+> **⏩ UPDATED `claude-1`, 2026-09-06 ~12:40 ET — measurement Sunday, no build, no deploy, no merge.**
+> Market closed 09-06 and 09-07 (Labor Day); next session **Tuesday 2026-09-08**.
+> ✅ **THE ATR PROBE IS LIVE.** `/home/trader/atr_probe_enable.log`: fence **GO** (all four gates
+> green), v2 stopped 20:05:03 / ready 20:05:34, pid 3135615, **step 4 proof present** —
+> `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS=*` in the RUNNING process env. 0 tracebacks,
+> warmup 850 bars for IMRN. Probe lines 0 as predicted (bars stop 20:00 ET). The transient timer has
+> since expired and lists none — expected, it was one-shot.
+> 🔴 **CONF3 measured and boarded** (open, codex-2) — the confirmation exit closes Schwab only;
+> 3 of 3 fires orphaned the fan-out leg. ⛔ **Its supposed safe branch, `[OMS-EXIT-REPROTECT]`, is
+> 0-for-8.** 🔴 **SIL1 released** (codex-2), blocked on a threshold that must be **per account** —
+> `live:orb` carries 18× Schwab's refusals and has no empty band. ✅ **WRAP1 answered** (two
+> triggers, one shared behaviour) and ✅ **CONF2 closed** (#897 is the whole answer). All four rows,
+> with the numbers, are in [`handoff-open-items.md`](handoff-open-items.md); the narrative is in
+> [`handoff-log.md`](handoff-log.md).
+> ⛔ **CONF1 POST-FIX HAS NOT FIRED ONCE.** All three fires ran pre-#897 and the OMS restarted 09-04
+> 17:50 ET, after the last one. The window is clean with no straddle — and that is not a pass.
+> ⛔ The main checkout is parked on `codex/atr-bracket-grid` with a dirty tree; everything this
+> session was read from `origin/main` and written in a separate worktree. **No deploy runs against
+> that tree.**
+
 ---
 
 # PRODUCTION — main and box IN SYNC
@@ -164,6 +184,11 @@ env var anyway, so either path ends with the probe on.
   `--clock-override` was **not** used — the change gains nothing from the hour.
 
 # ▶ NEXT SESSION — Tuesday 2026-09-08 (Monday is Labor Day)
+
+> ⏩ **09-06 update — item 1 is DONE.** The probe is confirmed live (see the header block); on
+> Tuesday just verify it is *emitting* `state=` / `flip=` per bar. **New for Tuesday:** CONF3's
+> failure-branch spec is with `codex-2` and the build starts once it lands; SIL1 needs a
+> **per-account** threshold from the operator before it can be built.
 
 1. **Confirm the ATR probe is live** and emitting `state=` / `flip=` per bar. Expect ~1.6 MB/session
    at the 9-symbol maximum; `maxsize 200M` gives ~59× headroom, so retention is unaffected.
