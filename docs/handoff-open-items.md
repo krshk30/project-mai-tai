@@ -389,9 +389,9 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   down, but it is not an open choice handed to the merging agent.
   [[feedback_something_else_was_covering_for_it]] [[feedback_a_failing_control_voids_the_probe]]
 
-- **SIL1 — ALARM WHEN THE REJECT CEILING FIRES** *(owner: **codex-2**; **RELEASED 2026-09-06** —
-  WRAP1 is answered and does not redirect it. **BLOCKED ON THRESHOLD: the operator picks the
-  number.**)*.
+- **SIL1 — ALARM WHEN THE REJECT CEILING FIRES** *(owner: **codex-2**; **RELEASED 2026-09-06**;
+  **THRESHOLD DECIDED 2026-09-06 — operator, final. READY TO BUILD.** WRAP1 is answered and does not
+  redirect it.)*.
   Fire when the **per-episode reject ceiling fires**, not on individual rejects (the operator refuses
   those as noise), and the symbol must be **visible on his screen while its exits are stood down**.
   ⭐ **Verified it covers the case that prompted it:** `[OMS-V2-EXIT-REJECT-CEILING]` fired for IMRN
@@ -459,6 +459,38 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   count** — not the ceiling firing early. Otherwise *decouple* quietly becomes *lower the ceiling*,
   which is the exact thing the operator's decision exists to prevent. Build two counters, not one
   with a lower bound. [[feedback_a_count_is_not_a_gate]]
+  ═══ **✅ DECISION — OPERATOR, 2026-09-06. FINAL. THIS IS THE SPEC.** ═══
+  **1 · `live:schwab_1m_v2` alarm threshold = 8.** Benign episodes cap at exactly **3** and the cap is
+  **structural** (`_V2_EXIT_RECONCILE_AFTER_FAILURES = 3` resolves them there). 8 gives margin above
+  it, catches **all 5 known storms**, and produces **0 false positives** on the 48-episode population.
+  **2 · ⛔ `live:orb` alarm = UNSET — EXPLICITLY UNCOVERED, WITH THE REASON.**
+  ⛔ **This is NOT "done" and NOT "deferred".** `live:orb`'s benign band genuinely reaches **19 across
+  80 episodes** — confirmed *after* scoping to the same population as Schwab (`-close-` +
+  `oms_v2_managed_exit='true'`), so it is not a scoping artefact. **No threshold under 20 is
+  defensible**, and a defensible one has not been measured. ⇒ **`live:orb` reject storms are NOT
+  alarmed, deliberately, and anyone reading this row must know that.** Do not let a future reader
+  infer coverage from SIL1's existence. [[feedback_an_absence_is_evidence_only_against_a_known_denominator]]
+  **3 · Ceiling stays 20 on BOTH accounts.** `_V2_EXIT_MAX_REJECTS_PER_EPISODE` is **unchanged**. The
+  alarm does not lower it.
+  **BUILD CONSTRAINTS — as agreed:**
+  **(a)** Key the alarm on the **`[OMS-V2-EXIT-REJECT-CEILING]` event path**, not on any reject-reason
+  string. Per-account and broker-agnostic, so it **cannot drift Schwab-only** — the defect CONF3
+  exists to fix.
+  **(b) ⛔ TWO COUNTERS, NOT ONE WITH A LOWER BOUND.** The alarm carries **its own count**;
+  `_v2_exit_reject_total` keeps its bound of **20** for the ceiling. If it ships as one counter with a
+  lower bound, *decouple* silently becomes *lower the ceiling* — the single thing this decision exists
+  to prevent. **The ceiling's failure mode is abandoning a live exit twelve rejects early; the
+  alarm's is a false page.** Those are not interchangeable.
+  **(c)** ⛔ **Name the two counters distinctly in the PR.** `_v2_exit_close_failures` (resets on HELD,
+  **unreachable**, bound 8) is **NOT** the alarm counter. **The value 8 will now appear on both** and a
+  future reader will assume fixing one moves the other.
+  **(d)** ⛔ **Not a log grep.** The refusal string appears **zero times in every retained log**; it
+  lives only in `broker_orders.payload->>'reject_reason'`. A log-based watch fails to a false clean.
+  **(e)** **The symbol must be visible on the operator's screen while its exits are stood down.** That
+  is the requirement — **not just the page.**
+  ✅ **ITEM 5 CLOSES ON THIS ROW — no separate row, no gap in the requirement.** The 36-minute
+  unsellable position (IMRN 09-04): `[OMS-V2-EXIT-REJECT-CEILING]` fired at **12:18:37 ET**, at the
+  **start** of the suppression, **36 minutes before** the OCO leg resolved it at 12:57:53.
 
 
 - **EOD1601 — 16:01 CANCEL-AND-REEXIT: cancel our own working SELL legs, confirm zero, then place

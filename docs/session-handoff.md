@@ -15,8 +15,10 @@ Integrator for this rotation. Needs `codex-2`'s review before merge — the auth
 > since expired and lists none — expected, it was one-shot.
 > 🔴 **CONF3 measured and boarded** (open, codex-2) — the confirmation exit closes Schwab only;
 > 3 of 3 fires orphaned the fan-out leg. ⛔ **Its supposed safe branch, `[OMS-EXIT-REPROTECT]`, is
-> 0-for-8.** 🔴 **SIL1 released** (codex-2), blocked on a threshold that must be **per account** —
-> `live:orb` carries 18× Schwab's refusals and has no empty band. ✅ **WRAP1 answered** (two
+> 0-for-8.** ✅ **SIL1 THRESHOLD DECIDED** (operator, 09-06, final —
+> **ready to build**): Schwab **8**; ceiling stays **20** on both accounts; ⛔ **`live:orb` alarm
+> UNSET — EXPLICITLY UNCOVERED**, because its benign band genuinely reaches 19 across 80 episodes
+> and no threshold under 20 is defensible. **live:orb reject storms are not alarmed, deliberately.** ✅ **WRAP1 answered** (two
 > triggers, one shared behaviour) and ✅ **CONF2 closed** (#897 is the whole answer). All four rows,
 > with the numbers, are in [`handoff-open-items.md`](handoff-open-items.md); the narrative is in
 > [`handoff-log.md`](handoff-log.md).
@@ -187,8 +189,8 @@ env var anyway, so either path ends with the probe on.
 
 > ⏩ **09-06 update — item 1 is DONE.** The probe is confirmed live (see the header block); on
 > Tuesday just verify it is *emitting* `state=` / `flip=` per bar. **New for Tuesday:** CONF3's
-> failure-branch spec is with `codex-2` and the build starts once it lands; SIL1 needs a
-> **per-account** threshold from the operator before it can be built.
+> failure-branch spec is with `codex-2` and the build starts once it lands; **SIL1's threshold is
+> decided and it is ready to build.**
 
 1. **Confirm the ATR probe is live** and emitting `state=` / `flip=` per bar. Expect ~1.6 MB/session
    at the 9-symbol maximum; `maxsize 200M` gives ~59× headroom, so retention is unaffected.
