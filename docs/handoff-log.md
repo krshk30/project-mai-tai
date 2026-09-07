@@ -15,6 +15,73 @@
 
 ---
 
+## 2026-09-07 — ORB proven closed three ways, and HDL1 diagnosed, built, reviewed hard, deployed
+
+Labor Day. Market shut all day, so the whole session ran with no live exposure.
+
+**ORB cannot reach a broker, and it is now proven rather than reasoned.** The operator wanted
+certainty before ORB observes live. Three independent levels: **structurally**, `orb_app.py` does
+not import `TradeIntentEvent` at all — it cannot construct one — and none of its three `xadd`
+targets is the intents stream; **by mutation**, removing the OMS refusal or the service-side
+`_require_paper_decision` each turns tests red, and the OMS test is parameterised across
+`paper:orb` and `live:schwab_1m_v2`, which independently proves the refusal is account-independent;
+and **live on the deployed code**, a forged ORB intent was refused on all three accounts with
+`ORDERS_PLACED=0`, while a non-ORB control proceeded past that branch and died reaching a real
+dependency — proving the guard fires before anything is touched and is not simply refusing
+everything. Later the post-deploy `/health` payload supplied the runtime reading that had been
+unobtainable in the morning: `execution_mode: paper`, `broker_route: none`.
+
+⛔ **And the thing to keep saying out loud: the environment gives no protection at all.** It reads
+`ORB_ENABLED=true`, `ORB_BROKER_ACCOUNT_NAME=live:orb`, `ORB_BROKER_PROVIDER=webull` — exactly as it
+would if ORB were live-wired. That is deliberate, because `live:orb` is where the v2 fan-out routes
+and an account-keyed refusal would have killed a real-money leg. The isolation is entirely in code,
+keyed on `strategy_code`. There is even a test called
+`test_orb_runtime_is_hard_coded_paper_even_with_hostile_broker_settings`. ⚠ One gap found and sized
+honestly: `ORB_PAPER_ACCOUNT_NAME` is unpinned — renaming it turns no test red — but it feeds only
+the registration and the paper tape, so it is a **labelling** risk, not reachability.
+
+**HDL1 — diagnosed before it was fixed, as instructed.** 10 of 78 Webull attachments (12.8%) over
+the 7 post-deploy sessions never persisted their handle. Two of the three candidates died on
+evidence: the exception branch fired **zero** times, and in **10 of 10** a filled entry row exists
+within **0–1 seconds** of the failure. It is a timing race — the attach runs off the fill path on
+purpose and beats the fill transaction's commit. The function's own docstring had predicted it: an
+earlier fix required the exact coid to stop the handle landing on the *wrong* row, and turned that
+into landing on *no* row.
+
+The fix is a bounded retry with a fresh session per attempt, plus a durable incident when the bound
+is exhausted — because `[WEBULL-PROTECT-HANDLE-LOST]` had been firing 1:1 with the failure and
+nothing read it, the same silence as SIL1.
+
+⭐ **Three review rounds, and every finding was mine.** `codex-2` withheld the pin twice. First: my
+dedupe *replaced* the incident payload, so a second loss erased the first pair's base coid — the
+only handle that could address it, and precisely what the incident exists to preserve; and my own
+repeated-loss test passed the **same** base three times, so it could never have caught it. A control
+whose *inputs* cannot distinguish the defect is not a control. Second: the handle reached only the
+payload, and `load_dashboard_data` discards payload — so the alert instructed a manual action and
+withheld the handle needed for it. Third: my census crossed the feature boundary; handle persistence
+landed 08-25 20:22 ET, so 8 pre-feature attachments were in my denominator and **understated** the
+rate. Then a fourth round for two stale `11.6%` lines I had claimed were corrected without grepping
+to prove it.
+
+⚠ **The process failure worth keeping.** My first mutation run was void: I used `git checkout --` to
+restore between mutations on an **uncommitted** tree, which deleted the fix, so two of three
+mutations silently ran against unfixed main. That is the exact trap recorded on 2026-09-04 and I
+walked into it again. Caught because the *restored* suite still failed. Every mutation since runs
+against a committed baseline with a landing probe after each restore.
+
+**The deploy.** Operator GO. `deploy_service.sh` refused on its weekday+hour proxy, which has no
+holiday calendar — on a day the market was shut. Its own `MAI_TAI_ALLOW_LIVE_RESTART=1` escape hatch
+was used and **the gate was not edited**; a safety gate is not edited while you are trying to get
+through it. ⚠ The `oms` target restarts **oms and strategy** together — my plan said "oms only" and
+was wrong about the script. Harmless here, but recorded so nobody plans around it again. v2 was not
+restarted, so the ATR probe survived and no bar hole was created.
+
+⛔ **Nothing deployed today is proven.** HDL1's retry needs the attach to beat the fill commit —
+about 1 in 8 attachments — so Tuesday is the first chance it fires at all. There are now **four**
+unexercised items running: CONF3's live close, SIL1's alarm, the released-leg recovery, and HDL1.
+
+---
+
 ## 2026-09-06 (later) — three PRs, a deploy, and two corrections of mine
 
 ⛔ **CORRECTION TO THIS FILE'S OWN 09-06 ENTRY BELOW.** That entry ends with the sentence
