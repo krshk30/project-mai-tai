@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Census ORB break bars against the operator's proposed entry filters.
+"""Compare the legacy ORB filter census with the settled operator rules.
 
-This is selection-only. It does not simulate an entry, fill, exit, or return.
-Every decision uses only completed Schwab 1-minute bars available when the
-breaking bar closes. The report is intended for operator sign-off before any
-stop sweep is run.
+The settled census is a per-name/day state machine. It emits exactly three
+decision kinds: a once-only day gate, live arm/pull/fill decisions, and the
+post-fill body sell. It never publishes an intent or calls a broker.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Sequence
+from typing import Literal, Sequence
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -26,7 +25,12 @@ from orb_momentum_turn_report import BarPoint, admissible_seed_bars
 from project_mai_tai.backtest.dot_entry import fast_stoch_k, rsi_wilders
 from project_mai_tai.backtest.watch_start import WatchWindow, build_windows
 from project_mai_tai.db.session import build_session_factory
-from project_mai_tai.market_halts import HALT_MIN_PRINT_GAP, HaltWindow, confirmed_halt_window
+from project_mai_tai.market_halts import (
+    HALT_MIN_PRINT_GAP,
+    HaltWindow,
+    confirmed_halt_window,
+    timestamp_is_halted,
+)
 from project_mai_tai.settings import get_settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy, V2Indicators
 
@@ -40,6 +44,16 @@ CHOP_LOOKBACK = 5
 CHOP_MIN_EFFICIENCY = Decimal("0.35")
 CHOP_MAX_REVERSALS = 2
 DB_SEED_BAR_LIMIT = 250
+DAY_GATE = "DAY_GATE"
+LIVE = "LIVE"
+POST_FILL_SELL = "POST_FILL_SELL"
+LOOKBACK_VOLUME_BASELINE = "volume-baseline"
+LOOKBACK_ABSOLUTE_LEVELS = "absolute-levels"
+LOOKBACK_ASSIGNMENTS = (LOOKBACK_VOLUME_BASELINE, LOOKBACK_ABSOLUTE_LEVELS)
+DEFAULT_BODY_THRESHOLD_PCT = Decimal("45")
+DEFAULT_BODY_MEASUREMENT_DELAY = "bar-close"
+
+LookbackAssignment = Literal["volume-baseline", "absolute-levels"]
 
 
 @dataclass(frozen=True)
@@ -98,6 +112,86 @@ class DayReport:
     no_break_symbols: tuple[str, ...]
     no_level_symbols: tuple[str, ...]
     rows: tuple[BreakRow, ...]
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    day: date
+    symbol: str
+    assignment: LookbackAssignment
+    evaluated_at: datetime
+    opening_high: Decimal | None
+    atr_state: str | None
+    atr_level: Decimal | None
+    close: Decimal | None
+    red_0925_0929: int | None
+    status: str
+    checks: tuple[str, ...]
+    kind: str = DAY_GATE
+
+
+@dataclass(frozen=True)
+class LiveDecision:
+    day: date
+    symbol: str
+    assignment: LookbackAssignment
+    evaluated_at: datetime
+    action: str
+    opening_high: Decimal
+    bar_at: datetime
+    volume_ratio: Decimal | None
+    macd_green: bool | None
+    rsi_up: bool | None
+    stoch_up: bool | None
+    checks: tuple[str, ...]
+    fill_at: datetime | None = None
+    fill_price: Decimal | None = None
+    kind: str = LIVE
+
+
+@dataclass(frozen=True)
+class PostFillDecision:
+    day: date
+    symbol: str
+    assignment: LookbackAssignment
+    evaluated_at: datetime
+    action: str
+    opening_high: Decimal
+    fill_at: datetime
+    fill_price: Decimal
+    body_pct: Decimal | None
+    threshold_pct: Decimal
+    delay_label: str
+    exit_at: datetime | None
+    exit_bid: Decimal | None
+    return_pct: Decimal | None
+    checks: tuple[str, ...]
+    kind: str = POST_FILL_SELL
+
+
+@dataclass(frozen=True)
+class SettledNameDay:
+    day: date
+    symbol: str
+    assignment: LookbackAssignment
+    gate: GateDecision
+    live: tuple[LiveDecision, ...]
+    post_fill: PostFillDecision | None
+
+
+@dataclass(frozen=True)
+class SettledDayReport:
+    day: date
+    watched_symbols: tuple[str, ...]
+    no_level_symbols: tuple[str, ...]
+    legacy_rows: tuple[BreakRow, ...]
+    runs: tuple[SettledNameDay, ...]
+
+
+@dataclass(frozen=True)
+class QuoteCoverage:
+    first_day: date | None
+    last_day: date | None
 
 
 def utc(value: datetime) -> datetime:
@@ -366,6 +460,399 @@ def evaluate_break(
     )
 
 
+def evaluate_day_gate(
+    *,
+    day: date,
+    symbol: str,
+    assignment: LookbackAssignment,
+    bars: Sequence[BarPoint],
+    indicators: Sequence[IndicatorSnapshot],
+    opening_high: Decimal | None,
+) -> GateDecision:
+    """Evaluate the only rules allowed to end a name's session."""
+    evaluated_at = at_et(day, 9, 31)
+    gate_index = next(
+        (index for index, item in enumerate(bars) if item.at == at_et(day, 9, 30)),
+        None,
+    )
+    opening = [item for item in bars if at_et(day, 9, 25) <= item.at < at_et(day, 9, 30)]
+    red_count = sum(item.close < item.open for item in opening) if len(opening) == 5 else None
+    current = indicators[gate_index] if gate_index is not None else None
+    bar_0930 = bars[gate_index] if gate_index is not None else None
+    checks: list[str] = []
+    killed = False
+    unanswerable = False
+
+    if current is None or bar_0930 is None or current.atr_level is None:
+        checks.append("DAY_GATE:R1=UNANSWERABLE ATR_0930_TRAIL_MISSING")
+        unanswerable = True
+    elif bar_0930.close <= current.atr_level:
+        checks.append("DAY_GATE:R1=FAIL CLOSE_NOT_ABOVE_ATR_TRAIL_AT_0930")
+        killed = True
+    else:
+        checks.append("DAY_GATE:R1=PASS CLOSE_ABOVE_ATR_TRAIL_AT_0930")
+
+    if red_count is None:
+        checks.append("DAY_GATE:R5=UNANSWERABLE FIVE_BAR_RUNUP_MISSING")
+        unanswerable = True
+    elif red_count >= 4:
+        checks.append("DAY_GATE:R5=FAIL FOUR_OF_FIVE_RED")
+        killed = True
+    else:
+        checks.append("DAY_GATE:R5=PASS FEWER_THAN_FOUR_OF_FIVE_RED")
+
+    if assignment == LOOKBACK_VOLUME_BASELINE:
+        if current is None or current.volume_average is None:
+            checks.append("DAY_GATE:R3_LOOKBACK=UNANSWERABLE VOLUME_BASELINE_MISSING")
+            unanswerable = True
+        else:
+            checks.append("DAY_GATE:R3_LOOKBACK=PASS VOLUME_BASELINE_AVAILABLE")
+    elif assignment == LOOKBACK_ABSOLUTE_LEVELS:
+        if current is None or current.rsi is None or current.stoch_k is None:
+            checks.append("DAY_GATE:R3_LOOKBACK=UNANSWERABLE RSI_OR_STOCH_LEVEL_MISSING")
+            unanswerable = True
+        elif current.rsi < 50 or current.stoch_k < 50:
+            checks.append("DAY_GATE:R3_LOOKBACK=FAIL RSI_OR_STOCH_BELOW_50_AT_0930")
+            killed = True
+        else:
+            checks.append("DAY_GATE:R3_LOOKBACK=PASS RSI_AND_STOCH_AT_LEAST_50_AT_0930")
+    else:  # pragma: no cover - argparse and the Literal contract prevent this
+        raise ValueError(f"unknown look-back assignment: {assignment}")
+
+    if opening_high is None:
+        checks.append("DAY_GATE:OPENING_RANGE=UNANSWERABLE HIGH_0925_0929_MISSING")
+        unanswerable = True
+    else:
+        checks.append("DAY_GATE:OPENING_RANGE=PASS HIGH_0925_0929_FIXED")
+
+    status = "KILLED" if killed else "UNANSWERABLE" if unanswerable else "ELIGIBLE"
+    return GateDecision(
+        day=day,
+        symbol=symbol,
+        assignment=assignment,
+        evaluated_at=evaluated_at,
+        opening_high=opening_high,
+        atr_state=current.atr_state if current else None,
+        atr_level=current.atr_level if current else None,
+        close=bar_0930.close if bar_0930 else None,
+        red_0925_0929=red_count,
+        status=status,
+        checks=tuple(checks),
+    )
+
+
+def evaluate_live_momentum(
+    *,
+    day: date,
+    symbol: str,
+    assignment: LookbackAssignment,
+    opening_high: Decimal,
+    bar: BarPoint,
+    current: IndicatorSnapshot,
+) -> LiveDecision:
+    """Arm or pull for the next interval; a pull never kills the name-day."""
+    volume_ratio = (
+        Decimal(bar.volume) / current.volume_average
+        if current.volume_average is not None and current.volume_average > 0
+        else None
+    )
+    macd_green = current.histogram > 0 if current.histogram is not None else None
+    rsi_up = (
+        current.rsi > current.prior_rsi
+        if current.rsi is not None and current.prior_rsi is not None
+        else None
+    )
+    stoch_up = (
+        current.stoch_k > current.prior_stoch_k
+        if current.stoch_k is not None and current.prior_stoch_k is not None
+        else None
+    )
+    checks = (
+        f"LIVE:R3_MACD_HISTOGRAM={'PASS' if macd_green else 'FAIL' if macd_green is False else 'UNANSWERABLE'}",
+        f"LIVE:R3_VOLUME={'PASS' if volume_ratio is not None and volume_ratio >= 1 else 'FAIL' if volume_ratio is not None else 'UNANSWERABLE'}",
+        f"LIVE:R3_RSI_DIRECTION={'PASS' if rsi_up else 'FAIL' if rsi_up is False else 'UNANSWERABLE'}",
+        f"LIVE:R3_STOCH_DIRECTION={'PASS' if stoch_up else 'FAIL' if stoch_up is False else 'UNANSWERABLE'}",
+    )
+    action = (
+        "ARM"
+        if macd_green is True
+        and volume_ratio is not None
+        and volume_ratio >= 1
+        and rsi_up is True
+        and stoch_up is True
+        else "PULL"
+    )
+    return LiveDecision(
+        day=day,
+        symbol=symbol,
+        assignment=assignment,
+        evaluated_at=decision_at(bar),
+        action=action,
+        opening_high=opening_high,
+        bar_at=bar.at,
+        volume_ratio=volume_ratio,
+        macd_green=macd_green,
+        rsi_up=rsi_up,
+        stoch_up=stoch_up,
+        checks=checks,
+    )
+
+
+def quote_is_known_by(
+    quotes: Sequence[QuotePoint],
+    *,
+    start: datetime,
+    at: datetime,
+) -> bool:
+    """Require positive NBBO evidence no later than the event being judged."""
+    return any(start <= quote.at <= at and quote.bid > 0 and quote.ask > 0 for quote in quotes)
+
+
+def first_break_while_armed(
+    *,
+    opening_high: Decimal,
+    trades: Sequence[TradePoint],
+    start: datetime,
+    end: datetime,
+    halts: Sequence[HaltWindow],
+) -> TradePoint | None:
+    return next(
+        (
+            trade
+            for trade in trades
+            if start <= trade.at < end
+            and trade.price > opening_high
+            and not timestamp_is_halted(trade.at, list(halts))
+        ),
+        None,
+    )
+
+
+def body_measurement_at(fill_at: datetime, delay: timedelta | None) -> datetime:
+    if delay is None:
+        return fill_at.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    return fill_at + delay
+
+
+def measured_body_percent(
+    *,
+    fill: TradePoint,
+    fill_bar: BarPoint,
+    trades: Sequence[TradePoint],
+    measurement_at: datetime,
+    delay: timedelta | None,
+) -> Decimal | None:
+    if delay is None:
+        return body_percent(fill_bar)
+    visible = [
+        trade.price
+        for trade in trades
+        if fill_bar.at <= trade.at <= measurement_at
+    ]
+    if not visible:
+        return None
+    open_price = fill_bar.open
+    high = max([open_price, *visible])
+    low = min([open_price, *visible])
+    span = high - low
+    return abs(visible[-1] - open_price) / span if span > 0 else None
+
+
+def first_executable_bid(
+    quotes: Sequence[QuotePoint],
+    *,
+    at: datetime,
+    halts: Sequence[HaltWindow],
+) -> QuotePoint | None:
+    return next(
+        (
+            quote
+            for quote in quotes
+            if quote.at >= at
+            and quote.bid > 0
+            and not timestamp_is_halted(quote.at, list(halts))
+        ),
+        None,
+    )
+
+
+def evaluate_post_fill(
+    *,
+    day: date,
+    symbol: str,
+    assignment: LookbackAssignment,
+    opening_high: Decimal,
+    fill: TradePoint,
+    fill_bar: BarPoint,
+    trades: Sequence[TradePoint],
+    quotes: Sequence[QuotePoint],
+    halts: Sequence[HaltWindow],
+    body_threshold_pct: Decimal,
+    body_delay: timedelta | None,
+    delay_label: str,
+) -> PostFillDecision:
+    measurement_at = body_measurement_at(fill.at, body_delay)
+    body = measured_body_percent(
+        fill=fill,
+        fill_bar=fill_bar,
+        trades=trades,
+        measurement_at=measurement_at,
+        delay=body_delay,
+    )
+    if body is None:
+        return PostFillDecision(
+            day, symbol, assignment, measurement_at, "UNANSWERABLE", opening_high,
+            fill.at, opening_high, None, body_threshold_pct, delay_label,
+            None, None, None,
+            ("POST_FILL_SELL:R4=UNANSWERABLE BODY_MEASUREMENT_MISSING",),
+        )
+    if body * 100 >= body_threshold_pct:
+        return PostFillDecision(
+            day, symbol, assignment, measurement_at, "HOLD", opening_high,
+            fill.at, opening_high, body * 100, body_threshold_pct, delay_label,
+            None, None, None,
+            ("POST_FILL_SELL:R4=PASS BODY_AT_OR_ABOVE_THRESHOLD",),
+        )
+    exit_quote = first_executable_bid(quotes, at=measurement_at, halts=halts)
+    if exit_quote is None:
+        return PostFillDecision(
+            day, symbol, assignment, measurement_at, "SELL_UNANSWERABLE", opening_high,
+            fill.at, opening_high, body * 100, body_threshold_pct, delay_label,
+            None, None, None,
+            (
+                "POST_FILL_SELL:R4=FAIL BODY_BELOW_THRESHOLD",
+                "POST_FILL_SELL:EXECUTION=UNANSWERABLE NO_EXECUTABLE_BID",
+            ),
+        )
+    return PostFillDecision(
+        day, symbol, assignment, measurement_at, "SELL", opening_high,
+        fill.at, opening_high, body * 100, body_threshold_pct, delay_label,
+        exit_quote.at, exit_quote.bid,
+        (exit_quote.bid / opening_high - Decimal("1")) * Decimal("100"),
+        (
+            "POST_FILL_SELL:R4=FAIL BODY_BELOW_THRESHOLD",
+            "POST_FILL_SELL:EXECUTION=PASS FIRST_EXECUTABLE_BID",
+        ),
+    )
+
+
+def run_settled_name_day(
+    *,
+    day: date,
+    symbol: str,
+    assignment: LookbackAssignment,
+    bars: Sequence[BarPoint],
+    indicators: Sequence[IndicatorSnapshot],
+    trades: Sequence[TradePoint],
+    quotes: Sequence[QuotePoint],
+    halts: Sequence[HaltWindow],
+    opening_high: Decimal | None,
+    body_threshold_pct: Decimal = DEFAULT_BODY_THRESHOLD_PCT,
+    body_delay: timedelta | None = None,
+    delay_label: str = DEFAULT_BODY_MEASUREMENT_DELAY,
+) -> SettledNameDay:
+    gate = evaluate_day_gate(
+        day=day,
+        symbol=symbol,
+        assignment=assignment,
+        bars=bars,
+        indicators=indicators,
+        opening_high=opening_high,
+    )
+    if gate.status != "ELIGIBLE" or opening_high is None:
+        return SettledNameDay(day, symbol, assignment, gate, (), None)
+
+    session_bars = [
+        (index, bar)
+        for index, bar in enumerate(bars)
+        if at_et(day, 9, 30) <= bar.at < at_et(day, 10, 0)
+    ]
+    live_rows: list[LiveDecision] = []
+    armed = False
+    interval_start: datetime | None = None
+    armed_from: LiveDecision | None = None
+    for index, bar in session_bars:
+        close_at = decision_at(bar)
+        if armed and interval_start is not None:
+            fill = first_break_while_armed(
+                opening_high=opening_high,
+                trades=trades,
+                start=interval_start,
+                end=min(close_at, at_et(day, 10, 0)),
+                halts=halts,
+            )
+            if fill is not None:
+                nbbo_known = quote_is_known_by(
+                    quotes,
+                    start=fill.at.replace(second=0, microsecond=0),
+                    at=fill.at,
+                )
+                live_rows.append(
+                    LiveDecision(
+                        day=day,
+                        symbol=symbol,
+                        assignment=assignment,
+                        evaluated_at=fill.at,
+                        action="FILL" if nbbo_known else "FILL_UNANSWERABLE",
+                        opening_high=opening_high,
+                        bar_at=fill.at.replace(second=0, microsecond=0),
+                        volume_ratio=armed_from.volume_ratio if armed_from else None,
+                        macd_green=armed_from.macd_green if armed_from else None,
+                        rsi_up=armed_from.rsi_up if armed_from else None,
+                        stoch_up=armed_from.stoch_up if armed_from else None,
+                        checks=(
+                            "LIVE:FILL=PASS BREAK_WHILE_ARMED_AT_OWN_PRICE",
+                            (
+                                "LIVE:NBBO=PASS KNOWN_NO_LATER_THAN_FILL"
+                                if nbbo_known
+                                else "LIVE:NBBO=UNANSWERABLE NO_QUOTE_BY_FILL"
+                            ),
+                        ),
+                        fill_at=fill.at,
+                        fill_price=opening_high if nbbo_known else None,
+                    )
+                )
+                if not nbbo_known:
+                    return SettledNameDay(day, symbol, assignment, gate, tuple(live_rows), None)
+                fill_bar = next(
+                    (item for _, item in session_bars if item.at == fill.at.replace(second=0, microsecond=0)),
+                    None,
+                )
+                if fill_bar is None:
+                    return SettledNameDay(day, symbol, assignment, gate, tuple(live_rows), None)
+                post_fill = evaluate_post_fill(
+                    day=day,
+                    symbol=symbol,
+                    assignment=assignment,
+                    opening_high=opening_high,
+                    fill=fill,
+                    fill_bar=fill_bar,
+                    trades=trades,
+                    quotes=quotes,
+                    halts=halts,
+                    body_threshold_pct=body_threshold_pct,
+                    body_delay=body_delay,
+                    delay_label=delay_label,
+                )
+                return SettledNameDay(day, symbol, assignment, gate, tuple(live_rows), post_fill)
+
+        if close_at >= at_et(day, 10, 0):
+            break
+        momentum = evaluate_live_momentum(
+            day=day,
+            symbol=symbol,
+            assignment=assignment,
+            opening_high=opening_high,
+            bar=bar,
+            current=indicators[index],
+        )
+        live_rows.append(momentum)
+        armed = momentum.action == "ARM"
+        armed_from = momentum if armed else None
+        interval_start = close_at
+    return SettledNameDay(day, symbol, assignment, gate, tuple(live_rows), None)
+
+
 def symbol_is_watched(windows: Sequence[WatchWindow], at: datetime, cutoff: datetime) -> bool:
     at_ms = int(at.timestamp() * 1000)
     cutoff_ms = int(cutoff.timestamp() * 1000)
@@ -498,6 +985,111 @@ def build_day_report(session_factory, settings, day: date) -> DayReport:
     )
 
 
+def load_quote_coverage(session_factory) -> QuoteCoverage:
+    with session_factory() as session:
+        first_at, last_at = session.execute(
+            text("SELECT min(event_ts),max(event_ts) FROM market_capture_quotes")
+        ).one()
+    return QuoteCoverage(
+        first_day=utc(first_at).astimezone(EASTERN).date() if first_at else None,
+        last_day=utc(last_at).astimezone(EASTERN).date() if last_at else None,
+    )
+
+
+def build_settled_day_report(
+    session_factory,
+    settings,
+    day: date,
+    *,
+    assignments: Sequence[LookbackAssignment],
+    body_threshold_pct: Decimal,
+    body_delay: timedelta | None,
+    delay_label: str,
+) -> SettledDayReport:
+    with session_factory() as session:
+        events = load_day_events(session, day)
+        cutoff = at_et(day, 9, 25)
+        windows_by_symbol = {
+            symbol: build_windows(rows)
+            for symbol, rows in events.items()
+            if any(
+                event_type == "CONFIRM" and at_ms <= int(cutoff.timestamp() * 1000)
+                for event_type, at_ms in rows
+            )
+        }
+        watched: set[str] = set()
+        no_level: set[str] = set()
+        legacy_rows: list[BreakRow] = []
+        runs: list[SettledNameDay] = []
+        for symbol, windows in sorted(windows_by_symbol.items()):
+            if not any(
+                window.start_ms <= int(cutoff.timestamp() * 1000)
+                and (
+                    window.end_ms is None
+                    or window.end_ms > int(at_et(day, 9, 30).timestamp() * 1000)
+                )
+                for window in windows
+            ):
+                continue
+            watched.add(symbol)
+            bars, trades, quotes = load_symbol_data(session, day, symbol)
+            opening = [bar for bar in bars if at_et(day, 9, 25) <= bar.at < at_et(day, 9, 30)]
+            opening_high = max((bar.high for bar in opening), default=None) if len(opening) == 5 else None
+            if opening_high is None:
+                no_level.add(symbol)
+            indicators = replay_indicators(settings, symbol, bars)
+            halts = confirmed_halts(trades, quotes)
+
+            if opening_high is not None:
+                accepted = 0
+                for number, index in enumerate(break_indices(bars, opening_high), start=1):
+                    bar = bars[index]
+                    if not symbol_is_watched(windows, decision_at(bar), cutoff):
+                        continue
+                    legacy = evaluate_break(
+                        day=day,
+                        symbol=symbol,
+                        break_number=number,
+                        bars=bars,
+                        index=index,
+                        indicators=indicators,
+                        opening_high=opening_high,
+                        halts=halts,
+                        quotes=quotes,
+                        accepted_before=accepted,
+                    )
+                    legacy_rows.append(legacy)
+                    if legacy.status == "PASS":
+                        accepted += 1
+
+            for assignment in assignments:
+                runs.append(
+                    run_settled_name_day(
+                        day=day,
+                        symbol=symbol,
+                        assignment=assignment,
+                        bars=bars,
+                        indicators=indicators,
+                        trades=trades,
+                        quotes=quotes,
+                        halts=halts,
+                        opening_high=opening_high,
+                        body_threshold_pct=body_threshold_pct,
+                        body_delay=body_delay,
+                        delay_label=delay_label,
+                    )
+                )
+    return SettledDayReport(
+        day=day,
+        watched_symbols=tuple(sorted(watched)),
+        no_level_symbols=tuple(sorted(no_level)),
+        legacy_rows=tuple(
+            sorted(legacy_rows, key=lambda row: (row.bar.at, row.symbol, row.break_number))
+        ),
+        runs=tuple(sorted(runs, key=lambda run: (run.assignment, run.symbol))),
+    )
+
+
 def trading_days(start: date, end: date) -> list[date]:
     days: list[date] = []
     current = start
@@ -594,12 +1186,231 @@ def write_csv(path: Path, reports: Sequence[DayReport]) -> None:
                 )
 
 
+def settled_decisions(run: SettledNameDay) -> list[GateDecision | LiveDecision | PostFillDecision]:
+    decisions: list[GateDecision | LiveDecision | PostFillDecision] = [run.gate, *run.live]
+    if run.post_fill is not None:
+        decisions.append(run.post_fill)
+    return decisions
+
+
+def render_settled(
+    reports: Sequence[SettledDayReport],
+    *,
+    coverage: QuoteCoverage,
+    requested_days: Sequence[date],
+    unreachable_days: Sequence[date],
+    assignments: Sequence[LookbackAssignment],
+    body_threshold_pct: Decimal,
+    delay_label: str,
+) -> str:
+    coverage_label = (
+        f"{coverage.first_day.isoformat()} through {coverage.last_day.isoformat()}"
+        if coverage.first_day is not None and coverage.last_day is not None
+        else "UNANSWERABLE"
+    )
+    legacy_rows = [row for report in reports for row in report.legacy_rows]
+    lines = [
+        DISCLOSURE,
+        f"Executable quote coverage: {coverage_label}; denominator {len(requested_days)} requested trading days. Unreachable: {', '.join(day.isoformat() for day in unreachable_days) if unreachable_days else 'none'}.",
+        "Kinds: DAY_GATE is evaluated once at the 09:30 bar close and is the only kind that can kill a name-day; LIVE arms or pulls and a pull never kills the day; POST_FILL_SELL evaluates only after a fill.",
+        "Timing: a bar labelled 09:30 becomes visible at 09:31:00 ET. A LIVE decision can affect only later prints. Fill = first non-halt print above the fixed 09:25-09:29 high while armed, at that fixed price, with positive NBBO known no later than the fill.",
+        "LIVE R3: MACD(12,26,9) histogram > 0; bar volume >= its prior-20-bar average; RSI(14,Wilder) rising; Fast Stoch K(10) rising. Candle colour and absolute RSI/Stoch floors are not LIVE checks.",
+        "Look-back assignment A (volume-baseline): the 09:30 DAY_GATE requires the prior-20 volume baseline to exist. Assignment B (absolute-levels): the 09:30 DAY_GATE requires RSI and Stoch K >= 50. Both are reported; neither is silently selected.",
+        f"POST_FILL_SELL parameters: body threshold {body_threshold_pct}% and measurement delay {delay_label}. Re-entry is disabled for this census after the first fill; that is a live-behaviour assumption, not an entry filter.",
+        f"Legacy comparison denominator: {len(legacy_rows)} break rows on the same loaded tape; legacy PASS {sum(row.status == 'PASS' for row in legacy_rows)}/{len(legacy_rows)}.",
+        "",
+        "| assignment | legacy PASS / break rows | gate eligible / name-days | fill candidates / eligible | priced / candidates | unanswerable / candidates | post-fill SELL / priced | HOLD / priced | coverage |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
+    ]
+    all_runs = [run for report in reports for run in report.runs]
+    for assignment in assignments:
+        runs = [run for run in all_runs if run.assignment == assignment]
+        eligible = [run for run in runs if run.gate.status == "ELIGIBLE"]
+        candidates = [
+            run
+            for run in eligible
+            if any(row.action in {"FILL", "FILL_UNANSWERABLE"} for row in run.live)
+        ]
+        fills = [run for run in candidates if any(row.action == "FILL" for row in run.live)]
+        unanswerable = [
+            run
+            for run in candidates
+            if any(row.action == "FILL_UNANSWERABLE" for row in run.live)
+        ]
+        sells = [run for run in fills if run.post_fill is not None and run.post_fill.action == "SELL"]
+        holds = [run for run in fills if run.post_fill is not None and run.post_fill.action == "HOLD"]
+        lines.append(
+            f"| {assignment} | {sum(row.status == 'PASS' for row in legacy_rows)}/{len(legacy_rows)} | "
+            f"{len(eligible)}/{len(runs)} | {len(candidates)}/{len(eligible)} | "
+            f"{len(fills)}/{len(candidates)} | {len(unanswerable)}/{len(candidates)} | "
+            f"{len(sells)}/{len(fills)} | {len(holds)}/{len(fills)} | {coverage_label} |"
+        )
+
+    lines.extend(["", "DAIC 2026-08-25 control, same tape:"])
+    daic_runs = [
+        run
+        for run in all_runs
+        if run.day == date(2026, 8, 25) and run.symbol == "DAIC"
+    ]
+    if not daic_runs:
+        lines.append(f"- UNANSWERABLE: DAIC is absent; denominator 0/{len(assignments)} assignments.")
+    for run in daic_runs:
+        fill = next((row for row in run.live if row.action == "FILL"), None)
+        post = run.post_fill
+        lines.append(
+            f"- {run.assignment}: gate {run.gate.status}; fill "
+            f"{clock(fill.fill_at) if fill and fill.fill_at else '-'} at {number(fill.fill_price, 4) if fill else '-'}; "
+            f"post-fill {post.action if post else '-'}; denominator 1 name-day."
+        )
+
+    for report in reports:
+        for assignment in assignments:
+            runs = [run for run in report.runs if run.assignment == assignment]
+            decisions = [decision for run in runs for decision in settled_decisions(run)]
+            lines.extend(
+                [
+                    "",
+                    f"{report.day.isoformat()} | assignment {assignment} | quote coverage {coverage_label} | denominator {len(decisions)} typed decisions across {len(runs)} watched name-days.",
+                    "",
+                    "| n | kind | sym | at ET | action | level | state | checks |",
+                    "|---:|---|---|---:|---|---:|---|---|",
+                ]
+            )
+            for index, decision in enumerate(decisions, start=1):
+                if isinstance(decision, GateDecision):
+                    action = decision.status
+                    level = number(decision.opening_high, 4)
+                    state = (
+                        f"ATR={decision.atr_state or '-'}@{number(decision.atr_level, 4)} "
+                        f"close={number(decision.close, 4)} red5={decision.red_0925_0929 if decision.red_0925_0929 is not None else '-'}"
+                    )
+                    at = decision.evaluated_at
+                    checks = decision.checks
+                elif isinstance(decision, LiveDecision):
+                    action = decision.action
+                    level = number(decision.opening_high, 4)
+                    state = (
+                        f"vol={number(decision.volume_ratio)} macd={decision.macd_green} "
+                        f"rsi_up={decision.rsi_up} stoch_up={decision.stoch_up}"
+                    )
+                    if decision.fill_price is not None:
+                        state += f" fill={number(decision.fill_price, 4)}"
+                    at = decision.evaluated_at
+                    checks = decision.checks
+                else:
+                    action = decision.action
+                    level = number(decision.opening_high, 4)
+                    state = (
+                        f"body={number(decision.body_pct)}% threshold={number(decision.threshold_pct)}% "
+                        f"exit={number(decision.exit_bid, 4)} return={number(decision.return_pct)}%"
+                    )
+                    at = decision.evaluated_at
+                    checks = decision.checks
+                lines.append(
+                    f"| {index}/{len(decisions)} | {decision.kind} | {decision.symbol} | "
+                    f"{clock(at)} | {action} | {level} | {state} | {'; '.join(checks)} |"
+                )
+    return "\n".join(lines)
+
+
+def write_settled_csv(path: Path, reports: Sequence[SettledDayReport]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = (
+        "day", "assignment", "kind", "symbol", "evaluated_at_et", "action",
+        "opening_high", "fill_at_et", "fill_price", "exit_at_et", "exit_bid",
+        "return_pct", "atr_state", "atr_level", "close", "red_0925_0929",
+        "volume_ratio", "macd_green", "rsi_up", "stoch_up", "body_pct",
+        "body_threshold_pct", "body_delay", "checks", "qualification",
+    )
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for report in reports:
+            for run in report.runs:
+                for decision in settled_decisions(run):
+                    row = {field: "" for field in fields}
+                    row.update(
+                        {
+                            "day": run.day,
+                            "assignment": run.assignment,
+                            "kind": decision.kind,
+                            "symbol": run.symbol,
+                            "evaluated_at_et": decision.evaluated_at.astimezone(EASTERN).isoformat(),
+                            "action": decision.status if isinstance(decision, GateDecision) else decision.action,
+                            "opening_high": decision.opening_high or "",
+                            "checks": "; ".join(decision.checks),
+                            "qualification": DISCLOSURE,
+                        }
+                    )
+                    if isinstance(decision, GateDecision):
+                        row.update(
+                            {
+                                "atr_state": decision.atr_state or "",
+                                "atr_level": decision.atr_level or "",
+                                "close": decision.close or "",
+                                "red_0925_0929": decision.red_0925_0929 if decision.red_0925_0929 is not None else "",
+                            }
+                        )
+                    elif isinstance(decision, LiveDecision):
+                        row.update(
+                            {
+                                "fill_at_et": decision.fill_at.astimezone(EASTERN).isoformat() if decision.fill_at else "",
+                                "fill_price": decision.fill_price or "",
+                                "volume_ratio": decision.volume_ratio or "",
+                                "macd_green": decision.macd_green if decision.macd_green is not None else "",
+                                "rsi_up": decision.rsi_up if decision.rsi_up is not None else "",
+                                "stoch_up": decision.stoch_up if decision.stoch_up is not None else "",
+                            }
+                        )
+                    else:
+                        row.update(
+                            {
+                                "fill_at_et": decision.fill_at.astimezone(EASTERN).isoformat(),
+                                "fill_price": decision.fill_price,
+                                "exit_at_et": decision.exit_at.astimezone(EASTERN).isoformat() if decision.exit_at else "",
+                                "exit_bid": decision.exit_bid or "",
+                                "return_pct": decision.return_pct if decision.return_pct is not None else "",
+                                "body_pct": decision.body_pct if decision.body_pct is not None else "",
+                                "body_threshold_pct": decision.threshold_pct,
+                                "body_delay": decision.delay_label,
+                            }
+                        )
+                    writer.writerow(row)
+
+
+def parse_body_delay(value: str) -> tuple[timedelta | None, str]:
+    if value == DEFAULT_BODY_MEASUREMENT_DELAY:
+        return None, value
+    try:
+        seconds = Decimal(value)
+    except Exception as exc:
+        raise argparse.ArgumentTypeError("body delay must be 'bar-close' or seconds") from exc
+    if seconds < 0:
+        raise argparse.ArgumentTypeError("body delay seconds must be non-negative")
+    return timedelta(seconds=float(seconds)), f"{seconds.normalize()}s-after-fill"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start-date", type=date.fromisoformat, required=True)
     parser.add_argument("--end-date", type=date.fromisoformat, required=True)
     parser.add_argument("--csv", type=Path)
-    parser.add_argument("--coverage-note", default="Coverage supplied by operator run.")
+    parser.add_argument(
+        "--lookback-assignment",
+        choices=("both", *LOOKBACK_ASSIGNMENTS),
+        default="both",
+    )
+    parser.add_argument(
+        "--body-threshold-pct",
+        type=Decimal,
+        default=DEFAULT_BODY_THRESHOLD_PCT,
+    )
+    parser.add_argument(
+        "--body-measurement-delay",
+        type=parse_body_delay,
+        default=(None, DEFAULT_BODY_MEASUREMENT_DELAY),
+        metavar="bar-close|SECONDS",
+    )
     return parser.parse_args()
 
 
@@ -607,12 +1418,51 @@ def main() -> int:
     args = parse_args()
     if args.start_date > args.end_date:
         raise SystemExit("start date must not be after end date")
+    if not Decimal("0") <= args.body_threshold_pct <= Decimal("100"):
+        raise SystemExit("body threshold must be between 0 and 100 percent")
     settings = get_settings()
     session_factory = build_session_factory(settings)
-    reports = [build_day_report(session_factory, settings, day) for day in trading_days(args.start_date, args.end_date)]
-    print(render(reports, coverage_note=args.coverage_note))
+    coverage = load_quote_coverage(session_factory)
+    requested_days = trading_days(args.start_date, args.end_date)
+    reachable_days = [
+        day
+        for day in requested_days
+        if coverage.first_day is not None
+        and coverage.last_day is not None
+        and coverage.first_day <= day <= coverage.last_day
+    ]
+    unreachable_days = [day for day in requested_days if day not in reachable_days]
+    assignments: tuple[LookbackAssignment, ...] = (
+        LOOKBACK_ASSIGNMENTS
+        if args.lookback_assignment == "both"
+        else (args.lookback_assignment,)
+    )
+    body_delay, delay_label = args.body_measurement_delay
+    reports = [
+        build_settled_day_report(
+            session_factory,
+            settings,
+            day,
+            assignments=assignments,
+            body_threshold_pct=args.body_threshold_pct,
+            body_delay=body_delay,
+            delay_label=delay_label,
+        )
+        for day in reachable_days
+    ]
+    print(
+        render_settled(
+            reports,
+            coverage=coverage,
+            requested_days=requested_days,
+            unreachable_days=unreachable_days,
+            assignments=assignments,
+            body_threshold_pct=args.body_threshold_pct,
+            delay_label=delay_label,
+        )
+    )
     if args.csv:
-        write_csv(args.csv, reports)
+        write_settled_csv(args.csv, reports)
     return 0
 
 
