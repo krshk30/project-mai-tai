@@ -267,6 +267,37 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 
 ### Open, defined, owned
 
+- **HDL1 — THE WEBULL PROTECT HANDLE LOSES A RACE WITH THE FILL COMMIT** *(owner: **codex-2** for
+  observation; built by `claude-1` under an operator role-reversal, reviewed and pinned by
+  `codex-2`. ✅ **BUILT, PINNED @ `a739f3bc`, MERGED `1ba88df3`, DEPLOYED 2026-09-07 14:31 ET.**
+  ⛔ **UNEXERCISED.** **NEXT ACTION: observe Tuesday's first attachment count.**)*.
+  **Measured before anything was built, per the operator's ruling:** 10 of **78** attachments
+  (**12.8%**) over the 7 POST-DEPLOY sessions never persisted their handle. Two of three candidates
+  died on evidence — the exception branch fired **ZERO** times, and in **10 of 10** a filled entry
+  row exists within **0–1 SECONDS** of the failure. ⇒ **A timing race**, not a swallowed error and
+  not a path that never attempts.
+  **Mechanism:** `_spawn_webull_protection` runs the attach OFF the fill path deliberately ("must
+  never stall a fill"); it beats the fill transaction's commit, `_find_oco_entry_order` finds no
+  FILLED row carrying the entry coid, and the handle is lost. ⭐ The function's own docstring
+  predicted it: an earlier fix required the exact coid to stop the handle landing on the WRONG row
+  and turned that into landing on NO row.
+  **Why it matters:** the pair still rests at the broker but its children become unaddressable after
+  a restart — a restart in that window leaves us blind to what guards a live position, and a second
+  pair may go on top.
+  **Fix:** bounded retry (5 attempts, 0.25/0.5/1/2s), each through `_run_db` so the session is
+  genuinely fresh — a retry on a reused session would re-read the same stale snapshot and could
+  never succeed. Plus a durable **critical** incident on exhaustion, because
+  `[WEBULL-PROTECT-HANDLE-LOST]` fired 1:1 with the failure and **nothing read it** — the same
+  silence as SIL1. Handles are **appended, never replaced**, and surfaced in the incident **title**
+  because `load_dashboard_data` discards the payload.
+  ⚠ **Scope is Webull-only BY DESIGN, not because Webull is broken:** one caller, and Schwab's
+  native OCO children hang off the entry coid.
+  ⚠ **12.8% is the rate we can SEE.** Rotated logs start 2026-08-19; nothing earlier survives.
+  ⭐ **Three review rounds, every finding `claude-1`'s** — a dedupe that erased the first handle
+  (and a control whose inputs could not distinguish it), a handle that never reached the operator
+  surface, and a census that crossed the feature boundary and understated the rate.
+  [[project_mai_tai_webull_mirror_born_broken]] [[feedback_a_check_that_cannot_come_out_false]]
+
 - **CONF3 — CONFIRMATION-EXIT FAN-OUT DEPLOYED; LIVE CLOSE UNEXERCISED**
   *(owner: **codex-2**; **OPEN ACCEPTANCE, live money — only a real fan-out close can prove it.**
   ✅ **BUILT, PINNED AND MERGED 2026-09-06 — PR #902, pinned @ `eb44cb35`, merged

@@ -62,25 +62,29 @@ close-out needs `codex-2`'s review before merge — the author does not review i
 
 ---
 
-# ✅ PRODUCTION — runtime code IN SYNC at `8b05ed42`
+# ✅ PRODUCTION — runtime code IN SYNC at `1ba88df3`
 
 | | |
 |---|---|
-| box (deployed) | **`8b05ed42520db71bd0eae78934bfe84f547c955b`** — re-derived from the box 2026-09-06 16:49 ET; checkout clean |
-| GitHub main at deploy | **`8b05ed42520db71bd0eae78934bfe84f547c955b`** — local `origin/main`, GitHub and VPS `origin/main` agreed before this docs-only follow-up |
-| **runtime split** | **none** after the deploy; OMS and control restarted only after the exact checkout and runtime refresh. Both post-restart gates proved fresh healthy process identities; the heartbeat schema does **not** independently attest the SHA. |
+| box (deployed) | **`1ba88df34c81e27f5bd2621d8b1999b924a1f339`** — re-derived FROM THE BOX 2026-09-07 14:32 ET; checkout clean |
+| GitHub main | **`1ba88df3`** — identical; three-way SHA verified by reading the box, not inferred |
+| **runtime split** | **none.** ⚠ The heartbeat schema does **not** independently attest the SHA, so the box read is the evidence. |
+| deploy 09-07 | **HDL1 `1ba88df3`** (PR #908) — operator GO, Labor Day, market shut all day; migrations OFF |
+| ⚠ deploy-gate note | `deploy_service.sh` refused on its **weekday+hour proxy, which has NO holiday calendar**. Its own `MAI_TAI_ALLOW_LIVE_RESTART=1` escape hatch was used; **the gate was NOT edited**. ⛔ A safety gate is not edited while you are trying to get through it. |
+| ⚠ restart scope | The `oms` target restarts **oms AND strategy** together. `claude-1`'s plan said "oms only" and was **wrong about the script** — harmless here (market shut, watchlist 0, clean start), but do not plan around "oms only" again. |
 | merges 09-04 | **seven**: #892 `b5ca941` · #893 `073a331` · #894 `1d7ec05` · #895 `b1769e5` · #896 `660bafa` · #897 `184cd8e` · #898 `c1e6357` — **these ARE on the box** |
-| merges 09-06 | #903 SIL1 `fd3e31dd` · #902 CONF3 `0b9d16b7` · #904 CONF3 test-only control `9a5a813c` · #901 docs `8b05ed42`; **all on the box** |
-| deploy 09-06 | **operator-authorized, after close; OMS + control only; migrations OFF** |
-| ⇒ consequence | CONF3 fan-out and SIL1 alarm are running, but both remain **UNEXERCISED**. Released-leg recovery is also **UNEXERCISED**. Deployed clean is not proven live. |
-| open PRs | **#906 only** — the close-out handoff PR. #905 merged as `ed7e62f4`; #901/#902/#903/#904 all merged. Exposure row below is the 16:49 ET post-deploy read |
-| exposure | **16:49 ET post-restart:** zero open managed rows; `live:schwab_1m_v2` and `live:orb` both flat with broker truth 6 seconds old; overview also reports zero pending intents and zero open virtual/account positions |
+| merges 09-06 | #903 SIL1 `fd3e31dd` · #902 CONF3 `0b9d16b7` · #904 control `9a5a813c` · #901 docs `8b05ed42` · #905 docs `ed7e62f4` |
+| merges 09-07 | #906 docs `193c4065` · #907 ORB settled-rules census `cd4cd8b8` · **#908 HDL1 `1ba88df3`** |
+| ⇒ consequence | ⛔ **FOUR items are running and NONE has ever fired**: CONF3's live close, SIL1's alarm, the released-leg recovery, and now **HDL1**. Deployed clean is not proven live. |
+| open PRs | **the close-out handoff PR only** |
+| exposure | **14:32 ET post-restart:** 0 non-zero account positions · 0 working orders · 0 open managed rows · 0 tracebacks in oms/strategy since the restart |
+| ⭐ ORB, settled | `/health` now reads **`execution_mode: paper`, `broker_route: none`** — the runtime proof that was unobtainable this morning. With the structural and mutation proof, ORB isolation is confirmed on **all three** levels. ⛔ The env still reads `live:orb`/`webull` and gives **no protection**; the isolation is entirely in code, keyed on `strategy_code`. |
 
 | service | pid | NRestarts | | service | pid | NRestarts |
 |---|---|---|---|---|---|---|
-| oms | **3508410** | 0 | | schwab-1m-v2 | **3135615** | 0 |
-| strategy | 3109745 | 0 | | market-data | 2202865 | 0 |
-| control | **3508437** | 0 | | reconciler | 2202771 | 0 |
+| oms | **3700368** | 0 | | schwab-1m-v2 | **3135615** *(untouched)* | 0 |
+| strategy | **3700379** | 0 | | market-data | 2202865 | 0 |
+| control | **3683699** *(restarted 13:12 ET by the `cd4cd8b` deploy)* | 0 | | reconciler | 2202771 | 0 |
 | **orb (NEW)** | 3110306 | 0 | | market-capture | 2202817 | 0 |
 
 ✅ **`schwab-1m-v2` was NOT restarted by this deploy.** PID stayed `3135615`, and its running
@@ -235,10 +239,12 @@ env var anyway, so either path ends with the probe on.
 | **WRAP1** — two triggers, one shared behaviour. 07-13 matches 07-31/08-04; 09-03 is the outlier. ROOT1 = 1 pinned + 2 consistent + 2 unexplained, **supported not proven** | **CONF3** — fan-out is running; the **live close has never fired** post-#897 |
 | **CONF2** — no evaluation row at 12:18; it was never a decision. #897 is the whole answer | **SIL1** — alarm is running; **no episode has reached 8**. `live:orb` is deliberately **UNSET/uncovered** |
 | **CONF3's root cause** — the reprotect was **0-for-8** because the recovery only fails when the broker is erroring | **Released-leg recovery** — replaces that 0-for-8 path and is itself **UNEXERCISED** |
+| **HDL1's cause** — a timing race, decided by evidence: the exception branch fired **0** times and in **10 of 10** the filled entry row exists within **0–1s** | **HDL1** — the bounded retry and its incident are running; **neither has fired**. The race needs the attach to beat the fill commit, ~1 in 8 attachments |
+| **ORB isolation** — proven structurally, by mutation, and at runtime (`paper` / `none`) | |
 
-⇒ The left column is finished. **The right column is three open acceptances, not three wins.**
+⇒ The left column is finished. **The right column is FOUR open acceptances, not four wins.**
 
-# ▶ ACCEPTANCE FOR TUESDAY — PRE-REGISTERED 2026-09-06, BEFORE THE SESSION
+# ▶ ACCEPTANCE FOR TUESDAY — PRE-REGISTERED 2026-09-06 (HDL1 added 09-07), BEFORE THE SESSION
 
 ⛔ **Written down now so a quiet day cannot be read as a pass.** Each has a denominator and a stated
 non-result. [[feedback_pre_registration_stopped_me]]
@@ -260,6 +266,17 @@ reads as *no opportunity* rather than *it works*.
 `symbol visible on the operator's screen`.
 ⛔ **All three, not just the page count** — on-screen visibility during the stand-down IS the
 requirement. ⛔ And `live:orb` stays **UNCOVERED**; its silence is not evidence of anything.
+
+**4 · HDL1 — added 2026-09-07 after the deploy.** `Webull attachments this session` / of those,
+`handle persisted on the FIRST attempt` / `persisted on a LATER attempt` / `LOST after the bound`.
+⛔ **Non-result:** the race needs the attach to beat the fill commit — about **1 in 8** attachments
+on the measured rate — so a session with **zero** later-attempt rescues proves **nothing** about the
+retry. ⇒ **Report the attachment count alongside the result**, so "it did not fire" reads as *few
+attachments* or *no race*, never as *the retry works*. The signal that it IS working is
+`[WEBULL-PROTECT-HANDLE-PERSISTED]` carrying an `attempt=N/5` **greater than 1**; the signal it is
+NOT enough is `[WEBULL-PROTECT-HANDLE-INCIDENT]`, which also puts the symbol and its base coid on
+the operator panel. ⚠ The measured rate is **10/78 = 12.8%** and that is the rate we can SEE —
+rotated logs start 2026-08-19.
 
 **One question to answer Tuesday, not to chase:** the `ServerException` density on `live:orb` per
 session. One number, from data already being pulled, and it is the input that makes item 2 readable.
