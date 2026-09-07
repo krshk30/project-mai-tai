@@ -3389,7 +3389,10 @@ class SchwabV2BotService:
             timestamp_ms = int(value_ms or 0)
         except (TypeError, ValueError, OverflowError):
             return None
-        if not 0 < timestamp_ms < 4_102_444_800_000:  # 2100-01-01 UTC
+        if not 1_577_836_800_000 <= timestamp_ms < 4_102_444_800_000:
+            # Plausible millisecond epochs only: 2020-01-01 <= value < 2100-01-01.
+            # A seconds-valued timestamp converts cleanly to 1970 and would otherwise make
+            # every current quote look like a multi-decade print gap.
             return None
         try:
             return datetime.fromtimestamp(timestamp_ms / 1000.0, UTC)

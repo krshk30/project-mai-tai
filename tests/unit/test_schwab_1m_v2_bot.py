@@ -227,21 +227,29 @@ async def test_out_of_range_halt_timestamp_never_suppresses_strategy_quote(
     assert bot._v2_data_health_snapshot()["halt_monitor"]["denominator"] == 0
 
 
-def test_halt_observer_rejects_out_of_range_timestamp_without_raising() -> None:
+def test_halt_observer_rejects_seconds_valued_timestamp_by_plausibility_bound() -> None:
     bot = _enabled_service()
-    quote = Quote(
-        "AAPL",
-        10.0,
-        10.1,
-        10.05,
-        1_780_000_300_000,
-        100,
-        1_780_000_000_000_000_000,
-    )
+    bot._watchlist = {"AAPL"}
+    quote_time_ms = 1_780_000_300_000
+    seconds_valued_trade_time = 1_780_000_000
+    for offset in range(3):
+        bot._observe_halt_from_quote(
+            "AAPL",
+            Quote(
+                "AAPL",
+                10.0,
+                10.1,
+                10.05,
+                quote_time_ms + offset * 1_000,
+                100,
+                seconds_valued_trade_time + offset,
+            ),
+        )
 
-    bot._observe_halt_from_quote("AAPL", quote)
-
-    assert bot._v2_data_health_snapshot()["halt_monitor"]["denominator"] == 0
+    health = bot._v2_data_health_snapshot()
+    assert health["halted_symbols"] == []
+    assert health["halt_monitor"]["status"] == "UNEXERCISED"
+    assert health["halt_monitor"]["denominator"] == 0
 
 
 @pytest.mark.asyncio
@@ -286,13 +294,22 @@ async def test_v2_observes_confirmed_halt_without_gating_strategy_quote(monkeypa
     bot = _enabled_service()
     bot._watchlist = {"AAPL"}
     bot._data_health["status"] = "healthy"
-    strategy_quotes: list[int] = []
 
-    def on_quote(_symbol, quote):  # noqa: ANN001
-        strategy_quotes.append(quote.quote_time_ms)
+    class _StrategySpy:
+        def __init__(self) -> None:
+            self.quote_times: list[int] = []
+
+        def on_quote(self, _symbol, quote):  # noqa: ANN001
+            self.quote_times.append(quote.quote_time_ms)
+            return None
+
+    async def _no_emit(*_args, **_kwargs) -> None:
         return None
 
-    monkeypatch.setattr(bot.strategy, "on_quote", on_quote)
+    strategy = _StrategySpy()
+    bot.strategy = strategy  # type: ignore[assignment]
+    monkeypatch.setattr(bot, "_maybe_emit", _no_emit)
+    monkeypatch.setattr(bot, "_emit_webull_fanout_legs", _no_emit)
     base = 1_780_000_000_000
     await bot._handle_quote(
         "AAPL",
@@ -304,7 +321,7 @@ async def test_v2_observes_confirmed_halt_without_gating_strategy_quote(monkeypa
     )
 
     health = bot._v2_data_health_snapshot()
-    assert strategy_quotes == [base + 1_000, base + 285_000], (
+    assert strategy.quote_times == [base + 1_000, base + 285_000], (
         "HALT1 is observable only; a confirmed halt must not gate the strategy"
     )
     assert health["status"] == "degraded"
