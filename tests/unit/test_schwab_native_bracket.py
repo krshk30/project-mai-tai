@@ -379,6 +379,69 @@ async def test_confirmation_release_rereads_after_oco_sibling_cancel_returns_400
 
 
 @pytest.mark.asyncio
+async def test_confirmation_release_refuses_childless_working_oco_wrapper(monkeypatch) -> None:
+    """A live OCO wrapper with omitted children is unknown, not released."""
+    adapter = _adapter(bracket_enabled=True)
+    root = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "orderId": "oco-1",
+                "status": "WORKING",
+                "orderStrategyType": "OCO",
+                "childOrderStrategies": [],
+            }
+        ],
+    }
+    deletes: list[str] = []
+
+    async def request(method, path, body=None):
+        deletes.append(path)
+        return 200, {}, {}
+
+    async def fetch(*_args):
+        return root
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    result = await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+
+    assert result == "unanswerable"
+    assert deletes == [], "an incomplete live wrapper must fail before broker writes"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_release_accepts_childless_terminal_oco_wrapper(monkeypatch) -> None:
+    adapter = _adapter(bracket_enabled=True)
+    root = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "orderId": "oco-1",
+                "status": "CANCELED",
+                "orderStrategyType": "OCO",
+                "childOrderStrategies": [],
+            }
+        ],
+    }
+
+    async def fetch(*_args):
+        return root
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+
+    assert (
+        await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+        == "released"
+    )
+
+
+@pytest.mark.asyncio
 async def test_confirmation_release_still_refuses_when_reread_finds_a_working_leg(
     monkeypatch,
 ) -> None:

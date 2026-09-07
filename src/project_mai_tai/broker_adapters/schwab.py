@@ -320,6 +320,15 @@ class SchwabBrokerAdapter:
                 leg = legs[0] if legs else {}
                 instruction = str(leg.get("instruction") or "").upper()
                 status = str(item.get("status") or "").upper()
+                if (
+                    not legs
+                    and bool(status)
+                    and status
+                    not in self.CANCELLED_STATUSES | self.REJECTED_STATUSES | {"FILLED"}
+                ):
+                    # An OCO wrapper can remain live without carrying its own leg.
+                    # Missing children are not proof that its sell protection is gone.
+                    unsafe = True
                 if instruction == "SELL":
                     if status == "FILLED":
                         filled = True
