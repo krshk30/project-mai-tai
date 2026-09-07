@@ -469,6 +469,26 @@ class OmsRiskService:
     # across 80 retained episodes, so no alarm threshold below the unchanged ceiling of 20 is
     # measured or defensible. Do not infer Webull coverage from SIL1 existing.
     _V2_EXIT_REJECT_ALARM_THRESHOLD_SCHWAB = 8
+    # ⛔⭐⭐ HDL1 (2026-09-07). THE WEBULL PROTECT HANDLE RACES THE FILL COMMIT AND LOSES.
+    # `_spawn_webull_protection` runs the attach OFF the fill path on purpose — it retries with
+    # sleeps and must never stall a fill. That background task then races the outer fill
+    # transaction's commit, and when it wins, `_find_oco_entry_order` finds no FILLED row carrying
+    # the entry coid and the handle is silently lost. The pair rests at the broker but its children
+    # become unaddressable after a restart, so a restart in that window leaves us blind to what is
+    # guarding a live position — and we may place a second pair on top.
+    # ⭐ MEASURED, not assumed: 10 of 78 attachments (12.8%) over the 7 POST-DEPLOY sessions lost
+    # the handle, and in 10 of 10 the filled entry row exists within 0-1 SECONDS of the failure.
+    # ⛔ THE DENOMINATOR IS 78, NOT 86. Handle persistence landed in `581186f` on 2026-08-25 20:22
+    # ET; the 8 earlier attachments that day carry no `handle_persisted=` and could never have
+    # exercised this failure. Counting them understated the rate. Split a census at the feature
+    # merge, always. Every
+    # one took the "no filled entry order accepted the handle" path; the exception path fired ZERO
+    # times. That is a timing race, not a swallowed error and not a path that never attempts.
+    # ⛔ The retry MUST use a FRESH session per attempt — `_run_db` opens one inside its worker
+    # thread, so a retry genuinely re-reads rather than re-querying a stale snapshot.
+    # ⚠ 12.8% is the rate we can SEE: rotated logs start 2026-08-19 and nothing before it survives.
+    _WEBULL_HANDLE_PERSIST_ATTEMPTS = 5
+    _WEBULL_HANDLE_PERSIST_BACKOFF_SECONDS = (0.25, 0.5, 1.0, 2.0)
     # ⛔⭐⭐ WHAT COUNTS AS "THE CLOSE PLACED" (#885 retrospective finding 2, 2026-09-04).
     # `not rejected` is NOT evidence of progress: `_emit_v2_managed_sell` returns [] when the
     # strategy/broker-account lookup misses, and an EMPTY list has no rejected event in it, so the
@@ -4977,40 +4997,176 @@ class OmsRiskService:
         entry_client_order_id: str = "",
     ) -> bool:
         """Persist the only handle that can address broker-created Webull exit children."""
-        try:
-            def _write(session: Session) -> bool:
-                # Use the fill event's exact entry id. Selecting merely "newest filled buy" can
-                # write the handle onto yesterday's row if this background task beats the outer
-                # fill transaction's commit.
-                entry = self._find_oco_entry_order(
-                    session, broker_account_name, symbol,
-                    client_order_id=entry_client_order_id,
-                )
-                if entry is None:
-                    return False
-                payload = dict(entry.payload or {})
-                payload["webull_protect_base_client_order_id"] = base_client_order_id
-                entry.payload = payload
-                session.flush()
-                return True
+        def _write(session: Session) -> bool:
+            # Use the fill event's exact entry id. Selecting merely "newest filled buy" can
+            # write the handle onto yesterday's row if this background task beats the outer
+            # fill transaction's commit.
+            entry = self._find_oco_entry_order(
+                session, broker_account_name, symbol,
+                client_order_id=entry_client_order_id,
+            )
+            if entry is None:
+                return False
+            payload = dict(entry.payload or {})
+            payload["webull_protect_base_client_order_id"] = base_client_order_id
+            entry.payload = payload
+            session.flush()
+            return True
 
-            persisted = bool(await self._run_db(_write, commit=True))
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - protection already exists; surface lost handle loudly
+        attempts = max(1, int(self._WEBULL_HANDLE_PERSIST_ATTEMPTS))
+        backoff = self._WEBULL_HANDLE_PERSIST_BACKOFF_SECONDS
+        last_error = False
+        for attempt in range(1, attempts + 1):
+            try:
+                persisted = bool(await self._run_db(_write, commit=True))
+                last_error = False
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - protection already exists; never break the attach
+                persisted = False
+                last_error = True
+                self.logger.warning(
+                    "[WEBULL-PROTECT-HANDLE-RETRY] %s %s base=%s attempt %d/%d raised",
+                    symbol, broker_account_name, base_client_order_id, attempt, attempts,
+                    exc_info=True,
+                )
+            if persisted:
+                if attempt > 1:
+                    self.logger.info(
+                        "[WEBULL-PROTECT-HANDLE-PERSISTED] %s %s base=%s handle_persisted=1 "
+                        "attempt=%d/%d — the entry row became visible after the fill commit; "
+                        "without the retry this handle would have been lost",
+                        symbol, broker_account_name, base_client_order_id, attempt, attempts,
+                    )
+                return True
+            if attempt < attempts:
+                await asyncio.sleep(backoff[min(attempt - 1, len(backoff) - 1)])
+        if last_error:
             self.logger.warning(
-                "[WEBULL-PROTECT-HANDLE-LOST] %s %s base=%s handle_persisted=0 — the pair is "
-                "resting but its child ids will be unaddressable after restart",
-                symbol, broker_account_name, base_client_order_id, exc_info=True,
+                "[WEBULL-PROTECT-HANDLE-LOST] %s %s base=%s handle_persisted=0 attempts=%d — the "
+                "pair is resting but its child ids will be unaddressable after restart",
+                symbol, broker_account_name, base_client_order_id, attempts,
             )
+        else:
+            self.logger.warning(
+                "[WEBULL-PROTECT-HANDLE-LOST] %s %s base=%s handle_persisted=0 attempts=%d — no "
+                "filled entry order accepted the handle; child/time/price attribution is not "
+                "restart-safe",
+                symbol, broker_account_name, base_client_order_id, attempts,
+            )
+        await self._raise_webull_handle_lost_incident(
+            broker_account_name, symbol, base_client_order_id, attempts=attempts,
+        )
+        return False
+
+    @staticmethod
+    def _webull_handle_lost_title(acct: str, symbol: str, handles: list[str]) -> str:
+        """⛔⭐ THE HANDLE MUST BE IN THE TITLE, because the title is all the operator ever sees.
+        `load_dashboard_data` serialises incidents as service/severity/title/status/opened_at and
+        DISCARDS the payload, so a base coid stored only in the payload cannot reach the panel —
+        and this incident's whole instruction is a manual action that needs that coid. Bounded to
+        the column's 255 chars, oldest first: the oldest unresolved pair is the one most likely to
+        have been forgotten."""
+        head = f"HDL1: {symbol} on {acct} — {len(handles)} unaddressable Webull pair(s): "
+        shown: list[str] = []
+        for handle in handles:
+            candidate = head + ", ".join([*shown, handle])
+            if len(candidate) > 200:
+                break
+            shown.append(handle)
+        title = head + ", ".join(shown) if shown else head.rstrip(": ")
+        remaining = len(handles) - len(shown)
+        if remaining > 0:
+            title = f"{title} (+{remaining} more in payload)"
+        return title[:255]
+
+    @staticmethod
+    def _webull_handle_lost_incident(
+        session: Session, acct: str, symbol: str
+    ) -> SystemIncident | None:
+        incidents = session.scalars(
+            select(SystemIncident).where(
+                SystemIncident.service_name == SERVICE_NAME,
+                SystemIncident.status != "closed",
+            )
+        ).all()
+        return next(
+            (
+                incident
+                for incident in incidents
+                if isinstance(incident.payload, dict)
+                and incident.payload.get("source") == "oms_webull_protect_handle_lost"
+                and incident.payload.get("broker_account_name") == acct
+                and incident.payload.get("symbol") == symbol
+            ),
+            None,
+        )
+
+    async def _raise_webull_handle_lost_incident(
+        self, acct: str, symbol: str, base_client_order_id: str, *, attempts: int
+    ) -> None:
+        """HDL1 must be VISIBLE. `[WEBULL-PROTECT-HANDLE-LOST]` already fired 1:1 with the failure
+        and nothing read it — the same silence as SIL1. A resting pair whose children cannot be
+        addressed is a live position we cannot prove we are guarding, so it earns an incident."""
+        def _write(session: Session) -> bool:
+            incident = self._webull_handle_lost_incident(session, acct, symbol)
+            existing = incident.payload if incident is not None and isinstance(incident.payload, dict) else {}
+            # ⛔⭐ APPEND, NEVER REPLACE. A second loss on the same (account, symbol) used to
+            # overwrite the payload, erasing the FIRST pair's base coid — the only handle that
+            # could address it. Dedupe must collapse the ROW, never the evidence: the stated
+            # hazard of this defect is a second pair landing on top of an unaddressable first one,
+            # so losing the first handle destroys exactly what the incident exists to preserve.
+            handles: list[str] = [
+                str(item) for item in (existing.get("base_client_order_ids") or []) if str(item)
+            ]
+            legacy = str(existing.get("base_client_order_id") or "")
+            if legacy and legacy not in handles:
+                handles.append(legacy)
+            if base_client_order_id and base_client_order_id not in handles:
+                handles.append(base_client_order_id)
+            payload = {
+                "source": "oms_webull_protect_handle_lost",
+                "broker_account_name": acct,
+                "symbol": symbol,
+                "base_client_order_ids": handles,
+                "base_client_order_id": handles[0] if handles else "",
+                "loss_count": len(handles),
+                "persist_attempts": attempts,
+            }
+            title = self._webull_handle_lost_title(acct, symbol, handles)
+            if incident is None:
+                session.add(
+                    SystemIncident(
+                        service_name=SERVICE_NAME,
+                        severity="critical",
+                        title=title,
+                        status="open",
+                        payload=payload,
+                        opened_at=utcnow(),
+                    )
+                )
+                return True
+            incident.payload = payload
+            incident.title = title
             return False
-        if not persisted:
-            self.logger.warning(
-                "[WEBULL-PROTECT-HANDLE-LOST] %s %s base=%s handle_persisted=0 — no filled entry "
-                "order accepted the handle; child/time/price attribution is not restart-safe",
-                symbol, broker_account_name, base_client_order_id,
+
+        try:
+            created = bool(await self._run_db(_write, commit=True))
+        except Exception:  # noqa: BLE001 - an incident write must never break the attach path
+            self.logger.exception(
+                "[WEBULL-PROTECT-HANDLE-INCIDENT-FAILED] %s %s base=%s — the lost handle was NOT "
+                "escalated; the resting pair is unchanged",
+                symbol, acct, base_client_order_id,
             )
-        return persisted
+            return
+        if created:
+            self.logger.error(
+                "[WEBULL-PROTECT-HANDLE-INCIDENT] %s %s base=%s attempts=%d — a protective pair is "
+                "resting at the broker whose children we can no longer address. A restart now "
+                "leaves this position's guard invisible to us and a second pair may be placed on "
+                "top. OPERATOR: check the position by hand.",
+                symbol, acct, base_client_order_id, attempts,
+            )
 
     async def _fetch_oco_exit_detail(
         self, acct: str, symbol: str, base_coid: str, *,
