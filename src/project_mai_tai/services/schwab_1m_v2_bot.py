@@ -79,6 +79,7 @@ from project_mai_tai.market_data.schwab_v2_loop_health import (
     run_resilient_loop,
     sleep_or_stop,
 )
+from project_mai_tai.market_halts import LiveHaltTracker
 from project_mai_tai.market_data.schwab_v2_rest_client import (
     ChartBar,
     Quote,
@@ -397,7 +398,13 @@ class SchwabV2BotService:
             "status": "starting",
             "halted_symbols": [],
             "warning_symbols": [],
+            "reasons": {},
+            "since": {},
         }
+        self._halt_trackers: dict[str, LiveHaltTracker] = {}
+        self._halt_last_quote_at_ms: dict[str, int] = {}
+        self._halt_quote_observations = 0
+        self._halt_confirmations = 0
         # --- SPOF Workstream A (v2): loop-resilience state ---
         # Shared with the REST client so bar/quote-loop failures surface in this
         # service's heartbeat. See docs/schwab-1m-v2-loop-resilience-design.md.
@@ -968,7 +975,7 @@ class SchwabV2BotService:
         await self._release_seeded_boot_warmup_on_timeout()
         self._cw_boot_hold_check()
         reportable = await asyncio.to_thread(self._fetch_reportable_state)
-        data_health = dict(self._data_health)
+        data_health = self._v2_data_health_snapshot()
         data_health["confirmation_exit"] = {
             "enabled": self._confirmation_exit_enabled(),
             "status": "MEASURED" if self._confirmation_evaluated else "UNEXERCISED",
@@ -2320,6 +2327,18 @@ class SchwabV2BotService:
         ⛔ EXIT-ONLY — see docs/design/held-symbol-exit-coverage.md §2.
         """
         desired = self._subscription_symbols()
+        if hasattr(self, "_halt_trackers"):
+            self._halt_trackers = {
+                symbol: tracker
+                for symbol, tracker in self._halt_trackers.items()
+                if symbol in desired
+            }
+            self._halt_last_quote_at_ms = {
+                symbol: observed_at
+                for symbol, observed_at in self._halt_last_quote_at_ms.items()
+                if symbol in desired
+            }
+            self._sync_halt_data_health()
         if self.rest_client is not None:
             self.rest_client.set_desired_symbols(desired)
         if self.streamer is not None:
@@ -3284,6 +3303,78 @@ class SchwabV2BotService:
                         reason="webull_direct_redis_emit_failed",
                     )
 
+    def _sync_halt_data_health(self) -> None:
+        active = self._subscription_symbols()
+        confirmed = {
+            symbol: tracker
+            for symbol, tracker in self._halt_trackers.items()
+            if symbol in active and tracker.confirmed
+        }
+        self._data_health["halted_symbols"] = sorted(confirmed)
+        self._data_health["reasons"] = {
+            symbol: (
+                "Schwab print gap confirmed: no trade print for at least 285s "
+                f"while quotes continued (quote_updates={tracker.quote_updates})"
+            )
+            for symbol, tracker in confirmed.items()
+        }
+        self._data_health["since"] = {
+            symbol: tracker.last_print_at.isoformat()
+            for symbol, tracker in confirmed.items()
+            if tracker.last_print_at is not None
+        }
+        self._data_health["halt_monitor"] = {
+            "status": "MEASURED" if self._halt_quote_observations else "UNEXERCISED",
+            "evaluated": self._halt_quote_observations,
+            "confirmed": self._halt_confirmations,
+            "denominator": self._halt_quote_observations,
+            "current": len(confirmed),
+        }
+
+    def _v2_data_health_snapshot(self) -> dict[str, object]:
+        self._sync_halt_data_health()
+        snapshot = dict(self._data_health)
+        if snapshot.get("halted_symbols") and snapshot.get("status") == "healthy":
+            snapshot["status"] = "degraded"
+        return snapshot
+
+    def _observe_halt_from_quote(self, symbol: str, quote: Quote) -> None:
+        normalized = str(symbol).upper()
+        tracker = self._halt_trackers.setdefault(normalized, LiveHaltTracker())
+        trade_time_ms = int(quote.trade_time_ms or 0)
+        if trade_time_ms:
+            reopened = tracker.observe_print(
+                datetime.fromtimestamp(trade_time_ms / 1000.0, UTC)
+            )
+            if reopened is not None:
+                logger.info(
+                    "[V2-HALT-RECOVERED] symbol=%s last_print_at=%s reopen_print_at=%s "
+                    "quote_updates=%d decision_gate=off",
+                    normalized,
+                    reopened.last_print_at.isoformat(),
+                    reopened.reopen_print_at.isoformat(),
+                    reopened.quote_updates,
+                )
+
+        quote_time_ms = int(quote.quote_time_ms or 0)
+        if quote_time_ms > self._halt_last_quote_at_ms.get(normalized, 0):
+            self._halt_last_quote_at_ms[normalized] = quote_time_ms
+            observation = tracker.observe_quote(
+                datetime.fromtimestamp(quote_time_ms / 1000.0, UTC)
+            )
+            if observation.last_print_at is not None:
+                self._halt_quote_observations += 1
+            if observation.newly_confirmed:
+                self._halt_confirmations += 1
+                logger.warning(
+                    "[V2-HALT-CONFIRMED] symbol=%s last_print_at=%s quote_updates=%d "
+                    "threshold_seconds=285 decision_gate=off",
+                    normalized,
+                    observation.last_print_at.isoformat(),
+                    observation.quote_updates,
+                )
+        self._sync_halt_data_health()
+
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
         now = datetime.now(UTC)
         self._last_tick_at[symbol] = _format_eastern(now)
@@ -3292,6 +3383,7 @@ class SchwabV2BotService:
         # stall is a real fault vs a quiet/closed market.
         self._last_quote_at_ms[symbol] = int(now.timestamp() * 1000)
         self._last_quote_by_symbol[str(symbol).upper()] = quote
+        self._observe_halt_from_quote(symbol, quote)
         try:
             draft = self.strategy.on_quote(symbol, quote)
         except Exception:

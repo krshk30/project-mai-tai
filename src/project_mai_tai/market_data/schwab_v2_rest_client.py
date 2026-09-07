@@ -64,6 +64,7 @@ class Quote:
     last_price: float
     quote_time_ms: int
     cumulative_volume: int | None = None
+    trade_time_ms: int = 0
 
 
 class SchwabV2RestClient:
@@ -383,6 +384,11 @@ class SchwabV2RestClient:
                         last_price=float(quote.get("lastPrice", 0.0) or 0.0),
                         quote_time_ms=int(quote.get("quoteTime", 0) or 0),
                         cumulative_volume=int(quote.get("totalVolume", 0) or 0),
+                        trade_time_ms=int(
+                            quote.get("tradeTime")
+                            or quote.get("tradeTimeInLong")
+                            or 0
+                        ),
                     )
                 )
             except (TypeError, ValueError):

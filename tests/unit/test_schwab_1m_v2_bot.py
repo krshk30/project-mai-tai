@@ -142,6 +142,102 @@ def test_empty_payload_increments_streak_and_resets_on_data() -> None:
     assert client.max_consecutive_empty() == 0
 
 
+def test_quote_payload_preserves_trade_timestamp_for_halt_observation() -> None:
+    client = _rest_client()
+    client._authorized_get = lambda url: {  # type: ignore[method-assign]
+        "AAPL": {
+            "quote": {
+                "bidPrice": 10.0,
+                "askPrice": 10.1,
+                "lastPrice": 10.05,
+                "quoteTime": 1_780_000_300_000,
+                "tradeTime": 1_780_000_000_000,
+                "totalVolume": 100,
+            }
+        }
+    }
+
+    quotes = client._fetch_quotes(["AAPL"])
+
+    assert quotes[0].trade_time_ms == 1_780_000_000_000
+
+
+def test_v2_halt_monitor_with_no_eligible_quotes_is_unexercised() -> None:
+    bot = _enabled_service()
+
+    health = bot._v2_data_health_snapshot()
+
+    assert health["halt_monitor"] == {
+        "status": "UNEXERCISED",
+        "evaluated": 0,
+        "confirmed": 0,
+        "denominator": 0,
+        "current": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_v2_observes_confirmed_halt_without_gating_strategy_quote(monkeypatch) -> None:
+    bot = _enabled_service()
+    bot._watchlist = {"AAPL"}
+    bot._data_health["status"] = "healthy"
+    strategy_quotes: list[int] = []
+
+    def on_quote(_symbol, quote):  # noqa: ANN001
+        strategy_quotes.append(quote.quote_time_ms)
+        return None
+
+    monkeypatch.setattr(bot.strategy, "on_quote", on_quote)
+    base = 1_780_000_000_000
+    await bot._handle_quote(
+        "AAPL",
+        Quote("AAPL", 10.0, 10.1, 10.05, base + 1_000, 100, base),
+    )
+    await bot._handle_quote(
+        "AAPL",
+        Quote("AAPL", 9.9, 10.0, 9.95, base + 285_000, 100, base),
+    )
+
+    health = bot._v2_data_health_snapshot()
+    assert strategy_quotes == [base + 1_000, base + 285_000], (
+        "HALT1 is observable only; a confirmed halt must not gate the strategy"
+    )
+    assert health["status"] == "degraded"
+    assert health["halted_symbols"] == ["AAPL"]
+    assert health["halt_monitor"] == {
+        "status": "MEASURED",
+        "evaluated": 2,
+        "confirmed": 1,
+        "denominator": 2,
+        "current": 1,
+    }
+    assert "285s" in health["reasons"]["AAPL"]
+
+    await bot._handle_quote(
+        "AAPL",
+        Quote("AAPL", 10.1, 10.2, 10.15, base + 286_500, 110, base + 286_000),
+    )
+    recovered = bot._v2_data_health_snapshot()
+    assert recovered["halted_symbols"] == []
+
+
+@pytest.mark.asyncio
+async def test_v2_halt_observer_counts_quote_updates_not_poll_repeats(monkeypatch) -> None:
+    bot = _enabled_service()
+    bot._watchlist = {"AAPL"}
+    monkeypatch.setattr(bot.strategy, "on_quote", lambda *_args: None)
+    base = 1_780_000_000_000
+    quote = Quote("AAPL", 10.0, 10.1, 10.05, base + 1_000, 100, base)
+
+    await bot._handle_quote("AAPL", quote)
+    for _ in range(3):
+        await bot._handle_quote("AAPL", quote)
+
+    health = bot._v2_data_health_snapshot()
+    assert health["halted_symbols"] == []
+    assert health["halt_monitor"]["denominator"] == 1
+
+
 # --- market-session helper -------------------------------------------------
 
 
