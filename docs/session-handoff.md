@@ -3,12 +3,26 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
+> ⛔⭐⭐ **PAPER vs LIVE — READ THIS BEFORE QUOTING ANY EXIT NUMBERS. Corrected 2026-09-06.**
+> **`+5%` target · `−8%` stop · reclaim OFF · one trade per segment are PAPER BOT settings ONLY.**
+> Live `schwab_1m_v2` remains on its **current** settings and **no change to them is pending**.
+> ⛔ **NOTHING IS OR WAS GATED ON CONF3.** `claude-1` wrote *"CONF3 blocks the operator's +5%/−8%
+> settings change"* and carried it through the CONF3 build brief, the relay blocks to `codex-2`, the
+> CONF3 board row and the #905 pin summary. **It was never true**, and it is corrected append-only at
+> `corrections/pr-905-paper-not-live-settings.md` on `review-pins`.
+> ⭐ **CONF3's case is unaffected and rests on measured live evidence at CURRENT settings:** 3 of 3
+> confirmation fires orphaned the `live:orb` fan-out leg, median **44m06s** open after the Schwab
+> counterpart closed, leg-vs-leg dispersion **+2.17 / +2.98 / −4.21 pp** on one decision.
+
 **Originally written by `claude-1`, 2026-09-04 17:57 ET.** Batch
 `2026-09-04-probe-answered-and-conf1-bound`; merged as PR #901.
 
 **Updated by `codex-2`, 2026-09-06 16:49 ET.** Operator-authorized OMS + control deploy; values
-below were read from the VPS after both post-restart gates passed. This update needs independent
-`claude-1` review before merge; the author does not review it.
+below were read from the VPS after both post-restart gates passed. Reviewed and pinned by
+`claude-1` @ `6606c7c9` (verified against the box, not the PR text) and **merged as `ed7e62f4`**.
+
+**Closed out by `claude-1`, 2026-09-06 evening.** Batch `2026-09-06-conf3-sil1-deployed`; this
+close-out needs `codex-2`'s review before merge — the author does not review it.
 
 > **⏩ UPDATED `claude-1`, 2026-09-06 ~12:40 ET — measurement Sunday, no build, no deploy, no merge.**
 > Market closed 09-06 and 09-07 (Labor Day); next session **Tuesday 2026-09-08**.
@@ -59,7 +73,7 @@ below were read from the VPS after both post-restart gates passed. This update n
 | merges 09-06 | #903 SIL1 `fd3e31dd` · #902 CONF3 `0b9d16b7` · #904 CONF3 test-only control `9a5a813c` · #901 docs `8b05ed42`; **all on the box** |
 | deploy 09-06 | **operator-authorized, after close; OMS + control only; migrations OFF** |
 | ⇒ consequence | CONF3 fan-out and SIL1 alarm are running, but both remain **UNEXERCISED**. Released-leg recovery is also **UNEXERCISED**. Deployed clean is not proven live. |
-| open PRs | **zero** at the 16:49 ET post-deploy check; this docs-only deploy-record PR opened afterwards |
+| open PRs | **#906 only** — the close-out handoff PR. #905 merged as `ed7e62f4`; #901/#902/#903/#904 all merged. Exposure row below is the 16:49 ET post-deploy read |
 | exposure | **16:49 ET post-restart:** zero open managed rows; `live:schwab_1m_v2` and `live:orb` both flat with broker truth 6 seconds old; overview also reports zero pending intents and zero open virtual/account positions |
 
 | service | pid | NRestarts | | service | pid | NRestarts |
@@ -71,6 +85,10 @@ below were read from the VPS after both post-restart gates passed. This update n
 
 ✅ **`schwab-1m-v2` was NOT restarted by this deploy.** PID stayed `3135615`, and its running
 environment still contains `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS=*`.
+
+> 🔑 **Schwab token, as of 2026-09-06 23:42 UTC** — `codex-2` re-authenticated during the deploy.
+> `refresh_token_expires_at` = **2026-09-13T20:47:13Z = 16:47 ET Sun 09-13**; `expires_at` is the
+> access token and rotates itself (a near-term value there is NOT an alarm — read BOTH fields).
 
 # FLAGS
 
@@ -206,6 +224,46 @@ env var anyway, so either path ends with the probe on.
   `strategy_bar_history`.
 - The fence blocked at 16:53 on its **clock proxy only** (all three substantive gates green). Its
   `--clock-override` was **not** used — the change gains nothing from the hour.
+
+# ⭐⭐ STATUS SPLIT — ANSWERED vs UNEXERCISED. Do not collapse these.
+
+⛔ **An unexercised fix reading as an answered item is how #684 sat live-and-never-exercised and how
+`[WEBULL-PROTECT-ATTACHED]` ran 0-for-ever for seven days.** Keep the two columns apart.
+
+| ✅ ANSWERED **and CLOSED** | ⛔ DEPLOYED and **UNEXERCISED** |
+|---|---|
+| **WRAP1** — two triggers, one shared behaviour. 07-13 matches 07-31/08-04; 09-03 is the outlier. ROOT1 = 1 pinned + 2 consistent + 2 unexplained, **supported not proven** | **CONF3** — fan-out is running; the **live close has never fired** post-#897 |
+| **CONF2** — no evaluation row at 12:18; it was never a decision. #897 is the whole answer | **SIL1** — alarm is running; **no episode has reached 8**. `live:orb` is deliberately **UNSET/uncovered** |
+| **CONF3's root cause** — the reprotect was **0-for-8** because the recovery only fails when the broker is erroring | **Released-leg recovery** — replaces that 0-for-8 path and is itself **UNEXERCISED** |
+
+⇒ The left column is finished. **The right column is three open acceptances, not three wins.**
+
+# ▶ ACCEPTANCE FOR TUESDAY — PRE-REGISTERED 2026-09-06, BEFORE THE SESSION
+
+⛔ **Written down now so a quiet day cannot be read as a pass.** Each has a denominator and a stated
+non-result. [[feedback_pre_registration_stopped_me]]
+
+**1 · CONF3 close.** `confirmation exits fired` / of those, `evaluations with a fan-out leg` / of
+those, `legs closed`.
+⛔ **Non-result:** the fan-out marker now emits on **every evaluation**, so coverage is readable
+without a fire — **but coverage is NOT the close.** Zero fires ⇒ report **UNEXERCISED**, never
+"clean". Reporting coverage as if it were the close is the failure mode this line exists to stop.
+
+**2 · Released-leg recovery.** `failed closes after a release` / of those, `re-protected` /
+`proved flat` / `UNCOVERED`.
+⛔ **Non-result:** it only exercises on a failed close **during broker trouble**. A day with no
+Webull errors proves **nothing** about it. ⇒ **Report the session's
+`webull.core.client ServerException` density ALONGSIDE the result, always**, so "it did not fire"
+reads as *no opportunity* rather than *it works*.
+
+**3 · SIL1.** `episodes ≥8 on live:schwab_1m_v2` / of those, `alarms raised` / of those,
+`symbol visible on the operator's screen`.
+⛔ **All three, not just the page count** — on-screen visibility during the stand-down IS the
+requirement. ⛔ And `live:orb` stays **UNCOVERED**; its silence is not evidence of anything.
+
+**One question to answer Tuesday, not to chase:** the `ServerException` density on `live:orb` per
+session. One number, from data already being pulled, and it is the input that makes item 2 readable.
+⛔ **An observation, not a workstream.**
 
 # ▶ NEXT SESSION — Tuesday 2026-09-08 (Monday is Labor Day)
 

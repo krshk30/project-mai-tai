@@ -305,7 +305,11 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   ⛔⛔ **THE SPREAD IS NOT THE COST — the sign was assumed and it is wrong.** The orphaned leg **BEAT**
   the confirmation exit in **2 of 3**, median **+2.17 pp**. Same shape as OVSD1: *count says urgent,
   cost says no*. ⭐ **The argument that survives is DISPERSION** — two legs of ONE decision diverging
-  2–4 pp, unmanaged and unbounded, widened by the move to +5%/−8%. **Never sell this as a P&L fix.**
+  2–4 pp, unmanaged and unbounded. **Never sell this as a P&L fix.**
+  ⛔ **CORRECTED 2026-09-06:** this sentence previously read *"widened by the move to +5%/−8%"*.
+  Those are **PAPER BOT settings**, not a pending live change, and **nothing was ever gated on
+  CONF3** — the framing was `claude-1`'s and it was false. The dispersion argument stands on its own
+  at CURRENT live settings and needs no future settings change to matter.
   ⛔ **ACCEPTANCE EVIDENCE CANNOT COME FROM THE PAPER COMPARISON.** `paper_exit.py:254` hardcodes
   `broker_account_name != "live:schwab_1m_v2" or venue != "schwab" -> return []`. It does **not** read
   `_v2_accounts()`. The harness is blind to the fan-out leg on **two independent conditions**.

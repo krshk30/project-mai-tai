@@ -15,6 +15,54 @@
 
 ---
 
+## 2026-09-06 (later) — three PRs, a deploy, and two corrections of mine
+
+⛔ **CORRECTION TO THIS FILE'S OWN 09-06 ENTRY BELOW.** That entry ends with the sentence
+*"...invisible to a paper harness that `paper_exit.py:254` hardcodes to `live:schwab_1m_v2` **and**
+`venue == "schwab"`, and widened by the coming +5%/−8%."* **The final clause is false and was mine.**
+`+5%` target, `−8%` stop, reclaim off and one trade per segment are **PAPER BOT settings** — not a
+pending change to live `schwab_1m_v2`, which stays on its current settings. **Nothing was ever gated
+on CONF3.** This file is append-only, so the sentence stands where it was written; this note is the
+correction. The rest of that paragraph — the paper harness being blind to the fan-out leg on two
+independent conditions — is unaffected and verified.
+
+⇒ CONF3's case never needed it: at **current** settings, 3 of 3 confirmation fires orphaned the
+`live:orb` leg, median **44m06s** open, dispersion **+2.17 / +2.98 / −4.21 pp** on one decision.
+⇒ The lesson: I inherited two numbers from a paper-exit discussion and attached them to the live bot
+without asking which bot they configured, then repeated them until they read as established. **A
+number that arrives as MOTIVATION deserves the same scrutiny as one that arrives as SUPPORT.**
+
+**What shipped.** `codex-2` built, and after independent review and mechanical pinning all three
+landed: SIL1 **`fd3e31dd`** (#903, pinned `e9b10d34`), CONF3 **`0b9d16b7`** (#902 — its first head
+conflicted with #903 in `oms/service.py`, so it was **rebased, never Update-branch**, re-reviewed
+from scratch and re-pinned `eb44cb35`; the earlier review did not carry), and CONF3's regression
+control **`9a5a813c`** (#904, pinned `72bc9db8`).
+
+**The deploy.** Operator-authorized after close, OMS + control only, migrations off. Box moved
+`c1e6357` → `8b05ed42`, verified by reading the box rather than the summary: oms pid 3508410 and
+control 3508437 restarted at 16:48 ET with NRestarts=0, while strategy, v2, market-data, reconciler,
+ORB and market-capture all kept pre-deploy start timestamps. **The v2 claim was proven, not
+inferred** — `/proc/3135615/environ` still carries
+`MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS=*`, so Friday's fenced-timer probe survived
+and no `strategy_bar_history` hole was created. `alembic_version` unchanged at `20260904_0019`; zero
+tracebacks post-restart. `codex-2` re-authenticated Schwab during the deploy, which reset the
+refresh window to **2026-09-13**.
+
+⛔ **NOTHING IS PROVEN LIVE.** CONF3's close, SIL1's alarm and the released-leg recovery are each
+**UNEXERCISED**. Deployed clean is not a pass, and the recovery in particular replaced a path that
+was **0-for-8** and whose root cause was that it only fails when the broker is erroring — which is
+exactly when it is needed. Tuesday's acceptance is pre-registered in
+[`session-handoff.md`](session-handoff.md) **before** the session, not judged after it.
+
+**The second correction.** My #902 pin described a regression that did not exist as written — I said
+removing the recovery-flat finalizer would inflate `released_unprotected_current`, but the clear path
+already pops that key and the count reads 0 in both the passing and failing runs. The real regression
+is narrower: the elapsed interval is lost from the decision summary. `codex-2` caught it; I verified
+it two ways and recorded `corrections/pr-902-uncovered-current-count.md`. The conclusion that the
+branch needed a control still stood, which is why #904 exists.
+
+---
+
 ## 2026-09-06 — a measurement Sunday: the fan-out leg the confirmation exit never closes, and the storms answered
 
 Market closed 09-06 and 09-07 (Labor Day). Three questions in, three answered, one of my own claims
