@@ -64,6 +64,7 @@ class Quote:
     last_price: float
     quote_time_ms: int
     cumulative_volume: int | None = None
+    trade_time_ms: int = 0
 
 
 class SchwabV2RestClient:
@@ -374,6 +375,17 @@ class SchwabV2RestClient:
             quote = record.get("quote")
             if not isinstance(quote, dict):
                 continue
+            # tradeTime is HALT1 observability only. A malformed optional timestamp must
+            # never discard the bid/ask update that drives the live strategy.
+            try:
+                trade_time_ms = int(
+                    quote.get("tradeTime")
+                    or quote.get("tradeTimeInLong")
+                    or quote.get("trade_time")
+                    or 0
+                )
+            except (TypeError, ValueError, OverflowError):
+                trade_time_ms = 0
             try:
                 results.append(
                     Quote(
@@ -383,6 +395,7 @@ class SchwabV2RestClient:
                         last_price=float(quote.get("lastPrice", 0.0) or 0.0),
                         quote_time_ms=int(quote.get("quoteTime", 0) or 0),
                         cumulative_volume=int(quote.get("totalVolume", 0) or 0),
+                        trade_time_ms=trade_time_ms,
                     )
                 )
             except (TypeError, ValueError):
