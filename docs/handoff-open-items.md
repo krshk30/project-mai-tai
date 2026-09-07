@@ -716,7 +716,11 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 - **REFUSE1 — WHAT THE BROKERS ACTUALLY SAY, AND THAT WE NEVER READ IT** *(owner: **operator** —
   he decides the response table; census by `claude-1` 2026-09-07, NEW CODE minted today)*.
   Live accounts only, 2026-07-07 → 2026-09-07. **13,896 reject events**; paper excluded entirely.
-  `live:orb` (Webull) 12,836 over 40 sessions · `live:schwab_1m_v2` (Schwab) 1,073 over 44.
+  `live:orb` (Webull) **12,836** over 40 sessions · `live:schwab_1m_v2` (Schwab) **1,060** over 44.
+  ⚠ **Two units, do not mix them:** 12,836 + 1,060 = **13,896 reject EVENTS**. Splitting the 13
+  rejects that carry two messages joined by `|` gives **13,909 message INSTANCES**, which is the
+  denominator for the per-message table only. An earlier draft of this row printed 1,073 (instances)
+  beside a 13,896 (events) total and did not reconcile.
   ⭐ **THE HEADLINE, IN THE OPERATOR'S TERMS: 26 storms, and not one ever stopped because of what
   the broker said.** Every storm of ≥5 attempts ended in a **fill** or the **session running out**.
   No run ends at a repeated value, so no ceiling fired anywhere.
@@ -778,8 +782,12 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   entries (the isolated bot is not one) and filters on a `"Completed bar flow stalled:"` prefix the
   new reason does not match. Dashboard only, by design.
   **NEXT ACTION: observe whether it ever reads MEASURED on a live session.**
-  Denominator: seed evaluations with a usable print timestamp. Falsifier: a confirmed halt that
-  suppresses a quote, bar, draft, intent, entry or exit.
+  Denominator: **deduplicated quote observations with a usable prior print timestamp** —
+  `_halt_quote_observations` increments only when the quote time is plausible, is **strictly greater
+  than the last one recorded for that symbol** (so repeated poll snapshots do not count), and the
+  tracker already holds a prior print. ⛔ An earlier draft called it "seed evaluations", which is
+  `SEEDPOP`'s unit, not this one.
+  Falsifier: a confirmed halt that suppresses a quote, bar, draft, intent, entry or exit.
 
 - **TICK1 — HARD-STOP RETRY VOLUME — ✅ CLOSED, NOT A LIVE FINDING** *(owner: `claude-1`; measured
   2026-09-07)*. ⛔ **THE 11,313 WAS A RETIRED PAPER BOT FROM MARCH.** 99.94% of it is
