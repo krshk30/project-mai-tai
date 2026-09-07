@@ -162,6 +162,111 @@ def test_quote_payload_preserves_trade_timestamp_for_halt_observation() -> None:
     assert quotes[0].trade_time_ms == 1_780_000_000_000
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trade_time", ("2026-09-07T13:45:00Z", float("inf")))
+async def test_non_numeric_halt_timestamp_never_suppresses_strategy_quote(
+    monkeypatch,
+    trade_time,
+) -> None:
+    bot = _enabled_service()
+    strategy_quotes: list[int] = []
+    monkeypatch.setattr(
+        bot.strategy,
+        "on_quote",
+        lambda _symbol, quote: strategy_quotes.append(quote.quote_time_ms),
+    )
+    client = SchwabV2RestClient(
+        Settings(),
+        on_chart_bar=_noop_bar,
+        on_quote=bot._handle_quote,
+    )
+    client.set_desired_symbols({"AAPL"})
+    client._authorized_get = lambda _url: {  # type: ignore[method-assign]
+        "AAPL": {
+            "quote": {
+                "bidPrice": 10.0,
+                "askPrice": 10.1,
+                "lastPrice": 10.05,
+                "quoteTime": 1_780_000_300_000,
+                "tradeTime": trade_time,
+                "totalVolume": 100,
+            }
+        }
+    }
+
+    await client._quote_loop_pass(0)
+
+    assert strategy_quotes == [1_780_000_300_000]
+    assert bot._last_quote_by_symbol["AAPL"].trade_time_ms == 0
+
+
+@pytest.mark.asyncio
+async def test_out_of_range_halt_timestamp_never_suppresses_strategy_quote(
+    monkeypatch,
+) -> None:
+    bot = _enabled_service()
+    strategy_quotes: list[int] = []
+    monkeypatch.setattr(
+        bot.strategy,
+        "on_quote",
+        lambda _symbol, quote: strategy_quotes.append(quote.quote_time_ms),
+    )
+    quote = Quote(
+        "AAPL",
+        10.0,
+        10.1,
+        10.05,
+        1_780_000_300_000,
+        100,
+        1_780_000_000_000_000_000,
+    )
+
+    await bot._handle_quote("AAPL", quote)
+
+    assert strategy_quotes == [quote.quote_time_ms]
+    assert bot._v2_data_health_snapshot()["halt_monitor"]["denominator"] == 0
+
+
+def test_halt_observer_rejects_out_of_range_timestamp_without_raising() -> None:
+    bot = _enabled_service()
+    quote = Quote(
+        "AAPL",
+        10.0,
+        10.1,
+        10.05,
+        1_780_000_300_000,
+        100,
+        1_780_000_000_000_000_000,
+    )
+
+    bot._observe_halt_from_quote("AAPL", quote)
+
+    assert bot._v2_data_health_snapshot()["halt_monitor"]["denominator"] == 0
+
+
+@pytest.mark.asyncio
+async def test_halt_observer_failure_never_suppresses_strategy_quote(
+    monkeypatch,
+) -> None:
+    bot = _enabled_service()
+    strategy_quotes: list[int] = []
+    monkeypatch.setattr(
+        bot.strategy,
+        "on_quote",
+        lambda _symbol, quote: strategy_quotes.append(quote.quote_time_ms),
+    )
+    monkeypatch.setattr(
+        bot,
+        "_observe_halt_from_quote",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("observer failed")),
+    )
+    quote = Quote("AAPL", 10.0, 10.1, 10.05, 1_780_000_300_000, 100)
+
+    await bot._handle_quote("AAPL", quote)
+
+    assert strategy_quotes == [quote.quote_time_ms]
+
+
 def test_v2_halt_monitor_with_no_eligible_quotes_is_unexercised() -> None:
     bot = _enabled_service()
 
@@ -236,6 +341,37 @@ async def test_v2_halt_observer_counts_quote_updates_not_poll_repeats(monkeypatc
     health = bot._v2_data_health_snapshot()
     assert health["halted_symbols"] == []
     assert health["halt_monitor"]["denominator"] == 1
+
+
+@pytest.mark.asyncio
+async def test_v2_halt_observer_prunes_symbols_outside_subscription_population(
+    monkeypatch,
+) -> None:
+    bot = _enabled_service()
+    bot._watchlist = {"AAPL", "MSFT"}
+    monkeypatch.setattr(bot.strategy, "on_quote", lambda *_args: None)
+    base = 1_780_000_000_000
+    await bot._handle_quote(
+        "AAPL",
+        Quote("AAPL", 10.0, 10.1, 10.05, base + 1_000, 100, base),
+    )
+    await bot._handle_quote(
+        "AAPL",
+        Quote("AAPL", 9.9, 10.0, 9.95, base + 285_000, 100, base),
+    )
+    await bot._handle_quote(
+        "MSFT",
+        Quote("MSFT", 20.0, 20.1, 20.05, base + 2_000, 100, base),
+    )
+    assert set(bot._halt_trackers) == {"AAPL", "MSFT"}
+    assert bot._v2_data_health_snapshot()["halted_symbols"] == ["AAPL"]
+
+    bot._watchlist = {"MSFT"}
+    bot._push_desired_symbols()
+
+    assert set(bot._halt_trackers) == {"MSFT"}
+    assert set(bot._halt_last_quote_at_ms) == {"MSFT"}
+    assert bot._v2_data_health_snapshot()["halted_symbols"] == []
 
 
 # --- market-session helper -------------------------------------------------

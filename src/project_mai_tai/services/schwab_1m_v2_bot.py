@@ -2327,6 +2327,7 @@ class SchwabV2BotService:
         ⛔ EXIT-ONLY — see docs/design/held-symbol-exit-coverage.md §2.
         """
         desired = self._subscription_symbols()
+        # Lightweight coverage harnesses call this method without constructing the full service.
         if hasattr(self, "_halt_trackers"):
             self._halt_trackers = {
                 symbol: tracker
@@ -3342,9 +3343,10 @@ class SchwabV2BotService:
         normalized = str(symbol).upper()
         tracker = self._halt_trackers.setdefault(normalized, LiveHaltTracker())
         trade_time_ms = int(quote.trade_time_ms or 0)
-        if trade_time_ms:
+        trade_time = self._halt_observation_time(trade_time_ms)
+        if trade_time is not None:
             reopened = tracker.observe_print(
-                datetime.fromtimestamp(trade_time_ms / 1000.0, UTC)
+                trade_time
             )
             if reopened is not None:
                 logger.info(
@@ -3357,10 +3359,14 @@ class SchwabV2BotService:
                 )
 
         quote_time_ms = int(quote.quote_time_ms or 0)
-        if quote_time_ms > self._halt_last_quote_at_ms.get(normalized, 0):
+        quote_time = self._halt_observation_time(quote_time_ms)
+        if (
+            quote_time is not None
+            and quote_time_ms > self._halt_last_quote_at_ms.get(normalized, 0)
+        ):
             self._halt_last_quote_at_ms[normalized] = quote_time_ms
             observation = tracker.observe_quote(
-                datetime.fromtimestamp(quote_time_ms / 1000.0, UTC)
+                quote_time
             )
             if observation.last_print_at is not None:
                 self._halt_quote_observations += 1
@@ -3375,6 +3381,21 @@ class SchwabV2BotService:
                 )
         self._sync_halt_data_health()
 
+    @staticmethod
+    def _halt_observation_time(value_ms: object) -> datetime | None:
+        """Convert a plausible epoch millisecond without risking the quote path."""
+
+        try:
+            timestamp_ms = int(value_ms or 0)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not 0 < timestamp_ms < 4_102_444_800_000:  # 2100-01-01 UTC
+            return None
+        try:
+            return datetime.fromtimestamp(timestamp_ms / 1000.0, UTC)
+        except (OSError, OverflowError, ValueError):
+            return None
+
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
         now = datetime.now(UTC)
         self._last_tick_at[symbol] = _format_eastern(now)
@@ -3383,7 +3404,13 @@ class SchwabV2BotService:
         # stall is a real fault vs a quiet/closed market.
         self._last_quote_at_ms[symbol] = int(now.timestamp() * 1000)
         self._last_quote_by_symbol[str(symbol).upper()] = quote
-        self._observe_halt_from_quote(symbol, quote)
+        try:
+            self._observe_halt_from_quote(symbol, quote)
+        except Exception:
+            logger.exception(
+                "[V2-HALT-OBSERVER-ERROR] symbol=%s quote preserved; decision_gate=off",
+                symbol,
+            )
         try:
             draft = self.strategy.on_quote(symbol, quote)
         except Exception:
