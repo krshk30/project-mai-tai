@@ -1,0 +1,9 @@
+{
+  "pr_number": 909,
+  "range_base": "1ba88df34c81e27f5bd2621d8b1999b924a1f339",
+  "range_head": "df47948d82852e53fab2719b8f05f756871def3f",
+  "reviewed_at": "2026-09-07T18:53:07Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the four-file handoff carrier; verified log and board append-only, session replacements, live production PIDs including corrected control 3683699, clean diff, and machine-generated manifest byte-identical and BALANCED 31/31."
+}
