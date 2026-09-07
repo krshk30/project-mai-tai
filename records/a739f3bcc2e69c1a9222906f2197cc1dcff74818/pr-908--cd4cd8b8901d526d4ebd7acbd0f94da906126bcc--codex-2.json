@@ -1,0 +1,9 @@
+{
+  "pr_number": 908,
+  "range_base": "cd4cd8b8901d526d4ebd7acbd0f94da906126bcc",
+  "range_head": "a739f3bcc2e69c1a9222906f2197cc1dcff74818",
+  "reviewed_at": "2026-09-07T18:23:39Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed HDL1 exact range: re-derived 10/78 post-feature census, verified bounded fresh-session retry and CancelledError propagation, confirmed distinct handles append without evidence loss, title exposes oldest actionable handle within 255 chars, ran focused 10 tests and ruff, and independently mutation-checked append and operator-title controls."
+}
