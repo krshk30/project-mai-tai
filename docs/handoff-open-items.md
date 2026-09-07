@@ -628,10 +628,219 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
   flag — the flag is correct and segment-scoped; it is being fed the wrong slot name.
   Denominator: stamped `live:orb` reclaim fan-out legs, 08-31 → 09-02 — 18.
   Falsifier: a `cw_entry_slot=reclaim` fill stamped `fanout_slot=resting` after the fix.
-- **DUP3 — 12 exit-side duplicate legs, design-or-defect, UNPROVEN** *(owner: codex-2; sits with
-  DUP2)*. Not yet assessed. **Next action:** classify each of the 12 as intended fan-out behaviour
-  or duplicate exit, then state which. Denominator: exit legs per closed position.
-  Falsifier: two exit legs against one lot with no fan-out design that calls for it.
+- **DUP3 — exit-side duplicate legs — ✅ CLOSED 2026-09-07, NO LIVE DEFECT** *(owner: `claude-1`;
+  measured 2026-09-07)*. ⛔ **THE "12" WAS A PAPER ACCOUNT.** It matches `paper:macd_30s` exactly
+  (12 events, 4 symbols, 2026-03-30/31). **Split by account before it counted as a finding.**
+  Falsifier used, per `codex-2`'s correction of the original: not "two exit legs" but **two SELLs
+  against one lot** — a cumulative position that goes NEGATIVE, computed over every fill.
+  Result, all history: **`live:schwab_1m_v2` = 0. `live:orb` = 2.** Both live:orb cases are the
+  SAME base coid as their own entry, with the sell **submitted 2026-07-28 16:14 carrying a
+  `filled_at` of 2026-07-27** — a bad fill timestamp, not an over-sell.
+  ⛔ **My own first cut reported 7 live over-sells and was WRONG:** five were my tie-break ordering a
+  sell ahead of its own entry when both fills share a `filled_at` second. Corrected by ordering buys
+  first on ties. A measurement artefact, stated here so the row cannot reopen on it.
+  ⇒ **Spun out as `TS1` below** — the fill-timestamp inversion is real and still open.
+  Denominator: every fill in every account, cumulative position per (account, symbol).
+  Falsifier: cumulative position < 0 at any fill, after buys-before-sells tie-breaking.
+
+- **TS1 — FILLS STAMPED BEFORE THEIR OWN ORDER WAS SUBMITTED — LIVE ONLY, ONGOING** *(owner:
+  codex-2; measured by `claude-1` 2026-09-07 out of DUP3)*. `filled_at` precedes `submitted_at` by
+  more than 60 s on **`live:orb` 64 of 892 fills (28 of them by >1 h), 2026-07-27 → 2026-09-04,
+  still occurring**, and **`live:schwab_1m_v2` 11 of 886 (8 by >1 h), 2026-07-28 → 2026-07-31,
+  stopped**. **ZERO on every paper account** — so it is not a clock-skew artefact of the harness.
+  ⚠ It silently corrupts any time-ordered analysis; it produced DUP3's false positives.
+  **Next action (codex-2):** establish whether the Webull leg is storing a broker-supplied trade
+  time in the fill row, and whether anything downstream orders on `filled_at`.
+  Denominator: all fills per account. Falsifier: a live fill with `filled_at < submitted_at - 60s`.
+
+- **ELIG — PER-BROKER ELIGIBILITY EVICTION — ✅ SCHWAB WORKS, ⛔ WEBULL IS EFFECTIVELY DEAD**
+  *(owner: codex-2; measured `claude-1` 2026-09-07)*. Population that CAN fail, per `codex-2`'s
+  correction: every live refusal naming a symbol-not-tradable condition, matched **per broker**
+  against whether an eligibility row was written for that symbol+session. ⛔ An earlier join unioned
+  both tables and let a Webull refusal match a Schwab row — corrected.
+  | refusal | in the live list? | symbol-days | row written | **no row** |
+  |---|---|---|---|---|
+  | SCHWAB "must be placed with a broker" | yes | 129 | **128** | 1 |
+  | SCHWAB "not eligible for electronic entry" | **NO** | 3 | 0 | **3** |
+  | WEBULL `NO_SUCH_TICKER` | yes | 2 | 1 | 1 |
+  | WEBULL `TICKER_ID_CAN_NOT_TRADE` | **NO** | 6 | 0 | **6** |
+  | WEBULL `TICKER_STATUS_NOT_ALLOW_TREADE_CS` | **NO** | 7 | 0 | **7** |
+  ⭐ **Eviction genuinely works where it fires:** of 158 live Schwab markings, 156 saw exactly one
+  further order, all within **0.87–7.03 s (median 1.55 s), none after 60 s** — the in-flight order
+  landing. **0 of 158 markings were followed by a real retry.**
+  ⛔ **`webull_ineligible_today` holds ONE row in the system's entire history** (PN, 2026-08-06)
+  against 12,836 Webull refusals over 40 sessions.
+  ⚠ **Backtest and live disagree:** `backtest/broker_refusal.py:63` recognises "not eligible for
+  electronic entry"; the live `SCHWAB_INELIGIBLE_REASON_SUBSTRINGS` is `("must be placed with a
+  broker",)` alone.
+  **Next action:** operator decides the response table first (see `REFUSE1`) — the missing strings
+  are a subset of that decision and must not be patched piecemeal ahead of it.
+  Denominator: symbol-days carrying a not-tradable refusal, per broker.
+  Falsifier: such a symbol-day with no eligibility row for that broker.
+
+- **SEEDPOP — DB-SEED TRUNCATION CENSUS — ✅ THE DENOMINATOR ARTEFACT IS REAL AND ALREADY FIXED**
+  *(owner: `claude-1`; measured 2026-09-07)*. ⛔ **ANY SEEDPOP NUMBER QUOTED BEFORE 2026-08-20
+  20:16 ET IS VOID.** The pre-fix census divided by `_db_seeded`, a dedup set pruned to the
+  watchlist (`_db_seeded &= selected`), and printed **impossible readings on the record**:
+  `truncations=12 of 7` (2026-08-19) and **`truncations=7 of 0`** (2026-08-20).
+  Post-fix the denominator is `_db_seed_evaluations` and the invariant holds in **all 41** census
+  lines: truncations never exceed evaluations. Live readings per boot epoch range 0/0 to **14/16
+  (87.5%)**; largest absolute **20 of 38 (52.6%)**. 348 raw `[V2-DB-SEED-GAP]` warnings over 14
+  sessions. ⚠ A high truncation rate is the guard REFUSING stale seed bars — it is the fix working,
+  not a defect.
+  **Next action:** none as a defect. Keep the census line; it is the only thing that distinguishes
+  a clean day from a census that never ran.
+  Denominator: `_db_seed_evaluations`, monotonic since boot, one per symbol per attempt.
+  Falsifier: a post-fix census line where truncations > evaluations.
+
+- **AMEND1 — FAN-OUT OUTCOME ACCEPTANCE — ⛔ PAIRING CLOSED, TWO METRICS STILL FAIL**
+  *(owner: codex-2; re-measured `claude-1` 2026-09-07)*. ⛔ **The "584 of 584" I first quoted
+  CANNOT FAIL BY CONSTRUCTION and is not evidence on its own.** The population that can fail is
+  `ops/health/fanout_outcome_acceptance.py` — **not** under `scripts/`; my first grep looked in the
+  wrong directory and would have wrongly reported it missing. It grades four external-outcome
+  populations, reproduces a known-bad baseline as a control first, and has a real four-state exit
+  including `UNEXERCISED`. Last graded session **2026-09-04**:
+  | metric | verdict | reading | baseline |
+  |---|---|---|---|
+  | `paired_legs` | **PASS** | 8 of 8 usable, coverage 100%, could-not-tell **0** | 16/53, 37 CTT |
+  | `duplicate_legs` | **PASS** | 0 of 8 filled Webull fan-out legs | 22/22 worse, median 4.58% |
+  | `fill_rate` | **FAIL** | mirror 7/37=18.9% vs Schwab 5/19=26.3%, gap **7.4pp** | gap 3.1pp |
+  | `refused_exits` | **FAIL** | 3 refused of 8 post-exit episodes | 37/25/49 per day |
+  ⭐ The shared-identity pairing gap `codex-2` flagged **is closed**: could-not-tell 37 → 0.
+  ⛔ **Do not act on either FAIL.** `fill_rate` rests on **2 matched symbols**. They need fresh
+  sessions, not analysis. **Next action:** read them again after Tuesday's session is graded —
+  which lands **Wednesday 2026-09-09 ~00:17 ET**, not Tuesday (see `D6TIME` note below).
+  Denominator: one completed ET calendar-day session, per metric.
+  Falsifier: a metric at or below its named known-bad outcome with a non-zero denominator.
+
+- **REFUSE1 — WHAT THE BROKERS ACTUALLY SAY, AND THAT WE NEVER READ IT** *(owner: **operator** —
+  he decides the response table; census by `claude-1` 2026-09-07, NEW CODE minted today)*.
+  Live accounts only, 2026-07-07 → 2026-09-07. **13,896 reject events**; paper excluded entirely.
+  `live:orb` (Webull) 12,836 over 40 sessions · `live:schwab_1m_v2` (Schwab) 1,073 over 44.
+  ⭐ **THE HEADLINE, IN THE OPERATOR'S TERMS: 26 storms, and not one ever stopped because of what
+  the broker said.** Every storm of ≥5 attempts ended in a **fill** or the **session running out**.
+  No run ends at a repeated value, so no ceiling fired anywhere.
+  Worst: **YJ 2026-08-07, 10,267 refusals in 159.8 minutes — one order every 0.93 s for 2h40m.**
+  Then AAOG 313 · CHPT 205 · NCRA 156 · AGEN 127 · KUST 125 · AAOG 113 · IPST 87.
+  **42 distinct messages** after normalising (65 raw: each Schwab 429 carries a fresh UUID).
+  ⛔ **36 of 42 are unrecognised by any live code path** (2,364 events). The five recognition lists
+  live in four files and together match **6 of 42**.
+  ⛔ **`NO_POSITION_REASONS` matches ZERO live messages** — `("cannot be sold short", "insufficient
+  qty", "no broker position available to sell")` at `oms/service.py:415`, duplicated at
+  `strategy_core/runner.py:468` and `strategy_engine_app.py:2840`.
+  ⚠ **CARRY THIS CORRECTION:** `claude-1` called the `CAN_NOT_SELL_SHORT` wording mismatch **the
+  cause** of the storms and it is **NOT**. It reached the operator as significant before it was
+  withdrawn. The mismatch is real — Webull's despaced string reads *"…can not sell short for lt
+  2k"* and the list expects *"cannot be sold short"*, so it cannot match by construction — but
+  **nothing on the live storm path consults that list**, so it terminated nothing. On the hard-stop
+  path specifically, live `HARD_STOP` is **16 orders — 15 filled, 1 rejected
+  `ORDER_RISK_RULE_PRICE_AGGRESSIVE` — with 0 of 16 carrying any of the four strings.**
+  ⚠ **The operator's four classes do not cover the data — a fifth is needed: 971 events (7% of all
+  live refusals) are OUR OWN malformed orders**, including 723 carrying
+  `RuntimeError('Webull combo MASTER must be LIMIT or MARKET…')` — **a Python exception from our
+  code written into the broker-reason column.** Retrying those is guaranteed to fail, but the
+  answer is not "stop and read the state", it is "we sent a bad order".
+  Proposed grouping, for the operator to rule on: **STOP** ~12,619 · **WAIT** ~39 ·
+  **PERMANENT** ~237 · **UNKNOWN** 11 · **OURS** ~971.
+  ⛔ **Measurement only. No response table is to be built until the operator rules.**
+  **Next action (operator):** rule the response table. Then `ELIG`'s missing strings fall out of it.
+  Denominator: all live reject events in the window, split by account.
+  Falsifier: a refusal class that retries after a STOP-class message once the table is in force.
+
+- **REJ1 — A CHILDLESS LIVE OCO WRAPPER READ AS "RELEASED"** *(owner: codex-2; reviewed and pinned
+  by `claude-1` @ `9b7f544e`)*. ✅ **BUILT, PINNED, MERGED `a0e74c98`, DEPLOYED 2026-09-07 23:06 UTC
+  (OMS pid `3751266`).** ⛔ **UNEXERCISED — no live confirmation-exit release has occurred since.**
+  In `release_native_oco_for_close`'s `walk()`, an OCO **wrapper** carries no
+  `orderLegCollection`, so `instruction` resolved to the empty string, the whole SELL block was
+  skipped, and **the wrapper's own status was never examined**. It contributed nothing to
+  working/filled/unsafe, the decision tail's early `if not working: return released` fired before
+  any DELETE or re-read, and `oms/service.py:4190` popped the stand-down.
+  ⚠ **#898 did NOT cover this** — it fixed DELETE non-2xx tolerance, which sits AFTER that early
+  return. The 2026-09-03 CHPT mechanism was intact on main until now.
+  The guard is bounded: no legs AND a truthy status AND not terminal. Fails CLOSED.
+  **NEXT ACTION: observe the first live release.** Denominator: live confirmation-exit releases.
+  Falsifier: a release returning `released` while a working wrapper still holds sell protection.
+
+- **HALT1 — V2 PUBLISHED A PERMANENTLY EMPTY `halted_symbols`** *(owner: codex-2; reviewed and
+  pinned by `claude-1` @ `01b64ddd` after two withheld rounds)*. ✅ **MERGED `5de2c363`, DEPLOYED
+  2026-09-07 23:08 UTC (v2 pid `3752275`).** ⛔ **UNEXERCISED — reads
+  `halt_monitor {"status":"UNEXERCISED","evaluated":0,"confirmed":0,"denominator":0,"current":0}`,
+  read from the published Redis payload, not from a report.** That is the instrument working, not
+  a result.
+  ⚠ **HALF CLOSED ONLY.** `warning_symbols` is **still hardcoded `[]`** at `schwab_1m_v2_bot.py:400`
+  and nothing writes it, while `control_plane.py:1892` reads it. **Do not close this row as fixed.**
+  ⛔ **The reading CANNOT distinguish a venue HALT from ILLIQUIDITY** — `halt_is_confirmed` is only
+  a ≥285 s print gap plus ≥2 quote updates, with **no session guard**, across the whole 07:00–16:00
+  window. It is consistent with `paper_exit.py`'s identical definition, so it is not a defect here.
+  ⛔ **NO DECISION GATE MAY EVER BE BUILT ON THIS FIELD** without a separately reviewed
+  session-aware design.
+  ⚠ It **pages nobody**: `_sync_runtime_data_health_incidents` iterates only `StrategyBotRuntime`
+  entries (the isolated bot is not one) and filters on a `"Completed bar flow stalled:"` prefix the
+  new reason does not match. Dashboard only, by design.
+  **NEXT ACTION: observe whether it ever reads MEASURED on a live session.**
+  Denominator: seed evaluations with a usable print timestamp. Falsifier: a confirmed halt that
+  suppresses a quote, bar, draft, intent, entry or exit.
+
+- **TICK1 — HARD-STOP RETRY VOLUME — ✅ CLOSED, NOT A LIVE FINDING** *(owner: `claude-1`; measured
+  2026-09-07)*. ⛔ **THE 11,313 WAS A RETIRED PAPER BOT FROM MARCH.** 99.94% of it is
+  `paper:tos_runner_shared` (ASTC, 2026-03-30). **Live exposure is 16 orders — 1 rejected, last
+  2026-07-23.** ⚠ It came within one query of being briefed to `codex-2` as live money; the
+  account split is the only thing that stopped it. **This row exists so the number cannot return.**
+  **Next action:** none. Denominator: hard-stop orders, split by account.
+  Falsifier: a live hard-stop retry population of material size.
+
+- **TICK1-A — MAKE THE FOUR BROKER STRINGS TERMINAL — ⛔ WITHDRAWN BY ITS AUTHOR** *(owner:
+  `claude-1`; withdrawn 2026-09-07)*. `codex-2` showed the four strings mean *we hold but cannot
+  sell*; making them terminal would pop `_armed_hard_stops` on a **held** position — the ERNA naked
+  shape. Independently reproduced: live `HARD_STOP` = 16 orders, 15 filled, 1 rejected
+  `ORDER_RISK_RULE_PRICE_AGGRESSIVE`, **0 of 16** carrying any of the four strings.
+  **Next action:** if it returns, it must be re-posed around **broker-confirmed flat state**, never
+  around a reject string. Falsifier: a terminal-on-string rule that disarms a held position.
+
+- **TICK1-B — NO PER-EPISODE CEILING ON THE HARD-STOP PATH — ⚠ SUPERSEDED, DO NOT BUILD**
+  *(owner: **operator**)*. ⛔ **The operator's 2026-09-07 ruling supersedes both the build and the
+  board options: "if we get an oversold, then stop selling and understand what's out there before
+  making the next call."** A ceiling that stops after N attempts stops the bleeding **without ever
+  reading what the broker said** — the wrong instrument. The right one is a response keyed to the
+  refusal itself. **Next action:** folded into `REFUSE1`; nothing to build here.
+
+- **REST1 — "SCHWAB API-OPEN REJECTS ~3/DAY AND NOTHING EVICTS" — ✅ THE BOARD'S CLAIM IS FALSE**
+  *(owner: `claude-1`; measured 2026-09-07 — supersedes open item **3** above)*. Eviction works
+  **1:1**; `hit_count` maxes at **1** on all 158 live Schwab rows. Confirmed against behaviour, not
+  config: 156 of 158 markings saw exactly one further order, all within 7 s. **"NOTHING evicts" is
+  wrong.** ⇒ See `ELIG` for what is genuinely uncovered — the Webull side, and three unmatched
+  strings. **Next action:** correct open item 3's headline when this batch is next edited.
+
+- **TAPE1 — CAPTURE WINDOW EXPIRY — ✅ CLOSED, NOT EXPIRED** *(owner: `claude-1`)*. All four days
+  survive as files. `market_capture_*` prunes at **14 CALENDAR days** (see `RET1`), and the
+  relevant days were inside the window when read. **Next action:** none.
+
+- **EOD1 — THE 2026-08-04 END-OF-DAY STORM — ✅ CAUSE ESTABLISHED, ONE QUESTION OPEN** *(owner:
+  **operator** for the open half)*. It was **our own retry storm**: 113 Schwab + 313 Webull orders
+  to 16:15:07. Not a broker event. ⛔ **STILL UNANSWERED: can the 90-second wait safely shorten?**
+  **Next action (operator):** rule on the 90 s, or park it explicitly. Nothing is blocked on it.
+
+- **NAKED2 — ✅ CLOSED BY THE OPERATOR'S WEBULL EXPORT** *(owner: closed 2026-09-07)*. Both legs
+  existed at **13:37:31** and never reached our books — i.e. **`HDL1` seen from the broker's end**,
+  not a separate defect. ⭐ The export was external evidence we could not have derived from our own
+  rows; the row is closed on it. **Next action:** none — it closes with `HDL1`.
+
+> ### `D6TIME` — when Tuesday's session actually gets graded
+> The D6 acceptance cron is `17 4,5,6 * * 2-6` (UTC; **`CRON_TZ` is ignored**) and grades **one
+> completed ET calendar day**. ⛔ **It is NOT stopped** — `claude-1` twice reported a missing
+> 2026-09-05 session off a wrong weekday. **2026-09-04 was FRIDAY**, 09-05 Saturday ran and graded
+> it correctly, and 09-06 Sunday / 09-07 Monday are outside the schedule. Expected session today is
+> `2026-09-04` and the harness is current.
+> ⭐ **And silence IS watched.** `ops/health/fleet_health_check.py:177` `classify_d6_status` —
+> *"The D6 cron cannot observe its own death; this independent monitor watches its output"* — is
+> fleet-health check #5, holiday-aware, RED on missing/unreadable/stale/future/no-SUCCESS.
+> **It is RED right now**: `D6 session=2026-09-04 completed without SUCCESS`. The two stale FAILs
+> have been paging since Saturday.
+> ⚠ **Detection latency, from the code's own comment: ~9h18m**, not real time — D6 runs ~00:17 ET,
+> fleet health first runs 09:35 ET.
+> ⛔ **Consequence for Tuesday: on 2026-09-08 the expected session is STILL `2026-09-04`.** Tuesday's
+> own session is graded **Wednesday 2026-09-09 ~00:17 ET**. The first read on all six live fixes
+> does not arrive Tuesday.
 
 - **RET1 — `market_capture_quotes` prunes at 14 CALENDAR days** *(owner: **operator** — the
   retention decision is theirs; measured 2026-09-03)*. `prune-capture.service` runs
