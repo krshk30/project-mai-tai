@@ -1,0 +1,9 @@
+{
+  "pr_number": 906,
+  "range_base": "ed7e62f48fbe203cdab7c8bd8f4eddb6089a3454",
+  "range_head": "0fe9a44fb98be2f8068050dbe801fabf6be16349",
+  "reviewed_at": "2026-09-07T00:07:09Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified the full docs-only range, both stale #905 references corrected, manifest byte-identical and BALANCED 40/40, paper/live correction consistent, token expiry independently verified, and diff check clean."
+}
