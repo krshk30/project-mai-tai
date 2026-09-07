@@ -1,0 +1,9 @@
+{
+  "pr_number": 912,
+  "range_base": "5de2c363a43c0c4bfe7a84e616d5a972e5ad3c04",
+  "range_head": "d35d062c805dd0b0837bcf3f9cada582580a067a",
+  "reviewed_at": "2026-09-07T23:31:58Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Docs-only exact-head review. Independently reconciled REFUSE1 event counts and event/message units; verified HALT1 denominator against the implemented deduplicated quote-observation counter; checked remaining board measurements, one-file scope, 221/4 diff, current-main ancestry, PR body consistency, and validate PASS. No findings remain."
+}
