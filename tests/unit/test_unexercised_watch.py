@@ -253,3 +253,72 @@ def test_the_state_write_is_atomic(tmp_path, monkeypatch):
     monkeypatch.setattr(uw.os, "replace", real_replace)
     assert state.read_text(encoding="utf-8") == good, "a failed write corrupted the previous state"
     assert not list(tmp_path.glob("*.tmp")), "a temp file was left behind"
+
+
+def test_pre_upgrade_state_without_announced_is_not_re_announced(tmp_path, monkeypatch):
+    """⛔ MEASURED IN PRODUCTION. State written before `announced` existed carries only `delivered`.
+    Defaulting the missing flag to False re-sent PEX1 as a first occurrence on the first cron run
+    after the upgrade, and that duplicate reached the operator's phone at 12:45 UTC 2026-09-08.
+    """
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "page", lambda t, b: pages.append(t) or True)
+    monkeypatch.setattr(uw, "CONDITIONS", {"PEX1_RESTING_FILL": lambda: (4, 41, "d")})
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+
+    # EXACTLY the legacy shape: delivered, no `announced` key at all.
+    state.write_text(json.dumps({"PEX1_RESTING_FILL": {
+        "fired": 4, "denominator": 41, "verdict": "OCCURRED",
+        "delivered": True, "blind_since": None, "blind_paged": False,
+    }}), encoding="utf-8")
+
+    uw.main(["--state", str(state), "--status", str(status)])
+
+    assert pages == [], f"a pre-upgrade state re-announced: {pages}"
+    assert json.loads(state.read_text(encoding="utf-8"))["PEX1_RESTING_FILL"]["announced"] is True
+
+
+def test_state_lost_page_is_retried_until_delivered(tmp_path, monkeypatch):
+    """⛔ The STATE LOST alarm queued once and never persisted its outcome, so a refused send was
+    lost: the next run read valid reconstructed JSON and never spoke again."""
+    attempts: list[str] = []
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": lambda: (0, 500, "d")})
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+    state.write_text("{ truncated", encoding="utf-8")
+
+    monkeypatch.setattr(uw, "page", lambda t, b: attempts.append(t) or False)   # refused
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert [a for a in attempts if a.startswith("STATE LOST")]
+
+    attempts.clear()
+    uw.main(["--state", str(state), "--status", str(status)])   # state is now VALID json
+    assert [a for a in attempts if a.startswith("STATE LOST")], "an undelivered STATE LOST was dropped"
+
+    attempts.clear()
+    monkeypatch.setattr(uw, "page", lambda t, b: attempts.append(t) or True)    # accepted
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert [a for a in attempts if a.startswith("STATE LOST")]
+
+    attempts.clear()
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert attempts == [], "STATE LOST kept paging after delivery"
+
+
+def test_corrupt_state_plus_a_failed_query_still_suppresses(tmp_path, monkeypatch):
+    """⛔ The COULD_NOT_TELL path returned early, so corrupt state plus a failed query rebuilt an
+    empty record and emitted a historical FIRED page the moment the query recovered."""
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "page", lambda t, b: pages.append(t) or True)
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+    state.write_text('{"HALT_REAL": {"fired": 1, "deliv', encoding="utf-8")
+
+    def broken():
+        raise RuntimeError("psql failed")
+
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": broken})
+    uw.main(["--state", str(state), "--status", str(status)])
+
+    pages.clear()
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": lambda: (1, 500, "d")})   # query recovers
+    uw.main(["--state", str(state), "--status", str(status)])
+
+    assert [p for p in pages if p.startswith("FIRED")] == [], "a historical occurrence was replayed"

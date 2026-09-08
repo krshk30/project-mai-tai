@@ -46,6 +46,9 @@ COULD_NOT_TELL = "COULD_NOT_TELL"
 # that IS a fault worth paging about. [[feedback_a_watch_that_fails_to_a_false_clean]]
 BLIND_DAYS_BEFORE_PAGE = 3
 
+# Reserved state key for the watcher's own bookkeeping. Never a condition name.
+WATCH_META_KEY = "__watch__"
+
 
 @dataclass
 class Reading:
@@ -277,6 +280,12 @@ def main(argv: list[str] | None = None) -> int:
             record = dict(prior)
             record["verdict"] = COULD_NOT_TELL
             record["last_run_at"] = now.isoformat()
+            if memory_lost:
+                # ⛔ Corrupt state PLUS a failed query bypassed suppression: the record rebuilt
+                # empty, so when the query recovered `announced` defaulted False and a historical
+                # FIRED page went out. Suppression must apply on this path too.
+                record["announced"] = True
+                record.setdefault("delivered", True)
             record["could_not_tell_since"] = prior.get("could_not_tell_since") or now.isoformat()
             if not prior.get("could_not_tell_paged") and not args.no_page:
                 pending.append((
@@ -293,7 +302,11 @@ def main(argv: list[str] | None = None) -> int:
         # `prior_fired > 0 and delivered`, so a 1 -> 0 -> 1 count sequence lost the announcement
         # memory at the dip and paged the SAME "first occurrence" twice. Log rotation and row
         # pruning both make a count fall. Once announced, always announced.
-        announced = bool(prior.get("announced", False))
+        # ⛔ LEGACY MIGRATION. State written before `announced` existed carries only `delivered`.
+        # Defaulting a missing `announced` to False re-sent PEX1 as a first occurrence on the first
+        # cron run after the upgrade -- a duplicate page that actually reached the operator at
+        # 12:45 UTC on 2026-09-08. A missing flag must inherit the old one, never reset it.
+        announced = bool(prior.get("announced", prior.get("delivered", False)))
         delivered = bool(prior.get("delivered", False)) or announced
         if memory_lost and verdict == OCCURRED:
             # Memory is gone and we cannot tell whether this was already announced. Bias to
@@ -336,13 +349,23 @@ def main(argv: list[str] | None = None) -> int:
             "could_not_tell_since": None, "could_not_tell_paged": False,
         }
 
-    if memory_lost and not args.no_page:
+    watch_meta = dict(state.get(WATCH_META_KEY, {})) if isinstance(state.get(WATCH_META_KEY), dict) else {}
+    state_lost_pending = bool(watch_meta.get("state_lost_pending", False))
+    if memory_lost:
+        state_lost_pending = True
+    if state_lost_pending and not args.no_page:
+        # ⛔ RETRIED UNTIL DELIVERED. The first version queued this once and never persisted the
+        # outcome, so a refused ntfy send was lost: the next run read valid reconstructed JSON,
+        # saw memory_lost=False, and never spoke again.
         pending.append((
-            "__state__", "corrupt",
+            WATCH_META_KEY, "corrupt",
             "STATE LOST -- unexercised watch cannot remember what it announced",
             "The watcher's state file was unreadable. Delivery memory is gone, so occurrence "
             "alarms are SUPPRESSED this run rather than replayed. Read the conditions by hand.",
         ))
+
+    watch_meta["state_lost_pending"] = state_lost_pending
+    state[WATCH_META_KEY] = watch_meta
 
     # ⛔ ORDER IS THE GUARD. State durable first, pages second.
     _write_state(state_path, state)
@@ -351,6 +374,9 @@ def main(argv: list[str] | None = None) -> int:
         if page(title, body):
             confirmed.append((name, kind))
     for name, kind in confirmed:
+        if kind == "corrupt":
+            state[WATCH_META_KEY]["state_lost_pending"] = False
+            continue
         if name not in state:
             continue
         if kind == "occurred":
