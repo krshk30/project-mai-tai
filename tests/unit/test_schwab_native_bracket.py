@@ -236,6 +236,13 @@ async def test_confirmation_release_cancels_working_oco_and_confirms_no_sell_rem
         "orderLegCollection": [{"instruction": "BUY"}],
         "childOrderStrategies": [
             {
+                # ⛔ A REAL SCHWAB OCO WRAPPER CARRIES A STATUS AND NO LEGS. Verified against the
+                # live broker 2026-09-08 on entry 1007843486886: the wrapper node reads
+                # legs=0, children=2, with its own status. The original fixture omitted `status`
+                # entirely, so `bool(status)` was False and the childless guard silently never
+                # fired here — the one test that could have caught the over-block sidestepped it.
+                "orderId": "oco-1",
+                "status": "WORKING",
                 "childOrderStrategies": [
                     {
                         "orderId": "target-1",
@@ -260,6 +267,13 @@ async def test_confirmation_release_cancels_working_oco_and_confirms_no_sell_rem
         **before,
         "childOrderStrategies": [
             {
+                # ⛔ A REAL SCHWAB OCO WRAPPER CARRIES A STATUS AND NO LEGS. Verified against the
+                # live broker 2026-09-08 on entry 1007843486886: the wrapper node reads
+                # legs=0, children=2, with its own status. The original fixture omitted `status`
+                # entirely, so `bool(status)` was False and the childless guard silently never
+                # fired here — the one test that could have caught the over-block sidestepped it.
+                "orderId": "oco-1",
+                "status": "WORKING",
                 "childOrderStrategies": [
                     {
                         "orderId": "target-1",
@@ -706,3 +720,120 @@ def test_bracket_exit_legs_round_to_schwab_tick_rule() -> None:
     target, protective = payload["childOrderStrategies"][0]["childOrderStrategies"]
     assert target["price"] == 11.33
     assert protective["stopPrice"] == 10.55
+
+
+@pytest.mark.asyncio
+async def test_confirmation_release_accepts_a_legless_working_wrapper_whose_children_are_visible(monkeypatch) -> None:
+    """⛔ THE PRODUCTION SHAPE, and the case the first version of this guard broke.
+
+    Verified against the live broker 2026-09-08 on entry 1007843486886: a real Schwab OCO wrapper
+    reads legs=0, children=2 and carries its OWN status. While protection is armed that status is
+    WORKING, so the original guard -- which asked only `not legs and bool(status) and not
+    terminal` -- fired on EVERY armed position and made release_native_oco_for_close return
+    `unanswerable` for the whole life of the bracket. The confirmation exit could then never close
+    the Schwab leg: on BNC at 09:52 the Webull leg closed at 5.1325 and the orphaned Schwab leg
+    rode to its target.
+
+    A wrapper whose children are present is not opaque. They are walked, and they decide.
+    """
+    live = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "orderId": "oco-1",
+                "status": "WORKING",          # the real wrapper carries one
+                "childOrderStrategies": [     # ... and its children are fully visible
+                    {"orderId": "target-1", "status": "WORKING",
+                     "orderLegCollection": [{"instruction": "SELL"}]},
+                    {"orderId": "stop-1", "status": "WORKING",
+                     "orderLegCollection": [{"instruction": "SELL"}]},
+                ],
+            }
+        ],
+    }
+    gone = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [
+            {
+                "orderId": "oco-1",
+                "status": "CANCELED",
+                "childOrderStrategies": [
+                    {"orderId": "target-1", "status": "CANCELED",
+                     "orderLegCollection": [{"instruction": "SELL"}]},
+                    {"orderId": "stop-1", "status": "CANCELED",
+                     "orderLegCollection": [{"instruction": "SELL"}]},
+                ],
+            }
+        ],
+    }
+    adapter = _adapter(bracket_enabled=True)
+    seq = [live, gone]
+    calls = {"n": 0}
+    deletes: list[str] = []
+
+    async def request(method, path, body=None):
+        deletes.append(path)
+        return 200, {}, {}
+
+    async def fetch(*_args):
+        node = seq[min(calls["n"], len(seq) - 1)]
+        calls["n"] += 1
+        return node
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    result = await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+
+    assert result == "released", (
+        "a legless WORKING wrapper with visible children is the normal armed state; refusing it "
+        "blocks every confirmation exit on the Schwab leg"
+    )
+    assert len(deletes) == 2, "both visible SELL children must still be cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("wrapper", "label"),
+    [
+        ({"orderId": "oco-1"}, "no status key at all"),
+        ({"orderId": "oco-1", "status": "", "childOrderStrategies": []}, "empty status string"),
+    ],
+)
+async def test_confirmation_release_refuses_a_wrapper_with_no_status_no_legs_and_no_children(
+    monkeypatch, wrapper, label
+) -> None:
+    """⛔ FAIL-CLOSED ON THE MOST OPAQUE SHAPE THERE IS.
+
+    The guard originally required `bool(status)`, so a node with no legs, no children AND no status
+    skipped the check entirely and the method reported `released` — claiming protection was gone
+    with no evidence whatsoever. A missing status made a node SAFER than a working one, which is
+    backwards. Absence is not a terminal status.
+    """
+    adapter = _adapter(bracket_enabled=True)
+    root = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [wrapper],
+    }
+    deletes: list[str] = []
+
+    async def request(method, path, body=None):
+        deletes.append(path)
+        return 200, {}, {}
+
+    async def fetch(*_args):
+        return root
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    result = await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+
+    assert result == "unanswerable", f"an unreadable wrapper ({label}) was reported released"
+    assert deletes == [], "nothing may be cancelled on evidence this thin"
