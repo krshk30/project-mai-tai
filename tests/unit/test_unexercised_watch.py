@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from datetime import datetime, timedelta
 import sys
 from pathlib import Path
 
@@ -322,3 +323,45 @@ def test_corrupt_state_plus_a_failed_query_still_suppresses(tmp_path, monkeypatc
     uw.main(["--state", str(state), "--status", str(status)])
 
     assert [p for p in pages if p.startswith("FIRED")] == [], "a historical occurrence was replayed"
+
+
+def test_each_blind_episode_pages_once_and_recovery_re_arms_it(tmp_path, monkeypatch):
+    """⛔ MEASURED DEFECT. A real denominator cleared `blind_since` but left `blind_paged` True, so
+    a SECOND blind episode never paged. The two are one episode marker and must end together.
+
+    ⭐ The mirror of the `announced` defect: that flag was too volatile, this one too sticky. Both
+    are a flag whose lifetime does not match the episode it describes.
+    """
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "page", lambda t, b: pages.append(t) or True)
+    monkeypatch.setattr(uw, "CONDITIONS", {"X": lambda: (0, 0, "no denominator")})
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+
+    def age_the_episode(days: int) -> None:
+        saved = json.loads(state.read_text(encoding="utf-8"))
+        saved["X"]["blind_since"] = (
+            datetime.fromisoformat(saved["X"]["blind_since"]) - timedelta(days=days)
+        ).isoformat()
+        state.write_text(json.dumps(saved), encoding="utf-8")
+
+    # Episode 1
+    uw.main(["--state", str(state), "--status", str(status)])
+    age_the_episode(uw.BLIND_DAYS_BEFORE_PAGE + 1)
+    uw.main(["--state", str(state), "--status", str(status)])
+    uw.main(["--state", str(state), "--status", str(status)])   # still blind, must stay silent
+    assert len([p for p in pages if p.startswith("BLIND")]) == 1, "one episode paged more than once"
+
+    # A real denominator ends the episode.
+    monkeypatch.setattr(uw, "CONDITIONS", {"X": lambda: (0, 500, "recovered")})
+    uw.main(["--state", str(state), "--status", str(status)])
+    saved = json.loads(state.read_text(encoding="utf-8"))["X"]
+    assert saved["blind_since"] is None
+    assert saved["blind_paged"] is False, "recovery did not re-arm the blind alarm"
+
+    # Episode 2 must page on its own merits.
+    pages.clear()
+    monkeypatch.setattr(uw, "CONDITIONS", {"X": lambda: (0, 0, "blind again")})
+    uw.main(["--state", str(state), "--status", str(status)])
+    age_the_episode(uw.BLIND_DAYS_BEFORE_PAGE + 1)
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert len([p for p in pages if p.startswith("BLIND")]) == 1, "a second blind episode was silent"

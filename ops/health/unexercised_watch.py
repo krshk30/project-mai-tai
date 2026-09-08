@@ -325,10 +325,19 @@ def main(argv: list[str] | None = None) -> int:
                 f"count={fired} denominator={denominator}\n{detail}\n"
                 f"This condition could not be forced; it has now happened. Read it today.",
             ))
-        blind_since = prior.get("blind_since") if verdict == NEVER_LOOKED else None
-        if verdict == NEVER_LOOKED and not blind_since:
-            blind_since = now.isoformat()
-        blind_paged = bool(prior.get("blind_paged", False))
+        # ⛔ blind_since AND blind_paged ARE ONE EPISODE MARKER AND MUST END TOGETHER. The first
+        # version cleared blind_since on a real denominator but carried blind_paged forward
+        # forever, so a SECOND blind episode never paged: blind for 4 days -> one page; denominator
+        # recovers; blind for another 4 days -> silence. A real denominator ENDS the episode.
+        # ⭐ Note the symmetry with `announced`, which failed the opposite way -- too volatile,
+        # reset by a count dip. Both are the same error: a flag whose lifetime does not match the
+        # episode it describes.
+        if verdict == NEVER_LOOKED:
+            blind_since = prior.get("blind_since") or now.isoformat()
+            blind_paged = bool(prior.get("blind_paged", False))
+        else:
+            blind_since = None
+            blind_paged = False
         if verdict == NEVER_LOOKED and blind_since and not args.no_page and not blind_paged:
             days = (now - datetime.fromisoformat(blind_since)).days
             if days >= BLIND_DAYS_BEFORE_PAGE:
