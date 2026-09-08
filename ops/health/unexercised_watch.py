@@ -214,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
 
     now = datetime.now(UTC)
     readings: list[Reading] = []
+    pending_pages: list[tuple[str, str]] = []
     for name, fn in CONDITIONS.items():
         try:
             fired, denominator, detail = fn()
@@ -225,23 +226,29 @@ def main(argv: list[str] | None = None) -> int:
         prior = state.get(name, {})
         prior_fired = int(prior.get("fired", 0))
         if verdict == OCCURRED and prior_fired == 0 and not args.no_page:
-            page(
+            # ⛔ QUEUED, NOT SENT. Every page is deferred until AFTER the state file is written.
+            # Measured 2026-09-08: with the send here and the write at the end, a state-write
+            # failure raised after paging and the SAME "first occurrence" page went out on every
+            # run -- 3 identical pages in 3 crashed invocations. A once-only alarm that repeats
+            # every 15 minutes becomes wallpaper, which is the exact reason the operator refused
+            # the reject alarm. No page may be sent before its memory is durable.
+            pending_pages.append((
                 f"FIRED {name} -- first occurrence",
                 f"{name} has occurred for the first time since deployment.\n"
                 f"count={fired} denominator={denominator}\n{detail}\n"
                 f"This condition could not be forced; it has now happened. Read it today.",
-            )
+            ))
         blind_since = prior.get("blind_since") if verdict == NEVER_LOOKED else None
         if verdict == NEVER_LOOKED and not blind_since:
             blind_since = now.isoformat()
         if verdict == NEVER_LOOKED and blind_since and not args.no_page:
             days = (now - datetime.fromisoformat(blind_since)).days
             if days >= BLIND_DAYS_BEFORE_PAGE and not prior.get("blind_paged"):
-                page(
+                pending_pages.append((
                     f"BLIND {name} -- denominator 0 for {days}d",
                     f"{name} has had NO denominator for {days} days. This is not a clean zero -- "
                     f"the watcher has never had anything to judge. UNEXERCISED, never PASS.",
-                )
+                ))
                 prior["blind_paged"] = True
         state[name] = {
             "fired": fired, "denominator": denominator, "verdict": verdict,
@@ -249,7 +256,10 @@ def main(argv: list[str] | None = None) -> int:
             "blind_paged": prior.get("blind_paged", False),
         }
 
+    # ⛔ ORDER IS THE GUARD. State first, pages second -- see the note above.
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    for title, body in pending_pages:
+        page(title, body)
     lines = [
         f"[UNEXERCISED-WATCH] run_at={now.isoformat()} conditions={len(readings)}",
         "⛔ A zero is a result only when the denominator is non-zero. NEVER_LOOKED is UNEXERCISED.",

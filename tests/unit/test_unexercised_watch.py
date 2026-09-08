@@ -95,3 +95,21 @@ def test_state_records_the_denominator_so_silence_can_be_read_later(tmp_path, mo
     assert saved["verdict"] == uw.NEVER_LOOKED
     assert saved["denominator"] == 0
     assert saved["blind_since"], "a blind condition must record WHEN it went blind"
+
+
+def test_no_page_is_sent_before_the_state_is_durable(tmp_path, monkeypatch):
+    """⛔ The wallpaper control, measured on the box 2026-09-08.
+
+    With the send ahead of the state write, a write failure raised AFTER paging and the identical
+    "first occurrence" page went out on every single run -- 3 pages in 3 crashed invocations. A
+    once-only alarm that repeats every 15 minutes is wallpaper. This test fails if the order is
+    ever put back.
+    """
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "page", lambda title, body: pages.append(title) or True)
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": lambda: (1, 500, "d")})
+    unwritable = tmp_path / "state_is_a_directory"
+    unwritable.mkdir()
+    with pytest.raises(IsADirectoryError):
+        uw.main(["--state", str(unwritable), "--status", str(tmp_path / "S.txt")])
+    assert pages == [], "a page was sent even though its state could never be persisted"
