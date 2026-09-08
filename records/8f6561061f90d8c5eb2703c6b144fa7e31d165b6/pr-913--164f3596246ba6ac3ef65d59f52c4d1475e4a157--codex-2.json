@@ -1,0 +1,9 @@
+{
+  "pr_number": 913,
+  "range_base": "164f3596246ba6ac3ef65d59f52c4d1475e4a157",
+  "range_head": "8f6561061f90d8c5eb2703c6b144fa7e31d165b6",
+  "reviewed_at": "2026-09-08T14:15:35Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed the conflict-free docs-only rebase after #914 and #916; the old and new PR diffs are byte-identical, the box-derived handoff content is unchanged, and diff checks are clean."
+}
