@@ -6,17 +6,26 @@ condition to occur on the live system. The first version of this docstring said 
 once been exercised", which conflated a test with a reading and is the exact rule this board keeps:
 the instrument is not the reading.
 
-⭐ WHAT IS ACTUALLY NEW, measured rather than asserted (2026-09-08):
-  RECOV1  MATERIALLY NEW. Nothing previously routed through the deployed
-          `_v2_close_reconcile_flat` with a real OmsManagedPosition row; the prior coverage was a
-          transcription of the predicate, which proves only that a rule was copied correctly.
-  DB2     DUPLICATE. #858's tests/unit/test_v2_fanout_zero_hold_mirror_scope.py already covers it:
-          removing the venue-evidence veto turns test_expired_hold_vetoes_release_of_a_filled_claim
-          RED without this file. Kept as a parallel control, not claimed as new.
-  SLOT2   PARTIAL. #880 covers slot consumption on fill. Removing the guard at
-          strategy_core/schwab_1m_v2.py:3161 left the whole unit suite's v2 tests green, so that
-          specific branch appears uncovered — but the mechanism is not new and the claim here is
-          only about that branch.
+⭐ WHAT IS ACTUALLY NEW, narrowed twice by codex-2 after I overstated it twice (2026-09-08):
+  RECOV1  NEW ONLY AT THE RELEASED-LATCH + HELD REPROTECTION BRANCH, with a real row. The ROUTING
+          is not new: test_oms_risk_service.py::test_flat_reconcile_addresses_the_attached_pair_not_the_entry
+          already calls `_v2_close_reconcile_flat` with a real OmsManagedPosition. What that file
+          never touches is the reprotect path -- it contains zero references to
+          `_exit_reservation_released` or `_reprotect_after_failed_release`.
+  SLOT2   DUPLICATE at the suppression branch. #880's
+          test_schwab_1m_v2_cw_v2.py::test_LHAI_flat_close_cannot_place_second_first_slot_in_same_segment
+          goes RED at the SAME line I mutated (schwab_1m_v2.py:3161) -- it places the forbidden
+          second order. Only the combined `_release_arm` -> re-entry control here is incremental.
+  DB2     DUPLICATE. #858's test_v2_fanout_zero_hold_mirror_scope.py already covers it: removing
+          the venue-evidence veto turns test_expired_hold_vetoes_release_of_a_filled_claim RED
+          without this file. Kept as a parallel control.
+
+⛔ HOW I GOT SLOT2 WRONG, recorded because the method failed twice over. My grep listed NINE
+candidate test files and I ran ONE of them, saw green, and reported the branch uncovered. My
+full-suite cross-check was then truncated by my own `head -20`: the summary line said 47 failed
+while the captured file held 20 FAILED lines, and the covering failure was never in what I grepped.
+I printed both numbers and did not compare them. A number that will not reconcile is the tell for
+truncated output, and I then escalated the mistake into a stated disagreement.
 
 Each row is driven against the DEPLOYED function. Stubs are held to the transport boundary — a
 broker read, a DB write, a queued order — so the decision under test is always the real one, and
