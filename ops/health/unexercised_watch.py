@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Watch the deployed-but-never-fired conditions and PAGE when one finally occurs.
+
+⛔ WHY THIS EXISTS. Fifteen items were deployed and unexercised, several for three weeks, and the
+board's own instruments could not tell "the condition never happened" from "nobody was looking".
+Two proofs of that, both from 2026-09-08:
+  - SIL1's exit-reject alarm had never once fired in its life; a forged 8-reject episode fired it
+    immediately, so the alarm was always correct and simply never triggered.
+  - The D6 grader's watchdog had been RED since Saturday and nobody read it.
+⇒ A watcher whose output nobody reads is worth nothing. This one PAGES.
+
+⭐ EVERY CONDITION CARRIES ITS OWN DENOMINATOR. A zero is only a result when the denominator is
+non-zero. Three distinct outcomes, never collapsed into "clean":
+    OCCURRED      fired >= 1                      -> page once, on the 0 -> 1 transition
+    NEVER_OCCURRED denominator > 0 and fired == 0  -> a real measured zero
+    NEVER_LOOKED  denominator == 0                 -> UNEXERCISED; the watcher saw nothing at all
+⛔ COULD_NOT_TELL is returned whenever a query fails. A broken query must never read as a clean
+zero -- that is the false-clean failure this whole board exists to prevent.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from dataclasses import dataclass, asdict
+from datetime import UTC, datetime
+from pathlib import Path
+
+NTFY_URL = "https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
+STATE_PATH = Path("/home/trader/unexercised_watch/state.json")
+STATUS_PATH = Path("/home/trader/unexercised_watch/STATUS.txt")
+V2_LOG = Path("/var/log/project-mai-tai/schwab-1m-v2.log")
+OMS_LOG = Path("/var/log/project-mai-tai/oms.log")
+
+OCCURRED = "OCCURRED"
+NEVER_OCCURRED = "NEVER_OCCURRED"
+NEVER_LOOKED = "NEVER_LOOKED"
+COULD_NOT_TELL = "COULD_NOT_TELL"
+
+# A condition that has had a denominator for this many consecutive days without ever firing is
+# still not a fault -- but one with NO denominator for this long means the watcher is blind, and
+# that IS a fault worth paging about. [[feedback_a_watch_that_fails_to_a_false_clean]]
+BLIND_DAYS_BEFORE_PAGE = 3
+
+
+@dataclass
+class Reading:
+    name: str
+    verdict: str
+    fired: int
+    denominator: int
+    detail: str
+
+
+def _dsn() -> str:
+    out = subprocess.run(
+        ["sudo", "grep", "-E", "^MAI_TAI_DATABASE_URL=", "/etc/project-mai-tai/project-mai-tai.env"],
+        capture_output=True, text=True, timeout=20,
+    )
+    line = (out.stdout or "").strip().splitlines()[0] if out.stdout.strip() else ""
+    return line.split("=", 1)[1] if "=" in line else ""
+
+
+def _psql(sql: str) -> list[str]:
+    """Run one SQL statement as the app user. Raises on any failure -- the caller turns that
+    into COULD_NOT_TELL rather than a zero."""
+    dsn = _dsn()
+    if not dsn:
+        raise RuntimeError("MAI_TAI_DATABASE_URL unreadable")
+    pwd = dsn.split("://", 1)[1].split(":", 1)[1].split("@", 1)[0]
+    env = dict(os.environ, PGPASSWORD=pwd)
+    out = subprocess.run(
+        ["psql", "-U", "mai_tai", "-h", "localhost", "-d", "project_mai_tai", "-tA", "-c", sql],
+        capture_output=True, text=True, env=env, timeout=60,
+    )
+    if out.returncode != 0:
+        raise RuntimeError(f"psql failed: {(out.stderr or '').strip()[:200]}")
+    return [r for r in (out.stdout or "").splitlines() if r.strip()]
+
+
+def _log_count(path: Path, marker: str) -> int:
+    """Count a marker across the live log AND its rotations. ⛔ Logs are root:root 640, so this
+    must run as root -- a permission failure returns a FALSE ZERO otherwise, which is exactly the
+    trap that cost a day on 2026-09-06. We raise instead."""
+    if not path.exists():
+        raise RuntimeError(f"{path} missing")
+    if not os.access(path, os.R_OK):
+        raise RuntimeError(f"{path} unreadable -- run as root, a false zero is not a result")
+    total = 0
+    for candidate in sorted(path.parent.glob(path.name + "*")):
+        if candidate.suffix == ".gz":
+            out = subprocess.run(["zgrep", "-c", marker, str(candidate)], capture_output=True, text=True)
+        else:
+            out = subprocess.run(["grep", "-c", marker, str(candidate)], capture_output=True, text=True)
+        total += int((out.stdout or "0").strip() or 0)
+    return total
+
+
+# --------------------------------------------------------------------------------------------
+# The four conditions nobody can force. Each returns (fired, denominator, detail).
+# --------------------------------------------------------------------------------------------
+
+def check_halt() -> tuple[int, int, str]:
+    """HALT1/HALT2 -- a REAL Schwab halt seen by v2.
+    Denominator: deduplicated quote observations with a usable prior print, which is exactly what
+    halt_monitor publishes. Zero there means the detector never had anything to judge."""
+    fired = _log_count(V2_LOG, "[V2-HALT-CONFIRMED]")
+    rows = _psql(
+        "select coalesce(max((payload->'data_health'->'halt_monitor'->>'denominator')::int),0) "
+        "from dashboard_snapshots where payload::text like '%halt_monitor%'"
+    )
+    return fired, int(rows[0] or 0) if rows else 0, "denominator = deduplicated quote observations"
+
+
+def check_two_broker_close() -> tuple[int, int, str]:
+    """CONF3 -- a confirmation exit that closed BOTH broker legs.
+    Denominator: confirmation-exit evaluations. Fired: evaluations whose fan-out actually closed
+    the second account too."""
+    rows = _psql("select count(*) from v2_confirmation_exit_evaluations")
+    denominator = int(rows[0] or 0) if rows else 0
+    fired = _log_count(OMS_LOG, "[OMS-V2-CONFIRMATION-EXIT-FANOUT-CLOSED]")
+    return fired, denominator, "denominator = confirmation-exit evaluations"
+
+
+def check_reject_storm() -> tuple[int, int, str]:
+    """SIL1 -- the exit-reject alarm firing on a live storm.
+    Denominator: rejected closes on the two live accounts, which is the population the alarm
+    counts. ⛔ Split by account: a paper reject is not this condition."""
+    rows = _psql(
+        "select count(*) from broker_order_events e join broker_orders o on o.id=e.order_id "
+        "join broker_accounts b on b.id=o.broker_account_id "
+        "where e.event_type='rejected' and b.name like 'live:%' "
+        "and e.event_at >= now() - interval '30 days'"
+    )
+    denominator = int(rows[0] or 0) if rows else 0
+    fired = _log_count(OMS_LOG, "[OMS-V2-EXIT-REJECT-ALARM]")
+    return fired, denominator, "denominator = live rejected closes, 30d, live accounts only"
+
+
+def check_resting_fill() -> tuple[int, int, str]:
+    """PEX1 -- a resting entry that actually filled and was admitted by the paper harness.
+    Denominator: fills the harness classified at all. Zero means it was never offered one."""
+    rows = _psql("select count(*) from paper_exit_events")
+    denominator = int(rows[0] or 0) if rows else 0
+    rows2 = _psql("select count(*) from paper_exit_events where payload::text like '%resting%'")
+    fired = int(rows2[0] or 0) if rows2 else 0
+    return fired, denominator, "denominator = paper_exit_events classified"
+
+
+CONDITIONS = {
+    "HALT_REAL": check_halt,
+    "CONF3_TWO_BROKER_CLOSE": check_two_broker_close,
+    "SIL1_REJECT_STORM": check_reject_storm,
+    "PEX1_RESTING_FILL": check_resting_fill,
+}
+
+
+def classify(fired: int, denominator: int) -> str:
+    if fired > 0:
+        return OCCURRED
+    if denominator > 0:
+        return NEVER_OCCURRED
+    return NEVER_LOOKED
+
+
+def page(title: str, body: str) -> bool:
+    """⛔ ASCII titles only -- ntfy rejects non-ASCII headers."""
+    out = subprocess.run(
+        ["curl", "-sS", "--fail-with-body", "--max-time", "20",
+         "-H", f"Title: {title.encode('ascii', 'ignore').decode('ascii')}",
+         "-H", "Priority: high", "-H", "Tags: rotating_light",
+         "-d", body, NTFY_URL],
+        capture_output=True, text=True,
+    )
+    return out.returncode == 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--state", default=str(STATE_PATH))
+    ap.add_argument("--status", default=str(STATUS_PATH))
+    ap.add_argument("--no-page", action="store_true", help="evaluate and write status, send nothing")
+    args = ap.parse_args(argv)
+
+    state_path, status_path = Path(args.state), Path(args.status)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+
+    now = datetime.now(UTC)
+    readings: list[Reading] = []
+    for name, fn in CONDITIONS.items():
+        try:
+            fired, denominator, detail = fn()
+            verdict = classify(fired, denominator)
+        except Exception as exc:  # noqa: BLE001 - a failed query is COULD_NOT_TELL, never a zero
+            fired, denominator, detail, verdict = 0, 0, f"{type(exc).__name__}: {exc}", COULD_NOT_TELL
+        readings.append(Reading(name, verdict, fired, denominator, detail))
+
+        prior = state.get(name, {})
+        prior_fired = int(prior.get("fired", 0))
+        if verdict == OCCURRED and prior_fired == 0 and not args.no_page:
+            page(
+                f"FIRED {name} -- first occurrence",
+                f"{name} has occurred for the first time since deployment.\n"
+                f"count={fired} denominator={denominator}\n{detail}\n"
+                f"This condition could not be forced; it has now happened. Read it today.",
+            )
+        blind_since = prior.get("blind_since") if verdict == NEVER_LOOKED else None
+        if verdict == NEVER_LOOKED and not blind_since:
+            blind_since = now.isoformat()
+        if verdict == NEVER_LOOKED and blind_since and not args.no_page:
+            days = (now - datetime.fromisoformat(blind_since)).days
+            if days >= BLIND_DAYS_BEFORE_PAGE and not prior.get("blind_paged"):
+                page(
+                    f"BLIND {name} -- denominator 0 for {days}d",
+                    f"{name} has had NO denominator for {days} days. This is not a clean zero -- "
+                    f"the watcher has never had anything to judge. UNEXERCISED, never PASS.",
+                )
+                prior["blind_paged"] = True
+        state[name] = {
+            "fired": fired, "denominator": denominator, "verdict": verdict,
+            "last_run_at": now.isoformat(), "blind_since": blind_since,
+            "blind_paged": prior.get("blind_paged", False),
+        }
+
+    state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    lines = [
+        f"[UNEXERCISED-WATCH] run_at={now.isoformat()} conditions={len(readings)}",
+        "⛔ A zero is a result only when the denominator is non-zero. NEVER_LOOKED is UNEXERCISED.",
+    ]
+    for r in readings:
+        lines.append(f"  {r.name:24} {r.verdict:15} fired={r.fired:<6} denominator={r.denominator:<8} {r.detail}")
+    status_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("\n".join(lines))
+    return 0 if all(r.verdict != COULD_NOT_TELL for r in readings) else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
