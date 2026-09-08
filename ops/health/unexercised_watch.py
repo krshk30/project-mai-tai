@@ -108,11 +108,28 @@ def check_halt() -> tuple[int, int, str]:
     Denominator: deduplicated quote observations with a usable prior print, which is exactly what
     halt_monitor publishes. Zero there means the detector never had anything to judge."""
     fired = _log_count(V2_LOG, "[V2-HALT-CONFIRMED]")
-    rows = _psql(
-        "select coalesce(max((payload->'data_health'->'halt_monitor'->>'denominator')::int),0) "
-        "from dashboard_snapshots where payload::text like '%halt_monitor%'"
+    # ⛔ The denominator lives ONLY in the v2 bot's published state. Two wrong sources were tried
+    # first and both read as a clean zero: dashboard_snapshots carries no halt_monitor at all (0
+    # rows), and taking the NEWEST strategy-state-isolated entry returns whichever bot published
+    # last, which is usually not v2. A wrong source here reports NEVER_LOOKED while the real
+    # denominator is in the thousands. Scan back and require a v2 payload, or say COULD_NOT_TELL.
+    out = subprocess.run(
+        ["redis-cli", "XREVRANGE", "mai_tai:strategy-state-isolated", "+", "-", "COUNT", "80"],
+        capture_output=True, text=True, timeout=30,
     )
-    return fired, int(rows[0] or 0) if rows else 0, "denominator = deduplicated quote observations"
+    if out.returncode != 0:
+        raise RuntimeError("redis-cli XREVRANGE failed")
+    denominator = None
+    for chunk in (out.stdout or "").split("schwab_1m_v2")[1:]:
+        marker = chunk.find('"denominator"')
+        if marker != -1:
+            digits = "".join(ch for ch in chunk[marker + 13 : marker + 40] if ch.isdigit())
+            if digits:
+                denominator = int(digits)
+                break
+    if denominator is None:
+        raise RuntimeError("no schwab_1m_v2 halt_monitor payload in the last 80 state entries")
+    return fired, denominator, "denominator = deduplicated quote observations (v2 published state)"
 
 
 def check_two_broker_close() -> tuple[int, int, str]:
@@ -143,11 +160,14 @@ def check_reject_storm() -> tuple[int, int, str]:
 def check_resting_fill() -> tuple[int, int, str]:
     """PEX1 -- a resting entry that actually filled and was admitted by the paper harness.
     Denominator: fills the harness classified at all. Zero means it was never offered one."""
+    # ⛔ NOT a LIKE on the payload. The first version matched '%resting%' anywhere and counted
+    # LATE_MIRROR rows as resting fills. The condition is a real harness EXIT decision on an
+    # admitted fill, which is exactly event_type='PAPER_EXIT'.
     rows = _psql("select count(*) from paper_exit_events")
     denominator = int(rows[0] or 0) if rows else 0
-    rows2 = _psql("select count(*) from paper_exit_events where payload::text like '%resting%'")
+    rows2 = _psql("select count(*) from paper_exit_events where event_type='PAPER_EXIT'")
     fired = int(rows2[0] or 0) if rows2 else 0
-    return fired, denominator, "denominator = paper_exit_events classified"
+    return fired, denominator, "denominator = paper_exit_events classified; fired = PAPER_EXIT decisions"
 
 
 CONDITIONS = {
