@@ -1,12 +1,26 @@
 """One harness, three rows: SLOT2, DB2, RECOV1.
 
-⛔ WHY THESE EXIST. All three were deployed and had never once been exercised. Each is driven here
-against the DEPLOYED function -- not a transcription of its predicate, which is what RECOV1 was
-carried as until 2026-09-08 and which proves only that a rule was copied correctly.
+⛔ WHAT THIS IS NOT. It is NOT evidence that any of these has been exercised in production, and it
+closes NO live acceptance status. A unit test cannot move a row from UNEXERCISED — that requires the
+condition to occur on the live system. The first version of this docstring said all three "had never
+once been exercised", which conflated a test with a reading and is the exact rule this board keeps:
+the instrument is not the reading.
 
-⭐ EVERY TEST CARRIES A CONTROL THAT COULD HAVE FAILED. Showing that a guard blocks is not showing
-that it discriminates; the pair is the evidence. Stubs are held to the transport boundary (a broker
-read, a DB write, a queued order) so the decision under test is always the real one.
+⭐ WHAT IS ACTUALLY NEW, measured rather than asserted (2026-09-08):
+  RECOV1  MATERIALLY NEW. Nothing previously routed through the deployed
+          `_v2_close_reconcile_flat` with a real OmsManagedPosition row; the prior coverage was a
+          transcription of the predicate, which proves only that a rule was copied correctly.
+  DB2     DUPLICATE. #858's tests/unit/test_v2_fanout_zero_hold_mirror_scope.py already covers it:
+          removing the venue-evidence veto turns test_expired_hold_vetoes_release_of_a_filled_claim
+          RED without this file. Kept as a parallel control, not claimed as new.
+  SLOT2   PARTIAL. #880 covers slot consumption on fill. Removing the guard at
+          strategy_core/schwab_1m_v2.py:3161 left the whole unit suite's v2 tests green, so that
+          specific branch appears uncovered — but the mechanism is not new and the claim here is
+          only about that branch.
+
+Each row is driven against the DEPLOYED function. Stubs are held to the transport boundary — a
+broker read, a DB write, a queued order — so the decision under test is always the real one, and
+every test carries a control that could have failed.
 """
 
 from __future__ import annotations
@@ -201,6 +215,12 @@ def _oms(*, latched: bool, read: _PositionRead, spawned: list) -> OmsRiskService
     o._v2_exit_close_failures = {KEY: 99}
     o._V2_EXIT_RECONCILE_AFTER_FAILURES = 3
     o._webull_protect_base = {}
+    # ⛔ INSTANCE-OWNED, NEVER THE CLASS ATTRIBUTE. `_v2_exit_stood_down` is declared at
+    # oms/service.py:521 as a CLASS-level set and re-assigned per instance in __init__.
+    # object.__new__ skips __init__, so an unassigned fixture mutates the one shared set: the
+    # UNKNOWN case reaches the abandonment threshold and writes into it, and a later HELD case
+    # happens to clear it. That made the suite order-dependent and unlike production.
+    o._v2_exit_stood_down = set()
 
     async def _state(_a, _s):
         return read
@@ -258,3 +278,22 @@ def test_recov1_an_unpriceable_row_skips_rather_than_guessing(quantity, entry_pr
     service._reprotect_after_failed_release(ACCT, SYMBOL, _managed_row(quantity=quantity, entry_price=entry_price))
 
     assert spawned == []
+
+
+def test_the_recov1_fixture_never_touches_the_class_level_stand_down_set():
+    """⛔ ISOLATION ASSERTION. `_v2_exit_stood_down` is a CLASS attribute (oms/service.py:521)
+    re-assigned per instance in __init__. A fixture built with object.__new__ and no assignment
+    mutates the single shared set, so one test's UNKNOWN read leaks into the next test's state.
+    """
+    before = set(OmsRiskService._v2_exit_stood_down)
+
+    first = _oms(latched=True, read=_PositionRead.UNKNOWN, spawned=[])
+    second = _oms(latched=True, read=_PositionRead.HELD, spawned=[])
+
+    assert first._v2_exit_stood_down is not OmsRiskService._v2_exit_stood_down
+    assert second._v2_exit_stood_down is not first._v2_exit_stood_down
+
+    asyncio.run(first._v2_close_reconcile_flat(None, ACCT, SYMBOL, _managed_row()))
+
+    assert second._v2_exit_stood_down == set(), "one fixture's stand-down leaked into another"
+    assert set(OmsRiskService._v2_exit_stood_down) == before, "the CLASS attribute was mutated"
