@@ -1,0 +1,9 @@
+{
+  "pr_number": 914,
+  "range_base": "1e685eded410a64c0c2e341d58a441081742690a",
+  "range_head": "b59447c1f66ca0cb45c4073b2d24a9528b739a20",
+  "reviewed_at": "2026-09-08T13:12:38Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed all four correction rounds; re-derived live denominators and installed checksum; 22 focused tests pass; independently proved sticky and volatile blind-latch mutations fail; legacy delivery migration, state-loss retry, corrupt-state suppression, atomic state, fixed-string grep, and delivery retry verified."
+}
