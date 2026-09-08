@@ -31,7 +31,8 @@ def test_orb_environment_builder_excludes_broker_credentials_and_enables_observa
                 "MAI_TAI_REDIS_URL=redis://localhost/0",
                 "MAI_TAI_REDIS_STREAM_PREFIX=mai_tai",
                 "MAI_TAI_ORB_ENABLED=false",
-                "MAI_TAI_ORB_RUNNING_HIGH_ENABLED=true",
+                "MAI_TAI_ORB_RUNNING_HIGH_ENABLED=false",
+                "MAI_TAI_ORB_RESTING_ENTRY_ENABLED=false",
                 "MAI_TAI_ORB_BROKER_ACCOUNT_NAME=live:orb",
                 "MAI_TAI_ORB_BROKER_PROVIDER=webull",
                 "MAI_TAI_SERVICE_DB_TIMEOUTS_ENABLED=true",
@@ -52,8 +53,11 @@ def test_orb_environment_builder_excludes_broker_credentials_and_enables_observa
     assert "MAI_TAI_DATABASE_URL=postgresql://paper-writer" in rendered
     assert "MAI_TAI_REDIS_URL=redis://localhost/0" in rendered
     assert "MAI_TAI_ORB_RUNNING_HIGH_ENABLED=true" in rendered
+    assert "MAI_TAI_ORB_RESTING_ENTRY_ENABLED=true" in rendered
     assert "MAI_TAI_SERVICE_DB_TIMEOUTS_ENABLED=true" in rendered
     assert rendered.count("MAI_TAI_ORB_ENABLED=true") == 1
+    assert rendered.count("MAI_TAI_ORB_RUNNING_HIGH_ENABLED=true") == 1
+    assert rendered.count("MAI_TAI_ORB_RESTING_ENTRY_ENABLED=true") == 1
     assert "must-not-cross" not in rendered
     assert "MAI_TAI_OMS_ADAPTER" not in rendered
     assert "MAI_TAI_ORB_BROKER_ACCOUNT_NAME" not in rendered

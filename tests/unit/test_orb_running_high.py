@@ -111,28 +111,28 @@ def test_reclaim_takes_precedence():
     assert svc._reclaim_mode is True
 
 
-def test_resting_entry_records_stop_limit_policy_at_break():
+def test_resting_entry_records_fixed_paper_order_policy():
     svc = _rh_svc(orb_resting_entry_enabled=True)
     ev = svc._build_paper_entry_decision(
         "FOO", 10.50, observed_at=svc._session_open_utc()
     )
     md = ev.detail["metadata"]
-    assert md["order_type"] == "STOP_LIMIT"
-    assert md["stop_price"] == "10.5000"                          # trigger = the broken level
-    assert md["limit_price"] == f"{10.50 * 1.015:.4f}"           # capped at level*(1+gap_cap 1.5%)
-    assert md["reference_price"] == "10.5000"
-    assert md["execution_mode"] == "running_high_breakout"
-    assert "price_source" not in md                              # NOT quote-priced
-    assert md["trail_pct"] == str(svc.settings.orb_reclaim_trail_pct)  # exit unchanged (Phase-1)
+    assert md == {
+        "orb_entry": "true",
+        "execution_mode": "fixed_opening_high_resting",
+        "order_type": "MODELED_RESTING_ORDER",
+        "broker_route": "none",
+    }
+    assert ev.mode == "fixed_opening_high_resting"
 
 
 def test_resting_entry_supersedes_quote_priced():
-    """When both flags are on, resting wins (STOP_LIMIT, not the quote-priced ask limit)."""
+    """The fixed paper model never inherits the historical quote-priced order shape."""
     svc = _rh_svc(orb_resting_entry_enabled=True, orb_oms_quote_priced_entry_enabled=True)
     md = svc._build_paper_entry_decision(
         "FOO", 10.50, observed_at=svc._session_open_utc()
     ).detail["metadata"]
-    assert md["order_type"] == "STOP_LIMIT"
+    assert md["order_type"] == "MODELED_RESTING_ORDER"
     assert "price_source" not in md
 
 

@@ -63,6 +63,12 @@ class OrbTickAggregator:
         self._bucket = None
         return bar
 
+    def flush_before(self, timestamp: datetime) -> OrbBar | None:
+        """Finalize the trade bar when a later quote proves its minute has ended."""
+        if self._bucket is None or self._floor_minute(timestamp) <= self._bucket:
+            return None
+        return self.flush()
+
     def _start(self, bucket: datetime, price: float, size: float) -> None:
         self._bucket = bucket
         self._o = self._h = self._l = self._c = price
