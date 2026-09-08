@@ -317,17 +317,30 @@ class SchwabBrokerAdapter:
             def walk(item: dict[str, object]) -> None:
                 nonlocal filled, unsafe
                 legs = item.get("orderLegCollection") or []
+                children = item.get("childOrderStrategies") or []
                 leg = legs[0] if legs else {}
                 instruction = str(leg.get("instruction") or "").upper()
                 status = str(item.get("status") or "").upper()
                 if (
                     not legs
+                    and not children
                     and bool(status)
                     and status
                     not in self.CANCELLED_STATUSES | self.REJECTED_STATUSES | {"FILLED"}
                 ):
-                    # An OCO wrapper can remain live without carrying its own leg.
-                    # Missing children are not proof that its sell protection is gone.
+                    # OPAQUE ONLY. A live node with neither legs nor children tells us nothing
+                    # about its sell protection, so refuse -- that is the CHPT case this guard
+                    # was built for.
+                    # ⛔ `not children` IS LOAD-BEARING. A real Schwab OCO wrapper is ALWAYS
+                    # legless and carries its status on the wrapper itself; verified against the
+                    # live broker 2026-09-08 on entry 1007843486886 (legs=0, children=2). Without
+                    # this clause the guard fired on every armed position, so
+                    # release_native_oco_for_close returned `unanswerable` for the whole life of
+                    # the protection and the confirmation exit could NEVER close the Schwab leg.
+                    # Live consequence, BNC 2026-09-08 09:52: the Webull leg closed at 5.1325 and
+                    # the orphaned Schwab leg rode to its target -- a one-sided fan-out exit, the
+                    # mirror of the defect CONF3 exists to prevent.
+                    # A wrapper whose children are present is NOT opaque: they are walked below.
                     unsafe = True
                 if instruction == "SELL":
                     if status == "FILLED":
