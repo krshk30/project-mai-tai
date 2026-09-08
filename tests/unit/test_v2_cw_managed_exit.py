@@ -10,6 +10,7 @@ arms the in-memory pending set only when CW is enabled.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -20,7 +21,14 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import OmsManagedPosition, TradeIntent
+from project_mai_tai.db.models import (
+    BrokerAccount,
+    BrokerOrder,
+    OmsManagedPosition,
+    Strategy,
+    SystemIncident,
+    TradeIntent,
+)
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 
@@ -96,6 +104,30 @@ def _arm(svc, sf, *, entry=10.0, qty=100) -> None:
         )
         s.commit()
     svc._managed_v2_symbols.add((ACCT, SYM))
+
+
+def _record_filled_entry(sf, *, broker_order_id: str = "entry-order-1") -> None:
+    with sf() as s:
+        strategy = s.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
+        account = s.scalar(select(BrokerAccount).where(BrokerAccount.name == ACCT))
+        assert strategy is not None and account is not None
+        s.add(
+            BrokerOrder(
+                intent_id=None,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id=f"entry-client-{broker_order_id}",
+                broker_order_id=broker_order_id,
+                symbol=SYM,
+                side="buy",
+                order_type="stop_limit",
+                time_in_force="day",
+                quantity=Decimal("100"),
+                status="filled",
+                payload={"native_oco_bracket": "true"},
+            )
+        )
+        s.commit()
 
 
 def _quote(svc, bid: float, *, ask: float | None = None) -> None:
@@ -181,6 +213,192 @@ async def test_cw_flip_full_close_at_bid():
     assert intents[0].reason.endswith("CW_FLIP")
     assert _ref(intents[0]) == Decimal("9.9000")   # fills at the bid
     assert (ACCT, SYM) not in svc._cw_flip_pending  # consumed
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_releases_an_armed_native_oco_before_closing() -> None:
+    """MOBX 2026-09-08: a bar-close flip must not be swallowed by native-OCO stand-down."""
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(armed=True, release_result="released")
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _record_filled_entry(sf)
+    svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
+    svc._cw_flip_pending.add((ACCT, SYM))
+    _quote(svc, bid=9.90)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, "entry-order-1")]
+    intents = _sell_intents(sf)
+    assert len(intents) == 1
+    assert intents[0].reason.endswith("CW_FLIP")
+    assert (ACCT, SYM) not in svc._cw_flip_pending
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_never_sells_when_native_oco_release_is_unanswerable() -> None:
+    """Uncertain cancellation keeps the broker bracket authoritative and cannot retry per quote."""
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(armed=True, release_result="unanswerable")
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _record_filled_entry(sf)
+    svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
+    svc._cw_flip_pending.add((ACCT, SYM))
+
+    for bid in (9.90, 9.89, 9.88):
+        _quote(svc, bid=bid)
+        await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, "entry-order-1")]
+    assert _sell_intents(sf) == []
+    assert (ACCT, SYM) not in svc._cw_flip_pending
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_reports_uncovered_when_close_fails_after_oco_release(capsys) -> None:
+    """A released bracket plus a refused close must never disappear as a quiet one-shot."""
+    sf = _make_sf()
+    adapter = _RejectingConfirmationAdapter(armed=True, release_result="released")
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _record_filled_entry(sf)
+    svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
+    svc._cw_flip_pending.add((ACCT, SYM))
+    _quote(svc, bid=9.90)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    output = capsys.readouterr().out
+
+    assert adapter.release_calls == [(ACCT, "entry-order-1")]
+    assert len(_sell_intents(sf)) == 1
+    assert "[OMS-V2-CW-FLIP-UNCOVERED]" in output
+    assert f"managed_row={_open_row_id(sf)}" in output
+    assert "oco_released=1 close_outcome=refused" in output
+    assert (ACCT, SYM) not in svc._cw_flip_pending
+    with sf() as session:
+        incidents = list(session.scalars(select(SystemIncident)).all())
+    assert len(incidents) == 1
+    assert incidents[0].severity == "critical"
+    assert incidents[0].status == "open"
+    assert "CW flip UNCOVERED" in incidents[0].title
+    assert incidents[0].payload == {
+        "source": "oms_v2_cw_flip_uncovered",
+        "broker_account_name": ACCT,
+        "symbol": SYM,
+        "managed_row_id": _open_row_id(sf),
+        "oco_released": True,
+        "close_outcome": "refused",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_refuses_release_if_position_changes_before_target_read() -> None:
+    """A replacement between the snapshot and release read must keep its own OCO untouched."""
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(armed=True, release_result="released")
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    row_a = _open_row_id(sf)
+    _record_filled_entry(sf, broker_order_id="entry-order-A")
+    svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
+    svc._cw_flip_pending.add((ACCT, SYM))
+    _quote(svc, bid=9.90)
+
+    original_run_db = svc._run_db
+    swapped = False
+
+    async def _replace_before_release_read(fn, *, commit=True):  # type: ignore[no-untyped-def]
+        nonlocal swapped
+        if getattr(fn, "__name__", "") == "_read_release_target" and not swapped:
+            swapped = True
+            _close_open_row(sf)
+            _match_production_partial_index(sf)
+            _arm(svc, sf, entry=11.0, qty=100)
+            _record_filled_entry(sf, broker_order_id="entry-order-B")
+        return await original_run_db(fn, commit=commit)
+
+    svc._run_db = _replace_before_release_read  # type: ignore[method-assign]
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert swapped, "the replacement must occur after snapshot A and before the release read"
+    assert _open_row_id(sf) != row_a
+    assert _row_status_open(sf)
+    assert adapter.release_calls == []
+    assert _sell_intents(sf) == []
+
+
+@pytest.mark.asyncio
+async def test_armed_native_oco_keeps_owning_target_even_with_a_pending_flip() -> None:
+    """The exception is only for the ATR flip; it must not revive the whole software ladder."""
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(armed=True)
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
+    svc._cw_flip_pending.add((ACCT, SYM))
+    _quote(svc, bid=10.25)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == []
+    assert _sell_intents(sf) == []
+    assert (ACCT, SYM) in svc._cw_flip_pending
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_defers_when_the_oco_already_resolved_by_fill() -> None:
+    """An OCO child that already sold wins; the flip closes bookkeeping and emits no second sell."""
+    sf = _make_sf()
+    adapter = _ConfirmationAdapter(armed=True, release_result="resolved_by_fill")
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _record_filled_entry(sf)
+    svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
+    svc._cw_flip_pending.add((ACCT, SYM))
+    _quote(svc, bid=9.90)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, "entry-order-1")]
+    assert _sell_intents(sf) == []
+    assert _row(sf).status == "closed"
+    assert (ACCT, SYM) not in svc._managed_v2_symbols
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_does_not_sell_a_replacement_position_after_oco_release() -> None:
+    """The broker await for position A must never let its flip close replacement position B."""
+    sf = _make_sf()
+
+    class _ReplaceDuringRelease(_ConfirmationAdapter):
+        async def release_native_oco_for_close(
+            self, broker_account_name: str, entry_broker_order_id: str
+        ) -> str:
+            self.release_calls.append((broker_account_name, entry_broker_order_id))
+            _close_open_row(sf)
+            _match_production_partial_index(sf)
+            _arm(svc, sf, entry=11.0, qty=100)
+            return "released"
+
+    adapter = _ReplaceDuringRelease(armed=True)
+    svc = _svc(sf, cw=True, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    row_a = _open_row_id(sf)
+    _record_filled_entry(sf)
+    svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
+    svc._cw_flip_pending.add((ACCT, SYM))
+    _quote(svc, bid=9.90)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, "entry-order-1")]
+    assert _open_row_id(sf) != row_a
+    assert _row_status_open(sf)
+    assert (ACCT, SYM) in svc._managed_v2_symbols
+    assert _sell_intents(sf) == []
 
 
 @pytest.mark.asyncio
@@ -724,5 +942,8 @@ async def test_a_position_REPLACED_DURING_the_broker_await_is_not_closed_by_the_
     assert _row_status_open(sf), (
         "position B must still be OPEN — it was closed on position A's OCO fill, which is the "
         "replacement-during-await race"
+    )
+    assert (ACCT, SYM) in svc._managed_v2_symbols, (
+        "refusing the close must not silently remove the replacement from managed-exit evaluation"
     )
     assert _sell_intents(sf) == []

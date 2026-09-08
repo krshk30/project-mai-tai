@@ -639,6 +639,11 @@ class SchwabV2Strategy:
         self._resting_max_bar_age_ms = int(float(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_max_bar_age_secs", 180.0) or 180.0
         ) * 1000)
+        self._resting_quote_max_age_ms = max(0, int(getattr(
+            self.settings,
+            "strategy_schwab_1m_v2_cw_v2_resting_entry_quote_max_age_ms",
+            10_000,
+        )))
         # ESTABLISHED-SHORT gate: only rest once the ATR has been short for >= this many consecutive bars.
         self._resting_min_short_bars = max(1, int(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_min_short_bars", 3) or 3
@@ -3151,13 +3156,16 @@ class SchwabV2Strategy:
                 # STOP<=ASK guard (RTH broker stop only): a buy-stop must sit ABOVE the ask. On a fast
                 # up-tick the live ask can already be at/above the trail (the flip is happening) -> placing
                 # firm-rejects "stop price must be above the current ask". Skip; re-arm once the trail is
-                # back above the market. Fail-open when no fresh quote (let the broker be the backstop).
+                # back above the market. A present-but-stale quote fails closed: MOBX used a
+                # 17-second-old ask below the stop after the live ask had crossed it, guaranteeing
+                # a broker refusal. A wholly absent quote retains the legacy fail-open behavior.
                 # In EH there is NO broker stop (software rest), so the guard is skipped — the quote
                 # cross-check prices/abandons the marketable EH-LIMIT instead.
                 if not (self._eh_resting_enabled and self._resting_session_is_eh()):
-                    ask = float(getattr(state.last_quote, "ask_price", 0.0) or 0.0) if state.last_quote else 0.0
-                    if ask > 0.0 and trail <= ask:
-                        return
+                    if state.last_quote is not None:
+                        ask = self._fresh_resting_ask(state.last_quote)
+                        if ask is None or (ask > 0.0 and trail <= ask):
+                            return
                 if state.cw_resting_taken:
                     segment_id = int(state.fanout_segment_id or state.cw_arm_bar_ts or 0)
                     marker_key = segment_id if segment_id > 0 else -1
@@ -3363,19 +3371,33 @@ class SchwabV2Strategy:
             bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
             if not bar_ms or (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
                 return
-            # STOP<=ASK guard (#527), reused verbatim, fail-open unchanged. ⛔ The residual risk is
+            # STOP<=ASK guard (#527), including the same present-quote freshness requirement.
+            # ⛔ The residual risk is
             # HIGHER here than where it was measured: `cw_segment_high` sits AT the recent high by
             # definition, while the first-entry trail sits below the market by construction.
             if not (self._eh_resting_enabled and self._resting_session_is_eh()):
-                ask = float(getattr(state.last_quote, "ask_price", 0.0) or 0.0) if state.last_quote else 0.0
-                if ask > 0.0 and level <= ask:
-                    return
+                if state.last_quote is not None:
+                    ask = self._fresh_resting_ask(state.last_quote)
+                    if ask is None or (ask > 0.0 and level <= ask):
+                        return
             self._queue_resting_place(state, level, slot="reclaim")
             return
         # STABLE-REST: re-place only on a meaningful move, else leave it out there (#547/NVVE).
         if (state.resting_level > 0.0
                 and abs(level - state.resting_level) / state.resting_level >= self._resting_reprice_frac):
             self._queue_resting_cancel(state, reason="reprice")
+
+    def _fresh_resting_ask(self, quote: Quote) -> float | None:
+        """Return a usable ask only when the present quote is current enough for placement."""
+        try:
+            quote_time_ms = int(getattr(quote, "quote_time_ms", 0) or 0)
+            age_ms = self._now_ms() - quote_time_ms
+            ask = float(getattr(quote, "ask_price", 0.0) or 0.0)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if quote_time_ms <= 0 or age_ms < 0 or age_ms > self._resting_quote_max_age_ms:
+            return None
+        return ask
 
     def _eh_resting_cross_check(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         """EH software-emulated resting TRIGGER (P-B2). A broker buy-stop-limit can't trigger in extended

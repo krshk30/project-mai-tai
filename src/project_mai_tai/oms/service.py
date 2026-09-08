@@ -693,6 +693,9 @@ class OmsRiskService:
         # `v2_cw_flip` signal event; consumed (full close) by the CW exit on the next
         # quote. In-memory so the hot quote path never does a per-tick Redis read.
         self._cw_flip_pending: set[tuple[str, str]] = set()
+        # A native-OCO release is broker I/O. Claim the one-shot flip before awaiting so two
+        # quote tasks cannot cancel the same bracket or submit two closes concurrently.
+        self._cw_flip_release_inflight: set[tuple[str, str]] = set()
         # Operator manual-stop cache (see `_load_global_manual_stop_symbols`).
         # Per-symbol clock for the OCO exit poll, so a managed position is not re-queried on
         # every sync (Webull 429s readily — see the exit-fill probe and the mirror flood).
@@ -3962,7 +3965,7 @@ class OmsRiskService:
     async def _close_confirmation_flat_leg(
         self, acct: str, symbol: str, *, expected_row_id: str
     ) -> bool:
-        def _close(session: Session) -> bool:
+        def _close(session: Session) -> None:
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
@@ -4210,6 +4213,187 @@ class OmsRiskService:
             )
         return result
 
+    async def _release_native_oco_for_cw_flip(
+        self, acct: str, symbol: str, *, expected_row_id: str
+    ) -> str:
+        """Release the current position's native bracket before its bar-close ATR exit.
+
+        The native OCO normally owns target/stop execution. A confirmed ATR flip is different:
+        it is an explicit full-close decision, so leaving the OCO armed makes the stand-down eat
+        the decision. Bind the release to the current managed-position UUID and the latest filled
+        entry, then let the adapter's authoritative tree reread decide whether cancellation was
+        complete, already resolved by a fill, or unanswerable.
+        """
+
+        def _read_release_target(session: Session) -> tuple[str, str]:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != expected_row_id:
+                return "different_position", ""
+            entry = self._find_oco_entry_order(session, acct, symbol)
+            broker_order_id = str(getattr(entry, "broker_order_id", "") or "").strip()
+            if not broker_order_id:
+                return "entry_order_missing", ""
+            return "ready", broker_order_id
+
+        try:
+            target_status, broker_order_id = await self._run_db(
+                _read_release_target, commit=False
+            )
+        except Exception:  # noqa: BLE001 - an unreadable episode must retain its OCO
+            self.logger.exception(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=release_target_read_failed",
+                symbol,
+                acct,
+            )
+            return "unanswerable"
+        if target_status != "ready":
+            self.logger.error(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=%s expected_row=%s",
+                symbol,
+                acct,
+                target_status,
+                expected_row_id,
+            )
+            return "unanswerable"
+        release = getattr(getattr(self, "broker_adapter", None), "release_native_oco_for_close", None)
+        if release is None:
+            self.logger.error(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=adapter_capability_missing",
+                symbol,
+                acct,
+            )
+            return "unanswerable"
+        try:
+            result = str(await release(acct, broker_order_id))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - never sell against an unreadable OCO
+            self.logger.exception(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=release_failed",
+                symbol,
+                acct,
+            )
+            return "unanswerable"
+        if result == "released":
+            # Do not mutate the symbol-scoped armed cache here. A replacement position can open
+            # during the broker await and its fresh confirmation uses the same key; the periodic
+            # authoritative broker refresh owns clearing or replacing that state.
+            self.logger.info(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=RELEASED "
+                "entry_broker_order_id=%s",
+                symbol,
+                acct,
+                broker_order_id,
+            )
+            return result
+        if result == "resolved_by_fill":
+            self.logger.info(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s "
+                "status=ALREADY_RESOLVED_BY_OCO_FILL entry_broker_order_id=%s",
+                symbol,
+                acct,
+                broker_order_id,
+            )
+            return result
+        self.logger.error(
+            "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+            "reason=release_unconfirmed entry_broker_order_id=%s",
+            symbol,
+            acct,
+            broker_order_id,
+        )
+        return "unanswerable"
+
+    @staticmethod
+    def _cw_flip_uncovered_incident(
+        session: Session, acct: str, symbol: str, managed_row_id: str
+    ) -> SystemIncident | None:
+        incidents = session.scalars(
+            select(SystemIncident).where(
+                SystemIncident.service_name == SERVICE_NAME,
+                SystemIncident.status != "closed",
+            )
+        ).all()
+        return next(
+            (
+                incident
+                for incident in incidents
+                if isinstance(incident.payload, dict)
+                and incident.payload.get("source") == "oms_v2_cw_flip_uncovered"
+                and incident.payload.get("broker_account_name") == acct
+                and incident.payload.get("symbol") == symbol
+                and incident.payload.get("managed_row_id") == managed_row_id
+            ),
+            None,
+        )
+
+    async def _raise_cw_flip_uncovered_incident(
+        self,
+        acct: str,
+        symbol: str,
+        *,
+        managed_row_id: str,
+        close_outcome: str,
+    ) -> None:
+        """Make a released bracket plus failed ATR close visible on the operator surface."""
+
+        def _write(session: Session) -> bool:
+            payload = {
+                "source": "oms_v2_cw_flip_uncovered",
+                "broker_account_name": acct,
+                "symbol": symbol,
+                "managed_row_id": managed_row_id,
+                "oco_released": True,
+                "close_outcome": close_outcome,
+            }
+            incident = self._cw_flip_uncovered_incident(
+                session, acct, symbol, managed_row_id
+            )
+            if incident is None:
+                session.add(
+                    SystemIncident(
+                        service_name=SERVICE_NAME,
+                        severity="critical",
+                        title=(
+                            f"CW flip UNCOVERED: {symbol} on {acct}; close or protect now"
+                        )[:255],
+                        status="open",
+                        payload=payload,
+                        opened_at=utcnow(),
+                    )
+                )
+                return True
+            incident.severity = "critical"
+            incident.status = "open"
+            incident.closed_at = None
+            incident.payload = payload
+            return False
+
+        try:
+            created = bool(await self._run_db(_write, commit=True))
+        except Exception:  # noqa: BLE001 - observability must not alter the broker outcome
+            self.logger.exception(
+                "[OMS-V2-CW-FLIP-INCIDENT-FAILED] sym=%s acct=%s managed_row=%s — "
+                "the uncovered position was NOT persisted to the operator incident surface",
+                symbol,
+                acct,
+                managed_row_id,
+            )
+            return
+        if created:
+            self.logger.error(
+                "[OMS-V2-CW-FLIP-INCIDENT] sym=%s acct=%s managed_row=%s status=OPEN",
+                symbol,
+                acct,
+                managed_row_id,
+            )
+
     async def _evaluate_v2_managed_exit(self, acct: str, symbol: str) -> None:
         """Run the v2 exit ladder for one symbol on the latest quote. DECISION uses
         the live bid; FILL reference_price is the leg LEVEL (decision B — stop/floor/
@@ -4233,6 +4417,7 @@ class OmsRiskService:
         fanout_decision: _ConfirmationFanoutDecision | None = None
         protection = ""
         bound_row_id = ""
+        native_oco_stand_down = False
         quote = self._latest_quotes_by_symbol.get(symbol)
         if confirmation is not None:
             fanout_decision = self._confirmation_fanout_decision(confirmation)
@@ -4338,7 +4523,9 @@ class OmsRiskService:
                         fanout_decision, acct, outcome="refused"
                     )
                 return
-        elif self._native_oco_stand_down_active(acct, symbol):
+        else:
+            native_oco_stand_down = self._native_oco_stand_down_active(acct, symbol)
+        if native_oco_stand_down and key not in self._cw_flip_pending:
             # A broker-native OCO owns this exit: target + stop are ONE broker-arbitrated
             # pair. Running the software ladder here would place a THIRD protective sell
             # against the same shares -- the NXTC oversell, merely relocated. Fail-open
@@ -4519,6 +4706,47 @@ class OmsRiskService:
                     flip_pending=flip_pending,
                     ratcheted_floor_price=position.floor_price,
                 )
+                if native_oco_stand_down:
+                    # The bracket continues to own target/stop outcomes. Only the explicit
+                    # bar-close ATR flip may take ownership, after its exact OCO is released.
+                    if action != "flip":
+                        return
+                    release_inflight = self.__dict__.setdefault(
+                        "_cw_flip_release_inflight", set()
+                    )
+                    if key in release_inflight:
+                        return
+                    # One flip is one release attempt. Pop before broker I/O so concurrent quote
+                    # tasks cannot repeat DELETEs; cancellation restores the decision for retry.
+                    self._cw_flip_pending.discard(key)
+                    release_inflight.add(key)
+                    try:
+                        release_result = await self._release_native_oco_for_cw_flip(
+                            acct,
+                            symbol,
+                            expected_row_id=snapshot.managed_row_id,
+                        )
+                    except asyncio.CancelledError:
+                        self._cw_flip_pending.add(key)
+                        raise
+                    finally:
+                        release_inflight.discard(key)
+                    if release_result == "resolved_by_fill":
+                        await self._close_resolved_oco_managed_row(
+                            acct,
+                            symbol,
+                            expected_row_id=snapshot.managed_row_id,
+                        )
+                        self._cw_floor_armed.discard(key)
+                        return
+                    if release_result != "released":
+                        self.logger.error(
+                            "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s reason=oco_release_unconfirmed "
+                            "— the native bracket remains authoritative; no close was submitted",
+                            symbol,
+                            acct,
+                        )
+                        return
                 if action == "arm":
                     # reached +target% -> lock the floor, keep riding (NO exit); persist state.
                     self._cw_floor_armed.add((acct, symbol))
@@ -4551,11 +4779,35 @@ class OmsRiskService:
                         ref, tag = entry_price * (1.0 - self._cw_stop_pct / 100.0), "CW_HARD_STOP"
                     else:  # flip: full close at the current bid (trend exit)
                         ref, tag = bid, "CW_FLIP"
-                    await self._emit_v2_exit_on_loop(
+                    emit_outcome = await self._emit_v2_exit_on_loop(
                         acct, symbol, position, entry_price, kind="HARD",
                         reference_price=ref, reason=f"oms_v2_managed_exit:{tag}",
                         bid=bid, close_on_fill=close_on_fill,
+                        expected_managed_row_id=(
+                            snapshot.managed_row_id if native_oco_stand_down else ""
+                        ),
                     )
+                    if native_oco_stand_down and emit_outcome not in {
+                        "closed", "close_submitted", "no_open_row"
+                    }:
+                        # The broker pair is already gone. Do not hide a failed replacement close
+                        # behind the one-shot flip latch: this position now needs operator action.
+                        self.logger.error(
+                            "[OMS-V2-CW-FLIP-UNCOVERED] sym=%s acct=%s managed_row=%s "
+                            "oco_released=1 close_outcome=%s — the ATR flip released the native "
+                            "bracket but its replacement close did not place; operator protection "
+                            "is required",
+                            symbol,
+                            acct,
+                            snapshot.managed_row_id,
+                            emit_outcome,
+                        )
+                        await self._raise_cw_flip_uncovered_incident(
+                            acct,
+                            symbol,
+                            managed_row_id=snapshot.managed_row_id,
+                            close_outcome=emit_outcome,
+                        )
                     self._cw_flip_pending.discard((acct, symbol))
                     self._cw_floor_armed.discard((acct, symbol))
                 return
@@ -5985,7 +6237,7 @@ class OmsRiskService:
         else:
             self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
 
-        def _close(session: Session) -> None:
+        def _close(session: Session) -> bool:
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
@@ -6006,15 +6258,18 @@ class OmsRiskService:
                         "the replacement position on the previous position's OCO fill",
                         symbol, acct, expected_row_id, current or "-",
                     )
-                    return
+                    return False
             if detail:
                 entry_order = self._find_oco_entry_order(session, acct, symbol)
                 self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             if row is not None:
                 self.store.close_managed_position(session, row)
             self._close_v2_exit_reject_alarm_incident(session, (acct, symbol))
+            return True
 
-        await self._run_db(_close, commit=True)
+        closed_expected_episode = bool(await self._run_db(_close, commit=True))
+        if not closed_expected_episode:
+            return
         key = (acct, symbol)
         self._managed_v2_symbols.discard(key)
         self._cw_flip_pending.discard(key)
@@ -6046,6 +6301,7 @@ class OmsRiskService:
         close_on_fill: bool,
         sell_qty: int | None = None,
         level: str | None = None,
+        expected_managed_row_id: str = "",
     ) -> str:
         """The RARE v2 exit-emit, kept ON-LOOP (single session, one commit) exactly as
         before PR-A: it reaches the shared ``_record_order_reports``, which mutates
@@ -6072,6 +6328,16 @@ class OmsRiskService:
                     # to the ceiling.
                     self._v2_exit_end_episode((acct, symbol), session=session)
                     return "no_open_row"
+                if expected_managed_row_id and str(row.id) != expected_managed_row_id:
+                    self.logger.error(
+                        "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s expected_row=%s open_row=%s "
+                        "reason=different_position_after_oco_release",
+                        symbol,
+                        acct,
+                        expected_managed_row_id,
+                        row.id,
+                    )
+                    return "refused"
                 if kind == "SCALE":
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="scale", quantity=int(sell_qty or 0),

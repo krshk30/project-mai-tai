@@ -261,6 +261,26 @@ def test_an_already_crossed_level_is_not_rested(monkeypatch) -> None:
     assert _places(strat) == [] and st.resting_active is False
 
 
+def test_a_stale_quote_cannot_authorize_the_reclaim_stop(monkeypatch) -> None:
+    """The reclaim path shares the MOBX stop guard and must share its freshness bound."""
+    strat = _strat()
+    _rth(strat, monkeypatch, bar_age_ms=17_000)
+    st = _armed(seg_high=10.0)
+    st.bars[-1] = OHLCVBar(
+        timestamp_ms=RTH + 16_000,
+        open=9.5,
+        high=10.0,
+        low=9.1,
+        close=9.8,
+        volume=500_000,
+    )
+    st.last_quote = Quote("TEST", 9.05, 9.10, 9.08, RTH, 0)
+
+    strat._cw_v2_reclaim_resting_track(st)
+
+    assert _places(strat) == [] and st.resting_active is False
+
+
 def test_fail_open_when_there_is_no_quote(monkeypatch) -> None:
     """Fail-open is INHERITED UNCHANGED. Making it fail-closed is a separate change with its own
     evidence - a rider on an entry-path change is how an unrelated behaviour ships unnoticed."""

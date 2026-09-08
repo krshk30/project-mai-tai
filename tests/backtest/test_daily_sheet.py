@@ -60,7 +60,9 @@ def _good_bars():
 
 
 def _good_quotes():
-    qs = [Quote(ts=_BASE + timedelta(minutes=i, seconds=30),
+    # The live strategy sees a quote every five seconds. Keep the placement-authorizing quote
+    # current at bar close; a 30-second-old fixture now correctly fails the stale-ask guard.
+    qs = [Quote(ts=_BASE + timedelta(minutes=i, seconds=59),
                 bid=_OHLC[i][3] - 0.15, ask=_OHLC[i][3] + 0.05, last=_OHLC[i][3])
           for i in range(9, 16)]
     qs.append(Quote(ts=_BASE + timedelta(minutes=16, seconds=30), bid=98.40, ask=98.50, last=98.50))
