@@ -1,0 +1,9 @@
+{
+  "pr_number": 917,
+  "range_base": "0824ead4a8f389a7752b2d64eef2f9c54c476d9f",
+  "range_head": "c86e9df2676be0ea5fd6b29c8cee2910578a7b3d",
+  "reviewed_at": "2026-09-08T15:53:51Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed both guard corrections and all order-tree fixtures; reproduced the production wrapper and missing-status fail-open; independently proved three mutation axes RED; 30 focused tests, Ruff, diff checks, and CI validate pass; known OVSD1 limitation remains separate and flag-off."
+}
