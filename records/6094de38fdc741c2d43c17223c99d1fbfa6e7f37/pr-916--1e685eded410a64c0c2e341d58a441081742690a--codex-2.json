@@ -1,9 +1,0 @@
-{
-  "pr_number": 916,
-  "range_base": "1e685eded410a64c0c2e341d58a441081742690a",
-  "range_head": "6094de38fdc741c2d43c17223c99d1fbfa6e7f37",
-  "reviewed_at": "2026-09-08T13:48:57Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Reviewed all three rounds; corrected live-vs-test framing; independently reproduced SLOT2 and DB2 duplicate coverage; verified RECOV1 novelty is limited to the released-latch plus HELD reprotection branch; fixture isolation mutation fails; 12 focused tests and related controls pass; Ruff, diff checks, and exact-head CI validate pass."
-}
