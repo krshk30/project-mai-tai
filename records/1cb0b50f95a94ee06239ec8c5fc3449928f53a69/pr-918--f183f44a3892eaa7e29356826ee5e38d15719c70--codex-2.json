@@ -1,0 +1,9 @@
+{
+  "pr_number": 918,
+  "range_base": "f183f44a3892eaa7e29356826ee5e38d15719c70",
+  "range_head": "1cb0b50f95a94ee06239ec8c5fc3449928f53a69",
+  "reviewed_at": "2026-09-08T18:26:08Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed completed-position interval dedupe and ISO timestamp parsing; replayed the verbatim live BNC payload; 14 focused tests and Ruff clean; removing ISO parsing made three controls fail; verified account and real re-entry boundaries; corrected GitHub body matches the exact head."
+}
