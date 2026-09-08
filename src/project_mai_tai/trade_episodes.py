@@ -63,6 +63,35 @@ def _entry_falls_inside_an_existing_cycle(
             return True
     return False
 
+
+def _find_covering_row(
+    completed_rows: list[dict[str, Any]],
+    strategy_code: str,
+    account_name: str,
+    symbol: str,
+    entry_time: str,
+) -> dict[str, Any] | None:
+    """Return an already-built cycle whose [entry, exit] window contains this entry, if any.
+
+    ⛔ The identity is the INTERVAL, not the timestamp. Two passes describe the same position with
+    different entry stamps — the fill when it happened, the order when it was marked filled — and on
+    the Webull fan-out leg that gap was ~14 seconds.
+
+    ⭐ It stays tight enough for back-to-back trades on one symbol: BNC exited 11:02:21 and
+    re-entered 11:03:08 on 2026-09-08, and the second entry falls OUTSIDE the first window.
+    """
+    target = parse_et_timestamp(entry_time)
+    for row in completed_rows:
+        if str(row.get("strategy_code", "") or "") != strategy_code:
+            continue
+        if str(row.get("broker_account_name", "") or "") != account_name:
+            continue
+        if str(row.get("symbol", "") or "").upper() != symbol:
+            continue
+        if parse_et_timestamp(row.get("entry_time")) <= target <= parse_et_timestamp(row.get("exit_time")):
+            return row
+    return None
+
 def collect_completed_trade_cycles(
     *,
     strategy_code: str,
@@ -93,6 +122,28 @@ def collect_completed_trade_cycles(
         exit_time = str(trade["exit_time"] or "-")
         symbol = str(trade["ticker"]).upper()
         trade_account_name = str(trade["broker_account_name"] or broker_account_name)
+
+        # ⛔ A CYCLE ALREADY COVERING THIS INTERVAL IS THIS CYCLE. The fills pass and the filled-order
+        # pass both reconstruct positions, and where both exist they describe ONE position twice. The
+        # order copy is the worse of the two: a broker_orders row carries no fill price, so it renders
+        # `-` entry, `-` exit and $0.00 P&L, stamped at `updated_at` rather than the fill time.
+        # Measured live 2026-09-08 — every Webull fan-out leg appeared twice, e.g. BNC 12:09:50
+        # -$0.02 beside a phantom 12:10:04 $+0.00 from open-e0c300989641 / close-8a0891514c98, both
+        # payload_has_price=NO. Exact-timestamp dedupe missed because the two stamps differ by ~14s.
+        # ⭐ ENRICH, NEVER DISCARD. The order pass is not only a fallback: it carries the PATH label
+        # the fills lack, which test_collect_completed_trade_cycles_prefers_fills pins. So a covered
+        # duplicate fills in what the surviving row is missing and is then dropped.
+        covering = _find_covering_row(
+            completed_rows, strategy_code, trade_account_name, symbol, entry_time
+        )
+        if covering is not None:
+            candidate_path = str(trade["path"] or "").strip()
+            if candidate_path and is_generic_path(covering.get("path")):
+                covering["path"] = candidate_path
+            if not entry_price and covering.get("entry_price"):
+                pass  # the priced row already wins; nothing to take from an unpriced duplicate
+            return
+
         existing_keys.add((strategy_code, trade_account_name, symbol, entry_time))
         existing_spans.append(
             (
