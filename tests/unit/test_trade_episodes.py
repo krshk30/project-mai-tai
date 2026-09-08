@@ -398,3 +398,86 @@ def test_coalesce_completed_trade_cycles_merges_shadow_close_row_into_real_cycle
     assert merged[0]["pnl"] == -1.16
     assert merged[0]["summary"] == "Hard Stop Native Backup"
     assert merged[0]["exit_time"] == "2026-05-01 01:12:02 PM ET"
+
+
+def _fill(side, qty, price, at, *, account="live:orb", intent, reason):
+    return {
+        "symbol": "BNC", "side": side, "quantity": qty, "price": price, "filled_at": at,
+        "strategy_code": "schwab_1m_v2", "broker_account_name": account,
+        "intent_type": intent, "reason": reason,
+    }
+
+
+def test_a_managed_row_inside_an_existing_cycle_is_not_a_second_position():
+    """⛔ MEASURED IN PRODUCTION, BNC 2026-09-08. The fan-out leg's fill is stamped 09:50:51 and its
+    managed row 09:51:04 — 13 seconds of settle lag. Deduping on the exact entry-time string missed,
+    so the dashboard rendered the SAME Webull position twice: once truthfully at -$0.12, and once
+    from the managed row with no prices and $+0.00 (+0.0%).
+    """
+    fills = [
+        _fill("buy", 1, 5.25, "2026-09-08 09:50:51 AM ET", intent="open", reason="ENTRY_RESTING"),
+        _fill("sell", 1, 5.1325, "2026-09-08 09:52:05 AM ET", intent="close", reason="Close"),
+    ]
+    closed_today = [{
+        "ticker": "BNC", "broker_account_name": "live:orb",
+        "entry_time": "2026-09-08 09:51:04 AM ET", "exit_time": "2026-09-08 09:52:18 AM ET",
+        "original_quantity": 1, "entry_path": "Resting",
+        "reason": "oms_v2_managed_exit:CONFIRMATION_EXIT",
+    }]
+
+    cycles = collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2", broker_account_name="live:orb",
+        recent_orders=[], recent_fills=fills, closed_today=closed_today,
+    )
+
+    assert len(cycles) == 1, [
+        (c.entry_time, c.entry_price, c.exit_price, c.pnl) for c in cycles
+    ]
+    only = cycles[0]
+    assert only.entry_price == 5.25
+    assert only.exit_price == 5.1325
+    assert only.pnl < 0, "the surviving row must be the priced one, not the $0.00 phantom"
+
+
+def test_a_genuine_re_entry_after_the_close_is_still_its_own_position():
+    """⛔ THE CONTROL THAT KEEPS THE FIX HONEST. BNC exited 11:02:21 and re-entered 11:03:08 on the
+    same day — 47 seconds later. A tolerance-window dedupe would have swallowed it. The interval
+    test must not: the second entry falls OUTSIDE the first cycle's window.
+    """
+    fills = [
+        _fill("buy", 1, 4.83, "2026-09-08 10:59:14 AM ET", intent="open", reason="ENTRY_RESTING"),
+        _fill("sell", 1, 4.93, "2026-09-08 11:02:21 AM ET", intent="close", reason="Close"),
+    ]
+    closed_today = [{
+        "ticker": "BNC", "broker_account_name": "live:orb",
+        "entry_time": "2026-09-08 11:03:08 AM ET", "exit_time": "2026-09-08 11:18:31 AM ET",
+        "original_quantity": 1, "entry_path": "Reclaim",
+        "reason": "oms_v2_managed_exit:CLOSE",
+    }]
+
+    cycles = collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2", broker_account_name="live:orb",
+        recent_orders=[], recent_fills=fills, closed_today=closed_today,
+    )
+
+    assert len(cycles) == 2, "a real re-entry was swallowed by the duplicate suppression"
+
+
+def test_the_same_symbol_on_the_other_broker_is_never_suppressed():
+    """The two fan-out legs are separate positions. Account is part of the identity."""
+    fills = [
+        _fill("buy", 1, 5.25, "2026-09-08 09:50:51 AM ET", intent="open", reason="ENTRY_RESTING"),
+        _fill("sell", 1, 5.1325, "2026-09-08 09:52:05 AM ET", intent="close", reason="Close"),
+    ]
+    closed_today = [{
+        "ticker": "BNC", "broker_account_name": "live:schwab_1m_v2",
+        "entry_time": "2026-09-08 09:51:04 AM ET", "exit_time": "2026-09-08 09:57:24 AM ET",
+        "original_quantity": 2, "entry_path": "Resting", "reason": "oms_v2_managed_exit:CLOSE",
+    }]
+
+    cycles = collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2", broker_account_name="live:orb",
+        recent_orders=[], recent_fills=fills, closed_today=closed_today,
+    )
+
+    assert len(cycles) == 2, "the Schwab leg was suppressed by the Webull leg's window"
