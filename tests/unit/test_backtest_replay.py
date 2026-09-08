@@ -166,7 +166,9 @@ def _tp(minute: int, price: float) -> TapeTrade:
 def _run_rth(tape, cross_ask: float = RESTING_STOP, **overrides):
     """RTH resting entry (fills AT the ATR line so fill == OCO reference => a clean +2%/-5% frame),
     then resolve the static OCO against `tape`."""
-    settings = build_replay_settings(**overrides)
+    settings = build_replay_settings(
+        **{"oms_v2_cw_target_pct": 2.0, "oms_v2_cw_hard_stop_pct": 5.0, **overrides}
+    )
     source = _MemSource(_bars(), _quotes(cross_ask), trades=tape)
     return replay_symbol_day(source, SYM, DAY, settings)
 
@@ -328,6 +330,8 @@ def _run_eh(*, floor_enabled: bool):
     settings = build_replay_settings(
         strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,  # let the reactive path fire
         oms_v2_cw_floor_exit_enabled=floor_enabled,
+        oms_v2_cw_target_pct=2.0,
+        oms_v2_cw_hard_stop_pct=5.0,
     )
     source = _MemSource(_eh_bars(), _eh_quotes(_EH_FLOOR_BIDS))
     return replay_symbol_day(source, SYM, DAY, settings)
@@ -390,6 +394,8 @@ def test_eh_open_bar_close_atr_flip_exit() -> None:
     settings = build_replay_settings(
         strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
         oms_v2_cw_floor_exit_enabled=True,
+        oms_v2_cw_target_pct=2.0,
+        oms_v2_cw_hard_stop_pct=5.0,
     )
     res = replay_symbol_day(_MemSource(bars, quotes), SYM, DAY, settings)
     assert len(res.trades) == 1, f"expected one EH trade; skips={res.skips} misses={res.misses}"
@@ -409,9 +415,13 @@ def test_eh_open_bar_close_atr_flip_exit() -> None:
 
 def _run_eh_flatten(floor_bids, *, floor_enabled: bool = True, **overrides):
     settings = build_replay_settings(
-        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,  # let the reactive EH path fire
-        oms_v2_cw_floor_exit_enabled=floor_enabled,
-        **overrides,
+        **{
+            "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": False,
+            "oms_v2_cw_floor_exit_enabled": floor_enabled,
+            "oms_v2_cw_target_pct": 2.0,
+            "oms_v2_cw_hard_stop_pct": 5.0,
+            **overrides,
+        }
     )
     return replay_symbol_day(_MemSource(_eh_bars(), _eh_quotes(floor_bids)), SYM, DAY, settings)
 
@@ -509,7 +519,13 @@ def _eh_rest_quotes(cross_ask: float, floor_bids=None) -> list[TapeQuote]:
 
 def _run_eh_rest(cross_ask: float, *, floor_bids=None, eh_enabled: bool = True, **overrides):
     settings = build_replay_settings(
-        eh_enabled=eh_enabled, oms_v2_cw_floor_exit_enabled=True, **overrides
+        eh_enabled=eh_enabled,
+        **{
+            "oms_v2_cw_floor_exit_enabled": True,
+            "oms_v2_cw_target_pct": 2.0,
+            "oms_v2_cw_hard_stop_pct": 5.0,
+            **overrides,
+        },
     )
     source = _MemSource(_eh_rest_bars(), _eh_rest_quotes(cross_ask, floor_bids))
     return replay_symbol_day(source, SYM, DAY, settings)
@@ -655,19 +671,26 @@ def test_env_set_values_beat_live_locked() -> None:
         )
 
 
-def test_live_locked_tracks_production_for_the_three_flags_that_once_drifted() -> None:
-    """⛔ The 07-28 divergence, pinned so it cannot silently return.
-
-    All three were measured ON THE BOX as `true` (2026-08-19, scripts/audit_live_locked_drift.py).
-    The mirror's whole contract is that an off-VPS / CI replay is faithful WITHOUT an env file, and
-    these are the three that made it unfaithful.
-    """
+def test_live_locked_tracks_production_for_the_two_eh_flags_that_once_drifted() -> None:
+    """⛔ The remaining 07-28 divergence, pinned so it cannot silently return."""
     for key in (
-        "strategy_schwab_1m_v2_cw_v2_reclaim_enabled",
         "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled",
         "oms_v2_eh_entry_enabled",
     ):
         assert LIVE_LOCKED[key] is True, f"{key} must mirror production (live: true)"
+
+
+def test_live_locked_tracks_the_2026_09_08_cw_operator_settings() -> None:
+    """Reclaim off and +5%/-8% must be visible to both replay and the drift audit."""
+    expected = {
+        "strategy_schwab_1m_v2_cw_v2_reclaim_enabled": False,
+        "oms_v2_cw_target_pct": 5.0,
+        "oms_v2_cw_hard_stop_pct": 8.0,
+    }
+    settings = build_replay_settings()
+    for key, value in expected.items():
+        assert LIVE_LOCKED[key] == value, f"{key} is absent or stale in the live mirror"
+        assert getattr(settings, key) == value, f"{key} is stale in an off-VPS replay"
 
 
 def test_reclaim_parity_actually_moves_the_entry_cap() -> None:
@@ -684,8 +707,8 @@ def test_reclaim_parity_actually_moves_the_entry_cap() -> None:
     off = _Settings(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False)
     assert SchwabV2Strategy(build_replay_settings(base=on))._cw_v2_max_entries_per_flip == 2
     assert SchwabV2Strategy(build_replay_settings(base=off))._cw_v2_max_entries_per_flip == 1
-    # And the DEFAULT (no env, off-VPS / CI) must now follow production, which runs reclaim ON.
-    assert SchwabV2Strategy(build_replay_settings())._cw_v2_max_entries_per_flip == 2
+    # And the DEFAULT (no env, off-VPS / CI) follows production: reclaim OFF means one entry.
+    assert SchwabV2Strategy(build_replay_settings())._cw_v2_max_entries_per_flip == 1
 
 
 def test_live_locked_still_applies_with_no_env() -> None:
@@ -708,6 +731,14 @@ def test_explicit_overrides_still_win_over_everything() -> None:
     base = _Settings(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True)
     s = build_replay_settings(base=base, strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False)
     assert s.strategy_schwab_1m_v2_cw_v2_reclaim_enabled is False
+
+
+def test_env_can_roll_back_the_live_locked_target_and_stop() -> None:
+    """A runtime rollback remains an env change plus restart, not a replay code deployment."""
+    base = _Settings(oms_v2_cw_target_pct=2.0, oms_v2_cw_hard_stop_pct=5.0)
+    settings = build_replay_settings(base=base)
+    assert settings.oms_v2_cw_target_pct == 2.0
+    assert settings.oms_v2_cw_hard_stop_pct == 5.0
 
 
 def test_eh_switch_still_forces_eh_on() -> None:
