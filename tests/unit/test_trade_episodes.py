@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from project_mai_tai.trade_episodes import coalesce_completed_trade_cycles
+from project_mai_tai.trade_episodes import parse_et_timestamp, coalesce_completed_trade_cycles
 from project_mai_tai.trade_episodes import collect_completed_trade_cycles
 
 
@@ -420,7 +420,8 @@ def test_a_managed_row_inside_an_existing_cycle_is_not_a_second_position():
     ]
     closed_today = [{
         "ticker": "BNC", "broker_account_name": "live:orb",
-        "entry_time": "2026-09-08 09:51:04 AM ET", "exit_time": "2026-09-08 09:52:18 AM ET",
+        "entry_time": "2026-09-08T13:51:04.129000+00:00",
+        "exit_time": "2026-09-08T13:52:18.677000+00:00",
         "original_quantity": 1, "entry_path": "Resting",
         "reason": "oms_v2_managed_exit:CONFIRMATION_EXIT",
     }]
@@ -450,7 +451,8 @@ def test_a_genuine_re_entry_after_the_close_is_still_its_own_position():
     ]
     closed_today = [{
         "ticker": "BNC", "broker_account_name": "live:orb",
-        "entry_time": "2026-09-08 11:03:08 AM ET", "exit_time": "2026-09-08 11:18:31 AM ET",
+        "entry_time": "2026-09-08T15:03:08.480000+00:00",
+        "exit_time": "2026-09-08T15:18:31.000000+00:00",
         "original_quantity": 1, "entry_path": "Reclaim",
         "reason": "oms_v2_managed_exit:CLOSE",
     }]
@@ -471,7 +473,8 @@ def test_the_same_symbol_on_the_other_broker_is_never_suppressed():
     ]
     closed_today = [{
         "ticker": "BNC", "broker_account_name": "live:schwab_1m_v2",
-        "entry_time": "2026-09-08 09:51:04 AM ET", "exit_time": "2026-09-08 09:57:24 AM ET",
+        "entry_time": "2026-09-08T13:51:04.129000+00:00",
+        "exit_time": "2026-09-08T13:57:24.000000+00:00",
         "original_quantity": 2, "entry_path": "Resting", "reason": "oms_v2_managed_exit:CLOSE",
     }]
 
@@ -481,3 +484,48 @@ def test_the_same_symbol_on_the_other_broker_is_never_suppressed():
     )
 
     assert len(cycles) == 2, "the Schwab leg was suppressed by the Webull leg's window"
+
+
+def test_parse_et_timestamp_reads_the_iso_utc_shape_the_bot_actually_publishes():
+    """⛔ THE FIXTURE-VS-PRODUCTION CONTROL. `closed_today` is built with `lot[2].isoformat()`, so
+    every timestamp reaching the dedupe is ISO UTC with fractional seconds — not the display-ET
+    string the dashboard's own rows carry. Before this, ISO fell through to datetime.min, so BOTH
+    duplicate checks compared a real time against year 1 and never matched. The first version of
+    this fix was written against display-ET fixtures and was therefore INERT in production.
+    """
+    parsed = parse_et_timestamp("2026-09-08T13:50:51.255000+00:00")
+
+    assert parsed.year == 2026, "the live ISO shape fell through to datetime.min"
+    assert (parsed.hour, parsed.minute, parsed.second) == (9, 50, 51), "not converted to ET"
+    # display-ET must still parse, and the two forms must agree on the same instant
+    display = parse_et_timestamp("2026-09-08 09:50:51 AM ET")
+    assert abs((parsed - display).total_seconds()) < 1
+
+
+def test_the_production_bnc_payload_yields_exactly_one_priced_cycle():
+    """The live 2026-09-08 BNC/Webull leg, verbatim: fills in display-ET, closed_today in ISO UTC.
+
+    On the previous head this returned TWO cycles — the priced one at -$0.1175 and a phantom at
+    $0.00 — because the ISO timestamps could not be parsed.
+    """
+    fills = [
+        _fill("buy", 1, 5.25, "2026-09-08 09:50:51 AM ET", intent="open", reason="ENTRY_RESTING"),
+        _fill("sell", 1, 5.1325, "2026-09-08 09:52:05 AM ET", intent="close", reason="Close"),
+    ]
+    closed_today = [{
+        "ticker": "BNC", "broker_account_name": "live:orb",
+        "entry_time": "2026-09-08T13:51:04.129000+00:00",
+        "exit_time": "2026-09-08T13:52:18.677000+00:00",
+        "original_quantity": 1, "entry_path": "Resting",
+        "reason": "oms_v2_managed_exit:CONFIRMATION_EXIT",
+    }]
+
+    cycles = collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2", broker_account_name="live:orb",
+        recent_orders=[], recent_fills=fills, closed_today=closed_today,
+    )
+
+    assert len(cycles) == 1, [(c.entry_time, c.entry_price, c.pnl) for c in cycles]
+    assert cycles[0].entry_price == 5.25
+    assert cycles[0].exit_price == 5.1325
+    assert cycles[0].pnl < 0, "the surviving row must carry the real loss, not $0.00"

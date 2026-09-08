@@ -560,8 +560,27 @@ def summarize_exit_events(exit_events: list[dict[str, Any]], initial_qty: float)
 
 
 def parse_et_timestamp(value: str) -> datetime:
+    """Parse either display-ET or ISO-UTC into an ET-aware datetime.
+
+    ⛔ ISO SUPPORT IS LOAD-BEARING, NOT A CONVENIENCE. The dashboard's own rows are display-ET
+    ("2026-09-08 09:51:04 AM ET"), but `closed_today` comes from the bot as
+    `lot[2].isoformat()` — "2026-09-08T13:51:04.129000+00:00". Without this branch every ISO value
+    fell through to datetime.min, so BOTH duplicate checks compared a real timestamp against
+    year 1 and never matched. That is why the same position was rendered twice with $0.00 P&L:
+    not a settle-lag near-miss, but two sources speaking different time formats.
+    """
     if not value:
         return datetime.min.replace(tzinfo=EASTERN_TZ)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        pass
+    else:
+        # A naive ISO value comes from a UTC-aware datetime that lost its offset in transit; the
+        # publishers in this codebase are all UTC. Display-ET strings never reach this branch.
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(EASTERN_TZ)
     try:
         return datetime.strptime(value, "%Y-%m-%d %I:%M:%S %p ET").replace(tzinfo=EASTERN_TZ)
     except ValueError:
