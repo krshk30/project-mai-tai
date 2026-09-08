@@ -22,7 +22,8 @@ trap 'rm -f "$tmp"' EXIT
     fi
     key="${BASH_REMATCH[2]}"
     case "$key" in
-      MAI_TAI_ORB_BROKER_ACCOUNT_NAME|MAI_TAI_ORB_BROKER_PROVIDER)
+      MAI_TAI_ORB_BROKER_ACCOUNT_NAME|MAI_TAI_ORB_BROKER_PROVIDER|\
+      MAI_TAI_ORB_RUNNING_HIGH_ENABLED|MAI_TAI_ORB_RESTING_ENTRY_ENABLED)
         ;;
       MAI_TAI_ENVIRONMENT|MAI_TAI_LOG_LEVEL|MAI_TAI_DATABASE_URL|MAI_TAI_REDIS_URL|\
       MAI_TAI_REDIS_STREAM_PREFIX|MAI_TAI_REDIS_MARKET_DATA_SUBSCRIPTION_STREAM_MAXLEN|\
@@ -33,6 +34,10 @@ trap 'rm -f "$tmp"' EXIT
   done < "$SOURCE_ENV"
   # This switch starts market-data observation only. Broker isolation is structural.
   echo "MAI_TAI_ORB_ENABLED=true"
+  # The isolated observer models one fixed opening-high resting order. These select
+  # paper behavior only; neither switch can add a broker route or credentials.
+  echo "MAI_TAI_ORB_RUNNING_HIGH_ENABLED=true"
+  echo "MAI_TAI_ORB_RESTING_ENTRY_ENABLED=true"
 } > "$tmp"
 
 chmod 0600 "$tmp"

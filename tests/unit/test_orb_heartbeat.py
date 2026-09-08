@@ -85,6 +85,7 @@ def test_publish_heartbeat_feeds_service_health_gate_and_isolated_dashboard() ->
         "execution_mode": "paper",
         "broker_route": "none",
         "universe_size": "1",
+        "entry_model": "bar_close",
     }
     state = IsolatedBotStateEvent.model_validate(
         json.loads(redis.writes[1][1]["data"])

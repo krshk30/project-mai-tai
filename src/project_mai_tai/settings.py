@@ -194,11 +194,9 @@ class Settings(BaseSettings):
     orb_reclaim_trail_pct: float = 3.0
     orb_reclaim_quantity: int = 5
     orb_reclaim_hold_secs: int = 25
-    # --- Running-high breakout observation, flag-gated, default OFF ---
-    # When True (and reclaim OFF): observe from 09:25, reference = running highest 1-min
-    # bar-high since 09:25; from 09:30 to (open + orb_running_high_window_minutes), enter when a
-    # bar's high breaks the running high, at the breakout level, only if the observed price is
-    # within orb_running_high_gap_cap_pct of the broken high. No order or exit is produced.
+    # --- Opening-high observation, flag-gated, default OFF ---
+    # Running-high alone retains the legacy dynamic reference. The broker-free ORB env also
+    # enables orb_resting_entry_enabled, selecting the fixed 09:25-09:30 paper order model.
     orb_running_high_enabled: bool = False
     orb_running_high_window_minutes: int = 30   # entries only 09:30 .. open+30 = 10:00 ET
     orb_running_high_gap_cap_pct: float = 1.5
@@ -207,8 +205,8 @@ class Settings(BaseSettings):
     # The paper observer records the selected policy but never invokes the OMS pricing path.
     orb_oms_quote_priced_entry_enabled: bool = False
     orb_oms_quote_priced_max_age_ms: int = 2000   # tunable: max ask staleness to price off
-    # Historical resting-entry selector. The paper observer records the stop/limit shape as
-    # evidence only; it has no Webull or other broker route.
+    # Fixed opening-high resting-entry paper model. The isolated env enables it; the
+    # observer records modeled order decisions only and has no broker route.
     orb_resting_entry_enabled: bool = False
     # P0.6 WINDOW FLATTEN (docs: P0.6-eod-flatten-design). ORB trades 09:30-10:00. AFTER 10:00 IT
     # SHOULD BE FLAT -- that is the rule, not a safety net. This enforces it.
