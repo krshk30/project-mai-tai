@@ -175,6 +175,35 @@ def test_0930_high_is_included_and_adjustment_is_modeled_only_when_proven_timely
     assert service._pending_paper_entries[-1].event_type == ORB_PAPER_ORDER_ADJUSTED_EVENT_TYPE
 
 
+def test_adjustment_refuses_price_evidence_from_before_the_0930_close() -> None:
+    service = _service()
+    _seed_initial_level(service)
+    open_at = service._session_open_utc()
+    state = service._states["FOO"]
+    state.latest_bid = 10.60
+    state.latest_ask = 10.70
+    state.latest_quote_at = open_at + timedelta(seconds=58, milliseconds=900)
+
+    service._on_bar(
+        "FOO",
+        _bar(service, 0, high=10.80, close=10.60),
+        observed_at=open_at + timedelta(minutes=1),
+        observed_price=10.70,
+    )
+
+    order = state.resting_order
+    assert order is not None
+    assert order.final_level == 10.80
+    assert order.current_level == 10.50
+    assert order.adjusted_at is None
+    assert order.adjustment_outcome == "UNANSWERABLE_ADJUSTMENT_TIMING"
+    assert order.decision_blocked is True
+    assert state.adjustment_unanswerable == 1
+    event = service._pending_paper_entries[-1]
+    assert event.event_type == ORB_PAPER_ORDER_UNANSWERABLE_EVENT_TYPE
+    assert event.detail["quote_at"] == state.latest_quote_at.isoformat()
+
+
 def test_unproven_adjustment_is_recorded_and_neither_left_nor_pulled() -> None:
     service = _service()
     _seed_initial_level(service)
