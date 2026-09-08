@@ -15,6 +15,114 @@
 
 ---
 
+## 2026-09-08 — a P1 found on the operator's own screens, the dashboard made truthful, and the paper-only rule reversed
+
+Batch `2026-09-08-rej1-fixed-and-reclaim-retired`, integrator `claude-1`, reviewer `codex-2`.
+Nine PRs merged (#913–#921), two deploys, three corrections of mine.
+
+### The P1 came from a discrepancy the operator noticed, not from a monitor
+
+BNC showed positive P&L on TOS and negative on Webull. The question — *why do the two brokers
+disagree?* — traced to `release_native_oco_for_close` in the Schwab adapter refusing to release a
+native OCO whose wrapper carried no `orderLegCollection`. **A wrapper whose children are visible is
+not opaque**, but the guard could not tell the two apart, so it returned `unanswerable` and the
+close was blocked. Fixed in **#917**, deployed the same day.
+
+⛔ **The happy-path fixture was the reason this survived.** `tests/unit/test_schwab_native_bracket.py`
+built its wrapper as a bare `{"childOrderStrategies": [...]}` — no `status`, no `orderLegCollection`,
+no `orderId` — which is precisely the shape the guard rejects in production. The test passed because
+it never modelled a real wrapper. The operator's instruction was exact: *"Fix the happy-path fixture
+first. If it does not [go red], the old test was proving nothing."* The fixture was corrected before
+the guard was touched.
+
+⭐ **None of the four causes that set `unsafe` logs anything.** The refusal is silent by construction,
+which is why a P1 with same-day live impact had to be found from a P&L screen.
+
+### The Completed Positions table was showing phantoms, and my first two explanations were wrong
+
+Blank prices, `$0.00` P&L, duplicate rows. Fixed across **#918** and **#919**: `parse_et_timestamp`
+now accepts ISO first, and a filled ORDER may no longer duplicate a position the fills already
+priced — `_find_covering_row` enriches the covering row, then drops the candidate.
+
+⛔ **Two corrections of mine on this one.** First I verified #918 against a payload I had
+*reconstructed* rather than the live one; it passed while the phantoms were still on the operator's
+screen. Then I claimed the cause was a 13-second settle-lag near-miss. Also wrong: the two sources
+were never comparable (ISO vs display-ET), so **both dedupe paths had always been dead** — not
+narrowly missing. Verified after the fix: `PHANTOM rows: 0` on the rendered dashboard.
+
+### Fifteen deployed-but-unexercised items, and a watcher for the ones that cannot be provoked
+
+Thirteen of fifteen were exercised with controls, offline, against pinned code. The remaining two
+need either a live session or a rare event, so **#914** built `ops/health/unexercised_watch.py` —
+four conditions (`HALT_REAL`, `CONF3_TWO_BROKER_CLOSE`, `SIL1_REJECT_STORM`, `PEX1_RESTING_FILL`),
+verdicts OCCURRED / NEVER_OCCURRED / NEVER_LOOKED / COULD_NOT_TELL. The operator's requirement was
+that a firing **must reach him** — not a log line, not a status file, not a dashboard field — so it
+pages via ntfy. Installed on the box with a sha-pinned cron, both paging paths proven.
+
+⛔ **It shipped two defects of my own first.** The page was sent at line 227 and the state persisted
+at line 252, so three crashed runs sent three identical pages; and a state row written before the
+`announced` flag existed defaulted it to `False` and sent one **real duplicate page to the
+operator's phone at 12:45:01 UTC**. Both fixed: pages are queued until after the state write, and
+`announced` is sticky across the legacy key.
+
+### The paper-only rule was reversed, and the review that preceded it was withheld
+
+`codex-2` proposed three live runtime values — reclaim OFF, target +5%, hard stop −8%. **The pin was
+withheld**, on findings rather than on doubt about the direction:
+
+- ⛔ **No review-pin artefact can exist for a runtime change.** The gate keys on
+  `records/<head-sha>/pr-<N>--<base>--<reviewer>.json`; with no PR there is no head, and
+  `gh pr checks` has nothing to turn green.
+- ⛔ It was **the exact triple the record called paper-only**, corrected append-only by the operator
+  on 09-06 at `corrections/pr-905-paper-not-live-settings.md`. A reviewer cannot pin past the
+  operator's own correction.
+- ⛔ **Three lines, four behaviour changes.** `schwab_1m_v2.py:591` reads
+  `_cw_v2_max_entries_per_flip = 2 if reclaim_enabled else 1`, so reclaim OFF also halves the
+  per-flip entry cap — the fourth member of the paper quartet, arriving unnamed.
+- ⚠ The hard stop moving −5% → −8% raises **maximum loss per trade by 60%**.
+
+The operator then reversed the 09-06 ruling explicitly. **The reversal is the record now**, and the
+banner at the top of `session-handoff.md` was rewritten to say so.
+
+### A number I had been repeating had no denominator
+
+I cited *"reclaim 38% win / −4.98% vs firsts 58% / +1.93%"* as the case for turning reclaim off.
+`codex-2` corrected it: that figure belongs to an era where nothing is gradeable. Re-derived myself
+by attributable coid-prefix pairing, live accounts only, no FIFO inference:
+
+| Era | Slot | Cycles | Win% | Median |
+|---|---|---:|---:|---:|
+| 08-27…09-01 | first | 27 | 78% | +2.00% |
+| 08-27…09-01 | **reclaim** | 16 | 75% | +1.94% |
+| 09-02…now | first | 32 | 69% | +1.89% |
+| 09-02…now | **reclaim** | 11 | 73% | +1.92% |
+
+**Pre-08-27 yields zero attributable cycles**, so the 38% figure has no attributable denominator in
+its own era. ⇒ Reclaim is **indistinguishable from first entries**. It is being retired for simpler
+one-slot behaviour, **not because it lost money** — and the comment shipped in `replay.py` says so.
+
+### #921 — pinned green, then caught failing, then pinned again
+
+`independent-review-pin` passed at `16075ba3` while `validate` was failing, and **#921 was the
+cause**. Controlled pair over the transitive population: base **182 passed / 0 failed**, head
+**183 passed / 1 failed**. `daily_sheet.py:48` receives LIVE_LOCKED's new 5.0 target off-VPS, and
+the fixture's `101.0` print reaches the old +2% target but not the new ~103.18. One-line fix probe
+supplied and verified; `codex-2` pushed it **on top** of the reviewed head, so no rebase occurred,
+the first record stayed valid, and nothing had to be deleted. Re-pinned at `4bcfee06`, both checks
+green, merged and deployed.
+
+⛔ **My population was wrong, and that is why I missed it.** I selected tests by
+`grep -rln build_replay_settings tests/` — files that *name* the symbol. The reaching population is
+files that call it **transitively**; `test_daily_sheet.py` never names it. The first record's
+summary is accurate about what I ran and wrong about what that covered. The corrected call-graph
+population is stated in the `4bcfee06` record. ⭐ *A grep for a symbol is not a call graph.*
+
+### Closed cleanly
+
+The post-deploy state I pre-registered before the settings landed — **26 mirrored / 0 drift /
+10 unset** — is exactly what `audit_live_locked_drift.py` reports on the box tonight, against
+24 / 0 / 10 this morning.
+
 ## 2026-09-07 — ORB proven closed three ways, and HDL1 diagnosed, built, reviewed hard, deployed
 
 Labor Day. Market shut all day, so the whole session ran with no live exposure.
