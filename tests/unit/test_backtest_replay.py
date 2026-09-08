@@ -65,13 +65,13 @@ def _bars() -> list[SchwabBar]:
 
 
 def _quotes(cross_ask: float) -> list[TapeQuote]:
-    """One quote mid-minute for bars 9..15 (ask below the resting stop so the STOP<=ASK
-    placement guard passes), then the crossing quote mid-way through the flip minute (bar 16)
-    with the given ask — this is the quote the resting order fills (or gaps) against."""
+    """One current quote before each bar close (matching the live 5s poll cadence), then the
+    crossing quote mid-way through the flip minute. The pre-close ask stays below the resting
+    stop so the STOP<=ASK placement guard passes."""
     qs = []
     for i in range(9, 16):
         c = _OHLC[i][3]
-        ts = BASE + timedelta(minutes=i, seconds=30)
+        ts = BASE + timedelta(minutes=i, seconds=59)
         qs.append(TapeQuote(ts=ts, bid=c - 0.15, ask=c + 0.05, last=c))  # ask well below the stop
     cross_ts = BASE + timedelta(minutes=16, seconds=30)
     qs.append(TapeQuote(ts=cross_ts, bid=cross_ask - 0.1, ask=cross_ask, last=cross_ask))

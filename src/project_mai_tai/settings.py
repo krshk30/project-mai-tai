@@ -545,6 +545,12 @@ class Settings(BaseSettings):
     # bar driving it is within this many seconds of wall-clock (live). Quiet-but-current names still
     # qualify; warmup-replayed (hours-old) bars do not.
     strategy_schwab_1m_v2_cw_v2_resting_entry_max_bar_age_secs: float = 180.0
+    # A present Schwab quote must be this fresh before its ask can authorize an RTH buy-stop.
+    # A stale ask can sit below the stop while the live ask has already crossed it, producing a
+    # guaranteed broker refusal. This is independent of bar freshness: MOBX 2026-09-08 used a
+    # current bar with a quote 17 seconds old and sent exactly that malformed order.
+    # Ten seconds covers two normal 5-second poll intervals but rejects MOBX's 17-second gap.
+    strategy_schwab_1m_v2_cw_v2_resting_entry_quote_max_age_ms: int = 10_000
     # ESTABLISHED-SHORT gate (2026-07-23, SKYQ): only rest once the ATR has been SHORT for >= this many
     # consecutive bars -- a REAL settled downtrend, not a 1-bar short in a whipsaw. Selectivity: skip
     # violent two-sided names (SKYQ ripped +9% then chopped) that flip repeatedly. Tunable without code.

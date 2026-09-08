@@ -118,15 +118,27 @@ def test_stop_leq_ask_guard_skips_the_place() -> None:
     strat = _strat()
     st = strat.watchlist_state("TEST")
     st.last_quote = Quote("TEST", 9.55, 9.60, 9.58, IN_WIN, 0)       # ask 9.60 >= trail 9.50 -> SKIP
-    assert _tick(strat, st, trail=9.50) == []
+    assert _tick(strat, st, trail=9.50, now_ms=IN_WIN + 1000) == []
     assert st.resting_active is False
     st.last_quote = Quote("TEST", 9.05, 9.10, 9.08, IN_WIN, 0)       # ask 9.10 < trail 9.50 -> place
-    out = _tick(strat, st, trail=9.50)
+    out = _tick(strat, st, trail=9.50, now_ms=IN_WIN + 1000)
     assert len(out) == 1 and out[0].intent_type == "open"
 
 
+def test_present_but_stale_quote_cannot_authorize_a_buy_stop() -> None:
+    """MOBX 2026-09-08: the 17-second-old ask was below the stop; the live ask was not."""
+    from project_mai_tai.market_data.schwab_v2_rest_client import Quote
+
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    st.last_quote = Quote("TEST", 9.05, 9.10, 9.08, IN_WIN, 0)
+
+    assert _tick(strat, st, trail=9.50, now_ms=IN_WIN + 17_000) == []
+    assert st.resting_active is False
+
+
 def test_stop_leq_ask_guard_fails_open_without_a_quote() -> None:
-    """No fresh quote -> the guard fails open (the broker stays the backstop); nothing regresses."""
+    """No quote at all retains the legacy fail-open behavior; stale evidence does not."""
     strat = _strat()
     st = strat.watchlist_state("TEST")
     st.last_quote = None
