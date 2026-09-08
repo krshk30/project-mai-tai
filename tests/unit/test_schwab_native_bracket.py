@@ -794,3 +794,46 @@ async def test_confirmation_release_accepts_a_legless_working_wrapper_whose_chil
         "blocks every confirmation exit on the Schwab leg"
     )
     assert len(deletes) == 2, "both visible SELL children must still be cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("wrapper", "label"),
+    [
+        ({"orderId": "oco-1"}, "no status key at all"),
+        ({"orderId": "oco-1", "status": "", "childOrderStrategies": []}, "empty status string"),
+    ],
+)
+async def test_confirmation_release_refuses_a_wrapper_with_no_status_no_legs_and_no_children(
+    monkeypatch, wrapper, label
+) -> None:
+    """⛔ FAIL-CLOSED ON THE MOST OPAQUE SHAPE THERE IS.
+
+    The guard originally required `bool(status)`, so a node with no legs, no children AND no status
+    skipped the check entirely and the method reported `released` — claiming protection was gone
+    with no evidence whatsoever. A missing status made a node SAFER than a working one, which is
+    backwards. Absence is not a terminal status.
+    """
+    adapter = _adapter(bracket_enabled=True)
+    root = {
+        "orderId": "entry-1",
+        "status": "FILLED",
+        "orderLegCollection": [{"instruction": "BUY"}],
+        "childOrderStrategies": [wrapper],
+    }
+    deletes: list[str] = []
+
+    async def request(method, path, body=None):
+        deletes.append(path)
+        return 200, {}, {}
+
+    async def fetch(*_args):
+        return root
+
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", request)
+
+    result = await adapter.release_native_oco_for_close("paper:schwab_1m", "entry-1")
+
+    assert result == "unanswerable", f"an unreadable wrapper ({label}) was reported released"
+    assert deletes == [], "nothing may be cancelled on evidence this thin"

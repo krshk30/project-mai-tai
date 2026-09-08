@@ -324,11 +324,10 @@ class SchwabBrokerAdapter:
                 if (
                     not legs
                     and not children
-                    and bool(status)
                     and status
                     not in self.CANCELLED_STATUSES | self.REJECTED_STATUSES | {"FILLED"}
                 ):
-                    # OPAQUE ONLY. A live node with neither legs nor children tells us nothing
+                    # OPAQUE ONLY. A node with neither legs nor children tells us nothing
                     # about its sell protection, so refuse -- that is the CHPT case this guard
                     # was built for.
                     # ⛔ `not children` IS LOAD-BEARING. A real Schwab OCO wrapper is ALWAYS
@@ -341,6 +340,12 @@ class SchwabBrokerAdapter:
                     # the orphaned Schwab leg rode to its target -- a one-sided fan-out exit, the
                     # mirror of the defect CONF3 exists to prevent.
                     # A wrapper whose children are present is NOT opaque: they are walked below.
+                    # ⛔ THERE IS NO `bool(status)` HERE, DELIBERATELY. The original guard required a
+                    # truthy status, so the MOST opaque node of all -- no legs, no children AND no
+                    # status -- skipped the check entirely and the method reported `released`
+                    # without any evidence that protection was gone. A missing status made a node
+                    # SAFER than a working one, which is backwards. Only a TERMINAL status makes an
+                    # unreadable node safe; absence is not terminal.
                     unsafe = True
                 if instruction == "SELL":
                     if status == "FILLED":
