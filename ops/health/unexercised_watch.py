@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -154,8 +155,11 @@ def check_two_broker_close() -> tuple[int, int, str]:
 
 def check_reject_storm() -> tuple[int, int, str]:
     """SIL1 -- the exit-reject alarm firing on a live storm.
-    Denominator: rejected closes on the two live accounts, which is the population the alarm
-    counts. ⛔ Split by account: a paper reject is not this condition."""
+
+    Denominator: Schwab MANAGED-EXIT SELL rejects only -- the single population the alarm can
+    cover. ⛔ NOT "the two live accounts": live:orb's threshold is deliberately UNSET and can
+    never fire, so counting it inflated the denominator from 264 to 2,080 and answered a
+    different question confidently."""
     # ⛔ THE DENOMINATOR MUST BE THE POPULATION THE ALARM CAN SEE. The first version counted every
     # live reject on both accounts -- 2,080 -- while the alarm counts only Schwab MANAGED-EXIT
     # sells, which is 264. A zero against the wrong population is not a measured zero; it is a
@@ -214,6 +218,35 @@ def page(title: str, body: str) -> bool:
     return out.returncode == 0
 
 
+def _load_state(path: Path) -> tuple[dict, bool]:
+    """Return (state, memory_lost). ⛔ A MISSING file is a first run; an UNPARSEABLE one is LOST
+    MEMORY, and the two must not be collapsed. The first version caught both and reset to {}, so a
+    truncated state file replayed every historical alert as a fresh first occurrence."""
+    if not path.exists():
+        return {}, False
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        return (loaded, False) if isinstance(loaded, dict) else ({}, True)
+    except (OSError, ValueError):
+        return {}, True
+
+
+def _write_state(path: Path, state: dict) -> None:
+    """⛔ ATOMIC. write_text truncates in place, so a crash mid-write leaves half a JSON document
+    and the next run loses every delivery record. Write beside the target and rename."""
+    handle, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, indent=2, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--state", default=str(STATE_PATH))
@@ -223,10 +256,7 @@ def main(argv: list[str] | None = None) -> int:
 
     state_path, status_path = Path(args.state), Path(args.status)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        state = {}
+    state, memory_lost = _load_state(state_path)
 
     now = datetime.now(UTC)
     readings: list[Reading] = []
@@ -259,10 +289,18 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         # A real reading. Clear any could-not-tell episode.
-        delivered = bool(prior.get("delivered", False))
-        prior_fired = int(prior.get("fired", 0))
-        already_announced = prior_fired > 0 and delivered
-        if verdict == OCCURRED and not already_announced and not args.no_page:
+        # ⛔ STICKY, NOT DERIVED FROM THE COUNT. The first version computed
+        # `prior_fired > 0 and delivered`, so a 1 -> 0 -> 1 count sequence lost the announcement
+        # memory at the dip and paged the SAME "first occurrence" twice. Log rotation and row
+        # pruning both make a count fall. Once announced, always announced.
+        announced = bool(prior.get("announced", False))
+        delivered = bool(prior.get("delivered", False)) or announced
+        if memory_lost and verdict == OCCURRED:
+            # Memory is gone and we cannot tell whether this was already announced. Bias to
+            # SILENCE: an alarm that repeats history is the wallpaper failure the operator refused.
+            # The CORRUPT page below tells him to look.
+            announced = True
+        if verdict == OCCURRED and not announced and not args.no_page:
             # ⛔ QUEUED, NOT SENT. Every page is deferred until AFTER the state file is written.
             # Measured 2026-09-08: with the send here and the write at the end, a state-write
             # failure raised after paging and the SAME page went out every run -- 3 identical
@@ -294,25 +332,36 @@ def main(argv: list[str] | None = None) -> int:
             # ⛔ DELIVERY IS NOT ASSUMED. `delivered` flips to True only after ntfy ACCEPTS the
             # send. The first version recorded the transition regardless, so a failed delivery was
             # suppressed FOREVER -- the alarm believed it had spoken when nothing was sent.
-            "delivered": delivered,
+            "delivered": delivered, "announced": announced,
             "could_not_tell_since": None, "could_not_tell_paged": False,
         }
 
+    if memory_lost and not args.no_page:
+        pending.append((
+            "__state__", "corrupt",
+            "STATE LOST -- unexercised watch cannot remember what it announced",
+            "The watcher's state file was unreadable. Delivery memory is gone, so occurrence "
+            "alarms are SUPPRESSED this run rather than replayed. Read the conditions by hand.",
+        ))
+
     # ⛔ ORDER IS THE GUARD. State durable first, pages second.
-    state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    _write_state(state_path, state)
     confirmed: list[tuple[str, str]] = []
     for name, kind, title, body in pending:
         if page(title, body):
             confirmed.append((name, kind))
     for name, kind in confirmed:
+        if name not in state:
+            continue
         if kind == "occurred":
             state[name]["delivered"] = True
+            state[name]["announced"] = True
         elif kind == "blind":
             state[name]["blind_paged"] = True
         elif kind == "could_not_tell":
             state[name]["could_not_tell_paged"] = True
     if confirmed:
-        state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+        _write_state(state_path, state)
     lines = [
         f"[UNEXERCISED-WATCH] run_at={now.isoformat()} conditions={len(readings)}",
         "⛔ A zero is a result only when the denominator is non-zero. NEVER_LOOKED is UNEXERCISED.",

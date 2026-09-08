@@ -196,3 +196,60 @@ def test_could_not_tell_pages_once_so_a_blind_watcher_is_not_silent(tmp_path, mo
     uw.main(["--state", str(state), "--status", str(status)])
     uw.main(["--state", str(state), "--status", str(status)])
     assert len([p for p in pages if p.startswith("CANNOT TELL")]) == 1
+
+
+def test_a_count_that_dips_and_returns_does_not_re_announce(tmp_path, monkeypatch):
+    """⛔ MEASURED DEFECT. Announcement memory was computed as `prior_fired > 0 and delivered`, so a
+    1 -> 0 -> 1 count sequence lost it at the dip and paged the SAME first occurrence twice. Log
+    rotation and row pruning both make a count fall."""
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "page", lambda t, b: pages.append(t) or True)
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+
+    for count in (1, 0, 1, 0, 1):
+        monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": (lambda c=count: (c, 500, "d"))})
+        uw.main(["--state", str(state), "--status", str(status)])
+
+    first = [p for p in pages if p.startswith("FIRED")]
+    assert len(first) == 1, f"a dipping count re-announced: {first}"
+
+
+def test_a_corrupt_state_file_suppresses_rather_than_replays(tmp_path, monkeypatch):
+    """⛔ A MISSING file is a first run; an UNPARSEABLE one is LOST MEMORY. Collapsing them made a
+    truncated state replay every historical alert as a fresh first occurrence."""
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "page", lambda t, b: pages.append(t) or True)
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": lambda: (1, 500, "d")})
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+    state.write_text('{"HALT_REAL": {"fired": 1, "deliv', encoding="utf-8")
+
+    uw.main(["--state", str(state), "--status", str(status)])
+
+    assert [p for p in pages if p.startswith("FIRED")] == [], "a corrupt state replayed history"
+    assert any(p.startswith("STATE LOST") for p in pages), "losing memory must be reported"
+
+    pages.clear()
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert pages == [], "the rebuilt state must not announce afterwards either"
+
+
+def test_the_state_write_is_atomic(tmp_path, monkeypatch):
+    """A crash mid-write must leave the PREVIOUS state intact, not half a JSON document."""
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": lambda: (1, 500, "d")})
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+    uw.main(["--state", str(state), "--status", str(status), "--no-page"])
+    good = state.read_text(encoding="utf-8")
+
+    real_replace = uw.os.replace
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(uw.os, "replace", boom)
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": lambda: (9, 900, "d")})
+    with pytest.raises(OSError):
+        uw.main(["--state", str(state), "--status", str(status), "--no-page"])
+
+    monkeypatch.setattr(uw.os, "replace", real_replace)
+    assert state.read_text(encoding="utf-8") == good, "a failed write corrupted the previous state"
+    assert not list(tmp_path.glob("*.tmp")), "a temp file was left behind"
