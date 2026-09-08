@@ -202,9 +202,10 @@ LIVE_LOCKED = dict(
     strategy_schwab_1m_v2_atr_flip_factor=3.5,
     strategy_schwab_1m_v2_cw_v2_reactive_entry_enabled=True,
     # Operator reversal 2026-09-08: reclaim is OFF on live v2, deliberately reducing the cap from
-    # two entries to one per ATR segment. The retained live comparison was 13 reclaims at 38% wins
-    # and -4.98% median versus 17 first entries at 58% wins and +1.93% median. Keep this mirror in
-    # lockstep so an off-VPS replay does not silently restore the second-entry path.
+    # two entries to one per ATR segment. The latest gradeable census before this decision was 17
+    # clean reclaim cycles through 2026-09-01: 76% wins, median +1.92%, indistinguishable from first
+    # entries. The older 13-cycle 38%/-4.98% result is pre-08-27 and unanswerable. This retires a
+    # profitable path for simpler one-slot behavior, not because measured reclaim lost money.
     strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False,
     # The same operator decision moves the hard target/stop from +2%/-5% to +5%/-8%. These keys were
     # previously absent from LIVE_LOCKED, which made that runtime change invisible to the drift audit.
