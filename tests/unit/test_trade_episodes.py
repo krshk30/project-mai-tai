@@ -529,3 +529,90 @@ def test_the_production_bnc_payload_yields_exactly_one_priced_cycle():
     assert cycles[0].entry_price == 5.25
     assert cycles[0].exit_price == 5.1325
     assert cycles[0].pnl < 0, "the surviving row must carry the real loss, not $0.00"
+
+
+def test_a_filled_order_does_not_duplicate_a_position_the_fills_already_priced():
+    """⛔ MEASURED LIVE, 2026-09-08, and the reason the dashboard showed every Webull leg twice.
+
+    The collector reconstructs cycles from fills AND from filled orders. A broker_orders row carries
+    NO fill price (payload_has_price=NO on all eight BNC/live:orb orders that day) and is stamped at
+    `updated_at`, not the fill time — so the order copy renders `-` entry, `-` exit and $+0.00.
+    Exact-timestamp dedupe missed because the stamps differ by ~14 seconds:
+        fill  12:09:50  -$0.02
+        order 12:10:04  $+0.00   <- open-e0c300989641 / close-8a0891514c98
+    """
+    fills = [
+        {"symbol": "BNC", "side": "buy", "quantity": 1, "price": 5.20,
+         "filled_at": "2026-09-08 12:09:50 PM ET", "strategy_code": "schwab_1m_v2",
+         "broker_account_name": "live:orb", "intent_type": "open", "reason": "ENTRY"},
+        {"symbol": "BNC", "side": "sell", "quantity": 1, "price": 5.185,
+         "filled_at": "2026-09-08 12:11:07 PM ET", "strategy_code": "schwab_1m_v2",
+         "broker_account_name": "live:orb", "intent_type": "close", "reason": "Close"},
+    ]
+    orders = [
+        {"symbol": "BNC", "side": "buy", "quantity": 1, "status": "filled",
+         "updated_at": "2026-09-08 12:10:04 PM ET", "strategy_code": "schwab_1m_v2",
+         "broker_account_name": "live:orb", "intent_type": "open", "reason": "ENTRY"},
+        {"symbol": "BNC", "side": "sell", "quantity": 1, "status": "filled",
+         "updated_at": "2026-09-08 12:11:17 PM ET", "strategy_code": "schwab_1m_v2",
+         "broker_account_name": "live:orb", "intent_type": "close",
+         "reason": "oms_v2_managed_exit:CONFIRMATION_EXIT"},
+    ]
+
+    cycles = collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2", broker_account_name="live:orb",
+        recent_orders=orders, recent_fills=fills, closed_today=[],
+    )
+
+    assert len(cycles) == 1, [(c.entry_time, c.entry_price, c.pnl) for c in cycles]
+    assert cycles[0].entry_price == 5.20, "the surviving row must be the PRICED one"
+    assert cycles[0].pnl < 0, "the phantom, not the real loss, survived"
+
+
+def test_an_order_only_position_is_still_reported_when_no_fill_exists():
+    """⛔ THE CONTROL THAT KEEPS THE ORDER PASS ALIVE. It is a fallback for positions whose fills
+    never arrived; suppressing it wholesale would silently drop those trades."""
+    orders = [
+        {"symbol": "ZZZ", "side": "buy", "quantity": 10, "price": "2.00", "status": "filled",
+         "updated_at": "2026-09-08 10:00:00 AM ET", "intent_type": "open", "reason": "ENTRY_X",
+         "path": "X", "broker_account_name": "live:orb"},
+        {"symbol": "ZZZ", "side": "sell", "quantity": 10, "price": "2.20", "status": "filled",
+         "updated_at": "2026-09-08 10:05:00 AM ET", "intent_type": "close", "reason": "Close",
+         "broker_account_name": "live:orb"},
+    ]
+
+    cycles = collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2", broker_account_name="live:orb",
+        recent_orders=orders, recent_fills=[], closed_today=[],
+    )
+
+    assert len(cycles) == 1
+    assert cycles[0].entry_price == 2.0, "an order-only position lost its prices"
+
+
+def test_two_separate_positions_on_one_symbol_both_survive():
+    """⛔ THE AXIS MY FIRST CONTROL SET MISSED. Suppressing on symbol+account alone left the suite
+    green, so nothing proved the interval was doing the work. BNC traded FOUR times on live:orb on
+    2026-09-08 — exiting 11:02:21 and re-entering 47 seconds later at 11:03:08. Both are real."""
+    fills = [
+        {"symbol": "BNC", "side": "buy", "quantity": 1, "price": 4.83,
+         "filled_at": "2026-09-08 10:59:14 AM ET", "strategy_code": "schwab_1m_v2",
+         "broker_account_name": "live:orb", "intent_type": "open", "reason": "ENTRY"},
+        {"symbol": "BNC", "side": "sell", "quantity": 1, "price": 4.93,
+         "filled_at": "2026-09-08 11:02:21 AM ET", "strategy_code": "schwab_1m_v2",
+         "broker_account_name": "live:orb", "intent_type": "close", "reason": "Close"},
+        {"symbol": "BNC", "side": "buy", "quantity": 1, "price": 5.20,
+         "filled_at": "2026-09-08 12:09:50 PM ET", "strategy_code": "schwab_1m_v2",
+         "broker_account_name": "live:orb", "intent_type": "open", "reason": "ENTRY"},
+        {"symbol": "BNC", "side": "sell", "quantity": 1, "price": 5.185,
+         "filled_at": "2026-09-08 12:11:07 PM ET", "strategy_code": "schwab_1m_v2",
+         "broker_account_name": "live:orb", "intent_type": "close", "reason": "Close"},
+    ]
+
+    cycles = collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2", broker_account_name="live:orb",
+        recent_orders=[], recent_fills=fills, closed_today=[],
+    )
+
+    assert len(cycles) == 2, "a real second position on the same symbol was swallowed"
+    assert {c.entry_price for c in cycles} == {4.83, 5.20}
