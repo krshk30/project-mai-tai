@@ -1,0 +1,9 @@
+{
+  "pr_number": 916,
+  "range_base": "9bc8976514785d0f1ea5cf8f2e162cee04692955",
+  "range_head": "215c6905c0c177361ccaaef9cfd7afcae5d3182a",
+  "reviewed_at": "2026-09-08T14:12:01Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed the conflict-free rebase onto #914; the old and new PR diffs are byte-identical, 12 focused controls pass, Ruff and diff checks are clean, fixture isolation is retained, and production source remains unchanged."
+}
