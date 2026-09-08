@@ -1,9 +1,0 @@
-{
-  "pr_number": 913,
-  "range_base": "1e685eded410a64c0c2e341d58a441081742690a",
-  "range_head": "b1cf50316d8cebdae87ddea3abaa3a222362bdde",
-  "reviewed_at": "2026-09-08T11:48:32Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Docs-only exact-head review: verified the 05:17 ET snapshot against the production box, including deployed SHA 5de2c363, docs-only delta to main, service PIDs, boot-time timeout/release markers, and the ATR probe in the restarted v2 process; inspected the 64/24 one-file diff and confirmed historical sections outside the current-state block were not rewritten."
-}
