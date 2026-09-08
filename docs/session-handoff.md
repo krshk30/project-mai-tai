@@ -24,6 +24,48 @@ below were read from the VPS after both post-restart gates passed. Reviewed and 
 **Closed out by `claude-1`, 2026-09-06 evening.** Batch `2026-09-06-conf3-sil1-deployed`; this
 close-out needs `codex-2`'s review before merge — the author does not review it.
 
+**Updated by `claude-1`, 2026-09-08 05:20 ET.** Current state re-derived FROM THE BOX, not from any
+report. ⛔ Sections below the FLAGS block are HISTORICAL RECORD and were deliberately left untouched.
+
+> **⏩ CURRENT — Tuesday 2026-09-08, the acceptance session. Written 05:20 ET, pre-market.**
+> ⛔ **THE 09-07 CLOSE-OUT DESCRIBED THE PRE-DEPLOY STATE.** Everything in the old PRODUCTION block
+> (`1ba88df3`, "open PRs: the close-out handoff PR only") was written BEFORE the 23:06/23:08 UTC
+> deploy and was wrong by morning. It is replaced below.
+> ⭐ **HALT1 HAS MOVED OFF UNEXERCISED — the first of the six to produce a live reading.**
+> Read from the published Redis payload at 05:18 ET:
+> `halt_monitor {"status":"MEASURED","evaluated":1718,"confirmed":0,"denominator":1718,"current":0}`.
+> ⚠ That is **MEASURED-NONE against a real denominator**, which is a result. It is **not** proof the
+> detector would catch a halt — nothing has halted. Do not upgrade it to "works".
+> ⛔ **THE OTHER FIVE ARE STILL UNEXERCISED**: CONF3's live close, SIL1's alarm, the released-leg
+> recovery, HDL1, REJ1. A zero on any of them today is UNEXERCISED, never a PASS.
+> ⚠ **THE BOOT HOLD RELEASED ON THE TIMEOUT PATH, NOT ON A FRESH SOURCE.** At 04:25:29 ET:
+> `[V2-BOOT-REST-WARMUP-TIMEOUT] outcome=warmup_gate_released
+> reason=fresh_source_not_observed_within_bound elapsed_seconds=371.9 bound_seconds=369
+> evaluated=2 confirmed=2 released=2 symbols=BNC,GMEX` — **2.9 s past the bound**, immediately
+> followed by `[V2-BOOT-HOLD] released — restoration_complete=1 reconstructed_uncapped=0`.
+> The scanner population WAS fresh and non-empty and the DB seed WAS confirmed (the timeout path
+> requires both, and caps reconstructed segments first) — what was missing was a **fresh source
+> observation** inside the bound. Data arrived afterwards: bars BNC 916 · GMEX 565 · WYHG 376 ·
+> ISPC 411, last ticks 05:18 ET. ⇒ Entries are OPEN with `entries_held=false`,
+> `restoration_complete=true`, watchlist **BNC, WYHG**. **This is the operator's pre-entry check and
+> it did not come back clean-by-the-strong-condition — judge it before entries.**
+> ⛔ **TODAY'S SESSION IS GRADED WEDNESDAY, NOT TODAY.** The D6 acceptance cron is
+> `17 4,5,6 * * 2-6` UTC (**`CRON_TZ` is ignored**) and grades one COMPLETED ET calendar day, so on
+> 09-08 the expected session is still `2026-09-04`. Tuesday's own session is graded
+> **Wednesday 2026-09-09 ~00:17 ET**; fleet health reflects it from ~09:35 ET.
+> ⚠ `fleet_health_check.py:177` (check #5, *"the D6 cron cannot observe its own death"*) is **RED
+> right now**: `D6 session=2026-09-04 completed without SUCCESS`. Its two FAILs — `fill_rate` gap
+> 7.4pp on **2 matched symbols**, `refused_exits` 3 of 8 — are stale and rest on tiny denominators.
+> ⛔ **Do not act on either.** They need fresh sessions, not analysis.
+> ⭐ **The 2026-09-07 measurement batch is boarded** in
+> [`handoff-open-items.md`](handoff-open-items.md) via PR #912 (`1e685ede`), 16 rows, each carrying
+> its own correction: DUP3's "12" was a paper account · TICK1's 11,313 was a retired paper bot ·
+> the `CAN_NOT_SELL_SHORT` mismatch is real in the code and caused nothing · any SEEDPOP number
+> before 2026-08-20 20:16 ET is void · AMEND1's "584 of 584" cannot fail by construction.
+> ⛔ **REFUSE1 is the operator's open decision:** 13,896 live reject events, 42 distinct messages,
+> **36 unrecognised by any live path**, and **26 storms of which not one ever stopped because of
+> what the broker said**. Measurement only — **no response table is to be built until he rules.**
+
 > **⏩ UPDATED `claude-1`, 2026-09-06 ~12:40 ET — measurement Sunday, no build, no deploy, no merge.**
 > Market closed 09-06 and 09-07 (Labor Day); next session **Tuesday 2026-09-08**.
 > ✅ **THE ATR PROBE IS LIVE.** `/home/trader/atr_probe_enable.log`: fence **GO** (all four gates
@@ -62,33 +104,31 @@ close-out needs `codex-2`'s review before merge — the author does not review i
 
 ---
 
-# ✅ PRODUCTION — runtime code IN SYNC at `1ba88df3`
+# ✅ PRODUCTION — runtime code IN SYNC at `5de2c363`
 
 | | |
 |---|---|
-| box (deployed) | **`1ba88df34c81e27f5bd2621d8b1999b924a1f339`** — re-derived FROM THE BOX 2026-09-07 14:32 ET; checkout clean |
-| GitHub main | **`1ba88df3`** — identical; three-way SHA verified by reading the box, not inferred |
+| box (deployed) | **`5de2c363a43c0c4bfe7a84e616d5a972e5ad3c04`** — re-derived FROM THE BOX 2026-09-08 05:17 ET; checkout clean |
+| GitHub main | **`1e685ede`** — **AHEAD of the box by DOCS ONLY** (#912 board rows). ⛔ Verify with `git diff --name-only 5de2c363 origin/main`; report the box as behind only if something outside `docs/` appears. |
 | **runtime split** | **none.** ⚠ The heartbeat schema does **not** independently attest the SHA, so the box read is the evidence. |
-| deploy 09-07 | **HDL1 `1ba88df3`** (PR #908) — operator GO, Labor Day, market shut all day; migrations OFF |
-| ⚠ deploy-gate note | `deploy_service.sh` refused on its **weekday+hour proxy, which has NO holiday calendar**. Its own `MAI_TAI_ALLOW_LIVE_RESTART=1` escape hatch was used; **the gate was NOT edited**. ⛔ A safety gate is not edited while you are trying to get through it. |
-| ⚠ restart scope | The `oms` target restarts **oms AND strategy** together. `claude-1`'s plan said "oms only" and was **wrong about the script** — harmless here (market shut, watchlist 0, clean start), but do not plan around "oms only" again. |
-| merges 09-04 | **seven**: #892 `b5ca941` · #893 `073a331` · #894 `1d7ec05` · #895 `b1769e5` · #896 `660bafa` · #897 `184cd8e` · #898 `c1e6357` — **these ARE on the box** |
-| merges 09-06 | #903 SIL1 `fd3e31dd` · #902 CONF3 `0b9d16b7` · #904 control `9a5a813c` · #901 docs `8b05ed42` · #905 docs `ed7e62f4` |
-| merges 09-07 | #906 docs `193c4065` · #907 ORB settled-rules census `cd4cd8b8` · **#908 HDL1 `1ba88df3`** |
-| ⇒ consequence | ⛔ **FOUR items are running and NONE has ever fired**: CONF3's live close, SIL1's alarm, the released-leg recovery, and now **HDL1**. Deployed clean is not proven live. |
-| open PRs | **the close-out handoff PR only** |
-| exposure | **14:32 ET post-restart:** 0 non-zero account positions · 0 working orders · 0 open managed rows · 0 tracebacks in oms/strategy since the restart |
-| ⭐ ORB, settled | `/health` now reads **`execution_mode: paper`, `broker_route: none`** — the runtime proof that was unobtainable this morning. With the structural and mutation proof, ORB isolation is confirmed on **all three** levels. ⛔ The env still reads `live:orb`/`webull` and gives **no protection**; the isolation is entirely in code, keyed on `strategy_code`. |
+| deploy 09-07 (2nd) | **REJ1 #911 + HALT1 #910 at `5de2c363`** — operator GO, outside the live session, 23:06:11 UTC (oms+strategy) and 23:08:07 UTC (v2); no migrations |
+| merges 09-07 | #906 `193c4065` · #907 `cd4cd8b8` · #908 HDL1 `1ba88df3` · #909 docs `ee194e19` · **#911 REJ1 `a0e74c98`** · **#910 HALT1 `5de2c363`** |
+| merges 09-08 | **#912 board rows `1e685ede`** — docs-only, pinned @ `d35d062c`, no deployment required |
+| ⇒ consequence | ⛔ **SIX items are running. FIVE have never fired** — CONF3's live close, SIL1's alarm, the released-leg recovery, HDL1, REJ1. **HALT1 is the one exception**: MEASURED, denominator 1,718, confirmed 0. Deployed clean is not proven live. |
+| open PRs | **none** |
+| exposure | **05:17 ET:** 0 non-zero account positions · 0 open managed rows · 0 armed stops · 0 working orders · **0 tracebacks** in oms/strategy/v2 since the deploy |
+| ⚠ deploy-gate note | `deploy_service.sh` refuses on a **weekday+hour proxy with NO holiday calendar**; its `MAI_TAI_ALLOW_LIVE_RESTART=1` escape hatch was used on 09-07 and **the gate was NOT edited**. ⛔ A safety gate is not edited while you are trying to get through it. |
+| ⚠ restart scope | The `oms` target restarts **oms AND strategy** together. Do not plan around "oms only". |
+| ⭐ ORB, settled | `/health` reads **`execution_mode: paper`, `broker_route: none`** — isolation confirmed structurally, by mutation, and at runtime. ⛔ The env still reads `live:orb`/`webull` and gives **no protection**; the isolation is entirely in code, keyed on `strategy_code`. |
 
-| service | pid | NRestarts | | service | pid | NRestarts |
-|---|---|---|---|---|---|---|
-| oms | **3700368** | 0 | | schwab-1m-v2 | **3135615** *(untouched)* | 0 |
-| strategy | **3700379** | 0 | | market-data | 2202865 | 0 |
-| control | **3683699** *(restarted 13:12 ET by the `cd4cd8b` deploy)* | 0 | | reconciler | 2202771 | 0 |
-| **orb (NEW)** | 3110306 | 0 | | market-capture | 2202817 | 0 |
+| service | pid | | service | pid |
+|---|---|---|---|---|
+| oms | **3751266** | | schwab-1m-v2 | **3752275** |
+| strategy | **3751318** | | market-data | 2202865 |
+| control | 3683699 | | reconciler | 2202771 |
 
-✅ **`schwab-1m-v2` was NOT restarted by this deploy.** PID stayed `3135615`, and its running
-environment still contains `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS=*`.
+⛔ **All three deploy PIDs were verified against `systemctl show -p MainPID`, not taken from a
+report** — a stale PID in the 09-07 handoff cost a withheld pin on #909.
 
 > 🔑 **Schwab token, as of 2026-09-06 23:42 UTC** — `codex-2` re-authenticated during the deploy.
 > `refresh_token_expires_at` = **2026-09-13T20:47:13Z = 16:47 ET Sun 09-13**; `expires_at` is the
@@ -101,7 +141,7 @@ environment still contains `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS
 | `..._CONFIRMATION_EXIT_ENABLED` (CONF1) | **`true`** | ON since 09-03; post-#897 live fire denominator remains zero |
 | `oms_v2_eod_cancel_reexit_enabled` (EOD1601) | **`False`** | still OFF, still **UNEXERCISED** |
 | ORB paper observer | **LIVE** | broker-disconnected, `paper:orb`, provider=none |
-| `..._ATR_FLIP_PROBE_SYMBOLS` | **`*`, active** | confirmed in running v2 PID `3135615`; this deploy did not restart it |
+| `..._ATR_FLIP_PROBE_SYMBOLS` | **`*`, active** | ⚠ **v2 HAS since been restarted** (09-07 23:08 UTC, now PID `3752275`) — **re-confirm the probe env in the RUNNING process before trusting it today** |
 
 ---
 
