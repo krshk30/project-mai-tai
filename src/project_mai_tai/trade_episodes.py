@@ -34,6 +34,35 @@ GENERIC_PATHS = {"", "-", "DB_RECONCILE", "RECONCILED"}
 GENERIC_SUMMARIES = {"close", "final close", "completed", "-", "reconciled close"}
 
 
+
+def _entry_falls_inside_an_existing_cycle(
+    spans: list[tuple[str, str, str, object, object]],
+    strategy_code: str,
+    account_name: str,
+    symbol: str,
+    entry_time: str,
+) -> bool:
+    """True when a managed row describes a position an earlier source already produced.
+
+    ⛔ The identity is the INTERVAL, not the timestamp. Two sources describe the same position with
+    different entry stamps -- the fill when it happened, the managed row when the OMS saw it -- and
+    on the Webull fan-out leg that gap was 13 seconds. Matching on the exact string produced a
+    duplicate completed position with no prices and $0.00 P&L.
+
+    ⭐ It stays tight enough for back-to-back trades on one symbol: BNC exited 11:02:21 and re-entered
+    11:03:08 on 2026-09-08, and the second entry falls OUTSIDE the first cycle's window, so it is
+    still reported as its own trade.
+    """
+    target = parse_et_timestamp(entry_time)
+    for span_strategy, span_account, span_symbol, span_entry, span_exit in spans:
+        if span_strategy != strategy_code or span_account != account_name:
+            continue
+        if span_symbol != symbol:
+            continue
+        if span_entry <= target <= span_exit:
+            return True
+    return False
+
 def collect_completed_trade_cycles(
     *,
     strategy_code: str,
@@ -44,6 +73,14 @@ def collect_completed_trade_cycles(
 ) -> list[CompletedTradeCycle]:
     completed_rows: list[dict[str, Any]] = []
     existing_keys: set[tuple[str, str, str, str]] = set()
+    # ⛔ A closed_today row and a fill-derived cycle describe THE SAME position, and their entry
+    # timestamps legitimately differ: the fill is stamped when it happened, the managed row when the
+    # OMS observed it. On the Webull fan-out leg that settle lag was 13s on 2026-09-08 (fill
+    # 09:50:51, managed row 09:51:04), so the exact-string key below missed and the managed row was
+    # appended as a SECOND cycle -- rendered with no prices and $0.00 P&L beside the real one.
+    # The interval is the identity: a managed row whose entry falls INSIDE an existing cycle's
+    # [entry, exit] window is that cycle, not a new trade.
+    existing_spans: list[tuple[str, str, str, object, object]] = []
     open_trades_by_account_symbol: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
     def append_completed_trade(trade: dict[str, Any]) -> None:
@@ -57,6 +94,15 @@ def collect_completed_trade_cycles(
         symbol = str(trade["ticker"]).upper()
         trade_account_name = str(trade["broker_account_name"] or broker_account_name)
         existing_keys.add((strategy_code, trade_account_name, symbol, entry_time))
+        existing_spans.append(
+            (
+                strategy_code,
+                trade_account_name,
+                symbol,
+                parse_et_timestamp(entry_time),
+                parse_et_timestamp(exit_time),
+            )
+        )
         completed_rows.append(
             {
                 "strategy_code": strategy_code,
@@ -228,6 +274,10 @@ def collect_completed_trade_cycles(
         if not symbol or not entry_time or looks_like_broker_payload_text(raw_reason):
             continue
         if (strategy_code, row_account_name, symbol, entry_time) in existing_keys:
+            continue
+        if _entry_falls_inside_an_existing_cycle(
+            existing_spans, strategy_code, row_account_name, symbol, entry_time
+        ):
             continue
         exit_time = str(item.get("exit_time", "") or "-")
         raw_path = str(item.get("path", "") or item.get("entry_path", "") or "-").strip() or "-"
@@ -510,8 +560,27 @@ def summarize_exit_events(exit_events: list[dict[str, Any]], initial_qty: float)
 
 
 def parse_et_timestamp(value: str) -> datetime:
+    """Parse either display-ET or ISO-UTC into an ET-aware datetime.
+
+    ⛔ ISO SUPPORT IS LOAD-BEARING, NOT A CONVENIENCE. The dashboard's own rows are display-ET
+    ("2026-09-08 09:51:04 AM ET"), but `closed_today` comes from the bot as
+    `lot[2].isoformat()` — "2026-09-08T13:51:04.129000+00:00". Without this branch every ISO value
+    fell through to datetime.min, so BOTH duplicate checks compared a real timestamp against
+    year 1 and never matched. That is why the same position was rendered twice with $0.00 P&L:
+    not a settle-lag near-miss, but two sources speaking different time formats.
+    """
     if not value:
         return datetime.min.replace(tzinfo=EASTERN_TZ)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        pass
+    else:
+        # A naive ISO value comes from a UTC-aware datetime that lost its offset in transit; the
+        # publishers in this codebase are all UTC. Display-ET strings never reach this branch.
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(EASTERN_TZ)
     try:
         return datetime.strptime(value, "%Y-%m-%d %I:%M:%S %p ET").replace(tzinfo=EASTERN_TZ)
     except ValueError:
