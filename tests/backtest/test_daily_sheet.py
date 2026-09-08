@@ -70,8 +70,8 @@ def _good_quotes():
 
 
 def _good_tape():
-    # a +2% target print (98.2636*1.02 ~ 100.23) after the ~10:16 fill -> a resolved static-OCO trade
-    return [Trade(ts=_BASE + timedelta(minutes=25), price=101.0, size=100)]
+    # A +5% target print (98.2636*1.05 ~ 103.18) after the ~10:16 fill resolves the static OCO.
+    return [Trade(ts=_BASE + timedelta(minutes=25), price=104.0, size=100)]
 
 
 class _SheetSource:
