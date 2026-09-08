@@ -25,7 +25,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -91,10 +91,20 @@ def _log_count(path: Path, marker: str) -> int:
         raise RuntimeError(f"{path} unreadable -- run as root, a false zero is not a result")
     total = 0
     for candidate in sorted(path.parent.glob(path.name + "*")):
-        if candidate.suffix == ".gz":
-            out = subprocess.run(["zgrep", "-c", marker, str(candidate)], capture_output=True, text=True)
-        else:
-            out = subprocess.run(["grep", "-c", marker, str(candidate)], capture_output=True, text=True)
+        tool = "zgrep" if candidate.suffix == ".gz" else "grep"
+        # ⛔ -F IS LOAD-BEARING, AND SO IS THE RETURN CODE. Every marker here is bracketed, e.g.
+        # "[V2-HALT-CONFIRMED]". As a basic regex that is a CHARACTER CLASS containing the range
+        # T-C, which is invalid, so grep exits 2 with "Invalid range end" and an EMPTY stdout.
+        # The first version parsed that empty output as 0 and reported NEVER_OCCURRED against a
+        # denominator of 2,080. Three markers, three false zeros -- the precise false-clean this
+        # watcher exists to prevent, inside the watcher.
+        # grep exit codes: 0 = matched, 1 = no match, >=2 = ERROR. Only 0 and 1 are answers.
+        out = subprocess.run([tool, "-cF", marker, str(candidate)], capture_output=True, text=True)
+        if out.returncode >= 2:
+            raise RuntimeError(
+                f"{tool} failed on {candidate.name} rc={out.returncode}: "
+                f"{(out.stderr or '').strip()[:120]}"
+            )
         total += int((out.stdout or "0").strip() or 0)
     return total
 
@@ -146,15 +156,21 @@ def check_reject_storm() -> tuple[int, int, str]:
     """SIL1 -- the exit-reject alarm firing on a live storm.
     Denominator: rejected closes on the two live accounts, which is the population the alarm
     counts. ⛔ Split by account: a paper reject is not this condition."""
+    # ⛔ THE DENOMINATOR MUST BE THE POPULATION THE ALARM CAN SEE. The first version counted every
+    # live reject on both accounts -- 2,080 -- while the alarm counts only Schwab MANAGED-EXIT
+    # sells, which is 264. A zero against the wrong population is not a measured zero; it is a
+    # different question answered confidently. live:orb is deliberately UNSET and can never fire,
+    # so including it inflates the denominator with cases the alarm is not covering.
     rows = _psql(
         "select count(*) from broker_order_events e join broker_orders o on o.id=e.order_id "
         "join broker_accounts b on b.id=o.broker_account_id "
-        "where e.event_type='rejected' and b.name like 'live:%' "
+        "where e.event_type='rejected' and b.name='live:schwab_1m_v2' and o.side='sell' "
+        "and (e.payload->'metadata'->>'oms_v2_managed_exit')='true' "
         "and e.event_at >= now() - interval '30 days'"
     )
     denominator = int(rows[0] or 0) if rows else 0
     fired = _log_count(OMS_LOG, "[OMS-V2-EXIT-REJECT-ALARM]")
-    return fired, denominator, "denominator = live rejected closes, 30d, live accounts only"
+    return fired, denominator, "denominator = Schwab managed-exit sell rejects, 30d (the only population the alarm covers)"
 
 
 def check_resting_fill() -> tuple[int, int, str]:
@@ -214,8 +230,9 @@ def main(argv: list[str] | None = None) -> int:
 
     now = datetime.now(UTC)
     readings: list[Reading] = []
-    pending_pages: list[tuple[str, str]] = []
+    pending: list[tuple[str, str, str, str]] = []   # (condition, kind, title, body)
     for name, fn in CONDITIONS.items():
+        prior = dict(state.get(name, {}))
         try:
             fired, denominator, detail = fn()
             verdict = classify(fired, denominator)
@@ -223,16 +240,35 @@ def main(argv: list[str] | None = None) -> int:
             fired, denominator, detail, verdict = 0, 0, f"{type(exc).__name__}: {exc}", COULD_NOT_TELL
         readings.append(Reading(name, verdict, fired, denominator, detail))
 
-        prior = state.get(name, {})
+        if verdict == COULD_NOT_TELL:
+            # ⛔ PRESERVE, NEVER OVERWRITE. The first version wrote fired=0 here, which reset the
+            # transition memory: a condition that had already OCCURRED and paged would page AGAIN
+            # the moment its query recovered. A failed query must not re-arm a delivered alarm.
+            record = dict(prior)
+            record["verdict"] = COULD_NOT_TELL
+            record["last_run_at"] = now.isoformat()
+            record["could_not_tell_since"] = prior.get("could_not_tell_since") or now.isoformat()
+            if not prior.get("could_not_tell_paged") and not args.no_page:
+                pending.append((
+                    name, "could_not_tell",
+                    f"CANNOT TELL {name} -- the watcher cannot read its own condition",
+                    f"{name} could not be evaluated: {detail}\n"
+                    f"This is NOT a clean zero. The condition may be occurring unseen.",
+                ))
+            state[name] = record
+            continue
+
+        # A real reading. Clear any could-not-tell episode.
+        delivered = bool(prior.get("delivered", False))
         prior_fired = int(prior.get("fired", 0))
-        if verdict == OCCURRED and prior_fired == 0 and not args.no_page:
+        already_announced = prior_fired > 0 and delivered
+        if verdict == OCCURRED and not already_announced and not args.no_page:
             # ⛔ QUEUED, NOT SENT. Every page is deferred until AFTER the state file is written.
             # Measured 2026-09-08: with the send here and the write at the end, a state-write
-            # failure raised after paging and the SAME "first occurrence" page went out on every
-            # run -- 3 identical pages in 3 crashed invocations. A once-only alarm that repeats
-            # every 15 minutes becomes wallpaper, which is the exact reason the operator refused
-            # the reject alarm. No page may be sent before its memory is durable.
-            pending_pages.append((
+            # failure raised after paging and the SAME page went out every run -- 3 identical
+            # pages in 3 crashed invocations. No page may be sent before its memory is durable.
+            pending.append((
+                name, "occurred",
                 f"FIRED {name} -- first occurrence",
                 f"{name} has occurred for the first time since deployment.\n"
                 f"count={fired} denominator={denominator}\n{detail}\n"
@@ -241,25 +277,42 @@ def main(argv: list[str] | None = None) -> int:
         blind_since = prior.get("blind_since") if verdict == NEVER_LOOKED else None
         if verdict == NEVER_LOOKED and not blind_since:
             blind_since = now.isoformat()
-        if verdict == NEVER_LOOKED and blind_since and not args.no_page:
+        blind_paged = bool(prior.get("blind_paged", False))
+        if verdict == NEVER_LOOKED and blind_since and not args.no_page and not blind_paged:
             days = (now - datetime.fromisoformat(blind_since)).days
-            if days >= BLIND_DAYS_BEFORE_PAGE and not prior.get("blind_paged"):
-                pending_pages.append((
+            if days >= BLIND_DAYS_BEFORE_PAGE:
+                pending.append((
+                    name, "blind",
                     f"BLIND {name} -- denominator 0 for {days}d",
                     f"{name} has had NO denominator for {days} days. This is not a clean zero -- "
                     f"the watcher has never had anything to judge. UNEXERCISED, never PASS.",
                 ))
-                prior["blind_paged"] = True
         state[name] = {
             "fired": fired, "denominator": denominator, "verdict": verdict,
             "last_run_at": now.isoformat(), "blind_since": blind_since,
-            "blind_paged": prior.get("blind_paged", False),
+            "blind_paged": blind_paged,
+            # ⛔ DELIVERY IS NOT ASSUMED. `delivered` flips to True only after ntfy ACCEPTS the
+            # send. The first version recorded the transition regardless, so a failed delivery was
+            # suppressed FOREVER -- the alarm believed it had spoken when nothing was sent.
+            "delivered": delivered,
+            "could_not_tell_since": None, "could_not_tell_paged": False,
         }
 
-    # ⛔ ORDER IS THE GUARD. State first, pages second -- see the note above.
+    # ⛔ ORDER IS THE GUARD. State durable first, pages second.
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-    for title, body in pending_pages:
-        page(title, body)
+    confirmed: list[tuple[str, str]] = []
+    for name, kind, title, body in pending:
+        if page(title, body):
+            confirmed.append((name, kind))
+    for name, kind in confirmed:
+        if kind == "occurred":
+            state[name]["delivered"] = True
+        elif kind == "blind":
+            state[name]["blind_paged"] = True
+        elif kind == "could_not_tell":
+            state[name]["could_not_tell_paged"] = True
+    if confirmed:
+        state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
     lines = [
         f"[UNEXERCISED-WATCH] run_at={now.isoformat()} conditions={len(readings)}",
         "⛔ A zero is a result only when the denominator is non-zero. NEVER_LOOKED is UNEXERCISED.",

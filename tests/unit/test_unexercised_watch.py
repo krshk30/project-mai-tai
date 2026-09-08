@@ -113,3 +113,86 @@ def test_no_page_is_sent_before_the_state_is_durable(tmp_path, monkeypatch):
     with pytest.raises(IsADirectoryError):
         uw.main(["--state", str(unwritable), "--status", str(tmp_path / "S.txt")])
     assert pages == [], "a page was sent even though its state could never be persisted"
+
+
+def test_a_grep_error_raises_instead_of_reporting_zero(tmp_path, monkeypatch):
+    """⛔ THE DEFECT THAT SHIPPED. Every marker is bracketed, e.g. "[V2-HALT-CONFIRMED]". As a basic
+    regex that is a character class containing the invalid range T-C, so grep exits 2 with an EMPTY
+    stdout -- which the first version parsed as 0. Three markers, three false zeros, reported as
+    NEVER_OCCURRED against a denominator of 2,080.
+    """
+    log = tmp_path / "svc.log"
+    log.write_text("[V2-HALT-CONFIRMED] one\nunrelated\n", encoding="utf-8")
+
+    # The real thing: a bracketed marker must be counted literally, not as a regex.
+    assert uw._log_count(log, "[V2-HALT-CONFIRMED]") == 1
+
+    class _Err:
+        returncode, stdout, stderr = 2, "", "grep: Invalid range end"
+
+    monkeypatch.setattr(uw.subprocess, "run", lambda *a, **k: _Err())
+    with pytest.raises(RuntimeError, match="rc=2"):
+        uw._log_count(log, "[V2-HALT-CONFIRMED]")
+
+
+def test_a_failed_delivery_is_retried_rather_than_suppressed(tmp_path, monkeypatch):
+    """⛔ The first version recorded the transition regardless of the send, so a failed delivery was
+    suppressed forever: the alarm believed it had spoken when nothing was sent."""
+    attempts: list[str] = []
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": lambda: (1, 500, "d")})
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+
+    monkeypatch.setattr(uw, "page", lambda t, b: attempts.append(t) or False)   # delivery FAILS
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert len(attempts) == 1
+    assert json.loads(state.read_text(encoding="utf-8"))["HALT_REAL"]["delivered"] is False
+
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert len(attempts) == 2, "an undelivered alarm must be retried, not silently dropped"
+
+    monkeypatch.setattr(uw, "page", lambda t, b: attempts.append(t) or True)    # delivery SUCCEEDS
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert len(attempts) == 3
+    assert json.loads(state.read_text(encoding="utf-8"))["HALT_REAL"]["delivered"] is True
+
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert len(attempts) == 3, "a delivered alarm must never page again"
+
+
+def test_could_not_tell_does_not_re_arm_a_delivered_occurrence(tmp_path, monkeypatch):
+    """⛔ The first version wrote fired=0 on COULD_NOT_TELL, resetting the transition memory, so a
+    condition that had already paged would page AGAIN as soon as its query recovered."""
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "page", lambda t, b: pages.append(t) or True)
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": lambda: (1, 500, "d")})
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert [p for p in pages if p.startswith("FIRED")] == ["FIRED HALT_REAL -- first occurrence"]
+
+    def broken():
+        raise RuntimeError("psql failed")
+
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": broken})
+    uw.main(["--state", str(state), "--status", str(status)])
+    saved = json.loads(state.read_text(encoding="utf-8"))["HALT_REAL"]
+    assert saved["fired"] == 1, "COULD_NOT_TELL overwrote the remembered occurrence"
+    assert saved["delivered"] is True
+
+    monkeypatch.setattr(uw, "CONDITIONS", {"HALT_REAL": lambda: (1, 500, "d")})
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert len([p for p in pages if p.startswith("FIRED")]) == 1, "the recovered query re-paged"
+
+
+def test_could_not_tell_pages_once_so_a_blind_watcher_is_not_silent(tmp_path, monkeypatch):
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "page", lambda t, b: pages.append(t) or True)
+
+    def broken():
+        raise RuntimeError("psql failed: connection refused")
+
+    monkeypatch.setattr(uw, "CONDITIONS", {"SIL1_REJECT_STORM": broken})
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+    uw.main(["--state", str(state), "--status", str(status)])
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert len([p for p in pages if p.startswith("CANNOT TELL")]) == 1
