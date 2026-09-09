@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "pr_number": 926,
+  "range_base": "fd22eb4d9714babbb4a65afcee573270c1b14a8d",
+  "range_head": "250a425f66b6546800c40c73209880f2de2cb6de",
+  "reviewer": "codex-2",
+  "reviewed_at": "2026-09-09T11:25:33Z",
+  "summary": "Verified the halt alarm counts only parseable confirmations whose print and confirmation timestamps fall within the same ET extended session; live no-page replay excluded the sole SUNE overnight artefact and reported 0/36280, while the intraday control and count-everything mutation prove the watcher remains capable of firing."
+}
