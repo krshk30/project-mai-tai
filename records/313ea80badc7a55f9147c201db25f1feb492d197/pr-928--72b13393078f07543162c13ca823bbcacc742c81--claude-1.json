@@ -1,0 +1,9 @@
+{
+  "pr_number": 928,
+  "range_base": "72b13393078f07543162c13ca823bbcacc742c81",
+  "range_head": "313ea80badc7a55f9147c201db25f1feb492d197",
+  "reviewed_at": "2026-09-09T13:15:56Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "INC1 reviewed at exact head. Verified the reader's query matches the EMITTER's row shape in oms/service.py:4488 (source/broker_account_name/symbol/managed_row_id/close_outcome, status!='closed') and that the emitter is REACHABLE from service.py:4970 when a released bracket's replacement close fails. Delivery is verified not assumed: page() returns a bool and an undelivered incident retries next run. A DB read failure fails CLOSED to COULD_NOT_TELL and pages, so UNKNOWN is never PASS. My #926 halt session-filter survives intact. Mutation: forcing delivered=True for every incident turns 2 controls RED. Focused 40 passed, ruff clean, full-suite controlled pair vs base 72b13393 re-derived by me: failure+error sets IDENTICAL (58 lines), 3420->3427 passed. UNEXERCISED and stated as such: system_incidents holds 11799 rows and ZERO with source=oms_v2_cw_flip_uncovered, ever, so the denominator is zero until a forced page is confirmed on the operator's phone."
+}
