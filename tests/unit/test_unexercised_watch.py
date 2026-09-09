@@ -365,3 +365,134 @@ def test_each_blind_episode_pages_once_and_recovery_re_arms_it(tmp_path, monkeyp
     age_the_episode(uw.BLIND_DAYS_BEFORE_PAGE + 1)
     uw.main(["--state", str(state), "--status", str(status)])
     assert len([p for p in pages if p.startswith("BLIND")]) == 1, "a second blind episode was silent"
+
+
+# ---------------------------------------------------------------------------
+# ⛔⭐⭐ HALT-FILTER — a print gap that SPANS A MARKET CLOSURE is not a halt.
+#
+# HALT_REAL's first "occurrence" (2026-09-09) was an artefact: market_halts.py confirms on elapsed
+# time plus quote activity with NO session term, quotes keep flowing overnight, so an ~8h closed
+# market satisfied the rule. It paged the operator as a first occurrence, which SPENDS this
+# watcher's once-only alarm -- a genuine intraday halt would then never page at all.
+#
+# The two strings below are the REAL log lines, copied verbatim from the box.
+# ---------------------------------------------------------------------------
+
+# The artefact that fired: last print 19:59:58 ET on 09-08, confirmed 03:59 ET on 09-09.
+REAL_SUNE_ARTEFACT = (
+    "2026-09-09 07:59:01,615 WARNING project_mai_tai.services.schwab_1m_v2_bot | "
+    "[V2-HALT-CONFIRMED] symbol=SUNE last_print_at=2026-09-08T23:59:58.153000+00:00 "
+    "quote_updates=3 threshold_seconds=285 decision_gate=off"
+)
+# A genuine intraday halt, shaped like the real NUR LULD pause (10:51 -> 10:56 ET on 09-08).
+INTRADAY_HALT = (
+    "2026-09-08 14:56:59,632 WARNING project_mai_tai.services.schwab_1m_v2_bot | "
+    "[V2-HALT-CONFIRMED] symbol=NUR last_print_at=2026-09-08T14:51:59.218000+00:00 "
+    "quote_updates=2 threshold_seconds=285 decision_gate=off"
+)
+
+
+def test_the_real_SUNE_line_is_NOT_counted_as_a_halt():
+    """⛔ THE KNOWN-BAD TAPE. This exact line paged the operator. It must not count."""
+    in_session, spanned, unparsable = uw.classify_halt_confirmations([REAL_SUNE_ARTEFACT])
+    assert (in_session, spanned, unparsable) == (0, 1, 0)
+
+
+def test_a_genuine_intraday_halt_IS_counted():
+    """⛔ PINS THE OTHER DIRECTION. A filter that suppresses everything is not a filter, it is an
+    off switch -- and this alarm exists precisely to catch the intraday case."""
+    in_session, spanned, unparsable = uw.classify_halt_confirmations([INTRADAY_HALT])
+    assert (in_session, spanned, unparsable) == (1, 0, 0)
+
+
+def test_both_together_give_the_honest_split():
+    assert uw.classify_halt_confirmations([REAL_SUNE_ARTEFACT, INTRADAY_HALT]) == (1, 1, 0)
+
+
+def test_a_confirmation_just_after_the_0400_open_is_still_an_artefact():
+    """⛔⭐⭐ WHY A TIME-OF-DAY WINDOW IS NOT ENOUGH. The overnight gap confirms on the FIRST quote
+    that arrives, which can land at 04:01 ET -- inside any 'is it session hours now' test. What
+    makes it an artefact is that the gap SPANS the closure, so both ends must be in one session."""
+    line = (
+        "2026-09-09 08:01:00,000 WARNING x | [V2-HALT-CONFIRMED] symbol=SUNE "
+        "last_print_at=2026-09-08T23:59:58.153000+00:00 quote_updates=3"
+    )
+    assert uw.classify_halt_confirmations([line]) == (0, 1, 0)
+
+
+def test_a_gap_spanning_the_weekend_is_an_artefact():
+    """2026-09-04 is a Friday, 2026-09-07 a Monday (and the Labor Day holiday)."""
+    line = (
+        "2026-09-07 14:00:00,000 WARNING x | [V2-HALT-CONFIRMED] symbol=FOO "
+        "last_print_at=2026-09-04T19:00:00.000000+00:00 quote_updates=5"
+    )
+    assert uw.classify_halt_confirmations([line]) == (0, 1, 0)
+
+
+def test_an_unparsable_line_is_UNKNOWN_and_never_a_clean_zero():
+    """⛔ A line we cannot read must not fall into either bucket. check_halt RAISES on these, so
+    the verdict becomes COULD_NOT_TELL rather than a confident NEVER_OCCURRED."""
+    assert uw.classify_halt_confirmations(["[V2-HALT-CONFIRMED] symbol=X but no timestamp"]) == (0, 0, 1)
+
+
+def test_a_marker_line_with_no_last_print_at_is_unparsable_not_in_session():
+    line = "2026-09-08 14:56:59,632 WARNING x | [V2-HALT-CONFIRMED] symbol=NUR quote_updates=2"
+    assert uw.classify_halt_confirmations([line]) == (0, 0, 1)
+
+
+# ---------------------------------------------------------------------------
+# ⛔⭐⭐ THE WIRING, NOT JUST THE CLASSIFIER.
+# The classifier tests above all passed against a mutant that fed `in_session + spanned` into
+# `fired`, and against one that deleted the unparsable guard -- because nothing exercised
+# check_halt itself. A tested helper wired to nothing is a written-never-run check.
+# ---------------------------------------------------------------------------
+
+
+class _FakeRedisOut:
+    returncode = 0
+    stdout = 'x schwab_1m_v2 ... "denominator": 33670 ...'
+    stderr = ""
+
+
+def _stub_denominator(monkeypatch):
+    monkeypatch.setattr(uw.subprocess, "run", lambda *a, **k: _FakeRedisOut())
+
+
+def test_check_halt_EXCLUDES_the_artefact_end_to_end(monkeypatch):
+    """⛔ THE CONTROL. The real SUNE line reaches check_halt and must yield fired=0 with a
+    non-zero denominator -- i.e. NEVER_OCCURRED, a measured zero, not NEVER_LOOKED."""
+    monkeypatch.setattr(uw, "_log_lines", lambda *_a, **_k: [REAL_SUNE_ARTEFACT])
+    _stub_denominator(monkeypatch)
+    fired, denominator, detail = uw.check_halt()
+    assert fired == 0
+    assert denominator == 33670
+    assert "EXCLUDED as session-boundary artefacts" in detail
+    assert uw.classify(fired, denominator) == uw.NEVER_OCCURRED
+
+
+def test_check_halt_still_COUNTS_a_genuine_intraday_halt(monkeypatch):
+    """PINS THE OTHER DIRECTION at the wiring level: the alarm must still be able to fire."""
+    monkeypatch.setattr(uw, "_log_lines", lambda *_a, **_k: [INTRADAY_HALT])
+    _stub_denominator(monkeypatch)
+    fired, denominator, detail = uw.check_halt()
+    assert fired == 1
+    assert "EXCLUDED" not in detail
+    assert uw.classify(fired, denominator) == uw.OCCURRED
+
+
+def test_check_halt_mixed_reports_only_the_real_one(monkeypatch):
+    monkeypatch.setattr(uw, "_log_lines", lambda *_a, **_k: [REAL_SUNE_ARTEFACT, INTRADAY_HALT])
+    _stub_denominator(monkeypatch)
+    fired, _denominator, detail = uw.check_halt()
+    assert fired == 1
+    assert "1 confirmation(s) EXCLUDED" in detail
+
+
+def test_check_halt_RAISES_on_an_unparsable_line_rather_than_reporting_a_clean_zero(monkeypatch):
+    """⛔ UNKNOWN IS NOT PASS. Raising makes the verdict COULD_NOT_TELL, which the watcher reports
+    and pages on -- silently dropping the line would print NEVER_OCCURRED against a real
+    denominator, the exact false clean this watcher exists to prevent."""
+    monkeypatch.setattr(uw, "_log_lines", lambda *_a, **_k: ["[V2-HALT-CONFIRMED] no timestamp"])
+    _stub_denominator(monkeypatch)
+    with pytest.raises(RuntimeError, match="could not be classified"):
+        uw.check_halt()
