@@ -67,7 +67,7 @@ fan-out slot.
 
 ---
 
-# 🔔 GATE 1 WATCHER IS LIVE — first window 09:00 ET tomorrow
+# 🔔 GATE 1 WATCHER IS LIVE — first page possible 09:30 ET tomorrow
 
 `#931`, installed 19:07 ET. **Exactly one** cron entry, verified:
 

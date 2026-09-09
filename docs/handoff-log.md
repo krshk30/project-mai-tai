@@ -3764,7 +3764,7 @@ standard); D21/D23/sawtooth/census closed earlier in the batch; clock-sweep row 
 
 **Tomorrow:** run the reading. One regime, pre-stated denominators, zeros say which kind they are.
 
-## 2026-09-09 (Wed) — RECLAIM1 built and shipped DARK, Gate 1 armed, eleven PRs deployed (claude-1)
+## 2026-09-09 (Wed) — RECLAIM1 built and shipped DARK, Gate 1 armed, ten PRs deployed (claude-1)
 
 **Shape of the day.** **Ten** PRs merged (#924–#934, minus #932 closed as superseded), across
 **three** deploy windows — 06:54 ET (#924/#925, ORB restarted for `orb_app.py`), 07:27 ET (#926,
