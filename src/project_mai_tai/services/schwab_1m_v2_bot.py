@@ -63,6 +63,7 @@ from project_mai_tai.fanout_outcome_consumer import (
     identity_from_metadata,
 )
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
+from project_mai_tai.v2_segment_consumption_store import V2SegmentConsumptionStore
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.events import (
     HeartbeatEvent,
@@ -256,6 +257,8 @@ class SchwabV2BotService:
         self.session_factory: sessionmaker[Session] | None = session_factory
         self.fanout_identity_store: FanoutSegmentIdentityStore | None = None
         self.fanout_outcome_journal: FanoutOutcomeJournal | None = None
+        self.segment_consumption_store: V2SegmentConsumptionStore | None = None
+        self._fanout_identity_restore_readable = False
         self._fanout_outcome_evaluations = 0
         self._stop_event = asyncio.Event()
         self._strategy_state_stream = stream_name(
@@ -439,16 +442,19 @@ class SchwabV2BotService:
                 "[V2-FANOUT-IDENTITY-RESTORE-FAILED] restored=0 could_not_tell=1 "
                 "reason=no_session_factory"
             )
+            self._fanout_identity_restore_readable = False
             return {}
         self.fanout_identity_store = FanoutSegmentIdentityStore(self.session_factory)
         try:
             restored_segments = self.fanout_identity_store.restore_active()
-        except Exception:  # noqa: BLE001 - identity is observational, never an entry gate
+        except Exception:  # noqa: BLE001 - consumption restore turns this uncertainty into a gate
             restored_segments = {}
+            self._fanout_identity_restore_readable = False
             logger.exception(
                 "[V2-FANOUT-IDENTITY-RESTORE-FAILED] restored=0 could_not_tell=1"
             )
         else:
+            self._fanout_identity_restore_readable = True
             logger.info(
                 "[V2-FANOUT-IDENTITY-RESTORE] restored=%d could_not_tell=0",
                 len(restored_segments),
@@ -458,6 +464,52 @@ class SchwabV2BotService:
             restored_segments,
         )
         return restored_segments
+
+    def _configure_segment_consumption_store(
+        self,
+        active_segments: dict[str, int],
+    ) -> None:
+        """Restore positive fill evidence; uncertainty blocks a fresh segment entry."""
+
+        if self.strategy._cw_v2_reclaim_enabled:
+            return
+        if self.session_factory is None or not self._fanout_identity_restore_readable:
+            self.strategy.configure_segment_consumption_persistence(
+                None,
+                active_segments=active_segments,
+                restore_readable=False,
+            )
+            logger.error(
+                "[V2-SEGMENT-CONSUMPTION-RESTORE] restored=0 could_not_tell=1 "
+                "entry_allowed=0 reason=identity_or_session_unreadable"
+            )
+            return
+        self.segment_consumption_store = V2SegmentConsumptionStore(self.session_factory)
+        try:
+            restored = self.segment_consumption_store.restore_consumed(active_segments)
+        except Exception:  # noqa: BLE001 - uncertainty must fail closed for entries
+            self.strategy.configure_segment_consumption_persistence(
+                self.segment_consumption_store.record_consumed,
+                active_segments=active_segments,
+                restore_readable=False,
+            )
+            logger.exception(
+                "[V2-SEGMENT-CONSUMPTION-RESTORE] restored=0 could_not_tell=1 entry_allowed=0"
+            )
+            return
+        self.strategy.configure_segment_consumption_persistence(
+            self.segment_consumption_store.record_consumed,
+            active_segments=active_segments,
+            consumed_segments=restored,
+            restore_readable=True,
+        )
+        logger.info(
+            "[V2-SEGMENT-CONSUMPTION-RESTORE] active=%d consumed=%d unknown=%d "
+            "could_not_tell=0",
+            len(active_segments),
+            len(restored),
+            len(active_segments) - len(restored),
+        )
 
     def _configure_fanout_outcome_journal(self, active_segments: dict[str, int]) -> None:
         """Replay durable outcomes before any market-data task can emit a new leg."""
@@ -539,6 +591,7 @@ class SchwabV2BotService:
                     exc,
                 )
         active_segments = self._configure_fanout_identity_store()
+        self._configure_segment_consumption_store(active_segments)
         self._configure_fanout_outcome_journal(active_segments)
         self.intent_emitter = SchwabV2IntentEmitter(
             self.settings,
@@ -827,6 +880,17 @@ class SchwabV2BotService:
             "rest_bars_gated_total": str(self._rest_bars_gated),
             "rest_bars_gap_fill_total": str(self._rest_bars_gap_fill),
             "fanout_outcome_evaluations": str(self._fanout_outcome_evaluations),
+            "cw_v2_reclaim_enabled": str(
+                bool(getattr(self.strategy, "_cw_v2_reclaim_enabled", False))
+            ).lower(),
+            "cw_v2_reactive_entry_effective": str(
+                bool(getattr(self.strategy, "_cw_v2_reclaim_enabled", False))
+                and bool(getattr(self.strategy, "_reactive_entry_enabled", False))
+            ).lower(),
+            "cw_v2_first_resting_entry_effective": str(
+                bool(getattr(self.strategy, "_cw_v2_enabled", False))
+                and bool(getattr(self.strategy, "_resting_entry_enabled", False))
+            ).lower(),
             "tick_capture": str(self.tick_writer is not None).lower(),
             **(
                 {

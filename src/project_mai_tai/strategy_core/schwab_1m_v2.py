@@ -225,12 +225,13 @@ class SymbolState:
     cw_trigger: float = 0.0                     # v2 trigger = max HIGH of flip bar + next 2 bars
     cw_flip_level: float = 0.0                  # the short trail crossed at the BUY flip (rule-7 line)
     cw_entries_this_flip: int = 0               # kept for labelling/back-compat; NOT the cap
-    # ⭐⭐ THE CAP IS COMPOSITION, NOT A COUNT (operator 2026-08-03). Exactly one RESTING and one
-    # RECLAIM per cross; `reclaim+reclaim` is "very bad" and `resting+resting` is forbidden. A
-    # scalar cap-at-2 permits both of those, so the slots are tracked PER TYPE.
-    # ⛔ A slot stays consumed after its position EXITS — an exit does not refill it.
+    # Reclaim-on retains the historical one-resting-plus-one-reclaim composition for research.
+    # Reclaim-off uses the account-neutral segment latch below: exactly one filled first rest.
     cw_resting_taken: bool = False              # the resting slot for THIS cross is used
     cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
+    cw_segment_consumed: bool = False           # either broker filled this logical segment
+    cw_segment_consumption_known: bool = True   # false after an incomplete restart reconstruction
+    cw_segment_consumed_slot_id: str = ""       # durable attempt identity that supplied the fill
     cw_resting_suppressed_segment_id: int = 0   # SLOT2 marker dedupe; policy remains cw_resting_taken
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
     cw_rule7_logged_bar_ts: int = 0            # dedupe for [V2-CW-RULE7-BLOCK]: one line per forming
@@ -489,8 +490,9 @@ class SchwabV2Strategy:
     OMS owns all exits (MACD-cross-down / stochastic-exit / quick-stop /
     scaled / hard-stop) — we never emit close/scale/cancel intents.
 
-    The engine calls update_position(symbol, qty) on a 5s poll so we can
-    track True→False transitions and release the reclaim claim.
+    The engine calls update_position(symbol, qty) on a 5s poll so confirmed
+    fills can consume the active ATR segment and closes can release only
+    transient emission state.
     """
 
     def __init__(
@@ -600,8 +602,8 @@ class SchwabV2Strategy:
         self._cw_v2_reclaim_gap_bars = int(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars", 0) or 0
         )
-        # CW-v2 reclaim master switch (operator rule 2026-07-15: reclaim OFF, code retained).
-        # OFF -> ONE entry per BUY-flip segment; ON -> the shipped 2-per-segment reclaim.
+        # CW-v2 reclaim master switch. OFF is a real producer gate: only the first ATR-trail
+        # resting order may enter. ON retains the historical reclaim paths for research.
         self._cw_v2_reclaim_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reclaim_enabled", False)
         )
@@ -684,9 +686,14 @@ class SchwabV2Strategy:
         )
         # Observation-only durable identity seam. The bot configures this after its DB session
         # factory exists, before any market-data loop starts. Strategy-only tests leave it unset.
-        # A persistence failure is logged and never changes whether an order is allowed.
+        # Identity persistence remains observational when reclaim is enabled.  With reclaim off,
+        # the companion consumption restore below fail-closes an active segment whose prior fill
+        # state cannot be reconstructed.
         self._fanout_identity_persist: Callable[[str, int, bool, str], None] | None = None
         self._restored_fanout_segment_ids: dict[str, int] = {}
+        self._segment_consumption_persist: Callable[[str, int, str, str], None] | None = None
+        self._restored_segment_consumption: dict[str, tuple[int, str] | None] = {}
+        self._segment_consumption_restore_readable = True
         # Webull-leg per-order qty: 0 => match the Schwab leg (_atr_qty).
         self._webull_fanout_qty = int(
             getattr(self.settings, "strategy_schwab_1m_v2_webull_fanout_quantity", 0) or 0
@@ -737,7 +744,7 @@ class SchwabV2Strategy:
         persist: Callable[[str, int, bool, str], None] | None,
         restored: Mapping[str, int] | None = None,
     ) -> None:
-        """Install the bot-owned durable store without making it a trading-policy input."""
+        """Install the durable identity used by fan-out and reclaim-off restart binding."""
 
         self._fanout_identity_persist = persist
         self._restored_fanout_segment_ids = {
@@ -761,6 +768,118 @@ class SchwabV2Strategy:
         """Install the bot-owned append-only outcome journal."""
 
         self._fanout_outcome_persist = persist
+
+    def configure_segment_consumption_persistence(
+        self,
+        persist: Callable[[str, int, str, str], None] | None,
+        *,
+        active_segments: Mapping[str, int] | None = None,
+        consumed_segments: Mapping[str, tuple[int, str]] | None = None,
+        restore_readable: bool = True,
+    ) -> None:
+        """Install fill-positive persistence before market-data processing begins."""
+
+        self._segment_consumption_persist = persist
+        consumed = {
+            str(symbol).upper(): (int(value[0]), str(value[1]))
+            for symbol, value in (consumed_segments or {}).items()
+        }
+        self._restored_segment_consumption = {
+            str(symbol).upper(): consumed.get(str(symbol).upper())
+            for symbol, segment_id in (active_segments or {}).items()
+            if int(segment_id) > 0
+        }
+        self._segment_consumption_restore_readable = bool(restore_readable)
+
+    def _restore_segment_consumption(self, state: SymbolState, segment_id: int) -> None:
+        if not getattr(self, "_segment_consumption_restore_readable", True):
+            state.cw_segment_consumed = True
+            state.cw_segment_consumption_known = False
+            state.cw_segment_consumed_slot_id = ""
+            logger.error(
+                "[V2-SEGMENT-CONSUMPTION-UNKNOWN] %s segment_id=%d entry_allowed=0 "
+                "reason=restart_store_unreadable",
+                state.symbol,
+                segment_id,
+            )
+            return
+        restored = getattr(self, "_restored_segment_consumption", {})
+        evidence = restored.pop(state.symbol.upper(), None) if isinstance(restored, dict) else None
+        if evidence is None or int(evidence[0]) != segment_id:
+            state.cw_segment_consumed = True
+            state.cw_segment_consumption_known = False
+            state.cw_segment_consumed_slot_id = ""
+            logger.error(
+                "[V2-SEGMENT-CONSUMPTION-UNKNOWN] %s segment_id=%d entry_allowed=0 "
+                "reason=active_segment_without_fill_state",
+                state.symbol,
+                segment_id,
+            )
+            return
+        state.cw_segment_consumed = True
+        state.cw_segment_consumption_known = True
+        state.cw_segment_consumed_slot_id = evidence[1]
+        logger.info(
+            "[V2-SEGMENT-CONSUMPTION-RESTORED] %s segment_id=%d consumed=1 slot_id=%s",
+            state.symbol,
+            segment_id,
+            evidence[1],
+        )
+
+    def _consume_segment_entry(
+        self,
+        state: SymbolState,
+        *,
+        slot_id: str,
+        reason: str,
+    ) -> None:
+        """Consume one logical segment on positive fill evidence from either broker."""
+
+        segment_id = self._ensure_fanout_segment_id(state)
+        if state.cw_segment_consumed and state.cw_segment_consumption_known:
+            return
+        state.cw_segment_consumed = True
+        state.cw_segment_consumption_known = True
+        state.cw_segment_consumed_slot_id = str(slot_id)
+        persist = getattr(self, "_segment_consumption_persist", None)
+        if persist is not None:
+            try:
+                persist(state.symbol, segment_id, str(slot_id), reason)
+            except Exception:  # noqa: BLE001 - in-memory consumption remains fail-closed
+                logger.exception(
+                    "[V2-SEGMENT-CONSUMPTION-PERSIST-FAILED] %s segment_id=%d "
+                    "consumed=1 entry_allowed=0 reason=%s",
+                    state.symbol,
+                    segment_id,
+                    reason,
+                )
+        logger.info(
+            "[V2-SEGMENT-CONSUMED] %s segment_id=%d slot_id=%s reason=%s",
+            state.symbol,
+            segment_id,
+            slot_id,
+            reason,
+        )
+
+    @staticmethod
+    def _reset_segment_entry_lifecycle(
+        state: SymbolState,
+        *,
+        reset_durable_slots: bool = True,
+    ) -> None:
+        """End one ATR segment without treating a position close as a reset."""
+
+        state.cw_entries_this_flip = 0
+        state.cw_resting_taken = False
+        state.cw_reclaim_taken = False
+        state.cw_resting_suppressed_segment_id = 0
+        state.cw_v2_emit_claimed = False
+        state.cw_v2_emit_ms = 0
+        if reset_durable_slots:
+            state.cw_segment_consumed = False
+            state.cw_segment_consumption_known = True
+            state.cw_segment_consumed_slot_id = ""
+            SchwabV2Strategy._reset_fanout_webull_slots(state)
 
     def _persist_fanout_claim_transition(
         self,
@@ -950,13 +1069,20 @@ class SchwabV2Strategy:
             state.fanout_claim_outcome = "filled"
             state.fanout_claim_ms = self._now_ms()
             self._consume_fanout_webull_slot(state, record.slot)
+            if not self._cw_v2_reclaim_enabled:
+                self._consume_segment_entry(
+                    state,
+                    slot_id=record.slot_id,
+                    reason="webull_fill",
+                )
             logger.info(
                 "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=filled held=1 "
                 "evidence=positive fill_rank=authoritative webull_slot_consumed=1 "
-                "webull_slot=%s — Schwab composition unchanged",
+                "webull_slot=%s segment_consumed=%d",
                 record.symbol,
                 record.slot_id,
                 record.slot,
+                int(state.cw_segment_consumed),
             )
             return "consumed"
 
@@ -1069,13 +1195,13 @@ class SchwabV2Strategy:
         segment_id: int,
         active: bool,
         reason: str,
-    ) -> None:
+    ) -> bool:
         persist = getattr(self, "_fanout_identity_persist", None)
         if persist is None:
-            return
+            return True
         try:
             persist(state.symbol, segment_id, active, reason)
-        except Exception:  # noqa: BLE001 - observation must never become a trading gate
+        except Exception:  # noqa: BLE001 - caller decides whether this transition is load-bearing
             logger.exception(
                 "[V2-FANOUT-IDENTITY-PERSIST-FAILED] %s segment_id=%d active=%d "
                 "reason=%s could_not_tell=1",
@@ -1084,7 +1210,7 @@ class SchwabV2Strategy:
                 int(active),
                 reason,
             )
-            return
+            return False
         logger.info(
             "[V2-FANOUT-IDENTITY-PERSISTED] %s segment_id=%d active=%d reason=%s "
             "persisted=1 could_not_tell=0",
@@ -1093,6 +1219,7 @@ class SchwabV2Strategy:
             int(active),
             reason,
         )
+        return True
 
     def _clear_fanout_segment_id(
         self,
@@ -1135,11 +1262,8 @@ class SchwabV2Strategy:
         state.cw_armed = False
         state.cw_arm_bar_ts = 0
         self._release_fanout_webull_claim(state, reason=reason)
+        self._reset_segment_entry_lifecycle(state)
         self._clear_fanout_segment_id(state, reason=reason)
-        self._reset_fanout_webull_slots(state)
-        state.cw_entries_this_flip = 0
-        state.cw_resting_taken = False
-        state.cw_reclaim_taken = False
         return True
 
     def _entry_window_closed_for_session(self, now: datetime | None = None) -> bool:
@@ -1194,12 +1318,7 @@ class SchwabV2Strategy:
             reason=reason,
             include_unconsumed_restore=True,
         )
-        state.cw_entries_this_flip = 0
-        state.cw_resting_taken = False
-        state.cw_reclaim_taken = False
-        self._reset_fanout_webull_slots(state)
-        state.cw_v2_emit_claimed = False
-        state.cw_v2_emit_ms = 0
+        self._reset_segment_entry_lifecycle(state)
         state.resting_flip_ms = 0
         return had_entry_state, arm_released, cancel_requested
 
@@ -1222,6 +1341,7 @@ class SchwabV2Strategy:
             return False
         self._release_fanout_webull_claim(state, reason=reason)
         released = self._release_arm(state, reason)
+        self._reset_segment_entry_lifecycle(state)
         self._clear_fanout_segment_id(
             state,
             reason=reason,
@@ -1276,10 +1396,11 @@ class SchwabV2Strategy:
         )
 
     def update_position(self, symbol: str, qty: int, *, held_qty: int | None = None) -> None:
-        """Called by the engine each position-poll cycle. On a True→False
-        transition (OMS just closed our position), release the CW-v2 reclaim claim so the
-        segment's second entry can fire. There is no cooldown: the per-segment entry cap bounds
-        re-entry instead (see the block below).
+        """Apply the fills-only position read used by the CW-v2 entry lifecycle.
+
+        A 0->held transition consumes the active segment when reclaim is off. A close releases
+        only transient emit state; it never reopens that segment. Feature-on research retains the
+        historical same-segment reclaim behavior.
 
         `qty` is the conservative UNION (fills ∪ in-flight open intents) and keeps driving every
         existing gate unchanged. `held_qty` is fills-only; it defaults to `qty` so a caller that
@@ -1302,11 +1423,6 @@ class SchwabV2Strategy:
         # with the reclaim slot still free must be the resting one. That test is robust to the
         # order in which `resting_active` is cleared.
         #
-        # ⛔ SCHWAB LEG ONLY. `SymbolState` is per symbol, but the bot's position poll is scoped
-        # to `strategy_schwab_1m_v2_account_name`; a Webull fan-out fill does NOT land here. That is
-        # intentional under operator reading A: the Webull fill consumes its venue-local fan-out
-        # claim and never consumes v2's resting/reclaim slot. Cross-venue 2x exposure is the paired
-        # broker experiment, not duplicate exposure for this counter.
         if prev_held == 0 and state.position_qty_held > 0 and not state.cw_reclaim_taken:
             # ⛔⭐⭐ CLAIM ON FILL — and the slot decides WHICH claim.
             # The original inference was "the reactive path claims cw_reclaim_taken at EMIT, so a
@@ -1321,6 +1437,26 @@ class SchwabV2Strategy:
                 state.cw_reclaim_taken = True
             else:
                 state.cw_resting_taken = True
+        if (
+            prev_held == 0
+            and state.position_qty_held > 0
+            and self._cw_v2_enabled
+            and not self._cw_v2_reclaim_enabled
+        ):
+            economic_slot = (
+                "reclaim" if state.last_resting_placed_slot == "reclaim" else "resting"
+            )
+            segment_id = self._ensure_fanout_segment_id(state)
+            self._consume_segment_entry(
+                state,
+                slot_id=fanout_slot_id(
+                    strategy_code=STRATEGY_CODE,
+                    symbol=state.symbol,
+                    segment_id=segment_id,
+                    slot=economic_slot,
+                ),
+                reason="schwab_fill",
+            )
         # ⭐⭐ FIRE THE WEBULL LEG *ON THE SCHWAB FILL* — not by re-detecting the cross (2026-08-13).
         #
         # ⛔ THE DEFECT THIS REPLACES. `_fanout_rth_resting_cross` watched quotes for price to reach
@@ -1388,18 +1524,16 @@ class SchwabV2Strategy:
         if position_closed:
             # ⛔ NO COOLDOWN (removed 2026-07-28, operator decision). A 5-bar cooldown used to be
             # armed here. It was invented when reclaim was UNCAPPED and could chase the same trade
-            # repeatedly; the `cw_entries_this_flip < _cw_v2_max_entries_per_flip` cap (2 = one
-            # resting + one reclaim per ATR segment) replaced the need for it.
+            # repeatedly. Feature-on research retains the one-resting-plus-one-reclaim composition;
+            # production reclaim-off uses the durable one-fill-per-segment latch instead.
             #
             # It was also already inert: every gate that read the counter lives on a path that
             # `_cw_v2_enabled` short-circuits (`on_quote` returns into `_cw_v2_quote`; `_cw_entry`
             # returns None on its first line), and none of the three LIVE paths -- reactive,
             # resting, fan-out -- ever consulted it.
             #
-            # ⭐ And it CONTRADICTED the design. The reclaim gap is 1 bar; the cooldown was 5. Wiring
-            # the counter back up would block the exact second entry the segment is meant to allow
-            # (resting fills bar 1, spike on bar 4 -> reclaim). Removed rather than left dormant,
-            # because a safety gate that is switched off is an invitation to "fix" it.
+            # In feature-on research it also contradicted the configured 1-bar reclaim gap. The
+            # cooldown remains removed; reclaim-off does not rely on it for safety.
             #
             # Say only what was OBSERVED. This poll sees a qty transition, not a cause: the
             # position may have been closed by the OMS, by a broker-side OCO leg filling, by the
@@ -1409,8 +1543,9 @@ class SchwabV2Strategy:
             # REAL close and when one of our own resting intents merely went terminal. That still
             # matters below -- it releases the reclaim claim -- so the two are logged distinctly.
             logger.info(
-                "schwab_1m_v2 position closed for %s — qty %d -> 0 [held %d -> %d, %s]; reclaim "
-                "claim released (no cooldown); Webull claim release evaluated separately "
+                "schwab_1m_v2 position closed for %s — qty %d -> 0 [held %d -> %d, %s]; "
+                "transient emit claim released; segment_consumed=%d reclaim_enabled=%d; "
+                "Webull claim release evaluated separately "
                 "(cause: OMS exit, broker OCO leg, operator close, reconcile, or our own resting "
                 "intent going terminal)",
                 symbol,
@@ -1418,13 +1553,11 @@ class SchwabV2Strategy:
                 prev_held,
                 state.position_qty_held,
                 "SPURIOUS-no-shares-ever-held" if spurious else "real-position-closed",
+                int(state.cw_segment_consumed),
+                int(self._cw_v2_reclaim_enabled),
             )
-            # ⛔ LOAD-BEARING -- these two lines are what actually enables reclaim, and they were
-            # historically written in the same block as the cooldown. Removing "the cooldown"
-            # without keeping them would silently stop every second entry.
-            # CW-v2 reclaim: our position just closed -> release the intrabar emit claim so a
-            # SECOND entry can fire in the SAME long segment (the cw_entries_this_flip<2 cap +
-            # arm-on-flip + the 1-bar gap bound it). No-op when the sub-flag is off.
+            # Retain the historical transient-claim release for feature-on research. Under
+            # reclaim-off this does not reopen admission: the durable segment latch stays consumed.
             if self._cw_v2_enabled:
                 state.cw_v2_emit_claimed = False
                 state.cw_v2_bars_since_exit = 0  # reclaim gap: start counting new bars from the exit
@@ -1636,9 +1769,9 @@ class SchwabV2Strategy:
         # touch). See docs/intrabar-hold-confirmation-design.md.
         state = self.watchlist_state(symbol)
         state.last_quote = quote
-        # CW-v2: intrabar break entry (rule 6/7 + reclaim + ORB skip). When the sub-flag is on it
-        # OWNS the CW entry via this quote path; the bar-close _cw_entry is a no-op. No-op (returns
-        # None like the base) when the sub-flag is off.
+        # CW-v2 quote handling owns first-resting cross support. The reactive reclaim producer is
+        # dispatched only when its master switch is on; with reclaim off, this path can service the
+        # already-resting first order but cannot manufacture a replacement entry.
         if self._cw_v2_enabled:
             # Dual-broker fan-out: in RTH resting mode the broker owns the Schwab cross, so software-
             # detect it here and queue the parallel Webull MARKET leg (once per flip). Side-effect only
@@ -1652,6 +1785,8 @@ class SchwabV2Strategy:
             eh_draft = self._eh_resting_cross_check(state, quote)
             if eh_draft is not None:
                 return eh_draft
+            if not self._cw_v2_reclaim_enabled:
+                return None
             return self._cw_v2_quote(state, quote)
         # Confirmed-window (CW) owns the entry via the bar-path wait-3 break. The intrabar
         # hold-confirm TOUCH entry is a separate signal and must NOT also fire under CW, so
@@ -1879,17 +2014,16 @@ class SchwabV2Strategy:
         state.cw_three_bar_high = 0.0
         state.cw_trigger = 0.0
         state.cw_flip_level = 0.0
-        state.cw_entries_this_flip = 0
         state.cw_bar_low_so_far = 0.0
         state.cw_segment_high = 0.0
-        state.cw_v2_emit_claimed = False
-        state.cw_v2_emit_ms = 0
         self._release_fanout_webull_claim(state, reason="session_anchor_reset")
         restored_anchor = int(getattr(self, "_restored_fanout_session_anchor_ms", 0) or 0)
         # Outcome replay runs before historical bar replay. Preserve a current-session durable fill
         # while those older anchors walk through this reset; retire it only at the next real anchor.
-        if not restored_anchor or anchor > restored_anchor:
-            self._reset_fanout_webull_slots(state)
+        self._reset_segment_entry_lifecycle(
+            state,
+            reset_durable_slots=not restored_anchor or anchor > restored_anchor,
+        )
         self._clear_fanout_segment_id(
             state,
             reason="session_anchor_reset",
@@ -2391,8 +2525,9 @@ class SchwabV2Strategy:
         """CW-v2 bar-path state machine (no-op unless the sub-flag is on). Maintains the arm /
         3-bar trigger (flip bar + next 2 bars) / flip-level on EVERY new bar independent of
         flat/cooldown/warmup, resets the forming-bar intrabar low, and releases a stale (no-fill)
-        emit claim. The actual ENTRY is intrabar in `on_quote` (_cw_v2_quote). Only mutates cw_*
-        fields (write-disjoint from Paths 1/2 and the A/B path)."""
+        emit claim. Reclaim-off entry is the ATR-trail resting manager; feature-on research may
+        additionally dispatch `_cw_v2_quote`. Only mutates cw_* fields (write-disjoint from Paths
+        1/2 and the A/B path)."""
         if not self._cw_v2_enabled:
             return
         # New bar: reset the forming-bar low; release a stale emit claim that never filled.
@@ -2483,6 +2618,10 @@ class SchwabV2Strategy:
             state.cw_arm_bar_ts = 0
             self._release_fanout_webull_claim(state, reason="flip")
             live_fanout_transition = self._fanout_identity_bar_is_live(state)
+            self._reset_segment_entry_lifecycle(
+                state,
+                reset_durable_slots=live_fanout_transition,
+            )
             self._clear_fanout_segment_id(
                 state,
                 reason="flip",
@@ -2490,14 +2629,6 @@ class SchwabV2Strategy:
                 # transition and must retire a durable key restored from the pre-restart process.
                 include_unconsumed_restore=live_fanout_transition,
             )
-            if live_fanout_transition:
-                self._reset_fanout_webull_slots(state)
-            # A cross ENDS here, so this is where its slots are released. Moved from the arm block
-            # (2026-08-03): entries belong to the cross that was live when they filled, or to the
-            # cross that confirms while the position is still held.
-            state.cw_entries_this_flip = 0
-            state.cw_resting_taken = False
-            state.cw_reclaim_taken = False
             return
         if not state.cw_armed:
             return
@@ -2525,10 +2656,13 @@ class SchwabV2Strategy:
         logger.info(
             "[V2-CW-STATE-PROBE] sym=%s armed=%s bars_waited=%d trig=%.4f seg_high=%.4f "
             "flip_level=%.4f entries_this_flip=%d max_per_flip=%d emit_claimed=%s "
+            "segment_consumed=%s consumption_known=%s consumed_slot_id=%s "
             "bars_since_exit=%d reclaim_gap=%d entries_held=%s pos_qty=%s",
             state.symbol, state.cw_armed, state.cw_bars_waited, state.cw_trigger,
             state.cw_segment_high, state.cw_flip_level, state.cw_entries_this_flip,
             self._cw_v2_max_entries_per_flip, state.cw_v2_emit_claimed,
+            state.cw_segment_consumed, state.cw_segment_consumption_known,
+            state.cw_segment_consumed_slot_id or "none",
             state.cw_v2_bars_since_exit, self._cw_v2_reclaim_gap_bars,
             self._entries_held, state.position_qty,
         )
@@ -2551,11 +2685,7 @@ class SchwabV2Strategy:
         return float(state.bars[-1].volume) > float(self._atr_vol_floor)
 
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
-        """CW-v2 intrabar entry: enter the instant a quote price breaks the frozen trigger, gated
-        by rule 7 (whole forming bar above the flip level), the 09:30-10:00 ORB skip, the flat gate,
-        and the per-flip entry cap (`_cw_v2_max_entries_per_flip`: 1 when reclaim is off — the
-        default — else the shipped 2). Cooldown is intentionally NOT gated (reclaim has no
-        cooldown). No-op unless the sub-flag is on. Returns a market-buy open draft or None."""
+        """Retained reactive reclaim implementation; ``on_quote`` owns its master gate."""
         if not self._cw_v2_enabled:
             return None
         if not self._reactive_entry_enabled or state.resting_active:
@@ -2885,6 +3015,29 @@ class SchwabV2Strategy:
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
     def _queue_resting_place(self, state: SymbolState, line: float, *, slot: str = "first") -> None:
+        if slot == "first" and not getattr(self, "_cw_v2_reclaim_enabled", True):
+            segment_id = self._ensure_fanout_segment_id(state)
+            if (
+                not state.cw_segment_consumption_known
+                or state.cw_segment_consumed
+                or state.cw_resting_taken
+            ):
+                logger.warning(
+                    "[V2-FIRST-RESTING-SEGMENT-BLOCK] %s segment_id=%d attempted=1 "
+                    "suppressed=1 consumed=%d known=%d reason=%s",
+                    state.symbol,
+                    segment_id,
+                    int(state.cw_segment_consumed),
+                    int(state.cw_segment_consumption_known),
+                    (
+                        "restart_state_unknown"
+                        if not state.cw_segment_consumption_known
+                        else "segment_consumed"
+                        if state.cw_segment_consumed
+                        else "reconstructed_segment"
+                    ),
+                )
+                return
         limit = line * (1.0 + self._resting_entry_band_pct / 100.0)
         state.resting_active = True
         state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel
@@ -3257,6 +3410,10 @@ class SchwabV2Strategy:
         trigger, price-committed. Rule 7 is NOT evaluated (a broker stop cannot carry intrabar
         state); that is the entire fidelity difference, ~1.3% upper bound.
         """
+        if not getattr(self, "_cw_v2_reclaim_enabled", True):
+            if state.resting_active and state.resting_slot == "reclaim":
+                self._queue_resting_cancel(state, reason="reclaim_disabled")
+            return
         if not (self._reactive_entry_enabled and self._cw_v2_enabled):
             return
         if self._entries_held:                       # boot-hold suppresses all entries
@@ -3602,6 +3759,7 @@ class SchwabV2Strategy:
                 reason="restart_restore",
             )
             state.fanout_segment_id = restored_id
+            self._restore_segment_consumption(state, restored_id)
             logger.info(
                 "[V2-FANOUT-IDENTITY-RESTORED] %s segment_id=%d restored=1",
                 state.symbol,
@@ -3617,15 +3775,39 @@ class SchwabV2Strategy:
                 1,
                 int(clock() if callable(clock) else datetime.now(UTC).timestamp() * 1000),
             )
-        # The durable bind precedes the in-memory assignment and every draft construction. Its
-        # failure is visible but observation-only: it never suppresses or reroutes live money.
-        self._persist_fanout_identity_transition(
+        # The durable bind precedes the in-memory assignment and every draft construction. With
+        # reclaim off, a failed bind must block the order now; otherwise a restart would have no
+        # record that this segment ever existed. Feature-on research retains the historical
+        # observation-only failure direction.
+        identity_persisted = self._persist_fanout_identity_transition(
             state,
             segment_id=segment_id,
             active=True,
             reason="segment_bind",
         )
         state.fanout_segment_id = segment_id
+        if (
+            not getattr(self, "_cw_v2_reclaim_enabled", True)
+            and not identity_persisted
+        ) or not getattr(self, "_segment_consumption_restore_readable", True):
+            state.cw_segment_consumed = True
+            state.cw_segment_consumption_known = False
+            state.cw_segment_consumed_slot_id = ""
+            logger.error(
+                "[V2-SEGMENT-CONSUMPTION-UNKNOWN] %s segment_id=%d entry_allowed=0 "
+                "reason=%s",
+                state.symbol,
+                segment_id,
+                (
+                    "identity_bind_failed"
+                    if not identity_persisted
+                    else "restart_store_unreadable"
+                ),
+            )
+        else:
+            state.cw_segment_consumed = False
+            state.cw_segment_consumption_known = True
+            state.cw_segment_consumed_slot_id = ""
         return segment_id
 
     def _fanout_slot_metadata(
@@ -3665,8 +3847,8 @@ class SchwabV2Strategy:
     ) -> dict[str, str]:
         """Bind the one shared segment/slot key copied to both broker legs.
 
-        This is observation-only metadata. No consumer reads it to release a
-        latch, suppress an entry, change quantity, or choose a venue.
+        The identity does not choose quantity or venue. With reclaim off, its segment/slot keys
+        also bind positive fill evidence to the durable one-entry-per-segment latch.
         """
 
         segment = segment_id or self._ensure_fanout_segment_id(state)

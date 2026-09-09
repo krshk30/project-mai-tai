@@ -147,6 +147,11 @@ def test_capped_reconstructed_segment_refuses_the_live_entry_gate() -> None:
     assert st.cw_resting_taken is True and st.cw_reclaim_taken is True
     assert s.cw_armed_segments()[0]["dangerous"] is False   # boot hold releases on this read...
     s._entries_held = False
+    st.bars.append(_bar(12.5, ts=NON_ORB_MS))
+    s._queue_resting_place(st, 9.5, slot="first")
+    assert s.drain_pending_intents() == [], (
+        "a capped reconstructed segment must not place the first resting order"
+    )
     assert s._cw_v2_quote(st, _quote(12.5)) is None, (
         "a capped reconstructed segment must not be tradeable once the hold releases"
     )

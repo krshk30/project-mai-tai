@@ -23,6 +23,7 @@ def _strat(**overrides):
     kwargs = {
         "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
+        "strategy_schwab_1m_v2_cw_v2_reclaim_enabled": True,
     }
     kwargs.update(overrides)
     return SchwabV2Strategy(Settings(**kwargs))
@@ -286,7 +287,7 @@ def test_cw_v2_reclaim_gap0_allows_same_bar_byte_identical():
 
 def test_cw_v2_reclaim_flag_defaults_off():
     assert Settings().strategy_schwab_1m_v2_cw_v2_reclaim_enabled is False
-    strat = _strat()
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False)
     assert strat._cw_v2_reclaim_enabled is False
     assert strat._cw_v2_max_entries_per_flip == 1
 
@@ -298,49 +299,55 @@ def test_cw_v2_reclaim_flag_on_restores_two_per_flip():
 
 
 def test_cw_v2_reclaim_off_allows_one_entry_per_flip_segment():
-    """THE operator rule: one entry per BUY-flip. The 2nd break — even a genuine NEW segment
-    high, which the reclaim path would have taken — must not enter."""
-    strat = _strat()                                  # reclaim OFF (default)
+    """A first resting fill consumes the segment; closing it enables no second producer."""
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False)
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
-    assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # entry #1
-    assert state.cw_entries_this_flip == 1
-    _release(state)                                   # flat again, claim released
-    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())  # segment high advances to 15.0
-    assert strat._cw_v2_quote(state, _quote(15.5)) is None          # NO reclaim
-    assert state.cw_entries_this_flip == 1
+    strat._queue_resting_place(state, 9.5, slot="first")
+    assert len(strat.drain_pending_intents()) == 1
+    _resting_fill(strat, state)
+    state.resting_active = False
+    strat.update_position("TEST", 0, held_qty=0)
+
+    assert state.cw_segment_consumed is True
+    assert strat.on_quote("TEST", _quote(15.5)) is None
+    strat._cw_v2_reclaim_resting_track(state)
+    assert strat.drain_pending_intents() == []
+    strat._queue_resting_place(state, 9.4, slot="first")
+    assert strat.drain_pending_intents() == []
 
 
 def test_cw_v2_reclaim_off_still_re_arms_on_a_fresh_buy_flip():
     """Reclaim-off caps entries per SEGMENT, not per day — a new BUY flip is a new segment
     and must still be enterable (otherwise the name goes dead after one trade)."""
-    strat = _strat()                                  # reclaim OFF
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False)
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
-    assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # entry #1, segment A
-    _release(state)
-    _feed_bar(strat, state, _bar(20.0, ts=6), _sig(flip="SELL"))    # segment A ends
-    # new segment B: BUY flip + 2 bars -> armed again, counter reset
-    _feed_bar(strat, state, _bar(8.0, ts=7), _sig(flip="BUY", flip_level=6.0))
-    assert state.cw_entries_this_flip == 0
-    _feed_bar(strat, state, _bar(7.5, ts=8), _sig())
-    _feed_bar(strat, state, _bar(7.8, ts=9), _sig())
-    strat._cw_v2_track(state, _sig())                 # watch phase
-    assert strat._cw_v2_quote(state, _quote(8.5)) is not None       # entry in segment B
-    assert state.cw_entries_this_flip == 1
+    strat._queue_resting_place(state, 9.5, slot="first")
+    strat.drain_pending_intents()
+    _resting_fill(strat, state)
+    state.resting_active = False
+    strat.update_position("TEST", 0, held_qty=0)
+    assert state.cw_segment_consumed is True
+
+    assert strat._release_arm(state, "fresh-sell-segment") is True
+    assert state.cw_segment_consumed is False
+    state.bars.append(_bar(8.0, ts=7))
+    strat._queue_resting_place(state, 6.0, slot="first")
+    assert len(strat.drain_pending_intents()) == 1
 
 
 def test_cw_v2_reclaim_off_leaves_gap_setting_inert():
     """The reclaim-gap knob is retained but unreachable while reclaim is off (no 2nd entry)."""
-    strat = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars=1)
+    strat = _strat(
+        strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False,
+        strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars=1,
+    )
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
-    assert strat._cw_v2_quote(state, _quote(12.5)) is not None
-    _release(state)
-    strat._cw_v2_track(state, _sig())                 # a new bar passes the gap
-    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
-    assert strat._cw_v2_quote(state, _quote(15.5)) is None          # still capped at 1
-    assert state.cw_entries_this_flip == 1
+    assert strat.on_quote("TEST", _quote(12.5)) is None
+    strat._queue_resting_place(state, 9.5, slot="first")
+    assert len(strat.drain_pending_intents()) == 1
 
 
 # --------------------------------------------------------------- 09:30-10:00 window REMOVED

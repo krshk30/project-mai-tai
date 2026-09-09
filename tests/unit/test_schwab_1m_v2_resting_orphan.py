@@ -158,10 +158,9 @@ def test_gate_reads_held_not_the_union() -> None:
 # short-circuits (`on_quote` returns into `_cw_v2_quote`; `_cw_entry` returns None on its first
 # line), and none of the three LIVE paths -- reactive, resting, fan-out -- ever consulted it.
 #
-# ⛔ And it CONTRADICTED the design: the reclaim gap is 1 bar, the cooldown was 5. Wiring the counter
-# back up would block the exact second entry a segment is meant to allow (resting fills bar 1, spike
-# on bar 4 -> reclaim). Removed rather than left dormant -- a switched-off safety gate invites a
-# future "fix" that would silently break reclaim.
+# Under the retained feature-on research mode, the reclaim gap is 1 bar while the cooldown was 5.
+# Wiring the counter back up would therefore block that mode's second entry. Production reclaim-off
+# admission is now governed by the durable one-fill-per-segment latch instead.
 
 def test_the_cooldown_counter_is_gone_entirely() -> None:
     """PINS THE REMOVAL. A dormant counter is what invites someone to wire it back up."""
@@ -172,9 +171,8 @@ def test_the_cooldown_counter_is_gone_entirely() -> None:
 
 
 def test_a_close_still_releases_the_reclaim_claim() -> None:
-    """⛔ THE LOAD-BEARING PART. These two lines lived in the same block as the cooldown; removing
-    'the cooldown' without keeping them would silently stop every SECOND entry in a segment."""
-    strat = _strat()
+    """Feature-on research still releases the transient claim used by its second entry."""
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True)
     st = strat.watchlist_state("EGG")
     st.cw_v2_emit_claimed = True
     st.cw_v2_bars_since_exit = 99
@@ -192,14 +190,15 @@ def test_the_close_is_logged_without_claiming_a_cooldown(caplog) -> None:
     with caplog.at_level("INFO"):
         strat.update_position("EGG", 0, held_qty=0)
     assert "position closed" in caplog.text
-    assert "reclaim claim released" in caplog.text
+    assert "transient emit claim released" in caplog.text
+    assert "segment_consumed=1 reclaim_enabled=0" in caplog.text
     assert "cooldown armed" not in caplog.text
     assert "real-position-closed" in caplog.text
 
 
 def test_a_spurious_close_is_still_labelled(caplog) -> None:
     """The union fires this transition when one of our OWN resting intents goes terminal. It no
-    longer arms anything, but it DOES still release the reclaim claim, so it stays distinguishable."""
+    longer arms anything, but it still releases transient emit state, so it stays distinguishable."""
     strat = _strat()
     strat.update_position("EGG", 2, held_qty=0)      # in-flight resting intent only
     with caplog.at_level("INFO"):
@@ -210,14 +209,13 @@ def test_a_spurious_close_is_still_labelled(caplog) -> None:
 def test_the_per_segment_cap_is_what_bounds_re_entry_now() -> None:
     """The cap is the replacement for the cooldown; pin BOTH values so the bound cannot vanish.
 
-    The cap is reclaim-driven: 1 with reclaim off, 2 with it on. PRODUCTION runs reclaim ON
-    (re-enabled 2026-07-27), so the live bound is 2 = one resting + one reclaim per ATR segment --
-    exactly the shape the cooldown was removed in favour of.
+    The scalar is reclaim-driven: 1 with reclaim off, 2 with it on. Production runs reclaim OFF;
+    feature-on research retains 2 = one resting + one reclaim per ATR segment.
     """
     assert _strat()._cw_v2_max_entries_per_flip == 1                      # reclaim off
 
-    live = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True)       # production
-    assert live._cw_v2_max_entries_per_flip == 2
+    historical = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True)
+    assert historical._cw_v2_max_entries_per_flip == 2
 
     # ⛔ The gap is ENV-SET in production (`..._CW_V2_RECLAIM_GAP_BARS=1`); the code default is 0.
     # Pinning the default here documents the divergence instead of hiding it -- reading 0 from this

@@ -207,7 +207,7 @@ def test_fresh_sell_retires_an_unconsumed_restart_identity_but_historical_sell_d
     assert strat._restored_fanout_segment_ids == {}
 
 
-def test_identity_persistence_failure_is_loud_but_does_not_gate_the_entry(caplog):
+def test_identity_persistence_failure_is_loud_and_marks_reclaim_off_admission_unknown(caplog):
     strat = _strat()
     strat._now_ms = lambda: RTH_MS
 
@@ -223,6 +223,7 @@ def test_identity_persistence_failure_is_loud_but_does_not_gate_the_entry(caplog
 
     assert st.cw_armed is True
     assert st.fanout_segment_id == RTH_MS
+    assert st.cw_segment_consumption_known is False
     assert any(
         "[V2-FANOUT-IDENTITY-PERSIST-FAILED]" in record.getMessage()
         and "could_not_tell=1" in record.getMessage()

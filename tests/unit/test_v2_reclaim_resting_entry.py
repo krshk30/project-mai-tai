@@ -45,6 +45,7 @@ def _strat(**over):
         "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": True,
+        "strategy_schwab_1m_v2_cw_v2_reclaim_enabled": True,
     }
     kw.update(over)
     s = SchwabV2Strategy(Settings(**kw))

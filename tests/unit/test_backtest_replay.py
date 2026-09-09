@@ -331,6 +331,7 @@ _EH_FLOOR_BIDS = [(20, 101.0), (21, 103.0), (22, 104.0), (23, 101.5)]
 def _run_eh(*, floor_enabled: bool):
     settings = build_replay_settings(
         strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,  # let the reactive path fire
+        strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True,
         oms_v2_cw_floor_exit_enabled=floor_enabled,
         oms_v2_cw_target_pct=2.0,
         oms_v2_cw_hard_stop_pct=5.0,
@@ -393,6 +394,7 @@ def test_eh_open_bar_close_atr_flip_exit() -> None:
     quotes = _eh_quotes([(20, 99.5), (21, 99.0), (22, 98.5), (23, 98.0)])
     settings = build_replay_settings(
         strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
+        strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True,
         oms_v2_cw_floor_exit_enabled=True,
         oms_v2_cw_target_pct=2.0,
         oms_v2_cw_hard_stop_pct=5.0,
@@ -416,6 +418,7 @@ def test_replay_atr_flip_is_bound_to_the_modeled_row_not_strategy_position(monke
     quotes = _eh_quotes([(20, 99.5), (21, 99.0), (22, 98.5), (23, 98.0)])
     settings = build_replay_settings(
         strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
+        strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True,
         oms_v2_cw_floor_exit_enabled=True,
         oms_v2_cw_target_pct=2.0,
         oms_v2_cw_hard_stop_pct=5.0,
@@ -439,6 +442,7 @@ def _run_eh_flatten(floor_bids, *, floor_enabled: bool = True, **overrides):
     settings = build_replay_settings(
         **{
             "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": False,
+            "strategy_schwab_1m_v2_cw_v2_reclaim_enabled": True,
             "oms_v2_cw_floor_exit_enabled": floor_enabled,
             "oms_v2_cw_target_pct": 2.0,
             "oms_v2_cw_hard_stop_pct": 5.0,
@@ -580,12 +584,30 @@ def test_p3_premarket_resting_eh_cross_fills_at_band_and_floor_rides() -> None:
 
 
 # ------------------------------------------------------------------ (b) reactive-EH marketable fill (P-B1 on)
+def test_replay_reclaim_off_never_falls_back_to_a_reactive_entry() -> None:
+    settings = build_replay_settings(
+        eh_enabled=True,
+        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
+        strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False,
+    )
+
+    result = replay_symbol_day(
+        _MemSource(_eh_bars(), _eh_quotes(_EH_FLOOR_BIDS)),
+        SYM,
+        DAY,
+        settings,
+    )
+
+    assert result.entries == []
+
+
 def test_p3_premarket_reactive_eh_marketable_fill() -> None:
     # A pre-market reactive break with the P-B1 cap ON: fills at the marketable ask (100.5), bounded by the
     # cross cap (signal 100.5 +1% = 101.5 -> ask 100.5 <= cap). Resting off so the reactive path fires.
     settings = build_replay_settings(
         eh_enabled=True,
         strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
+        strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True,
         oms_v2_cw_floor_exit_enabled=True,
     )
     res = replay_symbol_day(_MemSource(_eh_bars(), _eh_quotes(_EH_FLOOR_BIDS)), SYM, DAY, settings)
@@ -622,6 +644,7 @@ def test_p3_eh_live_bar_guard_blocks_stale_bar_entry() -> None:
         settings = build_replay_settings(
             eh_enabled=True,
             strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
+            strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True,
             strategy_schwab_1m_v2_cw_v2_reactive_entry_max_bar_age_secs=max_bar_age_secs,
         )
         return replay_symbol_day(
