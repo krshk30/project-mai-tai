@@ -159,7 +159,8 @@ def test_ftft_flip_consumes_the_first_entry_until_the_next_sell_flip() -> None:
 
     strategy._cw_v2_reclaim_resting_track(state)
     assert strategy.drain_pending_intents() == []
-    assert strategy._cw_v2_quote(state, object()) is None
+    quote = Quote("FTFT", 3.09, 3.11, 3.10, clock[0], 0)
+    assert strategy._cw_v2_quote(state, quote) is None
 
     state.bars.append(_bar(clock[0] + 60_000))
     strategy._cw_v2_track(state, _signal("SELL", state="short"))
@@ -484,8 +485,10 @@ def test_persistence_failure_refuses_the_first_rest() -> None:
     assert state.flip_owner_phase == "unknown"
 
 
-def test_strict_mode_disables_both_reclaim_producers() -> None:
-    strategy, clock, _identity_writes, _owner_writes = _strategy()
+def _reclaim_ready_state(
+    strategy: SchwabV2Strategy,
+    clock: list[int],
+) -> SymbolState:
     state = strategy.watchlist_state("OFF")
     state.bars.append(_bar())
     _book(strategy, clock, "OFF")
@@ -494,10 +497,28 @@ def test_strict_mode_disables_both_reclaim_producers() -> None:
     state.cw_segment_high = 3.0
     state.cw_flip_level = 2.5
     state.cw_bar_low_so_far = 2.8
+    return state
+
+
+def test_strict_mode_disables_the_rested_reclaim_producer() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _reclaim_ready_state(strategy, clock)
+    placements: list[str] = []
+    strategy._queue_resting_place = (
+        lambda _state, _line, *, slot="first": placements.append(slot)
+    )
 
     strategy._cw_v2_reclaim_resting_track(state)
-    assert strategy.drain_pending_intents() == []
-    assert strategy._cw_v2_quote(state, object()) is None
+
+    assert placements == []
+
+
+def test_strict_mode_disables_the_reactive_reclaim_producer() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _reclaim_ready_state(strategy, clock)
+    quote = Quote("OFF", 3.09, 3.11, 3.10, clock[0], 0)
+
+    assert strategy._cw_v2_quote(state, quote) is None
 
 
 def test_strict_mode_keeps_the_first_atr_trail_software_rest_in_extended_hours() -> None:
