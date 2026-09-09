@@ -97,8 +97,10 @@ submitted and repriced but never filled. It was not rejected.
    Webull close attempt.
 4. Do not treat merged code as tomorrow's behavior until the exact production
    state is verified. At capture time PR #933 was open, unpinned, default-off,
-   unmerged, and undeployed. PR #930 was merged but production remained on box
-   SHA `72b13393078f07543162c13ca823bbcacc742c81`.
+   unmerged, and undeployed. It has since merged as `dfde881a` but remains dark
+   and undeployed. PRs #927, #928, #929, and #930 were also merged but
+   undeployed; production remained on box SHA
+   `72b13393078f07543162c13ca823bbcacc742c81`.
 
 ## Next-session comparison checklist
 
@@ -131,4 +133,3 @@ Run this comparison after the next full session, split by broker and symbol:
 - `/var/log/project-mai-tai/schwab-1m-v2.log`
 - `/var/log/project-mai-tai/oms.log`
 - Deployed source at box SHA `72b13393078f07543162c13ca823bbcacc742c81`
-
