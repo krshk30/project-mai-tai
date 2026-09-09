@@ -6,6 +6,7 @@ place together) => never two live buy orders => no double-fill/oversell. Flag-of
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -143,6 +144,58 @@ def test_stop_leq_ask_guard_fails_open_without_a_quote() -> None:
     st = strat.watchlist_state("TEST")
     st.last_quote = None
     assert _tick(strat, st, trail=9.50)[0].intent_type == "open"
+
+
+def test_stop_ask_marker_carries_per_account_evaluation_and_hold_denominators(caplog) -> None:
+    """One shared decision must remain countable separately for both live broker accounts."""
+    from project_mai_tai.market_data.schwab_v2_rest_client import Quote
+
+    strat = _strat(
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_resting_mirror_enabled=True,
+    )
+    st = strat.watchlist_state("TEST")
+
+    with caplog.at_level(logging.INFO):
+        st.last_quote = Quote("TEST", 9.05, 9.10, 9.08, IN_WIN, 0)
+        assert _tick(strat, st, trail=9.50, now_ms=IN_WIN + 17_000) == []
+        st.last_quote = Quote("TEST", 9.05, 9.10, 9.08, IN_WIN + 20_000, 0)
+        assert _tick(strat, st, trail=9.50, now_ms=IN_WIN + 21_000)
+
+    lines = [
+        record.getMessage()
+        for record in caplog.records
+        if "[V2-STOP-ASK-PRICE-CHECK]" in record.getMessage()
+    ]
+    assert len(lines) == 4
+    assert {line.split("account=", 1)[1].split(" ", 1)[0] for line in lines} == {
+        "live:schwab_1m_v2",
+        "live:orb",
+    }
+    assert sum("evaluated=1" in line for line in lines) == 4
+    assert sum("held=1" in line for line in lines) == 2
+    assert sum("held=0" in line for line in lines) == 2
+    assert sum("reason=stale_quote" in line for line in lines) == 2
+
+
+def test_no_quote_fail_open_is_still_in_the_pricing_denominator(caplog) -> None:
+    strat = _strat(strategy_schwab_1m_v2_account_name="live:schwab_1m_v2")
+    st = strat.watchlist_state("TEST")
+    st.last_quote = None
+
+    with caplog.at_level(logging.INFO):
+        assert _tick(strat, st, trail=9.50)[0].intent_type == "open"
+
+    lines = [
+        record.getMessage()
+        for record in caplog.records
+        if "[V2-STOP-ASK-PRICE-CHECK]" in record.getMessage()
+    ]
+    assert len(lines) == 1
+    assert "account=live:schwab_1m_v2" in lines[0]
+    assert "evaluated=1 held=0 reason=no_quote_fail_open" in lines[0]
 
 
 def test_does_not_place_on_a_stale_replayed_bar() -> None:

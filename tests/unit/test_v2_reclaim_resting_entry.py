@@ -255,6 +255,7 @@ def test_an_already_crossed_level_is_not_rested(monkeypatch) -> None:
 
     class _Q:
         ask_price = 10.50
+        quote_time_ms = RTH
 
     st.last_quote = _Q()
     strat._cw_v2_reclaim_resting_track(st)
@@ -279,6 +280,31 @@ def test_a_stale_quote_cannot_authorize_the_reclaim_stop(monkeypatch) -> None:
     strat._cw_v2_reclaim_resting_track(st)
 
     assert _places(strat) == [] and st.resting_active is False
+
+
+def test_reclaim_stale_quote_refusal_is_counted_and_names_its_slot(
+    monkeypatch, caplog
+) -> None:
+    strat = _strat(strategy_schwab_1m_v2_account_name="live:schwab_1m_v2")
+    _rth(strat, monkeypatch, bar_age_ms=17_000)
+    st = _armed(seg_high=10.0)
+    st.bars[-1] = OHLCVBar(
+        timestamp_ms=RTH + 16_000,
+        open=9.5,
+        high=10.0,
+        low=9.1,
+        close=9.8,
+        volume=500_000,
+    )
+    st.last_quote = Quote("TEST", 9.05, 9.10, 9.08, RTH, 0)
+
+    with caplog.at_level(logging.INFO):
+        strat._cw_v2_reclaim_resting_track(st)
+
+    lines = _lines(caplog, "[V2-STOP-ASK-PRICE-CHECK]")
+    assert len(lines) == 1
+    assert "account=live:schwab_1m_v2" in lines[0]
+    assert "slot=reclaim evaluated=1 held=1 reason=stale_quote" in lines[0]
 
 
 def test_fail_open_when_there_is_no_quote(monkeypatch) -> None:
