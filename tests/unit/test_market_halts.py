@@ -143,3 +143,63 @@ def test_the_live_v2_bot_actually_opts_in():
 
     src = Path(__file__).resolve().parents[2] / "src/project_mai_tai/services/schwab_1m_v2_bot.py"
     assert "LiveHaltTracker(require_continuous_session=True)" in src.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# ⛔⭐⭐ THE EPISODE IS BOUNDED BY ITS SESSION (codex-2, #927).
+#
+# The first guard lived only in observe_quote. Two halves of one root escaped it:
+#   (a) the PRINT that closes the span still ran through unguarded confirmed_halt_window, so
+#       quotes at 19:59 ET + the first print at 04:01 ET next day returned an overnight HaltWindow;
+#   (b) `confirmed` / `quote_updates` SURVIVED the boundary, so after a genuine intraday
+#       confirmation the symbol kept reporting as halted into the next session.
+# Confirming and closing are two ends of one episode. A boundary that refuses one must refuse
+# the other, and must end the episode rather than merely decline to judge it.
+# ---------------------------------------------------------------------------
+
+_PRE_CLOSE_QUOTE = _dt(2026, 9, 8, 23, 59, 0, tzinfo=_UTC)   # 19:59 ET
+_NEXT_SESSION_PRINT = _dt(2026, 9, 9, 8, 1, 0, tzinfo=_UTC)  # 04:01 ET next day
+
+
+def test_pre_close_quotes_then_first_next_session_print_yields_NO_halt_window():
+    """⛔ CONTROL 1, codex-2's exact repro: seed two quote updates at 19:59 ET, then send the
+    first print at 04:01 ET the next day. observe_print must NOT return a HaltWindow."""
+    tracker = _Tracker(require_continuous_session=True)
+    tracker.observe_print(_dt(2026, 9, 8, 23, 55, tzinfo=_UTC))     # 19:55 ET, last real print
+    tracker.observe_quote(_PRE_CLOSE_QUOTE)
+    tracker.observe_quote(_PRE_CLOSE_QUOTE + timedelta(seconds=30))
+
+    window = tracker.observe_print(_NEXT_SESSION_PRINT)
+    assert window is None, "a print that closes an overnight gap is not a halt reopen"
+    # ...and the episode is over, not carried forward.
+    assert tracker.confirmed is False
+    assert tracker.quote_updates == 0
+
+
+def test_a_confirmed_halt_does_not_survive_into_the_next_session():
+    """⛔ CONTROL 2, codex-2's exact repro: a GENUINE intraday confirmation, then a next-session
+    quote. The observation must be UNKNOWN and the retained episode state must be CLEARED, because
+    `_sync_halt_data_health` reads `confirmed` and would otherwise report the symbol as currently
+    halted across a new session."""
+    tracker = _Tracker(require_continuous_session=True)
+    tracker.observe_print(_NUR_LAST_PRINT)
+    tracker.observe_quote(_NUR_CONFIRM_AT - timedelta(seconds=10))
+    confirmed = tracker.observe_quote(_NUR_CONFIRM_AT)
+    assert confirmed.newly_confirmed is True and tracker.confirmed is True   # a REAL halt first
+
+    obs = tracker.observe_quote(_dt(2026, 9, 9, 14, 0, tzinfo=_UTC))         # 10:00 ET next day
+    assert obs.state == "UNKNOWN"
+    assert obs.newly_confirmed is False
+    assert tracker.confirmed is False, "a halt episode must not outlive its session"
+    assert tracker.quote_updates == 0, "evidence from the old session must not persist"
+
+
+def test_the_default_tracker_still_carries_episode_state_across_the_boundary():
+    """⛔ BLAST-RADIUS CONTROL, unchanged in spirit from the default-off pin: research consumers
+    (paper_exit + 3 scripts) must be byte-identical. With the guard off, the overnight print still
+    produces its window exactly as before."""
+    tracker = _Tracker()
+    tracker.observe_print(_dt(2026, 9, 8, 23, 55, tzinfo=_UTC))
+    tracker.observe_quote(_PRE_CLOSE_QUOTE)
+    tracker.observe_quote(_PRE_CLOSE_QUOTE + timedelta(seconds=30))
+    assert tracker.observe_print(_NEXT_SESSION_PRINT) is not None, "default-off must be unchanged"

@@ -123,16 +123,29 @@ class LiveHaltTracker:
         self.confirmed = False
         self.require_continuous_session = require_continuous_session
 
+    def _reset_episode(self) -> None:
+        """End the current halt episode. ⛔ ONE place, deliberately: the confirm path and the close
+        path both end an episode, and this defect existed because they reset it separately."""
+        self.quote_updates = 0
+        self.confirmed = False
+
     def observe_quote(self, observed_at: datetime) -> HaltQuoteObservation:
         at = _utc(observed_at)
         if self.last_print_at is None or at <= self.last_print_at:
             return HaltQuoteObservation("UNKNOWN", False, self.last_print_at, self.quote_updates)
         if self.require_continuous_session and not session_is_continuous(self.last_print_at, at):
-            # ⛔ The gap spans a market closure, so the prior print cannot support a halt judgement
-            # at all — this is UNKNOWN for the same reason "no usable prior print" is: we have
-            # nothing to judge, rather than something we judged to be fine. Deliberately does NOT
-            # touch `quote_updates` or `confirmed`: an overnight gap must not accumulate evidence
-            # that then confirms the moment the new session opens.
+            # ⛔⭐⭐ THE BOUNDARY ENDS THE EPISODE. It does not merely decline to judge it.
+            #
+            # The first version returned UNKNOWN and left `confirmed` / `quote_updates` untouched,
+            # reasoning that an overnight gap must not ACCUMULATE evidence. That was half the
+            # problem. The other half is that evidence from the PREVIOUS session must not SURVIVE:
+            # after a genuine intraday confirmation, a next-day quote returned UNKNOWN while
+            # `confirmed` stayed True, and `_sync_halt_data_health` reads that retained flag — so
+            # the symbol kept being reported as currently halted into a new session. (codex-2, #927)
+            #
+            # A halt episode is bounded by the session it happened in. Once the session ends, the
+            # episode is over whatever its state was: reset it and report UNKNOWN.
+            self._reset_episode()
             return HaltQuoteObservation("UNKNOWN", False, self.last_print_at, self.quote_updates)
         self.quote_updates += 1
         was_confirmed = self.confirmed
@@ -152,16 +165,26 @@ class LiveHaltTracker:
         at = _utc(observed_at)
         if self.last_print_at is not None and at <= self.last_print_at:
             return None
+        # ⛔⭐⭐ THE SAME SESSION REFUSAL APPLIES TO THE PRINT THAT CLOSES THE SPAN.
+        # The guard was originally only in `observe_quote`, so the print ENDING an overnight gap
+        # still ran through the unguarded `confirmed_halt_window` and produced a HaltWindow across
+        # the closure — quotes at 19:59 ET plus the first print at 04:01 ET next day returned an
+        # overnight halt. Confirming and CLOSING are two halves of one episode; a boundary that
+        # refuses one must refuse the other. (codex-2, #927)
+        spans_closure = (
+            self.require_continuous_session
+            and self.last_print_at is not None
+            and not session_is_continuous(self.last_print_at, at)
+        )
         window = (
             confirmed_halt_window(
                 last_print_at=self.last_print_at,
                 reopen_print_at=at,
                 quote_updates=self.quote_updates,
             )
-            if self.last_print_at is not None
+            if self.last_print_at is not None and not spans_closure
             else None
         )
         self.last_print_at = at
-        self.quote_updates = 0
-        self.confirmed = False
+        self._reset_episode()
         return window
