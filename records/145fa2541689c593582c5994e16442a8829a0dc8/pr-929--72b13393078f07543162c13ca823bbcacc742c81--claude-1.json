@@ -1,9 +1,0 @@
-{
-  "pr_number": 929,
-  "range_base": "72b13393078f07543162c13ca823bbcacc742c81",
-  "range_head": "145fa2541689c593582c5994e16442a8829a0dc8",
-  "reviewed_at": "2026-09-09T13:16:06Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "STOPASK reviewed at exact head. This touches the LIVE v2 entry pricing path, so I walked the refactor for behaviour equivalence branch by branch: quote is None -> place (fail-open, preserved); non-fresh quote -> hold (matches the old 'ask is None'); fresh + ask>0 + stop<=ask -> hold; fresh + ask<=0 -> place (fail-open, preserved); fresh + ask>0 + stop>ask -> place. All five match the two inline guards it replaces. The new int() around _resting_quote_max_age_ms is a no-op: line 642 already coerces with max(0,int(...)). Mutations, each landing: return-always-True 5 RED; no-quote failing CLOSED 18 RED; stale-quote allowing placement 4 RED. Focused 60 passed, ruff clean, full-suite controlled pair vs base 72b13393 re-derived by me: failure+error sets IDENTICAL (58 lines), 3420->3423 passed. Scope noted: this MEASURES the stop-vs-ask decision and gives F12 its denominator; it does not fix the 3 live RTH rejections 'stop price must be above the current ask for buy stop orders'. Live denominator needs an after-close v2 restart."
-}

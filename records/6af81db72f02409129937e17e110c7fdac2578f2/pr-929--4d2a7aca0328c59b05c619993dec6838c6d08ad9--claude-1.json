@@ -1,0 +1,9 @@
+{
+  "pr_number": 929,
+  "range_base": "4d2a7aca0328c59b05c619993dec6838c6d08ad9",
+  "range_head": "6af81db72f02409129937e17e110c7fdac2578f2",
+  "reviewed_at": "2026-09-09T13:35:14Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "STOPASK re-reviewed FRESH at the rebased head 6af81db7; the 145fa254 pin is void because a rebase does not carry. Confirmed the rebase changed nothing substantive: the src diff hash is identical on both sides (7fba62f253b80e39). Re-walked behaviour equivalence on the LIVE v2 entry pricing path branch by branch: quote None -> place (fail-open preserved); non-fresh quote -> hold (matches the old 'ask is None'); fresh+ask>0+stop<=ask -> hold; fresh+ask<=0 -> place (fail-open preserved); fresh+ask>0+stop>ask -> place. All five match the two inline guards replaced. The int() around _resting_quote_max_age_ms is a no-op: line 642 already does max(0,int(...)). Mutants RE-RUN at this head, each landing: always-place 5 RED; no-quote failing CLOSED 18 RED; stale-quote allowing placement 4 RED. Focused 60 passed at this head. Full-suite controlled pair re-derived by me against base 4d2a7aca: failure and error sets IDENTICAL (58 lines), 3427 -> 3430 passed. Scope stated in the pin: STOPASK MEASURES the stop-vs-ask decision and gives F12 its denominator; it changes no placement behaviour and fixes nothing. Live denominator still needs an after-close v2 restart."
+}
