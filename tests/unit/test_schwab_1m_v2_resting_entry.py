@@ -111,7 +111,7 @@ def test_small_trail_move_does_not_replace() -> None:
     assert _tick(strat, st, trail=9.495) == []                       # 0.05% move -> leave it, no intent
 
 
-def test_stop_leq_ask_guard_skips_the_place() -> None:
+def test_stop_leq_ask_guard_skips_the_place(caplog) -> None:
     """⭐ STOP<=ASK guard. A buy-stop must sit ABOVE the ask; on a fast up-tick the ask can already be
     at/above the trail (the flip is happening) -> Schwab firm-rejects "stop must be above the current
     ask". Skip the place; re-arm once the trail is back above the market."""
@@ -119,8 +119,16 @@ def test_stop_leq_ask_guard_skips_the_place() -> None:
     strat = _strat()
     st = strat.watchlist_state("TEST")
     st.last_quote = Quote("TEST", 9.55, 9.60, 9.58, IN_WIN, 0)       # ask 9.60 >= trail 9.50 -> SKIP
-    assert _tick(strat, st, trail=9.50, now_ms=IN_WIN + 1000) == []
+    with caplog.at_level(logging.INFO):
+        assert _tick(strat, st, trail=9.50, now_ms=IN_WIN + 1000) == []
     assert st.resting_active is False
+    marker = [
+        record.getMessage()
+        for record in caplog.records
+        if "[V2-STOP-ASK-PRICE-CHECK]" in record.getMessage()
+    ]
+    assert len(marker) == 1
+    assert "slot=first evaluated=1 held=1 reason=stop_not_above_ask" in marker[0]
     st.last_quote = Quote("TEST", 9.05, 9.10, 9.08, IN_WIN, 0)       # ask 9.10 < trail 9.50 -> place
     out = _tick(strat, st, trail=9.50, now_ms=IN_WIN + 1000)
     assert len(out) == 1 and out[0].intent_type == "open"

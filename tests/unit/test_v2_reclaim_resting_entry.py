@@ -246,7 +246,7 @@ def test_placement_is_not_a_claim(monkeypatch) -> None:
 
 # -- reused guards -------------------------------------------------------------------------
 
-def test_an_already_crossed_level_is_not_rested(monkeypatch) -> None:
+def test_an_already_crossed_level_is_not_rested(monkeypatch, caplog) -> None:
     """#527 reused verbatim: a buy stop must sit ABOVE the ask. `cw_segment_high` sits at the recent
     high BY DEFINITION, so this path meets the condition far more often than the trail does."""
     strat = _strat()
@@ -258,8 +258,12 @@ def test_an_already_crossed_level_is_not_rested(monkeypatch) -> None:
         quote_time_ms = RTH
 
     st.last_quote = _Q()
-    strat._cw_v2_reclaim_resting_track(st)
+    with caplog.at_level(logging.INFO):
+        strat._cw_v2_reclaim_resting_track(st)
     assert _places(strat) == [] and st.resting_active is False
+    marker = _lines(caplog, "[V2-STOP-ASK-PRICE-CHECK]")
+    assert len(marker) == 1
+    assert "slot=reclaim evaluated=1 held=1 reason=stop_not_above_ask" in marker[0]
 
 
 def test_a_stale_quote_cannot_authorize_the_reclaim_stop(monkeypatch) -> None:
