@@ -5,20 +5,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from zoneinfo import ZoneInfo
+
+from project_mai_tai.strategy_core.time_utils import EASTERN_TZ, US_MARKET_HOLIDAYS
 
 HALT_MIN_PRINT_GAP = timedelta(seconds=285)
 HALT_MIN_QUOTE_UPDATES = 2
 
-# ET extended session, 04:00-20:00 on weekdays.
-_ET = ZoneInfo("America/New_York")
+# ET extended session, 04:00-20:00 on weekdays that are not full-closure holidays.
+_ET = EASTERN_TZ
 _SESSION_OPEN_MIN = 4 * 60
 _SESSION_CLOSE_MIN = 20 * 60
 
 
 def _in_extended_session(at: datetime) -> bool:
+    """Is this instant inside a session the market is actually OPEN for?
+
+    ⛔⭐⭐ THE HOLIDAY TERM IS LOAD-BEARING (codex-2, #927). The first version excluded weekends
+    and nothing else, so a gap lying ENTIRELY WITHIN a full-closure holiday — both ends on the same
+    weekday date, both between 04:00 and 20:00 — passed every test and read as one continuous
+    session. A quiet Thanksgiving would have confirmed as a halt on the same arithmetic as the
+    overnight SUNE artefact this whole guard exists to stop.
+
+    ⛔ The list is the SHARED `US_MARKET_HOLIDAYS`, imported, never re-declared here. Its own
+    comment says it must be rolled forward yearly or "window checks silently treat an un-listed
+    holiday as a normal trading day" — that is exactly this defect, and a second private copy would
+    rot independently and reintroduce it.
+    """
     et = _utc(at).astimezone(_ET)
     if et.weekday() >= 5:
+        return False
+    if et.date() in US_MARKET_HOLIDAYS:
         return False
     return _SESSION_OPEN_MIN <= et.hour * 60 + et.minute < _SESSION_CLOSE_MIN
 

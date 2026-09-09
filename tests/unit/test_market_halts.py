@@ -59,6 +59,7 @@ def test_batch_and_live_paths_use_the_same_confirmation_function() -> None:
 
 from datetime import UTC as _UTC  # noqa: E402
 from datetime import datetime as _dt  # noqa: E402
+from datetime import date  # noqa: E402
 
 from project_mai_tai.market_halts import (  # noqa: E402
     LiveHaltTracker as _Tracker,
@@ -203,3 +204,62 @@ def test_the_default_tracker_still_carries_episode_state_across_the_boundary():
     tracker.observe_quote(_PRE_CLOSE_QUOTE)
     tracker.observe_quote(_PRE_CLOSE_QUOTE + timedelta(seconds=30))
     assert tracker.observe_print(_NEXT_SESSION_PRINT) is not None, "default-off must be unchanged"
+
+
+# ---------------------------------------------------------------------------
+# ⛔⭐⭐ FULL-CLOSURE HOLIDAYS ARE NOT SESSIONS (codex-2, #927).
+#
+# The first guard excluded weekends and nothing else. A gap lying ENTIRELY WITHIN a holiday —
+# both ends on the same weekday date, both inside 04:00-20:00 — passed as one continuous session.
+# A quiet Thanksgiving would confirm as a halt on exactly the arithmetic that produced the
+# overnight SUNE artefact. 2026-11-26 (Thanksgiving) and 2026-09-07 (Labor Day) are weekdays.
+# ---------------------------------------------------------------------------
+
+from project_mai_tai.strategy_core.time_utils import US_MARKET_HOLIDAYS  # noqa: E402
+import project_mai_tai.market_halts as _mh  # noqa: E402
+
+
+def test_a_gap_entirely_inside_a_holiday_is_not_a_continuous_session():
+    """⛔ THE CONTROL. Thanksgiving 2026-11-26 is a Thursday; 10:00 -> 15:00 ET is inside the
+    04:00-20:00 window on ONE date. Weekday and same-date checks both pass; the market is shut."""
+    a = _dt(2026, 11, 26, 15, 0, tzinfo=_UTC)   # 10:00 ET
+    b = _dt(2026, 11, 26, 20, 0, tzinfo=_UTC)   # 15:00 ET
+    assert session_is_continuous(a, b) is False
+
+
+def test_the_live_tracker_refuses_to_confirm_a_holiday_gap():
+    """Same case driven through the tracker: a five-hour holiday gap must not confirm."""
+    tracker = _Tracker(require_continuous_session=True)
+    tracker.observe_print(_dt(2026, 11, 26, 15, 0, tzinfo=_UTC))
+    tracker.observe_quote(_dt(2026, 11, 26, 19, 30, tzinfo=_UTC))
+    obs = tracker.observe_quote(_dt(2026, 11, 26, 20, 0, tzinfo=_UTC))
+    assert obs.newly_confirmed is False
+    assert obs.state == "UNKNOWN"
+    assert tracker.confirmed is False
+
+
+def test_a_span_across_a_holiday_closure_is_refused_on_the_print_path_too():
+    """The print that closes a span over a holiday must not produce a HaltWindow either —
+    the same both-ends discipline as the overnight case."""
+    tracker = _Tracker(require_continuous_session=True)
+    tracker.observe_print(_dt(2026, 11, 25, 20, 0, tzinfo=_UTC))   # Wed 15:00 ET, real session
+    tracker.observe_quote(_dt(2026, 11, 25, 20, 30, tzinfo=_UTC))
+    tracker.observe_quote(_dt(2026, 11, 25, 21, 0, tzinfo=_UTC))
+    assert tracker.observe_print(_dt(2026, 11, 27, 15, 0, tzinfo=_UTC)) is None  # Fri, post-holiday
+
+
+def test_an_ordinary_trading_weekday_is_still_a_session():
+    """⛔ PINS THE OTHER DIRECTION. A holiday term that swallowed normal days would silently
+    disable the detector — the failure this guard exists to prevent, inverted."""
+    a = _dt(2026, 9, 8, 14, 51, 59, tzinfo=_UTC)   # Tue 10:51 ET, a real trading day
+    b = _dt(2026, 9, 8, 14, 56, 59, tzinfo=_UTC)
+    assert session_is_continuous(a, b) is True
+
+
+def test_the_holiday_list_is_the_SHARED_one_and_not_a_private_copy():
+    """⛔⭐⭐ A SECOND COPY WOULD ROT INDEPENDENTLY. time_utils' own comment says the list must be
+    rolled forward yearly or 'window checks silently treat an un-listed holiday as a normal trading
+    day' — which is precisely this defect. Pin the identity so a future edit cannot fork it."""
+    assert _mh.US_MARKET_HOLIDAYS is US_MARKET_HOLIDAYS
+    assert date(2026, 11, 26) in _mh.US_MARKET_HOLIDAYS   # Thanksgiving
+    assert date(2026, 9, 7) in _mh.US_MARKET_HOLIDAYS     # Labor Day
