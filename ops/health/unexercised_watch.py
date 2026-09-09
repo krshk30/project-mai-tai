@@ -21,6 +21,7 @@ zero -- that is the false-clean failure this whole board exists to prevent.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -35,6 +36,8 @@ from zoneinfo import ZoneInfo
 NTFY_URL = "https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
 STATE_PATH = Path("/home/trader/unexercised_watch/state.json")
 STATUS_PATH = Path("/home/trader/unexercised_watch/STATUS.txt")
+INC1_STATE_PATH = Path("/home/trader/unexercised_watch/inc1-state.json")
+INC1_STATUS_PATH = Path("/home/trader/unexercised_watch/INC1_STATUS.txt")
 V2_LOG = Path("/var/log/project-mai-tai/schwab-1m-v2.log")
 OMS_LOG = Path("/var/log/project-mai-tai/oms.log")
 
@@ -50,6 +53,7 @@ BLIND_DAYS_BEFORE_PAGE = 3
 
 # Reserved state key for the watcher's own bookkeeping. Never a condition name.
 WATCH_META_KEY = "__watch__"
+INC1_QUERY_META_KEY = "__query__"
 
 
 @dataclass
@@ -328,6 +332,147 @@ def page(title: str, body: str) -> bool:
     return out.returncode == 0
 
 
+def _inc1_open_incidents() -> list[dict[str, str]]:
+    """Read the exact open incident emitted when a released bracket cannot be replaced."""
+    rows = _psql(
+        "select json_build_object("
+        "'id', id::text, 'title', title, 'opened_at', opened_at, "
+        "'account', payload->>'broker_account_name', 'symbol', payload->>'symbol', "
+        "'managed_row_id', payload->>'managed_row_id', "
+        "'close_outcome', payload->>'close_outcome')::text "
+        "from system_incidents where status != 'closed' "
+        "and payload->>'source'='oms_v2_cw_flip_uncovered' "
+        "order by opened_at, id"
+    )
+    incidents: list[dict[str, str]] = []
+    for row in rows:
+        parsed = json.loads(row)
+        if not isinstance(parsed, dict) or not parsed.get("id"):
+            raise RuntimeError("INC1 query returned an incident without an id")
+        incidents.append({str(key): str(value or "") for key, value in parsed.items()})
+    return incidents
+
+
+def _run_inc1_pager_unlocked(
+    *, state_path: Path, status_path: Path, no_page: bool, now: datetime
+) -> int:
+    """Page every open INC1 incident once, retrying until ntfy confirms delivery."""
+    state, memory_lost = _load_state(state_path)
+    try:
+        incidents = _inc1_open_incidents()
+    except Exception as exc:  # noqa: BLE001 - a failed read is never an empty incident list
+        detail = f"{type(exc).__name__}: {exc}"
+        query_state = dict(state.get(INC1_QUERY_META_KEY, {}))
+        query_state.update(
+            {
+                "could_not_tell": True,
+                "last_run_at": now.isoformat(),
+                "detail": detail,
+            }
+        )
+        state[INC1_QUERY_META_KEY] = query_state
+        _write_state(state_path, state)
+        delivered = no_page or bool(query_state.get("delivered", False))
+        if not delivered and page(
+            "CANNOT TELL INC1 -- uncovered-position pager is blind",
+            "INC1 could not read open oms_v2_cw_flip_uncovered incidents.\n"
+            f"{detail}\nThis is not evidence that every live position is protected.",
+        ):
+            state[INC1_QUERY_META_KEY]["delivered"] = True
+            _write_state(state_path, state)
+        line = (
+            f"[INC1-PAGER] run_at={now.isoformat()} verdict=COULD_NOT_TELL "
+            f"open=UNANSWERABLE delivered={int(bool(state[INC1_QUERY_META_KEY].get('delivered')))} "
+            f"detail={detail}"
+        )
+        status_path.write_text(line + "\n", encoding="utf-8")
+        print(line)
+        return 2
+
+    state[INC1_QUERY_META_KEY] = {
+        "could_not_tell": False,
+        "last_run_at": now.isoformat(),
+        "detail": "",
+        "delivered": False,
+    }
+    pending: list[tuple[str, str, str]] = []
+    for incident in incidents:
+        incident_id = incident["id"]
+        prior = dict(state.get(incident_id, {}))
+        delivered = bool(prior.get("delivered", False))
+        state[incident_id] = {
+            **incident,
+            "delivered": delivered,
+            "last_seen_at": now.isoformat(),
+        }
+        if not delivered and not no_page:
+            title = incident.get("title") or (
+                f"CW flip UNCOVERED: {incident.get('symbol') or 'UNKNOWN'}; close or protect now"
+            )
+            body = (
+                "INC1: native protection was cancelled, but the replacement close failed.\n"
+                f"account={incident.get('account') or 'UNKNOWN'} "
+                f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
+                f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'}\n"
+                f"close_outcome={incident.get('close_outcome') or 'UNKNOWN'} "
+                f"opened_at={incident.get('opened_at') or 'UNKNOWN'}\n"
+                "The position may be unprotected. Close it or restore protection now."
+            )
+            pending.append((incident_id, title, body))
+
+    # Use the watcher's proven ordering: durable pending state first, delivery second.
+    _write_state(state_path, state)
+    delivered_now = 0
+    for incident_id, title, body in pending:
+        if page(title, body):
+            state[incident_id]["delivered"] = True
+            state[incident_id]["delivered_at"] = now.isoformat()
+            delivered_now += 1
+    if delivered_now:
+        _write_state(state_path, state)
+
+    delivered_total = sum(
+        bool(state.get(incident["id"], {}).get("delivered", False)) for incident in incidents
+    )
+    verdict = "OPEN_UNCOVERED" if incidents else "NO_OPEN_INCIDENT"
+    if memory_lost:
+        verdict += "_STATE_REBUILT"
+    line = (
+        f"[INC1-PAGER] run_at={now.isoformat()} verdict={verdict} "
+        f"open={len(incidents)} delivered={delivered_total} pending={len(incidents) - delivered_total} "
+        f"delivered_now={delivered_now}"
+    )
+    status_path.write_text(line + "\n", encoding="utf-8")
+    print(line)
+    return 0 if delivered_total == len(incidents) else 1
+
+
+def _run_inc1_pager(
+    *, state_path: Path, status_path: Path, no_page: bool, now: datetime
+) -> int:
+    """Serialize one-minute INC1 runs so a slow invocation cannot duplicate a page."""
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = state_path.with_name(state_path.name + ".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            line = (
+                f"[INC1-PAGER] run_at={now.isoformat()} verdict=ALREADY_RUNNING "
+                "open=UNANSWERABLE delivered=UNANSWERABLE pending=UNANSWERABLE"
+            )
+            status_path.write_text(line + "\n", encoding="utf-8")
+            print(line)
+            return 0
+        return _run_inc1_pager_unlocked(
+            state_path=state_path,
+            status_path=status_path,
+            no_page=no_page,
+            now=now,
+        )
+
+
 def _load_state(path: Path) -> tuple[dict, bool]:
     """Return (state, memory_lost). ⛔ A MISSING file is a first run; an UNPARSEABLE one is LOST
     MEMORY, and the two must not be collapsed. The first version caught both and reset to {}, so a
@@ -359,12 +504,26 @@ def _write_state(path: Path, state: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--state", default=str(STATE_PATH))
-    ap.add_argument("--status", default=str(STATUS_PATH))
+    ap.add_argument(
+        "--inc1",
+        action="store_true",
+        help="page open oms_v2_cw_flip_uncovered incidents using an independent state file",
+    )
+    ap.add_argument("--state")
+    ap.add_argument("--status")
     ap.add_argument("--no-page", action="store_true", help="evaluate and write status, send nothing")
     args = ap.parse_args(argv)
 
-    state_path, status_path = Path(args.state), Path(args.status)
+    if args.inc1:
+        return _run_inc1_pager(
+            state_path=Path(args.state or INC1_STATE_PATH),
+            status_path=Path(args.status or INC1_STATUS_PATH),
+            no_page=args.no_page,
+            now=datetime.now(UTC),
+        )
+
+    state_path = Path(args.state or STATE_PATH)
+    status_path = Path(args.status or STATUS_PATH)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state, memory_lost = _load_state(state_path)
 

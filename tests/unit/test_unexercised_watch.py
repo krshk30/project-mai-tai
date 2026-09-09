@@ -160,6 +160,144 @@ def test_a_failed_delivery_is_retried_rather_than_suppressed(tmp_path, monkeypat
     assert len(attempts) == 3, "a delivered alarm must never page again"
 
 
+def _inc1_row(*, incident_id: str = "incident-1", symbol: str = "NUR") -> str:
+    return json.dumps(
+        {
+            "id": incident_id,
+            "title": f"CW flip UNCOVERED: {symbol} on live:schwab_1m_v2; close or protect now",
+            "opened_at": "2026-09-09T14:31:02+00:00",
+            "account": "live:schwab_1m_v2",
+            "symbol": symbol,
+            "managed_row_id": "managed-1",
+            "close_outcome": "close_failed",
+        }
+    )
+
+
+def test_inc1_reads_only_open_uncovered_cw_flip_incidents(monkeypatch):
+    statements: list[str] = []
+
+    def capture(sql):
+        statements.append(sql)
+        return [_inc1_row()]
+
+    monkeypatch.setattr(uw, "_psql", capture)
+
+    assert uw._inc1_open_incidents()[0]["id"] == "incident-1"
+    assert len(statements) == 1
+    assert "status != 'closed'" in statements[0]
+    assert "payload->>'source'='oms_v2_cw_flip_uncovered'" in statements[0]
+
+
+def test_inc1_forced_incident_reaches_the_watchers_page_channel(tmp_path, monkeypatch):
+    """The critical incident must leave the dashboard and reach the same proven page() channel."""
+    pages: list[tuple[str, str]] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [_inc1_row()])
+    monkeypatch.setattr(uw, "page", lambda title, body: pages.append((title, body)) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    rc = uw.main(["--inc1", "--state", str(state), "--status", str(status)])
+
+    assert rc == 0
+    assert len(pages) == 1
+    assert pages[0][0].startswith("CW flip UNCOVERED: NUR")
+    assert "native protection was cancelled" in pages[0][1]
+    assert "close_failed" in pages[0][1]
+    assert json.loads(state.read_text(encoding="utf-8"))["incident-1"]["delivered"] is True
+    assert "open=1 delivered=1 pending=0" in status.read_text(encoding="utf-8")
+
+
+def test_inc1_failed_delivery_retries_until_accepted_then_stays_silent(tmp_path, monkeypatch):
+    attempts: list[str] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [_inc1_row()])
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    monkeypatch.setattr(uw, "page", lambda title, _body: attempts.append(title) or False)
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 1
+    assert len(attempts) == 1
+    assert json.loads(state.read_text(encoding="utf-8"))["incident-1"]["delivered"] is False
+
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 1
+    assert len(attempts) == 2, "a failed INC1 page was suppressed instead of retried"
+
+    monkeypatch.setattr(uw, "page", lambda title, _body: attempts.append(title) or True)
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+    assert len(attempts) == 3
+
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+    assert len(attempts) == 3, "a delivered INC1 incident paged more than once"
+
+
+def test_inc1_persists_pending_state_before_attempting_delivery(tmp_path, monkeypatch):
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [_inc1_row()])
+    monkeypatch.setattr(uw, "page", lambda title, _body: pages.append(title) or True)
+    unwritable = tmp_path / "state_is_a_directory"
+    unwritable.mkdir()
+
+    with pytest.raises(IsADirectoryError):
+        uw.main(
+            [
+                "--inc1",
+                "--state",
+                str(unwritable),
+                "--status",
+                str(tmp_path / "INC1_STATUS.txt"),
+            ]
+        )
+
+    assert pages == [], "INC1 paged before its delivery state was durable"
+
+
+def test_inc1_query_failure_is_not_reported_as_no_open_incident(tmp_path, monkeypatch):
+    pages: list[str] = []
+
+    def broken(_sql):
+        raise RuntimeError("psql failed")
+
+    monkeypatch.setattr(uw, "_psql", broken)
+    monkeypatch.setattr(uw, "page", lambda title, _body: pages.append(title) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    rc = uw.main(["--inc1", "--state", str(state), "--status", str(status)])
+
+    assert rc == 2
+    assert pages == ["CANNOT TELL INC1 -- uncovered-position pager is blind"]
+    assert "COULD_NOT_TELL" in status.read_text(encoding="utf-8")
+    assert "NO_OPEN_INCIDENT" not in status.read_text(encoding="utf-8")
+
+
+def test_inc1_no_open_incident_is_quiet_but_measured(tmp_path, monkeypatch):
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [])
+    monkeypatch.setattr(uw, "page", lambda title, _body: pages.append(title) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    rc = uw.main(["--inc1", "--state", str(state), "--status", str(status)])
+
+    assert rc == 0
+    assert pages == []
+    assert "verdict=NO_OPEN_INCIDENT open=0 delivered=0 pending=0" in status.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_inc1_overlapping_run_does_not_send_a_duplicate_page(tmp_path, monkeypatch):
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [_inc1_row()])
+    monkeypatch.setattr(uw, "page", lambda title, _body: pages.append(title) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+    lock_path = state.with_name(state.name + ".lock")
+
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        uw.fcntl.flock(lock.fileno(), uw.fcntl.LOCK_EX | uw.fcntl.LOCK_NB)
+        rc = uw.main(["--inc1", "--state", str(state), "--status", str(status)])
+
+    assert rc == 0
+    assert pages == [], "an overlapping INC1 run sent a duplicate page"
+    assert "verdict=ALREADY_RUNNING" in status.read_text(encoding="utf-8")
+
+
 def test_could_not_tell_does_not_re_arm_a_delivered_occurrence(tmp_path, monkeypatch):
     """⛔ The first version wrote fired=0 on COULD_NOT_TELL, resetting the transition memory, so a
     condition that had already paged would page AGAIN as soon as its query recovered."""
