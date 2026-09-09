@@ -1,0 +1,9 @@
+{
+  "pr_number": 924,
+  "range_base": "0941b82a63564b675c98fdcd25d1af6aedff30fc",
+  "range_head": "eea4c13c501c5f42ec874b70d9f16bcdd3e23b22",
+  "reviewed_at": "2026-09-09T10:35:33Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed DRIFT1 unset/default classification and cron delivery state machine; independently reproduced plain curl HTTP-500 false success, verified fail-with-body and time bounds, ran 30 focused tests, and mutation-checked that cooldown-on-attempt turns two controls red."
+}

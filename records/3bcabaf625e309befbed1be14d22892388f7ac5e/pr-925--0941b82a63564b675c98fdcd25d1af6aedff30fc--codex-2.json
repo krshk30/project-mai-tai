@@ -1,0 +1,9 @@
+{
+  "pr_number": 925,
+  "range_base": "0941b82a63564b675c98fdcd25d1af6aedff30fc",
+  "range_head": "3bcabaf625e309befbed1be14d22892388f7ac5e",
+  "reviewed_at": "2026-09-09T10:35:38Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed ORB-LEFT and ORBLBL against the operator ruling; verified retained 09:29-level fill, durable unanswerable evidence and denominator, literal paper account label, unchanged broker isolation, 28 focused tests, and mutation-checked that restoring the pre-ruling block makes two controls red."
+}
