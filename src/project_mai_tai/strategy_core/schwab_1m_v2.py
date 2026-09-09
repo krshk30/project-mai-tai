@@ -3390,6 +3390,7 @@ class SchwabV2Strategy:
 
     def _resting_ask_evidence(self, quote: Quote) -> tuple[float | None, int | None, str]:
         """Return the ask plus the evidence state used by the stop-vs-ask placement guard."""
+        max_age_ms = int(getattr(self, "_resting_quote_max_age_ms", 10_000))
         try:
             quote_time_ms = int(getattr(quote, "quote_time_ms", 0) or 0)
             age_ms = self._now_ms() - quote_time_ms
@@ -3400,15 +3401,20 @@ class SchwabV2Strategy:
             return None, age_ms, "missing_quote_time"
         if age_ms < 0:
             return None, age_ms, "future_quote"
-        if age_ms > self._resting_quote_max_age_ms:
+        if age_ms > max_age_ms:
             return None, age_ms, "stale_quote"
         return ask, age_ms, "fresh_quote"
 
     def _resting_pricing_accounts(self) -> tuple[str, ...]:
-        accounts = [str(self.settings.strategy_schwab_1m_v2_account_name or "UNKNOWN")]
-        if self._dual_broker_fanout_enabled and self._webull_resting_mirror_enabled:
+        settings = getattr(self, "settings", None)
+        accounts = [
+            str(getattr(settings, "strategy_schwab_1m_v2_account_name", "") or "UNKNOWN")
+        ]
+        if bool(getattr(self, "_dual_broker_fanout_enabled", False)) and bool(
+            getattr(self, "_webull_resting_mirror_enabled", False)
+        ):
             webull = str(
-                getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+                getattr(settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
             )
             if webull and webull not in accounts:
                 accounts.append(webull)
@@ -3434,6 +3440,7 @@ class SchwabV2Strategy:
 
         ask_text = f"{ask:.4f}" if ask is not None else "UNANSWERABLE"
         age_text = str(age_ms) if age_ms is not None else "UNANSWERABLE"
+        max_age_ms = int(getattr(self, "_resting_quote_max_age_ms", 10_000))
         log = logger.warning if held else logger.info
         for account in self._resting_pricing_accounts():
             log(
@@ -3447,7 +3454,7 @@ class SchwabV2Strategy:
                 stop_price,
                 ask_text,
                 age_text,
-                self._resting_quote_max_age_ms,
+                max_age_ms,
             )
         return not held
 
