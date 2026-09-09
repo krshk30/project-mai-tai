@@ -117,7 +117,29 @@ case "${LAST_ALERT:-}" in ''|*[!0-9]*) LAST_ALERT=0;; esac
 
 if [ "$LEVEL" != "OK" ] || [ "$SELFTEST" -eq 1 ]; then
   if [ "$PREV_STATUS" = "OK" ] || [ $(( NOW - LAST_ALERT )) -ge "$COOLDOWN_SECS" ] || [ "$SELFTEST" -eq 1 ]; then
-    BODY="$REPORT
+    # ⛔⭐⭐ THE PAGE MUST NOT CONTRADICT THE REPORT IT QUOTES (operator, 2026-09-09).
+    # The first version built ONE body for every case: the fixed paragraph "Production is not
+    # running the configuration the replay mirror describes" was sent even for a --selftest of a
+    # CLEAN audit, so the operator received a page asserting drift directly above this script's
+    # own "No drift: every env-set flag matches the mirror" output. A page whose prose contradicts
+    # its own evidence teaches the reader to distrust the channel, which is how a real RED gets
+    # skimmed. The interpretation is now chosen from what was actually measured.
+    if [ "$LEVEL" = "OK" ]; then
+      # Only reachable via --selftest: the audit is clean and this is a DELIVERY-PATH test.
+      TITLE="SELFTEST live-config watch delivery"
+      PRIORITY="low"
+      TAGS="white_check_mark"
+      BODY="[SELFTEST] DELIVERY-PATH TEST - THIS IS NOT A DRIFT ALERT.
+
+The audit below is CLEAN: production matches the mirror. This message exists only to prove the
+alarm can reach you, because a watchdog whose page has never been delivered is unproven.
+⛔ NO ACTION IS REQUIRED. A real drift alert is titled 'RED live config drift'.
+
+$REPORT
+
+Full reading: $STATUS_TXT"
+    else
+      BODY="$REPORT
 
 WHAT THIS MEANS. Production is not running the configuration the replay mirror describes.
 If a key is listed as UNSET AND DIVERGENT there is no env override for it, so the box is running
@@ -132,12 +154,21 @@ target restarts oms AND strategy together.
 asserts LIVE_LOCKED is False for them on purpose. Read that test before changing anything.
 
 Full reading: $STATUS_TXT"
-    [ "$SELFTEST" -eq 1 ] && BODY="[SELFTEST] $BODY"
-    if [ "$LEVEL" = "CANNOT_SEE" ]; then
-      send_ntfy "AMBER live-locked audit CANNOT SEE" "high" "warning" "$BODY"
-    else
-      send_ntfy "RED live config drift" "urgent" "rotating_light" "$BODY"
+      # ⛔ A SELFTEST OF A GENUINELY RED BOX KEEPS THE RED WORDING. The box really is drifted; only
+      # the delivery is being rehearsed, so suppressing the interpretation would be the same
+      # contradiction in the other direction.
+      [ "$SELFTEST" -eq 1 ] && BODY="[SELFTEST] $BODY"
+      if [ "$LEVEL" = "CANNOT_SEE" ]; then
+        TITLE="AMBER live-locked audit CANNOT SEE"
+        PRIORITY="high"
+        TAGS="warning"
+      else
+        TITLE="RED live config drift"
+        PRIORITY="urgent"
+        TAGS="rotating_light"
+      fi
     fi
+    send_ntfy "$TITLE" "$PRIORITY" "$TAGS" "$BODY"
     DELIVERY_RC=$?
     if [ "$DELIVERY_RC" -eq 0 ]; then
       echo "$STAMP  ALERT[$LEVEL] DELIVERED" >> "$OUT/alert.log"
