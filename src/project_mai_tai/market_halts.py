@@ -5,9 +5,46 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 HALT_MIN_PRINT_GAP = timedelta(seconds=285)
 HALT_MIN_QUOTE_UPDATES = 2
+
+# ET extended session, 04:00-20:00 on weekdays.
+_ET = ZoneInfo("America/New_York")
+_SESSION_OPEN_MIN = 4 * 60
+_SESSION_CLOSE_MIN = 20 * 60
+
+
+def _in_extended_session(at: datetime) -> bool:
+    et = _utc(at).astimezone(_ET)
+    if et.weekday() >= 5:
+        return False
+    return _SESSION_OPEN_MIN <= et.hour * 60 + et.minute < _SESSION_CLOSE_MIN
+
+
+def session_is_continuous(a: datetime, b: datetime) -> bool:
+    """Did the market stay OPEN across the whole span from `a` to `b`?
+
+    ⛔⭐⭐ WHY THIS EXISTS (2026-09-09). `halt_is_confirmed` asks only "has enough time passed with
+    quotes still arriving?" — it has no session term. Overnight, quotes keep flowing while no
+    trading occurs, so an ~8-hour MARKET CLOSURE satisfies the rule exactly as a halt does. Live
+    v2 confirmed a halt on SUNE at 03:59 ET against a last print of 19:59:58 ET the previous
+    evening. Nothing was held and no decision was gated, but it paged the operator as the first
+    real halt ever seen, which spent a once-only alarm on an artefact.
+
+    ⛔ A time-of-day test is NOT sufficient. The gap accumulates while the market is shut and then
+    confirms on the FIRST quote of the new session, which can arrive at 04:01 ET — inside any "is
+    it session hours now" window. Both ends must lie in one continuous session.
+
+    ⭐ The precedent already existed elsewhere: strategy_engine_app's symbol-health monitor refuses
+    to call a flat symbol halted after trading hours (test_schwab_after_hours_stale_halt.py). That
+    guard was simply never applied to this module.
+    """
+    a_utc, b_utc = _utc(a), _utc(b)
+    if not (_in_extended_session(a_utc) and _in_extended_session(b_utc)):
+        return False
+    return a_utc.astimezone(_ET).date() == b_utc.astimezone(_ET).date()
 
 
 def _utc(value: datetime) -> datetime:
@@ -68,16 +105,34 @@ class HaltQuoteObservation:
 
 
 class LiveHaltTracker:
-    """Classify a print gap incrementally without pretending its end is known."""
+    """Classify a print gap incrementally without pretending its end is known.
 
-    def __init__(self) -> None:
+    ⛔⭐⭐ `require_continuous_session` DEFAULTS TO FALSE ON PURPOSE. This module's own docstring
+    calls it "the one halt definition used by historical and live consumers", and the other
+    consumers are research surfaces — `paper_exit.py`, `scripts/actual_resting_operator_rule.py`,
+    `scripts/orb_exit_ladder_comparison.py`, `scripts/orb_raw_price_walk.py`. Turning the guard on
+    for all of them in one step would silently move historical halt windows and every result
+    derived from them, including the live PEX1 measurement. Default-off keeps every existing caller
+    byte-identical; the LIVE detector opts in. Widening it to the research path is a separate,
+    MEASURED decision, not a side effect of this fix.
+    """
+
+    def __init__(self, *, require_continuous_session: bool = False) -> None:
         self.last_print_at: datetime | None = None
         self.quote_updates = 0
         self.confirmed = False
+        self.require_continuous_session = require_continuous_session
 
     def observe_quote(self, observed_at: datetime) -> HaltQuoteObservation:
         at = _utc(observed_at)
         if self.last_print_at is None or at <= self.last_print_at:
+            return HaltQuoteObservation("UNKNOWN", False, self.last_print_at, self.quote_updates)
+        if self.require_continuous_session and not session_is_continuous(self.last_print_at, at):
+            # ⛔ The gap spans a market closure, so the prior print cannot support a halt judgement
+            # at all — this is UNKNOWN for the same reason "no usable prior print" is: we have
+            # nothing to judge, rather than something we judged to be fine. Deliberately does NOT
+            # touch `quote_updates` or `confirmed`: an overnight gap must not accumulate evidence
+            # that then confirms the moment the new session opens.
             return HaltQuoteObservation("UNKNOWN", False, self.last_print_at, self.quote_updates)
         self.quote_updates += 1
         was_confirmed = self.confirmed
