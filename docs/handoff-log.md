@@ -3763,3 +3763,111 @@ fix population).
 standard); D21/D23/sawtooth/census closed earlier in the batch; clock-sweep row closed by #871.
 
 **Tomorrow:** run the reading. One regime, pre-stated denominators, zeros say which kind they are.
+
+## 2026-09-09 (Wed) — RECLAIM1 built and shipped DARK, Gate 1 armed, ten PRs deployed (claude-1)
+
+**Shape of the day.** **Ten** PRs merged (#924–#934, minus #932 closed as superseded), across
+**three** deploy windows — 06:54 ET (#924/#925, ORB restarted for `orb_app.py`), 07:27 ET (#926,
+pull only, no restart), and 19:03 ET (the remaining six). Box and main in sync at `7a879a22` for the
+first time since 07:27 ET.
+
+**The operator's ruling that drove everything.** FTFT entered twice in one ATR segment. His rule,
+refined across three messages, settled at: *one trade per segment, the first resting entry only,
+reclaim no way* — with a fail-safe, because size goes to 200–500–1,000 and "don't take any single
+trade easily hereafter." That became RECLAIM1 (#933): the first ATR-trail rest is the segment's only
+entry, both reclaim producers refused, behind a single flag defaulting **off**.
+
+**RECLAIM1 is deployed and DARK.** Verified three ways, not one: `flip_owned_first_entry_enabled`
+defaults `False` at `settings.py:504`; the variable is **absent** from
+`/etc/project-mai-tai/project-mai-tai.env`, so nothing overrides the default; and the running v2
+emits **zero** `V2-FLIP-OWNER-*` markers. Merging and deploying it changed no trading behaviour.
+Enabling it is an operator decision that has not been made.
+
+**Why #933 took two heads.** I withheld the pin on `6c542d2a`. Mutation found four of five admission
+branches survived deletion, and — the decisive one — the headline control
+`test_ftft_flip_consumes_the_first_entry_until_the_next_sell_flip`, named for the operator's own
+incident, **never reached `_queue_resting_place` on the reclaim path at all**. I instrumented both
+boundaries: only `queue slot=first` was recorded. The test passed with the entire admission gate
+replaced by `return True`. Root cause was an earlier `return` in `_cw_v2_reclaim_resting_track`
+dominating the gate — the dead-guard-behind-an-earlier-return class. At `45462812` all five branches
+are red with a distinct producer-driven control each, and the FTFT test provably records
+`queue slot=reclaim → gate slot=reclaim`.
+
+**A sixth refusal site I had not mutated.** Reviewing #934's claim that RECLAIM1 "disables both
+reclaim producers" surfaced an unconditional guard in `_cw_v2_quote` refusing the *reactive* reclaim
+— outside the five branches I had tested before pinning. It turned out to be covered
+(`test_strict_mode_disables_the_reactive_reclaim_producer` goes red), so the pin stood, but the
+lesson is that "the gate" was two mechanisms and I had enumerated one.
+
+**Gate 1 watcher is live (#931).** Exactly one cron entry, `*/5 13-21 * * 1-5`, wrapper `755`,
+selftest delivered. It pages the moment a v2-held **Schwab** long entered pre-market survives into
+regular hours with no shares reserved — the shape #647's Gate 1 needs and that an ordinary RTH entry
+can never produce. The cron fires from 09:00 ET but the wrapper refuses until 09:30, so the first run that can page is **09:30 ET**.
+
+**#931 cost two withholds, both mine, both fair.** codex found (1) failed transition alerts did not
+retry — holding `LAST_ALERT` back was only *half* the retry; the wrapper also persisted the level it
+had just failed to send, consuming the transition; (2) the wrapper tests read the **real clock**, so
+outside 09:30–16:00 ET the script exited at its own RTH guard before any assertion — `4 failed /
+10 passed` after the close, and CI had passed only because it ran during regular hours, with the
+four silently-skipped tests being exactly the transition controls; (3) HTTP failure handling was
+unproven — deleting `--fail-with-body` and both timeouts left all 14 tests green. All three fixed,
+seven wrapper mutants now red, and each half of the retry fix has its own isolating control (the
+cooldown half is only exposed by a *same-level* repeat).
+
+**The Webull one-sided entry investigation (#934).** 24 logical producer episodes across FTFT, SUNE,
+YMAT; **zero** Webull venue rejections among 54 buy orders. Schwab filled 11 entry episodes, Webull
+matched 9 — the two gaps being FTFT 12:10 and SUNE 13:07, both consumed-fan-out-slot defects, not
+broker refusals. Confirmed by timestamp: every Schwab entry fill has a Webull twin except those two.
+The mechanism is a genuine subtlety — `_SLOT_BY_SOURCE` maps `rth_resting → "resting"` and
+`reactive → "reclaim"`, so the fan-out slot vocabulary is **not** the CW entry-slot vocabulary
+(`first`/`reclaim`), and the rested reclaim collides with the first entry in fan-out identity space.
+
+**Still open from that investigation:** a confirmation-exit race (SUNE 12:52:13.094 released
+`requested=2 confirmed=2`, then 12:52:13.355 refused `pair_cancel_unconfirmed` on the same
+protection base; Schwab closed, Webull did not, and the share sat until the 13:25 ATR exit). The OMS
+releases `_confirmation_exit_inflight` before the close reaches a terminal result.
+
+**F1 — the finding under all of it.** `_fetch_position_maps` scopes the v2 position count to the
+Schwab account alone, so a Webull-only fill leaves `position_qty=0` and the **trend exit cannot
+fire**. Proven live on YMAT: ATR flipped SELL, no exit. The hard stop, target and ladder all work
+(57 filled pre-market Webull sells); only the flip is blind. codex owns the lifecycle fix.
+
+**Retractions and verification failures of mine, recorded so they are not repeated.**
+- I told codex **no rebase was needed** on #931 because `git log base..head` resolved to exactly my
+  three commits. That is not the test the gate applies: `review_pin_gate.py:218` requires the base
+  to be an **ancestor** of the head, and a resolving range does not imply it. I verified a proxy for
+  the rule and stated the conclusion with more confidence than the check supported. Cost: one round
+  trip. Rule and the `merge-base --is-ancestor` one-liner now in memory.
+- I **committed a mutated wrapper** — mutant M-E, `exit 0` in place of the market-hours guard, which
+  would have made the watch do nothing on every run, silently. I had piped my mutation script
+  through `head -4`; SIGPIPE killed it before its restore line. My own new tests caught it on the
+  next run (11 red). Restored, verified the wrapper's full delta against the pre-fix commit, and
+  added a `trap` to the script.
+- Recovering from that, I ran `git stash -u` on an already-clean tree, so the following `stash pop`
+  popped **codex's** 09-06 stash into my worktree. Removed only the 18 untracked paths it
+  introduced; `stash@{0}` intact, no tracked file touched.
+- During deploy verification, two of my own first readings were **false** and I re-derived both
+  before reporting: `oms`/`strategy` read "inactive" because I guessed unit names (they are
+  `project-mai-tai-oms` / `-strategy`, not `-oms-risk` / `-strategy-engine`), and "38 tracebacks in
+  oms.log" was a whole-file count — the post-restart window is **0**.
+- My first search for `fanout_webull_collision_managed` and `pair_cancel_unconfirmed` returned zero
+  because the logs are root-only and I ran as `trader` — a **permissions false-zero**. Re-ran under
+  `sudo` before concluding.
+- I told codex the RECLAIM1 rule must be "path-independent", citing SUNE 09:38 as a legitimate first
+  entry. Wrong on both counts: it was a *resting* order tagged `slot=reclaim`, and under the
+  operator's ruling it is exactly the trade to eliminate. codex's narrower reading was correct.
+- The operator asked why I had not told him reclaim was already off when he asked me to investigate
+  entries. I had not checked. "You need to think about all the direction, not just one direction."
+
+**Reviews I gave:** #933 withheld at `6c542d2a`, pinned at `45462812` · #934 pinned at `fd788f69`,
+re-reviewed and re-pinned at `2bd2355c` after its rebase (the superseded record deleted in the same
+commit, because the gate globs every head directory and an orphaned record fail-closes the PR).
+
+**Deploy.** codex deployed `7a879a22` and restarted oms `180952`, strategy `180963`, v2 `181816`;
+`NRestarts=0`, flat, zero pending intents, zero open broker orders, v2 warmed 3/3 with one REST
+gap-fill. I re-derived every claim independently rather than co-signing it. ORB is running but it is
+the **paper** path (`[ORB-PAPER-ENTRY] … RECORDED_NOT_A_FILL`), restarted 06:54 ET (10:54 UTC) for
+the ORB-LEFT work — my 07-29 memory saying the service was disabled was stale and has been corrected.
+
+**Tomorrow.** Gate 1 can first page at 09:30 ET. RECLAIM1 is dark and awaits an operator decision. The
+confirmation-exit race and the F1 one-sided lifecycle are the open live defects.
