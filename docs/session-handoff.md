@@ -3,367 +3,192 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-> ⛔⭐⭐ **PAPER vs LIVE — READ THIS BEFORE QUOTING ANY EXIT NUMBERS. Corrected 2026-09-06.**
-> **`+5%` target · `−8%` stop · reclaim OFF · one trade per segment are PAPER BOT settings ONLY.**
-> Live `schwab_1m_v2` remains on its **current** settings and **no change to them is pending**.
-> ⛔ **NOTHING IS OR WAS GATED ON CONF3.** `claude-1` wrote *"CONF3 blocks the operator's +5%/−8%
-> settings change"* and carried it through the CONF3 build brief, the relay blocks to `codex-2`, the
-> CONF3 board row and the #905 pin summary. **It was never true**, and it is corrected append-only at
-> `corrections/pr-905-paper-not-live-settings.md` on `review-pins`.
-> ⭐ **CONF3's case is unaffected and rests on measured live evidence at CURRENT settings:** 3 of 3
-> confirmation fires orphaned the `live:orb` fan-out leg, median **44m06s** open after the Schwab
-> counterpart closed, leg-vs-leg dispersion **+2.17 / +2.98 / −4.21 pp** on one decision.
+> ⛔⭐⭐⭐ **THE 2026-09-06 PAPER-ONLY RULE IS REVERSED. Reversed by the operator, 2026-09-08.**
+> **Live `schwab_1m_v2` now runs `+5%` target · `−8%` hard stop · reclaim OFF · one entry per ATR
+> segment.** These are **no longer paper-bot settings** — they are installed in
+> `/etc/project-mai-tai/project-mai-tai.env` and **verified present in both running processes**
+> (see PRODUCTION below). The banner that stood here until today said the opposite; it was correct
+> when written and is now superseded. The 09-06 correction at
+> `corrections/pr-905-paper-not-live-settings.md` on `review-pins` remains valid **as history** —
+> it records that nothing was ever gated on CONF3, which is still true.
+>
+> ⚠ **Reclaim OFF is two changes, not one.** `schwab_1m_v2.py:591` reads
+> `_cw_v2_max_entries_per_flip = 2 if reclaim_enabled else 1`. Turning reclaim off **also halves the
+> per-flip entry cap**. Do not describe it as "the reclaim path is inert".
+>
+> ⚠ **The hard stop moved −5% → −8%: maximum loss per trade is 60% larger than it was yesterday.**
 
-**Originally written by `claude-1`, 2026-09-04 17:57 ET.** Batch
-`2026-09-04-probe-answered-and-conf1-bound`; merged as PR #901.
-
-**Updated by `codex-2`, 2026-09-06 16:49 ET.** Operator-authorized OMS + control deploy; values
-below were read from the VPS after both post-restart gates passed. Reviewed and pinned by
-`claude-1` @ `6606c7c9` (verified against the box, not the PR text) and **merged as `ed7e62f4`**.
-
-**Closed out by `claude-1`, 2026-09-06 evening.** Batch `2026-09-06-conf3-sil1-deployed`; this
-close-out needs `codex-2`'s review before merge — the author does not review it.
-
-**Updated by `claude-1`, 2026-09-08 05:20 ET.** Current state re-derived FROM THE BOX, not from any
-report. ⛔ Sections below the FLAGS block are HISTORICAL RECORD and were deliberately left untouched.
-
-> **⏩ CURRENT — Tuesday 2026-09-08, the acceptance session. Written 05:20 ET, pre-market.**
-> ⛔ **THE 09-07 CLOSE-OUT DESCRIBED THE PRE-DEPLOY STATE.** Everything in the old PRODUCTION block
-> (`1ba88df3`, "open PRs: the close-out handoff PR only") was written BEFORE the 23:06/23:08 UTC
-> deploy and was wrong by morning. It is replaced below.
-> ⭐ **HALT1 HAS MOVED OFF UNEXERCISED — the first of the six to produce a live reading.**
-> Read from the published Redis payload at 05:18 ET:
-> `halt_monitor {"status":"MEASURED","evaluated":1718,"confirmed":0,"denominator":1718,"current":0}`.
-> ⚠ That is **MEASURED-NONE against a real denominator**, which is a result. It is **not** proof the
-> detector would catch a halt — nothing has halted. Do not upgrade it to "works".
-> ⛔ **THE OTHER FIVE ARE STILL UNEXERCISED**: CONF3's live close, SIL1's alarm, the released-leg
-> recovery, HDL1, REJ1. A zero on any of them today is UNEXERCISED, never a PASS.
-> ⚠ **THE BOOT HOLD RELEASED ON THE TIMEOUT PATH, NOT ON A FRESH SOURCE.** At 04:25:29 ET:
-> `[V2-BOOT-REST-WARMUP-TIMEOUT] outcome=warmup_gate_released
-> reason=fresh_source_not_observed_within_bound elapsed_seconds=371.9 bound_seconds=369
-> evaluated=2 confirmed=2 released=2 symbols=BNC,GMEX` — **2.9 s past the bound**, immediately
-> followed by `[V2-BOOT-HOLD] released — restoration_complete=1 reconstructed_uncapped=0`.
-> The scanner population WAS fresh and non-empty and the DB seed WAS confirmed (the timeout path
-> requires both, and caps reconstructed segments first) — what was missing was a **fresh source
-> observation** inside the bound. Data arrived afterwards: bars BNC 916 · GMEX 565 · WYHG 376 ·
-> ISPC 411, last ticks 05:18 ET. ⇒ Entries are OPEN with `entries_held=false`,
-> `restoration_complete=true`, watchlist **BNC, WYHG**. **This is the operator's pre-entry check and
-> it did not come back clean-by-the-strong-condition — judge it before entries.**
-> ⛔ **TODAY'S SESSION IS GRADED WEDNESDAY, NOT TODAY.** The D6 acceptance cron is
-> `17 4,5,6 * * 2-6` UTC (**`CRON_TZ` is ignored**) and grades one COMPLETED ET calendar day, so on
-> 09-08 the expected session is still `2026-09-04`. Tuesday's own session is graded
-> **Wednesday 2026-09-09 ~00:17 ET**; fleet health reflects it from ~09:35 ET.
-> ⚠ `fleet_health_check.py:177` (check #5, *"the D6 cron cannot observe its own death"*) is **RED
-> right now**: `D6 session=2026-09-04 completed without SUCCESS`. Its two FAILs — `fill_rate` gap
-> 7.4pp on **2 matched symbols**, `refused_exits` 3 of 8 — are stale and rest on tiny denominators.
-> ⛔ **Do not act on either.** They need fresh sessions, not analysis.
-> ⭐ **The 2026-09-07 measurement batch is boarded** in
-> [`handoff-open-items.md`](handoff-open-items.md) via PR #912 (`1e685ede`), 16 rows, each carrying
-> its own correction: DUP3's "12" was a paper account · TICK1's 11,313 was a retired paper bot ·
-> the `CAN_NOT_SELL_SHORT` mismatch is real in the code and caused nothing · any SEEDPOP number
-> before 2026-08-20 20:16 ET is void · AMEND1's "584 of 584" cannot fail by construction.
-> ⛔ **REFUSE1 is the operator's open decision:** 13,896 live reject events, 42 distinct messages,
-> **36 unrecognised by any live path**, and **26 storms of which not one ever stopped because of
-> what the broker said**. Measurement only — **no response table is to be built until he rules.**
-
-> **⏩ UPDATED `claude-1`, 2026-09-06 ~12:40 ET — measurement Sunday, no build, no deploy, no merge.**
-> Market closed 09-06 and 09-07 (Labor Day); next session **Tuesday 2026-09-08**.
-> ✅ **THE ATR PROBE IS LIVE.** `/home/trader/atr_probe_enable.log`: fence **GO** (all four gates
-> green), v2 stopped 20:05:03 / ready 20:05:34, pid 3135615, **step 4 proof present** —
-> `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS=*` in the RUNNING process env. 0 tracebacks,
-> warmup 850 bars for IMRN. Probe lines 0 as predicted (bars stop 20:00 ET). The transient timer has
-> since expired and lists none — expected, it was one-shot.
-> ✅ **CONF3 MEASURED, BUILT, PINNED AND MERGED — `0b9d16b7` (PR #902, pinned @ `eb44cb35`), plus
-> its regression control `9a5a813c` (PR #904, pinned @ `72bc9db8`). ✅ DEPLOYED CLEAN 2026-09-06
-> 16:48 ET. ⛔ LIVE CLOSE STILL UNEXERCISED.** The
-> confirmation exit closed Schwab only; 3 of 3 fires orphaned the fan-out leg. ⛔ Its supposed safe
-> branch, `[OMS-EXIT-REPROTECT]`, was **0-for-8** — #904 supplies the control for the recovery-flat
-> branch that was previously inert to mutation.
-> ✅ **SIL1 DECIDED, BUILT, PINNED AND MERGED — `fd3e31dd` (PR #903, pinned @ `e9b10d34`). ✅
-> DEPLOYED CLEAN 2026-09-06 16:48 ET. ⛔ UNEXERCISED.** Operator decision 09-06, final: Schwab
-> **8** on its own counter; ceiling stays **20**
-> on both accounts; ⛔ **`live:orb` alarm UNSET — EXPLICITLY UNCOVERED**, because its benign band
-> genuinely reaches 19 across 80 episodes and no threshold under 20 is defensible. **live:orb reject
-> storms are not alarmed, deliberately.** ✅ **WRAP1 answered** (two
-> triggers, one shared behaviour) and ✅ **CONF2 closed** (#897 is the whole answer). All four rows,
-> with the numbers, are in [`handoff-open-items.md`](handoff-open-items.md); the narrative is in
-> [`handoff-log.md`](handoff-log.md).
-> ⛔ **CONF1 POST-FIX HAS NOT FIRED ONCE.** All three fires ran pre-#897 and the OMS restarted 09-04
-> 17:50 ET, after the last one. The window is clean with no straddle — and that is not a pass.
-> ✅ **The main checkout is CLEAN again** — it was parked on `codex/atr-bracket-grid` with a dirty
-> tree earlier today; `codex-2` preserved the tracked and untracked work in
-> `stash@{Sun Sep 6 12:32:15 2026}: On codex/atr-bracket-grid: codex preserve dirty atr-bracket-grid
-> before CONF3 2026-09-06`. **That deploy blocker is RESOLVED — do not carry it forward as current.**
-> Everything in this session was still read from `origin/main` and written in separate worktrees.
-> ⏩ **Later the same day, all three landed — see the PRODUCTION block for the deploy gap:**
-> SIL1 **#903** pinned @ `e9b10d34` → merged **`fd3e31dd`**; CONF3 **#902** (first head `fc377ea7`
-> conflicted with #903 in `oms/service.py`, so it was **rebased, never Update-branch**, re-reviewed
-> from scratch and re-pinned @ `eb44cb35`) → merged **`0b9d16b7`**; CONF3's regression control
-> **#904** pinned @ `72bc9db8` → merged **`9a5a813c`**. ✅ **ALL THREE ARE MERGED AND ON THE BOX;
-> #902/#903 RUNTIME CODE WAS DEPLOYED CLEAN, WHILE #904 IS TEST-ONLY. NONE IS PROVEN LIVE.**
+**Written by `claude-1`, 2026-09-08 20:05 ET; PRODUCTION block refreshed 20:50 ET after #923.** Batch `2026-09-08-rej1-fixed-and-reclaim-retired`.
+Integrator for this rotation. Needs `codex-2`'s review before merge — the author never reviews.
 
 ---
 
-# ✅ PRODUCTION — runtime code IN SYNC at `5de2c363`
+# ✅ PRODUCTION — main and box IN SYNC at `7eca22a7`
 
 | | |
 |---|---|
-| box (deployed) | **`5de2c363a43c0c4bfe7a84e616d5a972e5ad3c04`** — re-derived FROM THE BOX 2026-09-08 05:17 ET; checkout clean |
-| GitHub main | **`1e685ede`** — **AHEAD of the box by DOCS ONLY** (#912 board rows). ⛔ Verify with `git diff --name-only 5de2c363 origin/main`; report the box as behind only if something outside `docs/` appears. |
-| **runtime split** | **none.** ⚠ The heartbeat schema does **not** independently attest the SHA, so the box read is the evidence. |
-| deploy 09-07 (2nd) | **REJ1 #911 + HALT1 #910 at `5de2c363`** — operator GO, outside the live session, 23:06:11 UTC (oms+strategy) and 23:08:07 UTC (v2); no migrations |
-| merges 09-07 | #906 `193c4065` · #907 `cd4cd8b8` · #908 HDL1 `1ba88df3` · #909 docs `ee194e19` · **#911 REJ1 `a0e74c98`** · **#910 HALT1 `5de2c363`** |
-| merges 09-08 | **#912 board rows `1e685ede`** — docs-only, pinned @ `d35d062c`, no deployment required |
-| ⇒ consequence | ⛔ **SIX items are running. FIVE have never fired** — CONF3's live close, SIL1's alarm, the released-leg recovery, HDL1, REJ1. **HALT1 is the one exception**: MEASURED, denominator 1,718, confirmed 0. Deployed clean is not proven live. |
-| open PRs | **none** |
-| exposure | **05:17 ET:** 0 non-zero account positions · 0 open managed rows · 0 armed stops · 0 working orders · **0 tracebacks** in oms/strategy/v2 since the deploy |
-| ⚠ deploy-gate note | `deploy_service.sh` refuses on a **weekday+hour proxy with NO holiday calendar**; its `MAI_TAI_ALLOW_LIVE_RESTART=1` escape hatch was used on 09-07 and **the gate was NOT edited**. ⛔ A safety gate is not edited while you are trying to get through it. |
-| ⚠ restart scope | The `oms` target restarts **oms AND strategy** together. Do not plan around "oms only". |
-| ⭐ ORB, settled | `/health` reads **`execution_mode: paper`, `broker_route: none`** — isolation confirmed structurally, by mutation, and at runtime. ⛔ The env still reads `live:orb`/`webull` and gives **no protection**; the isolation is entirely in code, keyed on `strategy_code`. |
+| box (deployed) | **`7eca22a7a1ff55372b401ef45ff38f728c4edbb9`** — read FROM THE BOX 2026-09-08 20:50 ET, branch `main`, checkout clean |
+| GitHub main | **`7eca22a7`** — **identical**. Everything merged today is deployed |
+| open PRs | **none** (this handoff PR excepted) |
+| exposure | **20:50 ET:** live positions **0** · live working orders **0** · **0 tracebacks** in oms since the 00:46 UTC restart |
+| merges 09-08 | #913 handoff · #914 unexercised watcher · #915 ORB resting · #916 SLOT2/DB2/RECOV1 harness · **#917 REJ1 P1** · #918 + #919 dashboard truth · #920 ATR flip via native OCO · **#921 replay parity** · **#923 CW-flip position binding** |
+| deploys 09-08 | **(1)** merged PRs at `90f4860` — oms+strategy 21:26:30 UTC, v2 21:35:28 UTC. **(2)** #921 **plus the three runtime settings** at `c47d3a76` — oms+strategy **22:55:46 UTC**, v2 **22:58:09 UTC**. **(3)** #923 at `7eca22a7` — oms+strategy **00:46:33 UTC**; v2 deliberately NOT restarted (its only change was a docstring) |
+| ⚠ restart scope | The `oms` target restarts **oms AND strategy** together. Do not plan around "oms only" |
+| ⛔ ORB | **untouched since 2026-09-04 21:52 UTC.** `#915` is merged and **DARK** — see below |
 
-| service | pid | | service | pid |
-|---|---|---|---|---|
-| oms | **3751266** | | schwab-1m-v2 | **3752275** |
-| strategy | **3751318** | | market-data | 2202865 |
-| control | 3683699 | | reconciler | 2202771 |
+| service | pid | started (UTC) | | service | pid |
+|---|---|---|---|---|---|
+| oms | **4090993** | **00:46:33 (09-09)** | | market-data | 2202865 |
+| strategy | **4091004** | **00:46:33 (09-09)** | | market-capture | 2202817 |
+| schwab-1m-v2 | **4069310** | 22:58:09 | | reconciler | 2202771 |
+| control | 4001261 | 18:57:00 | | orb | 3110306 (09-04) |
 
-⛔ **All three deploy PIDs were verified against `systemctl show -p MainPID`, not taken from a
-report** — a stale PID in the 09-07 handoff cost a withheld pin on #909.
+⛔ Unit names are `project-mai-tai-<svc>.service`, **not** `mai-tai-<svc>`. A `systemctl show
+mai-tai-oms` returns `MainPID=0` and reads exactly like a dead service. It is not one.
 
-> 🔑 **Schwab token, as of 2026-09-06 23:42 UTC** — `codex-2` re-authenticated during the deploy.
-> `refresh_token_expires_at` = **2026-09-13T20:47:13Z = 16:47 ET Sun 09-13**; `expires_at` is the
-> access token and rotates itself (a near-term value there is NOT an alarm — read BOTH fields).
+---
 
-# FLAGS
+# FLAGS — read from the RUNNING processes, not the env file
 
 | flag | state | note |
 |---|---|---|
-| `..._CONFIRMATION_EXIT_ENABLED` (CONF1) | **`true`** | ON since 09-03; post-#897 live fire denominator remains zero |
-| `oms_v2_eod_cancel_reexit_enabled` (EOD1601) | **`False`** | still OFF, still **UNEXERCISED** |
-| ORB paper observer | **LIVE** | broker-disconnected, `paper:orb`, provider=none |
-| `..._ATR_FLIP_PROBE_SYMBOLS` | **`*`, active** | ⚠ **v2 HAS since been restarted** (09-07 23:08 UTC, now PID `3752275`) — **re-confirm the probe env in the RUNNING process before trusting it today** |
+| `..._CW_V2_RECLAIM_ENABLED` | **`false`** ⭐ NEW | also caps the segment at ONE entry |
+| `OMS_V2_CW_TARGET_PCT` | **`5.0`** ⭐ NEW | first time this has ever been set explicitly |
+| `OMS_V2_CW_HARD_STOP_PCT` | **`8.0`** ⭐ NEW | ⚠ 60% wider than yesterday |
+| `..._CONFIRMATION_EXIT_ENABLED` (CONF1) | `true` | ON since 09-03 |
+| `..._DUAL_BROKER_FANOUT_ENABLED` | `true` | `..._WEBULL_FANOUT_QUANTITY=1` |
+| `..._WEBULL_MIRROR_ENABLED` / `_EH_` / `_RESTING_` | `true` | |
+| `OMS_V2_EH_ENTRY_ENABLED` | `true` | |
+| `..._ATR_FLIP_PROBE_SYMBOLS` | `*` | present in v2 pid 4069310 — re-confirmed after tonight's restart |
+
+⛔ **`settings.py` code defaults are still `2.0` / `5.0`** (guarded by `test_exit_logic_cw.py:66-67`).
+⇒ **The env file alone holds live at 5/8.** An env rebuild silently reverts live to +2%/−5% while
+every backtest keeps modelling 5/8 — and `audit_live_locked_drift.py` files that in its `unset`
+bucket, which is its quietest, **not** as drift. Treat those two lines as load-bearing.
 
 ---
 
-# 🎯 THE PROBE RAN, AND IT FOUND A LIVE DEFECT
+# ⭐⭐ TODAY IN ONE LINE
 
-Attended, operator-run, ~$2.18. Entry `2.1657` → PM exit `2.1611` filled `16:05:00`, account flat.
-
-**Answer: one DELETE cancels BOTH OCO children.** Schwab accepts a DELETE against an OCO child, and
-the pair cancels as a unit.
-
-⛔ **But the second DELETE returns `400 "Order in state CANCELED cannot be canceled"` — not 404.**
-`release_native_oco_for_close` tolerated **404 only**, so it returned `unanswerable` on the very tick
-both legs were gone, and it skipped the authoritative order-tree reread that would have said
-`released`. Because the OCO always cancels as a unit, that path reported failure **every time it
-succeeded**.
-
-⇒ **EOD1601 could never have worked as written.** The 16:01 sequence would have cancelled the legs
-correctly and then stalled, at exactly the moment it exists for. Fixed by **#898**: DELETE responses
-are no longer release evidence; the reread decides, and stays fail-closed.
-
-⭐ This is what the $2.18 bought. The question was never "will Schwab accept the DELETE" — it was
-"what happens on the second one".
-
-# ⛔ CONF1 SOLD A POSITION IT WAS NEVER DECIDED FOR — fixed by #897
-
-IMRN 09-04, all ET:
-
-- **11:34:11** position A fills · **11:35 bar** reads `short` · **11:36:09** OMS exits A. Correct.
-- ⛔ the pending confirmation is **never popped after emitting**
-- A closes; **position B opens 12:18:03**
-- **12:18:04 → 12:18:37** the same stale decision fires **~20×** against B, into protective legs
-  placed seconds earlier → **20 refusals** → reject ceiling → **36 minutes of suppressed exits**
-- **12:54:01** the ATR flip is detected on time and **cannot be acted on**
-- **12:58:33** the broker's own OCO leg closes it at 1.63
-
-⭐ **The reject ceiling WORKED.** It stopped this at **20** where NCRA hit 145 and CHPT 205, and it
-left the row and broker protection in place — which is why the OCO leg was still there to close it.
-
-**#897** binds a confirmation to the episode it was decided for (`oms_managed_positions.id`, fresh
-per episode), makes it one-shot, and drops it **before** any OCO protection reconcile — reaching
-that reconcile would have stripped B's protection, and on `resolved_by_fill` closed B's row outright.
-
-⚠️ **CONF1's behaviour is still barely observed**: 6 evaluations, 2 fires, 2 symbols, 2 days — and
-one of the two fires *is* this defect.
+**A P1 that blocked live closes was found from the operator's own P&L screens — because the guard
+never logs and the happy-path fixture had never modelled a real wrapper — fixed and deployed the
+same day; the Completed Positions table was made truthful; and the paper-only settings rule was
+reversed and deployed to live.**
 
 ---
 
-# 🔴 OPEN — SEGMENT SLOT FLAGS NOT RELEASED ON AN ATR SHORT (deliberately unfixed)
+# ⛔ REJ1 (#917) — the class is fixed, the SILENCE is not
 
-IMRN: the 15:00 segment traded at 15:12 and exited 15:14 on a `short` read. At **15:40** a genuine
-new arm fired and the **resting slot was still held by the 15:00 segment** — the placement went out
-as `slot=reclaim`, not `slot=first`, and the Webull fan-out leg was suppressed.
+`release_native_oco_for_close` refused to release a native OCO whose wrapper carried no
+`orderLegCollection`. **A wrapper whose children are visible is not opaque.** Fixed and deployed.
 
-⚠️ **With reclaim being turned off, there would have been no trade at 15:39 at all.**
-
-⛔ **NOT FIXED, and that is the right call.** A release path already exists on the processed SELL
-flip (`schwab_1m_v2.py:2455-2476`). It did not run. I could not distinguish *"the SELL flip was
-never emitted"* from *"emitted and skipped"* because `[V2-ATR-PROBE]` is **off** — 0 lines for IMRN.
-Fixing the symptom by adding a second release site would have been a guess.
-
-**Frequency: 9 of 2,599 arms across 14 retained sessions inherited a previous segment's flags.**
-⚠️ Treat 9 as an **upper bound** — the detector counts a missing `[V2-CW-DISARM]`, but that line is
-gated on `cw_armed`, so a correct silent release is counted as an inheritance. **Rare, not routine.**
-
-⇒ Operator ruling: enable the ATR probe, **do not build the fix**, let the next occurrence answer it.
-
-# ⚠️ WRITE AMPLIFICATION — boarded, deliberately not fixed
-
-#898 removed an early return, so a non-2xx now continues to the next child instead of stopping.
-`_reconcile_confirmation_exit_protection` is **re-entrant across ticks** (`confirmation_inflight`
-blocks overlap only). Measured today: **2,290 invocations, peak 4/sec**.
-
-On a stuck path: **1 DELETE/tick before #898 → N after** (one per working SELL child; no cap — an
-existing test uses three). ⛔ My #898 pin asserted "an OCO carries two" as fact; that was **false and
-load-bearing**, corrected by `codex-2` and recorded append-only on `review-pins`
-(`corrections/pr-898-two-child-bound.md`).
-
-⚠️ Today this path issued **zero** DELETEs — **UNEXERCISED, not benign.** Operator ruling: board and
-watch `[SCHWAB-NATIVE-OCO-DELETE-NON2XX]`, **no speculative throttle**. Repeated firing on one symbol
-is the trigger.
+⛔ **Four distinct causes set `unsafe`, and NONE of them logs.** The opaque-node guard; a SELL child
+`ACCEPTED` with no `orderId`; a SELL child in `PARTIAL_FILL`; a SELL child with an unrecognised
+status. ⇒ **The next refusal in this class will also have to be found from a P&L screen.** Adding a
+reason line at the four sites is small, unclaimed, and the highest-value follow-up on the board.
 
 ---
 
-# 🏗 ORB IS NOW A BROKER-DISCONNECTED PAPER OBSERVER (#896)
+# ⛔ #915 IS MERGED AND DARK — no operator decision exists
 
-Deployed and running (pid 3110306). Two independent refusals: `OrbService._require_paper_decision`
-and `OmsRiskService.process_trade_intent` (first statement, before persistence or dispatch).
-Migration `20260904_0019` applied, additive.
+It flips ORB to the fixed opening-high resting model **the moment anyone rebuilds the ORB env and
+restarts ORB**. ORB has not been restarted since **2026-09-04 21:52 UTC**, so the change is inert
+today and will activate silently on the next unrelated ORB restart.
+⇒ **Decide it deliberately or leave ORB alone.** Do not let a routine restart make the decision.
 
-⛔ **`orb_paper_events` is EMPTY — 0 paper-tape lines.** Deployed ≠ working. The first real evidence
-is Tuesday's session.
-
-⭐ **A check worth keeping:** `live:orb` is the account the **v2 Webull fan-out** routes to. An ORB
-refusal keyed on *account* would have silently killed a real-money leg. It keys on
-`strategy_code == "orb"`, which is correct — and correct for a non-obvious reason.
-
-# ▶ IN FLIGHT — ATR PROBE ENABLE, HALF DONE
-
-`MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_PROBE_SYMBOLS=*` is written to the env file (line 211,
-backup `.bak-20260904-atrprobe`). **The running v2 process does not have it** — it is read once at
-`__init__`.
-
-A fence-gated restart is scheduled **on the box**, not from any agent session, so it runs whether or
-not anyone is connected. It re-runs `preflight_v2_restart.sh` and **aborts without restarting**
-unless that is GO, then writes a full checklist and pushes one ntfy either way.
-
-| | |
-|---|---|
-| unit | `mai-tai-atr-probe-enable.timer` → `.service` (transient) |
-| fires | 2026-09-05 **00:05 UTC** = Fri **20:05 ET** |
-| script | `/home/trader/atr_probe_enable.sh` |
-| **report** | **`/home/trader/atr_probe_enable.log`** |
-| did it fire? | `systemctl list-timers mai-tai-atr-probe-enable --all` |
-
-⛔ **VERIFY THIS FIRST NEXT SESSION — read that log.** If the fence refused, the probe is still off
-and the segment-flag defect stays undiagnosable. ⚠️ **Expect ZERO `[V2-ATR-PROBE]` lines in tonight's
-report**: bars stop at 20:00 ET, so there is nothing to sample. The proof it worked is step 4 of the
-log — the variable present in the RUNNING process environment. The first real `state=` / `flip=`
-lines arrive with Tuesday's session.
-
-⚠️ The timer is transient and would not survive a reboot — but a reboot restarts v2 and picks up the
-env var anyway, so either path ends with the probe on.
-- 20:05 rather than 18:00 deliberately: **bars stop at 20:00 ET**, so the restart leaves no hole in
-  `strategy_bar_history`.
-- The fence blocked at 16:53 on its **clock proxy only** (all three substantive gates green). Its
-  `--clock-override` was **not** used — the change gains nothing from the hour.
+---
 
 # ⭐⭐ STATUS SPLIT — ANSWERED vs UNEXERCISED. Do not collapse these.
 
-⛔ **An unexercised fix reading as an answered item is how #684 sat live-and-never-exercised and how
-`[WEBULL-PROTECT-ATTACHED]` ran 0-for-ever for seven days.** Keep the two columns apart.
-
 | ✅ ANSWERED **and CLOSED** | ⛔ DEPLOYED and **UNEXERCISED** |
 |---|---|
-| **WRAP1** — two triggers, one shared behaviour. 07-13 matches 07-31/08-04; 09-03 is the outlier. ROOT1 = 1 pinned + 2 consistent + 2 unexplained, **supported not proven** | **CONF3** — fan-out is running; the **live close has never fired** post-#897 |
-| **CONF2** — no evaluation row at 12:18; it was never a decision. #897 is the whole answer | **SIL1** — alarm is running; **no episode has reached 8**. `live:orb` is deliberately **UNSET/uncovered** |
-| **CONF3's root cause** — the reprotect was **0-for-8** because the recovery only fails when the broker is erroring | **Released-leg recovery** — replaces that 0-for-8 path and is itself **UNEXERCISED** |
-| **HDL1's cause** — a timing race, decided by evidence: the exception branch fired **0** times and in **10 of 10** the filled entry row exists within **0–1s** | **HDL1** — the bounded retry and its incident are running; **neither has fired**. The race needs the attach to beat the fill commit, ~1 in 8 attachments |
-| **ORB isolation** — proven structurally, by mutation, and at runtime (`paper` / `none`) | |
+| **REJ1** — cause found, fixed, deployed, live impact same day | **CONF3** — fan-out running; the live two-broker close has still never fired |
+| **Dashboard truth** — `PHANTOM rows: 0` verified on the rendered page | **SIL1** — alarm running; no episode has reached 8. `live:orb` deliberately UNSET/uncovered |
+| **MOBX** — not a broker decline; our own malformed buy-stop | **Released-leg recovery** — still never fired |
+| **Reclaim P&L** — indistinguishable from first entries (see below) | **HDL1** — bounded retry + incident; neither has fired |
+| **Replay parity** — LIVE_LOCKED now mirrors live on all three keys | **#914's four conditions** — the watcher exists so these stop being invisible |
+| **Post-deploy drift** — pre-registered 26/0/10, measured 26/0/10 | **#920's CW-flip release** — merged today, never exercised |
+| **NUR 12:34→13:29** — a flip decision that outlived its position, confirmed on the box | **#923's position binding** — deployed 00:46 UTC; the live path is **UNEXERCISED** |
 
-⇒ The left column is finished. **The right column is FOUR open acceptances, not four wins.**
+⭐ **13 of 15 deployed-but-unexercised items were exercised with controls today.** The two that
+remain need a live session or a rare event and are covered by the `#914` watcher, which pages the
+operator directly. Its cron is sha-pinned at `*/15 11-21 * * 1-5`.
 
-# ▶ ACCEPTANCE FOR TUESDAY — PRE-REGISTERED 2026-09-06 (HDL1 added 09-07), BEFORE THE SESSION
+---
 
-⛔ **Written down now so a quiet day cannot be read as a pass.** Each has a denominator and a stated
-non-result. [[feedback_pre_registration_stopped_me]]
+# ⭐ RECLAIM — retired for simplicity, NOT because it lost money
 
-**1 · CONF3 close.** `confirmation exits fired` / of those, `evaluations with a fan-out leg` / of
-those, `legs closed`.
-⛔ **Non-result:** the fan-out marker now emits on **every evaluation**, so coverage is readable
-without a fire — **but coverage is NOT the close.** Zero fires ⇒ report **UNEXERCISED**, never
-"clean". Reporting coverage as if it were the close is the failure mode this line exists to stop.
+Re-derived by attributable coid-prefix pairing, **live accounts only, no FIFO inference**:
 
-**2 · Released-leg recovery.** `failed closes after a release` / of those, `re-protected` /
-`proved flat` / `UNCOVERED`.
-⛔ **Non-result:** it only exercises on a failed close **during broker trouble**. A day with no
-Webull errors proves **nothing** about it. ⇒ **Report the session's
-`webull.core.client ServerException` density ALONGSIDE the result, always**, so "it did not fire"
-reads as *no opportunity* rather than *it works*.
+| Era | Slot | Cycles | Win% | Median |
+|---|---|---:|---:|---:|
+| 08-27…09-01 | first | 27 | 78% | +2.00% |
+| 08-27…09-01 | **reclaim** | 16 | 75% | +1.94% |
+| 09-02…now | first | 32 | 69% | +1.89% |
+| 09-02…now | **reclaim** | 11 | 73% | +1.92% |
 
-**3 · SIL1.** `episodes ≥8 on live:schwab_1m_v2` / of those, `alarms raised` / of those,
-`symbol visible on the operator's screen`.
-⛔ **All three, not just the page count** — on-screen visibility during the stand-down IS the
-requirement. ⛔ And `live:orb` stays **UNCOVERED**; its silence is not evidence of anything.
+⛔ **Pre-08-27 yields ZERO attributable cycles.** The older *"38% win / −4.98%"* figure — which I
+repeated in the CONF3 material and in a #921 review — **has no attributable denominator in its own
+era**. Do not cite it. It is withdrawn.
 
-**4 · HDL1 — added 2026-09-07 after the deploy.** `Webull attachments this session` / of those,
-`handle persisted on the FIRST attempt` / `persisted on a LATER attempt` / `LOST after the bound`.
-⛔ **Non-result:** the race needs the attach to beat the fill commit — about **1 in 8** attachments
-on the measured rate — so a session with **zero** later-attempt rescues proves **nothing** about the
-retry. ⇒ **Report the attachment count alongside the result**, so "it did not fire" reads as *few
-attachments* or *no race*, never as *the retry works*. The signal that it IS working is
-`[WEBULL-PROTECT-HANDLE-PERSISTED]` carrying an `attempt=N/5` **greater than 1**; the signal it is
-NOT enough is `[WEBULL-PROTECT-HANDLE-INCIDENT]`, which also puts the symbol and its base coid on
-the operator panel. ⚠ The measured rate is **10/78 = 12.8%** and that is the rate we can SEE —
-rotated logs start 2026-08-19.
+---
 
-**One question to answer Tuesday, not to chase:** the `ServerException` density on `live:orb` per
-session. One number, from data already being pulled, and it is the input that makes item 2 readable.
-⛔ **An observation, not a workstream.**
+# ⛔ ONE PR MERGED WITHOUT AN INDEPENDENT PIN — #919
 
-# ▶ NEXT SESSION — Tuesday 2026-09-08 (Monday is Labor Day)
+**`#919` merged at 18:56 UTC with `independent-review-pin` RED and ZERO records in the ledger.**
+Swept every PR from #910 to #923: **12 of 13 are pinned at their exact head; #919 is the only hole.**
 
-> ⏩ **09-06 update — item 1 is DONE.** The probe is confirmed live (see the header block); on
-> Tuesday just verify it is *emitting* `state=` / `flip=` per bar.
-> ⛔ **CONF3 AND SIL1 ARE BUILT, PINNED AND MERGED — THERE IS NOTHING TO BUILD.** #903 `fd3e31dd`,
-> #902 `0b9d16b7`, #904 `9a5a813c`. **The runtime changes are deployed clean and the box is in sync.**
-> Tuesday's job is **observe, not build or deploy**.
-> ⛔ **CONF3's live close stays UNEXERCISED**: it is proven only when a real
-> confirmation fire closes both legs. Merged is not proven, and deployed is not proven either.
+⛔ **It was not a silent bypass — it was an explicit operator waiver:** *"it's just a dashboard,,
+can you not review and pin it then merge and deploy"*. The code (a dashboard de-duplication fix in
+`trade_episodes.py`) reached production **without a second agent ever reading it**, which is the
+thing the gate exists to prevent. It is recorded at `corrections/pr-919-merged-without-a-pin.md` on
+`review-pins` so a later audit reads a decision rather than a gap.
 
-1. **Confirm the ATR probe is live** and emitting `state=` / `flip=` per bar. Expect ~1.6 MB/session
-   at the 9-symbol maximum; `maxsize 200M` gives ~59× headroom, so retention is unaffected.
-2. **Watch `[SCHWAB-NATIVE-OCO-DELETE-NON2XX]`** — first firing sizes the write amplification.
-3. **The segment-flag defect** — diagnose from the probe on the next occurrence. Do not guess.
-4. **EOD1601 stays OFF.** #898 removed its blocker; it is not thereby proven. The 16:01 path has
-   still never run against a real position.
-5. **Reclaim is being turned off** (operator, 09-04). That makes item 3 materially more expensive —
-   with reclaim off, an inherited slot means **no trade at all**.
+⇒ **The residual risk is unreviewed dashboard code in production.** If anyone wants that closed, the
+action is a post-hoc review of `5862b89c`, not a pin — the gate cannot pin a merged PR whose base
+has moved.
 
-# ⚠️ TWO VERIFICATION FAILURES OF MINE, RECORDED SO THEY ARE NOT REPEATED
+---
 
-1. **My first #893 mutation run was invalid.** `git checkout -- <file>` restores to HEAD and the fix
-   was **uncommitted**, so three of four mutations silently ran against unfixed `main`. I caught it
-   from the landing probe, not the result. ⇒ **Mutate against a COMMITTED baseline, and make the
-   "did it land?" probe part of the harness.**
-2. **I co-signed a number I had not checked** — "an OCO carries two" in the #898 pin, which was the
-   entire reason I accepted the change. ⇒ **A reviewed number is a claim I co-sign; re-derive it or
-   mark it as theirs.**
+# ▶ CARRIED — open, read-only, nobody is blocked on them
 
-⚠️ Also: a one-shot test of mine **passed with the fix removed**. An accepted sell became a working
-order, which flipped `dedup_active` and incidentally popped the pending — hiding the bug. Only a
-*rejecting* adapter reproduced the live condition. Mutation caught it; review did not.
+| item | question | owner |
+|---|---|---|
+| **BNC 11:03** | why did the Webull leg cancel at 11:03:11? | unassigned |
+| **claim overhang** | is a claim outliving its position by ~3 minutes intended? | unassigned |
+| **fan-out size** | the 2-vs-1 asymmetry between the legs | unassigned |
+| **ELIG** | Schwab 128/129 rows written, Webull **1 row ever**, three unmatched strings | unassigned |
+| **AMEND1** | D6 harness: `paired_legs` PASS, `duplicate_legs` PASS, `fill_rate` **FAIL** 7.4pp on 2 symbols, `refused_exits` **FAIL** 3/8 | unassigned |
+| **REJ1 silence** | add a reason line at the four `unsafe` sites | unassigned |
+| **drift audit** | `audit_live_locked_drift.py` is scheduled in **neither crontab** | unassigned |
 
-# ⚠️ Watch items live here, not in [`handoff-open-items.md`](handoff-open-items.md)
+---
 
-- **A deduped marker's silence is not an absence.** `[V2-RESTING-SLOT-CONSUMED]` is deduped by
-  segment key; its absence at 15:42 was **not** evidence the guard passed — it had logged the same
-  key at 15:15 and stayed silent. ⛔ Dedupe keyed on the thing under investigation is
-  self-concealing. Never quote a count of that marker as a count of suppressions.
-- **`bar_gap_watch_cron.sh` exits 0 by ET-GUARD SKIP after 16:00.** A clean evening exit is not a
-  pass.
-- **`broker_order_events` stores our own aborts as rejects** — every reject count is contaminated
-  unless keyed on the broker's verbatim reason string.
-- **`cancel_exit_leg_ids` still carries the 404-only assumption** that #898 fixed in its sibling.
-  Check it before anything relies on it.
+# ⚠️ THREE VERIFICATION FAILURES OF MINE, RECORDED SO THEY ARE NOT REPEATED
+
+1. **I verified #918 against a payload I reconstructed, not the live one.** It passed while the
+   phantoms were still on the operator's screen. ⇒ *Verify against the artefact the user is looking
+   at, not a model of it.*
+2. **I claimed a 13-second settle-lag near-miss as the cause of the duplicates.** Wrong — the two
+   sources were never comparable (ISO vs display-ET), so **both dedupe paths had always been dead**.
+   ⇒ *A plausible false reason stops the hunt.*
+3. **I chose #921's test population by grepping for the symbol name.** `test_daily_sheet.py` reaches
+   `build_replay_settings` **transitively** and never names it, so my "complete" run missed the one
+   test the change broke — and I pinned green over a red `validate`. ⇒ ⭐ **A grep for a symbol is
+   not a call graph.**
+
+Also, twice today `#914` — my own watcher — paged the operator's phone with duplicates before its
+state-write ordering and its sticky `announced` flag were fixed.
+
+---
+
+# ▶ NEXT SESSION — Wednesday 2026-09-09
+
+1. ⛔ **First live session on `+5%` / `−8%` / one-entry-per-segment.** Nothing about the exit
+   profile from before today is a baseline for it. Judge it on its own tape.
+2. ⛔ **Decide `#915`** before anything touches ORB.
+3. The REJ1 reason lines — small, high value, unclaimed.
+4. Watch `#914`'s four conditions. Silence is not green: read `STATUS.txt`, do not infer from the
+   absence of a page.
+
+⛔ Watch items live here, not in [`handoff-open-items.md`](handoff-open-items.md).
