@@ -39,7 +39,33 @@ silently omits it does not just differ — it flatters.
   controls, then let LIVE_LOCKED mirror live. That changes what every off-VPS backtest produces, so
   it is the operator's call, not a silent edit — this script only makes the drift impossible to miss.
 
-Exit codes:  0 = mirror matches live  ·  1 = DRIFT  ·  2 = CANNOT SEE (refused)
+## ⛔⭐⭐ THE SECOND AXIS — AN `unset` KEY DOES NOT RUN THE MIRROR (added 2026-09-09)
+
+This script used to print, for every key with no env override:
+
+    not set in env : N  (the mirrored value IS the live path)
+
+⛔ **That sentence is only true when `settings.py`'s default happens to EQUAL the mirror.** When it
+does not, the live path is the CODE DEFAULT and the mirror describes a configuration nothing runs.
+Measured on 7eca22a7: **13 of the 26 mirrored keys have a divergent code default**, including
+`oms_v2_cw_target_pct` (mirror 5.0, default 2.0), `oms_v2_cw_hard_stop_pct` (8.0 vs 5.0) and
+`strategy_schwab_1m_v2_enabled` (True vs False).
+
+⇒ So the exact failure this script exists to catch — an env rebuild dropping a load-bearing line —
+made it print the OPPOSITE of the truth and then exit 0 ("No drift"). It did not fail silent; it
+failed LOUD, in the wrong direction. A watch that fails to a false clean is worse than no watch.
+
+⛔ **Neither sibling tool covers it either.** `ops/health/env_default_drift.py` compares LIVE
+settings against code defaults, so when the env line is LOST live becomes the default and that tool
+reports NO drift — it goes quiet precisely when the line goes missing. The loss is invisible to both
+unless this script calls it.
+
+⇒ An unset key whose code default DIVERGES from the mirror is now RED and exits non-zero.
+A key that is unset but whose default AGREES with the mirror stays green: that is the benign case
+the original text described, and keeping it quiet is what stops this from becoming noise.
+
+Exit codes:  0 = mirror matches live  ·  1 = DRIFT (env-set disagreement, OR an unset key whose
+             code default diverges from the mirror)  ·  2 = CANNOT SEE (refused)
 """
 
 from __future__ import annotations
@@ -96,6 +122,50 @@ def audit(live_locked: dict[str, object], env: dict[str, str]) -> tuple[list, li
     return drifted, agreed, unset
 
 
+UNKNOWN = object()
+"""Sentinel: the mirror names a key that is not a Settings field at all."""
+
+
+def code_defaults(keys) -> dict[str, object]:
+    """key -> the value `settings.py` would use with NO env override at all.
+
+    ⛔⭐ Read from `Settings.model_fields[...].default`, NEVER from an instantiated `Settings()`.
+    The cron wrapper SOURCES the service env before running this, so an instance would be filled
+    from the very env we are auditing and every default would read back as the live value —
+    the check would compare the env against itself and could never come out false.
+    """
+    from project_mai_tai.settings import Settings
+
+    fields = Settings.model_fields
+    out: dict[str, object] = {}
+    for key in keys:
+        field = fields.get(key)
+        out[key] = UNKNOWN if field is None else field.default
+    return out
+
+
+def split_unset(unset: list, defaults: dict[str, object]) -> tuple[list, list, list]:
+    """(benign, divergent, unknown) for keys with no env override.
+
+    ⛔⭐⭐ A key with no env override does NOT run the mirror — it runs the CODE DEFAULT.
+      * benign   — default == mirror, so the mirrored value really IS the live path.
+      * divergent— default != mirror. The mirror describes a config NOTHING RUNS, and this is
+        exactly what a rebuilt env file that dropped a load-bearing line looks like. RED.
+      * unknown  — the mirror names a key that is not a Settings field. Also RED: a mirror entry
+        that cannot reach production is drift by another route.
+    """
+    benign, divergent, unknown = [], [], []
+    for key, mirror in unset:
+        default = defaults.get(key, UNKNOWN)
+        if default is UNKNOWN:
+            unknown.append((key, mirror))
+        elif default == mirror and isinstance(default, bool) == isinstance(mirror, bool):
+            benign.append((key, mirror))
+        else:
+            divergent.append((key, mirror, default))
+    return benign, divergent, unknown
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="P6 — LIVE_LOCKED vs the live env (read-only)")
     ap.add_argument("--env-file", default=os.environ.get("MAI_TAI_ENV_FILE", DEFAULT_ENV_FILE))
@@ -123,13 +193,38 @@ def main() -> int:
     print(f"LIVE_LOCKED audit — {len(LIVE_LOCKED)} mirrored setting(s) vs {args.env_file}")
     print(f"  env-set and AGREE : {len(agreed)}")
     print(f"  env-set and DRIFT : {len(drifted)}")
-    print(f"  not set in env    : {len(unset)}  (the mirrored value IS the live path)")
+    print(f"  not set in env    : {len(unset)}  (classified against settings.py defaults below)")
 
-    if unset:
-        print("\n  ⛔ These have NO env override, so LIVE_LOCKED is the ONLY live path for them.")
-        print("     A change to one of these is invisible to every env-based check:")
-        for key, value in unset:
+    try:
+        defaults = code_defaults([k for k, _ in unset])
+    except Exception as exc:  # noqa: BLE001 — cannot import means cannot answer
+        print(f"⛔ CANNOT SEE — REFUSING: cannot read settings.py defaults: {type(exc).__name__}: {exc}")
+        print("   ⛔ Without the code defaults an unset key is UNKNOWN, not benign.")
+        return 2
+    benign, divergent, unknown = split_unset(unset, defaults)
+
+    if benign:
+        print("\n  These have NO env override AND the code default equals the mirror, so the")
+        print("  mirrored value really IS the live path for them:")
+        for key, value in benign:
             print(f"       {key} = {value!r}")
+
+    if divergent:
+        print("\n  *** ⛔ UNSET AND DIVERGENT — the mirror describes a config NOTHING RUNS:")
+        for key, mirror, default in divergent:
+            print(f"       {key}")
+            print(f"           LIVE_LOCKED says   = {mirror!r}   <- what the mirror CLAIMS is live")
+            print(f"           settings.py default= {default!r}   <- what is ACTUALLY live")
+        print("\n  ⛔ There is no env override for these, so production runs the CODE DEFAULT.")
+        print("     This is what a rebuilt env file that dropped a load-bearing line looks like.")
+        print("     ⛔ ops/health/env_default_drift.py CANNOT see this: with the line gone, live")
+        print("        equals the default, so that tool correctly reports no drift. Only this")
+        print("        comparison — mirror vs default — can catch a LOST setting.")
+
+    if unknown:
+        print("\n  *** ⛔ MIRRORED KEY IS NOT A SETTINGS FIELD — it can never reach production:")
+        for key, mirror in unknown:
+            print(f"       {key} = {mirror!r}")
 
     if drifted:
         print("\n  *** DRIFT — an off-VPS / CI replay studies a configuration we are NOT trading:")
@@ -139,9 +234,16 @@ def main() -> int:
         print("     off-VPS / CI runs, which the module docstring promises are 'faithful'.")
         print("  ⛔ Before 'fixing' these, read test_env_set_values_beat_live_locked — three of")
         print("     them may be disagreeing DELIBERATELY to keep that regression meaningful.")
+
+    if drifted or divergent or unknown:
+        print(
+            f"\n⛔ RED — {len(drifted)} env-set drift(s), {len(divergent)} unset-and-divergent, "
+            f"{len(unknown)} unknown key(s)."
+        )
         return 1
 
-    print("\n  No drift: every env-set flag matches the mirror.")
+    print("\n  No drift: every env-set flag matches the mirror, and every unset key's code")
+    print("  default agrees with it.")
     return 0
 
 
