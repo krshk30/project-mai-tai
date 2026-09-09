@@ -320,3 +320,37 @@ def test_CANNOT_SEE_keeps_its_own_wording(tmp_path: Path) -> None:
     (message,) = h.sent_messages
     assert "Title: AMBER live-locked audit CANNOT SEE" in message
     assert "DELIVERY-PATH TEST" not in message
+
+
+def test_CANNOT_SEE_must_NOT_receive_the_RED_BODY(tmp_path: Path) -> None:
+    """⛔⭐⭐ THE CONTROL codex-2 ASKED FOR (#927). CANNOT_SEE means the audit could not READ the
+    configuration — it measured nothing. Sending the RED body would assert a drift nobody measured
+    and prescribe restoring an env line and restarting services on the strength of it.
+
+    This fails if the RED body ever reaches the CANNOT_SEE branch. It is the same defect as the
+    clean-selftest one, in the sibling branch I fixed around and left behind."""
+    h = _Harness(tmp_path)
+    h.run(audit_rc=2, curl_rc=0)
+    (message,) = h.sent_messages
+
+    # It must NOT assert drift...
+    assert _DRIFT_CLAIM not in message
+    # ...nor prescribe the RED remedy.
+    assert "Restore the env line" not in message
+    assert "restart the affected service" not in message
+    assert "Title: RED live config drift" not in message
+
+    # It must say plainly that nothing was determined, and refuse both false readings.
+    assert "COULD NOT DETERMINE THE CONFIGURATION STATE" in message
+    assert "This is NOT a drift report" in message
+    assert "UNKNOWN is not PASS" in message
+
+
+def test_a_selftest_of_a_CANNOT_SEE_box_still_says_it_could_not_see(tmp_path: Path) -> None:
+    """The discriminator stays the measured level, not the flag — as with the RED branch."""
+    h = _Harness(tmp_path)
+    h.run(audit_rc=2, curl_rc=0, selftest=True)
+    (message,) = h.sent_messages
+    assert "[SELFTEST]" in message
+    assert "COULD NOT DETERMINE THE CONFIGURATION STATE" in message
+    assert _DRIFT_CLAIM not in message

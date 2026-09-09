@@ -138,7 +138,35 @@ alarm can reach you, because a watchdog whose page has never been delivered is u
 $REPORT
 
 Full reading: $STATUS_TXT"
+    elif [ "$LEVEL" = "CANNOT_SEE" ]; then
+      # ⛔⭐⭐ A REFUSAL IS NOT A DRIFT REPORT (codex-2, #927). CANNOT_SEE means the audit could
+      # not READ the configuration at all — unreadable env, empty parse, unimportable mirror. It
+      # is UNKNOWN, and UNKNOWN is not a measurement. Sending the RED body here would assert a
+      # drift nobody measured AND prescribe restoring an env line and restarting services on the
+      # strength of it. That is the same false-confidence this whole watchdog exists to remove,
+      # pointing the other way.
+      TITLE="AMBER live-locked audit CANNOT SEE"
+      PRIORITY="high"
+      TAGS="warning"
+      BODY="THE AUDIT COULD NOT DETERMINE THE CONFIGURATION STATE. This is NOT a drift report.
+
+It did not measure production and is making NO claim about whether the box matches the mirror.
+The check itself could not run: the env file was unreadable or parsed empty, or LIVE_LOCKED could
+not be imported. The reason is in the reading below.
+
+⛔ DO NOT restore env lines or restart anything on the strength of this page. Nothing here says a
+setting is wrong. Fix the READ first, then let the audit answer the question.
+⛔ And do not treat this as an all-clear either. UNKNOWN is not PASS: while this persists, no
+env-based check can see a dropped setting.
+
+$REPORT
+
+Full reading: $STATUS_TXT"
+      [ "$SELFTEST" -eq 1 ] && BODY="[SELFTEST] $BODY"
     else
+      TITLE="RED live config drift"
+      PRIORITY="urgent"
+      TAGS="rotating_light"
       BODY="$REPORT
 
 WHAT THIS MEANS. Production is not running the configuration the replay mirror describes.
@@ -158,15 +186,6 @@ Full reading: $STATUS_TXT"
       # the delivery is being rehearsed, so suppressing the interpretation would be the same
       # contradiction in the other direction.
       [ "$SELFTEST" -eq 1 ] && BODY="[SELFTEST] $BODY"
-      if [ "$LEVEL" = "CANNOT_SEE" ]; then
-        TITLE="AMBER live-locked audit CANNOT SEE"
-        PRIORITY="high"
-        TAGS="warning"
-      else
-        TITLE="RED live config drift"
-        PRIORITY="urgent"
-        TAGS="rotating_light"
-      fi
     fi
     send_ntfy "$TITLE" "$PRIORITY" "$TAGS" "$BODY"
     DELIVERY_RC=$?
