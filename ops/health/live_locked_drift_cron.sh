@@ -34,12 +34,17 @@ set -u
 SELFTEST=0
 [ "${1:-}" = "--selftest" ] && SELFTEST=1
 
-REPO=/home/trader/project-mai-tai
-OUT=/home/trader/live_locked_drift
+# ⛔ Defaults ARE production. The overrides exist so tests can drive this wrapper against a
+# stubbed HTTP layer and a real state file; a fixture that cannot reach the real code path proves
+# nothing about it. Nothing here changes what cron runs.
+REPO="${DRIFT1_REPO:-/home/trader/project-mai-tai}"
+OUT="${DRIFT1_OUT:-/home/trader/live_locked_drift}"
+PYBIN="${DRIFT1_PYTHON:-$REPO/.venv/bin/python}"
+ENV_FILE_ARG="${DRIFT1_ENV_FILE:-}"
 LOG="$OUT/watch.log"
 STATE="$OUT/state"                 # holds: <STATUS> <LAST_ALERT_EPOCH>
 STATUS_TXT="$OUT/STATUS.txt"       # ⛔ read THIS; silence is not green
-NTFY_URL="https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
+NTFY_URL="${DRIFT1_NTFY_URL:-https://ntfy.sh/mai-tai-preopen-28806a5a97b7}"
 COOLDOWN_SECS=21600                # 6h: config changes are rare, so re-pages should be too
 mkdir -p "$OUT"
 
@@ -59,7 +64,11 @@ cd "$REPO" || { echo "$STAMP  ERROR: no $REPO" >> "$LOG"; exit 1; }
 # model class, it would be comparing the env against itself - a check that cannot come out false.
 # tests/unit/test_audit_live_locked_drift.py pins that it reads the class. Do not add `set -a`.
 
-REPORT=$(nice -n 19 "$REPO"/.venv/bin/python "$REPO"/scripts/audit_live_locked_drift.py 2>&1)
+if [ -n "$ENV_FILE_ARG" ]; then
+  REPORT=$(nice -n 19 "$PYBIN" "$REPO"/scripts/audit_live_locked_drift.py --env-file "$ENV_FILE_ARG" 2>&1)
+else
+  REPORT=$(nice -n 19 "$PYBIN" "$REPO"/scripts/audit_live_locked_drift.py 2>&1)
+fi
 RC=$?
 
 case "$RC" in
@@ -81,10 +90,25 @@ esac
 
 echo "$STAMP  $LEVEL (exit $RC)" >> "$LOG"
 
-send_ntfy() {  # $1=title $2=priority $3=tags $4=body
+# ⛔⭐⭐ DELIVERY IS VERIFIED, NEVER ASSUMED (codex-2 P1 on #924, 2026-09-09).
+#
+# The first version called `curl -s` and then logged "sent", advanced LAST_ALERT and persisted the
+# RED state REGARDLESS of the result. Measured: `curl -s` exits 0 on an HTTP 500 - so an ntfy
+# outage would have been recorded as a delivered page and then suppressed for the full six-hour
+# cooldown. The watchdog built to stop a false clean would itself have failed to one, at the
+# delivery layer. Returns 0 ONLY on confirmed acceptance.
+#
+#   --fail-with-body : non-2xx becomes exit 22 (plain `-s` returns 0). This is the whole fix.
+#   --connect-timeout/--max-time : a hang is a delivery FAILURE, not an indefinite block in cron.
+#   -sS : silent, but still write the error to alert.log so a failure is diagnosable.
+# ⛔ No `|| true` on this call, and no `set -e` reliance: the exit code IS the verdict.
+send_ntfy() {  # $1=title $2=priority $3=tags $4=body   -> 0 delivered, non-0 NOT delivered
   # ⛔ Titles must be ASCII - an em-dash silently LOSES the push (learned on the OCO watch).
-  curl -s -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
+  curl -sS --fail-with-body --connect-timeout 10 --max-time 30 \
+    -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
     >/dev/null 2>>"$OUT/alert.log"
+  CURL_RC=$?
+  return $CURL_RC
 }
 
 PREV_STATUS="OK"; LAST_ALERT=0
@@ -114,8 +138,19 @@ Full reading: $STATUS_TXT"
     else
       send_ntfy "RED live config drift" "urgent" "rotating_light" "$BODY"
     fi
-    echo "$STAMP  ALERT[$LEVEL] sent" >> "$OUT/alert.log"
-    LAST_ALERT=$NOW
+    DELIVERY_RC=$?
+    if [ "$DELIVERY_RC" -eq 0 ]; then
+      echo "$STAMP  ALERT[$LEVEL] DELIVERED" >> "$OUT/alert.log"
+      DELIVERY="delivered"
+      # ⛔ The cooldown starts at CONFIRMED delivery, never at the attempt.
+      LAST_ALERT=$NOW
+    else
+      echo "$STAMP  ALERT[$LEVEL] DELIVERY FAILED (curl exit $DELIVERY_RC) - NOT entering cooldown, will retry next run" >> "$OUT/alert.log"
+      DELIVERY="FAILED (curl exit $DELIVERY_RC)"
+      # ⛔ LAST_ALERT is deliberately NOT advanced. Leaving it stale is what makes the next cron
+      # run retry immediately instead of sitting silent for six hours on an undelivered page.
+    fi
+    printf 'delivery: %s\n' "$DELIVERY" >> "$STATUS_TXT"
   fi
   [ "$SELFTEST" -eq 0 ] && echo "$LEVEL $LAST_ALERT" > "$STATE"
 else
@@ -123,7 +158,17 @@ else
     send_ntfy "OK live config matches the mirror" "default" "white_check_mark" \
       "Every env-set flag matches LIVE_LOCKED, and every unset key's settings.py default agrees
 with it. Recovered at $STAMP."
-    echo "$STAMP  ALERT[GREEN] recovery sent" >> "$OUT/alert.log"
+    DELIVERY_RC=$?
+    if [ "$DELIVERY_RC" -ne 0 ]; then
+      # ⛔ An undelivered all-clear must not be recorded as sent either. Hold the previous status
+      # so the next run retries the recovery; clearing to OK here would lose it silently.
+      echo "$STAMP  RECOVERY DELIVERY FAILED (curl exit $DELIVERY_RC) - holding $PREV_STATUS, will retry next run" >> "$OUT/alert.log"
+      printf 'delivery: recovery FAILED (curl exit %s)\n' "$DELIVERY_RC" >> "$STATUS_TXT"
+      echo "$PREV_STATUS $LAST_ALERT" > "$STATE"
+      exit 0
+    fi
+    echo "$STAMP  ALERT[GREEN] recovery DELIVERED" >> "$OUT/alert.log"
+    printf 'delivery: recovery delivered\n' >> "$STATUS_TXT"
   fi
   echo "OK $LAST_ALERT" > "$STATE"
 fi
