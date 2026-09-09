@@ -1,0 +1,9 @@
+{
+  "pr_number": 927,
+  "range_base": "ec31a1901b4eedbfb5541c87f9f6465b5e1145b7",
+  "range_head": "caa34974f7819e031f65c8e0013023d27b054b0a",
+  "reviewed_at": "2026-09-09T14:03:47Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the live-only halt session guard, quote/print episode reset, full-closure holiday authority, and drift-alert wording; 172 focused tests passed and removing the shared holiday term made the holiday controls fail."
+}
