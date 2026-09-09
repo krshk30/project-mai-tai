@@ -1,0 +1,9 @@
+{
+  "pr_number": 930,
+  "range_base": "e7ad18fa0ee9e72465fbd9b9aba38c306657f5ef",
+  "range_head": "445d94774ff3b5d6080b23e138296a5f7f018d1a",
+  "reviewed_at": "2026-09-09T15:57:22Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Account-neutral ATR SELL exit observation, re-reviewed at 445d947 after the expiry controls landed. All three of my approval conditions verified: C1 emit_cw_flip is GONE from src entirely and test_retired_v2_cw_flip_event_arms_nothing pins the old path dead, so a both-leg position cannot be closed twice; C2 replay follows the new semantics via pending_atr_sell_observations/acknowledge and applies only if the modeled row is open, with the 'discarding while flat is load-bearing' case I had not considered; C3 quantity=state.position_qty and the position_qty<=0 gate are both deleted, the observation carries no account and no quantity, and the OMS sizes from the bound managed row. Controls are well chosen: C4 is the YMAT shape exactly (Schwab flat + Webull held -> only the Webull leg arms), plus cross-account independence, flag-off byte-identical, and publisher-cannot-inject-an-account which guards the property the design rests on. MY MUTATIONS, each landing on exactly one control: replacement-row guard removed 1 RED; one account's refusal aborting the sibling 1 RED; expiry guard removed 1 RED; expiry threshold widened to 100000s 1 RED. \u26d4 The expiry pair is the reason I withheld the pin at 76b14be \u2014 deleting the bound then left EVERY touched suite and the FULL suite green, and nothing in tests/ referenced invalid_or_expired_bar. It is now covered in both directions at 181s and 120s. Independent verification: touched suites 164 passed, ruff check src tests clean, full-suite controlled pair vs base e7ad18fa re-derived by me with failure and error sets IDENTICAL (58 lines), 3452 -> 3463 passed. \u26d4 Deploy is AFTER 16:00 ET, flat, on operator GO; it restarts oms AND strategy together."
+}
