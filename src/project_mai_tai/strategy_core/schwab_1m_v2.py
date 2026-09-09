@@ -339,6 +339,17 @@ class TradeIntentDraft:
 
 
 @dataclass(frozen=True)
+class ATRSellObservation:
+    """A fresh ATR SELL transition with no account, ownership, or order quantity."""
+
+    symbol: str
+    bar_time_ms: int
+    bar_close: float
+    atr_trail: float | None
+    decision_id: str
+
+
+@dataclass(frozen=True)
 class PostCloseEntryRelease:
     """One close-boundary census over entry-side state.
 
@@ -530,6 +541,11 @@ class SchwabV2Strategy:
         self._atr_symbol_gaps_observed: dict[tuple[str, str], int] = {}
         self._atr_nonadjacent_arm_evaluations: dict[tuple[int, str], int] = {}
         self._bar_observation_phase: Literal["replay", "live"] = "live"
+        # Account-neutral ATR exit observations. Ownership and quantity are OMS facts, not
+        # strategy state: one observation is evaluated independently against every configured
+        # v2 managed account. Entries and their Schwab-scoped position union remain untouched.
+        self._pending_atr_sell_observations: dict[str, ATRSellObservation] = {}
+        self._atr_sell_observed_bar_by_symbol: dict[str, int] = {}
         self._atr_period = max(
             1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_period", 5))
         )
@@ -1223,9 +1239,8 @@ class SchwabV2Strategy:
         assumed:
           * the software exit LADDER arms off `OmsService._cw_floor_armed`, a set keyed by
             (account, symbol) that the OMS owns — it never reads `state.cw_armed`;
-          * `_maybe_cw_flip_close`, the bar-close ATR exit that has NO RTH gate and so is the one
-            thing genuinely live after 16:00, gates on `_cw_enabled` / `position_qty > 0` /
-            `flip == "SELL"` — `cw_armed` is not in its conditions;
+          * `_observe_atr_sell`, the account-neutral bar-close ATR observation that has NO RTH gate
+            and so remains live after 16:00, never reads `cw_armed`;
           * every remaining reader is ENTRY-side (`_cw_v2_quote`, the reclaim gate,
             `_cap_reconstructed_segment`) and is exactly what should stop after 16:00.
         ⇒ Releasing the arm cannot disarm an exit. If a future exit path starts reading `cw_armed`,
@@ -2305,53 +2320,57 @@ class SchwabV2Strategy:
             },
         )
 
-    def _maybe_cw_flip_close(
+    def _observe_atr_sell(
         self, state: SymbolState, atr_signal: dict | None
-    ) -> TradeIntentDraft | None:
-        """Confirmed-window bar-close flip exit (variant CW). When CW is on and we HOLD
-        a position, a bar that CLOSES below the ATR trail (atr_signal flip == "SELL") is
-        the trend exit. Return a cw_flip CLOSE draft; the bot service publishes it as a
-        `v2_cw_flip` signal and the OMS closes the managed row on the next quote. Fires
-        once per flip (the SELL flip is a single-bar event). Fresh bars only — never on
-        a replayed historical flip during warmup. OFF or flat => None (byte-neutral)."""
+    ) -> ATRSellObservation | None:
+        """Queue one fresh, account-neutral ATR SELL observation per transition bar.
+
+        This is intentionally unconditional with respect to strategy position state. Traffic is
+        still bounded to one event per symbol's SELL transition bar, never one event per quote or
+        per below-trail bar; OMS accounts for held, flat, and unreadable legs independently.
+        """
         if not self._cw_enabled:
-            return None
-        if state.position_qty <= 0:
             return None
         if atr_signal is None or atr_signal.get("flip") != "SELL":
             return None
         cur = state.bars[-1]
-        # Route the staleness clock through the `_now_ms()` seam (base returns wall-clock ms,
-        # BYTE-IDENTICAL to the prior inline `datetime.now(UTC)`), so the backtest REPLAY — which
-        # overrides `_now_ms()` with the injected historical clock — can reach this bar-close flip
-        # exit instead of it being permanently stale-gated. No live behavior change.
         now_ms = self._now_ms()
-        if (now_ms - cur.timestamp_ms) / 1000.0 > MAX_BAR_AGE_SECONDS_FOR_EMIT:
-            return None  # stale/replayed bar — never signal an exit on old history
-        trail = atr_signal.get("trail")
-        logger.info(
-            "[V2-CW] %s bar-close SELL flip while holding qty=%d close=%.4f trail=%s "
-            "-> CW_FLIP close signal",
-            state.symbol, state.position_qty, cur.close,
-            f"{trail:.4f}" if trail is not None else "none",
-        )
-        return TradeIntentDraft(
+        age_seconds = (now_ms - cur.timestamp_ms) / 1000.0
+        if not 0.0 <= age_seconds <= MAX_BAR_AGE_SECONDS_FOR_EMIT:
+            return None
+        if self._atr_sell_observed_bar_by_symbol.get(state.symbol) == cur.timestamp_ms:
+            return None
+        trail_raw = atr_signal.get("trail")
+        trail = float(trail_raw) if trail_raw is not None else None
+        decision_id = f"atr-sell:{state.symbol}:{cur.timestamp_ms}"
+        observation = ATRSellObservation(
             symbol=state.symbol,
-            side="sell",
-            intent_type="close",
-            quantity=Decimal(str(int(state.position_qty))),
-            reason="schwab_1m_v2 ATR Flip CW [bar-close flip]",
-            metadata={
-                "cw_flip": "true",
-                "path": "ATR Flip",
-                "atr_variant": "CW",
-                "atr_trail": f"{trail:.4f}" if trail is not None else "",
-                "bar_close": f"{cur.close:.4f}",
-                "bar_time_ms": str(cur.timestamp_ms),
-                "source": "schwab_1m_v2",
-                "strategy_version": STRATEGY_VERSION,
-            },
+            bar_time_ms=cur.timestamp_ms,
+            bar_close=float(cur.close),
+            atr_trail=trail,
+            decision_id=decision_id,
         )
+        self._atr_sell_observed_bar_by_symbol[state.symbol] = cur.timestamp_ms
+        self._pending_atr_sell_observations[decision_id] = observation
+        logger.info(
+            "[V2-ATR-SELL-OBSERVED] sym=%s decision_id=%s bar_time_ms=%d close=%.4f "
+            "trail=%s account=none quantity=none phase=%s",
+            state.symbol,
+            decision_id,
+            cur.timestamp_ms,
+            cur.close,
+            f"{trail:.4f}" if trail is not None else "none",
+            self._bar_observation_phase,
+        )
+        return observation
+
+    def pending_atr_sell_observations(self) -> list[ATRSellObservation]:
+        """Return queued observations without consuming them; delivery acknowledgement owns removal."""
+
+        return list(self._pending_atr_sell_observations.values())
+
+    def acknowledge_atr_sell_observation(self, decision_id: str) -> None:
+        self._pending_atr_sell_observations.pop(decision_id, None)
 
     @staticmethod
     def _cw_is_extended_hours(ts_ms: int) -> bool:
@@ -3992,7 +4011,8 @@ class SchwabV2Strategy:
                     arm_released,
                     cancel_requested,
                 )
-            return self._maybe_cw_flip_close(state, atr_signal)
+            self._observe_atr_sell(state, atr_signal)
+            return None
 
         # CW-v2: advance the intrabar-entry state machine (arm / flip+2 trigger / flip-level /
         # forming-bar-low reset) on every new bar, independent of flat/cooldown/warmup. No-op
@@ -4007,14 +4027,9 @@ class SchwabV2Strategy:
         # the live order. One resting order per symbol, always — see the method's docstring.
         self._cw_v2_reclaim_resting_track(state)
 
-        # Confirmed-window (variant CW) bar-close flip EXIT signal: when CW is on and we
-        # HOLD a position, a bar that closes below the ATR trail (flip == "SELL") is the
-        # trend exit. Emit a lightweight cw_flip CLOSE draft here (before the holding
-        # early-returns below); the bot service turns it into a `v2_cw_flip` signal the
-        # OMS executes through its managed-exit machinery (PR #3). OFF or flat = None.
-        cw_flip_draft = self._maybe_cw_flip_close(state, atr_signal)
-        if cw_flip_draft is not None:
-            return cw_flip_draft
+        # Observe the ATR transition before all entry-only holding/warmup gates. The observation
+        # carries no account and no quantity; the OMS binds it to each account's open managed row.
+        self._observe_atr_sell(state, atr_signal)
 
         # Bootstrap: need enough history for the slowest indicator chain
         # PLUS the settling allowance — see `macd_warmup_settling_bars`
@@ -4427,28 +4442,34 @@ class SchwabV2IntentEmitter:
         )
         return event.event_id
 
-    async def emit_cw_flip(self, symbol: str, bar_time_ms: str) -> None:
-        """Publish a lightweight `v2_cw_flip` signal (NOT a trade_intent) onto the same
-        strategy-intents stream the OMS consumes. The OMS binds the decision's bar identity
-        to the currently open managed row, then closes that exact row on the next quote via
-        its exit machinery. Carries no order fields because the OMS owns the close. Reuses
-        the wired stream + maxlen — no new channel."""
+    async def emit_atr_sell_observation(self, observation: ATRSellObservation) -> None:
+        """Publish an account-neutral ATR SELL observation, never an order instruction."""
         await self.redis.xadd(
             self.stream,
             {
                 "data": json.dumps(
                     {
-                        "event_type": "v2_cw_flip",
-                        "symbol": symbol,
-                        "broker_account_name": self.broker_account_name,
-                        "bar_time_ms": str(bar_time_ms),
+                        "event_type": "v2_atr_sell_observation",
+                        "symbol": observation.symbol,
+                        "bar_time_ms": str(observation.bar_time_ms),
+                        "bar_close": str(observation.bar_close),
+                        "atr_trail": (
+                            str(observation.atr_trail)
+                            if observation.atr_trail is not None
+                            else ""
+                        ),
+                        "decision_id": observation.decision_id,
                     }
                 )
             },
             maxlen=self.settings.redis_strategy_intent_stream_maxlen,
             approximate=True,
         )
-        logger.info("schwab_1m_v2 emitted v2_cw_flip signal symbol=%s", symbol)
+        logger.info(
+            "schwab_1m_v2 emitted ATR SELL observation symbol=%s decision_id=%s",
+            observation.symbol,
+            observation.decision_id,
+        )
 
     async def emit_confirmation_exit(self, evaluation) -> None:  # type: ignore[no-untyped-def]
         """Publish v2's canonical one-shot ATR evaluation; consumers never recompute it."""

@@ -19,6 +19,7 @@ from project_mai_tai.backtest.data import Quote as TapeQuote
 from project_mai_tai.backtest.data import SchwabBar
 from project_mai_tai.backtest.data import Trade as TapeTrade
 from project_mai_tai.backtest.replay import (
+    ReplayStrategy,
     _static_oco_first_touch,
     build_replay_settings,
     replay_symbol_day,
@@ -229,8 +230,9 @@ def test_static_oco_first_touch_unit_precedence() -> None:
 def test_static_oco_races_the_live_bar_close_flip() -> None:
     """REGRESSION (2026-07-26): the RTH exit must race the live software cw_flip close.
 
-    `schwab_1m_v2._maybe_cw_flip_close` fires whenever CW is on, we hold, and a bar CLOSES below the
-    ATR trail — and it has NO RTH gate, so it races the broker OCO in regular hours too. The replay
+    the strategy emits an account-neutral ATR SELL observation whenever CW is on and a bar closes
+    below the ATR trail. The OMS binds it to the open managed row, with no RTH gate, so it races the
+    broker OCO in regular hours too. The replay
     modelled only target/stop/bell, so SMCX 2026-07-22 (never reached +2%, never reached -5%) drifted
     to the bell at -2.81% when live would have flip-closed at 14:33. Operator caught it off a chart.
 
@@ -372,10 +374,8 @@ def test_mutation_floor_flag_flips_eh_exit_shape() -> None:
 
 # ------------------------------------------------------------------ EH bar-close ATR flip exit
 # Proves the "flip" exit_reason is reachable in the replay: after the EH entry, a bar-close SELL
-# flip while holding makes the REAL strategy emit a cw_flip CLOSE draft (`_maybe_cw_flip_close`) —
-# which is only reachable because its staleness clock now routes through the `_now_ms()` seam the
-# ReplayStrategy overrides (a behavior-identical live refactor). flip_pending -> cw_exit_decision
-# returns "flip" on the next bid.
+# flip makes the REAL strategy emit an account-neutral ATR observation. Replay binds that observation
+# to its modeled open row, and `flip_pending` makes cw_exit_decision return "flip" on the next bid.
 _EH_FLIP_TAIL = [
     (99.0, 99.1, 95.0, 95.2),  # 19  crash below the ATR trail -> SELL flip while holding
     (95.0, 95.1, 93.0, 93.2),  # 20
@@ -403,6 +403,28 @@ def test_eh_open_bar_close_atr_flip_exit() -> None:
     assert t.geometry == "eh_floor_ride"
     assert t.exit_reason == "flip"  # the bar-close ATR SELL flip closed it
     assert t.exit_px < t.entry_px  # closed at the (falling) bid, a trend exit
+
+
+def test_replay_atr_flip_is_bound_to_the_modeled_row_not_strategy_position(monkeypatch) -> None:
+    """C2: removing strategy position ownership must not remove the modeled managed-row exit."""
+
+    monkeypatch.setattr(ReplayStrategy, "update_position", lambda *_args, **_kwargs: None)
+    bars = _eh_bars()
+    for i, (o, h, lo, c) in enumerate(_EH_FLIP_TAIL, start=len(_EH_OHLC)):
+        ts_ms = int((EH_BASE + timedelta(minutes=i)).timestamp() * 1000)
+        bars.append(SchwabBar(ts=ts_ms, open=o, high=h, low=lo, close=c, volume=50_000))
+    quotes = _eh_quotes([(20, 99.5), (21, 99.0), (22, 98.5), (23, 98.0)])
+    settings = build_replay_settings(
+        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
+        oms_v2_cw_floor_exit_enabled=True,
+        oms_v2_cw_target_pct=2.0,
+        oms_v2_cw_hard_stop_pct=5.0,
+    )
+
+    result = replay_symbol_day(_MemSource(bars, quotes), SYM, DAY, settings)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_reason == "flip"
 
 
 # ------------------------------------------------------------------ EH overnight-flatten backstop

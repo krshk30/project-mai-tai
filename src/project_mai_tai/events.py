@@ -230,7 +230,7 @@ class StrategyStateSnapshotEvent(EventEnvelope):
 
     ⇒ The rule is snapshot-vs-event, not importance: importance is a judgement that drifts, the
     payload's shape can be CHECKED. Event-carrying streams (`strategy-intents` — trade intents and
-    `v2_cw_flip`; `order-events`) are the exposed ones; snapshot streams are safe by construction.
+    `v2_atr_sell_observation`; `order-events`) are the exposed ones; snapshot streams are safe by construction.
     """
 
     event_type: Literal["strategy_state_snapshot"] = "strategy_state_snapshot"

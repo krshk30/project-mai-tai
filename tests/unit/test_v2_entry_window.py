@@ -41,13 +41,9 @@ def _open_draft(symbol: str = "SUNE") -> TradeIntentDraft:
 class _RecordingEmitter:
     def __init__(self) -> None:
         self.emitted: list = []
-        self.cw_flips: list = []
 
     async def emit(self, draft) -> None:
         self.emitted.append(draft)
-
-    async def emit_cw_flip(self, symbol, bar_time_ms) -> None:
-        self.cw_flips.append((symbol, bar_time_ms))
 
 
 # --- _within_entry_window boundaries (default 7:00–16:00 ET) ---
@@ -136,9 +132,10 @@ async def test_maybe_emit_allows_open_inside_window(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_maybe_emit_cw_flip_exit_not_gated(monkeypatch) -> None:
-    """A cw_flip CLOSE draft is an EXIT — it must publish even outside the entry
-    window (the window only caps entries)."""
+async def test_legacy_cw_flip_close_draft_emits_nothing_after_observation_replaces_it(
+    monkeypatch,
+) -> None:
+    """The retired close draft must not run beside the account-neutral observation."""
     svc = _svc()
     svc.intent_emitter = _RecordingEmitter()
     monkeypatch.setattr(svc, "_within_entry_window", lambda now: False)  # outside window
@@ -150,6 +147,6 @@ async def test_maybe_emit_cw_flip_exit_not_gated(monkeypatch) -> None:
         reason="schwab_1m_v2 CW flip",
         metadata={"cw_flip": "true", "bar_time_ms": "123"},
     )
-    await svc._maybe_emit(close_draft)
-    assert svc.intent_emitter.cw_flips == [("SUNE", "123")]
+    result = await svc._maybe_emit(close_draft)
+    assert result == "dropped_retired_legacy_exit"
     assert svc.intent_emitter.emitted == []

@@ -248,7 +248,7 @@ def test_a_real_BUY_flip_arms_before_close_and_is_blocked_after_close(monkeypatc
     assert "[V2-POST-CLOSE-ENTRY-BLOCKED] AFTER evaluated=1 blocked=1" in caplog.text
 
 
-def test_a_held_position_still_emits_its_SELL_exit_after_close(monkeypatch) -> None:
+def test_a_held_position_still_observes_its_SELL_exit_after_close(monkeypatch) -> None:
     strat = _strategy()
     state = _arm(strat, "HELD", qty=1, held=1)
     after_at = datetime(2026, 8, 26, 16, 2, tzinfo=ET)
@@ -262,7 +262,9 @@ def test_a_held_position_still_emits_its_SELL_exit_after_close(monkeypatch) -> N
 
     draft = strat._evaluate_completed_bar(state, is_new_bar=True)
 
-    assert draft is not None and draft.intent_type == "close" and draft.side == "sell"
+    assert draft is None
+    observations = strat.pending_atr_sell_observations()
+    assert len(observations) == 1 and observations[0].symbol == "HELD"
     assert state.cw_armed is False
     assert state.position_qty_held == 1
 
@@ -374,9 +376,8 @@ def test_NO_AFTER_HOURS_EXIT_PATH_READS_cw_armed() -> None:
     B20 is only safe because releasing the arm cannot disarm an EXIT. Verified before building:
 
       * the software exit ladder arms off `OmsService._cw_floor_armed`, not `state.cw_armed`;
-      * `_maybe_cw_flip_close` — the bar-close ATR exit that has NO RTH gate, and therefore the one
-        exit genuinely live past 16:00 — gates on `_cw_enabled`, `position_qty > 0` and
-        `flip == "SELL"`.
+      * `_observe_atr_sell` — the account-neutral bar-close ATR observation that has NO RTH gate
+        and remains live past 16:00 — never reads `cw_armed`.
 
     If a future exit path starts reading `cw_armed`, THIS is the test that should fail first, and
     B20 must be re-argued before it ships again.
@@ -385,9 +386,9 @@ def test_NO_AFTER_HOURS_EXIT_PATH_READS_cw_armed() -> None:
 
     from project_mai_tai.exit_logic import cw_exit
 
-    src = inspect.getsource(SchwabV2Strategy._maybe_cw_flip_close)
+    src = inspect.getsource(SchwabV2Strategy._observe_atr_sell)
     assert "cw_armed" not in src, (
-        "_maybe_cw_flip_close now reads cw_armed — B20 releases that flag after 16:00 and would "
+        "_observe_atr_sell now reads cw_armed — B20 releases that flag after 16:00 and would "
         "disarm this exit for a position held past the bell"
     )
     assert "cw_armed" not in inspect.getsource(cw_exit), (

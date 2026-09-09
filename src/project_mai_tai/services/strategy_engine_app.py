@@ -7080,7 +7080,7 @@ class StrategyEngineService:
             await self._publish_strategy_state_snapshot()
             return
 
-        if event_type == "v2_cw_flip":
+        if event_type == "v2_atr_sell_observation":
             symbol = str(payload.get("symbol", "")).strip().upper()
             if symbol and self.paper_exit_runtime is not None:
                 try:
