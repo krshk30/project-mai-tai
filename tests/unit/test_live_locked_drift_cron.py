@@ -54,9 +54,14 @@ class _Harness:
         self.audit_rc.write_text("1", encoding="utf-8")
         # ⛔ The stub records EVERY invocation, so "silence" is provable as an absent attempt
         # rather than merely an absent log line.
+        self.payloads = tmp_path / "curl-payloads"
         _write_executable(
             self.bin / "curl",
             '#!/usr/bin/env bash\nprintf "call\\n" >> "$FAKE_CURL_ATTEMPTS"\n'
+            '# ⛔ Record the full argv so a test can assert what the operator would actually READ,\n'
+            '# not merely that a send was attempted. A delivery count cannot catch a page whose\n'
+            '# prose contradicts its own report.\n'
+            'printf "%s\\n---ARGV-END---\\n" "$*" >> "$FAKE_CURL_PAYLOADS"\n'
             'exit "$(cat "$FAKE_CURL_RC")"\n',
         )
         _write_executable(
@@ -66,7 +71,7 @@ class _Harness:
         )
         self.python = tmp_path / "fake_audit_python"
 
-    def run(self, *, audit_rc: int | None = None, curl_rc: int | None = None) -> subprocess.CompletedProcess:
+    def run(self, *, audit_rc: int | None = None, curl_rc: int | None = None, selftest: bool = False) -> subprocess.CompletedProcess:
         if audit_rc is not None:
             self.audit_rc.write_text(str(audit_rc), encoding="utf-8")
         if curl_rc is not None:
@@ -80,12 +85,14 @@ class _Harness:
                 "DRIFT1_PYTHON": str(self.python),
                 "DRIFT1_NTFY_URL": self.ntfy_url,
                 "FAKE_CURL_ATTEMPTS": str(self.attempts),
+                "FAKE_CURL_PAYLOADS": str(self.payloads),
                 "FAKE_CURL_RC": str(self.curl_rc),
                 "FAKE_AUDIT_RC": str(self.audit_rc),
             }
         )
+        argv = [str(BASH), str(WRAPPER)] + (["--selftest"] if selftest else [])
         return subprocess.run(
-            [str(BASH), str(WRAPPER)],
+            argv,
             cwd=ROOT, env=env, capture_output=True, text=True, timeout=60, check=False,
         )
 
@@ -99,6 +106,14 @@ class _Harness:
     def state(self) -> tuple[str, int]:
         status, last_alert = (self.out / "state").read_text(encoding="utf-8").split()
         return status, int(last_alert)
+
+    @property
+    def sent_messages(self) -> list[str]:
+        """Every curl argv, i.e. exactly what the operator's phone would render."""
+        if not self.payloads.exists():
+            return []
+        raw = self.payloads.read_text(encoding="utf-8")
+        return [m.strip() for m in raw.split("---ARGV-END---") if m.strip()]
 
     @property
     def alert_log(self) -> str:
@@ -241,3 +256,101 @@ def test_the_delivery_flags_are_present_and_no_failure_is_swallowed() -> None:
     assert not any("send_ntfy" in ln and "|| true" in ln for ln in code)
     joined = "\n".join(code)
     assert "CURL_RC" in joined and "DELIVERY_RC" in joined, "the exit code must be captured, not dropped"
+
+
+# ---------------------------------------------------------------------------
+# ⛔⭐⭐ THE PAGE MUST NOT CONTRADICT THE REPORT IT QUOTES.
+#
+# Found by the operator READING a real selftest push (2026-09-09): the page said "Production is not
+# running the configuration the replay mirror describes" directly above this script's own
+# "No drift: every env-set flag matches the mirror".
+#
+# ⛔ These assert MESSAGE CONTENT. The delivery-count controls above all passed while the
+# contradiction shipped, because a count cannot see what the message says.
+# ---------------------------------------------------------------------------
+
+_DRIFT_CLAIM = "Production is not running the configuration the replay mirror describes"
+
+
+def test_a_clean_selftest_identifies_itself_as_a_DELIVERY_TEST(tmp_path: Path) -> None:
+    """A selftest of a GREEN box must not assert drift, and must not wear the RED title."""
+    h = _Harness(tmp_path)
+    h.run(audit_rc=0, curl_rc=0, selftest=True)
+    assert h.attempt_count == 1
+    (message,) = h.sent_messages
+    # ⛔ Assert on the Title HEADER, not a bare substring: the clean-selftest body legitimately
+    # names the real alert ("A real drift alert is titled 'RED live config drift'") so a naive
+    # `not in message` check fails on the very sentence that makes the page unambiguous.
+    assert "Title: SELFTEST live-config watch delivery" in message
+    assert "DELIVERY-PATH TEST - THIS IS NOT A DRIFT ALERT" in message
+    assert "NO ACTION IS REQUIRED" in message
+    assert _DRIFT_CLAIM not in message, "a clean audit must never be described as drifted"
+    assert "Title: RED live config drift" not in message
+
+
+def test_a_REAL_red_keeps_the_drift_wording_and_the_urgent_title(tmp_path: Path) -> None:
+    """⛔ PINS THE OTHER DIRECTION. Softening a genuine RED would be the worse failure: the whole
+    point of this watchdog is that a real drift reads as an emergency."""
+    h = _Harness(tmp_path)
+    h.run(audit_rc=1, curl_rc=0)
+    (message,) = h.sent_messages
+    assert "Title: RED live config drift" in message
+    assert "Priority: urgent" in message
+    assert _DRIFT_CLAIM in message
+    assert "DELIVERY-PATH TEST" not in message
+
+
+def test_a_selftest_of_a_GENUINELY_red_box_keeps_the_red_wording(tmp_path: Path) -> None:
+    """⛔ The discriminator is the MEASURED LEVEL, not the selftest flag. If the box really is
+    drifted, a rehearsal of the delivery path must still say so — suppressing the interpretation
+    there would be the same contradiction pointing the other way."""
+    h = _Harness(tmp_path)
+    h.run(audit_rc=1, curl_rc=0, selftest=True)
+    (message,) = h.sent_messages
+    assert "[SELFTEST]" in message
+    assert "Title: RED live config drift" in message
+    assert _DRIFT_CLAIM in message
+    assert "THIS IS NOT A DRIFT ALERT" not in message
+
+
+def test_CANNOT_SEE_keeps_its_own_wording(tmp_path: Path) -> None:
+    """A refusal to measure is neither clean nor drifted; it must stay distinguishable from both."""
+    h = _Harness(tmp_path)
+    h.run(audit_rc=2, curl_rc=0)
+    (message,) = h.sent_messages
+    assert "Title: AMBER live-locked audit CANNOT SEE" in message
+    assert "DELIVERY-PATH TEST" not in message
+
+
+def test_CANNOT_SEE_must_NOT_receive_the_RED_BODY(tmp_path: Path) -> None:
+    """⛔⭐⭐ THE CONTROL codex-2 ASKED FOR (#927). CANNOT_SEE means the audit could not READ the
+    configuration — it measured nothing. Sending the RED body would assert a drift nobody measured
+    and prescribe restoring an env line and restarting services on the strength of it.
+
+    This fails if the RED body ever reaches the CANNOT_SEE branch. It is the same defect as the
+    clean-selftest one, in the sibling branch I fixed around and left behind."""
+    h = _Harness(tmp_path)
+    h.run(audit_rc=2, curl_rc=0)
+    (message,) = h.sent_messages
+
+    # It must NOT assert drift...
+    assert _DRIFT_CLAIM not in message
+    # ...nor prescribe the RED remedy.
+    assert "Restore the env line" not in message
+    assert "restart the affected service" not in message
+    assert "Title: RED live config drift" not in message
+
+    # It must say plainly that nothing was determined, and refuse both false readings.
+    assert "COULD NOT DETERMINE THE CONFIGURATION STATE" in message
+    assert "This is NOT a drift report" in message
+    assert "UNKNOWN is not PASS" in message
+
+
+def test_a_selftest_of_a_CANNOT_SEE_box_still_says_it_could_not_see(tmp_path: Path) -> None:
+    """The discriminator stays the measured level, not the flag — as with the RED branch."""
+    h = _Harness(tmp_path)
+    h.run(audit_rc=2, curl_rc=0, selftest=True)
+    (message,) = h.sent_messages
+    assert "[SELFTEST]" in message
+    assert "COULD NOT DETERMINE THE CONFIGURATION STATE" in message
+    assert _DRIFT_CLAIM not in message

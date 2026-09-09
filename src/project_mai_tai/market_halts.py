@@ -6,8 +6,61 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+from project_mai_tai.strategy_core.time_utils import EASTERN_TZ, US_MARKET_HOLIDAYS
+
 HALT_MIN_PRINT_GAP = timedelta(seconds=285)
 HALT_MIN_QUOTE_UPDATES = 2
+
+# ET extended session, 04:00-20:00 on weekdays that are not full-closure holidays.
+_ET = EASTERN_TZ
+_SESSION_OPEN_MIN = 4 * 60
+_SESSION_CLOSE_MIN = 20 * 60
+
+
+def _in_extended_session(at: datetime) -> bool:
+    """Is this instant inside a session the market is actually OPEN for?
+
+    ⛔⭐⭐ THE HOLIDAY TERM IS LOAD-BEARING (codex-2, #927). The first version excluded weekends
+    and nothing else, so a gap lying ENTIRELY WITHIN a full-closure holiday — both ends on the same
+    weekday date, both between 04:00 and 20:00 — passed every test and read as one continuous
+    session. A quiet Thanksgiving would have confirmed as a halt on the same arithmetic as the
+    overnight SUNE artefact this whole guard exists to stop.
+
+    ⛔ The list is the SHARED `US_MARKET_HOLIDAYS`, imported, never re-declared here. Its own
+    comment says it must be rolled forward yearly or "window checks silently treat an un-listed
+    holiday as a normal trading day" — that is exactly this defect, and a second private copy would
+    rot independently and reintroduce it.
+    """
+    et = _utc(at).astimezone(_ET)
+    if et.weekday() >= 5:
+        return False
+    if et.date() in US_MARKET_HOLIDAYS:
+        return False
+    return _SESSION_OPEN_MIN <= et.hour * 60 + et.minute < _SESSION_CLOSE_MIN
+
+
+def session_is_continuous(a: datetime, b: datetime) -> bool:
+    """Did the market stay OPEN across the whole span from `a` to `b`?
+
+    ⛔⭐⭐ WHY THIS EXISTS (2026-09-09). `halt_is_confirmed` asks only "has enough time passed with
+    quotes still arriving?" — it has no session term. Overnight, quotes keep flowing while no
+    trading occurs, so an ~8-hour MARKET CLOSURE satisfies the rule exactly as a halt does. Live
+    v2 confirmed a halt on SUNE at 03:59 ET against a last print of 19:59:58 ET the previous
+    evening. Nothing was held and no decision was gated, but it paged the operator as the first
+    real halt ever seen, which spent a once-only alarm on an artefact.
+
+    ⛔ A time-of-day test is NOT sufficient. The gap accumulates while the market is shut and then
+    confirms on the FIRST quote of the new session, which can arrive at 04:01 ET — inside any "is
+    it session hours now" window. Both ends must lie in one continuous session.
+
+    ⭐ The precedent already existed elsewhere: strategy_engine_app's symbol-health monitor refuses
+    to call a flat symbol halted after trading hours (test_schwab_after_hours_stale_halt.py). That
+    guard was simply never applied to this module.
+    """
+    a_utc, b_utc = _utc(a), _utc(b)
+    if not (_in_extended_session(a_utc) and _in_extended_session(b_utc)):
+        return False
+    return a_utc.astimezone(_ET).date() == b_utc.astimezone(_ET).date()
 
 
 def _utc(value: datetime) -> datetime:
@@ -68,16 +121,47 @@ class HaltQuoteObservation:
 
 
 class LiveHaltTracker:
-    """Classify a print gap incrementally without pretending its end is known."""
+    """Classify a print gap incrementally without pretending its end is known.
 
-    def __init__(self) -> None:
+    ⛔⭐⭐ `require_continuous_session` DEFAULTS TO FALSE ON PURPOSE. This module's own docstring
+    calls it "the one halt definition used by historical and live consumers", and the other
+    consumers are research surfaces — `paper_exit.py`, `scripts/actual_resting_operator_rule.py`,
+    `scripts/orb_exit_ladder_comparison.py`, `scripts/orb_raw_price_walk.py`. Turning the guard on
+    for all of them in one step would silently move historical halt windows and every result
+    derived from them, including the live PEX1 measurement. Default-off keeps every existing caller
+    byte-identical; the LIVE detector opts in. Widening it to the research path is a separate,
+    MEASURED decision, not a side effect of this fix.
+    """
+
+    def __init__(self, *, require_continuous_session: bool = False) -> None:
         self.last_print_at: datetime | None = None
+        self.quote_updates = 0
+        self.confirmed = False
+        self.require_continuous_session = require_continuous_session
+
+    def _reset_episode(self) -> None:
+        """End the current halt episode. ⛔ ONE place, deliberately: the confirm path and the close
+        path both end an episode, and this defect existed because they reset it separately."""
         self.quote_updates = 0
         self.confirmed = False
 
     def observe_quote(self, observed_at: datetime) -> HaltQuoteObservation:
         at = _utc(observed_at)
         if self.last_print_at is None or at <= self.last_print_at:
+            return HaltQuoteObservation("UNKNOWN", False, self.last_print_at, self.quote_updates)
+        if self.require_continuous_session and not session_is_continuous(self.last_print_at, at):
+            # ⛔⭐⭐ THE BOUNDARY ENDS THE EPISODE. It does not merely decline to judge it.
+            #
+            # The first version returned UNKNOWN and left `confirmed` / `quote_updates` untouched,
+            # reasoning that an overnight gap must not ACCUMULATE evidence. That was half the
+            # problem. The other half is that evidence from the PREVIOUS session must not SURVIVE:
+            # after a genuine intraday confirmation, a next-day quote returned UNKNOWN while
+            # `confirmed` stayed True, and `_sync_halt_data_health` reads that retained flag — so
+            # the symbol kept being reported as currently halted into a new session. (codex-2, #927)
+            #
+            # A halt episode is bounded by the session it happened in. Once the session ends, the
+            # episode is over whatever its state was: reset it and report UNKNOWN.
+            self._reset_episode()
             return HaltQuoteObservation("UNKNOWN", False, self.last_print_at, self.quote_updates)
         self.quote_updates += 1
         was_confirmed = self.confirmed
@@ -97,16 +181,26 @@ class LiveHaltTracker:
         at = _utc(observed_at)
         if self.last_print_at is not None and at <= self.last_print_at:
             return None
+        # ⛔⭐⭐ THE SAME SESSION REFUSAL APPLIES TO THE PRINT THAT CLOSES THE SPAN.
+        # The guard was originally only in `observe_quote`, so the print ENDING an overnight gap
+        # still ran through the unguarded `confirmed_halt_window` and produced a HaltWindow across
+        # the closure — quotes at 19:59 ET plus the first print at 04:01 ET next day returned an
+        # overnight halt. Confirming and CLOSING are two halves of one episode; a boundary that
+        # refuses one must refuse the other. (codex-2, #927)
+        spans_closure = (
+            self.require_continuous_session
+            and self.last_print_at is not None
+            and not session_is_continuous(self.last_print_at, at)
+        )
         window = (
             confirmed_halt_window(
                 last_print_at=self.last_print_at,
                 reopen_print_at=at,
                 quote_updates=self.quote_updates,
             )
-            if self.last_print_at is not None
+            if self.last_print_at is not None and not spans_closure
             else None
         )
         self.last_print_at = at
-        self.quote_updates = 0
-        self.confirmed = False
+        self._reset_episode()
         return window

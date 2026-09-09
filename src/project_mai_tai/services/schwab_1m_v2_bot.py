@@ -3341,7 +3341,11 @@ class SchwabV2BotService:
 
     def _observe_halt_from_quote(self, symbol: str, quote: Quote) -> None:
         normalized = str(symbol).upper()
-        tracker = self._halt_trackers.setdefault(normalized, LiveHaltTracker())
+        # ⛔ The LIVE detector opts in to the session guard; research consumers keep the
+        # historical definition until that widening is measured separately.
+        tracker = self._halt_trackers.setdefault(
+            normalized, LiveHaltTracker(require_continuous_session=True)
+        )
         trade_time_ms = int(quote.trade_time_ms or 0)
         trade_time = self._halt_observation_time(trade_time_ms)
         if trade_time is not None:
