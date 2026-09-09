@@ -148,6 +148,8 @@ def test_ftft_flip_consumes_the_first_entry_until_the_next_sell_flip() -> None:
     state, opportunity = _place_first(strategy, clock, "FTFT")
 
     strategy.update_position("FTFT", 2, held_qty=2)
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+    assert not state.resting_active
     _book(strategy, clock, "FTFT", _leg(PRIMARY, "ftft-primary"))
     _buy_flip(strategy, state, clock)
     assert state.flip_owner_phase == "bound"
@@ -157,8 +159,28 @@ def test_ftft_flip_consumes_the_first_entry_until_the_next_sell_flip() -> None:
     assert state.flip_owner_phase == "bound"
     assert state.flip_owner_opportunity_id == opportunity
 
+    state.cw_bars_waited = 2
+    state.cw_segment_high = 3.0
+    placements: list[str] = []
+    original_place = strategy._queue_resting_place
+
+    def record_place(
+        target: SymbolState, line: float, *, slot: str = "first"
+    ) -> None:
+        placements.append(slot)
+        original_place(target, line, slot=slot)
+
+    strategy._queue_resting_place = record_place
     strategy._cw_v2_reclaim_resting_track(state)
+    assert placements == ["reclaim"], "the live reclaim producer must reach admission"
     assert strategy.drain_pending_intents() == []
+
+    # The durable owner remains load-bearing even if the legacy first-slot bit is lost.
+    state.cw_resting_taken = False
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+    assert placements == ["reclaim", "first"]
+    assert strategy.drain_pending_intents() == []
+
     quote = Quote("FTFT", 3.09, 3.11, 3.10, clock[0], 0)
     assert strategy._cw_v2_quote(state, quote) is None
 
@@ -308,6 +330,39 @@ def test_unknown_or_stale_position_evidence_refuses_a_first_rest() -> None:
     counts = strategy.flip_entry_observability()
     assert counts["admission_evaluated"] == 2
     assert counts["admission_refused_unknown"] == 2
+
+
+def test_unreadable_restore_refuses_first_rest_through_live_producer() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    strategy.configure_flip_entry_ownership(
+        lambda *_args: None,
+        restore_readable=False,
+    )
+    state = strategy.watchlist_state("BLINDREST")
+    state.bars.append(_bar(clock[0]))
+    _book(strategy, clock, "BLINDREST")
+
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+
+    assert strategy.drain_pending_intents() == []
+    counts = strategy.flip_entry_observability()
+    assert counts["admission_evaluated"] == 1
+    assert counts["admission_refused_unknown"] == 1
+
+
+def test_open_position_evidence_refuses_first_rest_through_live_producer() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = strategy.watchlist_state("OPENREST")
+    state.bars.append(_bar(clock[0]))
+    _book(strategy, clock, "OPENREST")
+    state.flip_owner_open_positions = {PRIMARY: _leg(PRIMARY, "open-rest-row")}
+
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+
+    assert strategy.drain_pending_intents() == []
+    counts = strategy.flip_entry_observability()
+    assert counts["admission_evaluated"] == 1
+    assert counts["admission_refused_unknown"] == 1
 
 
 def test_replaced_managed_row_fails_closed() -> None:
@@ -504,13 +559,22 @@ def test_strict_mode_disables_the_rested_reclaim_producer() -> None:
     strategy, clock, _identity_writes, _owner_writes = _strategy()
     state = _reclaim_ready_state(strategy, clock)
     placements: list[str] = []
-    strategy._queue_resting_place = (
-        lambda _state, _line, *, slot="first": placements.append(slot)
-    )
+    original_place = strategy._queue_resting_place
+
+    def record_place(
+        target: SymbolState, line: float, *, slot: str = "first"
+    ) -> None:
+        placements.append(slot)
+        original_place(target, line, slot=slot)
+
+    strategy._queue_resting_place = record_place
 
     strategy._cw_v2_reclaim_resting_track(state)
 
-    assert placements == []
+    assert placements == ["reclaim"]
+    assert strategy.drain_pending_intents() == []
+    counts = strategy.flip_entry_observability()
+    assert counts["admission_evaluated"] == 1
 
 
 def test_strict_mode_disables_the_reactive_reclaim_producer() -> None:

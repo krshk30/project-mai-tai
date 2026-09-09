@@ -3974,7 +3974,9 @@ class SchwabV2Strategy:
         if self._flip_owned_first_entry_enabled:
             if state.resting_active and state.resting_slot == "reclaim":
                 self._queue_resting_cancel(state, reason="flip_owned_first_only")
-            return
+            # Continue to the normal producer boundary so the centralized admission
+            # gate records and refuses the reclaim itself. Returning here made the
+            # non-first refusal unreachable and its control vacuous.
         if not (self._reactive_entry_enabled and self._cw_v2_enabled):
             return
         if self._entries_held:                       # boot-hold suppresses all entries
