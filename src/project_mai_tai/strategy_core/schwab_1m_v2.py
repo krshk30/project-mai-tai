@@ -4370,10 +4370,10 @@ class SchwabV2IntentEmitter:
 
     async def emit_cw_flip(self, symbol: str, bar_time_ms: str) -> None:
         """Publish a lightweight `v2_cw_flip` signal (NOT a trade_intent) onto the same
-        strategy-intents stream the OMS consumes. The OMS marks the symbol pending and
-        closes the managed row on the next quote via its exit machinery (PR #3). Carries
-        only what the OMS needs to key the pending set; no order fields (the OMS owns the
-        close). Reuses the wired stream + maxlen — no new channel."""
+        strategy-intents stream the OMS consumes. The OMS binds the decision's bar identity
+        to the currently open managed row, then closes that exact row on the next quote via
+        its exit machinery. Carries no order fields because the OMS owns the close. Reuses
+        the wired stream + maxlen — no new channel."""
         await self.redis.xadd(
             self.stream,
             {
