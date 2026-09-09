@@ -221,3 +221,46 @@ def test_manual_orb_intent_is_refused_by_oms_before_any_dependency_is_touched(
     )
 
     assert asyncio.run(service.process_trade_intent(event)) == []
+
+
+def test_the_paper_account_LABEL_itself_is_pinned_not_just_its_symbol() -> None:
+    """⛔⭐⭐ ORBLBL — the gap that sat open three days (2026-09-06 -> 09-09).
+
+    Every other assertion in this file compares `registration.account_name` against the SYMBOL
+    `ORB_PAPER_ACCOUNT_NAME`. Both sides move together, so renaming the VALUE turns nothing red:
+
+        ORB_PAPER_ACCOUNT_NAME = "paper:orb"   ->   "live:orb"     # whole file still green
+
+    That is a check that cannot come out false. It was correctly sized as a LABELLING risk and not
+    a reachability one - `orb_paper_store` imports no broker adapter, so a rename cannot conjure a
+    broker route - but the label is not cosmetic:
+
+      * `live:orb` is a REAL Webull margin account. It is the account v2's dual-broker fan-out
+        routes every Webull leg through, and `MAI_TAI_ORB_ENABLED` stays true precisely so that
+        account keeps existing. A paper label colliding with it would make the observer's modeled
+        decisions indistinguishable from real-money fan-out fills in the durable record.
+      * Reading `live:orb` fills as ORB activity has already happened once (2026-07-29) and cost a
+        wrong report that ORB was live when it had not run for six days.
+
+    So the literal is pinned here, and the `paper:` prefix with it.
+    """
+    assert ORB_PAPER_ACCOUNT_NAME == "paper:orb"
+    assert ORB_PAPER_ACCOUNT_NAME.startswith("paper:")
+    assert ORB_PAPER_ACCOUNT_NAME != "live:orb"
+    assert not ORB_PAPER_ACCOUNT_NAME.startswith("live:")
+
+
+def test_the_registration_carries_the_literal_paper_label_end_to_end() -> None:
+    """The same pin one layer out: a rename must also turn the REGISTRATION red, not just the
+    constant. Hostile broker settings, exactly as the parametrised test above supplies them."""
+    settings = Settings(
+        orb_enabled=True,
+        orb_broker_account_name="live:orb",
+        orb_broker_provider="webull",
+        webull_account_id="WB-LIVE",
+    )
+    registration = strategy_registration_map(settings)["orb"]
+    assert registration.account_name == "paper:orb"
+    assert all(
+        item.name != "paper:orb" for item in configured_broker_account_registrations(settings)
+    ), "the paper label must never become a configured BROKER account"

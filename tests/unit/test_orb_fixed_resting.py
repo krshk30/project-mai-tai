@@ -197,14 +197,27 @@ def test_adjustment_refuses_price_evidence_from_before_the_0930_close() -> None:
     assert order.current_level == 10.50
     assert order.adjusted_at is None
     assert order.adjustment_outcome == "UNANSWERABLE_ADJUSTMENT_TIMING"
-    assert order.decision_blocked is True
+    assert order.adjustment_unanswerable is True
     assert state.adjustment_unanswerable == 1
     event = service._pending_paper_entries[-1]
     assert event.event_type == ORB_PAPER_ORDER_UNANSWERABLE_EVENT_TYPE
     assert event.detail["quote_at"] == state.latest_quote_at.isoformat()
 
 
-def test_unproven_adjustment_is_recorded_and_neither_left_nor_pulled() -> None:
+def test_unanswerable_adjustment_LEAVES_the_0929_order_working() -> None:
+    """⛔⭐⭐ OPERATOR RULING 2026-09-09 — LEFT.
+
+    #915 deliberately implemented neither default and BLOCKED further modeled fills while the
+    question was open; this test previously asserted `filled_at is None` with the message "an
+    unresolved leave-or-pull decision must not pick a default". The operator has now picked:
+
+        "Place early so something is always working. Pulling it removes the very thing you placed
+         early for - and you'd miss the trade for a timing detail. And the downside is small.
+         You'd fill at the 9:29 level instead of the final one."
+
+    So the order stays working AT THE 09:29 LEVEL and is allowed to fill there. The unanswerable
+    event is still written every time, so the denominator keeps accruing.
+    """
     service = _service()
     _seed_initial_level(service)
     open_at = service._session_open_utc()
@@ -224,15 +237,80 @@ def test_unproven_adjustment_is_recorded_and_neither_left_nor_pulled() -> None:
     assert order is not None
     assert order.current_level == 10.50
     assert order.adjusted_at is None
-    assert order.decision_blocked is True
+    assert order.adjustment_unanswerable is True
     assert state.adjustment_unanswerable == 1
     event = service._pending_paper_entries[-1]
     assert event.event_type == ORB_PAPER_ORDER_UNANSWERABLE_EVENT_TYPE
     assert event.detail["status"] == "UNANSWERABLE"
     assert event.detail["reason"] == "HIGHER_09:30_HIGH_BUT_ADJUSTMENT_NOT_PROVEN_IN_TIME"
 
+    # ⛔ THE RULING. Before today this returned early on `decision_blocked` and filled nothing.
     service._check_fixed_resting_fill("FOO", 12.00, open_at + timedelta(minutes=2))
-    assert order.filled_at is None, "an unresolved leave-or-pull decision must not pick a default"
+    assert order.filled_at is not None, "LEFT means the 09:29 order stays working and may fill"
+
+    # ⛔⭐ AT THE 09:29 LEVEL, NOT THE FINAL ONE. This is the accepted cost of the ruling, and the
+    # single number that would make it wrong if it drifted. final_level here is 10.80.
+    assert order.fill_price == 10.50
+    assert order.current_level == 10.50
+    assert order.adjusted_at is None
+
+    fill = service._pending_paper_entries[-1]
+    assert fill.detail["reason"] == (
+        "INTRABAR_BREAK_OF_RETAINED_09:29_LEVEL_AFTER_UNANSWERABLE_TIMING"
+    ), "the LEFT population must be identifiable in the durable record, not just inferable"
+    assert fill.detail["level_derivation"] == "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET"
+
+
+def test_a_price_below_the_retained_level_still_does_NOT_fill() -> None:
+    """PINS THE OTHER DIRECTION. LEFT loosens one gate; it must not turn the order into a
+    fill-anything. A trade at or under the retained level is still no fill."""
+    service = _service()
+    _seed_initial_level(service)
+    open_at = service._session_open_utc()
+    state = service._states["FOO"]
+    state.latest_bid = 10.84
+    state.latest_ask = 10.86
+    state.latest_quote_at = open_at + timedelta(minutes=1, milliseconds=100)
+    service._on_bar(
+        "FOO",
+        _bar(service, 0, high=10.80, close=10.70),
+        observed_at=state.latest_quote_at,
+        observed_price=10.85,
+    )
+    order = state.resting_order
+    assert order is not None and order.adjustment_unanswerable is True
+
+    service._check_fixed_resting_fill("FOO", 10.50, open_at + timedelta(minutes=2))
+    assert order.filled_at is None, "a trade AT the level is not a break of it"
+
+
+def test_the_heartbeat_counts_the_population_where_LEFT_and_PULLED_DIFFER() -> None:
+    """⛔ NAME THE DENOMINATOR. LEFT and PULLED differ on exactly one population: unanswerable
+    orders that then filled at the retained level. Under PULLED each would have been a missed
+    trade. Counting it is what keeps the ruling reviewable rather than permanent by default."""
+    service = _service()
+    _seed_initial_level(service)
+    open_at = service._session_open_utc()
+    state = service._states["FOO"]
+    state.latest_bid = 10.84
+    state.latest_ask = 10.86
+    state.latest_quote_at = open_at + timedelta(minutes=1, milliseconds=100)
+    service._on_bar(
+        "FOO",
+        _bar(service, 0, high=10.80, close=10.70),
+        observed_at=state.latest_quote_at,
+        observed_price=10.85,
+    )
+
+    timing = service._build_heartbeat_payload().data_health["resting_adjustment_timing"]
+    assert timing["unanswerable"] == 1
+    assert timing["left_fills_at_retained_level"] == 0, "unanswerable but unfilled is not the population"
+
+    service._check_fixed_resting_fill("FOO", 12.00, open_at + timedelta(minutes=2))
+    timing = service._build_heartbeat_payload().data_health["resting_adjustment_timing"]
+    assert timing["left_fills_at_retained_level"] == 1
+    assert timing["ruling"].startswith("LEFT")
+    assert timing["status"] == "MEASURED"
 
 
 def test_no_0930_trade_bar_finalizes_the_level_instead_of_hanging() -> None:
@@ -316,6 +394,8 @@ def test_adjustment_metric_uses_real_denominator_and_zero_is_unexercised() -> No
         "filled_before_adjustment": 0,
         "modeled_adjustments_landed": 0,
         "unanswerable": 0,
+        "left_fills_at_retained_level": 0,
+        "ruling": "LEFT (operator 2026-09-09)",
         "denominator": 0,
     }
 
@@ -329,5 +409,7 @@ def test_adjustment_metric_uses_real_denominator_and_zero_is_unexercised() -> No
         "filled_before_adjustment": 0,
         "modeled_adjustments_landed": 0,
         "unanswerable": 1,
+        "left_fills_at_retained_level": 0,
+        "ruling": "LEFT (operator 2026-09-09)",
         "denominator": 1,
     }
