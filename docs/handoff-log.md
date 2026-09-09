@@ -117,6 +117,50 @@ files that call it **transitively**; `test_daily_sheet.py` never names it. The f
 summary is accurate about what I ran and wrong about what that covered. The corrected call-graph
 population is stated in the `4bcfee06` record. ⭐ *A grep for a symbol is not a call graph.*
 
+### Late — #923 bound a flip decision to the position that made it
+
+`codex-2` traced a class the census could only partly see: **a pending CW ATR-flip decision carried
+only account and symbol.** NUR proved it live, and I confirmed the whole chain on the box rather
+than from the PR text: the flip armed both legs at **12:34:02 ET while both accounts were FLAT**
+(the prior NUR rows had closed at 12:06:18), new rows opened at **13:29:45/46**, and the `CW_FLIP`
+exits fired at **13:29:47 and 13:29:50** — **1 to 4 seconds after the new positions opened, from a
+decision 55 minutes old.**
+
+Fixed in **#923** by binding each accepted decision to its source `bar_time_ms` and
+`OmsManagedPosition.id`, refusing an absent or replacement row, and expiring after 180s.
+
+⭐ **The mutation that mattered most was the one nobody asked for.** Forcing *every* decision to read
+as a different position turned **9 tests red**, including
+`test_cw_flip_decision_still_executes_for_its_own_position` — which is what separates a fix that
+**discriminates** from one that quietly disables the ATR exit. Four of my eight mutations came back
+green and became findings: the OMS's `180.0` and the strategy's `MAX_BAR_AGE_SECONDS_FOR_EMIT`
+are **uncoupled** despite a comment claiming they match; the downstream "no open row → drop any
+stale flip" guard **lost its only test** in the C3 rewrite; and the `bar_time_ms + 60_000`
+bar-start boundary is unpinned.
+
+⚠ **A denominator trap worth remembering:** the CW_FLIP exit census is only reachable with `zgrep`.
+The rotated OMS logs are gzipped, so a plain `grep` returns **4** exits where the real retained
+population is **19** (`live:orb` 12, `live:schwab_1m_v2` 7).
+
+### ⛔ And one PR went to production unreviewed
+
+**#919 merged with `independent-review-pin` RED and no record in the ledger.** A sweep of #910–#923
+found it is the only one: 12 of 13 are pinned at their exact head.
+
+It was an **explicit operator waiver** — *"it's just a dashboard,, can you not review and pin it
+then merge and deploy"* — not a bypass. But it is worth being honest about the cost: it was the
+**third** change that day to the same file, and the first two had each contained a verification
+error of mine that review caught. Waiving the gate on the third change to code you have already got
+wrong twice is the least safe place to waive it.
+
+There is no way to pin it now — a merged PR's `base.sha` is frozen at its merge parent, so a record
+written today would be graded against a base that has moved. Recorded instead at
+`corrections/pr-919-merged-without-a-pin.md` on `review-pins`, so a future audit reads a decision
+rather than a hole.
+
+⭐ **The ledger records what passed. It never records what was excused** — unless someone writes it
+down.
+
 ### Closed cleanly
 
 The post-deploy state I pre-registered before the settings landed — **26 mirrored / 0 drift /

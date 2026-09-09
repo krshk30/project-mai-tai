@@ -18,28 +18,28 @@
 >
 > ⚠ **The hard stop moved −5% → −8%: maximum loss per trade is 60% larger than it was yesterday.**
 
-**Written by `claude-1`, 2026-09-08 20:05 ET.** Batch `2026-09-08-rej1-fixed-and-reclaim-retired`.
+**Written by `claude-1`, 2026-09-08 20:05 ET; PRODUCTION block refreshed 20:50 ET after #923.** Batch `2026-09-08-rej1-fixed-and-reclaim-retired`.
 Integrator for this rotation. Needs `codex-2`'s review before merge — the author never reviews.
 
 ---
 
-# ✅ PRODUCTION — main and box IN SYNC at `c47d3a76`
+# ✅ PRODUCTION — main and box IN SYNC at `7eca22a7`
 
 | | |
 |---|---|
-| box (deployed) | **`c47d3a7601b8b70c3e42717a82924a58144b627e`** — read FROM THE BOX 2026-09-08 19:58 ET, branch `main`, checkout clean |
-| GitHub main | **`c47d3a76`** — **identical**. No docs-only lead this time; everything merged today is deployed |
+| box (deployed) | **`7eca22a7a1ff55372b401ef45ff38f728c4edbb9`** — read FROM THE BOX 2026-09-08 20:50 ET, branch `main`, checkout clean |
+| GitHub main | **`7eca22a7`** — **identical**. Everything merged today is deployed |
 | open PRs | **none** (this handoff PR excepted) |
-| exposure | **19:58 ET:** live positions **0** · live working orders **0** · **0 tracebacks** in oms/v2 since the 22:55 UTC restart |
-| merges 09-08 | #913 handoff · #914 unexercised watcher · #915 ORB resting · #916 SLOT2/DB2/RECOV1 harness · **#917 REJ1 P1** · #918 + #919 dashboard truth · #920 ATR flip via native OCO · **#921 replay parity** |
-| deploys 09-08 | **(1)** merged PRs at `90f4860` — oms+strategy 21:26:30 UTC, v2 21:35:28 UTC. **(2)** #921 **plus the three runtime settings** at `c47d3a76` — oms+strategy **22:55:46 UTC**, v2 **22:58:09 UTC** |
+| exposure | **20:50 ET:** live positions **0** · live working orders **0** · **0 tracebacks** in oms since the 00:46 UTC restart |
+| merges 09-08 | #913 handoff · #914 unexercised watcher · #915 ORB resting · #916 SLOT2/DB2/RECOV1 harness · **#917 REJ1 P1** · #918 + #919 dashboard truth · #920 ATR flip via native OCO · **#921 replay parity** · **#923 CW-flip position binding** |
+| deploys 09-08 | **(1)** merged PRs at `90f4860` — oms+strategy 21:26:30 UTC, v2 21:35:28 UTC. **(2)** #921 **plus the three runtime settings** at `c47d3a76` — oms+strategy **22:55:46 UTC**, v2 **22:58:09 UTC**. **(3)** #923 at `7eca22a7` — oms+strategy **00:46:33 UTC**; v2 deliberately NOT restarted (its only change was a docstring) |
 | ⚠ restart scope | The `oms` target restarts **oms AND strategy** together. Do not plan around "oms only" |
 | ⛔ ORB | **untouched since 2026-09-04 21:52 UTC.** `#915` is merged and **DARK** — see below |
 
 | service | pid | started (UTC) | | service | pid |
 |---|---|---|---|---|---|
-| oms | **4068606** | 22:55:46 | | market-data | 2202865 |
-| strategy | **4068617** | 22:55:46 | | market-capture | 2202817 |
+| oms | **4090993** | **00:46:33 (09-09)** | | market-data | 2202865 |
+| strategy | **4091004** | **00:46:33 (09-09)** | | market-capture | 2202817 |
 | schwab-1m-v2 | **4069310** | 22:58:09 | | reconciler | 2202771 |
 | control | 4001261 | 18:57:00 | | orb | 3110306 (09-04) |
 
@@ -108,6 +108,7 @@ today and will activate silently on the next unrelated ORB restart.
 | **Reclaim P&L** — indistinguishable from first entries (see below) | **HDL1** — bounded retry + incident; neither has fired |
 | **Replay parity** — LIVE_LOCKED now mirrors live on all three keys | **#914's four conditions** — the watcher exists so these stop being invisible |
 | **Post-deploy drift** — pre-registered 26/0/10, measured 26/0/10 | **#920's CW-flip release** — merged today, never exercised |
+| **NUR 12:34→13:29** — a flip decision that outlived its position, confirmed on the box | **#923's position binding** — deployed 00:46 UTC; the live path is **UNEXERCISED** |
 
 ⭐ **13 of 15 deployed-but-unexercised items were exercised with controls today.** The two that
 remain need a live session or a rare event and are covered by the `#914` watcher, which pages the
@@ -129,6 +130,23 @@ Re-derived by attributable coid-prefix pairing, **live accounts only, no FIFO in
 ⛔ **Pre-08-27 yields ZERO attributable cycles.** The older *"38% win / −4.98%"* figure — which I
 repeated in the CONF3 material and in a #921 review — **has no attributable denominator in its own
 era**. Do not cite it. It is withdrawn.
+
+---
+
+# ⛔ ONE PR MERGED WITHOUT AN INDEPENDENT PIN — #919
+
+**`#919` merged at 18:56 UTC with `independent-review-pin` RED and ZERO records in the ledger.**
+Swept every PR from #910 to #923: **12 of 13 are pinned at their exact head; #919 is the only hole.**
+
+⛔ **It was not a silent bypass — it was an explicit operator waiver:** *"it's just a dashboard,,
+can you not review and pin it then merge and deploy"*. The code (a dashboard de-duplication fix in
+`trade_episodes.py`) reached production **without a second agent ever reading it**, which is the
+thing the gate exists to prevent. It is recorded at `corrections/pr-919-merged-without-a-pin.md` on
+`review-pins` so a later audit reads a decision rather than a gap.
+
+⇒ **The residual risk is unreviewed dashboard code in production.** If anyone wants that closed, the
+action is a post-hoc review of `5862b89c`, not a pin — the gate cannot pin a merged PR whose base
+has moved.
 
 ---
 

@@ -22,17 +22,22 @@
 2026-09-08T23:55:26.845Z | claude-1 | CORRECTION | My test population for the #921 first pin was selected by grep for build_replay_settings in tests/ — files that NAME the symbol. The reaching population is files that call it TRANSITIVELY; test_daily_sheet.py never names it | the record at 16075ba3 says 'every test file touching build_replay_settings', which is what I ran and is the wrong denominator; the corrected call-graph population is stated in the 4bcfee06 record
 ```
 
-## DEPLOY (1)
+## DEPLOY (4)
 ```
 2026-09-08T23:55:26.751Z | claude-1 | DEPLOY | All merged PRs deployed after 16:00 ET; oms+strategy restarted 21:26:30 UTC, v2 restarted 21:35:28 UTC (pid 4052868, timeout_released=0 rest_warmed=3, 0 tracebacks); control 18:57; orb untouched since 2026-09-04 | box at 90f4860 at the time, checkout clean, both accounts flat
+2026-09-09T00:51:10.078Z | codex-2 | DEPLOY | Deployed dashboard corrections and the #917 plus #920 live exit fixes after the session | Control restarted at 18:57 UTC; OMS and strategy restarted at 21:26 UTC and v2 at 21:35 UTC; both accounts flat at the restart gates. #920 remained UNEXERCISED after clean deployment.
+2026-09-09T00:51:10.198Z | codex-2 | DEPLOY | Applied operator-authorized live v2 settings: reclaim off, one entry per ATR segment, target +5 percent, stop -8 percent | v2 restarted at 22:58:09 UTC as PID 4069310; Schwab quantity 2, Webull fan-out quantity 1 and dual-broker fan-out unchanged; landed flat.
+2026-09-09T00:51:10.442Z | codex-2 | DEPLOY | Deployed main 7eca22a7 for #923 with one OMS deployment after fresh flat checks | Preflight twice confirmed both real-money accounts flat and zero open managed rows with 3 to 11 second broker reads. OMS PID 4090993 and strategy PID 4091004 restarted once; v2, control, ORB, market-data, reconciler and market-capture PIDs unchanged. Both post-restart gates healthy, checkout clean at exact main SHA, no new tracebacks; live path remains UNEXERCISED.
 ```
 
-## FINDING (4)
+## FINDING (6)
 ```
 2026-09-08T23:55:26.673Z | claude-1 | FINDING | Broker refusal census, operator-ordered measurement only: 13,896 events, 42 distinct messages, 36 unrecognised by our handlers, 26 refusal storms of which NONE ended on a retry ceiling, 971 self-inflicted | EVERY broker refusal on LIVE accounts only over two months, paper accounts excluded entirely and every count split by account; grouped STOP/WAIT/PERMANENT/UNKNOWN. Operator's ruling stands: the reaction must follow the message we receive, not a ceiling that stops after N attempts
 2026-09-08T23:55:26.700Z | claude-1 | FINDING | MOBX was not declined by Schwab on its merits — the reject traces to our own malformed buy-stop. The 13:35 reclaim was separately blocked by a 1,174,975 ms-old filled claim | live:orb has 30 reclaim orders in the window; a reject is our defect, the reason lives in broker_order_events
 2026-09-08T23:55:26.726Z | claude-1 | FINDING | Deployed-but-unexercised inventory: 13 of 15 items exercised with controls; the remaining 2 need a live session or a rare event and are covered by the #914 watcher | 15 deployed-but-unexercised items sorted A (provokable now) / B (needs live session) / C (rare event, needs a watcher) / D (cannot be exercised as built); nothing touched real money, market shut
 2026-09-08T23:55:26.775Z | claude-1 | FINDING | Live runtime settings review (three-line env change, no PR): PIN WITHHELD. No review-pin artefact can exist for a runtime change — the gate keys on records/<head-sha>/pr-<N>--<base>--<reviewer>.json and there is no PR head | SHA-256 of the proposed triple verified byte-exact (89219e4e..., LF with trailing newline only). Contradicted the operator's own 2026-09-06 correction pinned at review-pins:corrections/pr-905-paper-not-live-settings.md. Reclaim=false also halves _cw_v2_max_entries_per_flip from 2 to 1 (schwab_1m_v2.py:591) — three lines, four behaviour changes. Hard stop -5% -> -8% raises maximum loss per trade by 60%
+2026-09-09T00:51:09.956Z | codex-2 | FINDING | PR #919 merged as 5862b89c with independent-review-pin failing and no committed pin | Population: 1 of 1 PR #919 head 4a7816ce; validate passed, reviews list empty, review-pins contains 0 records for PR #919. Dashboard-only duplicate suppression, but the independent-review requirement was not met.
+2026-09-09T00:51:10.259Z | codex-2 | FINDING | Stale pending ATR-flip decisions crossed position episodes in 11 of 19 gradeable live account-leg exits | Population: all 19 retained live CW_FLIP account-leg exits with both an arm marker and managed-row evidence; Schwab 4 of 7 stale and all rejected, Webull 7 of 12 stale and all filled; 29 additional exits UNANSWERABLE because arm evidence was absent or outside retention. NUR 09-08 was 55m44s stale.
 ```
 
 ## NOTE (20)
@@ -59,7 +64,7 @@
 2026-09-08T23:55:26.917Z | claude-1 | NOTE | Nothing schedules scripts/audit_live_locked_drift.py in either crontab. #921 makes the live bracket visible to an instrument nobody invokes | post-#921-deploy expectation, checkable: 26 mirrored / 0 drift / 10 unset (today reads 24 / 0 / 10)
 ```
 
-## PR (6)
+## PR (10)
 ```
 2026-09-08T23:54:57.416Z | claude-1 | PR | #913 MERGED — docs(handoff): current state for Tuesday 2026-09-08, re-derived from the box | docs/session-handoff.md
 2026-09-08T23:54:57.441Z | claude-1 | PR | #914 MERGED — feat(health): page when a deployed-but-unexercised condition finally occurs | ops/health/unexercised_watch.py, 4 conditions (HALT_REAL, CONF3_TWO_BROKER_CLOSE, SIL1_REJECT_STORM, PEX1_RESTING_FILL); installed on the box at /home/trader/unexercised_watch/watch.py with a sha-pinned cron */15 11-21 * * 1-5; both paging paths proven to the operator's phone
@@ -67,17 +72,26 @@
 2026-09-08T23:54:57.505Z | claude-1 | PR | #917 MERGED — fix(schwab): a wrapper whose children are visible is not opaque. REJ1 P1, live impact same day | src/project_mai_tai/broker_adapters/schwab.py release_native_oco_for_close; found from the operator's own TOS-vs-Webull P&L screens; the happy-path fixture in tests/unit/test_schwab_native_bracket.py was proving nothing and was fixed FIRST
 2026-09-08T23:54:57.526Z | claude-1 | PR | #918 + #919 MERGED — fix(dashboard): completed positions. The interval is the identity, and a filled order must not duplicate a position the fills already priced | src/project_mai_tai/trade_episodes.py; parse_et_timestamp now accepts ISO first, _find_covering_row enriches then drops; verified PHANTOM rows: 0 on the rendered dashboard
 2026-09-08T23:55:26.869Z | claude-1 | PR | #921 MERGED — PINNED @ 4bcfee06 after re-review; independent-review-pin pass, validate pass | no rebase (16075ba3 is an ancestor), so the prior record stayed valid and was not deleted. Six own mutations RED against a green control, including one proving the env-plus-restart rollback path has a real red break, and one measuring the repaired fixture's remaining headroom at +5.84%
+2026-09-09T00:51:09.749Z | codex-2 | PR | Built and merged #915 as 0824ead4: fixed opening-high resting model for broker-isolated ORB paper observer | Level/order timing and fail-closed unanswerable adjustment model; broker isolation retained; remains UNEXERCISED until ORB restart and was not enabled by the merge.
+2026-09-09T00:51:10.016Z | codex-2 | PR | Built and merged #920 as 90f4860c: execute v2 ATR flip through authoritative native-OCO handoff | Binds latest filled managed row, refuses unanswerable release and changed position, rejects stale present quotes, preserves no-quote semantics, and raises a critical uncovered incident; pinned at 43372c6b.
+2026-09-09T00:51:10.138Z | codex-2 | PR | Built and merged #921 as c47d3a76: mirror live v2 reclaim and exit settings in replay | Live locked parity now carries reclaim disabled, target +5 percent and stop -8 percent; environment remains the rollback mechanism; corrected transitive test population passed 184 of 184 at pinned head 4bcfee06.
+2026-09-09T00:51:10.320Z | codex-2 | PR | Built and merged #923 as 7eca22a7: bind pending ATR flips to their decision bar and managed-position identity | Exact NUR control refuses the 12:34 decision against the 13:29 position; 180-second expiry, replacement-position refusal, post-decision entry refusal and own-position execution are mutation-checked; focused 89 passed and full controlled pair added 6 with identical failure sets.
 ```
 
-## VERIFY (1)
+## VERIFY (6)
 ```
 2026-09-08T23:54:57.568Z | claude-1 | VERIFY | REVIEWED AND PINNED #915 (codex, ORB fixed opening-high resting) and #920 (codex, ATR flip through native OCO handoff) | both merged by codex
+2026-09-09T00:51:09.623Z | codex-2 | VERIFY | Reviewed and pinned #914 at b59447c1 after four correction rounds | Watcher live-code review: fixed false-zero grep handling, durable delivery state, corrupt-state suppression, legacy migration, blind-episode rearm; 22 tests and independent-review-pin PASS.
+2026-09-09T00:51:09.688Z | codex-2 | VERIFY | Reviewed and pinned #916 at 215c6905 and #913 at 8f656106 after conflict-free rebases | #916 test-only with SLOT2 reclassified duplicate and RECOV1 novelty narrowed; #913 docs-only and byte-identical to its reviewed diff; both independent-review-pin PASS.
+2026-09-09T00:51:09.810Z | codex-2 | VERIFY | Reviewed and pinned #917 at c86e9df2 | Reproduced live OCO wrapper and missing-status fail-open; verified visible-child, opaque-working, terminal, absent-status and empty-status cases plus three guard-axis mutations; 30 focused tests and CI green.
+2026-09-09T00:51:09.873Z | codex-2 | VERIFY | Reviewed and pinned #918 at 1cb0b50f | Dashboard-only completed-cycle fix; production ISO UTC publisher shape reproduced, interval/account identity retained, four mutations RED, 14 focused tests and CI green.
+2026-09-09T00:51:10.382Z | codex-2 | VERIFY | Claude independently pinned #923 at 421c1686; assessed four nonblocking review gaps before deployment | FN1 horizons are uncoupled, FN2 downstream snapshot-none clearing lacks a control, FN3 the plus-60-second bar-close boundary lacks a control, FN4 DB ingest failure is fail-closed but unmeasured. Real follow-up coverage and observability gaps; none changes the deployed owner and expiry correctness.
 ```
 
 ## RECONCILIATION
 ```
-journal entries (live + archive/2026-09-08-rej1-fixed-and-reclaim-retired) : 37
-entries emitted above               : 37
+journal entries (live + archive/2026-09-08-rej1-fixed-and-reclaim-retired) : 51
+entries emitted above               : 51
 duplicate physical entries          : 0
 malformed (not 5 fields)            : 0
 status                              : BALANCED — nothing was dropped
