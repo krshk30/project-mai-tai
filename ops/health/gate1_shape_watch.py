@@ -79,24 +79,17 @@ def qualifying_rows(rows: list[dict], now_et: datetime) -> tuple[list[dict], lis
 
 def fetch_rows() -> list[dict]:
     statuses = ",".join(f"'{s}'" for s in OPEN_ORDER_STATUSES)
-    # ⛔⭐⭐ "ENTERED" MEANS THE FILL, NOT THE ORDER SUBMISSION. v2 enters via a RESTING STOP_LIMIT
-    # that can sit for a long time before price breaks its trigger: measured live 2026-09-09, SUNE's
-    # entry order was SUBMITTED 11:13:13 and FILLED 11:34:00 — 21 minutes later. A resting order
-    # placed pre-market that fills after 09:30 is an RTH entry and its shares get bracketed at the
-    # fill, so it is NOT a Gate 1 candidate. Classifying on submission time would qualify it wrongly.
-    #
-    # ⚠ I first read that 21-minute gap as the MANAGED ROW's entry_time drifting from the fill and
-    # documented it as a defect. It is not: the managed row stamps the FILL (11:34:02 vs 11:34:00)
-    # and is correct. Recorded because a wrong reason for a right behaviour is worse than no reason.
-    #
-    # `least(...)` of the managed row and the earliest matching buy fill is therefore belt-and-braces
-    # against a future divergence, not a workaround for a live one. Erring EARLY costs a wasted
-    # preview; erring LATE loses the window entirely, so early is the safe direction.
+    # ⛔⭐⭐ ENTRY TIME COMES FROM THE MANAGED ROW, AND ONLY FROM IT (codex-2, #931).
+    # I briefly took `least(m.entry_time, min(any buy fill in the prior hour))` as belt-and-braces.
+    # That fill is NOT bound to this managed row, order or episode, so an EARLIER position's fill
+    # can be attached to the CURRENT one: a 09:20 pre-market fill that later closed, plus a 09:38
+    # RTH re-entry, yields least(...)=09:20 and the watch reports the RTH position as a qualifying
+    # pre-market shape. Today's SUNE is exactly that pattern.
+    # ⛔ And "erring early is safe" was wrong reasoning: this page ASKS THE OPERATOR TO ACT — to
+    # take the Gate 1 preview against the claimed shape. A false positive is not a wasted cycle,
+    # it is a false instruction. The managed row stamps the FILL and is correct; use it.
     sql = (
-        "select b.name, p.symbol, p.quantity, "
-        "least(m.entry_time, coalesce((select min(f.filled_at) from fills f "
-        "  where f.broker_account_id=p.broker_account_id and f.symbol=p.symbol "
-        "    and f.side='buy' and f.filled_at >= m.entry_time - interval '1 hour'), m.entry_time)), "
+        "select b.name, p.symbol, p.quantity, m.entry_time, "
         "coalesce((select sum(o.quantity) from broker_orders o "
         "  where o.broker_account_id=p.broker_account_id and o.symbol=p.symbol "
         f"    and o.side='sell' and o.status in ({statuses})), 0) as reserved "

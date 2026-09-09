@@ -68,8 +68,35 @@ PREV_STATUS="NONE"; LAST_ALERT=0
 case "${LAST_ALERT:-}" in ''|*[!0-9]*) LAST_ALERT=0;; esac
 
 if [ "$LEVEL" != "NONE" ] || [ "$SELFTEST" -eq 1 ]; then
-  if [ "$PREV_STATUS" = "NONE" ] || [ $(( NOW - LAST_ALERT )) -ge "$COOLDOWN_SECS" ] || [ "$SELFTEST" -eq 1 ]; then
-    if [ "$LEVEL" = "CANNOT_SEE" ]; then
+  # ⛔⭐⭐ A TRANSITION BETWEEN DISTINCT ACTIONABLE LEVELS PAGES IMMEDIATELY (codex-2, #931).
+  # The cooldown was shared across every non-NONE level, so a delivered CANNOT_SEE page put
+  # LAST_ALERT in the future of the cooldown and a REAL shape arriving seconds later was silently
+  # suppressed for up to 30 minutes — and the qualifying position can close inside that window.
+  # CANNOT_SEE and SHAPE are different instructions; the cooldown may only suppress a REPEAT.
+  SHOULD_PAGE=0
+  if [ "$SELFTEST" -eq 1 ]; then
+    SHOULD_PAGE=1
+  elif [ "$LEVEL" != "$PREV_STATUS" ]; then
+    SHOULD_PAGE=1
+  elif [ $(( NOW - LAST_ALERT )) -ge "$COOLDOWN_SECS" ]; then
+    SHOULD_PAGE=1
+  fi
+  if [ "$SHOULD_PAGE" -eq 1 ]; then
+    if [ "$LEVEL" = "NONE" ]; then
+      # ⛔⭐⭐ Only reachable via --selftest. A clean selftest must NOT claim a live shape, and must
+      # NOT instruct the preview (codex-2, #931 — the same contradictory-selftest class already
+      # corrected in #924, which I then rebuilt here). The discriminator is the MEASURED LEVEL,
+      # never the flag: a selftest run while a shape IS live still says the shape is live.
+      TITLE="SELFTEST Gate1 watch delivery"; PRIORITY="low"; TAGS="white_check_mark"
+      BODY="[SELFTEST] DELIVERY-PATH TEST - THIS IS NOT A GATE 1 ALERT.
+
+NO QUALIFYING SHAPE WAS OBSERVED. This message exists only to prove the alarm can reach you.
+⛔ DO NOT take the Gate 1 preview on the strength of this page, and it says NOTHING about whether
+oms_v2_rth_edge_bracket_enabled can be enabled. A real alert is titled
+'Gate1 shape is LIVE - take the preview now'.
+
+$REPORT"
+    elif [ "$LEVEL" = "CANNOT_SEE" ]; then
       TITLE="AMBER Gate1 watch CANNOT SEE"; PRIORITY="high"; TAGS="warning"
       BODY="THE WATCH COULD NOT READ THE POSITION STATE. This is NOT a report that no shape exists.
 ⛔ UNKNOWN is not PASS: while this persists a qualifying Gate 1 window could open and close unseen.
