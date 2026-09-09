@@ -1,0 +1,9 @@
+{
+  "pr_number": 922,
+  "range_base": "c47d3a7601b8b70c3e42717a82924a58144b627e",
+  "range_head": "c5c5034624bffd4950c8ed7b9b7db5dd3b903d06",
+  "reviewed_at": "2026-09-09T00:59:57Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed all three frozen handoff artifacts and the corrected GitHub body; verified the one-line log reconciliation, session current state against box 7eca22a7 and live PIDs, append-only handoff log, 51 of 51 BALANCED manifest byte-identical to a fresh generation, both ACKs on the active freeze, #919 waiver disclosure, clean diff, and MERGEABLE exact head."
+}
