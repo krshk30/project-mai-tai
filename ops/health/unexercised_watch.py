@@ -23,12 +23,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import tempfile
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 NTFY_URL = "https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
 STATE_PATH = Path("/home/trader/unexercised_watch/state.json")
@@ -113,6 +115,90 @@ def _log_count(path: Path, marker: str) -> int:
     return total
 
 
+def _log_lines(path: Path, marker: str) -> list[str]:
+    """Every line carrying `marker`, across the live log AND its rotations.
+
+    ⛔ Same discipline as `_log_count` and for the same reason: -F is load-bearing, and a grep
+    return code >= 2 is an ERROR, never an answer. A permission failure must raise, not read as
+    an empty list -- an empty list here would say NEVER_OCCURRED against a real denominator.
+    """
+    if not path.exists():
+        raise RuntimeError(f"{path} missing")
+    if not os.access(path, os.R_OK):
+        raise RuntimeError(f"{path} unreadable -- run as root, a false zero is not a result")
+    lines: list[str] = []
+    for candidate in sorted(path.parent.glob(path.name + "*")):
+        tool = "zgrep" if candidate.suffix == ".gz" else "grep"
+        out = subprocess.run([tool, "-hF", marker, str(candidate)], capture_output=True, text=True)
+        if out.returncode >= 2:
+            raise RuntimeError(
+                f"{tool} failed on {candidate.name} rc={out.returncode}: "
+                f"{(out.stderr or '').strip()[:120]}"
+            )
+        lines.extend(ln for ln in (out.stdout or "").splitlines() if ln.strip())
+    return lines
+
+
+# ET extended session. A print gap that spans a market CLOSURE is not evidence of a halt.
+_ET = ZoneInfo("America/New_York")
+_SESSION_OPEN_MIN = 4 * 60        # 04:00 ET
+_SESSION_CLOSE_MIN = 20 * 60      # 20:00 ET
+
+
+def _in_extended_session(at: datetime) -> bool:
+    et = at.astimezone(_ET)
+    if et.weekday() >= 5:
+        return False
+    return _SESSION_OPEN_MIN <= et.hour * 60 + et.minute < _SESSION_CLOSE_MIN
+
+
+def _same_extended_session(a: datetime, b: datetime) -> bool:
+    """Are both instants inside the SAME ET extended session (04:00-20:00, weekdays)?
+
+    ⛔⭐⭐ THIS IS THE DISCRIMINATOR, and a time-of-day window alone is NOT enough. The overnight
+    gap accumulates while the market is shut and then confirms on the first quote that arrives --
+    which can land at 04:01 ET, comfortably inside any "is it session hours now" test. What makes
+    the SUNE case an artefact is that the gap SPANS the closure: the last print was 19:59:58 ET on
+    2026-09-08 and the confirmation came at 03:59 ET on 2026-09-09. Requiring both ends in the
+    same session catches it whatever hour it fires.
+    """
+    if not (_in_extended_session(a) and _in_extended_session(b)):
+        return False
+    return a.astimezone(_ET).date() == b.astimezone(_ET).date()
+
+
+_HALT_LINE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})[,.]\d+ .*"
+    r"last_print_at=(?P<print_at>\S+)"
+)
+
+
+def classify_halt_confirmations(lines: list[str]) -> tuple[int, int, int]:
+    """(in_session, spanned_closure, unparsable) for [V2-HALT-CONFIRMED] lines.
+
+    Log timestamps are UTC (the file rotates at 00:00 UTC and its content starts at 00:00:32 UTC).
+    ⛔ `unparsable` is reported, never folded into either bucket: a line we cannot read is UNKNOWN,
+    and UNKNOWN is not PASS.
+    """
+    in_session = spanned = unparsable = 0
+    for line in lines:
+        m = _HALT_LINE.search(line)
+        if m is None:
+            unparsable += 1
+            continue
+        try:
+            confirmed_at = datetime.strptime(m.group("ts"), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+            last_print_at = datetime.fromisoformat(m.group("print_at"))
+        except ValueError:
+            unparsable += 1
+            continue
+        if _same_extended_session(last_print_at, confirmed_at):
+            in_session += 1
+        else:
+            spanned += 1
+    return in_session, spanned, unparsable
+
+
 # --------------------------------------------------------------------------------------------
 # The four conditions nobody can force. Each returns (fired, denominator, detail).
 # --------------------------------------------------------------------------------------------
@@ -121,7 +207,22 @@ def check_halt() -> tuple[int, int, str]:
     """HALT1/HALT2 -- a REAL Schwab halt seen by v2.
     Denominator: deduplicated quote observations with a usable prior print, which is exactly what
     halt_monitor publishes. Zero there means the detector never had anything to judge."""
-    fired = _log_count(V2_LOG, "[V2-HALT-CONFIRMED]")
+    # ⛔⭐⭐ FILTER THE SESSION-BOUNDARY ARTEFACT (operator ruling 2026-09-09).
+    # The first HALT_REAL "occurrence" was SUNE confirmed at 03:59 ET against a last print of
+    # 19:59:58 ET the previous evening -- an ~8h MARKET-CLOSED gap, not a halt. market_halts.py
+    # confirms on elapsed time plus quote activity with no session term, and quotes keep flowing
+    # overnight, so the rule is satisfiable while the market is shut. Counting that as a real halt
+    # spends this watcher's first-occurrence page on an artefact, so a genuine intraday halt would
+    # never page at all. The detector itself is fixed separately; this refuses to COUNT it.
+    in_session, spanned, unparsable = classify_halt_confirmations(
+        _log_lines(V2_LOG, "[V2-HALT-CONFIRMED]")
+    )
+    if unparsable:
+        raise RuntimeError(
+            f"{unparsable} [V2-HALT-CONFIRMED] line(s) could not be classified -- "
+            "an unreadable line is UNKNOWN, not a clean zero"
+        )
+    fired = in_session
     # ⛔ The denominator lives ONLY in the v2 bot's published state. Two wrong sources were tried
     # first and both read as a clean zero: dashboard_snapshots carries no halt_monitor at all (0
     # rows), and taking the NEWEST strategy-state-isolated entry returns whichever bot published
@@ -143,7 +244,13 @@ def check_halt() -> tuple[int, int, str]:
                 break
     if denominator is None:
         raise RuntimeError("no schwab_1m_v2 halt_monitor payload in the last 80 state entries")
-    return fired, denominator, "denominator = deduplicated quote observations (v2 published state)"
+    detail = "denominator = deduplicated quote observations (v2 published state)"
+    if spanned:
+        detail += (
+            f"; {spanned} confirmation(s) EXCLUDED as session-boundary artefacts "
+            "(gap spans a market closure, so it is not a halt)"
+        )
+    return fired, denominator, detail
 
 
 def check_two_broker_close() -> tuple[int, int, str]:
