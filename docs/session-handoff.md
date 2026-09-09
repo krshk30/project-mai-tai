@@ -27,17 +27,17 @@ Integrator for this rotation. Needs `codex-2`'s review before merge — the auth
 | GitHub main | **`7a879a22`** — **identical**. Everything merged today is deployed |
 | open PRs | **none** (this handoff PR excepted) |
 | exposure | **19:12 ET:** virtual positions **0** · open broker orders **0** · open/pending intents **0** · **0 tracebacks** in oms since the 23:03 UTC restart |
-| merges 09-09 | #924 DRIFT1 · #925 ORB-LEFT · #926 HALT-FILTER · #927 HALT-DETECTOR · #928 INC1 · #929 STOPASK · #930 F1/F2 account-neutral · **#931 GATE1 watch** · **#933 RECLAIM1 (dark)** · #934 Webull investigation. #932 CLOSED as superseded by #933 |
-| deploy 09-09 | **one window, after the close.** `7a879a22` — oms + strategy **23:03:42 UTC**, v2 **23:05:54 UTC**. Six PRs had been merged-but-undeployed since 07:27 ET; this cleared all of them |
+| merges 09-09 (**10**) | #924 DRIFT1 · #925 ORB-LEFT · #926 HALT-FILTER · #927 HALT-DETECTOR · #928 INC1 · #929 STOPASK · #930 F1/F2 account-neutral · **#931 GATE1 watch** · **#933 RECLAIM1 (dark)** · #934 Webull investigation. #932 CLOSED as superseded by #933 |
+| deploys 09-09 | **THREE windows, not one** — from the box's own reflog (all ET; the box clock is `Etc/UTC`). **(1) 06:54** → `fd22eb4` (#924/#925); ORB restarted 9s later at 10:54:27 UTC for `orb_app.py`. **(2) 07:27** → `72b13393` (#926); **pull only, no restart** — it is an `ops/health` script. **(3) 19:03** → `7a879a22` (the remaining six); oms+strategy **23:03:42 UTC**, v2 **23:05:54 UTC** |
 | ⚠ restart scope | The `oms` target restarts **oms AND strategy** together. Do not plan around "oms only" |
-| ⛔ ORB | **running, and it is the PAPER path** — `[ORB-PAPER-ENTRY] … RECORDED_NOT_A_FILL`. Restarted 10:54 ET for the ORB-LEFT work (#925). Not live money. Any memory saying the service is disabled is stale |
+| ⛔ ORB | **running, and it is the PAPER path** — `[ORB-PAPER-ENTRY] … RECORDED_NOT_A_FILL`. Restarted **06:54 ET** (10:54 UTC) for the ORB-LEFT work (#925), and again earlier at 05:22 ET (09:22 UTC) by the operator. Not live money. Any memory saying the service is disabled is stale |
 
 | service | pid | started (UTC) | | service | pid |
 |---|---|---|---|---|---|
 | oms | **180952** | **23:03:42** | | market-data | 2202865 |
 | strategy | **180963** | **23:03:42** | | market-capture | 2202817 |
 | schwab-1m-v2 | **181816** | **23:05:54** | | reconciler | 2202771 |
-| control | 4001261 | 18:57:00 (09-08) | | orb | (paper) 10:54 ET |
+| control | 4001261 | 18:57:00 (09-08) | | orb | (paper) 10:54:27 UTC = 06:54 ET |
 
 All three restarted services: `active`, `NRestarts=0`. v2 warmed **3/3**, streamer connected, one
 REST gap-fill recorded during restart. No migrations ran.
@@ -60,7 +60,7 @@ REST gap-fill recorded during restart. No migrations ran.
 
 # ⭐⭐ TODAY IN ONE LINE
 
-Eleven PRs merged and deployed; RECLAIM1 built to the operator's one-entry-per-flip ruling and
+Ten PRs merged and deployed across three windows; RECLAIM1 built to the operator's one-entry-per-flip ruling and
 shipped **dark** with a fail-safe; the Gate 1 watcher armed; and the Webull one-sided-entry question
 answered — **zero venue rejections in 54 orders**, the two missing legs were our own consumed
 fan-out slot.
@@ -77,6 +77,11 @@ fan-out slot.
 
 Wrapper committed `100755`. Selftest logged `ALERT[NONE] DELIVERED` and — correctly — wrote **no
 state file**, which is the behaviour `test_a_selftest_does_not_write_state` pins.
+
+⛔ **THE ACTIONABLE WINDOW STARTS 09:30 ET, NOT 09:00.** The cron fires from 13:00 UTC (09:00 ET),
+but the wrapper's own guard is `ETMIN -lt 570` — it **exits immediately** until 09:30 and after
+16:00. That is correct (the qualifying shape needs an RTH session), but do not sit waiting for a
+page at 09:00: the first run that can page is 09:30 ET.
 
 ⛔ **It pages the moment a qualifying shape exists: a v2-held SCHWAB long, entered pre-market, still
 held in regular hours, with NO shares reserved by an open exit.** An ordinary RTH entry can never
@@ -212,12 +217,22 @@ not weaken it to raise the fill count.**
    control.* Found by codex, not by me.
 6. **I missed that reclaim was already off** when the operator asked me to investigate entries.
    ⇒ *"You need to think about all the direction, not just one direction."*
+7. **I read the box's UTC clock and labelled it ET.** `systemctl`'s ORB timestamp is `10:54:27 UTC`
+   = **06:54 ET**; I reported "10:54 ET" in the handoff, the log and a memory. I had converted
+   correctly for the SUNE log lines an hour earlier, so this was inconsistency, not ignorance.
+   ⇒ *The box clock is `Etc/UTC`. Convert EVERY timestamp read from it, including systemd's.*
+8. **I said "one deploy window" without checking.** There were **three** (06:54, 07:27, 19:03 ET),
+   provable from `git reflog` on the box in one command. I generalised from the window I had
+   watched. ⇒ *Ask what the ARTEFACT says, not what I remember doing.*
+9. **I announced Gate 1 as arming at 09:00 ET** — the cron hour, not the wrapper's guard, which
+   refuses until 09:30. I wrote that guard. ⇒ *A schedule is not a behaviour; read the code that
+   runs, not the line that launches it.* All four caught by codex-2 on #935, none by me.
 
 ---
 
 # ▶ NEXT SESSION — Thursday 2026-09-10
 
-1. 🔔 **Gate 1 arms at 09:00 ET.** If it pages, the qualifying window is open **only while that
+1. 🔔 **Gate 1 can first page at 09:30 ET** (the cron starts 09:00; the watcher refuses until 09:30). If it pages, the qualifying window is open **only while that
    position is** — take the `previewOrder` by hand, immediately. Preview, never a live probe.
 2. ⛔ **Decide RECLAIM1.** It is deployed, dark, controlled and reversible by one flag. It has never
    run live. This is an operator decision, not an agent one.

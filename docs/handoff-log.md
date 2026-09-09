@@ -3766,9 +3766,10 @@ standard); D21/D23/sawtooth/census closed earlier in the batch; clock-sweep row 
 
 ## 2026-09-09 (Wed) — RECLAIM1 built and shipped DARK, Gate 1 armed, eleven PRs deployed (claude-1)
 
-**Shape of the day.** Eleven PRs merged (#924–#934, minus #932 closed as superseded), one deploy at
-`7a879a22`, box and main in sync for the first time since 07:27 ET. Six of those PRs sat
-merged-but-undeployed for most of the day; the deploy cleared all of them at once after the close.
+**Shape of the day.** **Ten** PRs merged (#924–#934, minus #932 closed as superseded), across
+**three** deploy windows — 06:54 ET (#924/#925, ORB restarted for `orb_app.py`), 07:27 ET (#926,
+pull only, no restart), and 19:03 ET (the remaining six). Box and main in sync at `7a879a22` for the
+first time since 07:27 ET.
 
 **The operator's ruling that drove everything.** FTFT entered twice in one ATR segment. His rule,
 refined across three messages, settled at: *one trade per segment, the first resting entry only,
@@ -3801,7 +3802,7 @@ lesson is that "the gate" was two mechanisms and I had enumerated one.
 **Gate 1 watcher is live (#931).** Exactly one cron entry, `*/5 13-21 * * 1-5`, wrapper `755`,
 selftest delivered. It pages the moment a v2-held **Schwab** long entered pre-market survives into
 regular hours with no shares reserved — the shape #647's Gate 1 needs and that an ordinary RTH entry
-can never produce. First live window 09:00 ET tomorrow.
+can never produce. The cron fires from 09:00 ET but the wrapper refuses until 09:30, so the first run that can page is **09:30 ET**.
 
 **#931 cost two withholds, both mine, both fair.** codex found (1) failed transition alerts did not
 retry — holding `LAST_ALERT` back was only *half* the retry; the wrapper also persisted the level it
@@ -3865,8 +3866,8 @@ commit, because the gate globs every head directory and an orphaned record fail-
 **Deploy.** codex deployed `7a879a22` and restarted oms `180952`, strategy `180963`, v2 `181816`;
 `NRestarts=0`, flat, zero pending intents, zero open broker orders, v2 warmed 3/3 with one REST
 gap-fill. I re-derived every claim independently rather than co-signing it. ORB is running but it is
-the **paper** path (`[ORB-PAPER-ENTRY] … RECORDED_NOT_A_FILL`), restarted 10:54 ET for the ORB-LEFT
-work — my 07-29 memory saying the service was disabled was stale and has been corrected.
+the **paper** path (`[ORB-PAPER-ENTRY] … RECORDED_NOT_A_FILL`), restarted 06:54 ET (10:54 UTC) for
+the ORB-LEFT work — my 07-29 memory saying the service was disabled was stale and has been corrected.
 
-**Tomorrow.** Gate 1 arms at 09:00 ET. RECLAIM1 is dark and awaits an operator decision. The
+**Tomorrow.** Gate 1 can first page at 09:30 ET. RECLAIM1 is dark and awaits an operator decision. The
 confirmation-exit race and the F1 one-sided lifecycle are the open live defects.
