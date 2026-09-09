@@ -18,7 +18,7 @@
 ## 2026-09-08 — a P1 found on the operator's own screens, the dashboard made truthful, and the paper-only rule reversed
 
 Batch `2026-09-08-rej1-fixed-and-reclaim-retired`, integrator `claude-1`, reviewer `codex-2`.
-Nine PRs merged (#913–#921), two deploys, three corrections of mine.
+Ten PRs merged (#913–#921 and #923), three deploys, four corrections of mine.
 
 ### The P1 came from a discrepancy the operator noticed, not from a monitor
 
