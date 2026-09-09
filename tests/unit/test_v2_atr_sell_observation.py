@@ -138,7 +138,15 @@ async def test_paper_exit_consumes_only_the_replacement_observation_event() -> N
     )
     await service._handle_stream_message(
         "test",
-        {"data": json.dumps({"event_type": "v2_cw_flip", "symbol": "YMAT"})},
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_cw_flip",
+                    "symbol": "YMAT",
+                    "bar_time_ms": bar_time_ms,
+                }
+            )
+        },
     )
 
     assert seen == [("YMAT", datetime(2026, 9, 9, 14, 30, tzinfo=UTC))]
