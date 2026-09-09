@@ -48,6 +48,11 @@ from project_mai_tai.fanout_outcome_consumer import (
     TERMINAL_RELEASE_OUTCOMES,
     FanoutOutcome,
 )
+from project_mai_tai.v2_flip_entry_ownership import (
+    FlipEntryOwnershipRecord,
+    FlipPositionBook,
+    FlipPositionLeg,
+)
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.entry_gate import resolve_entry_window
@@ -73,6 +78,13 @@ MAX_BAR_AGE_SECONDS_FOR_EMIT = 180.0
 # restore lag is 19.119s; one complete 5.000s position-poll interval makes the calibrated hold
 # 24.119s. Re-measure the restore distribution before changing either operand.
 FANOUT_POSITIVE_ZERO_HOLD_MS = 19_119 + 5_000
+
+# Position evidence is refreshed by the 5-second poll. Two missed polls make the identity unknown;
+# a larger grace would let an old row authorize a new live-money entry.
+FLIP_OWNER_EVIDENCE_MAX_AGE_MS = 15_000
+# A managed row is committed after the fill. Give that write three poll intervals before treating
+# positive fill evidence with no row as contradictory rather than calling the position flat.
+FLIP_OWNER_ROW_SETTLE_MS = 15_000
 
 
 @dataclass(frozen=True)
@@ -250,6 +262,22 @@ class SymbolState:
     # bar close (EH/RTH resting). It is deliberately not called an arm timestamp: it identifies the
     # segment for grouping without falsely claiming the segment was already armed.
     fanout_segment_id: int = 0
+    # RECLAIM1 strict lifecycle. This is deliberately separate from cw_arm_bar_ts: the opportunity
+    # can fill before the BUY flip exists, while cw_arm_bar_ts keeps meaning "confirmed flip bar".
+    # awaiting_fill = BUY flip confirmed while its first rest is still settling at the broker.
+    # resting = the durable first opportunity exists and may be working/repricing before a fill.
+    flip_owner_phase: str = "idle"  # idle | resting | awaiting_fill | provisional | bound | awaiting_close | unknown
+    flip_owner_opportunity_id: int = 0
+    flip_owner_flip_bar_ts: int = 0
+    flip_owner_provisional_started_ms: int = 0
+    flip_owner_fill_accounts: set[str] = field(default_factory=set)
+    flip_owner_position_ids: dict[str, str] = field(default_factory=dict)
+    flip_owner_position_entry_ms: dict[str, int] = field(default_factory=dict)
+    flip_owner_evidence_readable: bool = False
+    flip_owner_evidence_at_ms: int = 0
+    flip_owner_open_positions: dict[str, FlipPositionLeg] = field(default_factory=dict)
+    flip_owner_first_rest_placed: bool = False
+    fanout_last_retired_opportunity_id: int = 0
     # CW-v2 RESTING flip-entry (INERT unless strategy_schwab_1m_v2_cw_v2_resting_entry_enabled). A
     # resting buy-stop-limit tracks the ATR SHORT trail; NO-OVERLAP replace (cancel one bar, place the
     # next => never two live buy orders). Reset with the other cw_* at the 04:00-ET anchor.
@@ -493,6 +521,10 @@ class SchwabV2Strategy:
     track True→False transitions and release the reclaim claim.
     """
 
+    # Minimal safety harnesses intentionally construct the strategy with object.__new__. Keep the
+    # new mode false there so those probes continue to exercise the legacy path.
+    _flip_owned_first_entry_enabled = False
+
     def __init__(
         self, settings: Settings, config: SchwabV2Config | None = None
     ) -> None:
@@ -606,6 +638,46 @@ class SchwabV2Strategy:
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reclaim_enabled", False)
         )
         self._cw_v2_max_entries_per_flip = 2 if self._cw_v2_reclaim_enabled else 1
+        # RECLAIM1 is a separate default-off fail-safe. The older reclaim flag remains untouched so
+        # switching this off restores the exact producer and slot behaviour running before this PR.
+        self._flip_owned_first_entry_enabled = bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_flip_owned_first_entry_enabled",
+                False,
+            )
+        )
+        self._flip_owner_primary_account = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_account_name", "") or ""
+        )
+        self._flip_owner_webull_account = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+        )
+        self._flip_owner_accounts = {
+            value
+            for value in (self._flip_owner_primary_account, self._flip_owner_webull_account)
+            if value
+        }
+        self._flip_owner_persist: (
+            Callable[[FlipEntryOwnershipRecord, bool, str], None] | None
+        ) = None
+        self._restored_flip_owners: dict[str, FlipEntryOwnershipRecord | None] = {}
+        self._flip_owner_restore_readable = not self._flip_owned_first_entry_enabled
+        self._flip_owner_counts: dict[str, int] = {
+            "admission_evaluated": 0,
+            "admission_refused_unknown": 0,
+            "bind_evaluated": 0,
+            "bind_succeeded": 0,
+            "bind_pending": 0,
+            "bind_unknown": 0,
+            "preflip_close_evaluated": 0,
+            "preflip_close_released": 0,
+            "preflip_close_unknown": 0,
+            "cross_account_evaluated": 0,
+            "cross_account_known": 0,
+            "cross_account_pending": 0,
+            "cross_account_unknown": 0,
+        }
         # CW-v2 ENTRY MODE (two independent flags; docs/v2-resting-flip-entry-design.md). Reactive =
         # the current wait-3 MARKET break (default ON = byte-identical). Resting = a buy-stop-limit at
         # the ATR trail line (+band) that fills AT the cross -> OTOCO (default OFF = inert). The
@@ -682,9 +754,9 @@ class SchwabV2Strategy:
         self._dual_broker_fanout_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)
         )
-        # Observation-only durable identity seam. The bot configures this after its DB session
-        # factory exists, before any market-data loop starts. Strategy-only tests leave it unset.
-        # A persistence failure is logged and never changes whether an order is allowed.
+        # Durable fan-out identity seam. Legacy mode keeps it observation-only. RECLAIM1 strict
+        # mode checks its result before placing because an unpersisted opportunity cannot be
+        # reconstructed safely after restart.
         self._fanout_identity_persist: Callable[[str, int, bool, str], None] | None = None
         self._restored_fanout_segment_ids: dict[str, int] = {}
         # Webull-leg per-order qty: 0 => match the Schwab leg (_atr_qty).
@@ -730,6 +802,7 @@ class SchwabV2Strategy:
         if state is None:
             state = SymbolState(symbol=symbol)
             self._symbol_states[symbol] = state
+            self._restore_flip_owner(state)
         return state
 
     def configure_fanout_identity_persistence(
@@ -761,6 +834,538 @@ class SchwabV2Strategy:
         """Install the bot-owned append-only outcome journal."""
 
         self._fanout_outcome_persist = persist
+
+    def configure_flip_entry_ownership(
+        self,
+        persist: Callable[[FlipEntryOwnershipRecord, bool, str], None] | None,
+        *,
+        active_segments: Mapping[str, int] | None = None,
+        restored: Mapping[str, FlipEntryOwnershipRecord] | None = None,
+        restore_readable: bool = True,
+    ) -> None:
+        """Install RECLAIM1 state before any emitter or market-data task starts."""
+
+        if not self._flip_owned_first_entry_enabled:
+            return
+        self._flip_owner_persist = persist
+        self._flip_owner_restore_readable = bool(restore_readable)
+        active = {
+            str(symbol).upper(): int(segment_id)
+            for symbol, segment_id in (active_segments or {}).items()
+            if int(segment_id) > 0
+        }
+        records = {str(symbol).upper(): value for symbol, value in (restored or {}).items()}
+        symbols = set(active) | set(records)
+        self._restored_flip_owners = {}
+        for symbol in symbols:
+            record = records.get(symbol)
+            active_id = active.get(symbol)
+            if record is None or active_id != record.opportunity_id:
+                # A durable opportunity without a durable owner may still be a working broker
+                # order. Restart cannot prove otherwise, so strict mode refuses instead of placing
+                # a replacement. The fail-safe switch bypasses this store entirely on rollback.
+                self._restored_flip_owners[symbol] = None
+            else:
+                self._restored_flip_owners[symbol] = record
+        for state in self._symbol_states.values():
+            self._restore_flip_owner(state)
+
+    def flip_entry_observability(self) -> dict[str, int | str]:
+        return {
+            "mode": "enabled" if self._flip_owned_first_entry_enabled else "disabled",
+            **self._flip_owner_counts,
+        }
+
+    def _flip_owner_record(self, state: SymbolState) -> FlipEntryOwnershipRecord:
+        return FlipEntryOwnershipRecord(
+            symbol=state.symbol.upper(),
+            opportunity_id=int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0),
+            phase=state.flip_owner_phase,
+            flip_bar_ts=int(state.flip_owner_flip_bar_ts),
+            provisional_started_ms=int(state.flip_owner_provisional_started_ms),
+            fill_accounts=tuple(sorted(state.flip_owner_fill_accounts)),
+            position_ids=dict(state.flip_owner_position_ids),
+            position_entry_ms=dict(state.flip_owner_position_entry_ms),
+        )
+
+    def _persist_flip_owner(self, state: SymbolState, *, active: bool, reason: str) -> bool:
+        persist = self._flip_owner_persist
+        if persist is None:
+            self._set_flip_owner_unknown(state, reason="persistence_unconfigured", persist=False)
+            return False
+        record = self._flip_owner_record(state)
+        if record.opportunity_id <= 0:
+            self._set_flip_owner_unknown(state, reason="missing_opportunity_identity", persist=False)
+            return False
+        try:
+            persist(record, active, reason)
+        except Exception:  # noqa: BLE001 - failure must block, never reopen an entry
+            logger.exception(
+                "[V2-FLIP-OWNER-PERSIST-FAILED] %s opportunity_id=%d phase=%s "
+                "entry_allowed=0 reason=%s",
+                state.symbol,
+                record.opportunity_id,
+                record.phase,
+                reason,
+            )
+            self._set_flip_owner_unknown(state, reason="persistence_failed", persist=False)
+            return False
+        return True
+
+    def _restore_flip_owner(self, state: SymbolState) -> None:
+        if not self._flip_owned_first_entry_enabled:
+            return
+        restored = self._restored_flip_owners
+        symbol = state.symbol.upper()
+        if symbol not in restored:
+            return
+        record = restored.pop(symbol)
+        if not self._flip_owner_restore_readable or record is None:
+            state.flip_owner_opportunity_id = int(
+                self._restored_fanout_segment_ids.get(symbol, 0)
+                or state.fanout_segment_id
+                or 0
+            )
+            self._set_flip_owner_unknown(state, reason="restart_state_unreadable", persist=False)
+            return
+        state.flip_owner_phase = record.phase
+        state.flip_owner_opportunity_id = record.opportunity_id
+        state.flip_owner_flip_bar_ts = record.flip_bar_ts
+        state.flip_owner_provisional_started_ms = record.provisional_started_ms
+        state.flip_owner_fill_accounts = set(record.fill_accounts)
+        state.flip_owner_position_ids = dict(record.position_ids)
+        state.flip_owner_position_entry_ms = dict(record.position_entry_ms)
+        state.flip_owner_first_rest_placed = True
+        logger.info(
+            "[V2-FLIP-OWNER-RESTORED] %s opportunity_id=%d phase=%s positions=%d "
+            "entry_allowed=0 pending_fresh_position_read=1",
+            state.symbol,
+            record.opportunity_id,
+            record.phase,
+            len(record.position_ids),
+        )
+
+    def _set_flip_owner_unknown(
+        self, state: SymbolState, *, reason: str, persist: bool = True
+    ) -> None:
+        state.flip_owner_phase = "unknown"
+        logger.error(
+            "[V2-FLIP-OWNER-UNKNOWN] %s opportunity_id=%d entry_allowed=0 reason=%s",
+            state.symbol,
+            int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0),
+            reason,
+        )
+        if persist and self._flip_owner_persist is not None:
+            self._persist_flip_owner(state, active=True, reason=reason)
+
+    @staticmethod
+    def _clear_flip_owner_memory(state: SymbolState) -> None:
+        state.flip_owner_phase = "idle"
+        state.flip_owner_opportunity_id = 0
+        state.flip_owner_flip_bar_ts = 0
+        state.flip_owner_provisional_started_ms = 0
+        state.flip_owner_fill_accounts.clear()
+        state.flip_owner_position_ids.clear()
+        state.flip_owner_position_entry_ms.clear()
+        state.flip_owner_first_rest_placed = False
+
+    def _retire_flip_owner_opportunity(self, state: SymbolState, *, reason: str) -> bool:
+        opportunity_id = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+        if opportunity_id <= 0:
+            self._set_flip_owner_unknown(state, reason=f"{reason}_missing_opportunity")
+            return False
+        # Retire the shared order identity first. If the process stops between these two writes,
+        # restart sees an owner without its opportunity and fails closed. Reversing the order could
+        # restore an apparently unused opportunity after the owner had already been retired.
+        if not self._persist_fanout_identity_transition(
+            state,
+            segment_id=opportunity_id,
+            active=False,
+            reason=reason,
+        ):
+            self._set_flip_owner_unknown(state, reason=f"{reason}_identity_retire_failed")
+            return False
+        if not self._persist_flip_owner(state, active=False, reason=reason):
+            return False
+        state.fanout_last_retired_opportunity_id = max(
+            state.fanout_last_retired_opportunity_id,
+            opportunity_id,
+        )
+        self._release_fanout_webull_claim(state, reason=reason)
+        self._clear_fanout_segment_id(state, reason=reason, persist=False)
+        self._reset_fanout_webull_slots(state)
+        state.cw_resting_taken = False
+        state.cw_reclaim_taken = False
+        state.cw_v2_emit_claimed = False
+        state.cw_v2_emit_ms = 0
+        self._clear_flip_owner_memory(state)
+        return True
+
+    def _ensure_flip_owner_opportunity(self, state: SymbolState) -> int:
+        current = int(state.fanout_segment_id or state.flip_owner_opportunity_id or 0)
+        if current > 0:
+            state.flip_owner_opportunity_id = current
+            return current
+        candidate = max(
+            1,
+            int(self._now_ms()),
+            int(state.fanout_last_retired_opportunity_id) + 1,
+        )
+        if not self._persist_fanout_identity_transition(
+            state,
+            segment_id=candidate,
+            active=True,
+            reason="flip_owned_opportunity_v2_bind",
+        ):
+            state.flip_owner_opportunity_id = candidate
+            self._set_flip_owner_unknown(state, reason="opportunity_identity_persist_failed")
+            return 0
+        state.fanout_segment_id = candidate
+        state.flip_owner_opportunity_id = candidate
+        logger.info(
+            "[V2-FLIP-OWNER-OPPORTUNITY] %s opportunity_id=%d identity_schema=v2 "
+            "d20_definition=entry_opportunity evaluated=1 bound=1",
+            state.symbol,
+            candidate,
+        )
+        return candidate
+
+    def _note_flip_owner_fill(self, state: SymbolState, *, account_name: str, reason: str) -> None:
+        if not self._flip_owned_first_entry_enabled:
+            return
+        account = str(account_name).strip()
+        if not account or account not in self._flip_owner_accounts:
+            self._set_flip_owner_unknown(state, reason=f"{reason}_unknown_account")
+            return
+        opportunity_id = self._ensure_flip_owner_opportunity(state)
+        if opportunity_id <= 0 or not state.flip_owner_first_rest_placed:
+            self._set_flip_owner_unknown(state, reason=f"{reason}_not_first_rest")
+            return
+        if state.flip_owner_phase in {"resting", "awaiting_fill"}:
+            state.flip_owner_phase = "provisional"
+            if state.flip_owner_provisional_started_ms <= 0:
+                state.flip_owner_provisional_started_ms = self._now_ms()
+        elif state.flip_owner_phase not in {"provisional", "bound"}:
+            self._set_flip_owner_unknown(state, reason=f"{reason}_phase_mismatch")
+            return
+        state.flip_owner_fill_accounts.add(account)
+        if not self._persist_flip_owner(state, active=True, reason=reason):
+            return
+        logger.info(
+            "[V2-FLIP-OWNER-FILL] %s opportunity_id=%d account=%s phase=%s "
+            "fill_accounts=%d",
+            state.symbol,
+            opportunity_id,
+            account,
+            state.flip_owner_phase,
+            len(state.flip_owner_fill_accounts),
+        )
+
+    def apply_flip_position_book(self, book: FlipPositionBook) -> None:
+        """Apply one account-neutral OMS ownership read on the strategy state thread."""
+
+        if not self._flip_owned_first_entry_enabled:
+            return
+        symbols = set(self._symbol_states) | {str(value).upper() for value in book.legs_by_symbol}
+        for symbol in symbols:
+            state = self.watchlist_state(symbol)
+            state.flip_owner_evidence_readable = bool(book.readable)
+            state.flip_owner_evidence_at_ms = int(book.observed_at_ms)
+            if not book.readable:
+                state.flip_owner_open_positions = {}
+                if state.flip_owner_phase != "idle":
+                    self._flip_owner_counts["cross_account_evaluated"] += 1
+                    self._flip_owner_counts["cross_account_unknown"] += 1
+                    logger.error(
+                        "[V2-FLIP-OWNER-CROSS-ACCOUNT-EVIDENCE] %s evaluated=%d known=%d "
+                        "pending=%d unknown=%d entry_allowed=0 reason=position_book_unreadable",
+                        state.symbol,
+                        self._flip_owner_counts["cross_account_evaluated"],
+                        self._flip_owner_counts["cross_account_known"],
+                        self._flip_owner_counts["cross_account_pending"],
+                        self._flip_owner_counts["cross_account_unknown"],
+                    )
+                continue
+            legs = tuple(book.legs_by_symbol.get(symbol, ()))
+            by_account: dict[str, FlipPositionLeg] = {}
+            duplicate = False
+            for leg in legs:
+                if leg.account_name in by_account:
+                    duplicate = True
+                    break
+                by_account[leg.account_name] = leg
+            state.flip_owner_open_positions = by_account
+            if duplicate or any(account not in self._flip_owner_accounts for account in by_account):
+                self._set_flip_owner_unknown(state, reason="position_book_identity_ambiguous")
+                continue
+            self._apply_flip_position_evidence(state)
+
+    def _apply_flip_position_evidence(self, state: SymbolState) -> None:
+        open_positions = state.flip_owner_open_positions
+        phase = state.flip_owner_phase
+        if phase == "idle":
+            if open_positions:
+                self._set_flip_owner_unknown(state, reason="open_position_without_entry_owner")
+            return
+        if phase == "unknown":
+            return
+        self._flip_owner_counts["cross_account_evaluated"] += 1
+        valid = True
+        unexpected_accounts = set(open_positions) - state.flip_owner_fill_accounts
+        if unexpected_accounts:
+            self._flip_owner_counts["cross_account_unknown"] += 1
+            self._set_flip_owner_unknown(
+                state,
+                reason="position_without_matching_first_rest_fill_evidence",
+            )
+            return
+        for account, leg in open_positions.items():
+            if (
+                state.flip_owner_provisional_started_ms > 0
+                and leg.entry_time_ms + FLIP_OWNER_ROW_SETTLE_MS
+                < state.flip_owner_provisional_started_ms
+            ):
+                valid = False
+                break
+            prior = state.flip_owner_position_ids.get(account)
+            if prior and prior != leg.managed_row_id:
+                valid = False
+                break
+            state.flip_owner_position_ids[account] = leg.managed_row_id
+            state.flip_owner_position_entry_ms[account] = leg.entry_time_ms
+        if not valid:
+            self._flip_owner_counts["cross_account_unknown"] += 1
+            self._set_flip_owner_unknown(state, reason="managed_position_replaced_or_predates_fill")
+            return
+        missing_rows = state.flip_owner_fill_accounts - set(state.flip_owner_position_ids)
+        if missing_rows:
+            age_ms = self._now_ms() - int(state.flip_owner_provisional_started_ms or self._now_ms())
+            if age_ms > FLIP_OWNER_ROW_SETTLE_MS:
+                self._flip_owner_counts["cross_account_unknown"] += 1
+                self._set_flip_owner_unknown(state, reason="fill_without_managed_position_row")
+            else:
+                self._flip_owner_counts["cross_account_pending"] += 1
+                logger.info(
+                    "[V2-FLIP-OWNER-CROSS-ACCOUNT-EVIDENCE] %s evaluated=%d known=%d "
+                    "pending=%d unknown=%d open=%d filled_accounts=%d position_ids=%d",
+                    state.symbol,
+                    self._flip_owner_counts["cross_account_evaluated"],
+                    self._flip_owner_counts["cross_account_known"],
+                    self._flip_owner_counts["cross_account_pending"],
+                    self._flip_owner_counts["cross_account_unknown"],
+                    len(open_positions),
+                    len(state.flip_owner_fill_accounts),
+                    len(state.flip_owner_position_ids),
+                )
+            return
+        self._flip_owner_counts["cross_account_known"] += 1
+        logger.info(
+            "[V2-FLIP-OWNER-CROSS-ACCOUNT-EVIDENCE] %s evaluated=%d known=%d pending=%d unknown=%d "
+            "open=%d filled_accounts=%d position_ids=%d",
+            state.symbol,
+            self._flip_owner_counts["cross_account_evaluated"],
+            self._flip_owner_counts["cross_account_known"],
+            self._flip_owner_counts["cross_account_pending"],
+            self._flip_owner_counts["cross_account_unknown"],
+            len(open_positions),
+            len(state.flip_owner_fill_accounts),
+            len(state.flip_owner_position_ids),
+        )
+        any_bound_open = any(
+            state.flip_owner_position_ids.get(account) == leg.managed_row_id
+            for account, leg in open_positions.items()
+        )
+        if phase == "awaiting_fill" and open_positions:
+            state.flip_owner_phase = "provisional"
+            phase = "provisional"
+        if (
+            phase == "provisional"
+            and state.flip_owner_flip_bar_ts > 0
+            and state.flip_owner_position_ids
+            and any_bound_open
+        ):
+            self._bind_flip_owner_on_buy_flip(
+                state,
+                flip_bar_ts=state.flip_owner_flip_bar_ts,
+            )
+            phase = state.flip_owner_phase
+        if phase == "provisional" and state.flip_owner_position_ids and not any_bound_open:
+            if state.flip_owner_flip_bar_ts > 0:
+                self._flip_owner_counts["preflip_close_evaluated"] += 1
+                self._flip_owner_counts["preflip_close_unknown"] += 1
+                self._set_flip_owner_unknown(
+                    state,
+                    reason="position_closed_after_flip_before_owner_binding",
+                )
+                logger.error(
+                    "[V2-FLIP-OWNER-PREFLIP-CLOSE-EVALUATED] %s evaluated=%d released=%d "
+                    "unknown=%d entry_allowed=0 reason=flip_already_confirmed",
+                    state.symbol,
+                    self._flip_owner_counts["preflip_close_evaluated"],
+                    self._flip_owner_counts["preflip_close_released"],
+                    self._flip_owner_counts["preflip_close_unknown"],
+                )
+                return
+            self._flip_owner_counts["preflip_close_evaluated"] += 1
+            released = self._retire_flip_owner_opportunity(
+                state,
+                reason="all_sibling_positions_closed_before_flip",
+            )
+            if released:
+                self._flip_owner_counts["preflip_close_released"] += 1
+            else:
+                self._flip_owner_counts["preflip_close_unknown"] += 1
+            logger.info(
+                "[V2-FLIP-OWNER-PREFLIP-CLOSE-EVALUATED] %s evaluated=%d released=%d "
+                "unknown=%d entry_allowed=%d",
+                state.symbol,
+                self._flip_owner_counts["preflip_close_evaluated"],
+                self._flip_owner_counts["preflip_close_released"],
+                self._flip_owner_counts["preflip_close_unknown"],
+                int(released),
+            )
+        elif phase == "awaiting_close" and state.flip_owner_position_ids and not any_bound_open:
+            self._retire_flip_owner_opportunity(state, reason="bound_flip_position_closed")
+
+    def _flip_owner_evidence_fresh(self, state: SymbolState) -> bool:
+        return bool(
+            state.flip_owner_evidence_readable
+            and state.flip_owner_evidence_at_ms > 0
+            and 0 <= self._now_ms() - state.flip_owner_evidence_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
+        )
+
+    def _strict_first_rest_admitted(self, state: SymbolState, *, slot: str) -> bool:
+        if not self._flip_owned_first_entry_enabled:
+            return True
+        self._flip_owner_counts["admission_evaluated"] += 1
+        reason = "allowed"
+        allowed = True
+        if slot != "first":
+            allowed, reason = False, "non_first_producer_disabled"
+        elif not self._flip_owner_restore_readable:
+            allowed, reason = False, "restore_unreadable"
+        elif not self._flip_owner_evidence_fresh(state):
+            allowed, reason = False, "position_evidence_missing_or_stale"
+        elif state.flip_owner_phase not in {"idle", "resting"}:
+            allowed, reason = False, f"owner_phase_{state.flip_owner_phase}"
+        elif state.flip_owner_open_positions:
+            allowed, reason = False, "open_position_present"
+        if not allowed and reason not in {"non_first_producer_disabled", "owner_phase_bound"}:
+            self._flip_owner_counts["admission_refused_unknown"] += 1
+        logger.info(
+            "[V2-FLIP-OWNER-ADMISSION] %s evaluated=%d refused_unknown=%d allowed=%d "
+            "slot=%s reason=%s",
+            state.symbol,
+            self._flip_owner_counts["admission_evaluated"],
+            self._flip_owner_counts["admission_refused_unknown"],
+            int(allowed),
+            slot,
+            reason,
+        )
+        return allowed
+
+    def _bind_flip_owner_on_buy_flip(self, state: SymbolState, *, flip_bar_ts: int) -> None:
+        if not self._flip_owned_first_entry_enabled:
+            return
+        if state.flip_owner_phase == "resting":
+            if state.flip_owner_open_positions:
+                self._set_flip_owner_unknown(state, reason="buy_flip_position_without_fill_evidence")
+            else:
+                state.flip_owner_phase = "awaiting_fill"
+                state.flip_owner_flip_bar_ts = int(flip_bar_ts)
+                state.flip_owner_provisional_started_ms = self._now_ms()
+                self._persist_flip_owner(
+                    state,
+                    active=True,
+                    reason="buy_flip_waiting_for_first_rest_fill",
+                )
+            return
+        if state.flip_owner_phase != "provisional":
+            return
+        self._flip_owner_counts["bind_evaluated"] += 1
+        state.flip_owner_flip_bar_ts = int(flip_bar_ts)
+        open_ids = {
+            account: leg.managed_row_id
+            for account, leg in state.flip_owner_open_positions.items()
+        }
+        bound_open = bool(state.flip_owner_position_ids) and any(
+            open_ids.get(account) == row_id
+            for account, row_id in state.flip_owner_position_ids.items()
+        )
+        all_fills_bound = state.flip_owner_fill_accounts <= set(state.flip_owner_position_ids)
+        fresh = self._flip_owner_evidence_fresh(state)
+        if not (fresh and bound_open and all_fills_bound):
+            age_ms = self._now_ms() - int(
+                state.flip_owner_provisional_started_ms or self._now_ms()
+            )
+            if age_ms <= FLIP_OWNER_ROW_SETTLE_MS:
+                self._flip_owner_counts["bind_pending"] += 1
+                self._persist_flip_owner(
+                    state,
+                    active=True,
+                    reason="buy_flip_binding_pending_position_read",
+                )
+                logger.info(
+                    "[V2-FLIP-OWNER-BIND-EVALUATED] %s flip_bar_ts=%d evaluated=%d "
+                    "bound=%d pending=%d unknown=%d fresh=%d open_rows=%d",
+                    state.symbol,
+                    flip_bar_ts,
+                    self._flip_owner_counts["bind_evaluated"],
+                    self._flip_owner_counts["bind_succeeded"],
+                    self._flip_owner_counts["bind_pending"],
+                    self._flip_owner_counts["bind_unknown"],
+                    int(fresh),
+                    len(open_ids),
+                )
+                return
+            self._flip_owner_counts["bind_unknown"] += 1
+            self._set_flip_owner_unknown(state, reason="buy_flip_owner_not_proven")
+        else:
+            state.flip_owner_phase = "bound"
+            if self._persist_flip_owner(state, active=True, reason="buy_flip_bound"):
+                self._flip_owner_counts["bind_succeeded"] += 1
+        logger.info(
+            "[V2-FLIP-OWNER-BIND-EVALUATED] %s flip_bar_ts=%d evaluated=%d bound=%d "
+            "pending=%d unknown=%d fresh=%d open_rows=%d",
+            state.symbol,
+            flip_bar_ts,
+            self._flip_owner_counts["bind_evaluated"],
+            self._flip_owner_counts["bind_succeeded"],
+            self._flip_owner_counts["bind_pending"],
+            self._flip_owner_counts["bind_unknown"],
+            int(fresh),
+            len(open_ids),
+        )
+
+    def _end_flip_owner_on_sell(self, state: SymbolState) -> None:
+        if not self._flip_owned_first_entry_enabled:
+            return
+        phase = state.flip_owner_phase
+        if phase == "idle":
+            return
+        if phase == "unknown":
+            return
+        if not self._flip_owner_evidence_fresh(state):
+            self._set_flip_owner_unknown(
+                state,
+                reason="sell_flip_without_fresh_position_evidence",
+            )
+            return
+        if phase == "resting":
+            self._retire_flip_owner_opportunity(state, reason="sell_flip_no_fill")
+            return
+        if phase == "awaiting_fill":
+            if state.flip_owner_open_positions:
+                self._set_flip_owner_unknown(state, reason="sell_flip_with_unbound_first_fill")
+            else:
+                self._retire_flip_owner_opportunity(state, reason="sell_flip_without_fill")
+            return
+        open_ids = {leg.managed_row_id for leg in state.flip_owner_open_positions.values()}
+        if any(row_id in open_ids for row_id in state.flip_owner_position_ids.values()):
+            state.flip_owner_phase = "awaiting_close"
+            self._persist_flip_owner(state, active=True, reason="sell_flip_waiting_for_close")
+            return
+        self._retire_flip_owner_opportunity(state, reason="sell_flip_flat")
 
     def _persist_fanout_claim_transition(
         self,
@@ -950,6 +1555,20 @@ class SchwabV2Strategy:
             state.fanout_claim_outcome = "filled"
             state.fanout_claim_ms = self._now_ms()
             self._consume_fanout_webull_slot(state, record.slot)
+            if self._flip_owned_first_entry_enabled:
+                if record.slot != "resting":
+                    self._set_flip_owner_unknown(
+                        state,
+                        reason="webull_fill_from_non_first_slot",
+                    )
+                else:
+                    self._note_flip_owner_fill(
+                        state,
+                        account_name=(
+                            record.broker_account_name or self._flip_owner_webull_account
+                        ),
+                        reason="webull_first_rest_filled",
+                    )
             logger.info(
                 "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=filled held=1 "
                 "evidence=positive fill_rank=authoritative webull_slot_consumed=1 "
@@ -1069,13 +1688,13 @@ class SchwabV2Strategy:
         segment_id: int,
         active: bool,
         reason: str,
-    ) -> None:
+    ) -> bool:
         persist = getattr(self, "_fanout_identity_persist", None)
         if persist is None:
-            return
+            return not self._flip_owned_first_entry_enabled
         try:
             persist(state.symbol, segment_id, active, reason)
-        except Exception:  # noqa: BLE001 - observation must never become a trading gate
+        except Exception:  # noqa: BLE001 - strict mode treats this as unknown and refuses entry
             logger.exception(
                 "[V2-FANOUT-IDENTITY-PERSIST-FAILED] %s segment_id=%d active=%d "
                 "reason=%s could_not_tell=1",
@@ -1084,7 +1703,7 @@ class SchwabV2Strategy:
                 int(active),
                 reason,
             )
-            return
+            return False
         logger.info(
             "[V2-FANOUT-IDENTITY-PERSISTED] %s segment_id=%d active=%d reason=%s "
             "persisted=1 could_not_tell=0",
@@ -1093,6 +1712,7 @@ class SchwabV2Strategy:
             int(active),
             reason,
         )
+        return True
 
     def _clear_fanout_segment_id(
         self,
@@ -1100,6 +1720,7 @@ class SchwabV2Strategy:
         *,
         reason: str,
         include_unconsumed_restore: bool = False,
+        persist: bool = True,
     ) -> None:
         segment_id = int(state.fanout_segment_id or 0)
         state.fanout_segment_id = 0
@@ -1108,7 +1729,7 @@ class SchwabV2Strategy:
             restored_id = int(restored.pop(state.symbol.upper(), 0) or 0)
             if segment_id <= 0:
                 segment_id = restored_id
-        if segment_id > 0:
+        if segment_id > 0 and persist:
             self._persist_fanout_identity_transition(
                 state,
                 segment_id=segment_id,
@@ -1134,6 +1755,11 @@ class SchwabV2Strategy:
         logger.info("[V2-CW-DISARM] %s reason=%s", state.symbol, reason)
         state.cw_armed = False
         state.cw_arm_bar_ts = 0
+        if self._flip_owned_first_entry_enabled:
+            # The confirmed arm is entry permission; the position owner survives until every
+            # bound broker leg closes. Clearing both here would reopen the exact same segment.
+            state.cw_entries_this_flip = 0
+            return True
         self._release_fanout_webull_claim(state, reason=reason)
         self._clear_fanout_segment_id(state, reason=reason)
         self._reset_fanout_webull_slots(state)
@@ -1183,21 +1809,24 @@ class SchwabV2Strategy:
         )
         if state.resting_active or state.webull_resting_active:
             self._queue_resting_cancel(state, reason=reason)
-        self._release_fanout_webull_claim(state, reason=reason)
+        if not self._flip_owned_first_entry_enabled:
+            self._release_fanout_webull_claim(state, reason=reason)
         arm_released = self._release_arm(state, reason)
 
         # Some claims can outlive the arm (for example an emitted-but-not-filled leg). The entry
         # window ending releases those too; none is an exit input.
         state.cw_arm_bar_ts = 0
-        self._clear_fanout_segment_id(
-            state,
-            reason=reason,
-            include_unconsumed_restore=True,
-        )
+        if not self._flip_owned_first_entry_enabled:
+            self._clear_fanout_segment_id(
+                state,
+                reason=reason,
+                include_unconsumed_restore=True,
+            )
         state.cw_entries_this_flip = 0
-        state.cw_resting_taken = False
-        state.cw_reclaim_taken = False
-        self._reset_fanout_webull_slots(state)
+        if not self._flip_owned_first_entry_enabled:
+            state.cw_resting_taken = False
+            state.cw_reclaim_taken = False
+            self._reset_fanout_webull_slots(state)
         state.cw_v2_emit_claimed = False
         state.cw_v2_emit_ms = 0
         state.resting_flip_ms = 0
@@ -1220,6 +1849,19 @@ class SchwabV2Strategy:
         state = self._symbol_states.get(symbol)
         if state is None:
             return False
+        if self._flip_owned_first_entry_enabled and (
+            state.flip_owner_phase != "idle" or state.fanout_segment_id
+        ):
+            if state.resting_active or state.webull_resting_active:
+                self._queue_resting_cancel(state, reason=reason)
+            released = self._release_arm(state, reason)
+            self._set_flip_owner_unknown(
+                state,
+                reason="watchlist_removed_before_position_episode_ended",
+            )
+            # Keep the state object. If the symbol re-enters the watchlist in this process, UNKNOWN
+            # remains an entry refusal rather than being replaced by a fresh unowned state.
+            return released
         self._release_fanout_webull_claim(state, reason=reason)
         released = self._release_arm(state, reason)
         self._clear_fanout_segment_id(
@@ -1276,10 +1918,10 @@ class SchwabV2Strategy:
         )
 
     def update_position(self, symbol: str, qty: int, *, held_qty: int | None = None) -> None:
-        """Called by the engine each position-poll cycle. On a True→False
-        transition (OMS just closed our position), release the CW-v2 reclaim claim so the
-        segment's second entry can fire. There is no cooldown: the per-segment entry cap bounds
-        re-entry instead (see the block below).
+        """Apply the primary-account position poll without inferring the Webull leg.
+
+        Compatibility mode retains the historical True→False reclaim release. Strict flip-owned
+        mode leaves closure to the account-neutral managed-position book.
 
         `qty` is the conservative UNION (fills ∪ in-flight open intents) and keeps driving every
         existing gate unchanged. `held_qty` is fills-only; it defaults to `qty` so a caller that
@@ -1290,6 +1932,12 @@ class SchwabV2Strategy:
         prev_held = state.position_qty_held
         state.position_qty = max(0, int(qty))
         state.position_qty_held = max(0, int(qty if held_qty is None else held_qty))
+        if self._flip_owned_first_entry_enabled and prev_held == 0 < state.position_qty_held:
+            self._note_flip_owner_fill(
+                state,
+                account_name=self._flip_owner_primary_account,
+                reason="schwab_first_rest_filled",
+            )
         # ⭐⭐ A FILL CONSUMES THE RESTING SLOT (2026-08-03). `position_qty_held` is FILLS-ONLY, so a
         # 0 -> >0 transition here is a real execution, not an in-flight intent.
         #
@@ -1408,28 +2056,38 @@ class SchwabV2Strategy:
             # `position_qty` is the UNION (fills ∪ in-flight open intents), so this fires both on a
             # REAL close and when one of our own resting intents merely went terminal. That still
             # matters below -- it releases the reclaim claim -- so the two are logged distinctly.
-            logger.info(
-                "schwab_1m_v2 position closed for %s — qty %d -> 0 [held %d -> %d, %s]; reclaim "
-                "claim released (no cooldown); Webull claim release evaluated separately "
-                "(cause: OMS exit, broker OCO leg, operator close, reconcile, or our own resting "
-                "intent going terminal)",
-                symbol,
-                prev,
-                prev_held,
-                state.position_qty_held,
-                "SPURIOUS-no-shares-ever-held" if spurious else "real-position-closed",
-            )
+            if self._flip_owned_first_entry_enabled:
+                logger.info(
+                    "[V2-FLIP-OWNER-PRIMARY-CLOSE] %s union=%d->0 held=%d->%d "
+                    "account_neutral_close_pending=1 entry_released=0",
+                    symbol,
+                    prev,
+                    prev_held,
+                    state.position_qty_held,
+                )
+            else:
+                logger.info(
+                    "schwab_1m_v2 position closed for %s — qty %d -> 0 [held %d -> %d, %s]; "
+                    "reclaim claim released (no cooldown); Webull claim release evaluated "
+                    "separately (cause: OMS exit, broker OCO leg, operator close, reconcile, "
+                    "or our own resting intent going terminal)",
+                    symbol,
+                    prev,
+                    prev_held,
+                    state.position_qty_held,
+                    "SPURIOUS-no-shares-ever-held" if spurious else "real-position-closed",
+                )
             # ⛔ LOAD-BEARING -- these two lines are what actually enables reclaim, and they were
             # historically written in the same block as the cooldown. Removing "the cooldown"
             # without keeping them would silently stop every second entry.
             # CW-v2 reclaim: our position just closed -> release the intrabar emit claim so a
             # SECOND entry can fire in the SAME long segment (the cw_entries_this_flip<2 cap +
             # arm-on-flip + the 1-bar gap bound it). No-op when the sub-flag is off.
-            if self._cw_v2_enabled:
+            if self._cw_v2_enabled and not self._flip_owned_first_entry_enabled:
                 state.cw_v2_emit_claimed = False
                 state.cw_v2_bars_since_exit = 0  # reclaim gap: start counting new bars from the exit
 
-        if self._cw_v2_enabled:
+        if self._cw_v2_enabled and not self._flip_owned_first_entry_enabled:
             # ⛔ Evidence precedence at the release site. The UNION can fall to zero because a
             # Webull fill terminalized its own open intent, while a transient [VIRTUAL-CLEAR] can
             # separately make the fills-only read zero. Both converge here before restoration can
@@ -1884,20 +2542,49 @@ class SchwabV2Strategy:
         state.cw_segment_high = 0.0
         state.cw_v2_emit_claimed = False
         state.cw_v2_emit_ms = 0
-        self._release_fanout_webull_claim(state, reason="session_anchor_reset")
         restored_anchor = int(getattr(self, "_restored_fanout_session_anchor_ms", 0) or 0)
-        # Outcome replay runs before historical bar replay. Preserve a current-session durable fill
-        # while those older anchors walk through this reset; retire it only at the next real anchor.
-        if not restored_anchor or anchor > restored_anchor:
-            self._reset_fanout_webull_slots(state)
-        self._clear_fanout_segment_id(
-            state,
-            reason="session_anchor_reset",
-            # DB-seed replay legitimately walks older session anchors. A current-session durable
-            # key must survive that replay and bind only when the first live draft/arm appears.
-            # The next real 04:00 boundary is strictly newer and retires an unused restore.
-            include_unconsumed_restore=bool(restored_anchor and anchor > restored_anchor),
-        )
+        if self._flip_owned_first_entry_enabled:
+            # Historical warmup anchors cannot retire current durable ownership. At a real 04:00
+            # boundary, flat + fresh evidence closes the old opportunity; an open or unreadable
+            # position book keeps entry admission closed until the owned rows finish.
+            if self._fanout_identity_bar_is_live(state):
+                if not self._flip_owner_evidence_fresh(state):
+                    self._set_flip_owner_unknown(
+                        state,
+                        reason="session_reset_without_fresh_position_evidence",
+                    )
+                elif state.flip_owner_open_positions:
+                    if state.flip_owner_phase == "unknown":
+                        self._set_flip_owner_unknown(
+                            state,
+                            reason="session_reset_open_position_unknown_owner",
+                        )
+                    else:
+                        state.flip_owner_phase = "awaiting_close"
+                        self._persist_flip_owner(
+                            state,
+                            active=True,
+                            reason="session_reset_waiting_for_position_close",
+                        )
+                elif state.fanout_segment_id or state.flip_owner_opportunity_id:
+                    self._retire_flip_owner_opportunity(
+                        state,
+                        reason="session_reset_flat",
+                    )
+        else:
+            self._release_fanout_webull_claim(state, reason="session_anchor_reset")
+            # Outcome replay runs before historical bar replay. Preserve a current-session durable fill
+            # while those older anchors walk through this reset; retire it only at the next real anchor.
+            if not restored_anchor or anchor > restored_anchor:
+                self._reset_fanout_webull_slots(state)
+            self._clear_fanout_segment_id(
+                state,
+                reason="session_anchor_reset",
+                # DB-seed replay legitimately walks older session anchors. A current-session durable
+                # key must survive that replay and bind only when the first live draft/arm appears.
+                # The next real 04:00 boundary is strictly newer and retires an unused restore.
+                include_unconsumed_restore=bool(restored_anchor and anchor > restored_anchor),
+            )
         # Resting flip-entry: a live resting order is already cancelled at 16:00 (out-of-window),
         # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
         state.resting_active = False
@@ -2474,30 +3161,39 @@ class SchwabV2Strategy:
                 # instead of manufacturing a second opportunity at bar close. Reconstructed DB
                 # bars deliberately do not consume a durable restart key: the first LIVE arm or
                 # draft does, after warmup has finished replaying historical BUY/SELL flips.
-                self._ensure_fanout_segment_id(state)
+                if not self._flip_owned_first_entry_enabled:
+                    self._ensure_fanout_segment_id(state)
+            self._bind_flip_owner_on_buy_flip(
+                state,
+                flip_bar_ts=int(state.bars[-1].timestamp_ms),
+            )
             return
         if flip == "SELL":
             if self._cw_armed_segment_safety_enabled and state.cw_armed:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
             state.cw_arm_bar_ts = 0
-            self._release_fanout_webull_claim(state, reason="flip")
             live_fanout_transition = self._fanout_identity_bar_is_live(state)
-            self._clear_fanout_segment_id(
-                state,
-                reason="flip",
-                # Historical SELLs are warmup reconstruction; the first fresh SELL is a real
-                # transition and must retire a durable key restored from the pre-restart process.
-                include_unconsumed_restore=live_fanout_transition,
-            )
-            if live_fanout_transition:
-                self._reset_fanout_webull_slots(state)
+            if self._flip_owned_first_entry_enabled:
+                self._end_flip_owner_on_sell(state)
+            else:
+                self._release_fanout_webull_claim(state, reason="flip")
+                self._clear_fanout_segment_id(
+                    state,
+                    reason="flip",
+                    # Historical SELLs are warmup reconstruction; the first fresh SELL is a real
+                    # transition and must retire a durable key restored from the pre-restart process.
+                    include_unconsumed_restore=live_fanout_transition,
+                )
+                if live_fanout_transition:
+                    self._reset_fanout_webull_slots(state)
             # A cross ENDS here, so this is where its slots are released. Moved from the arm block
             # (2026-08-03): entries belong to the cross that was live when they filled, or to the
             # cross that confirms while the position is still held.
             state.cw_entries_this_flip = 0
-            state.cw_resting_taken = False
-            state.cw_reclaim_taken = False
+            if not self._flip_owned_first_entry_enabled:
+                state.cw_resting_taken = False
+                state.cw_reclaim_taken = False
             return
         if not state.cw_armed:
             return
@@ -2557,6 +3253,10 @@ class SchwabV2Strategy:
         default — else the shipped 2). Cooldown is intentionally NOT gated (reclaim has no
         cooldown). No-op unless the sub-flag is on. Returns a market-buy open draft or None."""
         if not self._cw_v2_enabled:
+            return None
+        if self._flip_owned_first_entry_enabled:
+            # RECLAIM1 strict mode has one producer: the first ATR-trail rest. The reactive
+            # segment-high path is not a fallback when that order misses.
             return None
         if not self._reactive_entry_enabled or state.resting_active:
             # Reactive entry off, OR a resting buy-stop-limit is already live for this symbol.
@@ -2885,6 +3585,20 @@ class SchwabV2Strategy:
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
     def _queue_resting_place(self, state: SymbolState, line: float, *, slot: str = "first") -> None:
+        if not self._strict_first_rest_admitted(state, slot=slot):
+            return
+        if self._flip_owned_first_entry_enabled and self._ensure_flip_owner_opportunity(state) <= 0:
+            return
+        if self._flip_owned_first_entry_enabled:
+            state.flip_owner_first_rest_placed = True
+            if state.flip_owner_phase == "idle":
+                state.flip_owner_phase = "resting"
+            if not self._persist_flip_owner(
+                state,
+                active=True,
+                reason="first_rest_working",
+            ):
+                return
         limit = line * (1.0 + self._resting_entry_band_pct / 100.0)
         state.resting_active = True
         state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel
@@ -2907,12 +3621,12 @@ class SchwabV2Strategy:
             state.symbol, slot, line, limit, self._resting_entry_band_pct,
         )
         shared_fanout_identity: dict[str, str] = {}
-        if self._dual_broker_fanout_enabled:
+        if self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled:
             shared_fanout_identity = self._fanout_identity_metadata(
                 state,
                 source=(
                     "rth_resting_mirror"
-                    if self._webull_resting_mirror_enabled
+                    if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled
                     else "rth_resting"
                 ),
             )
@@ -3257,6 +3971,10 @@ class SchwabV2Strategy:
         trigger, price-committed. Rule 7 is NOT evaluated (a broker stop cannot carry intrabar
         state); that is the entire fidelity difference, ~1.3% upper bound.
         """
+        if self._flip_owned_first_entry_enabled:
+            if state.resting_active and state.resting_slot == "reclaim":
+                self._queue_resting_cancel(state, reason="flip_owned_first_only")
+            return
         if not (self._reactive_entry_enabled and self._cw_v2_enabled):
             return
         if self._entries_held:                       # boot-hold suppresses all entries
@@ -3527,7 +4245,7 @@ class SchwabV2Strategy:
             state.symbol, px, level, cap, self._resting_entry_band_pct,
         )
         shared_fanout_identity: dict[str, str] = {}
-        if self._dual_broker_fanout_enabled:
+        if self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled:
             shared_fanout_identity = self._fanout_identity_metadata(
                 state,
                 source="eh_resting",
@@ -3670,14 +4388,25 @@ class SchwabV2Strategy:
         """
 
         segment = segment_id or self._ensure_fanout_segment_id(state)
+        arm_bar_ts = (
+            int(state.flip_owner_flip_bar_ts)
+            if self._flip_owned_first_entry_enabled
+            else int(segment)
+        )
         return {
             "fanout_segment_id": str(segment),
             # S7 (2026-09-01): first-slot resting drafts are built before the BUY arm exists, so
             # serializing state.cw_arm_bar_ts stamped 0 on every first fill while reclaim carried a
-            # value. The durable fan-out segment is already bound at that first draft and survives
-            # through reclaim. Keep the legacy grading key as its metadata-only alias; never stamp
-            # SymbolState early, because the live seed-cap and entry gates read that state field.
-            "cw_arm_bar_ts": str(segment),
+            # value. Legacy mode keeps the durable fan-out segment as this metadata-only alias.
+            # Strict mode records the actual confirmed flip bar, or 0 before one exists, and adds
+            # an explicit identity schema so D20 populations cannot be pooled across definitions.
+            # Never stamp SymbolState early: the live seed-cap and entry gates read that field.
+            "cw_arm_bar_ts": str(arm_bar_ts),
+            **(
+                {"fanout_identity_schema": "entry_opportunity_v2"}
+                if self._flip_owned_first_entry_enabled
+                else {}
+            ),
             **self._fanout_slot_metadata(state, source=source, segment_id=segment),
         }
 

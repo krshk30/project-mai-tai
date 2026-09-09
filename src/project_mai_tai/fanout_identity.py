@@ -16,6 +16,7 @@ FANOUT_IDENTITY_KEYS = (
     "fanout_slot_id",
     "fanout_attempt_id",
     "fanout_predecessor_attempt_id",
+    "fanout_identity_schema",
 )
 
 _SLOT_BY_SOURCE = {

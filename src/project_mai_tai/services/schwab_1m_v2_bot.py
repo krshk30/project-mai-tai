@@ -63,6 +63,11 @@ from project_mai_tai.fanout_outcome_consumer import (
     identity_from_metadata,
 )
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
+from project_mai_tai.v2_flip_entry_ownership import (
+    FlipEntryOwnershipStore,
+    FlipPositionBook,
+    FlipPositionLeg,
+)
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.events import (
     HeartbeatEvent,
@@ -256,6 +261,7 @@ class SchwabV2BotService:
         self.session_factory: sessionmaker[Session] | None = session_factory
         self.fanout_identity_store: FanoutSegmentIdentityStore | None = None
         self.fanout_outcome_journal: FanoutOutcomeJournal | None = None
+        self.flip_entry_ownership_store: FlipEntryOwnershipStore | None = None
         self._fanout_outcome_evaluations = 0
         self._stop_event = asyncio.Event()
         self._strategy_state_stream = stream_name(
@@ -503,6 +509,62 @@ class SchwabV2BotService:
             applied,
         )
 
+    def _configure_flip_entry_ownership_store(
+        self,
+        active_segments: dict[str, int],
+    ) -> None:
+        """Restore strict entry ownership before any outcome or market-data task runs."""
+
+        if not bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_flip_owned_first_entry_enabled",
+                False,
+            )
+        ):
+            return
+        if self.session_factory is None:
+            self.strategy.configure_flip_entry_ownership(
+                None,
+                active_segments=active_segments,
+                restore_readable=False,
+            )
+            logger.error(
+                "[V2-FLIP-OWNER-RESTORE] evaluated=0 restored=0 could_not_tell=1 "
+                "entry_allowed=0 reason=no_session_factory"
+            )
+            return
+        self.flip_entry_ownership_store = FlipEntryOwnershipStore(self.session_factory)
+        try:
+            restored = self.flip_entry_ownership_store.restore_active()
+        except Exception:  # noqa: BLE001 - unreadable ownership must refuse entries
+            restored = {}
+            restore_readable = False
+            logger.exception(
+                "[V2-FLIP-OWNER-RESTORE] evaluated=0 restored=0 could_not_tell=1 "
+                "entry_allowed=0"
+            )
+        else:
+            restore_readable = True
+            logger.info(
+                "[V2-FLIP-OWNER-RESTORE] evaluated=%d restored=%d could_not_tell=0",
+                len(active_segments),
+                len(restored),
+            )
+
+        def persist(record, active: bool, reason: str) -> None:  # type: ignore[no-untyped-def]
+            store = self.flip_entry_ownership_store
+            if store is None:
+                raise RuntimeError("flip entry ownership store is not configured")
+            store.record(record, active=active, reason=reason)
+
+        self.strategy.configure_flip_entry_ownership(
+            persist,
+            active_segments=active_segments,
+            restored=restored,
+            restore_readable=restore_readable,
+        )
+
     @property
     def streamer_enabled(self) -> bool:
         """Streamer subsumes the REST bar-poll path for live bars. REST keeps
@@ -539,6 +601,7 @@ class SchwabV2BotService:
                     exc,
                 )
         active_segments = self._configure_fanout_identity_store()
+        self._configure_flip_entry_ownership_store(active_segments)
         self._configure_fanout_outcome_journal(active_segments)
         self.intent_emitter = SchwabV2IntentEmitter(
             self.settings,
@@ -827,6 +890,10 @@ class SchwabV2BotService:
             "rest_bars_gated_total": str(self._rest_bars_gated),
             "rest_bars_gap_fill_total": str(self._rest_bars_gap_fill),
             "fanout_outcome_evaluations": str(self._fanout_outcome_evaluations),
+            **{
+                f"flip_entry_{key}": str(value)
+                for key, value in self.strategy.flip_entry_observability().items()
+            },
             "tick_capture": str(self.tick_writer is not None).lower(),
             **(
                 {
@@ -1414,6 +1481,20 @@ class SchwabV2BotService:
     async def _position_poll_pass(self) -> None:
         maps = await asyncio.to_thread(self._fetch_position_maps)
         if maps is None:
+            if bool(
+                getattr(
+                    self.settings,
+                    "strategy_schwab_1m_v2_flip_owned_first_entry_enabled",
+                    False,
+                )
+            ):
+                self.strategy.apply_flip_position_book(
+                    FlipPositionBook(
+                        observed_at_ms=int(datetime.now(UTC).timestamp() * 1000),
+                        readable=False,
+                        legs_by_symbol={},
+                    )
+                )
             # A DB read failure is not permission to leave entry state alive after the close.
             # Releasing entry permission is safe without a position answer: held positions keep
             # their independent EXIT state and subscription coverage. Any resting BUY cancellation
@@ -1431,6 +1512,15 @@ class SchwabV2BotService:
         for symbol in tracked:
             qty = positions.get(symbol, 0)
             self.strategy.update_position(symbol, qty, held_qty=held.get(symbol, 0))
+        if bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_flip_owned_first_entry_enabled",
+                False,
+            )
+        ):
+            position_book = await asyncio.to_thread(self._fetch_flip_position_book)
+            self.strategy.apply_flip_position_book(position_book)
         if getattr(self, "session_factory", None) is not None:
             await self._sync_confirmation_entries()
         self._release_entry_state_at_window_close()
@@ -1877,6 +1967,98 @@ class SchwabV2BotService:
             logger.exception("schwab_1m_v2 _fetch_open_positions failed")
             return None
         return positions, held
+
+    def _fetch_flip_position_book(self) -> FlipPositionBook:
+        """Read open strategy-owned position episodes for both fan-out accounts at once."""
+
+        observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if self.session_factory is None:
+            return FlipPositionBook(
+                observed_at_ms=observed_at_ms,
+                readable=False,
+                legs_by_symbol={},
+            )
+        accounts = tuple(
+            dict.fromkeys(
+                value
+                for value in (
+                    str(self.settings.strategy_schwab_1m_v2_account_name or "").strip(),
+                    str(
+                        getattr(
+                            self.settings,
+                            "strategy_schwab_1m_v2_webull_account_name",
+                            "",
+                        )
+                        or ""
+                    ).strip(),
+                )
+                if value
+            )
+        )
+        if not accounts:
+            return FlipPositionBook(
+                observed_at_ms=observed_at_ms,
+                readable=False,
+                legs_by_symbol={},
+            )
+        try:
+            with self.session_factory() as session:
+                rows = session.scalars(
+                    select(OmsManagedPosition).where(
+                        OmsManagedPosition.strategy_code == STRATEGY_CODE,
+                        OmsManagedPosition.broker_account_name.in_(accounts),
+                        OmsManagedPosition.status == "open",
+                    )
+                ).all()
+        except Exception:  # noqa: BLE001 - an unreadable owner is an entry refusal
+            logger.exception(
+                "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=0 known=0 unknown=1 "
+                "entry_allowed=0"
+            )
+            return FlipPositionBook(
+                observed_at_ms=int(datetime.now(UTC).timestamp() * 1000),
+                readable=False,
+                legs_by_symbol={},
+            )
+        by_symbol: dict[str, list[FlipPositionLeg]] = {}
+        for row in rows:
+            symbol = str(row.symbol or "").strip().upper()
+            account = str(row.broker_account_name or "").strip()
+            quantity = int(row.current_quantity or 0)
+            if not symbol or not account or quantity <= 0 or row.entry_time is None:
+                logger.error(
+                    "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=%d known=0 unknown=1 "
+                    "entry_allowed=0 reason=malformed_open_managed_row row_id=%s",
+                    len(rows),
+                    row.id,
+                )
+                return FlipPositionBook(
+                    observed_at_ms=int(datetime.now(UTC).timestamp() * 1000),
+                    readable=False,
+                    legs_by_symbol={},
+                )
+            entry_time = row.entry_time
+            if entry_time.tzinfo is None:
+                entry_time = entry_time.replace(tzinfo=UTC)
+            by_symbol.setdefault(symbol, []).append(
+                FlipPositionLeg(
+                    account_name=account,
+                    managed_row_id=str(row.id),
+                    entry_time_ms=int(entry_time.timestamp() * 1000),
+                    quantity=quantity,
+                )
+            )
+        observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
+        logger.info(
+            "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=%d known=1 unknown=0 symbols=%d",
+            len(rows),
+            len(by_symbol),
+        )
+        return FlipPositionBook(
+            observed_at_ms=observed_at_ms,
+            readable=True,
+            legs_by_symbol={symbol: tuple(legs) for symbol, legs in by_symbol.items()},
+        )
 
     async def _scanner_consumer_loop(self) -> None:
         """Seed from the latest existing strategy-state snapshot, then tail
