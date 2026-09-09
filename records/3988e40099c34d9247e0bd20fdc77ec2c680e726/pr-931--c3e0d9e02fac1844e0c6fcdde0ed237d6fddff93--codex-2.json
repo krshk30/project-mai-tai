@@ -1,0 +1,9 @@
+{
+  "pr_number": 931,
+  "range_base": "c3e0d9e02fac1844e0c6fcdde0ed237d6fddff93",
+  "range_head": "3988e40099c34d9247e0bd20fdc77ec2c680e726",
+  "reviewed_at": "2026-09-09T22:59:50Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed GATE1 read-only shape watcher and cron delivery path. Verified Schwab-only managed-row attribution, reserved-share classification, every-row denominator, RTH/holiday guards, truthful selftest wording, CANNOT_SEE handling, transition and repeat cooldown semantics, failed-delivery retry ownership, real HTTP 500 failure plus HTTP 200 control, and code-level fail/timeout flags. Re-ran 29 focused tests outside RTH, ruff, bash syntax, exact-base ancestry, and targeted mutations for persisted level, cooldown timestamp, and HTTP flags; all controls discriminated. Read-only only: no install, schedule, service restart, broker action, or production execution."
+}
