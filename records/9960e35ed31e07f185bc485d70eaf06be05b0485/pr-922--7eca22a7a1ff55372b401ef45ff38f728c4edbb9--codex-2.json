@@ -1,0 +1,9 @@
+{
+  "pr_number": 922,
+  "range_base": "7eca22a7a1ff55372b401ef45ff38f728c4edbb9",
+  "range_head": "9960e35ed31e07f185bc485d70eaf06be05b0485",
+  "reviewed_at": "2026-09-09T01:05:18Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed the rebased frozen handoff against current main 7eca22a7; proved all three files byte-identical to the previously accepted head, verified the new base is an ancestor, all three Claude markers survived, #923 is accurately represented as deployed and UNEXERCISED, the 51 of 51 manifest remains byte-identical and BALANCED, both freeze ACKs remain present, the GitHub body is current, and the diff is clean and MERGEABLE."
+}
