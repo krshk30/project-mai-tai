@@ -97,6 +97,7 @@ from project_mai_tai.strategy_core.order_routing import (
 )
 from project_mai_tai.strategy_core import entry_gate
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
+    MAX_BAR_AGE_SECONDS_FOR_EMIT,
     PostCloseEntryRelease,
     SERVICE_NAME,
     STRATEGY_CODE,
@@ -1419,6 +1420,7 @@ class SchwabV2BotService:
             # queued here must still be emitted rather than waiting for another bar.
             self._release_entry_state_at_window_close()
             await self._drain_direct_strategy_intents()
+            await self._drain_atr_sell_observations()
             logger.warning(
                 "[V2-POSITION-READ-UNKNOWN] result=COULD_NOT_TELL entry_permission=BLOCKED "
                 "known_position_state=RETAINED — polarity: this is not broker-flat evidence"
@@ -1433,6 +1435,7 @@ class SchwabV2BotService:
             await self._sync_confirmation_entries()
         self._release_entry_state_at_window_close()
         await self._drain_direct_strategy_intents()
+        await self._drain_atr_sell_observations()
         self._roll_stale_session_state(positions, held)
         # Refresh EXIT COVERAGE on the same pass (one extra read, already off-loop).
         managed = await asyncio.to_thread(self._fetch_managed_symbols)
@@ -3220,8 +3223,8 @@ class SchwabV2BotService:
                     expired.evaluation_bar_start_ms,
                     bar.timestamp_ms,
                 )
-            # Same-close ordering is deliberate: CONF1 is emitted before the existing ATR SELL
-            # draft. Existing quote exits have already won before this bar close.
+            # Same-close ordering is deliberate: CONF1 is emitted before the ATR SELL observation.
+            # Existing quote exits have already won before this bar close.
             await self._emit_confirmation_evaluations(
                 self._confirmation_exit.evaluate_bar(
                     symbol=normalized,
@@ -3229,6 +3232,7 @@ class SchwabV2BotService:
                     atr_state=atr_state,
                 )
             )
+        await self._drain_atr_sell_observations()
         await self._maybe_emit(draft)
         await self._drain_direct_strategy_intents()
         # Dual-broker fan-out: emit any Webull legs the strategy queued this bar (no-op if off).
@@ -3303,6 +3307,51 @@ class SchwabV2BotService:
                         outcome="could_not_tell",
                         reason="webull_direct_redis_emit_failed",
                     )
+
+    async def _drain_atr_sell_observations(self) -> None:
+        """Publish account-neutral ATR observations, retaining failed deliveries until expiry."""
+
+        pending = getattr(self.strategy, "pending_atr_sell_observations", None)
+        acknowledge = getattr(self.strategy, "acknowledge_atr_sell_observation", None)
+        if not callable(pending) or not callable(acknowledge):
+            return
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        for observation in pending():
+            age_seconds = (now_ms - int(observation.bar_time_ms)) / 1000.0
+            if not 0.0 <= age_seconds <= MAX_BAR_AGE_SECONDS_FOR_EMIT:
+                acknowledge(observation.decision_id)
+                logger.error(
+                    "[V2-ATR-SELL-DELIVERY-EXPIRED] sym=%s decision_id=%s age_seconds=%.3f "
+                    "expiry_seconds=%.1f",
+                    observation.symbol,
+                    observation.decision_id,
+                    age_seconds,
+                    MAX_BAR_AGE_SECONDS_FOR_EMIT,
+                )
+                continue
+            if self.intent_emitter is None:
+                logger.error(
+                    "[V2-ATR-SELL-DELIVERY-FAILED] sym=%s decision_id=%s reason=no_emitter "
+                    "retryable=1 age_seconds=%.3f expiry_seconds=%.1f",
+                    observation.symbol,
+                    observation.decision_id,
+                    age_seconds,
+                    MAX_BAR_AGE_SECONDS_FOR_EMIT,
+                )
+                continue
+            try:
+                await self.intent_emitter.emit_atr_sell_observation(observation)
+            except Exception:
+                logger.exception(
+                    "[V2-ATR-SELL-DELIVERY-FAILED] sym=%s decision_id=%s reason=publish_failed "
+                    "retryable=1 age_seconds=%.3f expiry_seconds=%.1f",
+                    observation.symbol,
+                    observation.decision_id,
+                    age_seconds,
+                    MAX_BAR_AGE_SECONDS_FOR_EMIT,
+                )
+                continue
+            acknowledge(observation.decision_id)
 
     def _sync_halt_data_health(self) -> None:
         active = self._subscription_symbols()
@@ -3565,25 +3614,16 @@ class SchwabV2BotService:
         if draft is None:
             return "not_applicable"
         target_emitter = emitter if emitter is not None else self.intent_emitter
-        # Confirmed-window (variant CW) bar-close flip: the strategy expresses the trend
-        # exit as a CLOSE draft tagged cw_flip. Publish it as a lightweight `v2_cw_flip`
-        # signal (the OMS closes the managed row) rather than a normal intent — skip the
-        # entry-side ATR-only belt / EH-routing below. Only ever set when CW is enabled;
-        # otherwise no draft carries cw_flip, so this is byte-neutral.
         if (
             getattr(draft, "intent_type", "") == "close"
             and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"
         ):
-            if self.intent_emitter is None:
-                logger.warning("schwab_1m_v2 cw_flip dropped — emitter not initialized")
-                return "dropped_no_emitter"
-            try:
-                await self.intent_emitter.emit_cw_flip(
-                    draft.symbol, str(draft.metadata.get("bar_time_ms", ""))
-                )
-            except Exception:
-                logger.exception("schwab_1m_v2 cw_flip emit failed for %s", draft.symbol)
-            return "queued" if self.intent_emitter is not None else "could_not_tell"
+            logger.error(
+                "[V2-CW-FLIP-LEGACY-DROPPED] sym=%s reason=retired_close_draft_path "
+                "replacement=v2_atr_sell_observation",
+                getattr(draft, "symbol", "?"),
+            )
+            return "dropped_retired_legacy_exit"
         # ⛔⭐⭐ EXIT-ONLY CHOKEPOINT (2026-08-11). Held-symbol coverage keeps a de-listed symbol
         # SUBSCRIBED so its exits keep working — which means bars and quotes now arrive for a name
         # the scanner has dropped, and the strategy will happily evaluate it for ENTRY. Block that

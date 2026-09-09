@@ -195,7 +195,6 @@ class _FrozenNow(datetime):
 class _Rec:
     def __init__(self): self.emitted = []
     async def emit(self, d): self.emitted.append(d)
-    async def emit_cw_flip(self, *a): ...
 
 
 async def _emit_at(monkeypatch, fixed: datetime, **svc_kw):

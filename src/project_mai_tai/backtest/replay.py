@@ -496,11 +496,12 @@ def _static_oco_first_touch(
     last print <= the close).
 
     ⭐ THIRD LEG — `flip_dt` (the live bar-close ATR SELL-flip). The broker OCO is NOT the only exit
-    live: `schwab_1m_v2._maybe_cw_flip_close` fires whenever CW is on, we hold, and a bar CLOSES below
-    the ATR trail — and it has **no RTH gate**, so it races the OCO in regular hours too. Omitting it
+    live: the strategy emits an account-neutral observation whenever CW is on and a bar closes below
+    the ATR trail. The OMS binds it to each open managed row with no RTH gate, so it races the OCO in
+    regular hours too. Omitting it
     made SMCX 2026-07-22 drift to the bell at −2.81% when live would have flip-closed at 14:33
-    (operator caught it off a TOS chart). `flip_dt` is the bar-close instant the REAL strategy emitted
-    the cw_flip draft; the modeled fill is the FIRST PRINT at/after it, mirroring the live bot→OMS
+    (operator caught it off a TOS chart). `flip_dt` is the bar-close instant of that observation; the
+    modeled fill is the FIRST PRINT at/after it, mirroring the live bot-to-OMS
     handoff (the OMS closes the managed row on the next quote). Target/stop are checked first on a
     given print because those legs rest AT the exchange, while the flip is a software close that has
     to go out on the next tick. Returns (exit_ts, exit_px, reason), or **None** when the tape
@@ -851,6 +852,13 @@ def replay_symbol_day(
         if kind == 0:  # bar (delivered at close)
             bar = _to_chartbar(symbol, payload)  # type: ignore[arg-type]
             draft = strat.on_bar(symbol, bar)
+            # The live strategy emits an account-neutral ATR observation. Replay has one modeled
+            # managed row, so consume the observation now and apply it only if that row is open.
+            # Discarding while flat is load-bearing: a later entry must never inherit an old flip.
+            atr_sell_observed = False
+            for observation in strat.pending_atr_sell_observations():
+                atr_sell_observed = True
+                strat.acknowledge_atr_sell_observation(observation.decision_id)
             # #618/#619 watch-start cap. Live runs this after every replay that can ARM a segment;
             # here every bar is such a replay, and the test is purely `arm_bar_ts <= watch_start`,
             # so running it each bar is equivalent and cannot miss a re-arm (the live 07-27 bug was
@@ -882,30 +890,17 @@ def replay_symbol_day(
                 if draft is not None:
                     _gate_and_maybe_fill(draft, eff_dt)
             elif geometry == "eh_floor_ride":
-                # EH floor-ride: a bar-close ATR SELL-flip while holding is the trend exit. The REAL
-                # strategy returns a cw_flip CLOSE draft (`_maybe_cw_flip_close`, spec §6b). Mirror the
-                # bot->OMS handoff: mark flip_pending so the next bid tick closes via cw_exit_decision
-                # (precedence target/arm > stop > flip, exactly like the live block). Resting churn
-                # while holding is drained + discarded.
+                # EH floor-ride: bind the account-neutral ATR observation to the modeled open row,
+                # then let the next bid close through cw_exit_decision. Resting churn while holding
+                # is drained and discarded.
                 strat.drain_pending_intents()
-                if (
-                    draft is not None
-                    and getattr(draft, "intent_type", "") == "close"
-                    and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"
-                ):
+                if atr_sell_observed:
                     eh_flip_pending = True
             elif geometry == "rth_static_oco":
-                # RTH: the broker OCO is resting, but the live software cw_flip close races it
-                # (`_maybe_cw_flip_close` has NO RTH gate). Same bot->OMS handoff as the EH branch:
-                # the REAL strategy emits the flip draft at the bar close; resolve the OCO with that
-                # instant as a third leg (target/stop still win if the tape reached them first).
+                # RTH: bind the observation to the modeled row and race its bar-close instant
+                # against the resting broker OCO. Target/stop still win if touched first.
                 strat.drain_pending_intents()
-                if (
-                    draft is not None
-                    and getattr(draft, "intent_type", "") == "close"
-                    and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"
-                    and entry_rec is not None
-                ):
+                if atr_sell_observed and entry_rec is not None:
                     _open_static_oco(entry_rec, flip_dt=eff_dt)
             continue
 

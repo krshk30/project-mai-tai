@@ -314,6 +314,16 @@ class _CWFlipDecision:
 
     bar_time_ms: int
     managed_row_id: str
+    decision_id: str
+
+
+@dataclass(frozen=True)
+class _CWFlipBinding:
+    """One account's ownership answer for an account-neutral ATR observation."""
+
+    status: str  # "owned" | "not_owned" | "unanswerable"
+    managed_row_id: str = ""
+    entry_time: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -480,6 +490,8 @@ class OmsRiskService:
     # A CW flip is emitted from a completed one-minute bar and should execute on the next quote.
     # Match the strategy's existing live-bar freshness horizon: after three minutes from the bar
     # start, the decision is stale and must not migrate to a later position on the same symbol.
+    # Measured from the bar START: 180s leaves about 120s after a normal minute close for the
+    # account-neutral observation to arrive and close its exact managed-row owner.
     _V2_CW_FLIP_MAX_BAR_AGE_SECONDS = 180.0
     # ⛔⭐⭐ HDL1 (2026-09-07). THE WEBULL PROTECT HANDLE RACES THE FILL COMMIT AND LOSES.
     # `_spawn_webull_protection` runs the attach OFF the fill path on purpose — it retries with
@@ -1055,16 +1067,13 @@ class OmsRiskService:
             event = TradeTickEvent.model_validate(payload)
             await self._handle_trade_tick_event(event)
             return
-        # Confirmed-window bar-close flip signal (PR #3): mark (acct, symbol) pending so
-        # the CW exit closes the managed row on the next quote via its exit machinery.
-        # CW-gated + rare; ordered after the hot quote/trade paths. No-op when CW is off.
-        if event_type == "v2_cw_flip":
+        # A fresh ATR SELL observation names no account and carries no quantity. Resolve every
+        # configured v2 account against its own managed row, then let the existing quote-driven
+        # exit machinery close only that row's quantity. This replaces the former strategy-owned
+        # `v2_cw_flip` close draft; accepting both would double-close a two-leg position.
+        if event_type == "v2_atr_sell_observation":
             if self._cw_exit_enabled:
                 sym = str(payload.get("symbol", "")).upper().strip()
-                acct = (
-                    str(payload.get("broker_account_name", "")).strip()
-                    or self.settings.strategy_schwab_1m_v2_account_name
-                )
                 if sym:
                     try:
                         bar_time_ms = int(str(payload.get("bar_time_ms", "")).strip())
@@ -1077,82 +1086,111 @@ class OmsRiskService:
                     )
                     if not (0.0 <= bar_age_seconds <= self._V2_CW_FLIP_MAX_BAR_AGE_SECONDS):
                         self.logger.error(
-                            "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s reason=invalid_or_expired_bar "
-                            "bar_time_ms=%s age_seconds=%.3f",
+                            "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=none "
+                            "reason=invalid_or_expired_bar bar_time_ms=%s age_seconds=%.3f "
+                            "expiry_seconds=%.1f denominator=0",
                             sym,
-                            acct,
                             payload.get("bar_time_ms", "missing"),
                             bar_age_seconds,
+                            self._V2_CW_FLIP_MAX_BAR_AGE_SECONDS,
                         )
                         return
-                    # ⭐⭐ CW_FLIP FAN-OUT (2026-08-07). The flip used to arm ONE account -- the one
-                    # the publisher named, which is the bot's own (Schwab). Every OTHER exit reason
-                    # reaches the Webull leg for free because CW_HARD_STOP / CW_FLOOR are
-                    # STATE-driven: they iterate managed ROWS, and live:orb has rows. The flip alone
-                    # is EVENT-driven and per-account, so the fan-out leg was never told to exit.
-                    #
-                    # Measured over the 7-day corpus:  CW_HARD_STOP 400 orb / 241 schwab
-                    #                                  CW_FLOOR      47 orb /   9 schwab
-                    #                                  CW_FLIP        0 orb /   4 schwab
-                    # ⛔ CLASS A (no owner), NOT Class B (refused): there is no reject count because
-                    # nothing was ever emitted. Cost, n=2 of 4 usable: the Webull leg rode the
-                    # reversal for 22m37s (AAOG 08-04, -2.31%) and 14m01s (GTE 08-05, -4.74%) until
-                    # the CW_HARD_STOP fallback caught it. Rare and expensive -- ~1 event per 2 days
-                    # -- NOT a running cost.
-                    #
-                    # ⭐ WHY THIS IS CONSISTENCY, NOT A NEW RULE: `_v2_accounts()` is already the
-                    # flag-gated answer to "which accounts does the CW exit ladder manage", and it
-                    # collapses to Schwab-only when the fan-out flag is off -- so this is
-                    # BYTE-IDENTICAL with the flag off, and needs no flag of its own. The flip was
-                    # simply the one place that never used it.
-                    #
-                    # ⛔ A decision belongs to one position, not an (account, symbol) lane. NUR
-                    # 2026-09-08 proved that relying on a later no-row evaluation is insufficient:
-                    # its 12:34 decision was never evaluated while flat, survived 55 minutes, and
-                    # attached to a new 13:29 position. Bind now and refuse an absent/replacement row.
-                    for arm_acct in dict.fromkeys([*self._v2_accounts(), acct]):
-                        managed_row_id, entry_time = await self._cw_flip_bound_managed_position(
-                            arm_acct, sym
+                    expected_decision_id = f"atr-sell:{sym}:{bar_time_ms}"
+                    decision_id = str(payload.get("decision_id", "")).strip()
+                    if decision_id != expected_decision_id:
+                        self.logger.error(
+                            "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=none "
+                            "reason=invalid_decision_identity decision_id=%s expected=%s "
+                            "denominator=0",
+                            sym,
+                            decision_id or "missing",
+                            expected_decision_id,
                         )
-                        if not managed_row_id:
+                        return
+                    accounts = tuple(dict.fromkeys(self._v2_accounts()))
+                    owned = 0
+                    armed = 0
+                    refused = 0
+                    not_owned = 0
+                    unanswerable = 0
+                    bar_close = datetime.fromtimestamp((bar_time_ms + 60_000) / 1000.0, UTC)
+                    for arm_acct in accounts:
+                        binding = await self._cw_flip_bound_managed_position(arm_acct, sym)
+                        if binding.status == "not_owned":
+                            not_owned += 1
+                            self._clear_cw_flip_pending((arm_acct, sym))
+                            self.logger.info(
+                                "[OMS-V2-CW-FLIP-LEG] sym=%s acct=%s decision_id=%s "
+                                "outcome=not_owned managed_row=none",
+                                sym,
+                                arm_acct,
+                                decision_id,
+                            )
+                            continue
+                        if binding.status != "owned":
+                            refused += 1
+                            unanswerable += 1
                             self.logger.error(
                                 "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s "
-                                "reason=no_open_position_to_bind bar_time_ms=%d",
+                                "reason=bind_read_failed bar_time_ms=%d decision_id=%s",
                                 sym,
                                 arm_acct,
                                 bar_time_ms,
+                                decision_id,
                             )
                             self._clear_cw_flip_pending((arm_acct, sym))
                             continue
-                        bar_close = datetime.fromtimestamp(
-                            (bar_time_ms + 60_000) / 1000.0, UTC
-                        )
-                        if entry_time is None or entry_time > bar_close:
+                        owned += 1
+                        if binding.entry_time is None or binding.entry_time > bar_close:
+                            refused += 1
                             self.logger.error(
                                 "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s "
                                 "reason=position_opened_after_bar bar_time_ms=%d managed_row=%s "
-                                "entry_time=%s",
+                                "entry_time=%s decision_id=%s",
                                 sym,
                                 arm_acct,
                                 bar_time_ms,
-                                managed_row_id,
-                                entry_time.isoformat() if entry_time is not None else "unknown",
+                                binding.managed_row_id,
+                                (
+                                    binding.entry_time.isoformat()
+                                    if binding.entry_time is not None
+                                    else "unknown"
+                                ),
+                                decision_id,
                             )
                             self._clear_cw_flip_pending((arm_acct, sym))
                             continue
                         self._arm_cw_flip_pending(
                             (arm_acct, sym),
                             bar_time_ms=bar_time_ms,
-                            managed_row_id=managed_row_id,
+                            managed_row_id=binding.managed_row_id,
+                            decision_id=decision_id,
                         )
+                        armed += 1
                         self.logger.info(
-                            "[OMS-V2-CW] flip pending armed acct=%s sym=%s bar_time_ms=%d "
-                            "managed_row=%s",
-                            arm_acct,
+                            "[OMS-V2-CW-FLIP-LEG] sym=%s acct=%s decision_id=%s outcome=armed "
+                            "bar_time_ms=%d managed_row=%s",
                             sym,
+                            arm_acct,
+                            decision_id,
                             bar_time_ms,
-                            managed_row_id,
+                            binding.managed_row_id,
                         )
+                    self.logger.info(
+                        "[OMS-V2-CW-FLIP-EVALUATED] sym=%s decision_id=%s "
+                        "accounts_evaluated=%d owned=%d armed=%d refused=%d not_owned=%d "
+                        "unanswerable=%d denominator=%d expiry_seconds=%.1f",
+                        sym,
+                        decision_id,
+                        len(accounts),
+                        owned,
+                        armed,
+                        refused,
+                        not_owned,
+                        unanswerable,
+                        len(accounts),
+                        self._V2_CW_FLIP_MAX_BAR_AGE_SECONDS,
+                    )
             return
 
         if event_type == "v2_confirmation_exit":
@@ -4227,27 +4265,30 @@ class OmsRiskService:
 
     async def _cw_flip_bound_managed_position(
         self, acct: str, symbol: str
-    ) -> tuple[str, datetime | None]:
-        """Return the open managed-row identity and entry time, failing closed on read faults."""
+    ) -> _CWFlipBinding:
+        """Return one account's managed-row ownership without collapsing unknown into flat."""
 
         try:
-            def _read(session: Session) -> tuple[str, datetime | None]:
+            def _read(session: Session) -> _CWFlipBinding:
                 row = self.store.get_open_managed_position(
                     session, broker_account_name=acct, symbol=symbol
                 )
                 if row is None:
-                    return "", None
-                return str(row.id), _as_utc(row.entry_time)
+                    return _CWFlipBinding(status="not_owned")
+                return _CWFlipBinding(
+                    status="owned",
+                    managed_row_id=str(row.id),
+                    entry_time=_as_utc(row.entry_time),
+                )
 
-            row_id, entry_time = await self._run_db(_read, commit=False)
-            return str(row_id or ""), entry_time
+            return await self._run_db(_read, commit=False)
         except Exception:  # noqa: BLE001 - an ownerless flip must never arm
             self.logger.exception(
                 "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s reason=bind_read_failed",
                 symbol,
                 acct,
             )
-            return "", None
+            return _CWFlipBinding(status="unanswerable")
 
     def _arm_cw_flip_pending(
         self,
@@ -4255,12 +4296,14 @@ class OmsRiskService:
         *,
         bar_time_ms: int,
         managed_row_id: str,
+        decision_id: str = "",
     ) -> None:
         self.__dict__.setdefault("_cw_flip_pending", set()).add(key)
         decisions = self.__dict__.setdefault("_cw_flip_decisions", {})
         decisions[key] = _CWFlipDecision(
             bar_time_ms=bar_time_ms,
             managed_row_id=managed_row_id,
+            decision_id=decision_id or f"atr-sell:{key[1]}:{bar_time_ms}",
         )
 
     def _clear_cw_flip_pending(self, key: tuple[str, str]) -> None:
@@ -4892,6 +4935,7 @@ class OmsRiskService:
                                 key,
                                 bar_time_ms=owned_flip.bar_time_ms,
                                 managed_row_id=owned_flip.managed_row_id,
+                                decision_id=owned_flip.decision_id,
                             )
                         raise
                     finally:

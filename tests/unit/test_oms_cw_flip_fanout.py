@@ -6,9 +6,8 @@
     CW_FLOOR        47 live:orb  /    9 live:schwab_1m_v2
     CW_FLIP          0 live:orb  /    4 live:schwab_1m_v2      <- the gap
 
-⛔ CLASS A (no owner), NOT Class B (refused). There is NO reject count, because nothing is ever
-emitted: the flip is EVENT-driven and arms one account, while the stop and floor are STATE-driven
-and iterate managed ROWS (so live:orb is covered for free).
+The replacement signal is account-neutral: the OMS evaluates every configured account and binds
+only rows that were open when the transition bar closed. No publisher-owned account can narrow it.
 
 COST, n=2 of 4 usable events -- the Webull leg rode the reversal until the hard-stop fallback:
     AAOG 2026-08-04   flip exit 4.2903 @08:14:01  ->  Webull 4.1911 @08:36:38   +22m37s   -2.31%
@@ -28,7 +27,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.oms.service import OmsRiskService, _CWFlipBinding
 from project_mai_tai.settings import Settings
 
 SCHWAB = "live:schwab_1m_v2"
@@ -53,6 +52,7 @@ def _svc(fanout: bool = True) -> OmsRiskService:
     svc._cw_flip_pending = set()
     svc._cw_flip_decisions = {}
     svc._cw_flip_missing_bound_accounts = set()
+    svc._cw_flip_unanswerable_accounts = set()
     svc._cw_exit_enabled = True
     svc.logger = SimpleNamespace(
         _lines=[],
@@ -61,34 +61,69 @@ def _svc(fanout: bool = True) -> OmsRiskService:
         error=lambda m, *a: svc.logger._lines.append(m % a),
     )
 
-    async def _bound(acct: str, symbol: str) -> tuple[str, datetime | None]:
+    async def _bound(acct: str, symbol: str) -> _CWFlipBinding:
+        if acct in svc._cw_flip_unanswerable_accounts:
+            return _CWFlipBinding(status="unanswerable")
         if acct in svc._cw_flip_missing_bound_accounts:
-            return "", None
-        return f"row:{acct}:{symbol}", datetime.now(UTC) - timedelta(seconds=120)
+            return _CWFlipBinding(status="not_owned")
+        return _CWFlipBinding(
+            status="owned",
+            managed_row_id=f"row:{acct}:{symbol}",
+            entry_time=datetime.now(UTC) - timedelta(seconds=120),
+        )
 
     svc._cw_flip_bound_managed_position = _bound
     return svc
 
 
-def _flip(svc, symbol: str, account: str = SCHWAB):
+def _flip(svc, symbol: str, *, extra: dict | None = None):
     """Drive the REAL stream handler, not a helper — the arm site is what changed, and a helper
     would let the handler's own wiring drift away from what the test proves."""
+    bar_time_ms = int((datetime.now(UTC) - timedelta(seconds=90)).timestamp() * 1000)
     asyncio.run(
         svc._handle_stream_message(
             {
                 "data": json.dumps(
                     {
-                        "event_type": "v2_cw_flip",
+                        "event_type": "v2_atr_sell_observation",
                         "symbol": symbol,
-                        "broker_account_name": account,
-                        "bar_time_ms": str(
-                            int((datetime.now(UTC) - timedelta(seconds=90)).timestamp() * 1000)
-                        ),
+                        "bar_time_ms": str(bar_time_ms),
+                        "decision_id": f"atr-sell:{symbol}:{bar_time_ms}",
+                        **(extra or {}),
                     }
                 )
             }
         )
     )
+
+
+def _flip_at_age(svc, symbol: str, *, age_seconds: float, now: datetime) -> None:
+    bar_time_ms = int((now - timedelta(seconds=age_seconds)).timestamp() * 1000)
+    asyncio.run(
+        svc._handle_stream_message(
+            {
+                "data": json.dumps(
+                    {
+                        "event_type": "v2_atr_sell_observation",
+                        "symbol": symbol,
+                        "bar_time_ms": str(bar_time_ms),
+                        "decision_id": f"atr-sell:{symbol}:{bar_time_ms}",
+                    }
+                )
+            }
+        )
+    )
+
+
+def _bind_owned_before(svc, now: datetime) -> None:
+    async def _owned_before_bar(acct: str, symbol: str) -> _CWFlipBinding:
+        return _CWFlipBinding(
+            status="owned",
+            managed_row_id=f"row:{acct}:{symbol}",
+            entry_time=now - timedelta(minutes=10),
+        )
+
+    svc._cw_flip_bound_managed_position = _owned_before_bar
 
 
 # ------------------------------------------------------- criteria 1 & 2: the leg gets armed
@@ -119,7 +154,7 @@ def test_C2_GTE_the_webull_leg_is_armed_WITH_the_flip() -> None:
 def test_both_accounts_are_logged_so_the_fan_out_is_visible_on_the_tape() -> None:
     svc = _svc()
     _flip(svc, "GTE")
-    armed = [ln for ln in svc.logger._lines if "flip pending armed" in ln]
+    armed = [ln for ln in svc.logger._lines if "outcome=armed" in ln]
     assert len(armed) == 2
     assert any(ORB in ln for ln in armed) and any(SCHWAB in ln for ln in armed)
 
@@ -134,19 +169,68 @@ def test_flag_OFF_is_byte_identical_to_the_old_behaviour() -> None:
     assert svc._cw_flip_pending == {(SCHWAB, "AAOG")}
 
 
-def test_an_unexpected_publisher_account_is_still_armed_not_silently_dropped() -> None:
-    """Superset, never a substitution: if the publisher ever names an account outside
-    `_v2_accounts()` and that account has an open managed row, we must not silently ignore it."""
+def test_publisher_cannot_inject_an_account_into_the_account_neutral_observation() -> None:
     svc = _svc()
-    _flip(svc, "AAOG", account="live:some_other")
-    assert ("live:some_other", "AAOG") in svc._cw_flip_pending
-    assert (ORB, "AAOG") in svc._cw_flip_pending
+    _flip(svc, "AAOG", extra={"broker_account_name": "live:some_other"})
+    assert ("live:some_other", "AAOG") not in svc._cw_flip_pending
+    assert svc._cw_flip_pending == {(SCHWAB, "AAOG"), (ORB, "AAOG")}
 
 
 def test_cw_disabled_arms_nothing() -> None:
     svc = _svc()
     svc._cw_exit_enabled = False
     _flip(svc, "AAOG")
+    assert svc._cw_flip_pending == set()
+
+
+def test_observation_identity_must_bind_the_symbol_and_bar() -> None:
+    svc = _svc()
+    _flip(svc, "YMAT", extra={"decision_id": "atr-sell:OTHER:1"})
+    assert svc._cw_flip_pending == set()
+    assert any("invalid_decision_identity" in line for line in svc.logger._lines)
+
+
+def test_expired_observation_is_refused_before_any_account_is_armed(monkeypatch) -> None:
+    now = datetime(2026, 9, 9, 15, 0, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: now)
+    svc = _svc()
+    _bind_owned_before(svc, now)
+
+    _flip_at_age(svc, "YMAT", age_seconds=181.0, now=now)
+
+    assert svc._cw_flip_pending == set()
+    assert any("reason=invalid_or_expired_bar" in line for line in svc.logger._lines)
+
+
+def test_observation_inside_expiry_still_arms_each_owned_account(monkeypatch) -> None:
+    now = datetime(2026, 9, 9, 15, 0, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: now)
+    svc = _svc()
+    _bind_owned_before(svc, now)
+
+    _flip_at_age(svc, "YMAT", age_seconds=120.0, now=now)
+
+    assert svc._cw_flip_pending == {(SCHWAB, "YMAT"), (ORB, "YMAT")}
+    assert not any("invalid_or_expired_bar" in line for line in svc.logger._lines)
+
+
+def test_retired_v2_cw_flip_event_arms_nothing() -> None:
+    svc = _svc()
+    bar_time_ms = int((datetime.now(UTC) - timedelta(seconds=90)).timestamp() * 1000)
+    asyncio.run(
+        svc._handle_stream_message(
+            {
+                "data": json.dumps(
+                    {
+                        "event_type": "v2_cw_flip",
+                        "symbol": "YMAT",
+                        "broker_account_name": SCHWAB,
+                        "bar_time_ms": bar_time_ms,
+                    }
+                )
+            }
+        )
+    )
     assert svc._cw_flip_pending == set()
 
 
@@ -163,16 +247,29 @@ def test_C3_GTE_1624_webull_ALREADY_CLOSED_emits_NOTHING() -> None:
     _flip(svc, "GTE")
     assert (ORB, "GTE") not in svc._cw_flip_pending
     assert (SCHWAB, "GTE") in svc._cw_flip_pending
-    assert any("no_open_position_to_bind" in line for line in svc.logger._lines)
+    assert any("outcome=not_owned" in line for line in svc.logger._lines)
 
 
 def test_C4_symmetric_schwab_closed_webull_OPEN_the_open_leg_stays_armed() -> None:
-    """The mirror of C3 and the more common shape once the fan-out works: the Schwab leg has gone
-    but the Webull leg is still open. Dropping the Schwab arm must not disturb the Webull one."""
+    """YMAT 2026-09-09: Webull-only ownership still arms Webull and never arms Schwab."""
     svc = _svc()
     svc._cw_flip_missing_bound_accounts.add(SCHWAB)
-    _flip(svc, "GTE")
-    assert (SCHWAB, "GTE") not in svc._cw_flip_pending
-    assert (ORB, "GTE") in svc._cw_flip_pending, (
+    _flip(svc, "YMAT")
+    assert (SCHWAB, "YMAT") not in svc._cw_flip_pending
+    assert (ORB, "YMAT") in svc._cw_flip_pending, (
         "refusing the closed leg's arm also dropped the OPEN leg's — the open leg would never flip"
     )
+
+
+def test_one_accounts_unanswerable_read_does_not_block_the_other_account() -> None:
+    svc = _svc()
+    svc._cw_flip_unanswerable_accounts.add(SCHWAB)
+    _flip(svc, "YMAT")
+    assert (SCHWAB, "YMAT") not in svc._cw_flip_pending
+    assert (ORB, "YMAT") in svc._cw_flip_pending
+    summary = next(line for line in svc.logger._lines if "CW-FLIP-EVALUATED" in line)
+    assert "accounts_evaluated=2" in summary
+    assert "owned=1" in summary
+    assert "armed=1" in summary
+    assert "refused=1" in summary
+    assert "unanswerable=1" in summary

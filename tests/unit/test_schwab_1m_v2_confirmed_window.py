@@ -141,7 +141,7 @@ def test_cw_new_buy_flip_rearms_and_resets_trigger():
     assert state.cw_three_bar_high == 0.0
 
 
-# --------------------- PR #3: bar-close flip exit signal (_maybe_cw_flip_close) ------
+# --------------------- account-neutral bar-close ATR SELL observation ------
 
 def _hold(strat, qty=10):
     state = strat.watchlist_state("TEST")
@@ -150,44 +150,49 @@ def _hold(strat, qty=10):
     return state
 
 
-def test_cw_flip_close_fires_when_holding_on_sell_flip():
+def test_atr_sell_observation_does_not_depend_on_strategy_position_quantity():
+    strat = _strat()
+    state = _hold(strat, qty=0)
+    observation = strat._observe_atr_sell(state, _sig(flip="SELL", state="short"))
+    assert observation is not None
+    assert observation.symbol == "TEST"
+    assert observation.decision_id == f"atr-sell:TEST:{state.bars[-1].timestamp_ms}"
+    assert not hasattr(observation, "quantity")
+    assert not hasattr(observation, "broker_account_name")
+    assert strat.pending_atr_sell_observations() == [observation]
+
+
+def test_atr_sell_observation_is_deduped_per_transition_bar():
+    strat = _strat()
+    state = _hold(strat, qty=0)
+    first = strat._observe_atr_sell(state, _sig(flip="SELL", state="short"))
+    assert first is not None
+    strat.acknowledge_atr_sell_observation(first.decision_id)
+    assert strat._observe_atr_sell(state, _sig(flip="SELL", state="short")) is None
+    assert strat.pending_atr_sell_observations() == []
+
+
+def test_atr_sell_observation_none_without_sell_flip():
     strat = _strat()
     state = _hold(strat, qty=10)
-    draft = strat._maybe_cw_flip_close(state, _sig(flip="SELL", state="short"))
-    assert draft is not None
-    assert draft.side == "sell" and draft.intent_type == "close"
-    assert draft.quantity == Decimal("10")
-    assert draft.metadata["cw_flip"] == "true"
-    assert draft.metadata["atr_variant"] == "CW"
+    assert strat._observe_atr_sell(state, _sig(flip=None)) is None
+    assert strat._observe_atr_sell(state, _sig(flip="BUY")) is None
 
 
-def test_cw_flip_close_none_when_flat():
-    strat = _strat()
-    state = _hold(strat, qty=0)  # flat
-    assert strat._maybe_cw_flip_close(state, _sig(flip="SELL", state="short")) is None
-
-
-def test_cw_flip_close_none_without_sell_flip():
-    strat = _strat()
-    state = _hold(strat, qty=10)
-    assert strat._maybe_cw_flip_close(state, _sig(flip=None)) is None
-    assert strat._maybe_cw_flip_close(state, _sig(flip="BUY")) is None
-
-
-def test_cw_flip_close_none_when_flag_off():
+def test_atr_sell_observation_none_when_flag_off():
     strat = SchwabV2Strategy(Settings())  # CW disabled
     state = strat.watchlist_state("TEST")
     state.position_qty = 10
     state.bars.append(_bar(10.0, ts=_now_ms()))
-    assert strat._maybe_cw_flip_close(state, _sig(flip="SELL", state="short")) is None
+    assert strat._observe_atr_sell(state, _sig(flip="SELL", state="short")) is None
 
 
-def test_cw_flip_close_none_on_stale_bar():
+def test_atr_sell_observation_none_on_stale_bar():
     strat = _strat()
     state = strat.watchlist_state("TEST")
     state.position_qty = 10
     state.bars.append(_bar(10.0, ts=_now_ms() - 600_000))  # 10 min old -> stale
-    assert strat._maybe_cw_flip_close(state, _sig(flip="SELL", state="short")) is None
+    assert strat._observe_atr_sell(state, _sig(flip="SELL", state="short")) is None
 
 
 # ------- PR #4: CW is exclusive with the on_quote hold-confirm TOUCH entry -----------
