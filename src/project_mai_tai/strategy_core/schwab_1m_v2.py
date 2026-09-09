@@ -3162,10 +3162,8 @@ class SchwabV2Strategy:
                 # In EH there is NO broker stop (software rest), so the guard is skipped — the quote
                 # cross-check prices/abandons the marketable EH-LIMIT instead.
                 if not (self._eh_resting_enabled and self._resting_session_is_eh()):
-                    if state.last_quote is not None:
-                        ask = self._fresh_resting_ask(state.last_quote)
-                        if ask is None or (ask > 0.0 and trail <= ask):
-                            return
+                    if not self._resting_stop_ask_allows(state, trail, slot="first"):
+                        return
                 if state.cw_resting_taken:
                     segment_id = int(state.fanout_segment_id or state.cw_arm_bar_ts or 0)
                     marker_key = segment_id if segment_id > 0 else -1
@@ -3376,10 +3374,8 @@ class SchwabV2Strategy:
             # HIGHER here than where it was measured: `cw_segment_high` sits AT the recent high by
             # definition, while the first-entry trail sits below the market by construction.
             if not (self._eh_resting_enabled and self._resting_session_is_eh()):
-                if state.last_quote is not None:
-                    ask = self._fresh_resting_ask(state.last_quote)
-                    if ask is None or (ask > 0.0 and level <= ask):
-                        return
+                if not self._resting_stop_ask_allows(state, level, slot="reclaim"):
+                    return
             self._queue_resting_place(state, level, slot="reclaim")
             return
         # STABLE-REST: re-place only on a meaningful move, else leave it out there (#547/NVVE).
@@ -3389,15 +3385,78 @@ class SchwabV2Strategy:
 
     def _fresh_resting_ask(self, quote: Quote) -> float | None:
         """Return a usable ask only when the present quote is current enough for placement."""
+        ask, _age_ms, reason = self._resting_ask_evidence(quote)
+        return ask if reason == "fresh_quote" else None
+
+    def _resting_ask_evidence(self, quote: Quote) -> tuple[float | None, int | None, str]:
+        """Return the ask plus the evidence state used by the stop-vs-ask placement guard."""
+        max_age_ms = int(getattr(self, "_resting_quote_max_age_ms", 10_000))
         try:
             quote_time_ms = int(getattr(quote, "quote_time_ms", 0) or 0)
             age_ms = self._now_ms() - quote_time_ms
             ask = float(getattr(quote, "ask_price", 0.0) or 0.0)
         except (TypeError, ValueError, OverflowError):
-            return None
-        if quote_time_ms <= 0 or age_ms < 0 or age_ms > self._resting_quote_max_age_ms:
-            return None
-        return ask
+            return None, None, "invalid_quote"
+        if quote_time_ms <= 0:
+            return None, age_ms, "missing_quote_time"
+        if age_ms < 0:
+            return None, age_ms, "future_quote"
+        if age_ms > max_age_ms:
+            return None, age_ms, "stale_quote"
+        return ask, age_ms, "fresh_quote"
+
+    def _resting_pricing_accounts(self) -> tuple[str, ...]:
+        settings = getattr(self, "settings", None)
+        accounts = [
+            str(getattr(settings, "strategy_schwab_1m_v2_account_name", "") or "UNKNOWN")
+        ]
+        if bool(getattr(self, "_dual_broker_fanout_enabled", False)) and bool(
+            getattr(self, "_webull_resting_mirror_enabled", False)
+        ):
+            webull = str(
+                getattr(settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+            )
+            if webull and webull not in accounts:
+                accounts.append(webull)
+        return tuple(accounts)
+
+    def _resting_stop_ask_allows(
+        self, state: SymbolState, stop_price: float, *, slot: str
+    ) -> bool:
+        """Evaluate and record every RTH stop-vs-ask pricing decision for each broker leg."""
+        quote = state.last_quote
+        if quote is None:
+            ask, age_ms, reason, held = None, None, "no_quote_fail_open", False
+        else:
+            ask, age_ms, evidence = self._resting_ask_evidence(quote)
+            if evidence != "fresh_quote":
+                reason, held = evidence, True
+            elif ask is not None and ask > 0.0 and stop_price <= ask:
+                reason, held = "stop_not_above_ask", True
+            elif ask is not None and ask <= 0.0:
+                reason, held = "nonpositive_ask_fail_open", False
+            else:
+                reason, held = "allowed", False
+
+        ask_text = f"{ask:.4f}" if ask is not None else "UNANSWERABLE"
+        age_text = str(age_ms) if age_ms is not None else "UNANSWERABLE"
+        max_age_ms = int(getattr(self, "_resting_quote_max_age_ms", 10_000))
+        log = logger.warning if held else logger.info
+        for account in self._resting_pricing_accounts():
+            log(
+                "[V2-STOP-ASK-PRICE-CHECK] symbol=%s account=%s slot=%s evaluated=1 "
+                "held=%d reason=%s stop=%.4f ask=%s quote_age_ms=%s max_age_ms=%d",
+                state.symbol,
+                account,
+                slot,
+                int(held),
+                reason,
+                stop_price,
+                ask_text,
+                age_text,
+                max_age_ms,
+            )
+        return not held
 
     def _eh_resting_cross_check(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         """EH software-emulated resting TRIGGER (P-B2). A broker buy-stop-limit can't trigger in extended
