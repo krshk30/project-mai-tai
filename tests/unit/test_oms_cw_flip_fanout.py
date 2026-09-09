@@ -115,6 +115,17 @@ def _flip_at_age(svc, symbol: str, *, age_seconds: float, now: datetime) -> None
     )
 
 
+def _bind_owned_before(svc, now: datetime) -> None:
+    async def _owned_before_bar(acct: str, symbol: str) -> _CWFlipBinding:
+        return _CWFlipBinding(
+            status="owned",
+            managed_row_id=f"row:{acct}:{symbol}",
+            entry_time=now - timedelta(minutes=10),
+        )
+
+    svc._cw_flip_bound_managed_position = _owned_before_bar
+
+
 # ------------------------------------------------------- criteria 1 & 2: the leg gets armed
 
 def test_C1_AAOG_the_webull_leg_is_armed_WITH_the_flip() -> None:
@@ -183,6 +194,7 @@ def test_expired_observation_is_refused_before_any_account_is_armed(monkeypatch)
     now = datetime(2026, 9, 9, 15, 0, tzinfo=UTC)
     monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: now)
     svc = _svc()
+    _bind_owned_before(svc, now)
 
     _flip_at_age(svc, "YMAT", age_seconds=181.0, now=now)
 
@@ -194,15 +206,7 @@ def test_observation_inside_expiry_still_arms_each_owned_account(monkeypatch) ->
     now = datetime(2026, 9, 9, 15, 0, tzinfo=UTC)
     monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: now)
     svc = _svc()
-
-    async def _owned_before_bar(acct: str, symbol: str) -> _CWFlipBinding:
-        return _CWFlipBinding(
-            status="owned",
-            managed_row_id=f"row:{acct}:{symbol}",
-            entry_time=now - timedelta(minutes=10),
-        )
-
-    svc._cw_flip_bound_managed_position = _owned_before_bar
+    _bind_owned_before(svc, now)
 
     _flip_at_age(svc, "YMAT", age_seconds=120.0, now=now)
 
