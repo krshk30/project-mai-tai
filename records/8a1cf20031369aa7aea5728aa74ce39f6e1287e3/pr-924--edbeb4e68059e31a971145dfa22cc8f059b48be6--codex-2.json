@@ -1,0 +1,9 @@
+{
+  "pr_number": 924,
+  "range_base": "edbeb4e68059e31a971145dfa22cc8f059b48be6",
+  "range_head": "8a1cf20031369aa7aea5728aa74ce39f6e1287e3",
+  "reviewed_at": "2026-09-09T10:48:23Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed DRIFT1 after conflict-free rebase onto merged #925; stable patch identity 58dd2b74fecf06be54bc9b8e3b84b3258ebeea2d matches the previously reviewed range, 30 focused tests pass, and delivery/cooldown controls remain discriminating."
+}
