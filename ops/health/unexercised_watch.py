@@ -21,6 +21,7 @@ zero -- that is the false-clean failure this whole board exists to prevent.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -352,11 +353,10 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
     return incidents
 
 
-def _run_inc1_pager(
+def _run_inc1_pager_unlocked(
     *, state_path: Path, status_path: Path, no_page: bool, now: datetime
 ) -> int:
     """Page every open INC1 incident once, retrying until ntfy confirms delivery."""
-    state_path.parent.mkdir(parents=True, exist_ok=True)
     state, memory_lost = _load_state(state_path)
     try:
         incidents = _inc1_open_incidents()
@@ -445,6 +445,32 @@ def _run_inc1_pager(
     status_path.write_text(line + "\n", encoding="utf-8")
     print(line)
     return 0 if delivered_total == len(incidents) else 1
+
+
+def _run_inc1_pager(
+    *, state_path: Path, status_path: Path, no_page: bool, now: datetime
+) -> int:
+    """Serialize one-minute INC1 runs so a slow invocation cannot duplicate a page."""
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = state_path.with_name(state_path.name + ".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            line = (
+                f"[INC1-PAGER] run_at={now.isoformat()} verdict=ALREADY_RUNNING "
+                "open=UNANSWERABLE delivered=UNANSWERABLE pending=UNANSWERABLE"
+            )
+            status_path.write_text(line + "\n", encoding="utf-8")
+            print(line)
+            return 0
+        return _run_inc1_pager_unlocked(
+            state_path=state_path,
+            status_path=status_path,
+            no_page=no_page,
+            now=now,
+        )
 
 
 def _load_state(path: Path) -> tuple[dict, bool]:

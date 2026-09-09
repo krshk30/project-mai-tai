@@ -282,6 +282,22 @@ def test_inc1_no_open_incident_is_quiet_but_measured(tmp_path, monkeypatch):
     )
 
 
+def test_inc1_overlapping_run_does_not_send_a_duplicate_page(tmp_path, monkeypatch):
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [_inc1_row()])
+    monkeypatch.setattr(uw, "page", lambda title, _body: pages.append(title) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+    lock_path = state.with_name(state.name + ".lock")
+
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        uw.fcntl.flock(lock.fileno(), uw.fcntl.LOCK_EX | uw.fcntl.LOCK_NB)
+        rc = uw.main(["--inc1", "--state", str(state), "--status", str(status)])
+
+    assert rc == 0
+    assert pages == [], "an overlapping INC1 run sent a duplicate page"
+    assert "verdict=ALREADY_RUNNING" in status.read_text(encoding="utf-8")
+
+
 def test_could_not_tell_does_not_re_arm_a_delivered_occurrence(tmp_path, monkeypatch):
     """⛔ The first version wrote fired=0 on COULD_NOT_TELL, resetting the transition memory, so a
     condition that had already paged would page AGAIN as soon as its query recovered."""
