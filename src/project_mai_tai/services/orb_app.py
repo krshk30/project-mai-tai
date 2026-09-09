@@ -115,7 +115,14 @@ class _ModeledRestingOrder:
     adjustment_outcome: str = "NOT_EVALUATED"
     filled_at: datetime | None = None
     fill_price: float | None = None
-    decision_blocked: bool = False
+    # ⛔⭐⭐ OPERATOR RULING 2026-09-09 — LEFT, not PULLED. This records that adjustment timing was
+    # unanswerable; it does NOT gate the fill. It replaced `decision_blocked`, which did gate it.
+    # #915 deliberately implemented neither default and blocked further modeled fills while the
+    # question was open. The ruling: "place early so something is always working — pulling it
+    # removes the very thing you placed early for, and you'd miss the trade for a timing detail."
+    # The accepted cost is a fill at the 09:29 level instead of the final one: slightly cheaper,
+    # slightly earlier — the trade already accepted by choosing to place at 09:29.
+    adjustment_unanswerable: bool = False
 
 
 @dataclass
@@ -773,7 +780,9 @@ class OrbService:
             return
 
         order.adjustment_outcome = "UNANSWERABLE_ADJUSTMENT_TIMING"
-        order.decision_blocked = True
+        # ⛔ LEFT: flag it for the record and the heartbeat, but leave the order WORKING at
+        # `order.current_level` — still the 09:29 level, deliberately not raised to final_level.
+        order.adjustment_unanswerable = True
         st.adjustment_unanswerable += 1
         self._queue_fixed_resting_event(
             symbol,
@@ -792,7 +801,8 @@ class OrbService:
         )
         logger.warning(
             "[ORB-PAPER-ADJUSTMENT-UNANSWERABLE] %s old=%.4f new=%.4f "
-            "observed_price=%s quote_at=%s denominator=adjustment_opportunities",
+            "observed_price=%s quote_at=%s denominator=adjustment_opportunities "
+            "ruling=LEFT order_still_working_at_old_level=true",
             symbol,
             order.initial_level,
             order.final_level,
@@ -850,7 +860,6 @@ class OrbService:
             st is None
             or order is None
             or order.filled_at is not None
-            or order.decision_blocked
             or st.pending
             or ts < order.placed_at
         ):
@@ -875,7 +884,14 @@ class OrbService:
                     else "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET"
                 ),
                 status="RECORDED_NOT_A_BROKER_FILL",
-                reason="INTRABAR_BREAK_OF_MODELED_RESTING_LEVEL",
+                reason=(
+                    # ⛔ The LEFT population: this order filled at the retained 09:29 level after
+                    # adjustment timing could not be proven. Before the ruling it could not fill
+                    # at all, so this reason marks the cases where LEFT and PULLED DIFFER.
+                    "INTRABAR_BREAK_OF_RETAINED_09:29_LEVEL_AFTER_UNANSWERABLE_TIMING"
+                    if order.adjustment_unanswerable
+                    else "INTRABAR_BREAK_OF_MODELED_RESTING_LEVEL"
+                ),
                 quote_at=st.latest_quote_at,
                 bid=st.latest_bid,
                 ask=st.latest_ask,
@@ -885,12 +901,13 @@ class OrbService:
         )
         logger.info(
             "[ORB-PAPER-RESTING-FILL] %s modeled_fill=%.4f trade=%.4f at=%s "
-            "adjusted=%s check=live assumption=resting-level",
+            "adjusted=%s unanswerable_left=%s check=live assumption=resting-level",
             symbol,
             order.current_level,
             price,
             ts.isoformat(),
             order.adjusted_at is not None,
+            order.adjustment_unanswerable,
         )
 
     # ----- the entry brain: OR build -> breakout -> arm-on-window-open -> paper decision -----
@@ -1205,7 +1222,7 @@ class OrbService:
             if st.paper_entries:
                 status = "paper_entry_recorded"
             elif self._fixed_resting_mode and st.resting_order is not None:
-                if st.resting_order.decision_blocked:
+                if st.resting_order.adjustment_unanswerable:
                     status = "adjustment_unanswerable"
                 elif st.resting_order.adjusted_at is not None:
                     status = "resting_adjusted"
@@ -1255,6 +1272,17 @@ class OrbService:
             and st.resting_order.final_level is not None
             and st.resting_order.final_level > st.resting_order.initial_level
         )
+        # ⛔⭐ THE RULING'S OWN DENOMINATOR. LEFT and PULLED differ on exactly one population:
+        # orders that were unanswerable AND then filled at the retained 09:29 level. Under PULLED
+        # every one of these would have been a missed trade. Counting it is what makes the ruling
+        # reviewable later instead of permanent by default.
+        left_fills_at_retained_level = sum(
+            1
+            for st in self._states.values()
+            if st.resting_order is not None
+            and st.resting_order.adjustment_unanswerable
+            and st.resting_order.filled_at is not None
+        )
         return StrategyBotStatePayload(
             strategy_code=SERVICE_NAME,
             account_name=ORB_PAPER_ACCOUNT_NAME,
@@ -1276,6 +1304,8 @@ class OrbService:
                     "filled_before_adjustment": filled_before_adjustment,
                     "modeled_adjustments_landed": adjustments_landed,
                     "unanswerable": adjustment_unanswerable,
+                    "left_fills_at_retained_level": left_fills_at_retained_level,
+                    "ruling": "LEFT (operator 2026-09-09)",
                     "denominator": adjustment_denominator,
                 },
             },
