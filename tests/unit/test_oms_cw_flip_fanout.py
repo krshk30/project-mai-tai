@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from project_mai_tai.oms.service import OmsRiskService
@@ -50,6 +51,8 @@ def _svc(fanout: bool = True) -> OmsRiskService:
         oms_v2_exit_management_enabled=True,
     )
     svc._cw_flip_pending = set()
+    svc._cw_flip_decisions = {}
+    svc._cw_flip_missing_bound_accounts = set()
     svc._cw_exit_enabled = True
     svc.logger = SimpleNamespace(
         _lines=[],
@@ -57,6 +60,13 @@ def _svc(fanout: bool = True) -> OmsRiskService:
         warning=lambda m, *a: svc.logger._lines.append(m % a),
         error=lambda m, *a: svc.logger._lines.append(m % a),
     )
+
+    async def _bound(acct: str, symbol: str) -> tuple[str, datetime | None]:
+        if acct in svc._cw_flip_missing_bound_accounts:
+            return "", None
+        return f"row:{acct}:{symbol}", datetime.now(UTC) - timedelta(seconds=120)
+
+    svc._cw_flip_bound_managed_position = _bound
     return svc
 
 
@@ -71,7 +81,9 @@ def _flip(svc, symbol: str, account: str = SCHWAB):
                         "event_type": "v2_cw_flip",
                         "symbol": symbol,
                         "broker_account_name": account,
-                        "bar_time_ms": "1786048080000",
+                        "bar_time_ms": str(
+                            int((datetime.now(UTC) - timedelta(seconds=90)).timestamp() * 1000)
+                        ),
                     }
                 )
             }
@@ -90,6 +102,11 @@ def test_C1_AAOG_the_webull_leg_is_armed_WITH_the_flip() -> None:
     assert (ORB, "AAOG") in svc._cw_flip_pending, (
         "the Webull leg was not armed — it will ride the reversal to the hard-stop fallback"
     )
+    assert (
+        svc._cw_flip_decisions[(SCHWAB, "AAOG")].managed_row_id
+        == "row:live:schwab_1m_v2:AAOG"
+    )
+    assert svc._cw_flip_decisions[(ORB, "AAOG")].managed_row_id == "row:live:orb:AAOG"
 
 
 def test_C2_GTE_the_webull_leg_is_armed_WITH_the_flip() -> None:
@@ -119,7 +136,7 @@ def test_flag_OFF_is_byte_identical_to_the_old_behaviour() -> None:
 
 def test_an_unexpected_publisher_account_is_still_armed_not_silently_dropped() -> None:
     """Superset, never a substitution: if the publisher ever names an account outside
-    `_v2_accounts()`, we must not silently ignore it. An unmanaged pair self-discards downstream."""
+    `_v2_accounts()` and that account has an open managed row, we must not silently ignore it."""
     svc = _svc()
     _flip(svc, "AAOG", account="live:some_other")
     assert ("live:some_other", "AAOG") in svc._cw_flip_pending
@@ -133,47 +150,29 @@ def test_cw_disabled_arms_nothing() -> None:
     assert svc._cw_flip_pending == set()
 
 
-# ------------------------------------------------------- criteria 3 & 4: the phantom guard
-
-def _drive_exit(svc, acct: str, symbol: str, snapshot):
-    """Drive `_maybe_emit_v2_managed_exit` far enough to exercise the no-open-row branch."""
-    svc._managed_v2_symbols = {(acct, symbol)}
-    svc._cw_floor_armed = set()
-    svc._latest_quotes_by_symbol = {symbol: {"bid": 9.5}}
-    svc.emitted = []
-
-    async def _run_db(fn, commit=False):
-        return snapshot
-
-    async def _emit(*a, **k):
-        svc.emitted.append((a, k))
-
-    svc._run_db = _run_db
-    svc._emit_v2_exit_on_loop = _emit
-    asyncio.run(svc._evaluate_v2_managed_exit(acct, symbol))
+# ------------------------------------------------------- criteria 3 & 4: bind only open legs
 
 
 def test_C3_GTE_1624_webull_ALREADY_CLOSED_emits_NOTHING() -> None:
     """⛔⭐ THE PHANTOM-EXIT CASE, AND IT IS ALREADY INSTANCED. GTE 2026-08-05: the Webull leg closed
     at 16:01:32 on its own OCO; the Schwab flip fired at 16:24. Under the fan-out that flip now arms
-    live:orb for a symbol with NO open position. Nothing may be emitted, and the stale arm must be
-    dropped."""
+    only a leg with an open managed position. An ownerless decision is refused at acceptance, not
+    left pending in the hope that a later quote will clear it."""
     svc = _svc()
+    svc._cw_flip_missing_bound_accounts.add(ORB)
     _flip(svc, "GTE")
-    assert (ORB, "GTE") in svc._cw_flip_pending          # armed by the fan-out
-    _drive_exit(svc, ORB, "GTE", snapshot=None)          # ...but no open managed row
-    assert svc.emitted == [], "a phantom sell was emitted for a leg that had already closed"
-    assert (ORB, "GTE") not in svc._cw_flip_pending, "the stale flip was not dropped"
-    assert (ORB, "GTE") not in svc._managed_v2_symbols
+    assert (ORB, "GTE") not in svc._cw_flip_pending
+    assert (SCHWAB, "GTE") in svc._cw_flip_pending
+    assert any("no_open_position_to_bind" in line for line in svc.logger._lines)
 
 
 def test_C4_symmetric_schwab_closed_webull_OPEN_the_open_leg_stays_armed() -> None:
     """The mirror of C3 and the more common shape once the fan-out works: the Schwab leg has gone
     but the Webull leg is still open. Dropping the Schwab arm must not disturb the Webull one."""
     svc = _svc()
+    svc._cw_flip_missing_bound_accounts.add(SCHWAB)
     _flip(svc, "GTE")
-    _drive_exit(svc, SCHWAB, "GTE", snapshot=None)       # Schwab leg already flat
     assert (SCHWAB, "GTE") not in svc._cw_flip_pending
     assert (ORB, "GTE") in svc._cw_flip_pending, (
-        "dropping the closed leg's arm also dropped the OPEN leg's — the open leg would never flip"
+        "refusing the closed leg's arm also dropped the OPEN leg's — the open leg would never flip"
     )

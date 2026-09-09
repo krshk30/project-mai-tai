@@ -309,6 +309,14 @@ class _V2ManagedSnapshot:
 
 
 @dataclass(frozen=True)
+class _CWFlipDecision:
+    """A bar-close ATR decision bound to the managed-position episode it observed."""
+
+    bar_time_ms: int
+    managed_row_id: str
+
+
+@dataclass(frozen=True)
 class _V2ExitRejectAlarm:
     key: tuple[str, str]
     alarm_count: int
@@ -469,6 +477,10 @@ class OmsRiskService:
     # across 80 retained episodes, so no alarm threshold below the unchanged ceiling of 20 is
     # measured or defensible. Do not infer Webull coverage from SIL1 existing.
     _V2_EXIT_REJECT_ALARM_THRESHOLD_SCHWAB = 8
+    # A CW flip is emitted from a completed one-minute bar and should execute on the next quote.
+    # Match the strategy's existing live-bar freshness horizon: after three minutes from the bar
+    # start, the decision is stale and must not migrate to a later position on the same symbol.
+    _V2_CW_FLIP_MAX_BAR_AGE_SECONDS = 180.0
     # ⛔⭐⭐ HDL1 (2026-09-07). THE WEBULL PROTECT HANDLE RACES THE FILL COMMIT AND LOSES.
     # `_spawn_webull_protection` runs the attach OFF the fill path on purpose — it retries with
     # sleeps and must never stall a fill. That background task then races the outer fill
@@ -689,10 +701,11 @@ class OmsRiskService:
         )
         self._cw_floor_pct: float = float(getattr(self.settings, "oms_v2_cw_floor_pct", 2.0))
         self._cw_floor_armed: set[tuple[str, str]] = set()
-        # (acct, symbol) pairs with a bar-close ATR flip pending (PR #3). Set from the
-        # `v2_cw_flip` signal event; consumed (full close) by the CW exit on the next
-        # quote. In-memory so the hot quote path never does a per-tick Redis read.
+        # (acct, symbol) pairs with a bar-close ATR flip pending (PR #3). The companion decision
+        # binds each key to the bar and managed-row UUID that owned it. Both are in-memory so the
+        # hot quote path never does a per-tick Redis read.
         self._cw_flip_pending: set[tuple[str, str]] = set()
+        self._cw_flip_decisions: dict[tuple[str, str], _CWFlipDecision] = {}
         # A native-OCO release is broker I/O. Claim the one-shot flip before awaiting so two
         # quote tasks cannot cancel the same bracket or submit two closes concurrently.
         self._cw_flip_release_inflight: set[tuple[str, str]] = set()
@@ -1053,6 +1066,25 @@ class OmsRiskService:
                     or self.settings.strategy_schwab_1m_v2_account_name
                 )
                 if sym:
+                    try:
+                        bar_time_ms = int(str(payload.get("bar_time_ms", "")).strip())
+                    except (TypeError, ValueError):
+                        bar_time_ms = 0
+                    bar_age_seconds = (
+                        (utcnow().timestamp() * 1000 - bar_time_ms) / 1000.0
+                        if bar_time_ms > 0
+                        else float("inf")
+                    )
+                    if not (0.0 <= bar_age_seconds <= self._V2_CW_FLIP_MAX_BAR_AGE_SECONDS):
+                        self.logger.error(
+                            "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s reason=invalid_or_expired_bar "
+                            "bar_time_ms=%s age_seconds=%.3f",
+                            sym,
+                            acct,
+                            payload.get("bar_time_ms", "missing"),
+                            bar_age_seconds,
+                        )
+                        return
                     # ⭐⭐ CW_FLIP FAN-OUT (2026-08-07). The flip used to arm ONE account -- the one
                     # the publisher named, which is the bot's own (Schwab). Every OTHER exit reason
                     # reaches the Webull leg for free because CW_HARD_STOP / CW_FLOOR are
@@ -1074,14 +1106,52 @@ class OmsRiskService:
                     # BYTE-IDENTICAL with the flag off, and needs no flag of its own. The flip was
                     # simply the one place that never used it.
                     #
-                    # ⛔ A stale arm is harmless BY EXISTING DESIGN, and that is load-bearing here:
-                    # `_maybe_emit_v2_managed_exit` discards a pending flip when the symbol has no
-                    # open managed row ("no open row -> drop any stale flip"). So arming an account
-                    # whose leg already exited emits NOTHING. That guard is now pinned by a test.
+                    # ⛔ A decision belongs to one position, not an (account, symbol) lane. NUR
+                    # 2026-09-08 proved that relying on a later no-row evaluation is insufficient:
+                    # its 12:34 decision was never evaluated while flat, survived 55 minutes, and
+                    # attached to a new 13:29 position. Bind now and refuse an absent/replacement row.
                     for arm_acct in dict.fromkeys([*self._v2_accounts(), acct]):
-                        self._cw_flip_pending.add((arm_acct, sym))
+                        managed_row_id, entry_time = await self._cw_flip_bound_managed_position(
+                            arm_acct, sym
+                        )
+                        if not managed_row_id:
+                            self.logger.error(
+                                "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s "
+                                "reason=no_open_position_to_bind bar_time_ms=%d",
+                                sym,
+                                arm_acct,
+                                bar_time_ms,
+                            )
+                            self._clear_cw_flip_pending((arm_acct, sym))
+                            continue
+                        bar_close = datetime.fromtimestamp(
+                            (bar_time_ms + 60_000) / 1000.0, UTC
+                        )
+                        if entry_time is None or entry_time > bar_close:
+                            self.logger.error(
+                                "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s "
+                                "reason=position_opened_after_bar bar_time_ms=%d managed_row=%s "
+                                "entry_time=%s",
+                                sym,
+                                arm_acct,
+                                bar_time_ms,
+                                managed_row_id,
+                                entry_time.isoformat() if entry_time is not None else "unknown",
+                            )
+                            self._clear_cw_flip_pending((arm_acct, sym))
+                            continue
+                        self._arm_cw_flip_pending(
+                            (arm_acct, sym),
+                            bar_time_ms=bar_time_ms,
+                            managed_row_id=managed_row_id,
+                        )
                         self.logger.info(
-                            "[OMS-V2-CW] flip pending armed acct=%s sym=%s", arm_acct, sym
+                            "[OMS-V2-CW] flip pending armed acct=%s sym=%s bar_time_ms=%d "
+                            "managed_row=%s",
+                            arm_acct,
+                            sym,
+                            bar_time_ms,
+                            managed_row_id,
                         )
             return
 
@@ -3980,7 +4050,7 @@ class OmsRiskService:
         if closed:
             key = (acct, symbol)
             self._managed_v2_symbols.discard(key)
-            self._cw_flip_pending.discard(key)
+            self._clear_cw_flip_pending(key)
             self._cw_floor_armed.discard(key)
             self._v2_exit_end_episode(key)
             self._clear_exit_reservation_release(acct, symbol)
@@ -4154,6 +4224,76 @@ class OmsRiskService:
                 symbol, acct,
             )
             return ""
+
+    async def _cw_flip_bound_managed_position(
+        self, acct: str, symbol: str
+    ) -> tuple[str, datetime | None]:
+        """Return the open managed-row identity and entry time, failing closed on read faults."""
+
+        try:
+            def _read(session: Session) -> tuple[str, datetime | None]:
+                row = self.store.get_open_managed_position(
+                    session, broker_account_name=acct, symbol=symbol
+                )
+                if row is None:
+                    return "", None
+                return str(row.id), _as_utc(row.entry_time)
+
+            row_id, entry_time = await self._run_db(_read, commit=False)
+            return str(row_id or ""), entry_time
+        except Exception:  # noqa: BLE001 - an ownerless flip must never arm
+            self.logger.exception(
+                "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s reason=bind_read_failed",
+                symbol,
+                acct,
+            )
+            return "", None
+
+    def _arm_cw_flip_pending(
+        self,
+        key: tuple[str, str],
+        *,
+        bar_time_ms: int,
+        managed_row_id: str,
+    ) -> None:
+        self.__dict__.setdefault("_cw_flip_pending", set()).add(key)
+        decisions = self.__dict__.setdefault("_cw_flip_decisions", {})
+        decisions[key] = _CWFlipDecision(
+            bar_time_ms=bar_time_ms,
+            managed_row_id=managed_row_id,
+        )
+
+    def _clear_cw_flip_pending(self, key: tuple[str, str]) -> None:
+        self.__dict__.setdefault("_cw_flip_pending", set()).discard(key)
+        self.__dict__.setdefault("_cw_flip_decisions", {}).pop(key, None)
+
+    def _fresh_cw_flip_decision(
+        self, key: tuple[str, str]
+    ) -> _CWFlipDecision | None:
+        pending = self.__dict__.setdefault("_cw_flip_pending", set())
+        decisions = self.__dict__.setdefault("_cw_flip_decisions", {})
+        decision = decisions.get(key)
+        if key not in pending or decision is None:
+            if key in pending or decision is not None:
+                self._clear_cw_flip_pending(key)
+                self.logger.error(
+                    "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s reason=incomplete_owner",
+                    key[1],
+                    key[0],
+                )
+            return None
+        age_seconds = (utcnow().timestamp() * 1000 - decision.bar_time_ms) / 1000.0
+        if age_seconds < 0 or age_seconds > self._V2_CW_FLIP_MAX_BAR_AGE_SECONDS:
+            self._clear_cw_flip_pending(key)
+            self.logger.warning(
+                "[OMS-V2-CW-FLIP-EXPIRED] sym=%s acct=%s bar_time_ms=%d age_seconds=%.3f",
+                key[1],
+                key[0],
+                decision.bar_time_ms,
+                age_seconds,
+            )
+            return None
+        return decision
 
     async def _reconcile_confirmation_exit_protection(self, acct: str, symbol: str) -> str:
         """Return released/resolved_by_fill/unanswerable from fresh broker evidence."""
@@ -4525,7 +4665,8 @@ class OmsRiskService:
                 return
         else:
             native_oco_stand_down = self._native_oco_stand_down_active(acct, symbol)
-        if native_oco_stand_down and key not in self._cw_flip_pending:
+        cw_flip_decision = self._fresh_cw_flip_decision(key)
+        if native_oco_stand_down and cw_flip_decision is None:
             # A broker-native OCO owns this exit: target + stop are ONE broker-arbitrated
             # pair. Running the software ladder here would place a THIRD protective sell
             # against the same shares -- the NXTC oversell, merely relocated. Fail-open
@@ -4553,7 +4694,7 @@ class OmsRiskService:
             )
             if snapshot is None:
                 self._managed_v2_symbols.discard((acct, symbol))  # dict mutation stays on-loop
-                self._cw_flip_pending.discard((acct, symbol))  # no open row -> drop any stale flip
+                self._clear_cw_flip_pending((acct, symbol))  # no open row -> drop any stale flip
                 self._cw_floor_armed.discard((acct, symbol))  # no open row -> drop any armed floor
                 self._post_exit_stale_held_clear(acct, symbol)
                 confirmation_pending.pop(key, None)
@@ -4567,6 +4708,24 @@ class OmsRiskService:
                         protection=protection,
                     )
                 return
+
+            if (
+                cw_flip_decision is not None
+                and cw_flip_decision.managed_row_id != snapshot.managed_row_id
+            ):
+                self.logger.error(
+                    "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s bound_row=%s open_row=%s "
+                    "bar_time_ms=%d reason=different_position",
+                    symbol,
+                    acct,
+                    cw_flip_decision.managed_row_id,
+                    snapshot.managed_row_id,
+                    cw_flip_decision.bar_time_ms,
+                )
+                self._clear_cw_flip_pending(key)
+                cw_flip_decision = None
+                if native_oco_stand_down:
+                    return
 
             # C3 — the broker has already sold, but its position view can remain HELD for minutes.
             # A durable SELL fill plus an older position snapshot is positive evidence of that
@@ -4697,7 +4856,7 @@ class OmsRiskService:
                 # BID-derived high-water floor that `_hydrate_v2_position` restored above. BID-only
                 # is load-bearing: an ask spike on a wide spread must not manufacture a ratchet that
                 # the unchanged bid immediately breaches.
-                flip_pending = (acct, symbol) in self._cw_flip_pending
+                flip_pending = cw_flip_decision is not None
                 armed = (acct, symbol) in self._cw_floor_armed
                 action, _armed_out = cw_exit_decision(
                     entry_price, bid, armed,
@@ -4718,7 +4877,8 @@ class OmsRiskService:
                         return
                     # One flip is one release attempt. Pop before broker I/O so concurrent quote
                     # tasks cannot repeat DELETEs; cancellation restores the decision for retry.
-                    self._cw_flip_pending.discard(key)
+                    owned_flip = cw_flip_decision
+                    self._clear_cw_flip_pending(key)
                     release_inflight.add(key)
                     try:
                         release_result = await self._release_native_oco_for_cw_flip(
@@ -4727,7 +4887,12 @@ class OmsRiskService:
                             expected_row_id=snapshot.managed_row_id,
                         )
                     except asyncio.CancelledError:
-                        self._cw_flip_pending.add(key)
+                        if owned_flip is not None:
+                            self._arm_cw_flip_pending(
+                                key,
+                                bar_time_ms=owned_flip.bar_time_ms,
+                                managed_row_id=owned_flip.managed_row_id,
+                            )
                         raise
                     finally:
                         release_inflight.discard(key)
@@ -4808,7 +4973,7 @@ class OmsRiskService:
                             managed_row_id=snapshot.managed_row_id,
                             close_outcome=emit_outcome,
                         )
-                    self._cw_flip_pending.discard((acct, symbol))
+                    self._clear_cw_flip_pending((acct, symbol))
                     self._cw_floor_armed.discard((acct, symbol))
                 return
 
@@ -5044,7 +5209,7 @@ class OmsRiskService:
         await self._run_db(_close, commit=True)
         key = (acct, symbol)
         self._managed_v2_symbols.discard(key)
-        self._cw_flip_pending.discard(key)
+        self._clear_cw_flip_pending(key)
         self._cw_floor_armed.discard(key)
         # #885 finding 1: this cleared the stand-down but NOT the reject total that produced it.
         self._v2_exit_end_episode(key)
@@ -5925,7 +6090,7 @@ class OmsRiskService:
                 self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             self.store.close_managed_position(session, row)
             self._managed_v2_symbols.discard(key)
-            self._cw_flip_pending.discard(key)
+            self._clear_cw_flip_pending(key)
             self._cw_floor_armed.discard(key)
             self._v2_exit_end_episode(
                 key, session=session
@@ -6272,7 +6437,7 @@ class OmsRiskService:
             return
         key = (acct, symbol)
         self._managed_v2_symbols.discard(key)
-        self._cw_flip_pending.discard(key)
+        self._clear_cw_flip_pending(key)
         self._cw_floor_armed.discard(key)
         # ⛔ MUST clear: this is the RECOVERY path a stand-down relies on. Leaving it set would
         # silently suppress exits for the NEXT position on this symbol.

@@ -10,7 +10,7 @@ arms the in-memory pending set only when CW is enabled.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -29,6 +29,7 @@ from project_mai_tai.db.models import (
     SystemIncident,
     TradeIntent,
 )
+from project_mai_tai.oms import service as service_module
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 
@@ -96,14 +97,25 @@ def _svc(
     return svc
 
 
-def _arm(svc, sf, *, entry=10.0, qty=100) -> None:
+def _arm(svc, sf, *, entry=10.0, qty=100, entry_time: datetime | None = None) -> None:
     with sf() as s:
         svc.store.create_managed_position(
             s, strategy_code="schwab_1m_v2", broker_account_name=ACCT,
             symbol=SYM, entry_price=Decimal(str(entry)), quantity=qty, entry_path="ATR Flip",
+            entry_time=entry_time,
         )
         s.commit()
     svc._managed_v2_symbols.add((ACCT, SYM))
+
+
+def _bind_flip(svc, sf, *, bar_time_ms: int | None = None) -> int:
+    bar_time_ms = bar_time_ms or int((datetime.now(UTC) - timedelta(seconds=90)).timestamp() * 1000)
+    svc._arm_cw_flip_pending(
+        (ACCT, SYM),
+        bar_time_ms=bar_time_ms,
+        managed_row_id=_open_row_id(sf),
+    )
+    return bar_time_ms
 
 
 def _record_filled_entry(sf, *, broker_order_id: str = "entry-order-1") -> None:
@@ -130,11 +142,16 @@ def _record_filled_entry(sf, *, broker_order_id: str = "entry-order-1") -> None:
         s.commit()
 
 
-def _quote(svc, bid: float, *, ask: float | None = None) -> None:
-    from datetime import UTC, datetime
+def _quote(
+    svc,
+    bid: float,
+    *,
+    ask: float | None = None,
+    received_at: datetime | None = None,
+) -> None:
     svc._latest_quotes_by_symbol[SYM] = {
         "bid": bid, "ask": bid + 0.01 if ask is None else ask,
-        "received_at": datetime.now(UTC),
+        "received_at": received_at or datetime.now(UTC),
     }
 
 
@@ -199,11 +216,13 @@ async def test_cw_no_exit_between_bounds_without_flip():
 async def test_cw_flip_full_close_at_bid():
     sf = _make_sf()
     svc = _svc(sf, cw=True)
-    _arm(svc, sf, entry=10.0, qty=100)
+    now = datetime.now(UTC)
+    bar_time_ms = int((now - timedelta(seconds=90)).timestamp() * 1000)
+    _arm(svc, sf, entry=10.0, qty=100, entry_time=now - timedelta(seconds=120))
     # Arm the flip via the dispatcher event, then a quote inside the bounds closes it.
     await svc._handle_stream_message(
         {"data": json.dumps({"event_type": "v2_cw_flip", "symbol": SYM,
-                             "broker_account_name": ACCT})}
+                             "broker_account_name": ACCT, "bar_time_ms": bar_time_ms})}
     )
     assert (ACCT, SYM) in svc._cw_flip_pending
     _quote(svc, bid=9.90)                          # inside bounds, but flip pending
@@ -216,6 +235,184 @@ async def test_cw_flip_full_close_at_bid():
 
 
 @pytest.mark.asyncio
+async def test_NUR_1329_position_never_inherits_the_1234_flip(monkeypatch) -> None:
+    """NUR 2026-09-08: an ownerless 12:34 decision must not sell the 13:29 position."""
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
+    clock = {"now": datetime(2026, 9, 8, 16, 34, 2, tzinfo=UTC)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+    bar_time_ms = int(datetime(2026, 9, 8, 16, 33, tzinfo=UTC).timestamp() * 1000)
+
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_cw_flip",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                    "bar_time_ms": bar_time_ms,
+                }
+            )
+        }
+    )
+    assert (ACCT, SYM) not in svc._cw_flip_pending
+
+    clock["now"] = datetime(2026, 9, 8, 17, 29, 46, tzinfo=UTC)
+    _arm(svc, sf, entry=3.24, qty=2, entry_time=clock["now"])
+    _quote(svc, bid=3.20, received_at=clock["now"])
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert _sell_intents(sf) == []
+    assert _row_status_open(sf), "the 13:29 position must not inherit the 12:34 decision"
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_refuses_a_position_opened_after_the_decision_bar(monkeypatch) -> None:
+    """A delayed stream event must not bind an old bar to the row that happens to be open now."""
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
+    bar_time = datetime(2026, 9, 8, 16, 33, tzinfo=UTC)
+    clock = {"now": bar_time + timedelta(seconds=90)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+    _arm(svc, sf, entry=3.24, qty=2, entry_time=bar_time + timedelta(seconds=70))
+
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_cw_flip",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                    "bar_time_ms": int(bar_time.timestamp() * 1000),
+                }
+            )
+        }
+    )
+
+    assert (ACCT, SYM) not in svc._cw_flip_pending
+    assert _row_status_open(sf)
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_without_a_bar_identity_never_arms() -> None:
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
+    _arm(svc, sf, entry=3.24, qty=2)
+
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_cw_flip",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                }
+            )
+        }
+    )
+
+    assert (ACCT, SYM) not in svc._cw_flip_pending
+    assert _row_status_open(sf)
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_decision_expires_before_it_can_act(monkeypatch) -> None:
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
+    bar_time = datetime(2026, 9, 8, 16, 33, tzinfo=UTC)
+    clock = {"now": bar_time + timedelta(seconds=62)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+    _arm(svc, sf, entry=3.24, qty=2, entry_time=bar_time - timedelta(minutes=5))
+
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_cw_flip",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                    "bar_time_ms": int(bar_time.timestamp() * 1000),
+                }
+            )
+        }
+    )
+    assert (ACCT, SYM) in svc._cw_flip_pending
+
+    clock["now"] = bar_time + timedelta(seconds=181)
+    _quote(svc, bid=3.20, received_at=clock["now"])
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert _sell_intents(sf) == []
+    assert (ACCT, SYM) not in svc._cw_flip_pending
+    assert _row_status_open(sf)
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_decision_refuses_a_replacement_position(monkeypatch) -> None:
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
+    bar_time = datetime(2026, 9, 8, 16, 33, tzinfo=UTC)
+    clock = {"now": bar_time + timedelta(seconds=62)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+    _arm(svc, sf, entry=3.24, qty=2, entry_time=bar_time - timedelta(minutes=5))
+    row_a = _open_row_id(sf)
+
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_cw_flip",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                    "bar_time_ms": int(bar_time.timestamp() * 1000),
+                }
+            )
+        }
+    )
+    _close_open_row(sf)
+    _match_production_partial_index(sf)
+    _arm(svc, sf, entry=3.24, qty=2, entry_time=clock["now"])
+    assert _open_row_id(sf) != row_a
+
+    _quote(svc, bid=3.20, received_at=clock["now"])
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert _sell_intents(sf) == []
+    assert (ACCT, SYM) not in svc._cw_flip_pending
+    assert _row_status_open(sf), "a decision for row A must never migrate to replacement row B"
+
+
+@pytest.mark.asyncio
+async def test_cw_flip_decision_still_executes_for_its_own_position(monkeypatch) -> None:
+    """Control: ownership must discriminate, not disable the ATR exit."""
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
+    bar_time = datetime(2026, 9, 8, 16, 33, tzinfo=UTC)
+    clock = {"now": bar_time + timedelta(seconds=62)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+    _arm(svc, sf, entry=3.24, qty=2, entry_time=bar_time - timedelta(minutes=5))
+
+    await svc._handle_stream_message(
+        {
+            "data": json.dumps(
+                {
+                    "event_type": "v2_cw_flip",
+                    "symbol": SYM,
+                    "broker_account_name": ACCT,
+                    "bar_time_ms": int(bar_time.timestamp() * 1000),
+                }
+            )
+        }
+    )
+    _quote(svc, bid=3.20, received_at=clock["now"])
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    intents = _sell_intents(sf)
+    assert len(intents) == 1
+    assert intents[0].reason.endswith("CW_FLIP")
+
+
+@pytest.mark.asyncio
 async def test_cw_flip_releases_an_armed_native_oco_before_closing() -> None:
     """MOBX 2026-09-08: a bar-close flip must not be swallowed by native-OCO stand-down."""
     sf = _make_sf()
@@ -224,7 +421,7 @@ async def test_cw_flip_releases_an_armed_native_oco_before_closing() -> None:
     _arm(svc, sf, entry=10.0, qty=100)
     _record_filled_entry(sf)
     svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
-    svc._cw_flip_pending.add((ACCT, SYM))
+    _bind_flip(svc, sf)
     _quote(svc, bid=9.90)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -245,7 +442,7 @@ async def test_cw_flip_never_sells_when_native_oco_release_is_unanswerable() -> 
     _arm(svc, sf, entry=10.0, qty=100)
     _record_filled_entry(sf)
     svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
-    svc._cw_flip_pending.add((ACCT, SYM))
+    _bind_flip(svc, sf)
 
     for bid in (9.90, 9.89, 9.88):
         _quote(svc, bid=bid)
@@ -265,7 +462,7 @@ async def test_cw_flip_reports_uncovered_when_close_fails_after_oco_release(caps
     _arm(svc, sf, entry=10.0, qty=100)
     _record_filled_entry(sf)
     svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
-    svc._cw_flip_pending.add((ACCT, SYM))
+    _bind_flip(svc, sf)
     _quote(svc, bid=9.90)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -303,7 +500,7 @@ async def test_cw_flip_refuses_release_if_position_changes_before_target_read() 
     row_a = _open_row_id(sf)
     _record_filled_entry(sf, broker_order_id="entry-order-A")
     svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
-    svc._cw_flip_pending.add((ACCT, SYM))
+    _bind_flip(svc, sf)
     _quote(svc, bid=9.90)
 
     original_run_db = svc._run_db
@@ -338,7 +535,7 @@ async def test_armed_native_oco_keeps_owning_target_even_with_a_pending_flip() -
     svc = _svc(sf, cw=True, adapter=adapter)
     _arm(svc, sf, entry=10.0, qty=100)
     svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
-    svc._cw_flip_pending.add((ACCT, SYM))
+    _bind_flip(svc, sf)
     _quote(svc, bid=10.25)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -357,7 +554,7 @@ async def test_cw_flip_defers_when_the_oco_already_resolved_by_fill() -> None:
     _arm(svc, sf, entry=10.0, qty=100)
     _record_filled_entry(sf)
     svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
-    svc._cw_flip_pending.add((ACCT, SYM))
+    _bind_flip(svc, sf)
     _quote(svc, bid=9.90)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -389,7 +586,7 @@ async def test_cw_flip_does_not_sell_a_replacement_position_after_oco_release() 
     row_a = _open_row_id(sf)
     _record_filled_entry(sf)
     svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(UTC)
-    svc._cw_flip_pending.add((ACCT, SYM))
+    _bind_flip(svc, sf)
     _quote(svc, bid=9.90)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -406,7 +603,7 @@ async def test_cw_target_takes_precedence_over_pending_flip():
     sf = _make_sf()
     svc = _svc(sf, cw=True)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._cw_flip_pending.add((ACCT, SYM))
+    _bind_flip(svc, sf)
     _quote(svc, bid=10.25)                          # +2% AND flip pending -> target wins
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
     intents = _sell_intents(sf)
@@ -419,16 +616,19 @@ async def test_cw_target_takes_precedence_over_pending_flip():
 async def test_dispatcher_arms_pending_only_when_cw_enabled():
     sf = _make_sf()
     on = _svc(sf, cw=True)
+    now = datetime.now(UTC)
+    bar_time_ms = int((now - timedelta(seconds=90)).timestamp() * 1000)
+    _arm(on, sf, entry_time=now - timedelta(seconds=120))
     await on._handle_stream_message(
         {"data": json.dumps({"event_type": "v2_cw_flip", "symbol": SYM,
-                             "broker_account_name": ACCT})}
+                             "broker_account_name": ACCT, "bar_time_ms": bar_time_ms})}
     )
     assert (ACCT, SYM) in on._cw_flip_pending
 
     off = _svc(_make_sf(), cw=False)
     await off._handle_stream_message(
         {"data": json.dumps({"event_type": "v2_cw_flip", "symbol": SYM,
-                             "broker_account_name": ACCT})}
+                             "broker_account_name": ACCT, "bar_time_ms": bar_time_ms})}
     )
     assert (ACCT, SYM) not in off._cw_flip_pending
 
