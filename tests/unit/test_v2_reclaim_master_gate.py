@@ -91,6 +91,7 @@ def test_reclaim_off_disables_both_reclaim_producers() -> None:
 
     quote = Quote("FTFT", 5.09, 5.11, 5.10, SEGMENT, 0)
     assert strategy.on_quote("FTFT", quote) is None
+    strategy._resting_stop_ask_allows = lambda *_args, **_kwargs: True
     strategy._cw_v2_reclaim_resting_track(state)
     assert strategy.drain_pending_intents() == []
 
