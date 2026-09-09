@@ -74,6 +74,7 @@ if [ "$LEVEL" != "NONE" ] || [ "$SELFTEST" -eq 1 ]; then
   # suppressed for up to 30 minutes — and the qualifying position can close inside that window.
   # CANNOT_SEE and SHAPE are different instructions; the cooldown may only suppress a REPEAT.
   SHOULD_PAGE=0
+  PERSIST_STATUS="$LEVEL"
   if [ "$SELFTEST" -eq 1 ]; then
     SHOULD_PAGE=1
   elif [ "$LEVEL" != "$PREV_STATUS" ]; then
@@ -122,9 +123,22 @@ $REPORT"
       # ⛔ Do NOT advance the cooldown on an undelivered page: retry on the next run instead of
       # sitting silent while the window closes.
       echo "$STAMP  ALERT[$LEVEL] DELIVERY FAILED (curl exit $DELIVERY_RC) - will retry next run" >> "$OUT/alert.log"
+      # ⛔⭐⭐ AND DO NOT PERSIST THE LEVEL WE FAILED TO SEND (codex-2 P1, #931).
+      # Holding LAST_ALERT back is only HALF the retry, and the missing half was silent.
+      # The retry has TWO independent routes: a level TRANSITION, or an EXPIRED cooldown. Writing
+      # the new level here consumed the transition without ever delivering it, so the next run saw
+      # LEVEL == PREV_STATUS and fell through to the cooldown — which a DIFFERENT level's delivered
+      # page had already refreshed. Sequence that loses a real shape:
+      #     run A  CANNOT_SEE  delivered   -> state "CANNOT_SEE <recent>"
+      #     run B  SHAPE       FAILED      -> state "SHAPE <recent>"   <- transition consumed
+      #     run C  SHAPE       suppressed  -> no transition, cooldown not expired
+      # Two attempts where three were required, and the qualifying position can close inside those
+      # 30 minutes. Keeping PREV_STATUS leaves the transition INTACT for the next run.
+      # ⛔ This is not the same bug as the cooldown one: reverting either half alone still loses it.
+      PERSIST_STATUS="$PREV_STATUS"
     fi
   fi
-  [ "$SELFTEST" -eq 0 ] && echo "$LEVEL $LAST_ALERT" > "$STATE"
+  [ "$SELFTEST" -eq 0 ] && echo "$PERSIST_STATUS $LAST_ALERT" > "$STATE"
 else
   echo "NONE $LAST_ALERT" > "$STATE"
 fi
