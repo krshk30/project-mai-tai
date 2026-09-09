@@ -97,6 +97,24 @@ def _flip(svc, symbol: str, *, extra: dict | None = None):
     )
 
 
+def _flip_at_age(svc, symbol: str, *, age_seconds: float, now: datetime) -> None:
+    bar_time_ms = int((now - timedelta(seconds=age_seconds)).timestamp() * 1000)
+    asyncio.run(
+        svc._handle_stream_message(
+            {
+                "data": json.dumps(
+                    {
+                        "event_type": "v2_atr_sell_observation",
+                        "symbol": symbol,
+                        "bar_time_ms": str(bar_time_ms),
+                        "decision_id": f"atr-sell:{symbol}:{bar_time_ms}",
+                    }
+                )
+            }
+        )
+    )
+
+
 # ------------------------------------------------------- criteria 1 & 2: the leg gets armed
 
 def test_C1_AAOG_the_webull_leg_is_armed_WITH_the_flip() -> None:
@@ -159,6 +177,37 @@ def test_observation_identity_must_bind_the_symbol_and_bar() -> None:
     _flip(svc, "YMAT", extra={"decision_id": "atr-sell:OTHER:1"})
     assert svc._cw_flip_pending == set()
     assert any("invalid_decision_identity" in line for line in svc.logger._lines)
+
+
+def test_expired_observation_is_refused_before_any_account_is_armed(monkeypatch) -> None:
+    now = datetime(2026, 9, 9, 15, 0, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: now)
+    svc = _svc()
+
+    _flip_at_age(svc, "YMAT", age_seconds=181.0, now=now)
+
+    assert svc._cw_flip_pending == set()
+    assert any("reason=invalid_or_expired_bar" in line for line in svc.logger._lines)
+
+
+def test_observation_inside_expiry_still_arms_each_owned_account(monkeypatch) -> None:
+    now = datetime(2026, 9, 9, 15, 0, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: now)
+    svc = _svc()
+
+    async def _owned_before_bar(acct: str, symbol: str) -> _CWFlipBinding:
+        return _CWFlipBinding(
+            status="owned",
+            managed_row_id=f"row:{acct}:{symbol}",
+            entry_time=now - timedelta(minutes=10),
+        )
+
+    svc._cw_flip_bound_managed_position = _owned_before_bar
+
+    _flip_at_age(svc, "YMAT", age_seconds=120.0, now=now)
+
+    assert svc._cw_flip_pending == {(SCHWAB, "YMAT"), (ORB, "YMAT")}
+    assert not any("invalid_or_expired_bar" in line for line in svc.logger._lines)
 
 
 def test_retired_v2_cw_flip_event_arms_nothing() -> None:
