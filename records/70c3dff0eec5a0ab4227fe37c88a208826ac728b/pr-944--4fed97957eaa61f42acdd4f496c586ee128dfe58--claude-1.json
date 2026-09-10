@@ -1,0 +1,9 @@
+{
+  "pr_number": 944,
+  "range_base": "4fed97957eaa61f42acdd4f496c586ee128dfe58",
+  "range_head": "70c3dff0eec5a0ab4227fe37c88a208826ac728b",
+  "reviewed_at": "2026-09-10T22:38:32Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Independent review of the shared Schwab opening-eligibility classifier. Verified the prior head's regression is fixed: I re-ran a side-by-side of main's live matcher against the head classifier over 8 reason strings \u2014 the three phrasings main latched and 6a57f295 dropped ('This security must be placed with a broker', 'Order must be placed with a broker.', bare 'must be placed with a broker') all latch again, the two specific Schwab wordings latch, and an unrelated 'oversold' refusal correctly does not. Zero regressions vs main. Mutations, each independently RED against tests/unit/test_oms_risk_service.py + test_broker_refusal.py (112 passed baseline): drop the restored broad fragment -> 1 failed; drop 'not eligible for electronic entry' -> 4 failed; classifier always False -> 11 failed. Controlled full unit pair vs base 4fed979: base 46 failed/3540 passed, head 46 failed/3542 passed, ZERO new failure names and ZERO fixed (compared as sorted sets). Ruff clean on src+tests. Pin gate ancestor test: main IS an ancestor of head. Trial-merged against #946 (both touch oms/service.py) and #945 \u2014 all three pairwise merge-tree runs clean, no conflicts. Scope confirmed: latch is per broker account so the Webull leg stays independently eligible; no lifecycle, confirmation-exit, OCO, settings or migration change."
+}
