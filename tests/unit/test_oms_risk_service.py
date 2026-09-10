@@ -1205,6 +1205,7 @@ async def test_oms_service_blocks_not_tradable_symbol_for_rest_of_session() -> N
 @pytest.mark.parametrize(
     "reason",
     [
+        "This security must be placed with a broker",
         "Opening transactions for this security must be placed with a broker. Contact us",
         (
             "Your order is not eligible for electronic entry. Please call a Charles Schwab "

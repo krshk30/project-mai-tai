@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 SCHWAB_OPENING_INELIGIBLE_REASON_SUBSTRINGS = (
+    "must be placed with a broker",
     "opening transactions for this security must be placed with a broker",
     "not eligible for electronic entry",
 )
