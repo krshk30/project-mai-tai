@@ -9735,29 +9735,61 @@ def _build_bot_decision_lines(decision_entries: list[dict[str, str]]) -> str:
     )
 
 
+def _leg_broker_label(account_name: str) -> str:
+    """Short broker label for a fan-out leg row. `live:orb` is the WEBULL account the v2 fan-out
+    routes through - it is NOT the ORB bot (see the decommission note); showing the raw account
+    name here would read as an ORB position to anyone but me."""
+    name = str(account_name or "").strip()
+    if not name:
+        return "-"
+    if name == "live:orb":
+        return "Webull"
+    if "schwab" in name:
+        return "Schwab"
+    if name.startswith("paper:"):
+        return f"paper ({name.split(':', 1)[1]})"
+    return name
+
+
 def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
     strategy_code = bot["strategy_code"]
     account_name = bot["account_name"]
-    runtime_positions = {str(item.get("ticker", "")).upper(): item for item in bot["positions"] if item.get("ticker")}
+    # ⛔⭐⭐ ONE ROW PER BROKER LEG, KEYED BY (ACCOUNT, SYMBOL) — NOT BY SYMBOL.
+    # Operator 2026-09-10 on TNON: Order History showed BOTH legs (Schwab qty 2 and the Webull
+    # fan-out qty 1) while Open Positions showed a single row. Three defects compounded:
+    #   1. `virtual_positions` was keyed by SYMBOL alone. A v2 fan-out puts BOTH legs under the
+    #      same strategy_code, so both matched the filter and the second silently OVERWROTE the
+    #      first in the dict. One symbol could only ever produce one row.
+    #   2. `account_positions` was additionally filtered to the bot's OWN account, so the Webull
+    #      broker row was excluded outright even when it existed.
+    #   3. The render loop iterated symbols, so there was structurally nowhere to show a leg.
+    # ⇒ A MISSING FAN-OUT LEG WAS INVISIBLE ON THIS PAGE BY CONSTRUCTION. That is the same
+    # account-collapsing shape as F1 (the v2 position count scoped to Schwab), and it is why a
+    # one-sided entry went unnoticed for so long: the page had no place to show the absence.
+    # ⛔ Single-account bots are unaffected — one account yields exactly the same rows as before.
+    runtime_positions = {
+        (account_name, str(item.get("ticker", "")).upper()): item
+        for item in bot["positions"]
+        if item.get("ticker")
+    }
     virtual_positions = {
-        str(item.get("symbol", "")).upper(): item
+        (str(item.get("broker_account_name", "") or account_name), str(item.get("symbol", "")).upper()): item
         for item in data["virtual_positions"]
         if item.get("strategy_code") == strategy_code
+        and _as_float(item.get("quantity"))
     }
+    # Broker truth for ANY account this strategy actually holds a leg on, not just the bot's own.
+    tracked = set(runtime_positions) | set(virtual_positions)
     account_positions = {
-        str(item.get("symbol", "")).upper(): item
+        (str(item.get("broker_account_name", "")), str(item.get("symbol", "")).upper()): item
         for item in data["account_positions"]
-        if item.get("broker_account_name") == account_name
-        and (
-            str(item.get("symbol", "")).upper() in runtime_positions
-            or str(item.get("symbol", "")).upper() in virtual_positions
-        )
+        if (str(item.get("broker_account_name", "")), str(item.get("symbol", "")).upper()) in tracked
     }
 
-    def _symbol_sort_key(symbol: str) -> str:
-        runtime = runtime_positions.get(symbol) or {}
-        virtual = virtual_positions.get(symbol) or {}
-        account = account_positions.get(symbol) or {}
+    def _symbol_sort_key(key: tuple[str, str]) -> str:
+        runtime = runtime_positions.get(key) or {}
+        virtual = virtual_positions.get(key) or {}
+        account = account_positions.get(key) or {}
         return str(
             runtime.get("entry_time")
             or virtual.get("updated_at")
@@ -9774,10 +9806,11 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
         return '<tr><td colspan="7" style="text-align:center;color:#888;padding:28px 15px;">No open positions</td></tr>'
 
     rows: list[str] = []
-    for symbol in symbols:
-        runtime = runtime_positions.get(symbol)
-        virtual = virtual_positions.get(symbol)
-        account = account_positions.get(symbol)
+    for key in symbols:
+        leg_account, symbol = key
+        runtime = runtime_positions.get(key)
+        virtual = virtual_positions.get(key)
+        account = account_positions.get(key)
 
         runtime_qty = _as_float(runtime.get("quantity")) if runtime else 0.0
         virtual_qty = _as_float(virtual.get("quantity")) if virtual else 0.0
@@ -9814,7 +9847,7 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
 
         rows.append(
             f"""<tr style="border-bottom:1px solid #222;">
-            <td><strong>{escape(symbol)}</strong></td>
+            <td><strong>{escape(symbol)}</strong><br><span style="font-size:10px;color:#98a6c8;">{escape(_leg_broker_label(leg_account))}</span></td>
             <td style="text-align:right">{_fmt_qty(runtime_qty)}<br><span style="font-size:10px;color:#888;">{time_text}</span></td>
             <td style="text-align:right">{_fmt_money(runtime_entry)}</td>
             <td style="text-align:right">{_fmt_qty(virtual_qty)}<br><span style="font-size:10px;color:#888;">{_fmt_money(virtual_avg)}</span></td>
