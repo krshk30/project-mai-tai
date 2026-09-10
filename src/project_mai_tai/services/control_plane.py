@@ -4876,9 +4876,9 @@ BOT_PAGE_META = {
         "path": "/bot/1m-schwab",
     },
     "schwab_1m_v2": {
-        "title": "Schwab 1 Min Bot v2 (isolated)",
-        "nav_title": "Schwab 1m v2",
-        "badge": "1Mv2",
+        "title": "ATR Bot",
+        "nav_title": "ATR Bot",
+        "badge": "ATR",
         "color": "#00897b",
         "path": "/bot/1m-schwab-v2",
     },
@@ -4897,8 +4897,8 @@ BOT_PAGE_META = {
         "path": "/bot/runner",
     },
     "orb": {
-        "title": "Mai Tai ORB Bot (P6 OPEN)",
-        "nav_title": "Mai Tai ORB",
+        "title": "ORB Bot",
+        "nav_title": "ORB Bot",
         "badge": "ORB",
         "color": "#8e44ad",
         "path": "/bot/orb",
