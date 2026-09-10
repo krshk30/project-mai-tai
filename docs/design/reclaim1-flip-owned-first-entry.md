@@ -8,9 +8,11 @@ This change is default-off behind one switch:
 When the switch is on, one ATR-trail resting entry opportunity belongs to one
 confirmed BUY flip. The resting order may fill before the BUY flip is confirmed.
 If any sibling broker leg remains open when that flip closes, the opportunity is
-bound to that flip and remains consumed until the next SELL flip. If every sibling
-position closes before a BUY flip is confirmed, the opportunity is retired and a
-new first rest receives a new durable identity.
+bound to that flip and remains consumed until the next SELL flip. A pre-BUY-flat
+opportunity is released only when every filled sibling row has an exact,
+fully-filled confirmation-exit close. A stop, target, ATR exit, manual close, flat
+reconcile, partial confirmation fill, or ambiguous close consumes the opportunity
+until the next SELL flip.
 
 The strict path admits only `cw_entry_slot=first`. Both reclaim producers are off:
 the rested segment-high producer and the reactive intrabar segment-high producer.
@@ -39,8 +41,15 @@ malformed, mismatched, stale, or replaced evidence refuses entry.
 The managed-position row UUID is the position-episode identity for each broker
 leg. One fresh query reads open `schwab_1m_v2` rows for both configured live
 accounts. A dual-broker fill is one logical opportunity: either fill consumes it,
-and all observed sibling rows must close before a pre-flip opportunity can be
-released.
+and every filled sibling row must carry a confirmed close before a pre-flip
+opportunity can be released.
+
+Confirmation-close evidence uses the existing order, fill, and intent ledger; it
+adds no table or migration. The OMS stamps the durable `fanout_slot_id` and exact
+managed-row UUID into the immutable confirmation-exit intent. The owner releases
+only after cumulative fills cover the sell quantity and every recorded sibling
+matches both identifiers. Delayed broker reports therefore cannot erase the
+decision identity, and partial or mismatched evidence fails closed.
 
 `fanout_segment_id` remains the cross-emitter order identity. It is not redefined
 as the ATR flip ID. A pre-flip close retires that identity through the existing
@@ -58,12 +67,17 @@ No money path reads that payload field.
 | Assumption | Live marker | Denominator and false direction |
 | --- | --- | --- |
 | A provisional first-rest fill still held when the BUY flip closes belongs to that flip. | `[V2-FLIP-OWNER-BIND-EVALUATED]` | `bind_evaluated`; outcomes are `bound`, `pending`, and `unknown`. Missing, stale, or mismatched evidence becomes `unknown` and permits no entry. |
-| All sibling positions closing before any BUY flip confirms releases the provisional opportunity. | `[V2-FLIP-OWNER-PREFLIP-CLOSE-EVALUATED]` | `preflip_close_evaluated`; outcomes are `released` and `unknown`. A persistence failure remains closed and does not mint a replacement. |
+| A next-bar confirmation exit that fully closes every sibling before any BUY flip releases the provisional opportunity. Every other close consumes it until the next SELL flip. | `[V2-FLIP-OWNER-PREFLIP-CLOSE-EVALUATED]` | `preflip_close_evaluated`; outcomes are `released`, `consumed`, and `unknown`, with `confirmation_closed` naming the discriminating evidence. Partial, mismatched, or missing evidence cannot mint a replacement. |
 | Explicit Webull fill evidence plus the fresh account-neutral managed-position book is sufficient to establish whether every sibling position remains open. | `[V2-FLIP-OWNER-CROSS-ACCOUNT-EVIDENCE]` | `cross_account_evaluated`; outcomes are `known`, `pending`, and `unknown`. An unreadable book, an unannounced account row, duplicate rows, a replaced UUID, or a missing row beyond the settle bound becomes `unknown`. |
 | Every attempted first-rest admission had current evidence and a readable restart state. | `[V2-FLIP-OWNER-ADMISSION]` | `admission_evaluated`; `refused_unknown` is the fail-closed subset. The marker also names the slot and reason. |
 
 The same cumulative counters are exported in the v2 heartbeat as `flip_entry_*`.
 No zero is a pass without its matching `*_evaluated` denominator.
+
+On 2026-09-10, DBGI produced two SHORT segments in four hours while TNON produced
+about eighteen. One trade per SHORT segment therefore has symbol-dependent
+frequency; a low-trade day is expected behavior, not evidence that reclaim should
+be restored.
 
 ## Replay limit
 

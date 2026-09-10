@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
+
 from project_mai_tai.fanout_outcome_consumer import FanoutOutcome
+from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
@@ -12,6 +15,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SymbolState,
 )
 from project_mai_tai.v2_flip_entry_ownership import (
+    FlipConfirmationClose,
     FlipEntryOwnershipRecord,
     FlipPositionBook,
     FlipPositionLeg,
@@ -101,12 +105,16 @@ def _book(
     symbol: str,
     *legs: FlipPositionLeg,
     readable: bool = True,
+    confirmation_closes: tuple[FlipConfirmationClose, ...] = (),
 ) -> None:
     strategy.apply_flip_position_book(
         FlipPositionBook(
             observed_at_ms=clock[0],
             readable=readable,
             legs_by_symbol={symbol: tuple(legs)} if legs else {},
+            confirmation_closes_by_symbol=(
+                {symbol: confirmation_closes} if confirmation_closes else {}
+            ),
         )
     )
 
@@ -117,6 +125,24 @@ def _leg(account: str, row_id: str, *, entered_ms: int = NOW_MS) -> FlipPosition
         managed_row_id=row_id,
         entry_time_ms=entered_ms,
         quantity=2 if account == PRIMARY else 1,
+    )
+
+
+def _confirmation_close(
+    symbol: str,
+    opportunity: int,
+    account: str,
+    row_id: str,
+) -> FlipConfirmationClose:
+    return FlipConfirmationClose(
+        account_name=account,
+        managed_row_id=row_id,
+        fanout_slot_id=fanout_slot_id(
+            strategy_code="schwab_1m_v2",
+            symbol=symbol,
+            segment_id=opportunity,
+            slot="resting",
+        ),
     )
 
 
@@ -190,27 +216,75 @@ def test_ftft_flip_consumes_the_first_entry_until_the_next_sell_flip() -> None:
     assert state.flip_owner_opportunity_id == 0
 
 
-def test_sune_preflip_close_releases_then_mints_a_new_first_opportunity() -> None:
+def test_dbgi_stop_close_keeps_the_same_short_segment_consumed() -> None:
     strategy, clock, identity_writes, _owner_writes = _strategy()
-    state, first_opportunity = _place_first(strategy, clock, "SUNE")
+    state, first_opportunity = _place_first(strategy, clock, "DBGI")
 
-    strategy.update_position("SUNE", 2, held_qty=2)
-    _book(strategy, clock, "SUNE", _leg(PRIMARY, "sune-first"))
-    strategy.update_position("SUNE", 0, held_qty=0)
-    _book(strategy, clock, "SUNE")
+    strategy.update_position("DBGI", 2, held_qty=2)
+    _book(strategy, clock, "DBGI", _leg(PRIMARY, "dbgi-first"))
+    strategy.update_position("DBGI", 0, held_qty=0)
+    _book(strategy, clock, "DBGI")
+
+    assert state.flip_owner_phase == "consumed"
+    assert state.flip_owner_opportunity_id == first_opportunity
+    assert not any(not active for _symbol, _segment, active, _reason in identity_writes)
+    strategy._queue_resting_place(state, 3.566, slot="first")
+    assert strategy.drain_pending_intents() == []
+
+
+def test_confirmation_exit_close_releases_and_mints_a_new_first_opportunity() -> None:
+    strategy, clock, identity_writes, _owner_writes = _strategy()
+    state, first_opportunity = _place_first(strategy, clock, "FALSEFLIP")
+
+    strategy.update_position("FALSEFLIP", 2, held_qty=2)
+    _book(strategy, clock, "FALSEFLIP", _leg(PRIMARY, "false-flip-row"))
+    strategy.update_position("FALSEFLIP", 0, held_qty=0)
+    _book(
+        strategy,
+        clock,
+        "FALSEFLIP",
+        confirmation_closes=(
+            _confirmation_close(
+                "FALSEFLIP", first_opportunity, PRIMARY, "false-flip-row"
+            ),
+        ),
+    )
 
     assert state.flip_owner_phase == "idle"
     assert state.flip_owner_opportunity_id == 0
     assert identity_writes[-1][1:3] == (first_opportunity, False)
 
     clock[0] += 60_000
-    _book(strategy, clock, "SUNE")
+    _book(strategy, clock, "FALSEFLIP")
     strategy._queue_resting_place(state, 3.566, slot="first")
     second = strategy.drain_pending_intents()
     assert len(second) == 1
     second_opportunity = int(second[0].metadata["fanout_segment_id"])
     assert second_opportunity > first_opportunity
     assert second[0].metadata["cw_entry_slot"] == "first"
+
+
+@pytest.mark.parametrize("mismatch", ["slot", "row", "account"])
+def test_confirmation_close_must_match_the_exact_opportunity_and_position(
+    mismatch: str,
+) -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state, opportunity = _place_first(strategy, clock, "BOUND")
+    strategy.update_position("BOUND", 2, held_qty=2)
+    _book(strategy, clock, "BOUND", _leg(PRIMARY, "bound-row"))
+    close = _confirmation_close("BOUND", opportunity, PRIMARY, "bound-row")
+    if mismatch == "slot":
+        close = FlipConfirmationClose(PRIMARY, "bound-row", "different-slot")
+    elif mismatch == "row":
+        close = FlipConfirmationClose(PRIMARY, "replacement-row", close.fanout_slot_id)
+    else:
+        close = FlipConfirmationClose(WEBULL, "bound-row", close.fanout_slot_id)
+
+    strategy.update_position("BOUND", 0, held_qty=0)
+    _book(strategy, clock, "BOUND", confirmation_closes=(close,))
+
+    assert state.flip_owner_phase == "consumed"
+    assert state.flip_owner_opportunity_id == opportunity
 
 
 def test_dual_broker_fill_is_one_episode_and_waits_for_both_siblings_to_close() -> None:
@@ -351,7 +425,7 @@ def test_fill_arriving_after_unknown_is_recorded_and_recovers_the_open_episode()
     }
 
 
-def test_unknown_preflip_owner_recovers_to_idle_after_late_fill_then_flat_book() -> None:
+def test_unknown_preflip_owner_without_confirmation_close_stays_consumed() -> None:
     strategy, clock, identity_writes, _owner_writes = _strategy(dual=True)
     state, opportunity = _place_first(strategy, clock, "RECOVER")
     mirror = strategy.drain_webull_direct_intents()[0]
@@ -396,9 +470,9 @@ def test_unknown_preflip_owner_recovers_to_idle_after_late_fill_then_flat_book()
 
     strategy.update_position("RECOVER", 0, held_qty=0)
     _book(strategy, clock, "RECOVER")
-    assert state.flip_owner_phase == "idle"
-    assert state.flip_owner_opportunity_id == 0
-    assert ("RECOVER", opportunity, False, "unknown_preflip_owner_flat_after_settle") in identity_writes
+    assert state.flip_owner_phase == "consumed"
+    assert state.flip_owner_opportunity_id == opportunity
+    assert not any(not active for _symbol, _segment, active, _reason in identity_writes)
 
 
 def test_unknown_preflip_flat_book_waits_for_fill_settlement_before_retiring() -> None:
@@ -531,7 +605,7 @@ def test_webull_only_fill_consumes_the_flip_without_a_schwab_position() -> None:
     assert state.flip_owner_position_ids == {WEBULL: "webull-only-row"}
 
 
-def test_dual_preflip_episode_releases_only_after_both_siblings_close() -> None:
+def test_dual_preflip_episode_does_not_release_when_only_one_sibling_confirmed() -> None:
     strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
     state, opportunity = _place_first(strategy, clock, "PRE2")
     mirror = strategy.drain_webull_direct_intents()[0]
@@ -563,7 +637,74 @@ def test_dual_preflip_episode_releases_only_after_both_siblings_close() -> None:
     assert state.flip_owner_phase == "provisional"
     assert state.flip_owner_opportunity_id == opportunity
 
-    _book(strategy, clock, "PRE2")
+    _book(
+        strategy,
+        clock,
+        "PRE2",
+        confirmation_closes=(
+            _confirmation_close("PRE2", opportunity, PRIMARY, "pre2-primary"),
+        ),
+    )
+    assert state.flip_owner_phase == "consumed"
+    assert state.flip_owner_opportunity_id == opportunity
+
+
+def test_dual_preflip_confirmation_releases_after_both_siblings_close() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "PRE2OK")
+    mirror = strategy.drain_webull_direct_intents()[0]
+    strategy.update_position("PRE2OK", 2, held_qty=2)
+    strategy.apply_fanout_outcome(
+        FanoutOutcome(
+            record_id=uuid4(),
+            created_at=datetime.now(UTC),
+            symbol="PRE2OK",
+            segment_id=opportunity,
+            slot=mirror.metadata["fanout_slot"],
+            slot_id=mirror.metadata["fanout_slot_id"],
+            attempt_id="preflip-dual-complete",
+            outcome="filled",
+            evidence_id="preflip-dual-complete-fill",
+            broker_account_name=WEBULL,
+        )
+    )
+    _book(
+        strategy,
+        clock,
+        "PRE2OK",
+        _leg(PRIMARY, "pre2ok-primary"),
+        _leg(WEBULL, "pre2ok-webull"),
+    )
+
+    strategy.update_position("PRE2OK", 0, held_qty=0)
+    _book(
+        strategy,
+        clock,
+        "PRE2OK",
+        confirmation_closes=(
+            _confirmation_close("PRE2OK", opportunity, PRIMARY, "pre2ok-primary"),
+            _confirmation_close("PRE2OK", opportunity, WEBULL, "pre2ok-webull"),
+        ),
+    )
+
+    assert state.flip_owner_phase == "idle"
+    assert state.flip_owner_opportunity_id == 0
+
+
+def test_tnon_sell_flip_clears_a_flat_unknown_owner_for_the_new_segment() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state, opportunity = _place_first(strategy, clock, "TNONSELL")
+    strategy.update_position("TNONSELL", 2, held_qty=2)
+    _book(strategy, clock, "TNONSELL", _leg(PRIMARY, "tnon-stale-row"))
+    strategy._set_flip_owner_unknown(state, reason="stale_owner_before_new_sell")
+    strategy.update_position("TNONSELL", 0, held_qty=0)
+    _book(strategy, clock, "TNONSELL")
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_opportunity_id == opportunity
+
+    state.bars.append(_bar(clock[0] + 60_000))
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+
     assert state.flip_owner_phase == "idle"
     assert state.flip_owner_opportunity_id == 0
 

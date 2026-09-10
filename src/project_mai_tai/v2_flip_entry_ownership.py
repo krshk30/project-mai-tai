@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Mapping
 from sqlalchemy import select
@@ -15,7 +15,15 @@ from project_mai_tai.fanout_segment_store import current_session_anchor
 SNAPSHOT_TYPE = "v2_flip_entry_ownership"
 SCHEMA_VERSION = 1
 ACTIVE_PHASES = frozenset(
-    {"resting", "awaiting_fill", "provisional", "bound", "awaiting_close", "unknown"}
+    {
+        "resting",
+        "awaiting_fill",
+        "provisional",
+        "bound",
+        "consumed",
+        "awaiting_close",
+        "unknown",
+    }
 )
 
 
@@ -28,10 +36,22 @@ class FlipPositionLeg:
 
 
 @dataclass(frozen=True)
+class FlipConfirmationClose:
+    """A confirmed confirmation-exit fill for one exact managed-position row."""
+
+    account_name: str
+    managed_row_id: str
+    fanout_slot_id: str
+
+
+@dataclass(frozen=True)
 class FlipPositionBook:
     observed_at_ms: int
     readable: bool
     legs_by_symbol: Mapping[str, tuple[FlipPositionLeg, ...]]
+    confirmation_closes_by_symbol: Mapping[
+        str, tuple[FlipConfirmationClose, ...]
+    ] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

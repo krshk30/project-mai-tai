@@ -3,15 +3,25 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from project_mai_tai.db.models import Base, DashboardSnapshot, OmsManagedPosition
+from project_mai_tai.db.models import (
+    Base,
+    BrokerAccount,
+    BrokerOrder,
+    DashboardSnapshot,
+    Fill,
+    OmsManagedPosition,
+    Strategy,
+    TradeIntent,
+)
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.v2_flip_entry_ownership import (
@@ -32,7 +42,15 @@ def _factory():
     )
     Base.metadata.create_all(
         engine,
-        tables=[DashboardSnapshot.__table__, OmsManagedPosition.__table__],
+        tables=[
+            DashboardSnapshot.__table__,
+            OmsManagedPosition.__table__,
+            Strategy.__table__,
+            BrokerAccount.__table__,
+            TradeIntent.__table__,
+            BrokerOrder.__table__,
+            Fill.__table__,
+        ],
     )
     return sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -65,6 +83,15 @@ def test_active_owner_round_trips_and_inactive_transition_removes_it() -> None:
 
     store.record(record, active=False, reason="sell_flip_flat", now=NOW + timedelta(minutes=2))
     assert store.restore_active(now=NOW + timedelta(minutes=3)) == {}
+
+
+def test_consumed_owner_round_trips_until_a_real_sell_flip_retires_it() -> None:
+    store = FlipEntryOwnershipStore(_factory())
+    consumed = replace(_record(), phase="consumed", flip_bar_ts=0)
+
+    store.record(consumed, active=True, reason="stop_close_consumed", now=NOW)
+
+    assert store.restore_active(now=NOW + timedelta(minutes=1)) == {"FTFT": consumed}
 
 
 def test_malformed_current_session_owner_fails_the_whole_restore_closed() -> None:
@@ -124,6 +151,115 @@ def test_service_position_book_reads_both_live_accounts_in_one_population() -> N
         "live:schwab_1m_v2",
         "live:orb",
     }
+
+
+def test_position_book_reads_only_fully_filled_bound_confirmation_closes() -> None:
+    factory = _factory()
+    now = datetime.now(UTC)
+    with factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
+        account = BrokerAccount(
+            name="live:orb", provider="webull", environment="production"
+        )
+        session.add_all([strategy, account])
+        session.flush()
+        intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="DBGI",
+            side="sell",
+            intent_type="close",
+            quantity=Decimal("2"),
+            reason="oms_v2_managed_exit:CONFIRMATION_EXIT",
+            status="filled",
+            payload={},
+        )
+        session.add(intent)
+        session.flush()
+        order = BrokerOrder(
+            intent_id=intent.id,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            client_order_id="dbgi-confirmation-close",
+            broker_order_id="dbgi-confirmation-order",
+            symbol="DBGI",
+            side="sell",
+            order_type="market",
+            time_in_force="day",
+            quantity=Decimal("2"),
+            status="filled",
+            payload={
+                "flip_owner_confirmation_exit": "true",
+                "confirmation_fanout_slot_id": "dbgi-first-slot",
+                "confirmation_managed_row_id": "dbgi-managed-row",
+            },
+        )
+        session.add(order)
+        session.flush()
+        session.add(
+            Fill(
+                order_id=order.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                broker_fill_id="dbgi-confirmation-fill",
+                symbol="DBGI",
+                side="sell",
+                quantity=Decimal("1"),
+                price=Decimal("5.40"),
+                filled_at=now,
+                payload={},
+            )
+        )
+        session.commit()
+    bot = SchwabV2BotService(
+        Settings(
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_webull_account_name="live:orb",
+        ),
+        session_factory=factory,
+    )
+
+    partial_book = bot._fetch_flip_position_book()
+
+    assert "DBGI" not in partial_book.confirmation_closes_by_symbol
+
+    with factory() as session:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
+        account = session.scalar(
+            select(BrokerAccount).where(BrokerAccount.name == "live:orb")
+        )
+        order = session.scalar(
+            select(BrokerOrder).where(
+                BrokerOrder.client_order_id == "dbgi-confirmation-close"
+            )
+        )
+        assert strategy is not None and account is not None and order is not None
+        session.add(
+            Fill(
+                order_id=order.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                broker_fill_id="dbgi-confirmation-fill-2",
+                symbol="DBGI",
+                side="sell",
+                quantity=Decimal("1"),
+                price=Decimal("5.40"),
+                filled_at=now,
+                payload={},
+            )
+        )
+        session.commit()
+
+    book = bot._fetch_flip_position_book()
+
+    assert book.readable is True
+    assert book.confirmation_closes_by_symbol["DBGI"][0].managed_row_id == (
+        "dbgi-managed-row"
+    )
+    assert book.confirmation_closes_by_symbol["DBGI"][0].fanout_slot_id == (
+        "dbgi-first-slot"
+    )
 
 
 def test_service_restores_owner_between_identity_and_outcome_bootstrap() -> None:

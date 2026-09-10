@@ -49,6 +49,7 @@ from project_mai_tai.fanout_outcome_consumer import (
     FanoutOutcome,
 )
 from project_mai_tai.v2_flip_entry_ownership import (
+    FlipConfirmationClose,
     FlipEntryOwnershipRecord,
     FlipPositionBook,
     FlipPositionLeg,
@@ -266,7 +267,7 @@ class SymbolState:
     # can fill before the BUY flip exists, while cw_arm_bar_ts keeps meaning "confirmed flip bar".
     # awaiting_fill = BUY flip confirmed while its first rest is still settling at the broker.
     # resting = the durable first opportunity exists and may be working/repricing before a fill.
-    flip_owner_phase: str = "idle"  # idle | resting | awaiting_fill | provisional | bound | awaiting_close | unknown
+    flip_owner_phase: str = "idle"  # idle | resting | awaiting_fill | provisional | bound | consumed | awaiting_close | unknown
     flip_owner_opportunity_id: int = 0
     flip_owner_flip_bar_ts: int = 0
     flip_owner_provisional_started_ms: int = 0
@@ -672,6 +673,7 @@ class SchwabV2Strategy:
             "bind_unknown": 0,
             "preflip_close_evaluated": 0,
             "preflip_close_released": 0,
+            "preflip_close_consumed": 0,
             "preflip_close_unknown": 0,
             "cross_account_evaluated": 0,
             "cross_account_known": 0,
@@ -1078,7 +1080,7 @@ class SchwabV2Strategy:
                 len(state.flip_owner_fill_accounts),
             )
             return
-        elif state.flip_owner_phase not in {"provisional", "bound"}:
+        elif state.flip_owner_phase not in {"provisional", "bound", "consumed"}:
             self._set_flip_owner_unknown(state, reason=f"{reason}_phase_mismatch")
             return
         state.flip_owner_fill_accounts.add(account)
@@ -1131,7 +1133,32 @@ class SchwabV2Strategy:
             if duplicate or any(account not in self._flip_owner_accounts for account in by_account):
                 self._set_flip_owner_unknown(state, reason="position_book_identity_ambiguous")
                 continue
-            self._apply_flip_position_evidence(state)
+            confirmation_closes = tuple(book.confirmation_closes_by_symbol.get(symbol, ()))
+            self._apply_flip_position_evidence(state, confirmation_closes)
+
+    def _flip_owner_confirmation_closed(
+        self,
+        state: SymbolState,
+        closes: tuple[FlipConfirmationClose, ...],
+    ) -> bool:
+        """Require confirmation-close proof for every sibling row in this opportunity."""
+
+        opportunity_id = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+        if opportunity_id <= 0 or not state.flip_owner_position_ids:
+            return False
+        expected_slot_id = fanout_slot_id(
+            strategy_code=STRATEGY_CODE,
+            symbol=state.symbol,
+            segment_id=opportunity_id,
+            slot="resting",
+        )
+        confirmed_rows = {
+            (close.account_name, close.managed_row_id)
+            for close in closes
+            if close.fanout_slot_id == expected_slot_id
+        }
+        expected_rows = set(state.flip_owner_position_ids.items())
+        return expected_rows <= confirmed_rows
 
     @staticmethod
     def _flip_owner_leg_matches_episode(
@@ -1169,7 +1196,11 @@ class SchwabV2Strategy:
             )
         return True
 
-    def _recover_unknown_flip_owner(self, state: SymbolState) -> bool:
+    def _recover_unknown_flip_owner(
+        self,
+        state: SymbolState,
+        confirmation_closes: tuple[FlipConfirmationClose, ...],
+    ) -> bool:
         """Recover only ownership states made unambiguous by fresh durable evidence.
 
         True means an open episode was restored to ``provisional`` and normal reconciliation may
@@ -1243,17 +1274,25 @@ class SchwabV2Strategy:
             state.flip_owner_fill_accounts and state.flip_owner_position_ids
         )
         if valid and not open_positions and proven_owned_episode and age_ms > FLIP_OWNER_ROW_SETTLE_MS:
-            if state.flip_owner_flip_bar_ts <= 0:
+            if state.flip_owner_flip_bar_ts <= 0 and self._flip_owner_confirmation_closed(
+                state, confirmation_closes
+            ):
                 recovered = self._retire_flip_owner_opportunity(
                     state,
-                    reason="unknown_preflip_owner_flat_after_settle",
+                    reason="unknown_preflip_confirmation_exit_closed_all_siblings",
                 )
             else:
-                state.flip_owner_phase = "bound"
+                state.flip_owner_phase = (
+                    "consumed" if state.flip_owner_flip_bar_ts <= 0 else "bound"
+                )
                 recovered = self._persist_flip_owner(
                     state,
                     active=True,
-                    reason="unknown_postflip_owner_flat_waiting_for_sell_flip",
+                    reason=(
+                        "unknown_preflip_owner_flat_without_confirmation_close"
+                        if state.flip_owner_flip_bar_ts <= 0
+                        else "unknown_postflip_owner_flat_waiting_for_sell_flip"
+                    ),
                 )
             if recovered:
                 self._flip_owner_counts["unknown_recovery_succeeded"] += 1
@@ -1266,9 +1305,9 @@ class SchwabV2Strategy:
                     self._flip_owner_counts["unknown_recovery_pending"],
                     int(state.flip_owner_phase == "idle"),
                     (
-                        "preflip_flat_opportunity_retired"
+                        "preflip_confirmation_close_opportunity_retired"
                         if state.flip_owner_phase == "idle"
-                        else "postflip_flat_kept_consumed"
+                        else "flat_owner_kept_consumed"
                     ),
                 )
             return False
@@ -1289,7 +1328,11 @@ class SchwabV2Strategy:
         )
         return False
 
-    def _apply_flip_position_evidence(self, state: SymbolState) -> None:
+    def _apply_flip_position_evidence(
+        self,
+        state: SymbolState,
+        confirmation_closes: tuple[FlipConfirmationClose, ...],
+    ) -> None:
         open_positions = state.flip_owner_open_positions
         phase = state.flip_owner_phase
         if phase == "idle":
@@ -1298,7 +1341,7 @@ class SchwabV2Strategy:
             return
         self._flip_owner_counts["cross_account_evaluated"] += 1
         if phase == "unknown":
-            if not self._recover_unknown_flip_owner(state):
+            if not self._recover_unknown_flip_owner(state, confirmation_closes):
                 return
             phase = state.flip_owner_phase
         valid = True
@@ -1437,22 +1480,39 @@ class SchwabV2Strategy:
                 )
                 return
             self._flip_owner_counts["preflip_close_evaluated"] += 1
-            released = self._retire_flip_owner_opportunity(
-                state,
-                reason="all_sibling_positions_closed_before_flip",
+            confirmed_close = self._flip_owner_confirmation_closed(
+                state, confirmation_closes
             )
+            released = False
+            consumed = False
+            if confirmed_close:
+                released = self._retire_flip_owner_opportunity(
+                    state,
+                    reason="confirmation_exit_closed_all_siblings_before_flip",
+                )
+            else:
+                state.flip_owner_phase = "consumed"
+                consumed = self._persist_flip_owner(
+                    state,
+                    active=True,
+                    reason="preflip_flat_without_complete_confirmation_close",
+                )
             if released:
                 self._flip_owner_counts["preflip_close_released"] += 1
+            elif consumed:
+                self._flip_owner_counts["preflip_close_consumed"] += 1
             else:
                 self._flip_owner_counts["preflip_close_unknown"] += 1
             logger.info(
                 "[V2-FLIP-OWNER-PREFLIP-CLOSE-EVALUATED] %s evaluated=%d released=%d "
-                "unknown=%d entry_allowed=%d",
+                "consumed=%d unknown=%d entry_allowed=%d confirmation_closed=%d",
                 state.symbol,
                 self._flip_owner_counts["preflip_close_evaluated"],
                 self._flip_owner_counts["preflip_close_released"],
+                self._flip_owner_counts["preflip_close_consumed"],
                 self._flip_owner_counts["preflip_close_unknown"],
                 int(released),
+                int(confirmed_close),
             )
         elif phase == "awaiting_close" and state.flip_owner_position_ids and not any_bound_open:
             self._retire_flip_owner_opportunity(state, reason="bound_flip_position_closed")
@@ -1573,13 +1633,25 @@ class SchwabV2Strategy:
         phase = state.flip_owner_phase
         if phase == "idle":
             return
-        if phase == "unknown":
-            return
         if not self._flip_owner_evidence_fresh(state):
             self._set_flip_owner_unknown(
                 state,
                 reason="sell_flip_without_fresh_position_evidence",
             )
+            return
+        if phase == "unknown":
+            if state.flip_owner_open_positions:
+                state.flip_owner_phase = "awaiting_close"
+                self._persist_flip_owner(
+                    state,
+                    active=True,
+                    reason="sell_flip_unknown_owner_waiting_for_close",
+                )
+            else:
+                self._retire_flip_owner_opportunity(
+                    state,
+                    reason="sell_flip_flat_unknown_owner",
+                )
             return
         if phase == "resting":
             self._retire_flip_owner_opportunity(state, reason="sell_flip_no_fill")
