@@ -718,7 +718,7 @@ class OrbService:
         st: _SymbolState,
         *,
         evaluated_at: datetime,
-    ) -> tuple[bool, str, dict[str, object]]:
+    ) -> tuple[bool, str, str, dict[str, object]]:
         red_delay_until = self._session_open_utc() + timedelta(minutes=1)
         red_delay_applies = bool(
             self._paper_four_red_delay_enabled
@@ -733,14 +733,35 @@ class OrbService:
 
         allowed = not (red_delay_active or atr_unanswerable or atr_purple)
         if atr_unanswerable:
-            reason = "ATR_STATE_UNANSWERABLE_ORDER_WITHHELD"
+            check_kind = "live"
+            reason = "LIVE_CHECK_ATR_STATE_UNANSWERABLE_ORDER_WITHHELD"
         elif atr_purple:
-            reason = "ATR_PURPLE_ORDER_PULLED"
+            check_kind = "live"
+            reason = "LIVE_CHECK_ATR_PURPLE_ORDER_PULLED"
         elif red_delay_active:
-            reason = "FOUR_OF_FIVE_RED_FIRST_MINUTE_DELAY"
+            check_kind = "day_gate"
+            reason = "DAY_GATE_FOUR_OF_FIVE_RED_FIRST_MINUTE_DELAY"
         else:
-            reason = "ENTRY_GATES_PASS"
-        return allowed, reason, {
+            active_kinds = [
+                kind
+                for kind, enabled in (
+                    ("day_gate", self._paper_four_red_delay_enabled),
+                    ("live", self._paper_atr_entry_gate_enabled),
+                )
+                if enabled
+            ]
+            check_kind = "+".join(active_kinds)
+            reason = f"{'_AND_'.join(kind.upper() for kind in active_kinds)}_CHECKS_PASS"
+        checks_evaluated = [
+            kind
+            for kind, enabled in (
+                ("day_gate", self._paper_four_red_delay_enabled),
+                ("live", self._paper_atr_entry_gate_enabled),
+            )
+            if enabled
+        ]
+        return allowed, reason, check_kind, {
+            "checks_evaluated": checks_evaluated,
             "atr_entry_gate": (
                 "ENABLED" if self._paper_atr_entry_gate_enabled else "DISABLED"
             ),
@@ -778,7 +799,7 @@ class OrbService:
         if bar_at is not None and st.entry_gate_last_bar_at == bar_at:
             return
 
-        allowed, reason, gate_detail = self._fixed_entry_gate_decision(
+        allowed, reason, check_kind, gate_detail = self._fixed_entry_gate_decision(
             st,
             evaluated_at=evaluated_at,
         )
@@ -845,7 +866,7 @@ class OrbService:
         )
         detail = self._fixed_resting_detail(
             order,
-            check_kind="live",
+            check_kind=check_kind,
             level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET",
             status=("MODELED_RESTING" if allowed else "MODELED_ORDER_PULLED"),
             reason=reason,
@@ -871,7 +892,7 @@ class OrbService:
         )
         logger.info(
             "[ORB-PAPER-ENTRY-GATE] %s action=%s reason=%s atr=%s red=%s "
-            "evaluated=%d armed=%s fresh_cross_ready=%s check=live",
+            "evaluated=%d armed=%s fresh_cross_ready=%s check=%s checks=%s",
             symbol,
             action,
             reason,
@@ -880,6 +901,8 @@ class OrbService:
             st.entry_gate_evaluations,
             order.entry_gate_armed,
             order.fresh_cross_ready,
+            check_kind,
+            ",".join(gate_detail["checks_evaluated"]),
         )
         if initial and allowed:
             logger.info(

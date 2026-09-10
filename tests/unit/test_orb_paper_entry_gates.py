@@ -161,7 +161,10 @@ def test_atr_purple_pulls_then_cyan_rearms_without_a_backfilled_fill() -> None:
     assert order is not None
     assert state.atr_state == "short"
     assert order.entry_gate_armed is False
-    assert order.entry_gate_reason == "ATR_PURPLE_ORDER_PULLED"
+    assert order.entry_gate_reason == "LIVE_CHECK_ATR_PURPLE_ORDER_PULLED"
+    gate_event = service._pending_paper_entries[-1]
+    assert gate_event.detail["check_kind"] == "live"
+    assert gate_event.detail["checks_evaluated"] == ["live"]
 
     open_at = service._session_open_utc()
     service._check_fixed_resting_fill("FOO", 9.0, open_at + timedelta(seconds=10))
@@ -185,8 +188,12 @@ def test_atr_purple_pulls_then_cyan_rearms_without_a_backfilled_fill() -> None:
     )
     assert state.atr_state == "long"
     assert order.entry_gate_armed is True
+    assert order.entry_gate_reason == "LIVE_CHECKS_PASS"
     assert order.current_level == 11.05
     assert order.fresh_cross_ready is False
+    rearm_event = service._pending_paper_entries[-1]
+    assert rearm_event.detail["check_kind"] == "live"
+    assert rearm_event.detail["checks_evaluated"] == ["live"]
 
     service._check_fixed_resting_fill("FOO", 11.10, rearm_at)
     service._check_fixed_resting_fill("FOO", 11.20, rearm_at + timedelta(seconds=1))
@@ -207,7 +214,7 @@ def test_unknown_atr_fails_closed_until_a_completed_bar_produces_a_state() -> No
 
     assert state.atr_state is None
     assert order.entry_gate_armed is False
-    assert order.entry_gate_reason == "ATR_STATE_UNANSWERABLE_ORDER_WITHHELD"
+    assert order.entry_gate_reason == "LIVE_CHECK_ATR_STATE_UNANSWERABLE_ORDER_WITHHELD"
     assert state.entry_gate_atr_unanswerable == 1
 
     for minute in range(0, 4):
@@ -255,7 +262,10 @@ def test_four_red_bars_delay_only_the_first_minute_then_require_a_fresh_break() 
     assert order is not None
     assert state.opening_red_count == 4
     assert order.entry_gate_armed is False
-    assert order.entry_gate_reason == "FOUR_OF_FIVE_RED_FIRST_MINUTE_DELAY"
+    assert order.entry_gate_reason == "DAY_GATE_FOUR_OF_FIVE_RED_FIRST_MINUTE_DELAY"
+    gate_event = service._pending_paper_entries[-1]
+    assert gate_event.detail["check_kind"] == "day_gate"
+    assert gate_event.detail["checks_evaluated"] == ["day_gate"]
 
     open_at = service._session_open_utc()
     service._check_fixed_resting_fill("FOO", 10.6, open_at + timedelta(seconds=30))
@@ -270,7 +280,11 @@ def test_four_red_bars_delay_only_the_first_minute_then_require_a_fresh_break() 
         record_unchanged=False,
     )
     assert order.entry_gate_armed is True
+    assert order.entry_gate_reason == "DAY_GATE_CHECKS_PASS"
     assert order.fresh_cross_ready is False
+    rearm_event = service._pending_paper_entries[-1]
+    assert rearm_event.detail["check_kind"] == "day_gate"
+    assert rearm_event.detail["checks_evaluated"] == ["day_gate"]
 
     service._check_fixed_resting_fill("FOO", 10.7, rearm_at + timedelta(seconds=1))
     assert order.filled_at is None
@@ -360,6 +374,7 @@ def test_entry_gate_heartbeat_carries_decisions_and_denominators() -> None:
     event = service._pending_paper_entries[-1]
     assert event.event_type == ORB_PAPER_ENTRY_GATE_EVENT_TYPE
     assert event.detail["check_kind"] == "live"
+    assert event.detail["checks_evaluated"] == ["day_gate", "live"]
     assert event.detail["opening_red_count"] == 4
     assert event.detail["atr_state"] == "UNANSWERABLE"
 
@@ -386,9 +401,9 @@ def test_a_pulled_gate_decision_is_durable_and_visible_on_the_paper_screen() -> 
     assert store.decisions[0].event_type == ORB_PAPER_ENTRY_GATE_EVENT_TYPE
     row = service._build_heartbeat_payload().recent_decisions[0]
     assert row["status"] == "withhold"
-    assert row["reason"] == "FOUR_OF_FIVE_RED_FIRST_MINUTE_DELAY"
+    assert row["reason"] == "DAY_GATE_FOUR_OF_FIVE_RED_FIRST_MINUTE_DELAY"
     assert row["entry_gate_armed"] is False
-    assert row["check_kind"] == "live"
+    assert row["check_kind"] == "day_gate"
 
 
 def test_entry_gates_refuse_to_run_without_the_fixed_resting_model() -> None:
