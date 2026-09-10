@@ -27,11 +27,10 @@ def is_first_slot_resting(metadata: Mapping[str, object]) -> bool:
     """Use only durable entry stamps; reason strings and arm aliases are not evidence."""
     slot = str(metadata.get("cw_entry_slot", "")).strip().lower()
     variant = str(metadata.get("atr_variant", "")).strip().lower()
-    resting = str(metadata.get("resting_entry", "")).strip().lower()
-    if slot != "first" or resting != "true":
+    if slot != "first":
         return False
     if variant == "cw-v2-resting":
-        return True
+        return str(metadata.get("resting_entry", "")).strip().lower() == "true"
     return (
         variant == "cw-v2-fanout"
         and str(metadata.get("fanout_leg", "")).strip().lower() == "webull"

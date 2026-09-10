@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -113,11 +114,12 @@ def _seed_confirmation_fill(
     metadata = {
         "cw_entry_slot": "first",
         "atr_variant": "CW-v2-resting" if provider == "schwab" else "CW-v2-fanout",
-        "resting_entry": "true",
         "fanout_slot_id": slot_id,
     }
     if provider == "webull":
         metadata.update({"fanout_leg": "webull", "fanout_slot": "resting"})
+    else:
+        metadata["resting_entry"] = "true"
     with factory() as session:
         intent = TradeIntent(
             strategy_id=strategy_id,
@@ -175,6 +177,60 @@ def test_account_neutral_confirmation_discovery_ships_dark() -> None:
         Settings().strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled
         is False
     )
+
+
+@pytest.mark.parametrize(
+    "identity_setting",
+    [
+        "strategy_schwab_1m_v2_dual_broker_fanout_enabled",
+        "strategy_schwab_1m_v2_flip_owned_first_entry_enabled",
+    ],
+)
+def test_account_neutral_discovery_accepts_either_durable_identity_source(
+    identity_setting: str,
+) -> None:
+    settings = Settings(
+        strategy_schwab_1m_v2_webull_account_name="live:webull",
+        strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
+    ).model_copy(update={identity_setting: True})
+
+    assert SchwabV2BotService(settings)._confirmation_discovery_configuration_error() is None
+
+
+@pytest.mark.parametrize(
+    ("settings", "reason"),
+    [
+        (
+            Settings(
+                strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+                strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
+            ),
+            "webull_account_not_configured",
+        ),
+        (
+            Settings(
+                strategy_schwab_1m_v2_webull_account_name="live:webull",
+                strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
+            ),
+            "fanout_identity_source_disabled",
+        ),
+    ],
+)
+def test_invalid_account_neutral_configuration_is_visible_and_fails_closed(
+    settings: Settings,
+    reason: str,
+    caplog,
+) -> None:
+    service = SchwabV2BotService(settings)
+
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(service._sync_confirmation_entries())
+        asyncio.run(service._sync_confirmation_entries())
+
+    assert caplog.text.count("[V2-CONFIRMATION-EXIT-DISCOVERY]") == 1
+    assert "status=COULD_NOT_TELL" in caplog.text
+    assert f"reason={reason}" in caplog.text
+    assert "emits_on_change_only=true" in caplog.text
 
 
 def test_confirmation_slot_migration_adds_and_removes_the_unique_nullable_identity() -> None:
@@ -304,7 +360,6 @@ def test_webull_fanout_first_resting_stamp_is_confirmation_eligible() -> None:
     metadata = {
         "cw_entry_slot": "first",
         "atr_variant": "CW-v2-fanout",
-        "resting_entry": "true",
         "fanout_leg": "webull",
         "fanout_slot": "resting",
         "fanout_slot_id": "slot-dbgi",
@@ -312,7 +367,7 @@ def test_webull_fanout_first_resting_stamp_is_confirmation_eligible() -> None:
 
     assert is_first_slot_resting(metadata) is True
     assert is_first_slot_resting({**metadata, "fanout_slot": "reclaim"}) is False
-    assert is_first_slot_resting({**metadata, "resting_entry": "false"}) is False
+    assert is_first_slot_resting({**metadata, "fanout_leg": "schwab"}) is False
     assert is_first_slot_resting({**metadata, "fanout_slot_id": ""}) is True
 
 
@@ -573,6 +628,7 @@ def test_webull_only_first_rest_is_discovered_only_when_account_neutral_is_enabl
     settings = Settings(
         strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
         strategy_schwab_1m_v2_webull_account_name="live:webull",
+        strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
     )
 
     assert SchwabV2BotService(settings, session_factory=factory)._load_confirmation_entries() == []
@@ -606,6 +662,7 @@ def test_account_neutral_discovery_refuses_a_first_rest_with_no_opportunity_iden
         Settings(
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
             strategy_schwab_1m_v2_webull_account_name="live:webull",
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
             strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
         ),
         session_factory=factory,
@@ -633,6 +690,7 @@ def test_webull_only_first_rest_produces_one_durable_confirmation_decision() -> 
         Settings(
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
             strategy_schwab_1m_v2_webull_account_name="live:webull",
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
             strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
         ),
         session_factory=factory,
@@ -686,6 +744,7 @@ def test_dual_fills_produce_one_decision_candidate_per_fanout_opportunity() -> N
         Settings(
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
             strategy_schwab_1m_v2_webull_account_name="live:webull",
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
             strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
         ),
         session_factory=factory,
@@ -757,6 +816,52 @@ def test_durable_confirmation_decision_is_unique_per_fanout_opportunity() -> Non
     assert len(rows) == 1
     assert rows[0].fanout_slot_id == "slot-twin"
     assert rows[0].source_fill_id == webull_fill_id
+
+
+def test_enabling_account_neutral_discovery_adopts_the_same_fill_legacy_row() -> None:
+    factory, strategy_id, accounts = _confirmation_store()
+    filled_at = datetime.now(UTC) - timedelta(minutes=2)
+    _seed_confirmation_fill(
+        factory,
+        strategy_id=strategy_id,
+        account_id=accounts["schwab"],
+        provider="schwab",
+        symbol="DBGI",
+        slot_id="slot-dbgi",
+        filled_at=filled_at,
+    )
+    dark_settings = Settings(
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_webull_account_name="live:webull",
+        strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+    )
+    dark_service = SchwabV2BotService(dark_settings, session_factory=factory)
+    dark_entry = dark_service._load_confirmation_entries()[0]
+    assert dark_entry.fanout_slot_id == ""
+    target = dark_entry.evaluation_bar_start_ms
+    assert dark_service._record_confirmation_evaluation(
+        ConfirmationEvaluation(dark_entry, target, "short")
+    ) == (True, True)
+
+    enabled_service = SchwabV2BotService(
+        dark_settings.model_copy(
+            update={
+                "strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled": True
+            }
+        ),
+        session_factory=factory,
+    )
+    enabled_entry = enabled_service._load_confirmation_entries()[0]
+    assert enabled_entry.fanout_slot_id == "slot-dbgi"
+    assert enabled_service._record_confirmation_evaluation(
+        ConfirmationEvaluation(enabled_entry, target, "short")
+    ) == (False, True)
+
+    with factory() as session:
+        rows = list(session.query(V2ConfirmationExitEvaluation))
+    assert len(rows) == 1
+    assert rows[0].source_fill_id == dark_entry.fill_id
+    assert rows[0].fanout_slot_id == "slot-dbgi"
 
 
 def test_paper_confirmation_uses_stamped_first_fill_and_never_reclaim() -> None:
