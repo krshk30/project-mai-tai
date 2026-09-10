@@ -75,6 +75,21 @@ def test_paper_store_appends_once_without_order_or_account_identity() -> None:
     )
 
 
+def test_paper_store_reads_the_lifecycle_tape_for_restart_recovery() -> None:
+    factory = _session_factory()
+    store = OrbPaperStore(factory)
+    decision = _decision()
+    store.append(decision)
+
+    loaded = store.load_lifecycle()
+
+    assert len(loaded) == 1
+    assert loaded[0].event_key == decision.event_key
+    assert loaded[0].event_type == decision.event_type
+    assert loaded[0].entry_price == decision.entry_price
+    assert loaded[0].detail == decision.detail
+
+
 def test_non_paper_output_is_refused_at_service_boundary() -> None:
     with pytest.raises(RuntimeError, match="broker-disconnected"):
         OrbService._require_paper_decision(object())

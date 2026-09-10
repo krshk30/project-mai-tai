@@ -104,6 +104,19 @@ def _strategy_code_variants(strategy_code: str | None) -> tuple[str, ...]:
     return (normalized,)
 
 
+def _durable_paper_decision_symbols(
+    runtime_kind: str, runtime_bot: dict[str, Any]
+) -> set[str]:
+    if runtime_kind != "orb_paper":
+        return set()
+    return {
+        str(item.get("ticker") or item.get("symbol") or "").upper()
+        for item in list(runtime_bot.get("recent_decisions", []))
+        + list(runtime_bot.get("closed_today", []))
+        if str(item.get("ticker") or item.get("symbol") or "").strip()
+    }
+
+
 def current_eastern_day_end_utc(now: datetime | None = None) -> datetime:
     return current_eastern_day_start_utc(now) + timedelta(days=1)
 
@@ -1820,6 +1833,17 @@ class ControlPlaneRepository:
                 for item in positions
                 if str(item.get("ticker") or item.get("symbol") or "").strip()
             )
+            runtime_kind = (
+                registration.runtime_kind
+                if registration
+                else str(runtime_bot.get("runtime_kind", "unknown") or "unknown")
+            )
+            if runtime_kind == "orb_paper":
+                # A paper trade remains operator evidence after the scanner universe clears.
+                # Filtering it to the current watchlist made completed ORB trades disappear.
+                live_decision_symbols.update(
+                    _durable_paper_decision_symbols(runtime_kind, runtime_bot)
+                )
             recent_decisions = [
                 self._decision_display_row(item)
                 for item in list(runtime_bot.get("recent_decisions", []))
@@ -1966,11 +1990,7 @@ class ControlPlaneRepository:
                         or (registration.interval_secs if registration else 0)
                         or 0
                     ),
-                    "runtime_kind": (
-                        registration.runtime_kind
-                        if registration
-                        else str(runtime_bot.get("runtime_kind", "unknown") or "unknown")
-                    ),
+                    "runtime_kind": runtime_kind,
                     "execution_mode": registration.execution_mode if registration else "unknown",
                     "provider": (
                         self.settings.provider_for_strategy(code)
@@ -9779,6 +9799,8 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
             status_html = '<span style="color:#ff1744">⚠️ ACCOUNT-ONLY</span>'
         elif runtime and not account and bot.get("runtime_kind") == "macd":
             status_html = '<span style="color:#ff1744">⚠️ GHOST (not on broker)</span>'
+        elif runtime and bot.get("runtime_kind") == "orb_paper":
+            status_html = '<span style="color:#40c4ff">PAPER MODEL / NO BROKER</span>'
         else:
             status_html = '<span style="color:#888">-</span>'
 

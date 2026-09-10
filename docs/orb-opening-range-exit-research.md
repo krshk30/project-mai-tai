@@ -1,5 +1,33 @@
 # ORB Opening-Range Breakout
 
+## Broker-disconnected paper lifecycle
+
+The forward ORB observer models a complete trade after a fixed-resting fill while remaining
+structurally unable to reach a broker. It records one durable paper position and applies the
+settled exits to executable bid data:
+
+- `+5%` target on an intrabar touch;
+- `-8%` hard stop on an intrabar touch, including gap-through at the observed bid;
+- breaking-bar body below `45%` at fill, exited on the first post-fill bid; and
+- ATR `(5, 3.5, WILDERS)` turning short on a completed minute, exited on the current or next bid.
+
+There is no clock exit. An open paper position remains subscribed after the entry watchlist clears,
+survives an ORB restart from the append-only paper tape, and stays open until one of the four exit
+conditions fires. The isolated dashboard receives the modeled entry, open position, exit time and
+price, reason, and same-day P&L under the `paper:orb` account with the label
+`PAPER MODEL / NO BROKER`.
+
+This lifecycle does not add the eight operator entry filters. It starts only after the existing
+fixed-resting model records a fill; those entry rules still move one at a time, separately.
+
+The ATR input is the ORB gateway's trade-tick-derived one-minute tape, not Schwab REST or a broker
+chart. Every entry records that source and its exact pre-entry ATR bars; each later completed ATR
+bar is persisted for restart reconstruction. Rows written before lifecycle version 1 remain entry
+evidence only and are not retroactively turned into positions or P&L. Therefore the earlier YMAT
+entry cannot be graded as a completed trade from this implementation.
+
+`SIMULATED · NO REALISED CONTROL · NOT SIZE-QUALIFIED`
+
 ## 2026-09-04 operator disposition: forward paper observation
 
 The durable runners from PR #895 remain measurement tools only. They do not enable ORB or alter a

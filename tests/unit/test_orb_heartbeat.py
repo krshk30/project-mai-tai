@@ -84,6 +84,7 @@ def test_publish_heartbeat_feeds_service_health_gate_and_isolated_dashboard() ->
     assert heartbeat.payload.details == {
         "execution_mode": "paper",
         "broker_route": "none",
+        "paper_lifecycle": "entry-observation-only",
         "universe_size": "1",
         "entry_model": "bar_close",
     }

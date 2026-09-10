@@ -7,7 +7,8 @@ registered consumer (no new Schwab streamer session, no credential collision).
 Loop: read the pre-09:25 confirmed universe (the binding rule) → register those
 symbols as a gateway consumer → drain trade and quote ticks → aggregate trade ticks
 to 1-min bars → model one resting order at the 09:25-09:29 high → observe an intrabar
-fill or finalize the fixed 09:25-09:30 high → append every decision to the evidence tape.
+fill or finalize the fixed 09:25-09:30 high → maintain a durable paper position →
+model the settled exits at executable bid → report same-day P&L on the dashboard.
 
 The service cannot construct a trade intent or import broker routing. The OMS also
 refuses any forged ORB intent before persistence, giving the paper boundary two
@@ -44,13 +45,24 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.orb_paper_store import (
     ORB_PAPER_ACCOUNT_NAME,
+    ORB_PAPER_ATR_BAR_EVENT_TYPE,
     ORB_PAPER_EVENT_TYPE,
+    ORB_PAPER_EXIT_EVENT_TYPE,
     ORB_PAPER_LEVEL_FINALIZED_EVENT_TYPE,
     ORB_PAPER_ORDER_ADJUSTED_EVENT_TYPE,
     ORB_PAPER_ORDER_PLACED_EVENT_TYPE,
     ORB_PAPER_ORDER_UNANSWERABLE_EVENT_TYPE,
     OrbPaperDecision,
     OrbPaperStore,
+)
+from project_mai_tai.orb_paper_lifecycle import (
+    PAPER_ATR_FACTOR,
+    PAPER_ATR_PERIOD,
+    PAPER_LIFECYCLE_VERSION,
+    OrbPaperPosition,
+    compute_paper_atr_trail,
+    forming_bar_body_pct,
+    paper_atr_session_key,
 )
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.orb_intrabar import (
@@ -151,6 +163,10 @@ class _SymbolState:
     latest_quote_at: datetime | None = None
     adjustment_opportunities: int = 0
     adjustment_unanswerable: int = 0
+    atr_bars: list[OrbBar] = field(default_factory=list)
+    atr_state: str | None = None
+    atr_trail: float | None = None
+    atr_flip_evaluations: int = 0
 
 
 @dataclass(frozen=True)
@@ -162,6 +178,7 @@ class _PendingPaperEntry:
     event_type: str = ORB_PAPER_EVENT_TYPE
     detail: dict[str, object] = field(default_factory=dict)
     counts_as_entry: bool = True
+    event_key: str | None = None
 
 
 class OrbService:
@@ -172,6 +189,7 @@ class OrbService:
     _running_high_mode: bool = False
     _resting_entry: bool = False
     _fixed_resting_mode: bool = False
+    _paper_lifecycle_enabled: bool = False
     _mode: ExecutionMode = ExecutionMode.BAR_CLOSE
     # Market-data consume-loop throughput (mirrors strategy-engine #175/#179). The open
     # burst spans the WHOLE scanner universe and exceeded 700 ticks/s on 2026-06-30; a
@@ -202,6 +220,12 @@ class OrbService:
         self._states: dict[str, _SymbolState] = {}
         self._universe: set[str] = set()
         self._pending_paper_entries: list[_PendingPaperEntry] = []
+        self._paper_positions: dict[str, OrbPaperPosition] = {}
+        self._paper_closed_today: list[dict[str, object]] = []
+        self._paper_recent_decisions: list[dict[str, object]] = []
+        self._paper_exit_quote_evaluations = 0
+        self._paper_exit_counts: dict[str, int] = {}
+        self._paper_atr_bars_restored = 0
         self.paper_store = paper_store or (
             OrbPaperStore(session_factory) if session_factory is not None else None
         )
@@ -225,6 +249,27 @@ class OrbService:
         # it still cannot publish an order or invoke an adapter.
         self._resting_entry = bool(getattr(self.settings, "orb_resting_entry_enabled", False))
         self._fixed_resting_mode = self._running_high_mode and self._resting_entry
+        self._paper_lifecycle_enabled = bool(
+            getattr(self.settings, "orb_paper_lifecycle_enabled", False)
+        )
+        self._paper_target_pct = float(getattr(self.settings, "orb_paper_target_pct", 5.0))
+        self._paper_stop_pct = float(getattr(self.settings, "orb_paper_stop_pct", 8.0))
+        self._paper_min_break_body_pct = float(
+            getattr(self.settings, "orb_paper_min_break_body_pct", 45.0)
+        )
+        self._paper_atr_exit_enabled = bool(
+            getattr(self.settings, "orb_paper_atr_exit_enabled", True)
+        )
+        if self._paper_lifecycle_enabled and not self._fixed_resting_mode:
+            raise RuntimeError(
+                "ORB paper lifecycle requires the fixed resting entry model; refusing partial simulation"
+            )
+        if self._paper_lifecycle_enabled and (
+            self._paper_target_pct <= 0
+            or self._paper_stop_pct <= 0
+            or not 0 < self._paper_min_break_body_pct <= 100
+        ):
+            raise RuntimeError("ORB paper lifecycle rule values are invalid; refusing to start")
         self._cfg = OrbConfig(
             or_minutes=int(self.settings.orb_or_minutes),
             vol_mult=float(self.settings.orb_vol_mult),
@@ -254,6 +299,7 @@ class OrbService:
             self.session_factory = build_timed_session_factory(self.settings, service="orb", profile="fast")
         if self.paper_store is None:
             self.paper_store = OrbPaperStore(self.session_factory)
+        self._restore_paper_lifecycle()
         logger.info("[ORB] starting — broker-disconnected paper observer, market-data gateway consumer")
         try:
             while True:
@@ -265,7 +311,8 @@ class OrbService:
                     self._last_universe_refresh_at is None
                     or (now - self._last_universe_refresh_at).total_seconds() >= self._UNIVERSE_REFRESH_SECS
                 ):
-                    await self._sync_gateway_subscription(self._refresh_universe())
+                    self._refresh_universe()
+                    await self._sync_gateway_subscription(self._paper_market_symbols())
                     self._last_universe_refresh_at = now
                 processed = await self._drain_market_data()
                 await self._record_pending_paper_entries()
@@ -295,12 +342,20 @@ class OrbService:
         self._session_date = today
         self._states.clear()
         self._aggregators.clear()
+        self._paper_closed_today = []
+        self._paper_recent_decisions = []
+        self._restore_paper_lifecycle()
         logger.info("[ORB] day-roll reset %s -> %s: cleared per-symbol state + aggregators", prior, today)
 
     # ----- universe: pre-09:25 confirmed names (the binding rule) -----
     def _refresh_universe(self) -> list[str]:
         self._universe = {s.upper() for s in self._pre_open_universe()}
         return sorted(self._universe)
+
+    def _paper_market_symbols(self) -> list[str]:
+        """An open paper position keeps its feed even after the entry universe clears."""
+        positions = getattr(self, "_paper_positions", {})
+        return sorted(self._universe | set(positions))
 
     def _pre_open_universe(self) -> list[str]:
         """Confirmed scanner names whose confirmation landed at/before 09:25 ET (read
@@ -430,12 +485,12 @@ class OrbService:
         # lets the modeled placement/adjustment happen at the minute boundary rather
         # than waiting for the next trade print.
         agg = self._aggregators.get(symbol)
-        if agg is None:
-            return
-        bar = agg.flush_before(observed_at)
-        if bar is not None:
-            self._on_bar(symbol, bar, observed_at=observed_at, observed_price=ask)
-        self._finalize_fixed_resting_without_0930_bar(symbol, observed_at=observed_at)
+        if agg is not None:
+            bar = agg.flush_before(observed_at)
+            if bar is not None:
+                self._on_bar(symbol, bar, observed_at=observed_at, observed_price=ask)
+            self._finalize_fixed_resting_without_0930_bar(symbol, observed_at=observed_at)
+        self._evaluate_paper_position_quote(symbol, bid=bid, observed_at=observed_at)
 
     def _handle_market_data(self, fields: dict) -> None:
         raw = fields.get("data")
@@ -586,6 +641,7 @@ class OrbService:
         event_type: str,
         detail: dict[str, object],
         counts_as_entry: bool = False,
+        event_key: str | None = None,
     ) -> None:
         self._pending_paper_entries.append(
             _PendingPaperEntry(
@@ -596,6 +652,7 @@ class OrbService:
                 event_type=event_type,
                 detail=detail,
                 counts_as_entry=counts_as_entry,
+                event_key=event_key,
             )
         )
 
@@ -870,35 +927,103 @@ class OrbService:
         order.filled_at = ts
         order.fill_price = order.current_level
         st.pending = True
+        entry_key = self._paper_event_key(
+            symbol=symbol,
+            observed_at=ts,
+            event_type=ORB_PAPER_EVENT_TYPE,
+            attempt=1,
+        )
+        forming = self._aggregators.get(symbol)
+        forming_bar = forming.current_bar() if forming is not None else None
+        body_pct = (
+            forming_bar_body_pct(
+                open_price=forming_bar.open,
+                high=forming_bar.high,
+                low=forming_bar.low,
+                close=forming_bar.close,
+            )
+            if forming_bar is not None
+            else None
+        )
+        detail = self._fixed_resting_detail(
+            order,
+            check_kind="live",
+            level_derivation=(
+                "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE"
+                if order.adjusted_at is not None
+                else "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET"
+            ),
+            status="RECORDED_NOT_A_BROKER_FILL",
+            reason=(
+                "INTRABAR_BREAK_OF_RETAINED_09:29_LEVEL_AFTER_UNANSWERABLE_TIMING"
+                if order.adjustment_unanswerable
+                else "INTRABAR_BREAK_OF_MODELED_RESTING_LEVEL"
+            ),
+            quote_at=st.latest_quote_at,
+            bid=st.latest_bid,
+            ask=st.latest_ask,
+            decision_observed_at=ts,
+        )
+        if self._paper_lifecycle_enabled:
+            detail.update(
+                {
+                    "paper_lifecycle_version": PAPER_LIFECYCLE_VERSION,
+                    "paper_position_status": "OPEN",
+                    "target_pct": self._paper_target_pct,
+                    "stop_pct": self._paper_stop_pct,
+                    "target_price": order.current_level * (1.0 + self._paper_target_pct / 100.0),
+                    "hard_stop_price": order.current_level * (1.0 - self._paper_stop_pct / 100.0),
+                    "break_bar_body_pct_at_fill": body_pct,
+                    "break_bar_min_body_pct": self._paper_min_break_body_pct,
+                    "atr_exit": "BAR_CLOSE_5_3.5_WILDERS",
+                    "atr_source": "ORB_GATEWAY_TRADE_TICKS",
+                    "atr_bars_at_entry": [
+                        self._paper_bar_payload(bar) for bar in st.atr_bars
+                    ],
+                    "clock_exit": "DISABLED",
+                }
+            )
+            if forming_bar is None:
+                detail.update(
+                    {
+                        "paper_position_status": "UNANSWERABLE",
+                        "reason": "BREAK_BAR_EVIDENCE_MISSING_AT_MODELED_FILL",
+                        "lifecycle_unanswerable_reason": (
+                            "BREAK_BAR_EVIDENCE_MISSING_AT_MODELED_FILL"
+                        ),
+                    }
+                )
         self._queue_fixed_resting_event(
             symbol,
             price=order.current_level,
             observed_at=ts,
             event_type=ORB_PAPER_EVENT_TYPE,
-            detail=self._fixed_resting_detail(
-                order,
-                check_kind="live",
-                level_derivation=(
-                    "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE"
-                    if order.adjusted_at is not None
-                    else "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET"
-                ),
-                status="RECORDED_NOT_A_BROKER_FILL",
-                reason=(
-                    # ⛔ The LEFT population: this order filled at the retained 09:29 level after
-                    # adjustment timing could not be proven. Before the ruling it could not fill
-                    # at all, so this reason marks the cases where LEFT and PULLED DIFFER.
-                    "INTRABAR_BREAK_OF_RETAINED_09:29_LEVEL_AFTER_UNANSWERABLE_TIMING"
-                    if order.adjustment_unanswerable
-                    else "INTRABAR_BREAK_OF_MODELED_RESTING_LEVEL"
-                ),
-                quote_at=st.latest_quote_at,
-                bid=st.latest_bid,
-                ask=st.latest_ask,
-                decision_observed_at=ts,
-            ),
+            detail=detail,
             counts_as_entry=True,
+            event_key=entry_key,
         )
+        if self._paper_lifecycle_enabled and forming_bar is not None:
+            self._paper_positions[symbol] = OrbPaperPosition(
+                entry_event_key=entry_key,
+                symbol=symbol,
+                entry_time=ts,
+                entry_price=order.current_level,
+                quantity=float(self.settings.orb_reclaim_quantity),
+                mode="fixed_opening_high_resting",
+                target_pct=self._paper_target_pct,
+                stop_pct=self._paper_stop_pct,
+                break_body_pct=body_pct,
+                body_exit_pending=(
+                    body_pct is not None and body_pct < self._paper_min_break_body_pct
+                ),
+            )
+        elif self._paper_lifecycle_enabled:
+            logger.error(
+                "[ORB-PAPER-LIFECYCLE-UNANSWERABLE] %s reason=break-bar-evidence-missing "
+                "modeled_fill=%.4f denominator=modeled_fills",
+                symbol,
+                order.current_level,
+            )
         logger.info(
             "[ORB-PAPER-RESTING-FILL] %s modeled_fill=%.4f trade=%.4f at=%s "
             "adjusted=%s unanswerable_left=%s check=live assumption=resting-level",
@@ -919,6 +1044,7 @@ class OrbService:
         observed_at: datetime | None = None,
         observed_price: float | None = None,
     ) -> None:
+        self._update_paper_atr(symbol, bar, observed_at=observed_at)
         if self._fixed_resting_mode:
             self._on_bar_fixed_resting(
                 symbol,
@@ -987,6 +1113,423 @@ class OrbService:
         avg_volume = sum(b.volume for b in or_bars) / len(or_bars)
         return OpeningRange(high=high, low=low, avg_volume=avg_volume)
 
+    def _update_paper_atr(
+        self,
+        symbol: str,
+        bar: OrbBar,
+        *,
+        observed_at: datetime | None,
+    ) -> None:
+        """Evaluate the settled ATR exit only when a completed minute is observed."""
+        if not self._paper_lifecycle_enabled or not self._paper_atr_exit_enabled:
+            return
+        st = self._states.setdefault(symbol, _SymbolState())
+        if st.atr_bars and paper_atr_session_key(st.atr_bars[-1].timestamp) != (
+            paper_atr_session_key(bar.timestamp)
+        ):
+            st.atr_bars = []
+            st.atr_state = None
+            st.atr_trail = None
+        if any(item.timestamp == bar.timestamp for item in st.atr_bars):
+            return
+        st.atr_bars.append(bar)
+        rows = compute_paper_atr_trail(
+            st.atr_bars,
+            period=PAPER_ATR_PERIOD,
+            factor=PAPER_ATR_FACTOR,
+        )
+        latest = rows[-1]
+        st.atr_state = str(latest["state"]) if latest["state"] else None
+        st.atr_trail = float(latest["trail"]) if latest["trail"] is not None else None
+        if latest["state"] is not None:
+            st.atr_flip_evaluations += 1
+        position = self._paper_positions.get(symbol)
+        if position is not None and bar.timestamp >= position.entry_time.replace(second=0, microsecond=0):
+            self._queue_fixed_resting_event(
+                symbol,
+                price=bar.close,
+                observed_at=observed_at or self._modeled_minute_end(bar),
+                event_type=ORB_PAPER_ATR_BAR_EVENT_TYPE,
+                detail={
+                    "paper_lifecycle_version": PAPER_LIFECYCLE_VERSION,
+                    "reason": "ATR_BAR_EVIDENCE",
+                    "entry_event_key": position.entry_event_key,
+                    "atr_source": "ORB_GATEWAY_TRADE_TICKS",
+                    "atr_period": PAPER_ATR_PERIOD,
+                    "atr_factor": PAPER_ATR_FACTOR,
+                    "atr_average": "WILDERS",
+                    "atr_state": st.atr_state,
+                    "atr_trail": st.atr_trail,
+                    "atr_flip": latest["flip"],
+                    "bar": self._paper_bar_payload(bar),
+                },
+            )
+        if latest["flip"] != "SELL":
+            return
+        decision_at = self._modeled_minute_end(bar)
+        if position is None or position.exit_pending or position.entry_time > decision_at:
+            return
+        position.atr_exit_pending = True
+        position.atr_decision_at = decision_at
+        position.atr_trail = st.atr_trail
+        quote_at = st.latest_quote_at
+        if st.latest_bid is not None and quote_at is not None and quote_at >= decision_at:
+            self._evaluate_paper_position_quote(
+                symbol,
+                bid=st.latest_bid,
+                observed_at=quote_at,
+            )
+
+    @staticmethod
+    def _paper_bar_payload(bar: OrbBar) -> dict[str, object]:
+        return {
+            "timestamp": bar.timestamp.isoformat(),
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }
+
+    @staticmethod
+    def _paper_bar_from_payload(value: object) -> OrbBar | None:
+        if not isinstance(value, dict):
+            return None
+        try:
+            timestamp = datetime.fromisoformat(str(value["timestamp"]).replace("Z", "+00:00"))
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=UTC)
+            return OrbBar(
+                timestamp=timestamp.astimezone(UTC),
+                open=float(value["open"]),
+                high=float(value["high"]),
+                low=float(value["low"]),
+                close=float(value["close"]),
+                volume=float(value["volume"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _evaluate_paper_position_quote(
+        self,
+        symbol: str,
+        *,
+        bid: float,
+        observed_at: datetime,
+    ) -> None:
+        if not self._paper_lifecycle_enabled:
+            return
+        position = self._paper_positions.get(symbol)
+        if position is None or position.exit_pending or observed_at < position.entry_time:
+            return
+        position.observe_bid(bid, observed_at)
+        self._paper_exit_quote_evaluations += 1
+        if position.body_exit_pending:
+            self._queue_paper_exit(
+                position,
+                exit_price=bid,
+                observed_at=observed_at,
+                decision_at=position.entry_time,
+                reason="BREAK_BAR_BODY_UNDER_45_PCT",
+                check_kind="post-fill",
+            )
+        elif position.atr_exit_pending:
+            self._queue_paper_exit(
+                position,
+                exit_price=bid,
+                observed_at=observed_at,
+                decision_at=position.atr_decision_at or observed_at,
+                reason="ATR_TURNED_PURPLE_AT_BAR_CLOSE",
+                check_kind="bar-close",
+            )
+        elif bid >= position.target_price:
+            self._queue_paper_exit(
+                position,
+                exit_price=bid,
+                observed_at=observed_at,
+                decision_at=observed_at,
+                reason="TARGET_PLUS_5_PCT_TOUCH",
+                check_kind="live",
+            )
+        elif bid <= position.stop_price:
+            self._queue_paper_exit(
+                position,
+                exit_price=bid,
+                observed_at=observed_at,
+                decision_at=observed_at,
+                reason="HARD_STOP_MINUS_8_PCT_TOUCH",
+                check_kind="live",
+            )
+
+    def _queue_paper_exit(
+        self,
+        position: OrbPaperPosition,
+        *,
+        exit_price: float,
+        observed_at: datetime,
+        decision_at: datetime,
+        reason: str,
+        check_kind: str,
+    ) -> None:
+        position.exit_pending = True
+        pnl = round((exit_price - position.entry_price) * position.quantity, 8)
+        pnl_pct = round((exit_price / position.entry_price - 1.0) * 100.0, 8)
+        detail: dict[str, object] = {
+            "paper_lifecycle_version": PAPER_LIFECYCLE_VERSION,
+            "paper_position_status": "CLOSED",
+            "entry_event_key": position.entry_event_key,
+            "entry_time": position.entry_time.isoformat(),
+            "exit_time": observed_at.isoformat(),
+            "exit_decision_at": decision_at.isoformat(),
+            "exit_price": exit_price,
+            "exit_reason": reason,
+            "reason": reason,
+            "exit_summary": reason.replace("_", " ").title(),
+            "check_kind": check_kind,
+            "price_basis": "EXECUTABLE_BID",
+            "target_pct": position.target_pct,
+            "stop_pct": position.stop_pct,
+            "target_price": position.target_price,
+            "hard_stop_price": position.stop_price,
+            "break_bar_body_pct_at_fill": position.break_body_pct,
+            "break_bar_min_body_pct": self._paper_min_break_body_pct,
+            "atr_period": PAPER_ATR_PERIOD,
+            "atr_factor": PAPER_ATR_FACTOR,
+            "atr_average": "WILDERS",
+            "atr_trail": position.atr_trail,
+            "pnl": pnl,
+            "pnl_pct": pnl_pct,
+            "peak_profit_pct": position.peak_profit_pct,
+            "classification": "SIMULATED_NO_REALISED_CONTROL_NOT_SIZE_QUALIFIED",
+        }
+        self._pending_paper_entries.append(
+            _PendingPaperEntry(
+                symbol=position.symbol,
+                entry_price=position.entry_price,
+                observed_at=observed_at,
+                attempt=1,
+                event_type=ORB_PAPER_EXIT_EVENT_TYPE,
+                detail=detail,
+                counts_as_entry=False,
+            )
+        )
+        logger.info(
+            "[ORB-PAPER-EXIT] %s entry=%.4f exit=%.4f qty=%s pnl=%+.4f "
+            "reason=%s decision_at=%s observed_at=%s basis=executable-bid",
+            position.symbol,
+            position.entry_price,
+            exit_price,
+            position.quantity,
+            pnl,
+            reason,
+            decision_at.isoformat(),
+            observed_at.isoformat(),
+        )
+
+    @staticmethod
+    def _paper_entry_row(position: OrbPaperPosition) -> dict[str, object]:
+        return {
+            "event_key": position.entry_event_key,
+            "ticker": position.symbol,
+            "symbol": position.symbol,
+            "status": "paper_position_opened",
+            "reason": "MODELED_RESTING_FILL",
+            "entry_price": position.entry_price,
+            "quantity": position.quantity,
+            "entry_time": position.entry_time.isoformat(),
+            "last_bar_at": position.entry_time.isoformat(),
+            "target_price": position.target_price,
+            "hard_stop_price": position.stop_price,
+        }
+
+    @staticmethod
+    def _closed_row(decision: OrbPaperDecision) -> dict[str, object]:
+        detail = decision.detail
+        return {
+            "event_key": decision.event_key,
+            "ticker": decision.symbol,
+            "symbol": decision.symbol,
+            "entry_price": float(decision.entry_price),
+            "exit_price": float(detail["exit_price"]),
+            "quantity": float(decision.quantity),
+            "pnl": float(detail["pnl"]),
+            "pnl_pct": float(detail["pnl_pct"]),
+            "reason": str(detail["exit_reason"]),
+            "exit_summary": str(detail.get("exit_summary") or detail["exit_reason"]),
+            "entry_time": str(detail["entry_time"]),
+            "exit_time": str(detail["exit_time"]),
+            "peak_profit_pct": float(detail.get("peak_profit_pct") or 0.0),
+        }
+
+    @classmethod
+    def _paper_exit_row(cls, decision: OrbPaperDecision) -> dict[str, object]:
+        row = cls._closed_row(decision)
+        row.update(
+            {
+                "status": "paper_trade_closed",
+                "last_bar_at": row["exit_time"],
+            }
+        )
+        return row
+
+    def _remember_paper_decision(self, row: dict[str, object]) -> None:
+        key = str(row.get("event_key") or "")
+        self._paper_recent_decisions = [
+            item for item in self._paper_recent_decisions if str(item.get("event_key") or "") != key
+        ]
+        self._paper_recent_decisions.insert(0, row)
+        del self._paper_recent_decisions[50:]
+
+    def _complete_paper_exit(self, decision: OrbPaperDecision) -> None:
+        position = self._paper_positions.get(decision.symbol)
+        entry_key = str(decision.detail.get("entry_event_key") or "")
+        if position is None or position.entry_event_key != entry_key:
+            return
+        self._paper_positions.pop(decision.symbol, None)
+        row = self._closed_row(decision)
+        self._paper_closed_today = [
+            item for item in self._paper_closed_today if item.get("event_key") != decision.event_key
+        ]
+        self._paper_closed_today.insert(0, row)
+        reason = str(decision.detail.get("exit_reason") or "UNKNOWN")
+        self._paper_exit_counts[reason] = self._paper_exit_counts.get(reason, 0) + 1
+        self._remember_paper_decision(self._paper_exit_row(decision))
+
+    def _restore_paper_lifecycle(self) -> None:
+        """Fail closed on startup rather than forgetting an open modeled position."""
+        if not self._paper_lifecycle_enabled:
+            return
+        if self.paper_store is None:
+            raise RuntimeError("ORB paper lifecycle cannot restore without its durable store")
+        positions: dict[str, OrbPaperPosition] = {}
+        closed_today: list[dict[str, object]] = []
+        recent: list[dict[str, object]] = []
+        exit_counts: dict[str, int] = {}
+        for decision in self.paper_store.load_lifecycle():
+            detail = decision.detail
+            if int(detail.get("paper_lifecycle_version") or 0) != PAPER_LIFECYCLE_VERSION:
+                continue
+            observed_at = decision.observed_at
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=UTC)
+            if decision.event_type == ORB_PAPER_EVENT_TYPE:
+                if detail.get("paper_position_status") != "OPEN":
+                    if decision.session_date == self._session_date:
+                        recent.insert(
+                            0,
+                            {
+                                "event_key": decision.event_key,
+                                "ticker": decision.symbol,
+                                "symbol": decision.symbol,
+                                "status": "paper_trade_unanswerable",
+                                "reason": detail.get("lifecycle_unanswerable_reason"),
+                                "entry_price": float(decision.entry_price),
+                                "entry_time": observed_at.isoformat(),
+                                "last_bar_at": observed_at.isoformat(),
+                            },
+                        )
+                    continue
+                position = OrbPaperPosition(
+                    entry_event_key=decision.event_key,
+                    symbol=decision.symbol,
+                    entry_time=observed_at,
+                    entry_price=float(decision.entry_price),
+                    quantity=float(decision.quantity),
+                    mode=decision.mode,
+                    target_pct=float(detail.get("target_pct") or self._paper_target_pct),
+                    stop_pct=float(detail.get("stop_pct") or self._paper_stop_pct),
+                    break_body_pct=(
+                        float(detail["break_bar_body_pct_at_fill"])
+                        if detail.get("break_bar_body_pct_at_fill") is not None
+                        else None
+                    ),
+                    body_exit_pending=(
+                        detail.get("break_bar_body_pct_at_fill") is not None
+                        and float(detail["break_bar_body_pct_at_fill"])
+                        < self._paper_min_break_body_pct
+                    ),
+                )
+                positions[decision.symbol] = position
+                state = self._states.setdefault(decision.symbol, _SymbolState())
+                state.atr_bars = []
+                for raw_bar in detail.get("atr_bars_at_entry") or []:
+                    restored_bar = self._paper_bar_from_payload(raw_bar)
+                    if restored_bar is None:
+                        continue
+                    if state.atr_bars and paper_atr_session_key(
+                        state.atr_bars[-1].timestamp
+                    ) != paper_atr_session_key(restored_bar.timestamp):
+                        state.atr_bars = []
+                    if all(item.timestamp != restored_bar.timestamp for item in state.atr_bars):
+                        state.atr_bars.append(restored_bar)
+                if decision.session_date == self._session_date:
+                    recent.insert(0, self._paper_entry_row(position))
+            elif decision.event_type == ORB_PAPER_ATR_BAR_EVENT_TYPE:
+                entry_key = str(detail.get("entry_event_key") or "")
+                position = positions.get(decision.symbol)
+                restored_bar = self._paper_bar_from_payload(detail.get("bar"))
+                if (
+                    position is None
+                    or position.entry_event_key != entry_key
+                    or restored_bar is None
+                ):
+                    continue
+                state = self._states.setdefault(decision.symbol, _SymbolState())
+                if state.atr_bars and paper_atr_session_key(
+                    state.atr_bars[-1].timestamp
+                ) != paper_atr_session_key(restored_bar.timestamp):
+                    state.atr_bars = []
+                if all(item.timestamp != restored_bar.timestamp for item in state.atr_bars):
+                    state.atr_bars.append(restored_bar)
+                state.atr_state = str(detail.get("atr_state") or "") or None
+                state.atr_trail = (
+                    float(detail["atr_trail"]) if detail.get("atr_trail") is not None else None
+                )
+                if state.atr_state is not None:
+                    state.atr_flip_evaluations += 1
+                if detail.get("atr_flip") == "SELL":
+                    position.atr_exit_pending = True
+                    position.atr_decision_at = self._modeled_minute_end(restored_bar)
+                    position.atr_trail = state.atr_trail
+            elif decision.event_type == ORB_PAPER_EXIT_EVENT_TYPE:
+                entry_key = str(detail.get("entry_event_key") or "")
+                position = positions.get(decision.symbol)
+                if position is not None and position.entry_event_key == entry_key:
+                    positions.pop(decision.symbol, None)
+                if decision.session_date == self._session_date:
+                    closed_today.insert(0, self._closed_row(decision))
+                    recent.insert(0, self._paper_exit_row(decision))
+                    reason = str(detail.get("exit_reason") or "UNKNOWN")
+                    exit_counts[reason] = exit_counts.get(reason, 0) + 1
+        self._states = {
+            symbol: state for symbol, state in self._states.items() if symbol in positions
+        }
+        self._paper_positions = positions
+        self._paper_closed_today = closed_today[:100]
+        self._paper_recent_decisions = recent[:50]
+        self._paper_exit_counts = exit_counts
+        restored_atr_bars = sum(len(state.atr_bars) for state in self._states.values())
+        self._paper_atr_bars_restored = restored_atr_bars
+        replay_points = [
+            max(bar.timestamp for bar in state.atr_bars)
+            for symbol, state in self._states.items()
+            if symbol in positions and state.atr_bars
+        ]
+        if replay_points:
+            # One Redis stream offset serves every symbol. Resume from the oldest
+            # open position's next unpersisted minute; duplicate bars for fresher
+            # symbols are ignored by timestamp, while using the newest point here
+            # could skip evidence for the older position entirely.
+            replay_from_ms = int((min(replay_points).timestamp() + 60.0) * 1000) - 1
+            self._md_offset = f"{replay_from_ms}-0"
+        logger.info(
+            "[ORB-PAPER-RESTORE] open=%d closed_today=%d atr_bars=%d lifecycle_version=%d",
+            len(positions),
+            len(closed_today),
+            restored_atr_bars,
+            PAPER_LIFECYCLE_VERSION,
+        )
+
     def _check_reclaim(self, symbol: str, price: float, ts: datetime) -> None:
         """Intrabar reclaim entry (cap-off mode). Once the OR is armed, a tick at/above
         OR_high starts a hold timer; if price stays >= OR_high for orb_reclaim_hold_secs,
@@ -1042,6 +1585,7 @@ class OrbService:
         attempt: int | None = None,
         event_type: str = ORB_PAPER_EVENT_TYPE,
         detail: dict[str, object] | None = None,
+        event_key: str | None = None,
     ) -> OrbPaperDecision:
         if self._fixed_resting_mode:
             qty = int(self.settings.orb_reclaim_quantity)
@@ -1115,9 +1659,11 @@ class OrbService:
             }
         st = self._states.get(symbol)
         decision_attempt = attempt if attempt is not None else (st.attempts if st is not None else 0)
-        event_key = (
-            f"orb-paper:{observed_at.astimezone(_ET).date().isoformat()}:{symbol}:"
-            f"{event_type}:{decision_attempt}:{int(observed_at.timestamp() * 1_000_000)}"
+        event_key = event_key or self._paper_event_key(
+            symbol=symbol,
+            observed_at=observed_at,
+            event_type=event_type,
+            attempt=decision_attempt,
         )
         decision_detail: dict[str, object] = {
             "reason": "ORB_OPEN",
@@ -1145,6 +1691,15 @@ class OrbService:
             ),
             detail=decision_detail,
             event_type=event_type,
+        )
+
+    @staticmethod
+    def _paper_event_key(
+        *, symbol: str, observed_at: datetime, event_type: str, attempt: int
+    ) -> str:
+        return (
+            f"orb-paper:{observed_at.astimezone(_ET).date().isoformat()}:{symbol}:"
+            f"{event_type}:{attempt}:{int(observed_at.timestamp() * 1_000_000)}"
         )
 
     @staticmethod
@@ -1176,6 +1731,7 @@ class OrbService:
                     attempt=item.attempt,
                     event_type=item.event_type,
                     detail=item.detail,
+                    event_key=item.event_key,
                 )
             )
             try:
@@ -1191,6 +1747,37 @@ class OrbService:
                 st.pending = False
                 st.paper_entries += 1
                 st.last_paper_entry_price = entry_price
+            if item.counts_as_entry and self._paper_lifecycle_enabled:
+                position = self._paper_positions.get(symbol)
+                if position is not None and position.entry_event_key == decision.event_key:
+                    self._remember_paper_decision(self._paper_entry_row(position))
+                    if (
+                        position.body_exit_pending
+                        and st is not None
+                        and st.latest_bid is not None
+                        and st.latest_quote_at is not None
+                        and st.latest_quote_at >= position.entry_time
+                    ):
+                        self._evaluate_paper_position_quote(
+                            symbol,
+                            bid=st.latest_bid,
+                            observed_at=st.latest_quote_at,
+                        )
+                elif decision.detail.get("paper_position_status") == "UNANSWERABLE":
+                    self._remember_paper_decision(
+                        {
+                            "event_key": decision.event_key,
+                            "ticker": decision.symbol,
+                            "symbol": decision.symbol,
+                            "status": "paper_trade_unanswerable",
+                            "reason": decision.detail.get("lifecycle_unanswerable_reason"),
+                            "entry_price": float(decision.entry_price),
+                            "entry_time": decision.observed_at.isoformat(),
+                            "last_bar_at": decision.observed_at.isoformat(),
+                        }
+                    )
+            if item.event_type == ORB_PAPER_EXIT_EVENT_TYPE and self._paper_lifecycle_enabled:
+                self._complete_paper_exit(decision)
             if item.counts_as_entry:
                 if not self._fixed_resting_mode:
                     trail = self._active_trail_pct()
@@ -1215,11 +1802,15 @@ class OrbService:
         decisions: list[dict] = []
         bar_counts: dict[str, int] = {}
         last_tick: dict[str, str] = {}
+        paper_positions = getattr(self, "_paper_positions", {})
+        lifecycle_enabled = bool(getattr(self, "_paper_lifecycle_enabled", False))
         for sym, st in sorted(self._states.items()):
             bar_counts[sym] = len(st.or_bars)
             if st.last_bar_at:
                 last_tick[sym] = st.last_bar_at
-            if st.paper_entries:
+            if sym in paper_positions:
+                status = "paper_position_open"
+            elif st.paper_entries:
                 status = "paper_entry_recorded"
             elif self._fixed_resting_mode and st.resting_order is not None:
                 if st.resting_order.adjustment_unanswerable:
@@ -1236,7 +1827,7 @@ class OrbService:
                 status = "skipped"  # not in pre-09:25 universe / width-capped / no coverage
             else:
                 status = "armed"
-            row: dict = {"ticker": sym, "status": status}
+            row: dict = {"ticker": sym, "symbol": sym, "status": status}
             if st.opening_range is not None:
                 row["or_high"] = st.opening_range.high
                 row["or_low"] = st.opening_range.low
@@ -1283,10 +1874,36 @@ class OrbService:
             and st.resting_order.adjustment_unanswerable
             and st.resting_order.filled_at is not None
         )
+        position_rows = [
+            {
+                "ticker": position.symbol,
+                "symbol": position.symbol,
+                "quantity": position.quantity,
+                "entry_price": position.entry_price,
+                "current_price": (
+                    position.current_bid
+                    if position.current_bid is not None
+                    else position.entry_price
+                ),
+                "entry_time": position.entry_time.isoformat(),
+                "target_price": position.target_price,
+                "hard_stop_price": position.stop_price,
+                "break_bar_body_pct_at_fill": position.break_body_pct,
+                "atr_exit_pending": position.atr_exit_pending,
+                "price_basis": "EXECUTABLE_BID",
+            }
+            for position in sorted(paper_positions.values(), key=lambda item: item.entry_time)
+        ]
+        closed_today = list(getattr(self, "_paper_closed_today", []))
+        recent_paper = list(getattr(self, "_paper_recent_decisions", []))
+        if lifecycle_enabled:
+            decisions = recent_paper + decisions
+        atr_denominator = sum(st.atr_flip_evaluations for st in self._states.values())
+        exit_quote_denominator = int(getattr(self, "_paper_exit_quote_evaluations", 0))
         return StrategyBotStatePayload(
             strategy_code=SERVICE_NAME,
             account_name=ORB_PAPER_ACCOUNT_NAME,
-            watchlist=sorted(self._universe),
+            watchlist=self._paper_market_symbols(),
             data_health={
                 "status": "healthy",
                 "universe_size": len(self._universe),
@@ -1299,6 +1916,30 @@ class OrbService:
                     if self._running_high_mode
                     else self._mode.value
                 ),
+                "paper_lifecycle": {
+                    "status": "ACTIVE" if lifecycle_enabled else "DISABLED",
+                    "open_positions": len(position_rows),
+                    "closed_today": len(closed_today),
+                    "exit_quote_evaluations": exit_quote_denominator,
+                    "exit_quote_evaluations_basis": "SINCE_PROCESS_START",
+                    "exit_counts": dict(getattr(self, "_paper_exit_counts", {})),
+                    "exit_counts_basis": "CURRENT_ET_DAY_DURABLE_TAPE",
+                    "rules": {
+                        "target": "+5% touch on executable bid",
+                        "hard_stop": "-8% touch on executable bid",
+                        "break_bar_body": "under 45% at fill; exit on first post-fill executable bid",
+                        "atr": "5, 3.5, Wilders; purple turn on completed minute",
+                        "clock": "disabled; an open trade is never force-closed by time",
+                    },
+                    "atr_completed_bar_evaluations": atr_denominator,
+                    "atr_source": "ORB_GATEWAY_TRADE_TICKS",
+                    "atr_bars_restored": int(getattr(self, "_paper_atr_bars_restored", 0)),
+                    "atr_restart_recovery": (
+                        "DURABLE_ENTRY_SNAPSHOT_PLUS_COMPLETED_BARS_AND_STREAM_REPLAY"
+                    ),
+                    "denominator": exit_quote_denominator,
+                    "denominator_basis": "EXECUTABLE_BID_EVALUATIONS_SINCE_PROCESS_START",
+                },
                 "resting_adjustment_timing": {
                     "status": "MEASURED" if adjustment_denominator else "UNEXERCISED",
                     "filled_before_adjustment": filled_before_adjustment,
@@ -1309,8 +1950,10 @@ class OrbService:
                     "denominator": adjustment_denominator,
                 },
             },
-            recent_decisions=decisions,
-            positions=[],
+            recent_decisions=decisions[:50],
+            positions=position_rows,
+            daily_pnl=sum(float(item.get("pnl") or 0.0) for item in closed_today),
+            closed_today=closed_today,
             bar_counts=bar_counts,
             last_tick_at=last_tick,
         )
@@ -1325,6 +1968,11 @@ class OrbService:
                 details={
                     "execution_mode": "paper",
                     "broker_route": "none",
+                    "paper_lifecycle": (
+                        "entry+position+exit+pnl"
+                        if self._paper_lifecycle_enabled
+                        else "entry-observation-only"
+                    ),
                     "universe_size": str(len(self._universe)),
                     "entry_model": (
                         "fixed_opening_high_resting"
