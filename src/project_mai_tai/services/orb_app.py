@@ -2392,6 +2392,12 @@ class OrbService:
                         if self._paper_lifecycle_enabled
                         else "entry-observation-only"
                     ),
+                    "paper_atr_entry_gate": (
+                        "enabled" if self._paper_atr_entry_gate_enabled else "disabled"
+                    ),
+                    "paper_four_red_delay": (
+                        "enabled" if self._paper_four_red_delay_enabled else "disabled"
+                    ),
                     "universe_size": str(len(self._universe)),
                     "entry_model": (
                         "fixed_opening_high_resting"

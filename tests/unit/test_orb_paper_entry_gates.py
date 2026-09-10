@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -362,6 +362,17 @@ def test_entry_gate_heartbeat_carries_decisions_and_denominators() -> None:
     assert event.detail["check_kind"] == "live"
     assert event.detail["opening_red_count"] == 4
     assert event.detail["atr_state"] == "UNANSWERABLE"
+
+
+def test_service_health_exposes_the_running_entry_gate_switches() -> None:
+    service = _service(atr_gate=True, red_delay=True)
+    service.redis.xadd = AsyncMock()
+
+    asyncio.run(service._publish_heartbeat())
+
+    heartbeat = json.loads(service.redis.xadd.await_args_list[0].args[1]["data"])
+    assert heartbeat["payload"]["details"]["paper_atr_entry_gate"] == "enabled"
+    assert heartbeat["payload"]["details"]["paper_four_red_delay"] == "enabled"
 
 
 def test_a_pulled_gate_decision_is_durable_and_visible_on_the_paper_screen() -> None:
