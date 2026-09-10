@@ -2762,6 +2762,10 @@ class ControlPlaneRepository:
                         }
                     )
 
+                order_coid_by_id = {
+                    row.id: str(row.client_order_id or "")
+                    for row in (recent_order_rows + open_order_rows)
+                }
                 for fill in session.scalars(
                     select(Fill)
                     .where(Fill.filled_at >= session_start, Fill.filled_at < session_end)
@@ -2786,6 +2790,16 @@ class ControlPlaneRepository:
                             "price": _decimal_str(fill.price),
                             "filled_at": _datetime_str(fill.filled_at),
                             "entry_slot": str(fill_metadata.get("cw_entry_slot") or ""),
+                            # ⛔⭐⭐ THE FILL MUST CARRY ITS ORDER'S client_order_id.
+                            # The fills pass WINS the completed-cycle reconstruction (it is the
+                            # priced one), and without this the exit reason is unknowable: the
+                            # `-ocoexit-` suffix is the ONLY attributable exit marker we have, and
+                            # it lives on the ORDER. The order pass cannot supply it either,
+                            # because a broker OCO leg hangs off the ENTRY's intent, so its
+                            # intent_type is "open" and the exit reconstruction skips it outright.
+                            # That is why 11 OCO exits still rendered "Close" on 2026-09-09 after
+                            # the ATR/confirmation/floor exits were already naming themselves.
+                            "client_order_id": order_coid_by_id.get(fill.order_id, ""),
                             "broker_provider": account.provider if account else "",
                         }
                     )
