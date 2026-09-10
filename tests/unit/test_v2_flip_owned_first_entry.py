@@ -424,6 +424,27 @@ def test_unknown_postflip_flat_owner_stays_consumed_until_the_sell_flip() -> Non
     assert state.flip_owner_phase == "idle"
 
 
+def test_unknown_owner_refuses_a_later_position_outside_the_fill_episode() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state, opportunity = _place_first(strategy, clock, "LATER")
+    strategy.update_position("LATER", 2, held_qty=2)
+    strategy._set_flip_owner_unknown(state, reason="test_inconclusive_read")
+
+    clock[0] += 60_000
+    _book(
+        strategy,
+        clock,
+        "LATER",
+        _leg(PRIMARY, "later-position", entered_ms=clock[0]),
+    )
+
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_opportunity_id == opportunity
+    assert state.flip_owner_position_ids == {}
+    strategy._queue_resting_place(state, 2.90, slot="first")
+    assert strategy.drain_pending_intents() == []
+
+
 def test_webull_only_fill_consumes_the_flip_without_a_schwab_position() -> None:
     strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
     state, opportunity = _place_first(strategy, clock, "WONLY")
