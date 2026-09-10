@@ -85,6 +85,8 @@ def test_publish_heartbeat_feeds_service_health_gate_and_isolated_dashboard() ->
         "execution_mode": "paper",
         "broker_route": "none",
         "paper_lifecycle": "entry-observation-only",
+        "paper_atr_entry_gate": "disabled",
+        "paper_four_red_delay": "disabled",
         "universe_size": "1",
         "entry_model": "bar_close",
     }

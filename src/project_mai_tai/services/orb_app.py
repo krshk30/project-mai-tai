@@ -46,6 +46,7 @@ from project_mai_tai.events import (
 from project_mai_tai.orb_paper_store import (
     ORB_PAPER_ACCOUNT_NAME,
     ORB_PAPER_ATR_BAR_EVENT_TYPE,
+    ORB_PAPER_ENTRY_GATE_EVENT_TYPE,
     ORB_PAPER_EVENT_TYPE,
     ORB_PAPER_EXIT_EVENT_TYPE,
     ORB_PAPER_LEVEL_FINALIZED_EVENT_TYPE,
@@ -135,6 +136,12 @@ class _ModeledRestingOrder:
     # The accepted cost is a fill at the 09:29 level instead of the final one: slightly cheaper,
     # slightly earlier — the trade already accepted by choosing to place at 09:29.
     adjustment_unanswerable: bool = False
+    entry_gate_armed: bool = True
+    entry_gate_reason: str = "RULES_DISABLED"
+    entry_gate_changed_at: datetime | None = None
+    entry_gate_armed_at: datetime | None = None
+    fresh_cross_ready: bool = True
+    above_level: bool = False
 
 
 @dataclass
@@ -167,6 +174,17 @@ class _SymbolState:
     atr_state: str | None = None
     atr_trail: float | None = None
     atr_flip_evaluations: int = 0
+    opening_red_count: int | None = None
+    entry_gate_last_bar_at: datetime | None = None
+    entry_gate_evaluations: int = 0
+    entry_gate_arms: int = 0
+    entry_gate_pulls: int = 0
+    entry_gate_withholds: int = 0
+    entry_gate_atr_blocked: int = 0
+    entry_gate_atr_unanswerable: int = 0
+    entry_gate_red_delayed: int = 0
+    entry_break_evaluations: int = 0
+    entry_breaks_held: int = 0
 
 
 @dataclass(frozen=True)
@@ -190,6 +208,8 @@ class OrbService:
     _resting_entry: bool = False
     _fixed_resting_mode: bool = False
     _paper_lifecycle_enabled: bool = False
+    _paper_atr_entry_gate_enabled: bool = False
+    _paper_four_red_delay_enabled: bool = False
     _mode: ExecutionMode = ExecutionMode.BAR_CLOSE
     # Market-data consume-loop throughput (mirrors strategy-engine #175/#179). The open
     # burst spans the WHOLE scanner universe and exceeded 700 ticks/s on 2026-06-30; a
@@ -260,6 +280,12 @@ class OrbService:
         self._paper_atr_exit_enabled = bool(
             getattr(self.settings, "orb_paper_atr_exit_enabled", True)
         )
+        self._paper_atr_entry_gate_enabled = bool(
+            getattr(self.settings, "orb_paper_atr_entry_gate_enabled", False)
+        )
+        self._paper_four_red_delay_enabled = bool(
+            getattr(self.settings, "orb_paper_four_red_delay_enabled", False)
+        )
         if self._paper_lifecycle_enabled and not self._fixed_resting_mode:
             raise RuntimeError(
                 "ORB paper lifecycle requires the fixed resting entry model; refusing partial simulation"
@@ -270,6 +296,12 @@ class OrbService:
             or not 0 < self._paper_min_break_body_pct <= 100
         ):
             raise RuntimeError("ORB paper lifecycle rule values are invalid; refusing to start")
+        if (
+            self._paper_atr_entry_gate_enabled or self._paper_four_red_delay_enabled
+        ) and not self._fixed_resting_mode:
+            raise RuntimeError(
+                "ORB paper entry gates require the fixed resting entry model; refusing partial observation"
+            )
         self._cfg = OrbConfig(
             or_minutes=int(self.settings.orb_or_minutes),
             vol_mult=float(self.settings.orb_vol_mult),
@@ -490,6 +522,13 @@ class OrbService:
             if bar is not None:
                 self._on_bar(symbol, bar, observed_at=observed_at, observed_price=ask)
             self._finalize_fixed_resting_without_0930_bar(symbol, observed_at=observed_at)
+            self._evaluate_fixed_entry_gates(
+                symbol,
+                evaluated_at=observed_at,
+                observed_price=ask,
+                bar_at=None,
+                record_unchanged=False,
+            )
         self._evaluate_paper_position_quote(symbol, bid=bid, observed_at=observed_at)
 
     def _handle_market_data(self, fields: dict) -> None:
@@ -530,6 +569,13 @@ class OrbService:
             self._on_bar(symbol, bar, observed_at=ts, observed_price=price)
         if self._fixed_resting_mode:
             self._finalize_fixed_resting_without_0930_bar(symbol, observed_at=ts)
+            self._evaluate_fixed_entry_gates(
+                symbol,
+                evaluated_at=ts,
+                observed_price=price,
+                bar_at=None,
+                record_unchanged=False,
+            )
             self._check_fixed_resting_fill(symbol, price, ts)
         if self._reclaim_mode:
             self._check_reclaim(symbol, price, ts)
@@ -620,6 +666,14 @@ class OrbService:
             "adjusted": order.adjusted_at is not None,
             "adjusted_at": order.adjusted_at.isoformat() if order.adjusted_at else None,
             "adjustment_outcome": order.adjustment_outcome,
+            "entry_gate_armed": order.entry_gate_armed,
+            "entry_gate_reason": order.entry_gate_reason,
+            "entry_gate_changed_at": (
+                order.entry_gate_changed_at.isoformat()
+                if order.entry_gate_changed_at
+                else None
+            ),
+            "entry_gate_fresh_cross_ready": order.fresh_cross_ready,
             "fill_assumption": (
                 "MODELED_AT_RESTING_LEVEL_ON_FIRST_INTRABAR_TRADE_ABOVE_LEVEL; "
                 "NO_BROKER_ORDER; SPREAD_NOT_CHARGED"
@@ -655,6 +709,209 @@ class OrbService:
                 event_key=event_key,
             )
         )
+
+    def _paper_entry_gates_enabled(self) -> bool:
+        return self._paper_atr_entry_gate_enabled or self._paper_four_red_delay_enabled
+
+    def _fixed_entry_gate_decision(
+        self,
+        st: _SymbolState,
+        *,
+        evaluated_at: datetime,
+    ) -> tuple[bool, str, str, dict[str, object]]:
+        red_delay_until = self._session_open_utc() + timedelta(minutes=1)
+        red_delay_applies = bool(
+            self._paper_four_red_delay_enabled
+            and st.opening_red_count is not None
+            and st.opening_red_count >= 4
+        )
+        red_delay_active = red_delay_applies and evaluated_at < red_delay_until
+
+        atr_state = str(st.atr_state or "").lower()
+        atr_unanswerable = self._paper_atr_entry_gate_enabled and not atr_state
+        atr_purple = self._paper_atr_entry_gate_enabled and atr_state not in {"", "long"}
+
+        allowed = not (red_delay_active or atr_unanswerable or atr_purple)
+        if atr_unanswerable:
+            check_kind = "live"
+            reason = "LIVE_CHECK_ATR_STATE_UNANSWERABLE_ORDER_WITHHELD"
+        elif atr_purple:
+            check_kind = "live"
+            reason = "LIVE_CHECK_ATR_PURPLE_ORDER_PULLED"
+        elif red_delay_active:
+            check_kind = "day_gate"
+            reason = "DAY_GATE_FOUR_OF_FIVE_RED_FIRST_MINUTE_DELAY"
+        else:
+            active_kinds = [
+                kind
+                for kind, enabled in (
+                    ("day_gate", self._paper_four_red_delay_enabled),
+                    ("live", self._paper_atr_entry_gate_enabled),
+                )
+                if enabled
+            ]
+            check_kind = "+".join(active_kinds)
+            reason = f"{'_AND_'.join(kind.upper() for kind in active_kinds)}_CHECKS_PASS"
+        checks_evaluated = [
+            kind
+            for kind, enabled in (
+                ("day_gate", self._paper_four_red_delay_enabled),
+                ("live", self._paper_atr_entry_gate_enabled),
+            )
+            if enabled
+        ]
+        return allowed, reason, check_kind, {
+            "checks_evaluated": checks_evaluated,
+            "atr_entry_gate": (
+                "ENABLED" if self._paper_atr_entry_gate_enabled else "DISABLED"
+            ),
+            "atr_state": atr_state.upper() if atr_state else "UNANSWERABLE",
+            "four_red_delay": (
+                "ACTIVE"
+                if red_delay_active
+                else "COMPLETE"
+                if red_delay_applies
+                else "NOT_APPLICABLE"
+                if self._paper_four_red_delay_enabled
+                else "DISABLED"
+            ),
+            "opening_red_count": st.opening_red_count,
+            "red_delay_until": red_delay_until.isoformat(),
+        }
+
+    def _evaluate_fixed_entry_gates(
+        self,
+        symbol: str,
+        *,
+        evaluated_at: datetime,
+        observed_price: float | None,
+        bar_at: datetime | None,
+        initial: bool = False,
+        allow_arm: bool = True,
+        record_unchanged: bool = True,
+    ) -> None:
+        if not self._paper_entry_gates_enabled():
+            return
+        st = self._states.get(symbol)
+        order = st.resting_order if st is not None else None
+        if st is None or order is None or order.filled_at is not None:
+            return
+        if bar_at is not None and st.entry_gate_last_bar_at == bar_at:
+            return
+
+        allowed, reason, check_kind, gate_detail = self._fixed_entry_gate_decision(
+            st,
+            evaluated_at=evaluated_at,
+        )
+        if allowed and not order.entry_gate_armed and not allow_arm:
+            return
+        changed = initial or allowed != order.entry_gate_armed
+        if not changed and not record_unchanged:
+            return
+
+        prior_armed = order.entry_gate_armed
+        if initial:
+            action = "ARM" if allowed else "WITHHOLD"
+        elif allowed and not prior_armed:
+            action = "ARM"
+        elif not allowed and prior_armed:
+            action = "PULL"
+        else:
+            action = "HOLD_ARMED" if allowed else "HOLD_PULLED"
+
+        order.entry_gate_armed = allowed
+        order.entry_gate_reason = reason
+        if changed:
+            order.entry_gate_changed_at = evaluated_at
+        if allowed:
+            if initial:
+                order.entry_gate_armed_at = order.placed_at
+                order.fresh_cross_ready = True
+            elif not prior_armed:
+                order.entry_gate_armed_at = evaluated_at
+                # Re-arming above the level is not a retroactive fill. A later
+                # trade must first return to/below the level, then cross it.
+                order.fresh_cross_ready = bool(
+                    observed_price is not None and observed_price <= order.current_level
+                )
+                order.above_level = bool(
+                    observed_price is not None and observed_price > order.current_level
+                )
+        else:
+            order.entry_gate_armed_at = None
+            order.fresh_cross_ready = False
+            order.above_level = bool(
+                observed_price is not None and observed_price > order.current_level
+            )
+
+        st.entry_gate_evaluations += 1
+        if bar_at is not None:
+            st.entry_gate_last_bar_at = bar_at
+        if action == "ARM":
+            st.entry_gate_arms += 1
+        elif action == "PULL":
+            st.entry_gate_pulls += 1
+        elif action == "WITHHOLD":
+            st.entry_gate_withholds += 1
+        if self._paper_atr_entry_gate_enabled:
+            if not st.atr_state:
+                st.entry_gate_atr_unanswerable += 1
+            elif str(st.atr_state).lower() != "long":
+                st.entry_gate_atr_blocked += 1
+
+        event_type = (
+            ORB_PAPER_ORDER_PLACED_EVENT_TYPE
+            if initial and allowed
+            else ORB_PAPER_ENTRY_GATE_EVENT_TYPE
+        )
+        detail = self._fixed_resting_detail(
+            order,
+            check_kind=check_kind,
+            level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET",
+            status=("MODELED_RESTING" if allowed else "MODELED_ORDER_PULLED"),
+            reason=reason,
+            quote_at=st.latest_quote_at,
+            bid=st.latest_bid,
+            ask=st.latest_ask,
+            decision_observed_at=evaluated_at,
+        )
+        detail.update(gate_detail)
+        detail.update(
+            {
+                "entry_gate_action": action,
+                "entry_gate_evaluation": st.entry_gate_evaluations,
+                "fresh_cross_required_after_rearm": not order.fresh_cross_ready,
+            }
+        )
+        self._queue_fixed_resting_event(
+            symbol,
+            price=order.current_level,
+            observed_at=evaluated_at,
+            event_type=event_type,
+            detail=detail,
+        )
+        logger.info(
+            "[ORB-PAPER-ENTRY-GATE] %s action=%s reason=%s atr=%s red=%s "
+            "evaluated=%d armed=%s fresh_cross_ready=%s check=%s checks=%s",
+            symbol,
+            action,
+            reason,
+            gate_detail["atr_state"],
+            st.opening_red_count,
+            st.entry_gate_evaluations,
+            order.entry_gate_armed,
+            order.fresh_cross_ready,
+            check_kind,
+            ",".join(gate_detail["checks_evaluated"]),
+        )
+        if initial and allowed:
+            logger.info(
+                "[ORB-PAPER-ORDER-PLACED] %s level=%.4f placed_at=%s "
+                "derivation=09:25-09:29 check=day_gate entry_gates=pass",
+                symbol,
+                order.current_level,
+                order.placed_at.isoformat(),
+            )
 
     def _on_bar_fixed_resting(
         self,
@@ -725,27 +982,41 @@ class OrbService:
             st.resting_order = order
             st.running_high = available_level
             st.attempts = 1
-            self._queue_fixed_resting_event(
-                symbol,
-                price=available_level,
-                observed_at=placed_at,
-                event_type=ORB_PAPER_ORDER_PLACED_EVENT_TYPE,
-                detail=self._fixed_resting_detail(
-                    order,
-                    check_kind="day_gate",
-                    level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET",
-                    status="MODELED_RESTING",
-                    reason="FIXED_RESTING_ORDER_PLACED",
-                    decision_observed_at=observed_at,
-                ),
+            st.opening_red_count = sum(
+                item.close < item.open for item in by_minute.values()
             )
-            logger.info(
-                "[ORB-PAPER-ORDER-PLACED] %s level=%.4f placed_at=%s "
-                "derivation=09:25-09:29 check=day_gate",
-                symbol,
-                available_level,
-                placed_at.isoformat(),
-            )
+            if self._paper_four_red_delay_enabled and st.opening_red_count >= 4:
+                st.entry_gate_red_delayed = 1
+            if self._paper_entry_gates_enabled():
+                self._evaluate_fixed_entry_gates(
+                    symbol,
+                    evaluated_at=placed_at,
+                    observed_price=observed_price,
+                    bar_at=bar.timestamp,
+                    initial=True,
+                )
+            else:
+                self._queue_fixed_resting_event(
+                    symbol,
+                    price=available_level,
+                    observed_at=placed_at,
+                    event_type=ORB_PAPER_ORDER_PLACED_EVENT_TYPE,
+                    detail=self._fixed_resting_detail(
+                        order,
+                        check_kind="day_gate",
+                        level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET",
+                        status="MODELED_RESTING",
+                        reason="FIXED_RESTING_ORDER_PLACED",
+                        decision_observed_at=observed_at,
+                    ),
+                )
+                logger.info(
+                    "[ORB-PAPER-ORDER-PLACED] %s level=%.4f placed_at=%s "
+                    "derivation=09:25-09:29 check=day_gate",
+                    symbol,
+                    available_level,
+                    placed_at.isoformat(),
+                )
             return
 
         if bar.timestamp != session_open or st.resting_order is None:
@@ -777,6 +1048,25 @@ class OrbService:
                     level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
                     status="FINALIZED_NO_ADJUSTMENT",
                     reason="ORDER_ALREADY_FILLED_AT_09:29_LEVEL",
+                    decision_observed_at=observed_at,
+                    **common,
+                ),
+            )
+            return
+        if not order.entry_gate_armed:
+            order.current_level = order.final_level
+            order.adjustment_outcome = "LEVEL_FINALIZED_WHILE_ENTRY_GATE_PULLED"
+            self._queue_fixed_resting_event(
+                symbol,
+                price=order.current_level,
+                observed_at=finalized_at,
+                event_type=ORB_PAPER_LEVEL_FINALIZED_EVENT_TYPE,
+                detail=self._fixed_resting_detail(
+                    order,
+                    check_kind="live",
+                    level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
+                    status="FINALIZED_WHILE_PULLED",
+                    reason="ENTRY_GATE_PULLED_ORDER_LEVEL_UPDATED_BEFORE_REARM",
                     decision_observed_at=observed_at,
                     **common,
                 ),
@@ -922,7 +1212,53 @@ class OrbService:
         ):
             return
         cutoff = self._session_open_utc() + timedelta(minutes=self._rh_window_min)
-        if ts > cutoff or price <= order.current_level:
+        if ts > cutoff:
+            return
+        if price <= order.current_level:
+            order.above_level = False
+            if order.entry_gate_armed:
+                order.fresh_cross_ready = True
+            return
+        if order.above_level:
+            return
+        order.above_level = True
+        st.entry_break_evaluations += 1
+        if not order.entry_gate_armed or not order.fresh_cross_ready or (
+            order.entry_gate_armed_at is not None and ts <= order.entry_gate_armed_at
+        ):
+            st.entry_breaks_held += 1
+            order.fresh_cross_ready = False
+            if self._paper_entry_gates_enabled():
+                detail = self._fixed_resting_detail(
+                    order,
+                    check_kind="live",
+                    level_derivation=(
+                        "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE"
+                        if order.finalized_at is not None
+                        else "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET"
+                    ),
+                    status="MODELED_BREAK_HELD",
+                    reason="BREAK_HELD_BY_ENTRY_GATE_OR_FRESH_CROSS_REQUIREMENT",
+                    quote_at=st.latest_quote_at,
+                    bid=st.latest_bid,
+                    ask=st.latest_ask,
+                    decision_observed_at=ts,
+                )
+                detail.update(
+                    {
+                        "entry_gate_evaluations": st.entry_gate_evaluations,
+                        "entry_break_evaluations": st.entry_break_evaluations,
+                        "entry_breaks_held": st.entry_breaks_held,
+                        "trade_price": price,
+                    }
+                )
+                self._queue_fixed_resting_event(
+                    symbol,
+                    price=order.current_level,
+                    observed_at=ts,
+                    event_type=ORB_PAPER_ENTRY_GATE_EVENT_TYPE,
+                    detail=detail,
+                )
             return
         order.filled_at = ts
         order.fill_price = order.current_level
@@ -1046,11 +1382,26 @@ class OrbService:
     ) -> None:
         self._update_paper_atr(symbol, bar, observed_at=observed_at)
         if self._fixed_resting_mode:
+            gate_evaluated_at = observed_at or self._modeled_minute_end(bar)
+            self._evaluate_fixed_entry_gates(
+                symbol,
+                evaluated_at=gate_evaluated_at,
+                observed_price=observed_price,
+                bar_at=bar.timestamp,
+                allow_arm=False,
+                record_unchanged=False,
+            )
             self._on_bar_fixed_resting(
                 symbol,
                 bar,
                 observed_at=observed_at,
                 observed_price=observed_price,
+            )
+            self._evaluate_fixed_entry_gates(
+                symbol,
+                evaluated_at=gate_evaluated_at,
+                observed_price=observed_price,
+                bar_at=bar.timestamp,
             )
             return
         if self._running_high_mode:
@@ -1120,8 +1471,10 @@ class OrbService:
         *,
         observed_at: datetime | None,
     ) -> None:
-        """Evaluate the settled ATR exit only when a completed minute is observed."""
-        if not self._paper_lifecycle_enabled or not self._paper_atr_exit_enabled:
+        """Evaluate settled ATR entry and exit rules on completed minutes."""
+        entry_gate_needed = self._paper_atr_entry_gate_enabled
+        exit_rule_needed = self._paper_lifecycle_enabled and self._paper_atr_exit_enabled
+        if not entry_gate_needed and not exit_rule_needed:
             return
         st = self._states.setdefault(symbol, _SymbolState())
         if st.atr_bars and paper_atr_session_key(st.atr_bars[-1].timestamp) != (
@@ -1143,6 +1496,8 @@ class OrbService:
         st.atr_trail = float(latest["trail"]) if latest["trail"] is not None else None
         if latest["state"] is not None:
             st.atr_flip_evaluations += 1
+        if not exit_rule_needed:
+            return
         position = self._paper_positions.get(symbol)
         if position is not None and bar.timestamp >= position.entry_time.replace(second=0, microsecond=0):
             self._queue_fixed_resting_event(
@@ -1776,6 +2131,27 @@ class OrbService:
                             "last_bar_at": decision.observed_at.isoformat(),
                         }
                     )
+            if item.event_type == ORB_PAPER_ENTRY_GATE_EVENT_TYPE:
+                self._remember_paper_decision(
+                    {
+                        "event_key": decision.event_key,
+                        "ticker": decision.symbol,
+                        "symbol": decision.symbol,
+                        "status": str(
+                            decision.detail.get("entry_gate_action")
+                            or "ENTRY_GATE_EVALUATED"
+                        ).lower(),
+                        "reason": decision.detail.get("reason"),
+                        "entry_price": float(decision.entry_price),
+                        "entry_time": decision.observed_at.isoformat(),
+                        "last_bar_at": decision.observed_at.isoformat(),
+                        "check_kind": decision.detail.get("check_kind"),
+                        "entry_gate_armed": decision.detail.get("entry_gate_armed"),
+                        "entry_gate_evaluation": decision.detail.get(
+                            "entry_gate_evaluation"
+                        ),
+                    }
+                )
             if item.event_type == ORB_PAPER_EXIT_EVENT_TYPE and self._paper_lifecycle_enabled:
                 self._complete_paper_exit(decision)
             if item.counts_as_entry:
@@ -1813,7 +2189,9 @@ class OrbService:
             elif st.paper_entries:
                 status = "paper_entry_recorded"
             elif self._fixed_resting_mode and st.resting_order is not None:
-                if st.resting_order.adjustment_unanswerable:
+                if not st.resting_order.entry_gate_armed:
+                    status = "entry_gate_withheld"
+                elif st.resting_order.adjustment_unanswerable:
                     status = "adjustment_unanswerable"
                 elif st.resting_order.adjusted_at is not None:
                     status = "resting_adjusted"
@@ -1843,6 +2221,15 @@ class OrbService:
                         "adjustment_outcome": order.adjustment_outcome,
                         "adjusted_at": order.adjusted_at.isoformat() if order.adjusted_at else None,
                         "modeled_fill_at": order.filled_at.isoformat() if order.filled_at else None,
+                        "entry_gate_armed": order.entry_gate_armed,
+                        "entry_gate_reason": order.entry_gate_reason,
+                        "entry_gate_changed_at": (
+                            order.entry_gate_changed_at.isoformat()
+                            if order.entry_gate_changed_at
+                            else None
+                        ),
+                        "fresh_cross_ready": order.fresh_cross_ready,
+                        "opening_red_count_0925_0929": st.opening_red_count,
                     }
                 )
             decisions.append(row)
@@ -1896,9 +2283,30 @@ class OrbService:
         ]
         closed_today = list(getattr(self, "_paper_closed_today", []))
         recent_paper = list(getattr(self, "_paper_recent_decisions", []))
-        if lifecycle_enabled:
+        if lifecycle_enabled or self._paper_entry_gates_enabled():
             decisions = recent_paper + decisions
         atr_denominator = sum(st.atr_flip_evaluations for st in self._states.values())
+        entry_gate_evaluations = sum(
+            st.entry_gate_evaluations for st in self._states.values()
+        )
+        entry_gate_arms = sum(st.entry_gate_arms for st in self._states.values())
+        entry_gate_pulls = sum(st.entry_gate_pulls for st in self._states.values())
+        entry_gate_withholds = sum(
+            st.entry_gate_withholds for st in self._states.values()
+        )
+        entry_gate_atr_blocked = sum(
+            st.entry_gate_atr_blocked for st in self._states.values()
+        )
+        entry_gate_atr_unanswerable = sum(
+            st.entry_gate_atr_unanswerable for st in self._states.values()
+        )
+        entry_gate_red_delayed = sum(
+            st.entry_gate_red_delayed for st in self._states.values()
+        )
+        entry_break_evaluations = sum(
+            st.entry_break_evaluations for st in self._states.values()
+        )
+        entry_breaks_held = sum(st.entry_breaks_held for st in self._states.values())
         exit_quote_denominator = int(getattr(self, "_paper_exit_quote_evaluations", 0))
         return StrategyBotStatePayload(
             strategy_code=SERVICE_NAME,
@@ -1940,6 +2348,40 @@ class OrbService:
                     "denominator": exit_quote_denominator,
                     "denominator_basis": "EXECUTABLE_BID_EVALUATIONS_SINCE_PROCESS_START",
                 },
+                "paper_entry_gates": {
+                    "status": (
+                        "ACTIVE" if self._paper_entry_gates_enabled() else "DISABLED"
+                    ),
+                    "atr_live_gate_enabled": self._paper_atr_entry_gate_enabled,
+                    "four_red_first_minute_delay_enabled": (
+                        self._paper_four_red_delay_enabled
+                    ),
+                    "rules": {
+                        "atr": (
+                            "completed-bar cyan/long arms; purple/short or unknown pulls; "
+                            "later cyan/long may re-arm"
+                        ),
+                        "four_red": (
+                            "four or more red bars among 09:25-09:29 delay entry only "
+                            "until 09:31 ET"
+                        ),
+                        "rearm": (
+                            "no retroactive fill; price must return to/below the fixed level "
+                            "then cross above"
+                        ),
+                    },
+                    "evaluations": entry_gate_evaluations,
+                    "arms": entry_gate_arms,
+                    "pulls": entry_gate_pulls,
+                    "initial_withholds": entry_gate_withholds,
+                    "atr_blocked": entry_gate_atr_blocked,
+                    "atr_unanswerable": entry_gate_atr_unanswerable,
+                    "red_delayed_name_days": entry_gate_red_delayed,
+                    "break_crossings_evaluated": entry_break_evaluations,
+                    "break_crossings_held": entry_breaks_held,
+                    "denominator": entry_gate_evaluations,
+                    "denominator_basis": "MODELED_ENTRY_GATE_DECISIONS_SINCE_PROCESS_START",
+                },
                 "resting_adjustment_timing": {
                     "status": "MEASURED" if adjustment_denominator else "UNEXERCISED",
                     "filled_before_adjustment": filled_before_adjustment,
@@ -1972,6 +2414,12 @@ class OrbService:
                         "entry+position+exit+pnl"
                         if self._paper_lifecycle_enabled
                         else "entry-observation-only"
+                    ),
+                    "paper_atr_entry_gate": (
+                        "enabled" if self._paper_atr_entry_gate_enabled else "disabled"
+                    ),
+                    "paper_four_red_delay": (
+                        "enabled" if self._paper_four_red_delay_enabled else "disabled"
                     ),
                     "universe_size": str(len(self._universe)),
                     "entry_model": (
