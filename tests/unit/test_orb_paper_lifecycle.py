@@ -34,6 +34,8 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SymbolState,
 )
 
+_ET = ZoneInfo("America/New_York")
+
 
 class _Store:
     def __init__(self, decisions: list[OrbPaperDecision] | None = None) -> None:
@@ -367,7 +369,7 @@ def test_restart_restores_an_open_position_and_same_day_closed_history() -> None
     entry = OrbPaperDecision(
         event_key="entry:open",
         event_type=ORB_PAPER_EVENT_TYPE,
-        session_date=at.astimezone().date(),
+        session_date=at.astimezone(_ET).date(),
         symbol="OPEN",
         observed_at=at,
         entry_price=Decimal("2.00"),
@@ -385,7 +387,7 @@ def test_restart_restores_an_open_position_and_same_day_closed_history() -> None
     closed_entry = OrbPaperDecision(
         event_key="entry:closed",
         event_type=ORB_PAPER_EVENT_TYPE,
-        session_date=at.astimezone().date(),
+        session_date=at.astimezone(_ET).date(),
         symbol="CLOSED",
         observed_at=at,
         entry_price=Decimal("1.00"),
@@ -400,7 +402,7 @@ def test_restart_restores_an_open_position_and_same_day_closed_history() -> None
     closed_exit = OrbPaperDecision(
         event_key="exit:closed",
         event_type=ORB_PAPER_EXIT_EVENT_TYPE,
-        session_date=at.astimezone().date(),
+        session_date=at.astimezone(_ET).date(),
         symbol="CLOSED",
         observed_at=at + timedelta(seconds=1),
         entry_price=Decimal("1.00"),
@@ -445,7 +447,7 @@ def test_restart_restores_exact_atr_bars_and_a_pending_sell_flip() -> None:
     entry = OrbPaperDecision(
         event_key="entry:atr",
         event_type=ORB_PAPER_EVENT_TYPE,
-        session_date=at.astimezone().date(),
+        session_date=at.astimezone(_ET).date(),
         symbol="ATR",
         observed_at=at,
         entry_price=Decimal("2.00"),
@@ -472,7 +474,7 @@ def test_restart_restores_exact_atr_bars_and_a_pending_sell_flip() -> None:
     atr = OrbPaperDecision(
         event_key="atr:bar",
         event_type=ORB_PAPER_ATR_BAR_EVENT_TYPE,
-        session_date=at.astimezone().date(),
+        session_date=at.astimezone(_ET).date(),
         symbol="ATR",
         observed_at=at + timedelta(minutes=2),
         entry_price=Decimal("1.90"),
@@ -499,7 +501,7 @@ def test_restart_restores_exact_atr_bars_and_a_pending_sell_flip() -> None:
     later_entry = OrbPaperDecision(
         event_key="entry:later",
         event_type=ORB_PAPER_EVENT_TYPE,
-        session_date=at.astimezone().date(),
+        session_date=at.astimezone(_ET).date(),
         symbol="LATER",
         observed_at=at + timedelta(minutes=9),
         entry_price=Decimal("3.00"),
@@ -517,7 +519,7 @@ def test_restart_restores_exact_atr_bars_and_a_pending_sell_flip() -> None:
     later_atr = OrbPaperDecision(
         event_key="atr:later",
         event_type=ORB_PAPER_ATR_BAR_EVENT_TYPE,
-        session_date=at.astimezone().date(),
+        session_date=at.astimezone(_ET).date(),
         symbol="LATER",
         observed_at=at + timedelta(minutes=11),
         entry_price=Decimal("3.00"),
@@ -565,7 +567,7 @@ def test_pre_lifecycle_entry_evidence_is_not_reopened_as_a_phantom_position() ->
     old_entry = OrbPaperDecision(
         event_key="entry:old-ymat",
         event_type=ORB_PAPER_EVENT_TYPE,
-        session_date=at.astimezone().date(),
+        session_date=at.astimezone(_ET).date(),
         symbol="YMAT",
         observed_at=at,
         entry_price=Decimal("1.91"),
@@ -587,7 +589,7 @@ def test_unanswerable_lifecycle_entry_is_not_reopened_as_a_phantom_position() ->
     unanswerable = OrbPaperDecision(
         event_key="entry:unanswerable",
         event_type=ORB_PAPER_EVENT_TYPE,
-        session_date=at.astimezone().date(),
+        session_date=at.astimezone(_ET).date(),
         symbol="YMAT",
         observed_at=at,
         entry_price=Decimal("1.91"),
