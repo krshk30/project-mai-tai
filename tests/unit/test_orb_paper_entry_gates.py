@@ -149,7 +149,7 @@ def test_atr_purple_pulls_then_cyan_rearms_without_a_backfilled_fill() -> None:
             _bar(
                 service,
                 minute,
-                open_price=8.0 if minute != -5 else 10.0,
+                open_price=8.0,
                 close=8.0,
                 high=8.05,
                 low=7.95,
