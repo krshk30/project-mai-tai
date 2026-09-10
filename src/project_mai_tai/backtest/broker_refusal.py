@@ -39,6 +39,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
+from project_mai_tai.broker_eligibility import is_schwab_opening_ineligible_reason
+
 
 class RefusalClass(str, Enum):
     """Why the broker refused. Kept separate because they are modelled differently."""
@@ -54,14 +56,6 @@ class RefusalClass(str, Enum):
 # than the violation (`STOP_LOSS_PRICE_LT_MARKETPRICE` reads as its own opposite), which is how a
 # whole week of diagnosis went the wrong way on 2026-08-17.
 _PATTERNS: tuple[tuple[RefusalClass, re.Pattern[str]], ...] = (
-    (
-        RefusalClass.NOT_ELECTRONICALLY_TRADEABLE,
-        re.compile(r"opening transactions for this security must be placed with a broker", re.I),
-    ),
-    (
-        RefusalClass.NOT_ELECTRONICALLY_TRADEABLE,
-        re.compile(r"not eligible for electronic entry", re.I),
-    ),
     (
         RefusalClass.TRIGGER_NOT_ABOVE_ASK,
         re.compile(r"stop price must be above the current ask", re.I),
@@ -102,6 +96,8 @@ def classify_refusal(reason: str | None) -> RefusalClass | None:
     if not reason:
         return None
     text = str(reason)
+    if is_schwab_opening_ineligible_reason(text):
+        return RefusalClass.NOT_ELECTRONICALLY_TRADEABLE
     for klass, pattern in _PATTERNS:
         if pattern.search(text):
             return klass

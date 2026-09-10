@@ -28,6 +28,7 @@ from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+from project_mai_tai.broker_eligibility import is_schwab_opening_ineligible_reason
 from project_mai_tai.db.session import build_oms_session_factory
 from project_mai_tai.db.models import (
     AccountPosition,
@@ -135,7 +136,6 @@ A2_NOT_SELLABLE_REASON_SUBSTRINGS = (
     "oversold",                    # Schwab free-text
     "overbought",                  # Schwab free-text
 )
-SCHWAB_INELIGIBLE_REASON_SUBSTRINGS = ("must be placed with a broker",)
 # Webull "not tradable today" markers for the dual-broker fan-out per-broker eligibility.
 # DELIBERATELY CONSERVATIVE (operator 2026-07-24: "never seen a Webull rejection — find out
 # later or never"): only a CLEAR symbol-not-tradable reject marks a name ineligible for the day.
@@ -10740,7 +10740,9 @@ class OmsRiskService:
                 status=report.event_type,
                 reason=report.reason,
             )
-            if report.event_type == "rejected" and self._is_schwab_ineligible_reason(report.reason):
+            if report.event_type == "rejected" and is_schwab_opening_ineligible_reason(
+                report.reason
+            ):
                 self.store.record_schwab_ineligible_entry(
                     session,
                     broker_account_id=broker_account_id,
@@ -11975,11 +11977,6 @@ class OmsRiskService:
             )
             is not None
         )
-
-    @staticmethod
-    def _is_schwab_ineligible_reason(reason: str | None) -> bool:
-        normalized = str(reason or "").strip().lower()
-        return any(fragment in normalized for fragment in SCHWAB_INELIGIBLE_REASON_SUBSTRINGS)
 
     def _has_cached_webull_ineligible_symbol(
         self,

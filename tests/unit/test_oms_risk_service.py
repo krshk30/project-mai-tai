@@ -911,8 +911,12 @@ class FakeRejectNotTradableBrokerAdapter:
 
 
 class FakeRejectSchwabIneligibleBrokerAdapter:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        reason: str = "Opening transactions for this security must be placed with a broker. Contact us",
+    ) -> None:
         self.requests = []
+        self.reason = reason
 
     async def submit_order(self, request):
         self.requests.append(request)
@@ -925,7 +929,7 @@ class FakeRejectSchwabIneligibleBrokerAdapter:
                 side=request.side,
                 intent_type=request.intent_type,
                 quantity=request.quantity,
-                reason="Opening transactions for this security must be placed with a broker. Contact us",
+                reason=self.reason,
                 metadata=dict(request.metadata),
             )
         ]
@@ -1198,10 +1202,21 @@ async def test_oms_service_blocks_not_tradable_symbol_for_rest_of_session() -> N
 
 
 @pytest.mark.asyncio
-async def test_oms_service_caches_schwab_ineligible_symbol_for_session_day() -> None:
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "This security must be placed with a broker",
+        "Opening transactions for this security must be placed with a broker. Contact us",
+        (
+            "Your order is not eligible for electronic entry. Please call a Charles Schwab "
+            "representative for assistance with this trade."
+        ),
+    ],
+)
+async def test_oms_service_caches_schwab_ineligible_symbol_for_session_day(reason: str) -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    adapter = FakeRejectSchwabIneligibleBrokerAdapter()
+    adapter = FakeRejectSchwabIneligibleBrokerAdapter(reason)
     service = OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
@@ -1246,7 +1261,7 @@ async def test_oms_service_caches_schwab_ineligible_symbol_for_session_day() -> 
 
     assert len(adapter.requests) == 1
     assert first[0].payload.status == "rejected"
-    assert "placed with a broker" in (first[0].payload.reason or "")
+    assert first[0].payload.reason == reason
     assert second[0].payload.status == "rejected"
     assert second[0].payload.reason == "schwab_ineligible_cached"
 
