@@ -401,6 +401,67 @@ def test_unknown_preflip_owner_recovers_to_idle_after_late_fill_then_flat_book()
     assert ("RECOVER", opportunity, False, "unknown_preflip_owner_flat_after_settle") in identity_writes
 
 
+def test_unknown_preflip_flat_book_waits_for_fill_settlement_before_retiring() -> None:
+    strategy, clock, identity_writes, _owner_writes = _strategy()
+    state, opportunity = _place_first(strategy, clock, "SETTLING")
+    strategy.update_position("SETTLING", 2, held_qty=2)
+    _book(strategy, clock, "SETTLING", _leg(PRIMARY, "settling-row"))
+    assert state.flip_owner_position_ids == {PRIMARY: "settling-row"}
+
+    strategy._set_flip_owner_unknown(state, reason="test_inconclusive_read")
+    strategy.update_position("SETTLING", 0, held_qty=0)
+    clock[0] += 14_999
+    _book(strategy, clock, "SETTLING")
+
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_opportunity_id == opportunity
+    assert not any(not active for _symbol, _segment, active, _reason in identity_writes)
+    strategy._queue_resting_place(state, 2.90, slot="first")
+    assert strategy.drain_pending_intents() == []
+
+
+def test_unknown_recovery_refuses_an_account_without_fill_evidence() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "UNEXPECTED")
+    strategy.drain_webull_direct_intents()
+    strategy.update_position("UNEXPECTED", 2, held_qty=2)
+    assert state.flip_owner_fill_accounts == {PRIMARY}
+
+    strategy._set_flip_owner_unknown(state, reason="test_inconclusive_read")
+    _book(
+        strategy,
+        clock,
+        "UNEXPECTED",
+        _leg(WEBULL, "unexpected-webull-row"),
+    )
+
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_opportunity_id == opportunity
+    assert state.flip_owner_position_ids == {}
+    strategy._queue_resting_place(state, 2.90, slot="first")
+    assert strategy.drain_pending_intents() == []
+
+
+def test_empty_unknown_owner_state_clears_and_allows_a_first_rest() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = strategy.watchlist_state("EMPTYUNKNOWN")
+    state.bars.append(_bar(clock[0]))
+    strategy._set_flip_owner_unknown(
+        state,
+        reason="test_ownerless_unknown",
+        persist=False,
+    )
+
+    _book(strategy, clock, "EMPTYUNKNOWN")
+
+    assert state.flip_owner_phase == "idle"
+    assert state.flip_owner_opportunity_id == 0
+    strategy._queue_resting_place(state, 2.90, slot="first")
+    placements = strategy.drain_pending_intents()
+    assert len(placements) == 1
+    assert placements[0].metadata["cw_entry_slot"] == "first"
+
+
 def test_unknown_postflip_flat_owner_stays_consumed_until_the_sell_flip() -> None:
     strategy, clock, _identity_writes, _owner_writes = _strategy()
     state, opportunity = _place_first(strategy, clock, "CONSUMED")
