@@ -255,6 +255,257 @@ def test_dual_broker_fill_is_one_episode_and_waits_for_both_siblings_to_close() 
     assert state.flip_owner_phase == "idle"
 
 
+def test_tnon_position_book_waits_for_late_webull_fill_then_reconciles() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "TNON")
+    mirror = strategy.drain_webull_direct_intents()[0]
+
+    strategy.update_position("TNON", 2, held_qty=2)
+    _book(
+        strategy,
+        clock,
+        "TNON",
+        _leg(PRIMARY, "tnon-primary"),
+        _leg(WEBULL, "tnon-webull"),
+    )
+
+    assert state.flip_owner_phase == "provisional"
+    assert state.flip_owner_fill_accounts == {PRIMARY}
+    assert state.flip_owner_position_ids == {PRIMARY: "tnon-primary"}
+    assert strategy.flip_entry_observability()["cross_account_pending"] == 1
+
+    outcome = FanoutOutcome(
+        record_id=uuid4(),
+        created_at=datetime.now(UTC),
+        symbol="TNON",
+        segment_id=opportunity,
+        slot=mirror.metadata["fanout_slot"],
+        slot_id=mirror.metadata["fanout_slot_id"],
+        attempt_id="tnon-webull",
+        outcome="filled",
+        evidence_id="tnon-webull-fill",
+        broker_account_name=WEBULL,
+    )
+    assert strategy.apply_fanout_outcome(outcome) == "consumed"
+    _book(
+        strategy,
+        clock,
+        "TNON",
+        _leg(PRIMARY, "tnon-primary"),
+        _leg(WEBULL, "tnon-webull"),
+    )
+
+    assert state.flip_owner_phase == "provisional"
+    assert state.flip_owner_fill_accounts == {PRIMARY, WEBULL}
+    assert state.flip_owner_position_ids == {
+        PRIMARY: "tnon-primary",
+        WEBULL: "tnon-webull",
+    }
+
+
+def test_fill_arriving_after_unknown_is_recorded_and_recovers_the_open_episode() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "LATEWEBULL")
+    mirror = strategy.drain_webull_direct_intents()[0]
+    strategy.update_position("LATEWEBULL", 2, held_qty=2)
+    _book(strategy, clock, "LATEWEBULL", _leg(PRIMARY, "late-primary"))
+
+    clock[0] += 15_001
+    _book(
+        strategy,
+        clock,
+        "LATEWEBULL",
+        _leg(PRIMARY, "late-primary"),
+        _leg(WEBULL, "late-webull"),
+    )
+    assert state.flip_owner_phase == "unknown"
+
+    assert strategy.apply_fanout_outcome(
+        FanoutOutcome(
+            record_id=uuid4(),
+            created_at=datetime.now(UTC),
+            symbol="LATEWEBULL",
+            segment_id=opportunity,
+            slot=mirror.metadata["fanout_slot"],
+            slot_id=mirror.metadata["fanout_slot_id"],
+            attempt_id="late-webull",
+            outcome="filled",
+            evidence_id="late-webull-fill",
+            broker_account_name=WEBULL,
+        )
+    ) == "consumed"
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_fill_accounts == {PRIMARY, WEBULL}
+
+    _book(
+        strategy,
+        clock,
+        "LATEWEBULL",
+        _leg(PRIMARY, "late-primary"),
+        _leg(WEBULL, "late-webull"),
+    )
+    assert state.flip_owner_phase == "provisional"
+    assert state.flip_owner_position_ids == {
+        PRIMARY: "late-primary",
+        WEBULL: "late-webull",
+    }
+
+
+def test_unknown_preflip_owner_recovers_to_idle_after_late_fill_then_flat_book() -> None:
+    strategy, clock, identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "RECOVER")
+    mirror = strategy.drain_webull_direct_intents()[0]
+    strategy.update_position("RECOVER", 2, held_qty=2)
+    _book(
+        strategy,
+        clock,
+        "RECOVER",
+        _leg(PRIMARY, "recover-primary"),
+        _leg(WEBULL, "recover-webull"),
+    )
+    clock[0] += 15_001
+    _book(
+        strategy,
+        clock,
+        "RECOVER",
+        _leg(PRIMARY, "recover-primary"),
+        _leg(WEBULL, "recover-webull"),
+    )
+    assert state.flip_owner_phase == "unknown"
+
+    assert strategy.apply_fanout_outcome(
+        FanoutOutcome(
+            record_id=uuid4(),
+            created_at=datetime.now(UTC),
+            symbol="RECOVER",
+            segment_id=opportunity,
+            slot=mirror.metadata["fanout_slot"],
+            slot_id=mirror.metadata["fanout_slot_id"],
+            attempt_id="recover-webull",
+            outcome="filled",
+            evidence_id="recover-webull-fill",
+            broker_account_name=WEBULL,
+        )
+    ) == "consumed"
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_fill_accounts == {PRIMARY, WEBULL}
+    assert state.flip_owner_position_ids == {
+        PRIMARY: "recover-primary",
+        WEBULL: "recover-webull",
+    }
+
+    strategy.update_position("RECOVER", 0, held_qty=0)
+    _book(strategy, clock, "RECOVER")
+    assert state.flip_owner_phase == "idle"
+    assert state.flip_owner_opportunity_id == 0
+    assert ("RECOVER", opportunity, False, "unknown_preflip_owner_flat_after_settle") in identity_writes
+
+
+def test_unknown_preflip_flat_book_waits_for_fill_settlement_before_retiring() -> None:
+    strategy, clock, identity_writes, _owner_writes = _strategy()
+    state, opportunity = _place_first(strategy, clock, "SETTLING")
+    strategy.update_position("SETTLING", 2, held_qty=2)
+    _book(strategy, clock, "SETTLING", _leg(PRIMARY, "settling-row"))
+    assert state.flip_owner_position_ids == {PRIMARY: "settling-row"}
+
+    strategy._set_flip_owner_unknown(state, reason="test_inconclusive_read")
+    strategy.update_position("SETTLING", 0, held_qty=0)
+    clock[0] += 14_999
+    _book(strategy, clock, "SETTLING")
+
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_opportunity_id == opportunity
+    assert not any(not active for _symbol, _segment, active, _reason in identity_writes)
+    strategy._queue_resting_place(state, 2.90, slot="first")
+    assert strategy.drain_pending_intents() == []
+
+
+def test_unknown_recovery_refuses_an_account_without_fill_evidence() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "UNEXPECTED")
+    strategy.drain_webull_direct_intents()
+    strategy.update_position("UNEXPECTED", 2, held_qty=2)
+    assert state.flip_owner_fill_accounts == {PRIMARY}
+
+    strategy._set_flip_owner_unknown(state, reason="test_inconclusive_read")
+    _book(
+        strategy,
+        clock,
+        "UNEXPECTED",
+        _leg(WEBULL, "unexpected-webull-row"),
+    )
+
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_opportunity_id == opportunity
+    assert state.flip_owner_position_ids == {}
+    strategy._queue_resting_place(state, 2.90, slot="first")
+    assert strategy.drain_pending_intents() == []
+
+
+def test_empty_unknown_owner_state_clears_and_allows_a_first_rest() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = strategy.watchlist_state("EMPTYUNKNOWN")
+    state.bars.append(_bar(clock[0]))
+    strategy._set_flip_owner_unknown(
+        state,
+        reason="test_ownerless_unknown",
+        persist=False,
+    )
+
+    _book(strategy, clock, "EMPTYUNKNOWN")
+
+    assert state.flip_owner_phase == "idle"
+    assert state.flip_owner_opportunity_id == 0
+    strategy._queue_resting_place(state, 2.90, slot="first")
+    placements = strategy.drain_pending_intents()
+    assert len(placements) == 1
+    assert placements[0].metadata["cw_entry_slot"] == "first"
+
+
+def test_unknown_postflip_flat_owner_stays_consumed_until_the_sell_flip() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state, opportunity = _place_first(strategy, clock, "CONSUMED")
+    strategy.update_position("CONSUMED", 2, held_qty=2)
+    _book(strategy, clock, "CONSUMED", _leg(PRIMARY, "consumed-row"))
+    _buy_flip(strategy, state, clock)
+    assert state.flip_owner_phase == "bound"
+
+    strategy._set_flip_owner_unknown(state, reason="test_inconclusive_read")
+    strategy.update_position("CONSUMED", 0, held_qty=0)
+    clock[0] += 15_001
+    _book(strategy, clock, "CONSUMED")
+
+    assert state.flip_owner_phase == "bound"
+    assert state.flip_owner_opportunity_id == opportunity
+    strategy._queue_resting_place(state, 2.90, slot="first")
+    assert strategy.drain_pending_intents() == []
+
+    state.bars.append(_bar(clock[0] + 60_000))
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+    assert state.flip_owner_phase == "idle"
+
+
+def test_unknown_owner_refuses_a_later_position_outside_the_fill_episode() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state, opportunity = _place_first(strategy, clock, "LATER")
+    strategy.update_position("LATER", 2, held_qty=2)
+    strategy._set_flip_owner_unknown(state, reason="test_inconclusive_read")
+
+    clock[0] += 60_000
+    _book(
+        strategy,
+        clock,
+        "LATER",
+        _leg(PRIMARY, "later-position", entered_ms=clock[0]),
+    )
+
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_opportunity_id == opportunity
+    assert state.flip_owner_position_ids == {}
+    strategy._queue_resting_place(state, 2.90, slot="first")
+    assert strategy.drain_pending_intents() == []
+
+
 def test_webull_only_fill_consumes_the_flip_without_a_schwab_position() -> None:
     strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
     state, opportunity = _place_first(strategy, clock, "WONLY")
@@ -383,8 +634,26 @@ def test_position_row_without_matching_fill_evidence_is_not_adopted() -> None:
 
     _book(strategy, clock, "LATE", _leg(PRIMARY, "unattributed-row"))
 
+    assert state.flip_owner_phase == "resting"
+    assert state.flip_owner_position_ids == {}
+
+    clock[0] += 15_001
+    _book(strategy, clock, "LATE", _leg(PRIMARY, "unattributed-row"))
+
     assert state.flip_owner_phase == "unknown"
     assert state.flip_owner_position_ids == {}
+
+
+def test_live_session_reset_without_an_owner_keeps_the_symbol_idle() -> None:
+    strategy, clock, _identity_writes, owner_writes = _strategy()
+    state = strategy.watchlist_state("EMPTY")
+    state.bars.append(_bar(clock[0]))
+
+    strategy._apply_session_anchor_reset(state, clock[0])
+
+    assert state.flip_owner_phase == "idle"
+    assert state.flip_owner_opportunity_id == 0
+    assert owner_writes == []
 
 
 def test_sell_flip_with_unreadable_position_evidence_cannot_release_ownership() -> None:
