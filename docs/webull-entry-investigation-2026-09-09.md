@@ -1,7 +1,30 @@
 # Webull Entry Investigation - 2026-09-09
 
-Status captured at approximately 16:30 ET on 2026-09-09. This note preserves the
-baseline for comparison with the next live session. All times below are ET.
+Initial three-symbol status captured at approximately 16:30 ET on 2026-09-09.
+Expanded later that day with the seven-day census below. This note preserves
+both the incident detail and the canonical baseline for comparison with the
+next live session. All times below are ET.
+
+## Seven-day categorized census
+
+This is the canonical wider-window comparison for 2026-09-03 through
+2026-09-09 ET: seven calendar days containing four trading sessions. Reprices
+and retries are collapsed into logical producer episodes. The denominator is
+72/72 episodes. Local refusals and safety suppressions are separated from
+actual Webull venue rejections. This table supersedes the narrower three-symbol
+counts only for the wider-window category question; the incident-level evidence
+below remains the source for FTFT, SUNE, and YMAT.
+
+| Outcome | Category | Logical episodes | Raw evidence | Symbols | Meaning and next step |
+| --- | --- | ---: | ---: | --- | --- |
+| Filled | Webull entry filled | 34/72 | 34 fills | AEHL, BNC, CDTG, CHPT, FTFT, GELS, IMRN, MOBX, NUR, SUNE, YMAT | Control population; no rejection occurred. |
+| Blocked/rejected | Consumed entry slot | 21/72 | 25 suppression markers | AEHL, BNC, CDTG, CHPT, FTFT, GELS, IMRN, NUR, SUNE, YMAT | Our code suppressed these before creating another intent. RECLAIM1 should prevent most attempts earlier; retain the slot guard and measure the next session. |
+| Blocked/rejected | Webull position already held | 7/72 | 13 local refusal intents | YMAT | The OMS refused these before broker submission. RECLAIM1's account-neutral position gate should now refuse both legs earlier; retain the OMS collision guard. |
+| Blocked/rejected | Webull minimum order size | 3/72 | 13 venue rejections | MIMI | The only actual Webull venue-rejection category: Webull required 100 shares below $1 while the configured leg was one share. Do not auto-size; consider a pre-submit capability refusal only after the next-session comparison. |
+| Blocked/rejected | Ask past cross cap | 1/72 | 1 local refusal | AEHL | Local chase protection, not a Webull rejection. Keep the cap; no change is authorized from this census. |
+| **Blocked/rejected subtotal** | **All four causes** | **32/72** | **52 refusal/suppression records** | **11 symbols** | **Observe the first full session with RECLAIM1 enabled before deciding whether another fix is needed.** |
+| Accepted, unfilled | Submitted, then cancelled or expired | 6/72 | 6 final unfilled outcomes | BNC, FTFT, MOBX, NUR, SST, YMAT | Webull accepted these; they were repriced, cancelled, or remained unfilled. They are not broker rejections. |
+| **Total** | **All categorized Webull producer episodes** | **72/72** |  |  | **34 filled + 32 blocked/rejected + 6 accepted but unfilled = 72.** |
 
 ## Scope and accounting
 
