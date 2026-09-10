@@ -240,12 +240,14 @@ def test_release_probes_end_at_the_existing_v2_retry_bound(monkeypatch) -> None:
     clock = {"now": 100.0}
     monkeypatch.setattr(svc.time, "monotonic", lambda: clock["now"])
 
-    for _ in range(s._EXIT_RESERVATION_MAX_ATTEMPTS + 3):
+    assert s._EXIT_RESERVATION_RETRY_SECONDS == 10.0
+    assert s._EXIT_RESERVATION_MAX_ATTEMPTS == 8
+    for _ in range(11):
         assert _release(s).outcome == "reserved"
-        clock["now"] += s._EXIT_RESERVATION_RETRY_SECONDS
+        clock["now"] += 10.0
 
     key = ("live:orb", "XHG")
-    assert len(adapter.cancelled) == s._EXIT_RESERVATION_MAX_ATTEMPTS
+    assert len(adapter.cancelled) == 8
     assert s._exit_reservation_terminal[key] == "reserved"
 
 
