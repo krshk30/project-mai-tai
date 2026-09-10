@@ -616,3 +616,131 @@ def test_two_separate_positions_on_one_symbol_both_survive():
 
     assert len(cycles) == 2, "a real second position on the same symbol was swallowed"
     assert {c.entry_price for c in cycles} == {4.83, 5.20}
+
+
+# ---------------------------------------------------------------------------
+# ⛔⭐⭐ THE EXIT SUMMARY MUST NAME THE MECHANISM, NOT THE ORDER STATUS.
+# Operator 2026-09-09, looking at the Completed Positions table: "the exit summary says just close.
+# I don't know whether that is the right close ... you have a hard stop or we reach the positive
+# result, our ATR exit - those exits I need to know."
+# Every row read "Close" because the exit event's `reason` arrived empty and the builder fell back
+# to `intent_type.upper()`. On that day FOUR distinct mechanisms rendered identically:
+#   11 OCO bracket, 8 ATR flip, 3 confirmation, 1 floor.
+# ---------------------------------------------------------------------------
+
+from project_mai_tai.trade_episodes import (  # noqa: E402
+    classify_exit_reason,
+    summarize_exit_events,
+)
+
+
+def test_the_ocoexit_marker_is_authoritative_over_the_reason_text() -> None:
+    """⛔ The `-ocoexit-` suffix is the ONLY attributable exit marker we have: a broker OCO leg
+    carries the ENTRY's client_order_id, while a software close mints a fresh `-close-<uuid>` with
+    no link back. The reason text on an OCO row is the ENTRY's strategy string ("ATR Flip
+    CW-v2-resting") and would otherwise be misread as an ATR flip exit."""
+    row = {
+        "client_order_id": "schwab_1m_v2-FTFT-open-f2dd2b9d46cb-ocoexit-68317638",
+        "reason": "schwab_1m_v2 ATR Flip CW-v2-resting",
+    }
+    assert classify_exit_reason(row) == "OCO bracket (target/stop)"
+
+
+def test_each_software_exit_mechanism_is_named(  # real 2026-09-09 rows
+) -> None:
+    cases = {
+        "oms_v2_managed_exit:CW_FLIP": "ATR flip exit",
+        "oms_v2_managed_exit:CONFIRMATION_EXIT": "Confirmation exit",
+        "oms_v2_managed_exit:CW_FLOOR": "Floor exit",
+        "oms_v2_managed_exit:CW_HARD_STOP": "Hard stop",
+    }
+    for reason, expected in cases.items():
+        row = {"client_order_id": "schwab_1m_v2-FTFT-close-c9cd251dd152", "reason": reason}
+        assert classify_exit_reason(row) == expected, reason
+
+
+def test_an_unattributable_exit_returns_EMPTY_rather_than_a_guess() -> None:
+    """⛔ A wrong reason stops the investigation that a blank one starts. When we cannot tell, the
+    classifier must say nothing and let the caller fall back - never invent a plausible mechanism."""
+    assert classify_exit_reason({"client_order_id": "x-close-1", "reason": ""}) == ""
+    assert classify_exit_reason({"client_order_id": "", "reason": "{'orderLegCollection': []}"}) == ""
+
+
+def test_the_summary_no_longer_collapses_every_exit_to_Close() -> None:
+    """THE REGRESSION CONTROL. Before the fix every one of these produced 'Close'."""
+    seen = {
+        summarize_exit_events([{"qty": 2, "price": 1.0, "reason": r, "intent_type": "close"}], 2)
+        for r in ("OCO bracket (target/stop)", "ATR flip exit", "Confirmation exit", "Floor exit")
+    }
+    assert seen == {"OCO bracket (target/stop)", "ATR flip exit", "Confirmation exit", "Floor exit"}
+    assert "Close" not in seen, "a status is not a reason"
+
+
+def test_a_classified_label_is_not_title_cased_into_nonsense() -> None:
+    """`.title()` turns 'OCO bracket (target/stop)' into 'Oco Bracket (Target/Stop)'. Raw machine
+    reasons still get titled; classified labels are already operator-facing."""
+    assert summarize_exit_events(
+        [{"qty": 1, "price": 1.0, "reason": "OCO bracket (target/stop)", "intent_type": "close"}], 1
+    ) == "OCO bracket (target/stop)"
+    assert summarize_exit_events(
+        [{"qty": 1, "price": 1.0, "reason": "SOME_RAW_REASON", "intent_type": "close"}], 1
+    ) == "Some Raw Reason"
+
+
+def _v2_cycle(*, exit_coid: str, exit_reason: str):
+    """The real 2026-09-09 FTFT shape, driven through the WHOLE pipeline."""
+    return collect_completed_trade_cycles(
+        strategy_code="schwab_1m_v2",
+        broker_account_name="live:schwab_1m_v2",
+        recent_orders=[
+            {
+                "symbol": "FTFT", "side": "buy", "intent_type": "open", "quantity": "2",
+                "price": "2.6195", "status": "filled",
+                "reason": "schwab_1m_v2 ATR Flip CW-v2-resting",
+                "client_order_id": "schwab_1m_v2-FTFT-open-f2dd2b9d46cb",
+                "path": "RESTING", "updated_at": "2026-09-09 01:31:17 PM ET",
+            },
+            {
+                "symbol": "FTFT", "side": "sell", "intent_type": "close", "quantity": "2",
+                "price": "2.41", "status": "filled", "reason": exit_reason,
+                "client_order_id": exit_coid,
+                "path": "", "updated_at": "2026-09-09 01:59:22 PM ET",
+            },
+        ],
+        recent_fills=[
+            {"symbol": "FTFT", "side": "buy", "quantity": "2", "price": "2.6195",
+             "filled_at": "2026-09-09 01:31:17 PM ET"},
+            {"symbol": "FTFT", "side": "sell", "quantity": "2", "price": "2.41",
+             "filled_at": "2026-09-09 01:59:22 PM ET"},
+        ],
+        closed_today=[],
+    )
+
+
+def test_END_TO_END_the_rendered_summary_names_the_mechanism_not_the_status() -> None:
+    """⛔⭐⭐ THE CONTROL THAT ACTUALLY BITES.
+
+    My first pass tested `classify_exit_reason` in isolation and every test stayed green when the
+    fix was reverted at its call site - the classifier was correct and simply never reached. This
+    drives `collect_completed_trade_cycles` end to end, which is the only thing that proves the
+    operator's table changed. Reverting the wire-up turns THIS red.
+    """
+    oco = _v2_cycle(
+        exit_coid="schwab_1m_v2-FTFT-open-f2dd2b9d46cb-ocoexit-68317638",
+        exit_reason="schwab_1m_v2 ATR Flip CW-v2-resting",
+    )
+    assert len(oco) == 1
+    assert oco[0].summary == "OCO bracket (target/stop)"
+
+    flip = _v2_cycle(
+        exit_coid="schwab_1m_v2-FTFT-close-c9cd251dd152",
+        exit_reason="oms_v2_managed_exit:CW_FLIP",
+    )
+    assert len(flip) == 1
+    assert flip[0].summary == "ATR flip exit"
+
+    # The two mechanisms must be DISTINGUISHABLE - that is the whole point.
+    assert oco[0].summary != flip[0].summary
+    for cycle in (*oco, *flip):
+        assert cycle.summary != "Close", "a status is not a reason"
+        assert round(cycle.pnl, 2) == -0.42, "the P&L that already verified must not move"

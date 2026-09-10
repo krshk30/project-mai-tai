@@ -140,6 +140,19 @@ def collect_completed_trade_cycles(
             candidate_path = str(trade["path"] or "").strip()
             if candidate_path and is_generic_path(covering.get("path")):
                 covering["path"] = candidate_path
+            # ⛔⭐⭐ THE EXIT REASON IS THE OTHER THING ONLY THE ORDER PASS CARRIES.
+            # `recent_fills` rows have no `client_order_id` and no `reason`, so the fills pass -
+            # which WINS, because it is the priced one - can only ever derive "Close" from the
+            # side. The order row is the only place the `-ocoexit-` marker and the
+            # `oms_v2_managed_exit:*` text exist. Enriching `path` but not `summary` is why the
+            # operator's Completed Positions table read "Close" on every row on 2026-09-09 while
+            # four distinct mechanisms were firing underneath it.
+            # ⇒ Same contract as `path`: fill in what the survivor is missing, never overwrite a
+            # summary that already names a mechanism.
+            candidate_summary = summarize_exit_events(trade["exit_events"], initial_qty)
+            if candidate_summary and not is_generic_summary(candidate_summary):
+                if is_generic_summary(str(covering.get("summary", "") or "")):
+                    covering["summary"] = candidate_summary
             if not entry_price and covering.get("entry_price"):
                 pass  # the priced row already wins; nothing to take from an unpriced duplicate
             return
@@ -254,7 +267,10 @@ def collect_completed_trade_cycles(
                     {
                         "qty": applied_qty,
                         "price": event_price,
-                        "reason": reason.upper() or intent_type.upper(),
+                        # ⛔ Classified mechanism FIRST; the raw text is only the fallback and
+                        # `intent_type.upper()` is the last resort - that last resort is what
+                        # printed "Close" on every row.
+                        "reason": classify_exit_reason(item) or reason.upper() or intent_type.upper(),
                         "intent_type": intent_type,
                     }
                 )
@@ -587,6 +603,69 @@ def looks_like_broker_payload_text(value: Any) -> bool:
     return any(marker in lower_text for marker in broker_markers)
 
 
+# ⛔⭐⭐ THE EXIT SUMMARY MUST NAME THE MECHANISM, NOT THE ORDER STATUS.
+# Operator 2026-09-09: "the exit summary says just close. I don't know whether that is the right
+# close ... you have a hard stop or we reach the positive result, our ATR exit - those exits I need
+# to know." Every row rendered "Close" because the exit event's `reason` arrived empty and the code
+# fell back to `intent_type.upper()`, which is literally "CLOSE". A status is not a reason: on
+# 2026-09-09 four DIFFERENT mechanisms all rendered identically as "Close" -
+#   11 OCO bracket (broker +5% target / -8% stop) - 8 ATR flip - 3 confirmation - 1 floor.
+# ⛔ The `-ocoexit-` suffix is the ONLY attributable exit marker we have: the broker OCO legs carry
+# the entry's own client_order_id, while a software close mints a fresh `-close-<uuid>` with no link
+# back. So the coid is checked FIRST and is authoritative; the reason text is the fallback.
+_EXIT_REASON_LABELS: tuple[tuple[str, str], ...] = (
+    ("CW_FLIP", "ATR flip exit"),
+    ("CONFIRMATION_EXIT", "Confirmation exit"),
+    ("CW_HARD_STOP", "Hard stop"),
+    ("CW_FLOOR", "Floor exit"),
+    ("CW_TARGET", "Target reached"),
+    ("SCALE_", "Scale-out"),
+    ("DB_RECONCILE", "Reconciled"),
+    ("MANUAL", "Manual close"),
+)
+
+
+_CLASSIFIED_EXIT_LABELS: frozenset[str] = frozenset(
+    {label for _needle, label in _EXIT_REASON_LABELS} | {"OCO bracket (target/stop)"}
+)
+
+
+def _present_exit_reason(raw: str) -> str:
+    """Title-case a RAW machine reason, but leave an already-classified label alone.
+
+    ⛔ `.title()` on "OCO bracket (target/stop)" yields "Oco Bracket (Target/Stop)" and on
+    "ATR flip exit" yields "Atr Flip Exit". The classifier's output is already operator-facing.
+    """
+
+    text = str(raw or "").strip()
+    if text in _CLASSIFIED_EXIT_LABELS:
+        return text
+    return text.replace("_", " ").title()
+
+
+def classify_exit_reason(item: dict[str, Any]) -> str:
+    """Human label for WHY a position closed. Empty string when we genuinely cannot tell.
+
+    ⛔ Returns "" rather than a guess. An unattributable exit must READ as unattributable -
+    inventing a plausible mechanism is worse than admitting we do not know, because a wrong
+    reason stops the investigation that a blank one starts.
+    """
+
+    coid = str(item.get("client_order_id", "") or "")
+    if "-ocoexit-" in coid:
+        # The broker's own OCO pair fired. Which leg it was is NOT recorded on the order, so do
+        # not claim "target" or "stop" here - the P&L sign next to it already tells the operator.
+        return "OCO bracket (target/stop)"
+    reason = str(item.get("reason", "") or "").strip()
+    if looks_like_broker_payload_text(reason):
+        return ""
+    upper = reason.upper()
+    for needle, label in _EXIT_REASON_LABELS:
+        if needle in upper:
+            return label
+    return ""
+
+
 def summarize_exit_events(exit_events: list[dict[str, Any]], initial_qty: float) -> str:
     if not exit_events:
         return "Completed"
@@ -597,13 +676,13 @@ def summarize_exit_events(exit_events: list[dict[str, Any]], initial_qty: float)
         close_reason_raw = str(close_events[-1].get("reason", "") or "final close")
         if looks_like_broker_payload_text(close_reason_raw):
             close_reason_raw = "final close"
-        close_reason = close_reason_raw.replace("_", " ").title()
+        close_reason = _present_exit_reason(close_reason_raw)
         return f"Scaled out {format_qty(scale_qty)}, then closed {format_qty(close_qty)} on {close_reason}"
     if close_events:
         close_reason_raw = str(close_events[-1].get("reason", "") or "final close")
         if looks_like_broker_payload_text(close_reason_raw):
             close_reason_raw = "final close"
-        close_reason = close_reason_raw.replace("_", " ").title()
+        close_reason = _present_exit_reason(close_reason_raw)
         return close_reason
     if scale_qty >= initial_qty - 0.0001:
         return f"Fully scaled out in {len(exit_events)} fills"
