@@ -22,6 +22,10 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
+import pytest
+
+from project_mai_tai.broker_adapters.protocols import ExitPairReleaseResult
+from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.oms import service as svc
 
@@ -54,6 +58,7 @@ class _Adapter:
 
     def __init__(self, *, has_capability: bool = True, reports=None) -> None:
         self.cancelled: list[tuple[str, str]] = []
+        self.has_capability = has_capability
         self.reports = reports or [
             SimpleNamespace(event_type="cancelled", reason="confirmed"),
             SimpleNamespace(event_type="cancelled", reason="confirmed"),
@@ -65,6 +70,20 @@ class _Adapter:
     async def cancel_exit_pair(self, *, broker_account_name, symbol, base_client_order_id):
         self.cancelled.append((symbol, base_client_order_id))
         return self.reports
+
+    async def release_exit_pair_for_close(
+        self, *, broker_account_name, symbol, base_client_order_id
+    ):
+        if not self.has_capability:
+            return ExitPairReleaseResult(outcome="unsupported")
+        self.cancelled.append((symbol, base_client_order_id))
+        reports = tuple(self.reports)
+        outcome = (
+            "released"
+            if len(reports) == 2 and all(report.event_type == "cancelled" for report in reports)
+            else "reserved"
+        )
+        return ExitPairReleaseResult(outcome=outcome, reports=reports)
 
 
 def _svc(adapter, *, base: str = "protect-base") -> svc.OmsRiskService:
@@ -78,16 +97,20 @@ def _svc(adapter, *, base: str = "protect-base") -> svc.OmsRiskService:
     return s
 
 
-def _release(s, symbol: str = "XHG") -> bool:
+def _release(
+    s, symbol: str = "XHG", *, terminal_after_attempt: bool = False
+) -> ExitPairReleaseResult:
     return asyncio.run(s._release_exit_reservation_before_close(
-        session=object(), broker_account_name="live:orb", symbol=symbol))
+        session=object(), broker_account_name="live:orb", symbol=symbol,
+        terminal_after_attempt=terminal_after_attempt,
+    ))
 
 
 def test_it_CANCELS_the_resting_pair_before_the_close(caplog) -> None:
     """Known-good control: two confirmed legs fire the success marker and stay quiet on failure."""
     caplog.set_level(logging.INFO)
     a = _Adapter()
-    assert _release(_svc(a)) is True
+    assert _release(_svc(a)).outcome == "released"
     assert a.cancelled == [("XHG", "protect-base")]
     text = caplog.text
     assert "[OMS-CANCEL-PAIR-REQUEST]" in text
@@ -105,7 +128,7 @@ def test_forced_HTTP_417_never_emits_the_success_marker(caplog) -> None:
         SimpleNamespace(event_type="rejected", reason="Webull rejected (http 417)"),
     ]
     s = _svc(_Adapter(reports=rejected))
-    assert _release(s) is False
+    assert _release(s).outcome == "reserved"
     assert ("live:orb", "XHG") not in s._exit_reservation_released
     text = caplog.text
     assert "[OMS-CANCEL-PAIR-UNCERTAIN]" in text
@@ -120,14 +143,13 @@ def test_one_confirmed_and_one_refused_is_NOT_a_release(caplog) -> None:
         SimpleNamespace(event_type="cancelled", reason="confirmed"),
         SimpleNamespace(event_type="rejected", reason="http 417"),
     ]
-    assert _release(_svc(_Adapter(reports=reports))) is False
+    assert _release(_svc(_Adapter(reports=reports))).outcome == "reserved"
     assert "confirmed=1 refused=1 release_confirmed=0" in caplog.text
     assert "[OMS-EXIT-RELEASE]" not in caplog.text
 
 
-def test_it_cancels_ONCE_PER_EPISODE_not_once_per_quote_tick() -> None:
-    """⛔ THE FIX MUST NOT BECOME THE BUG. The ladder re-evaluates every quote tick — 48 times in
-    five minutes for XHG. Re-cancelling each tick would just swap one storm for another."""
+def test_a_confirmed_release_is_reused_for_the_episode() -> None:
+    """The ladder re-evaluates every quote tick; a confirmed release must not be repeated."""
     a = _Adapter()
     s = _svc(a)
     for _ in range(25):
@@ -153,19 +175,30 @@ def test_an_adapter_with_NO_capability_changes_nothing() -> None:
     released (claiming a release we never performed would be worse than doing nothing)."""
     a = _Adapter(has_capability=False)
     s = _svc(a)
-    s.broker_adapter = SimpleNamespace()   # no cancel_exit_pair at all
-
-    async def _no_cap(**kw):
-        return []
-    s.broker_adapter.cancel_exit_pair = _no_cap
-    assert _release(s) is False
+    assert _release(s).outcome == "unsupported"
     assert ("live:orb", "XHG") not in s._exit_reservation_released
+
+
+def test_the_router_forwards_the_post_cancel_broker_state() -> None:
+    adapter = _Adapter()
+    router = RoutingBrokerAdapter(
+        default_provider="webull",
+        provider_by_account={"live:orb": "webull"},
+        factories_by_provider={"webull": lambda: adapter},
+    )
+
+    result = asyncio.run(router.release_exit_pair_for_close(
+        broker_account_name="live:orb", symbol="XHG", base_client_order_id="protect-base"
+    ))
+
+    assert result.outcome == "released"
+    assert adapter.cancelled == [("XHG", "protect-base")]
 
 
 def test_no_known_base_and_no_entry_order_cancels_NOTHING() -> None:
     a = _Adapter()
     s = _svc(a, base="")
-    assert _release(s) is False
+    assert _release(s).outcome == "unsupported"
     assert a.cancelled == []
 
 
@@ -175,20 +208,79 @@ def test_it_falls_back_to_the_ENTRY_coid_when_the_attach_id_is_forgotten() -> No
     a = _Adapter()
     s = _svc(a, base="")
     s._find_oco_entry_order = lambda *a_, **k: SimpleNamespace(client_order_id="entry-coid")
-    assert _release(s) is True
+    assert _release(s).outcome == "released"
     assert a.cancelled == [("XHG", "entry-coid")]
 
 
-def test_a_RAISING_cancel_never_blocks_the_close() -> None:
-    """⛔ The close is protection. A failed release must degrade to today's behaviour — a possibly
-    refused sell — never to NO sell at all."""
+def test_a_RAISING_release_is_unanswerable_and_never_claimed_clear() -> None:
+    """Unknown broker state cannot authorize a sell against potentially reserved shares."""
     class _Boom:
-        async def cancel_exit_pair(self, **kw):
+        async def release_exit_pair_for_close(self, **kw):
             raise RuntimeError("network")
 
     s = _svc(_Boom())
-    assert _release(s) is False           # returned, did not raise
+    assert _release(s).outcome == "unanswerable"
     assert ("live:orb", "XHG") not in s._exit_reservation_released
+
+
+def test_throttle_preserves_unanswerable_instead_of_claiming_protection_survived() -> None:
+    class _Boom:
+        async def release_exit_pair_for_close(self, **kw):
+            raise RuntimeError("network")
+
+    s = _svc(_Boom())
+    assert _release(s).outcome == "unanswerable"
+    assert _release(s).outcome == "unanswerable"
+
+
+def test_release_probes_end_at_the_existing_v2_retry_bound(monkeypatch) -> None:
+    reports = [SimpleNamespace(event_type="rejected", reason="still working")]
+    adapter = _Adapter(reports=reports)
+    s = _svc(adapter)
+    clock = {"now": 100.0}
+    monkeypatch.setattr(svc.time, "monotonic", lambda: clock["now"])
+
+    assert s._EXIT_RESERVATION_RETRY_SECONDS == 10.0
+    assert s._EXIT_RESERVATION_MAX_ATTEMPTS == 8
+    for _ in range(11):
+        assert _release(s).outcome == "reserved"
+        clock["now"] += 10.0
+
+    key = ("live:orb", "XHG")
+    assert len(adapter.cancelled) == 8
+    assert s._exit_reservation_terminal[key] == "reserved"
+
+
+def test_session_end_attempt_enters_the_operator_owned_terminal_state() -> None:
+    reports = [SimpleNamespace(event_type="rejected", reason="still working")]
+    adapter = _Adapter(reports=reports)
+    s = _svc(adapter)
+
+    assert _release(s, terminal_after_attempt=True).outcome == "reserved"
+
+    key = ("live:orb", "XHG")
+    assert s._exit_reservation_attempts[key] == 1
+    assert s._exit_reservation_terminal[key] == "reserved"
+    assert len(adapter.cancelled) == 1
+
+
+@pytest.mark.parametrize(
+    ("reason", "protective"),
+    [
+        ("oms_v2_managed_exit:CONFIRMATION_EXIT", True),
+        ("oms_v2_managed_exit:CW_FLOOR", True),
+        ("oms_v2_managed_exit:CW_HARD_STOP", True),
+        ("oms_v2_managed_exit:CW_FLIP", True),
+        ("oms_v2_managed_exit:HARD_STOP", True),
+        ("oms_v2_managed_exit:FLOOR_BREACH", True),
+        ("V2_EOD_CANCEL_REEXIT", True),
+        ("V2_OVERNIGHT_FLATTEN", True),
+        ("oms_v2_managed_exit:CW_TARGET", False),
+        ("oms_v2_managed_exit:SCALE_PCT2", False),
+    ],
+)
+def test_protective_exit_classification_is_explicit(reason: str, protective: bool) -> None:
+    assert svc.OmsRiskService._is_protective_v2_exit(reason) is protective
 
 
 # ------------------------------------------------- re-protect what the release uncovered

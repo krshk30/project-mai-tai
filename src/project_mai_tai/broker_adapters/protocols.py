@@ -58,6 +58,16 @@ class ExecutionReport:
 
 
 @dataclass(frozen=True)
+class ExitPairReleaseResult:
+    """Authoritative broker outcome after releasing an addressable exit pair."""
+
+    outcome: Literal[
+        "released", "resolved_by_fill", "reserved", "unanswerable", "unsupported"
+    ]
+    reports: tuple[ExecutionReport, ...] = ()
+
+
+@dataclass(frozen=True)
 class BrokerPositionSnapshot:
     broker_account_name: str
     symbol: str

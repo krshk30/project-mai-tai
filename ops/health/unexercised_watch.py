@@ -333,15 +333,20 @@ def page(title: str, body: str) -> bool:
 
 
 def _inc1_open_incidents() -> list[dict[str, str]]:
-    """Read the exact open incident emitted when a released bracket cannot be replaced."""
+    """Read open incidents from the one proven uncovered-position paging route."""
     rows = _psql(
         "select json_build_object("
         "'id', id::text, 'title', title, 'opened_at', opened_at, "
         "'account', payload->>'broker_account_name', 'symbol', payload->>'symbol', "
         "'managed_row_id', payload->>'managed_row_id', "
-        "'close_outcome', payload->>'close_outcome')::text "
+        "'close_outcome', payload->>'close_outcome', "
+        "'source', payload->>'source', 'release_outcome', payload->>'release_outcome', "
+        "'risk_state', payload->>'risk_state', 'exit_action', payload->>'exit_action', "
+        "'attempts', payload->>'attempts', "
+        "'max_attempts', payload->>'max_attempts', 'terminal', payload->>'terminal')::text "
         "from system_incidents where status != 'closed' "
-        "and payload->>'source'='oms_v2_cw_flip_uncovered' "
+        "and payload->>'source' in "
+        "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved') "
         "order by opened_at, id"
     )
     incidents: list[dict[str, str]] = []
@@ -375,7 +380,7 @@ def _run_inc1_pager_unlocked(
         delivered = no_page or bool(query_state.get("delivered", False))
         if not delivered and page(
             "CANNOT TELL INC1 -- uncovered-position pager is blind",
-            "INC1 could not read open oms_v2_cw_flip_uncovered incidents.\n"
+            "INC1 could not read open uncovered-position incidents.\n"
             f"{detail}\nThis is not evidence that every live position is protected.",
         ):
             state[INC1_QUERY_META_KEY]["delivered"] = True
@@ -409,15 +414,36 @@ def _run_inc1_pager_unlocked(
             title = incident.get("title") or (
                 f"CW flip UNCOVERED: {incident.get('symbol') or 'UNKNOWN'}; close or protect now"
             )
-            body = (
-                "INC1: native protection was cancelled, but the replacement close failed.\n"
-                f"account={incident.get('account') or 'UNKNOWN'} "
-                f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
-                f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'}\n"
-                f"close_outcome={incident.get('close_outcome') or 'UNKNOWN'} "
-                f"opened_at={incident.get('opened_at') or 'UNKNOWN'}\n"
-                "The position may be unprotected. Close it or restore protection now."
-            )
+            if incident.get("source") == "oms_v2_exit_release_unresolved":
+                risk_state = incident.get("risk_state") or "UNKNOWN"
+                risk_text = (
+                    "The exit pair is confirmed to remain protective."
+                    if risk_state == "protection_confirmed"
+                    else "The exit-pair state is unreadable after a cancellation attempt; the "
+                    "position may be unprotected."
+                )
+                body = (
+                    f"INC1: {risk_text}\n"
+                    f"account={incident.get('account') or 'UNKNOWN'} "
+                    f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
+                    f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'}\n"
+                    f"release_outcome={incident.get('release_outcome') or 'UNKNOWN'} "
+                    f"exit_action={incident.get('exit_action') or 'UNKNOWN'} "
+                    f"attempts={incident.get('attempts') or '0'}/"
+                    f"{incident.get('max_attempts') or 'UNKNOWN'} "
+                    f"terminal={incident.get('terminal') or 'false'}\n"
+                    "Use the existing position/protection runbook; do not assume flat."
+                )
+            else:
+                body = (
+                    "INC1: native protection was cancelled, but the replacement close failed.\n"
+                    f"account={incident.get('account') or 'UNKNOWN'} "
+                    f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
+                    f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'}\n"
+                    f"close_outcome={incident.get('close_outcome') or 'UNKNOWN'} "
+                    f"opened_at={incident.get('opened_at') or 'UNKNOWN'}\n"
+                    "The position may be unprotected. Close it or restore protection now."
+                )
             pending.append((incident_id, title, body))
 
     # Use the watcher's proven ordering: durable pending state first, delivery second.
@@ -507,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--inc1",
         action="store_true",
-        help="page open oms_v2_cw_flip_uncovered incidents using an independent state file",
+        help="page open INC1 uncovered-position incidents using an independent state file",
     )
     ap.add_argument("--state")
     ap.add_argument("--status")

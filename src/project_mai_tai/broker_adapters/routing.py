@@ -6,6 +6,7 @@ from project_mai_tai.broker_adapters.protocols import (
     BrokerAdapter,
     BrokerPositionSnapshot,
     ExecutionReport,
+    ExitPairReleaseResult,
     OrderRequest,
 )
 
@@ -108,6 +109,20 @@ class RoutingBrokerAdapter:
         fn = getattr(adapter, "cancel_exit_pair", None)
         if fn is None:
             return []
+        return await fn(
+            broker_account_name=broker_account_name,
+            symbol=symbol,
+            base_client_order_id=base_client_order_id,
+        )
+
+    async def release_exit_pair_for_close(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str
+    ) -> ExitPairReleaseResult:
+        """Route the broker-state reconciliation used before a software close."""
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "release_exit_pair_for_close", None)
+        if fn is None:
+            return ExitPairReleaseResult(outcome="unsupported")
         return await fn(
             broker_account_name=broker_account_name,
             symbol=symbol,
