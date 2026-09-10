@@ -38,6 +38,8 @@ def test_orb_environment_builder_excludes_broker_credentials_and_enables_observa
                 "MAI_TAI_ORB_PAPER_STOP_PCT=99",
                 "MAI_TAI_ORB_PAPER_MIN_BREAK_BODY_PCT=99",
                 "MAI_TAI_ORB_PAPER_ATR_EXIT_ENABLED=false",
+                "MAI_TAI_ORB_PAPER_ATR_ENTRY_GATE_ENABLED=true",
+                "MAI_TAI_ORB_PAPER_FOUR_RED_DELAY_ENABLED=true",
                 "MAI_TAI_ORB_WINDOW_FLATTEN_ENABLED=true",
                 "MAI_TAI_ORB_BROKER_ACCOUNT_NAME=live:orb",
                 "MAI_TAI_ORB_BROKER_PROVIDER=webull",
@@ -69,6 +71,8 @@ def test_orb_environment_builder_excludes_broker_credentials_and_enables_observa
     assert rendered.count("MAI_TAI_ORB_PAPER_STOP_PCT=8.0") == 1
     assert rendered.count("MAI_TAI_ORB_PAPER_MIN_BREAK_BODY_PCT=45.0") == 1
     assert rendered.count("MAI_TAI_ORB_PAPER_ATR_EXIT_ENABLED=true") == 1
+    assert rendered.count("MAI_TAI_ORB_PAPER_ATR_ENTRY_GATE_ENABLED=true") == 1
+    assert rendered.count("MAI_TAI_ORB_PAPER_FOUR_RED_DELAY_ENABLED=true") == 1
     assert rendered.count("MAI_TAI_ORB_WINDOW_FLATTEN_ENABLED=false") == 1
     assert "must-not-cross" not in rendered
     assert "MAI_TAI_OMS_ADAPTER" not in rendered

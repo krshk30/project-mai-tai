@@ -215,6 +215,10 @@ class Settings(BaseSettings):
     orb_paper_stop_pct: float = 8.0
     orb_paper_min_break_body_pct: float = 45.0
     orb_paper_atr_exit_enabled: bool = True
+    # Independent paper-entry gates. They default off so each operator-approved
+    # rule can be enabled and rolled back without changing the lifecycle itself.
+    orb_paper_atr_entry_gate_enabled: bool = False
+    orb_paper_four_red_delay_enabled: bool = False
     # P0.6 WINDOW FLATTEN (docs: P0.6-eod-flatten-design). ORB trades 09:30-10:00. AFTER 10:00 IT
     # SHOULD BE FLAT -- that is the rule, not a safety net. This enforces it.
     #
