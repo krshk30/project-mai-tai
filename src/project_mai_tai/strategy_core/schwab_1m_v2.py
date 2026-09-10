@@ -4694,7 +4694,8 @@ class SchwabV2Strategy:
             # reclaims use -- so any first-vs-reclaim split built on it was wrong.
             "cw_entry_n": str(entry_n),
             # Economic composition slot, deliberately separate from order style. The reclaim
-            # implementation can rest at the broker and therefore also carries resting_entry=true.
+            # implementation can rest at the broker, so producer identity -- not `resting_entry`
+            # -- distinguishes the first opportunity from reclaim on this fan-out leg.
             "cw_entry_slot": resolved_entry_slot,
             "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
             **identity,
@@ -5453,6 +5454,7 @@ class SchwabV2IntentEmitter:
                         "broker_account_name": entry.broker_account_name,
                         "source_order_id": str(entry.order_id),
                         "source_fill_id": str(entry.fill_id),
+                        "fanout_slot_id": entry.fanout_slot_id,
                         "broker_fill_id": entry.broker_fill_id,
                         "broker_order_id": entry.broker_order_id,
                         "filled_at": entry.filled_at.isoformat(),

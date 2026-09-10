@@ -55,6 +55,7 @@ from project_mai_tai.confirmation_exit import (
     ConfirmationEvaluation,
     ConfirmationExitTracker,
     confirmation_bar_start_ms,
+    confirmation_discovery_census,
     is_first_slot_resting,
 )
 from project_mai_tai.db.session import build_timed_session_factory
@@ -114,6 +115,12 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
 logger = logging.getLogger(__name__)
 
 INTERVAL_SECS = 60
+
+
+class ConfirmationDiscoveryConfigurationError(RuntimeError):
+    """Account-neutral confirmation discovery cannot produce complete evidence."""
+
+
 # Fix (b): number of persisted 60s bars to replay into the strategy buffer on a
 # symbol's cold-start. >= the 135-bar MACD settling with headroom, and bounded so
 # the seed + early live bars sit comfortably under the strategy's deque(maxlen=300).
@@ -400,6 +407,7 @@ class SchwabV2BotService:
         self._confirmation_evaluated = 0
         self._confirmation_fired = 0
         self._confirmation_long = 0
+        self._confirmation_discovery_signature: tuple[object, ...] | None = None
         self._last_data_flow: str | None = None
         self._data_health: dict[str, object] = {
             "status": "starting",
@@ -1157,9 +1165,25 @@ class SchwabV2BotService:
 
     def _load_confirmation_entries(self) -> list[ConfirmationEntry]:
         """Read today's authoritative primary fills; never infer an entry from bars."""
+        account_neutral = self._confirmation_account_neutral_discovery_enabled()
+        configuration_error = self._confirmation_discovery_configuration_error()
+        if configuration_error is not None:
+            raise ConfirmationDiscoveryConfigurationError(configuration_error)
         if self.session_factory is None:
             return []
         session_start = _current_scanner_session_start_utc()
+        account_filters = [
+            BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name,
+            BrokerAccount.provider == "schwab",
+        ]
+        if account_neutral:
+            account_names = [self.settings.strategy_schwab_1m_v2_account_name]
+            webull_account = str(
+                getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+            ).strip()
+            if webull_account:
+                account_names.append(webull_account)
+            account_filters = [BrokerAccount.name.in_(tuple(dict.fromkeys(account_names)))]
         with self.session_factory() as session:
             rows = session.execute(
                 select(Fill, BrokerOrder, BrokerAccount, TradeIntent)
@@ -1169,14 +1193,14 @@ class SchwabV2BotService:
                 .outerjoin(TradeIntent, TradeIntent.id == BrokerOrder.intent_id)
                 .where(
                     Strategy.code == STRATEGY_CODE,
-                    BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name,
-                    BrokerAccount.provider == "schwab",
+                    *account_filters,
                     Fill.side == "buy",
                     Fill.filled_at >= session_start,
                 )
                 .order_by(Fill.filled_at, Fill.id)
             ).all()
             entries: list[ConfirmationEntry] = []
+            logical_entries: dict[str, tuple[ConfirmationEntry, str]] = {}
             order_ids: set[object] = set()
             for fill, order, account, intent in rows:
                 if order.id in order_ids:
@@ -1191,6 +1215,15 @@ class SchwabV2BotService:
                 # Load-bearing scope fence: reclaims and every non-resting path are ignored from
                 # their durable stamps. cw_arm_bar_ts is intentionally not consulted.
                 if intent is None or intent.intent_type != "open" or not is_first_slot_resting(metadata):
+                    continue
+                fanout_slot_id = str(metadata.get("fanout_slot_id", "") or "").strip()
+                if account_neutral and not fanout_slot_id:
+                    logger.error(
+                        "[V2-CONFIRMATION-EXIT-UNANSWERABLE] sym=%s fill_id=%s "
+                        "reason=missing_fanout_slot_id",
+                        fill.symbol,
+                        fill.id,
+                    )
                     continue
                 filled_at = fill.filled_at
                 if filled_at.tzinfo is None:
@@ -1208,33 +1241,58 @@ class SchwabV2BotService:
                 effective_at = config.effective_at if config is not None else datetime(1970, 1, 1, tzinfo=UTC)
                 if effective_at.tzinfo is None:
                     effective_at = effective_at.replace(tzinfo=UTC)
-                entries.append(
-                    ConfirmationEntry(
-                        order_id=order.id,
-                        fill_id=fill.id,
-                        broker_fill_id=str(fill.broker_fill_id or ""),
-                        broker_order_id=str(order.broker_order_id or ""),
-                        broker_account_name=account.name,
-                        symbol=str(fill.symbol).upper(),
-                        filled_at=filled_at.astimezone(UTC),
-                        evaluation_bar_start_ms=confirmation_bar_start_ms(filled_at, bars),
-                        confirmation_bars=bars,
-                        config_id=config.id if config is not None else None,
-                        config_effective_at=effective_at.astimezone(UTC),
-                    )
+                entry = ConfirmationEntry(
+                    order_id=order.id,
+                    fill_id=fill.id,
+                    broker_fill_id=str(fill.broker_fill_id or ""),
+                    broker_order_id=str(order.broker_order_id or ""),
+                    broker_account_name=account.name,
+                    symbol=str(fill.symbol).upper(),
+                    filled_at=filled_at.astimezone(UTC),
+                    evaluation_bar_start_ms=confirmation_bar_start_ms(filled_at, bars),
+                    confirmation_bars=bars,
+                    config_id=config.id if config is not None else None,
+                    config_effective_at=effective_at.astimezone(UTC),
+                    fanout_slot_id=fanout_slot_id if account_neutral else "",
+                )
+                if not account_neutral:
+                    entries.append(entry)
+                    continue
+                existing = logical_entries.get(fanout_slot_id)
+                if existing is None or (
+                    account.provider == "schwab" and existing[1] != "schwab"
+                ):
+                    logical_entries[fanout_slot_id] = (entry, account.provider)
+            if account_neutral:
+                entries = sorted(
+                    (entry for entry, _provider in logical_entries.values()),
+                    key=lambda entry: (entry.filled_at, str(entry.fill_id)),
                 )
         return entries
 
     async def _sync_confirmation_entries(self) -> None:
         try:
             entries = await asyncio.to_thread(self._load_confirmation_entries)
+        except ConfirmationDiscoveryConfigurationError as exc:
+            signature = ("COULD_NOT_TELL", str(exc))
+            if signature != self._confirmation_discovery_signature:
+                self._confirmation_discovery_signature = signature
+                logger.error(
+                    "[V2-CONFIRMATION-EXIT-DISCOVERY] status=COULD_NOT_TELL "
+                    "reason=%s emits_on_change_only=true",
+                    exc,
+                )
+            return
         except Exception:  # noqa: BLE001 - a DB fault must not kill position monitoring
             logger.exception(
                 "[V2-CONFIRMATION-EXIT-ENTRY-READ] status=COULD_NOT_TELL; no entry inferred"
             )
             return
         for entry in entries:
-            if not self._confirmation_exit.add(entry):
+            if not self._confirmation_exit.add(
+                entry,
+                preferred_account_name=self.settings.strategy_schwab_1m_v2_account_name,
+            ):
                 continue
             last_bar = self._confirmation_last_live_bar_ms.get(entry.symbol, 0)
             if last_bar < entry.evaluation_bar_start_ms:
@@ -1269,6 +1327,86 @@ class SchwabV2BotService:
             self._confirmation_evaluated = evaluated
             self._confirmation_fired = fired
             self._confirmation_long = evaluated - fired
+        if self._confirmation_account_neutral_discovery_enabled():
+            try:
+                evaluated_slot_ids = await asyncio.to_thread(
+                    self._confirmation_evaluated_slot_ids
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "[V2-CONFIRMATION-EXIT-DISCOVERY] status=COULD_NOT_TELL"
+                )
+            else:
+                census = confirmation_discovery_census(
+                    entries=entries,
+                    evaluated_slot_ids=evaluated_slot_ids,
+                    last_live_bar_ms=self._confirmation_last_live_bar_ms,
+                )
+                signature = (
+                    census.matured,
+                    census.evaluated,
+                    census.missing_opportunities,
+                )
+                if signature != self._confirmation_discovery_signature:
+                    self._confirmation_discovery_signature = signature
+                    logger.info(
+                        "[V2-CONFIRMATION-EXIT-DISCOVERY] status=%s "
+                        "evaluated=%d denominator=%d missing=%s emits_on_change_only=true",
+                        "MEASURED" if census.matured else "UNEXERCISED",
+                        census.evaluated,
+                        census.matured,
+                        ",".join(census.missing_opportunities) or "none",
+                    )
+
+    def _confirmation_account_neutral_discovery_enabled(self) -> bool:
+        return bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled",
+                False,
+            )
+        )
+
+    def _confirmation_discovery_configuration_error(self) -> str | None:
+        if not self._confirmation_account_neutral_discovery_enabled():
+            return None
+        webull_account = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+        ).strip()
+        if not webull_account:
+            return "webull_account_not_configured"
+        identity_enabled = bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_dual_broker_fanout_enabled",
+                False,
+            )
+        ) or bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_flip_owned_first_entry_enabled",
+                False,
+            )
+        )
+        if not identity_enabled:
+            return "fanout_identity_source_disabled"
+        return None
+
+    def _confirmation_evaluated_slot_ids(self) -> set[str]:
+        if self.session_factory is None:
+            return set()
+        start = _current_scanner_session_start_utc()
+        with self.session_factory() as session:
+            return {
+                str(slot_id)
+                for slot_id in session.scalars(
+                    select(V2ConfirmationExitEvaluation.fanout_slot_id).where(
+                        V2ConfirmationExitEvaluation.filled_at >= start,
+                        V2ConfirmationExitEvaluation.fanout_slot_id.is_not(None),
+                    )
+                )
+                if slot_id
+            }
 
     def _confirmation_census(self) -> tuple[int, int]:
         if self.session_factory is None:
@@ -1292,17 +1430,29 @@ class SchwabV2BotService:
             return False, False
         entry = evaluation.entry
         with self.session_factory() as session:
-            existing = session.scalar(
-                select(V2ConfirmationExitEvaluation).where(
-                    V2ConfirmationExitEvaluation.source_fill_id == entry.fill_id
+            existing = None
+            if entry.fanout_slot_id:
+                existing = session.scalar(
+                    select(V2ConfirmationExitEvaluation).where(
+                        V2ConfirmationExitEvaluation.fanout_slot_id == entry.fanout_slot_id
+                    )
                 )
-            )
+            if existing is None:
+                existing = session.scalar(
+                    select(V2ConfirmationExitEvaluation).where(
+                        V2ConfirmationExitEvaluation.source_fill_id == entry.fill_id
+                    )
+                )
             if existing is not None:
+                if entry.fanout_slot_id and not existing.fanout_slot_id:
+                    existing.fanout_slot_id = entry.fanout_slot_id
+                    session.commit()
                 return False, existing.published_at is None
             session.add(
                 V2ConfirmationExitEvaluation(
                     source_fill_id=entry.fill_id,
                     source_order_id=entry.order_id,
+                    fanout_slot_id=entry.fanout_slot_id or None,
                     broker_fill_id=entry.broker_fill_id,
                     broker_order_id=entry.broker_order_id,
                     broker_account_name=entry.broker_account_name,
@@ -1354,6 +1504,7 @@ class SchwabV2BotService:
                         config_effective_at=row.config_effective_at.replace(
                             tzinfo=row.config_effective_at.tzinfo or UTC
                         ),
+                        fanout_slot_id=str(row.fanout_slot_id or ""),
                     ),
                     bar_start_ms=row.evaluation_bar_start_ms,
                     atr_state=row.atr_state,

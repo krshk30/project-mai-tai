@@ -568,7 +568,7 @@ class OrbPaperEvent(Base):
 
 
 class V2ConfirmationExitEvaluation(Base):
-    """Durable one-shot v2 ATR decision and Redis outbox, keyed by its source fill."""
+    """Durable one-shot v2 ATR decision and Redis outbox."""
 
     __tablename__ = "v2_confirmation_exit_evaluations"
 
@@ -577,6 +577,7 @@ class V2ConfirmationExitEvaluation(Base):
         ForeignKey("fills.id"), unique=True, nullable=False
     )
     source_order_id: Mapped[UUID] = mapped_column(ForeignKey("broker_orders.id"), nullable=False)
+    fanout_slot_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     broker_fill_id: Mapped[str] = mapped_column(String(128), default="")
     broker_order_id: Mapped[str] = mapped_column(String(128), default="")
     broker_account_name: Mapped[str] = mapped_column(String(64), nullable=False)
