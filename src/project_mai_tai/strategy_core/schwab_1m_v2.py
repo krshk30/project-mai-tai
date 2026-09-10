@@ -677,6 +677,9 @@ class SchwabV2Strategy:
             "cross_account_known": 0,
             "cross_account_pending": 0,
             "cross_account_unknown": 0,
+            "unknown_recovery_evaluated": 0,
+            "unknown_recovery_succeeded": 0,
+            "unknown_recovery_pending": 0,
         }
         # CW-v2 ENTRY MODE (two independent flags; docs/v2-resting-flip-entry-design.md). Reactive =
         # the current wait-3 MARKET break (default ON = byte-identical). Resting = a buy-stop-limit at
@@ -1045,6 +1048,36 @@ class SchwabV2Strategy:
             state.flip_owner_phase = "provisional"
             if state.flip_owner_provisional_started_ms <= 0:
                 state.flip_owner_provisional_started_ms = self._now_ms()
+        elif state.flip_owner_phase == "unknown":
+            # A durable broker fill is evidence even while admission remains fail-closed. The
+            # account-neutral position poll can expose Webull's managed row before this independent
+            # outcome poll arrives; discarding the later fill made UNKNOWN impossible to reconcile.
+            if state.flip_owner_provisional_started_ms <= 0:
+                state.flip_owner_provisional_started_ms = self._now_ms()
+            state.flip_owner_fill_accounts.add(account)
+            leg = state.flip_owner_open_positions.get(account)
+            if (
+                leg is not None
+                and self._flip_owner_evidence_fresh(state)
+                and self._flip_owner_leg_matches_episode(state, account, leg)
+            ):
+                state.flip_owner_position_ids[account] = leg.managed_row_id
+                state.flip_owner_position_entry_ms[account] = leg.entry_time_ms
+            if not self._persist_flip_owner(
+                state,
+                active=True,
+                reason=f"{reason}_evidence_recorded_while_unknown",
+            ):
+                return
+            logger.info(
+                "[V2-FLIP-OWNER-FILL] %s opportunity_id=%d account=%s phase=unknown "
+                "fill_accounts=%d reconciliation_pending=1 entry_allowed=0",
+                state.symbol,
+                opportunity_id,
+                account,
+                len(state.flip_owner_fill_accounts),
+            )
+            return
         elif state.flip_owner_phase not in {"provisional", "bound"}:
             self._set_flip_owner_unknown(state, reason=f"{reason}_phase_mismatch")
             return
@@ -1100,6 +1133,162 @@ class SchwabV2Strategy:
                 continue
             self._apply_flip_position_evidence(state)
 
+    @staticmethod
+    def _flip_owner_leg_matches_episode(
+        state: SymbolState,
+        account: str,
+        leg: FlipPositionLeg,
+    ) -> bool:
+        """Return whether a managed row can belong to this first-rest fill episode."""
+
+        started_ms = int(state.flip_owner_provisional_started_ms or 0)
+        if started_ms > 0 and abs(int(leg.entry_time_ms) - started_ms) > FLIP_OWNER_ROW_SETTLE_MS:
+            return False
+        prior = state.flip_owner_position_ids.get(account)
+        return not prior or prior == leg.managed_row_id
+
+    def _record_flip_owner_rows_for_known_fills(self, state: SymbolState) -> bool:
+        """Preserve only rows corroborated by a durable fill for this opportunity."""
+
+        changed = False
+        for account in state.flip_owner_fill_accounts:
+            leg = state.flip_owner_open_positions.get(account)
+            if leg is None:
+                continue
+            if not self._flip_owner_leg_matches_episode(state, account, leg):
+                return False
+            if state.flip_owner_position_ids.get(account) != leg.managed_row_id:
+                changed = True
+            state.flip_owner_position_ids[account] = leg.managed_row_id
+            state.flip_owner_position_entry_ms[account] = leg.entry_time_ms
+        if changed:
+            return self._persist_flip_owner(
+                state,
+                active=True,
+                reason="fill_correlated_position_evidence_recorded",
+            )
+        return True
+
+    def _recover_unknown_flip_owner(self, state: SymbolState) -> bool:
+        """Recover only ownership states made unambiguous by fresh durable evidence.
+
+        True means an open episode was restored to ``provisional`` and normal reconciliation may
+        continue. Flat post-flip episodes remain consumed until their SELL flip; only a proven-flat
+        pre-flip episode retires its opportunity.
+        """
+
+        self._flip_owner_counts["unknown_recovery_evaluated"] += 1
+        evaluated = self._flip_owner_counts["unknown_recovery_evaluated"]
+        open_positions = state.flip_owner_open_positions
+        opportunity_id = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+
+        if (
+            opportunity_id <= 0
+            and not open_positions
+            and not state.flip_owner_fill_accounts
+            and not state.flip_owner_position_ids
+        ):
+            self._clear_flip_owner_memory(state)
+            self._flip_owner_counts["unknown_recovery_succeeded"] += 1
+            logger.info(
+                "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+                "entry_allowed=1 reason=empty_owner_state_cleared",
+                state.symbol,
+                evaluated,
+                self._flip_owner_counts["unknown_recovery_succeeded"],
+                self._flip_owner_counts["unknown_recovery_pending"],
+            )
+            return False
+
+        unexpected_accounts = set(open_positions) - state.flip_owner_fill_accounts
+        valid = bool(
+            opportunity_id > 0
+            and state.flip_owner_first_rest_placed
+            and state.flip_owner_fill_accounts
+            and not unexpected_accounts
+            and self._flip_owner_evidence_fresh(state)
+        )
+        if valid:
+            for account, leg in open_positions.items():
+                if not self._flip_owner_leg_matches_episode(state, account, leg):
+                    valid = False
+                    break
+
+        if valid and open_positions:
+            for account, leg in open_positions.items():
+                state.flip_owner_position_ids[account] = leg.managed_row_id
+                state.flip_owner_position_entry_ms[account] = leg.entry_time_ms
+            state.flip_owner_phase = "provisional"
+            if not self._persist_flip_owner(
+                state,
+                active=True,
+                reason="unknown_owner_reconciled_from_fill_and_position_evidence",
+            ):
+                return False
+            self._flip_owner_counts["unknown_recovery_succeeded"] += 1
+            logger.info(
+                "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+                "entry_allowed=0 reason=fill_and_position_evidence_reconciled",
+                state.symbol,
+                evaluated,
+                self._flip_owner_counts["unknown_recovery_succeeded"],
+                self._flip_owner_counts["unknown_recovery_pending"],
+            )
+            return True
+
+        age_ms = self._now_ms() - int(
+            state.flip_owner_provisional_started_ms or self._now_ms()
+        )
+        proven_owned_episode = bool(
+            state.flip_owner_fill_accounts and state.flip_owner_position_ids
+        )
+        if valid and not open_positions and proven_owned_episode and age_ms > FLIP_OWNER_ROW_SETTLE_MS:
+            if state.flip_owner_flip_bar_ts <= 0:
+                recovered = self._retire_flip_owner_opportunity(
+                    state,
+                    reason="unknown_preflip_owner_flat_after_settle",
+                )
+            else:
+                state.flip_owner_phase = "bound"
+                recovered = self._persist_flip_owner(
+                    state,
+                    active=True,
+                    reason="unknown_postflip_owner_flat_waiting_for_sell_flip",
+                )
+            if recovered:
+                self._flip_owner_counts["unknown_recovery_succeeded"] += 1
+                logger.info(
+                    "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+                    "entry_allowed=%d reason=%s",
+                    state.symbol,
+                    evaluated,
+                    self._flip_owner_counts["unknown_recovery_succeeded"],
+                    self._flip_owner_counts["unknown_recovery_pending"],
+                    int(state.flip_owner_phase == "idle"),
+                    (
+                        "preflip_flat_opportunity_retired"
+                        if state.flip_owner_phase == "idle"
+                        else "postflip_flat_kept_consumed"
+                    ),
+                )
+            return False
+
+        self._flip_owner_counts["unknown_recovery_pending"] += 1
+        logger.warning(
+            "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+            "entry_allowed=0 reason=insufficient_unambiguous_evidence open=%d filled_accounts=%d "
+            "position_ids=%d age_ms=%d",
+            state.symbol,
+            evaluated,
+            self._flip_owner_counts["unknown_recovery_succeeded"],
+            self._flip_owner_counts["unknown_recovery_pending"],
+            len(open_positions),
+            len(state.flip_owner_fill_accounts),
+            len(state.flip_owner_position_ids),
+            age_ms,
+        )
+        return False
+
     def _apply_flip_position_evidence(self, state: SymbolState) -> None:
         open_positions = state.flip_owner_open_positions
         phase = state.flip_owner_phase
@@ -1107,12 +1296,53 @@ class SchwabV2Strategy:
             if open_positions:
                 self._set_flip_owner_unknown(state, reason="open_position_without_entry_owner")
             return
-        if phase == "unknown":
-            return
         self._flip_owner_counts["cross_account_evaluated"] += 1
+        if phase == "unknown":
+            if not self._recover_unknown_flip_owner(state):
+                return
+            phase = state.flip_owner_phase
         valid = True
         unexpected_accounts = set(open_positions) - state.flip_owner_fill_accounts
         if unexpected_accounts:
+            if (
+                state.flip_owner_phase in {"resting", "awaiting_fill", "provisional"}
+                and state.flip_owner_first_rest_placed
+                and int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) > 0
+                and unexpected_accounts <= self._flip_owner_accounts
+            ):
+                if state.flip_owner_provisional_started_ms <= 0:
+                    state.flip_owner_provisional_started_ms = self._now_ms()
+                    if not self._persist_flip_owner(
+                        state,
+                        active=True,
+                        reason="position_before_fill_evidence_settle_started",
+                    ):
+                        return
+                if not self._record_flip_owner_rows_for_known_fills(state):
+                    self._flip_owner_counts["cross_account_unknown"] += 1
+                    self._set_flip_owner_unknown(
+                        state,
+                        reason="managed_position_replaced_or_outside_fill_episode",
+                    )
+                    return
+                age_ms = self._now_ms() - state.flip_owner_provisional_started_ms
+                if age_ms <= FLIP_OWNER_ROW_SETTLE_MS:
+                    self._flip_owner_counts["cross_account_pending"] += 1
+                    logger.info(
+                        "[V2-FLIP-OWNER-CROSS-ACCOUNT-EVIDENCE] %s evaluated=%d known=%d "
+                        "pending=%d unknown=%d entry_allowed=0 "
+                        "reason=position_before_fill_evidence_settling unexpected_accounts=%s "
+                        "age_ms=%d settle_ms=%d",
+                        state.symbol,
+                        self._flip_owner_counts["cross_account_evaluated"],
+                        self._flip_owner_counts["cross_account_known"],
+                        self._flip_owner_counts["cross_account_pending"],
+                        self._flip_owner_counts["cross_account_unknown"],
+                        ",".join(sorted(unexpected_accounts)),
+                        age_ms,
+                        FLIP_OWNER_ROW_SETTLE_MS,
+                    )
+                    return
             self._flip_owner_counts["cross_account_unknown"] += 1
             self._set_flip_owner_unknown(
                 state,
@@ -2547,7 +2777,14 @@ class SchwabV2Strategy:
             # Historical warmup anchors cannot retire current durable ownership. At a real 04:00
             # boundary, flat + fresh evidence closes the old opportunity; an open or unreadable
             # position book keeps entry admission closed until the owned rows finish.
-            if self._fanout_identity_bar_is_live(state):
+            owner_active = bool(
+                state.flip_owner_phase != "idle"
+                or state.fanout_segment_id
+                or state.flip_owner_opportunity_id
+                or state.flip_owner_fill_accounts
+                or state.flip_owner_position_ids
+            )
+            if owner_active and self._fanout_identity_bar_is_live(state):
                 if not self._flip_owner_evidence_fresh(state):
                     self._set_flip_owner_unknown(
                         state,
