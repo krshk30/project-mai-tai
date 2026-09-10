@@ -24,6 +24,7 @@ from project_mai_tai.db.models import (
 )
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
+from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipEntryOwnershipRecord,
     FlipEntryOwnershipStore,
@@ -151,6 +152,142 @@ def test_service_position_book_reads_both_live_accounts_in_one_population() -> N
         "live:schwab_1m_v2",
         "live:orb",
     }
+
+
+def test_malformed_open_managed_row_still_fails_the_position_book_closed() -> None:
+    factory = _factory()
+    with factory() as session:
+        session.add(
+            OmsManagedPosition(
+                strategy_code="schwab_1m_v2",
+                broker_account_name="live:schwab_1m_v2",
+                symbol="BROKEN",
+                entry_price=Decimal("2.31"),
+                original_quantity=2,
+                current_quantity=0,
+                entry_path="ATR Flip",
+                entry_time=NOW,
+                status="open",
+            )
+        )
+        session.commit()
+    bot = SchwabV2BotService(
+        Settings(
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_webull_account_name="live:orb",
+        ),
+        session_factory=factory,
+    )
+
+    book = bot._fetch_flip_position_book()
+
+    assert book.readable is False
+    assert book.legs_by_symbol == {}
+
+
+@pytest.mark.parametrize(
+    ("slot_id", "managed_row_id", "expected_counts", "expected_reason"),
+    [
+        ("", "legacy-managed-row", "skipped_unbound=1 malformed=0", "missing_fanout_slot_id"),
+        ("legacy-slot", "", "skipped_unbound=0 malformed=1", "malformed_confirmation_close"),
+    ],
+)
+def test_unbound_or_malformed_confirmation_close_cannot_poison_unrelated_entries(
+    caplog,
+    slot_id: str,
+    managed_row_id: str,
+    expected_counts: str,
+    expected_reason: str,
+) -> None:
+    factory = _factory()
+    now = datetime.now(UTC)
+    with factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
+        account = BrokerAccount(
+            name="live:schwab_1m_v2", provider="schwab", environment="production"
+        )
+        session.add_all([strategy, account])
+        session.flush()
+        intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="LEGACY",
+            side="sell",
+            intent_type="close",
+            quantity=Decimal("2"),
+            reason="oms_v2_managed_exit:CONFIRMATION_EXIT",
+            status="filled",
+            payload={
+                "metadata": {
+                    "flip_owner_confirmation_exit": "true",
+                    "confirmation_fanout_slot_id": slot_id,
+                    "confirmation_managed_row_id": managed_row_id,
+                }
+            },
+        )
+        session.add(intent)
+        session.flush()
+        order = BrokerOrder(
+            intent_id=intent.id,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            client_order_id="legacy-dark-confirmation-close",
+            broker_order_id="legacy-dark-confirmation-order",
+            symbol="LEGACY",
+            side="sell",
+            order_type="market",
+            time_in_force="day",
+            quantity=Decimal("2"),
+            status="filled",
+            payload={},
+        )
+        session.add(order)
+        session.flush()
+        session.add(
+            Fill(
+                order_id=order.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                broker_fill_id="legacy-dark-confirmation-fill",
+                symbol="LEGACY",
+                side="sell",
+                quantity=Decimal("2"),
+                price=Decimal("5.40"),
+                filled_at=now,
+                payload={},
+            )
+        )
+        session.commit()
+
+    bot = SchwabV2BotService(
+        Settings(
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_webull_account_name="live:orb",
+        ),
+        session_factory=factory,
+    )
+    book = bot._fetch_flip_position_book()
+
+    assert book.readable is True
+    assert book.confirmation_closes_by_symbol == {}
+    assert f"evaluated=1 known=0 {expected_counts}" in caplog.text
+    assert f"reason={expected_reason}" in caplog.text
+
+    owner = SchwabV2Strategy(
+        Settings(
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_webull_account_name="live:orb",
+        )
+    )
+    owner._now_ms = lambda: book.observed_at_ms
+    owner.configure_flip_entry_ownership(lambda *_args: None, restore_readable=True)
+    unrelated = [owner.watchlist_state(symbol) for symbol in ("AAA", "BBB")]
+    owner.apply_flip_position_book(book)
+
+    assert all(owner._strict_first_rest_admitted(state, slot="first") for state in unrelated)
 
 
 def test_position_book_reads_only_fully_filled_bound_confirmation_closes() -> None:

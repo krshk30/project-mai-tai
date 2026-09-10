@@ -92,3 +92,17 @@ lifecycle is separate work.
 This PR does not enable the switch. Enabling requires an after-close deployment,
 both live accounts freshly flat, an exact-head independent pin, and a rollback
 rehearsal that flips the one setting off and restarts v2 without data changes.
+
+The same v2 restart must also set
+`strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=true`.
+Both settings are startup-cached, so there is no supported sequence that enables
+account-neutral confirmation discovery without the restart that activates this
+corrected ownership lifecycle. Before the next open, verify both values in the
+running process and require a `[V2-CONFIRMATION-EXIT-DISCOVERY]` reading.
+
+If account-neutral discovery remains off, a Schwab confirmation close has no
+durable opportunity identity and is counted as `skipped_unbound`; the position
+book remains readable, but the affected close cannot release its opportunity.
+Webull-only false flips likewise remain consumed because no confirmation decision
+exists for them. That is the safe degradation, not successful exercise of the
+multiple-false-flip rule.

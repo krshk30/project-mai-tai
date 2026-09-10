@@ -2225,6 +2225,9 @@ class SchwabV2BotService:
             ) + Decimal(fill.quantity)
             confirmation_context[order.id] = (order, account, intent)
         closes_by_symbol: dict[str, list[FlipConfirmationClose]] = {}
+        confirmation_evaluated = 0
+        confirmation_skipped_unbound = 0
+        confirmation_malformed = 0
         for order_id, filled_quantity in confirmation_totals.items():
             order, account, intent = confirmation_context[order_id]
             if filled_quantity < Decimal(order.quantity):
@@ -2236,23 +2239,45 @@ class SchwabV2BotService:
             }
             if str(metadata.get("flip_owner_confirmation_exit", "")).lower() != "true":
                 continue
+            confirmation_evaluated += 1
             slot_id = str(metadata.get("confirmation_fanout_slot_id", "") or "").strip()
             managed_row_id = str(
                 metadata.get("confirmation_managed_row_id", "") or ""
             ).strip()
             symbol = str(order.symbol or "").strip().upper()
             account_name = str(account.name or "").strip()
-            if not slot_id or not managed_row_id or not symbol or not account_name:
-                logger.error(
-                    "[V2-FLIP-OWNER-CONFIRMATION-CLOSE] evaluated=1 known=0 unknown=1 "
-                    "entry_allowed=0 reason=malformed_confirmation_close order_id=%s",
+            if not slot_id:
+                # Expected while #945's account-neutral discovery flag is dark. This close cannot
+                # prove an opportunity reset, but it must not poison unrelated symbols.
+                confirmation_skipped_unbound += 1
+                logger.warning(
+                    "[V2-FLIP-OWNER-CONFIRMATION-CLOSE] evaluated=%d known=%d "
+                    "skipped_unbound=%d malformed=%d reason=missing_fanout_slot_id "
+                    "order_id=%s symbol=%s account=%s",
+                    confirmation_evaluated,
+                    sum(len(values) for values in closes_by_symbol.values()),
+                    confirmation_skipped_unbound,
+                    confirmation_malformed,
                     order.id,
+                    symbol or "unknown",
+                    account_name or "unknown",
                 )
-                return FlipPositionBook(
-                    observed_at_ms=int(datetime.now(UTC).timestamp() * 1000),
-                    readable=False,
-                    legs_by_symbol={},
+                continue
+            if not managed_row_id or not symbol or not account_name:
+                confirmation_malformed += 1
+                logger.error(
+                    "[V2-FLIP-OWNER-CONFIRMATION-CLOSE] evaluated=%d known=%d "
+                    "skipped_unbound=%d malformed=%d entry_allowed=0 "
+                    "reason=malformed_confirmation_close order_id=%s symbol=%s account=%s",
+                    confirmation_evaluated,
+                    sum(len(values) for values in closes_by_symbol.values()),
+                    confirmation_skipped_unbound,
+                    confirmation_malformed,
+                    order.id,
+                    symbol or "unknown",
+                    account_name or "unknown",
                 )
+                continue
             closes_by_symbol.setdefault(symbol, []).append(
                 FlipConfirmationClose(
                     account_name=account_name,
@@ -2263,10 +2288,13 @@ class SchwabV2BotService:
         observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
         logger.info(
             "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=%d known=1 unknown=0 symbols=%d "
-            "confirmation_closes=%d",
+            "confirmation_evaluated=%d confirmation_closes=%d skipped_unbound=%d malformed=%d",
             len(rows),
             len(by_symbol),
+            confirmation_evaluated,
             sum(len(values) for values in closes_by_symbol.values()),
+            confirmation_skipped_unbound,
+            confirmation_malformed,
         )
         return FlipPositionBook(
             observed_at_ms=observed_at_ms,
