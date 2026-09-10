@@ -17,7 +17,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from project_mai_tai.broker_adapters.protocols import ExecutionReport
+from project_mai_tai.broker_adapters.protocols import ExecutionReport, ExitPairReleaseResult
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition, TradeIntent
@@ -62,10 +62,13 @@ def _make_sf() -> sessionmaker:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _svc(sf, *, enabled: bool = True, close_on_fill: bool = True, adapter=None) -> OmsRiskService:
+def _svc(
+    sf, *, enabled: bool = True, close_on_fill: bool = True, adapter=None, release: bool = False
+) -> OmsRiskService:
     settings = Settings(
         oms_v2_exit_management_enabled=enabled,
         oms_v2_exit_close_on_fill_enabled=close_on_fill,
+        oms_v2_exit_release_reservation_enabled=release,
     )
     svc = OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,
@@ -477,6 +480,198 @@ class _NoFillAdapter:
 
     async def list_account_positions(self, broker_account_name: str):
         return []
+
+
+class _PairStateAdapter(_NoFillAdapter):
+    def __init__(self, result: ExitPairReleaseResult) -> None:
+        super().__init__()
+        self.result = result
+        self.release_calls: list[tuple[str, str, str]] = []
+
+    async def release_exit_pair_for_close(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str
+    ) -> ExitPairReleaseResult:
+        self.release_calls.append((broker_account_name, symbol, base_client_order_id))
+        return self.result
+
+
+def _pair_report(event_type: str) -> ExecutionReport:
+    return ExecutionReport(
+        event_type=event_type,
+        origin="broker",
+        client_order_id="protect-baseT",
+        broker_order_id="WB-T1",
+        symbol=SYM,
+        side="sell",
+        intent_type="close",
+        quantity=Decimal("100"),
+        filled_quantity=Decimal("100") if event_type == "filled" else Decimal("0"),
+        fill_price=Decimal("9.50") if event_type == "filled" else None,
+        reason="test pair state",
+    )
+
+
+@pytest.mark.asyncio
+async def test_oco_fill_reconciles_without_a_redundant_software_sell() -> None:
+    result = ExitPairReleaseResult(
+        outcome="resolved_by_fill",
+        reports=(_pair_report("filled"), _pair_report("cancelled")),
+    )
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=9.40)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, SYM, "protect-base")]
+    assert adapter.submitted == []
+    assert _sell_intents(sf) == []
+    assert _row(sf).status == "closed"
+
+
+@pytest.mark.asyncio
+async def test_oco_fill_reconciliation_names_the_row_checked_before_the_broker_await(
+    monkeypatch,
+) -> None:
+    result = ExitPairReleaseResult(
+        outcome="resolved_by_fill",
+        reports=(_pair_report("filled"), _pair_report("cancelled")),
+    )
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    expected_row_id = str(_row(sf).id)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=9.40)
+    reconciled: list[tuple[str, str, str]] = []
+
+    async def _close(acct, symbol, *, detail=None, expected_row_id=None):
+        reconciled.append((acct, symbol, expected_row_id))
+        return True
+
+    monkeypatch.setattr(svc, "_close_resolved_oco_managed_row", _close)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert reconciled == [(ACCT, SYM, expected_row_id)]
+    assert adapter.submitted == []
+    assert _sell_intents(sf) == []
+
+
+@pytest.mark.asyncio
+async def test_adapter_without_pair_state_capability_keeps_the_existing_sell_path() -> None:
+    adapter = _NoFillAdapter()
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=9.40)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert len(adapter.submitted) == 1
+    assert len(_sell_intents(sf)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["reserved", "unanswerable"])
+async def test_unclear_pair_holds_the_close_without_an_intent_and_throttles(outcome: str) -> None:
+    result = ExitPairReleaseResult(
+        outcome=outcome,
+        reports=(_pair_report("accepted"), _pair_report("cancelled")),
+    )
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=9.40)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, SYM, "protect-base")]
+    assert adapter.submitted == []
+    assert _sell_intents(sf) == []
+    assert _row(sf).status == "open"
+
+
+@pytest.mark.asyncio
+async def test_unclear_pair_retries_when_the_probe_window_expires(monkeypatch) -> None:
+    result = ExitPairReleaseResult(
+        outcome="unanswerable",
+        reports=(_pair_report("accepted"), _pair_report("cancelled")),
+    )
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=9.40)
+    clock = {"now": 100.0}
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.time.monotonic", lambda: clock["now"]
+    )
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    clock["now"] += svc._EXIT_RESERVATION_RETRY_SECONDS - 0.001
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    clock["now"] += 0.001
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [
+        (ACCT, SYM, "protect-base"),
+        (ACCT, SYM, "protect-base"),
+    ]
+    assert adapter.submitted == []
+    assert _sell_intents(sf) == []
+    assert _row(sf).status == "open"
+
+
+@pytest.mark.asyncio
+async def test_reserved_pair_does_not_consume_a_scale_level() -> None:
+    result = ExitPairReleaseResult(
+        outcome="reserved",
+        reports=(_pair_report("accepted"), _pair_report("cancelled")),
+    )
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=10.25)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    row = _row(sf)
+    assert adapter.release_calls == [(ACCT, SYM, "protect-base")]
+    assert adapter.submitted == []
+    assert _sell_intents(sf) == []
+    assert row.status == "open"
+    assert row.current_quantity == 100
+    assert "PCT2" not in (row.scales_done or [])
+
+
+@pytest.mark.asyncio
+async def test_confirmed_clear_pair_allows_the_existing_software_sell() -> None:
+    result = ExitPairReleaseResult(
+        outcome="released",
+        reports=(_pair_report("cancelled"), _pair_report("cancelled")),
+    )
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=9.40)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert len(adapter.submitted) == 1
+    assert len(_sell_intents(sf)) == 1
 
 
 class _PartialFillAdapter:

@@ -18,7 +18,12 @@ from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
-from project_mai_tai.broker_adapters.protocols import BrokerAdapter, ExecutionReport, OrderRequest
+from project_mai_tai.broker_adapters.protocols import (
+    BrokerAdapter,
+    ExecutionReport,
+    ExitPairReleaseResult,
+    OrderRequest,
+)
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
@@ -82,6 +87,14 @@ class _ExitFetchFailed:
 
 
 _EXIT_FETCH_FAILED = _ExitFetchFailed()
+
+
+class _ManagedSellEvents(list):
+    """Order events with an optional pre-submit exit-pair result."""
+
+    def __init__(self, events=(), *, reservation: ExitPairReleaseResult | None = None) -> None:
+        super().__init__(events)
+        self.reservation = reservation
 
 
 def oco_exit_client_order_id(entry_client_order_id: str, child_id: str) -> str:
@@ -537,6 +550,9 @@ class OmsRiskService:
     # second (median 271s, but 30s at the low end), so we must keep testing or we would trade the
     # burn for a missed exit -- the same bug facing the other way.
     _A2_BACKOFF_SECONDS = 15.0
+    # A working or unreadable Webull pair must not trigger one cancel per quote tick. This is a
+    # broker-state probe cadence, not an abandonment bound; the managed row remains owned.
+    _EXIT_RESERVATION_RETRY_SECONDS = 10.0
     # ⛔ OPERATOR RISK DECISION, 2026-08-06, NOT a derived value. Sits inside the bimodal gap where
     # every bound from ~90s to ~250s escalates on the SAME 7 of 11 -- so nothing is traded away
     # anywhere in that range. Do not "optimise" it against a percentile.
@@ -546,8 +562,8 @@ class OmsRiskService:
     # (acct, SYMBOL) -> base coid of the resting Webull exit pair we attached. The legs themselves
     # are broker-created and unqueryable, so this is the only handle that can ever release them.
     _webull_protect_base: dict[tuple[str, str], str] = {}
-    # (acct, SYMBOL) already released this episode. Cancelling once per exit decision instead of
-    # once per quote tick is what keeps the fix from becoming a storm of its own.
+    # (acct, SYMBOL) already confirmed released this episode. A confirmed release is reused; an
+    # unreadable or still-reserved pair is probed on the bounded cadence above, never per quote.
     _exit_reservation_released: set[tuple[str, str]] = set()
 
     # How many consecutive sync cycles we will hold a managed row open waiting for a transient
@@ -692,6 +708,7 @@ class OmsRiskService:
         # `_release_exit_reservation_before_close`. Per-instance so tests cannot leak into each other.
         self._webull_protect_base: dict[tuple[str, str], str] = {}
         self._exit_reservation_released: set[tuple[str, str]] = set()
+        self._exit_reservation_last_try: dict[tuple[str, str], float] = {}
         # Consecutive TRANSIENT exit-fill fetch failures per (acct, symbol). See _defer_for_exit_fetch.
         self._oco_exit_fetch_deferrals: dict[tuple[str, str], int] = {}
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
@@ -2917,7 +2934,7 @@ class OmsRiskService:
     # ------------------------------------------- release the exit reservation before a software close
     async def _release_exit_reservation_before_close(
         self, *, session, broker_account_name: str, symbol: str,
-    ) -> bool:
+    ) -> ExitPairReleaseResult:
         """Cancel the resting exit legs so the ladder's own sell is not read as a naked short.
 
         ⛔⭐⭐ THE DEFECT. A resting exit leg RESERVES the position at the broker. The v2 software
@@ -2928,21 +2945,20 @@ class OmsRiskService:
         against 5 of 6 at Schwab — because Schwab STANDS THE LADDER DOWN while its bracket is armed
         (`_native_oco_stand_down_active`) and Webull exposes no such capability, so it fails OPEN.
 
-        ⛔⭐ CANCEL ONCE PER EPISODE, NOT PER TICK. The ladder re-evaluates on every quote tick. If
-        this re-cancelled each time it would simply become a new storm in place of the old one. The
-        latch is cleared when the position closes, so the next entry starts fresh.
+        ⛔⭐ CONFIRMED RELEASE ONCE; UNCERTAIN STATE ON A BOUNDED PROBE. The ladder re-evaluates on
+        every quote tick. A confirmed release is latched for the episode, while a working or
+        unreadable pair is retried every `_EXIT_RESERVATION_RETRY_SECONDS`. That preserves a path
+        out without recreating the 18-evaluation / 18-failed-cancel burst measured on 2026-09-10.
+        Only three software closes were rejected before flat reconciliation; the defect here is
+        broker-state reconciliation, not proximity to the 20-reject ceiling.
 
-        ⛔ VERIFICATION IS BACKGROUNDED ON PURPOSE. `_spawn_cancel_verification` documents why:
-        blocking an exit to confirm a cancel "would trade a rare unowned order for a common late
-        stop, which is the wrong direction". So we submit the cancels, let the close proceed on this
-        tick (it may still reject once while the cancel lands — one reject, not forty-eight), and
-        chase confirmation off-path.
-
-        Returns True if cancels were actually submitted.
+        A cancel acknowledgement is not enough. The broker state after the request decides whether
+        the software sell may proceed, whether the OCO already filled, or whether we must hold and
+        retry. That prevents both a redundant close and a sell against still-reserved shares.
         """
         key = (broker_account_name, symbol.upper())
         if key in self._exit_reservation_released:
-            return False
+            return ExitPairReleaseResult(outcome="released")
         base = self._webull_protect_base.get(key, "")
         if not base:
             # Native bracket children hang off the entry coid; bare Webull protection hangs off a
@@ -2955,7 +2971,12 @@ class OmsRiskService:
             except Exception:  # noqa: BLE001 - never break an exit for bookkeeping
                 base = ""
         if not base:
-            return False
+            return ExitPairReleaseResult(outcome="unsupported")
+        now = time.monotonic()
+        last_try = self.__dict__.setdefault("_exit_reservation_last_try", {}).get(key)
+        if last_try is not None and now - last_try < self._EXIT_RESERVATION_RETRY_SECONDS:
+            return ExitPairReleaseResult(outcome="reserved")
+        self._exit_reservation_last_try[key] = now
         # Trigger + polarity live beside the numbers: requested=2 is the denominator; only
         # confirmed=2 means the reservation is clear. A request is not a result.
         requested = 2
@@ -2965,43 +2986,55 @@ class OmsRiskService:
             "exit leg is confirmed cancelled or already absent",
             symbol, broker_account_name, base, requested,
         )
+        release_fn = getattr(self.broker_adapter, "release_exit_pair_for_close", None)
+        if release_fn is None:
+            self._exit_reservation_last_try.pop(key, None)
+            return ExitPairReleaseResult(outcome="unsupported")
         try:
-            reports = await self.broker_adapter.cancel_exit_pair(
+            release = await release_fn(
                 broker_account_name=broker_account_name, symbol=symbol,
                 base_client_order_id=base,
             )
-        except Exception:  # noqa: BLE001 - a failed release must never stop the close attempt
+        except Exception:  # noqa: BLE001 - never sell into an unreadable reservation
             self.logger.warning(
                 "[OMS-EXIT-RELEASE-RAISED] %s %s base=%s — could not cancel the resting exit legs; "
-                "closing anyway (the sell may still be refused as a short)",
-                symbol, broker_account_name, base, exc_info=True,
+                "holding the software close and retrying after %.0fs",
+                symbol, broker_account_name, base, self._EXIT_RESERVATION_RETRY_SECONDS,
+                exc_info=True,
             )
-            return False
-        if not reports:
-            # No capability (Schwab/simulated) or no addressable legs -> behave exactly as before.
-            self.logger.warning(
-                "[OMS-CANCEL-PAIR-UNCERTAIN] %s %s base=%s requested=%d reports=0 confirmed=0 "
-                "release_confirmed=0 — no success marker; the close still proceeds",
-                symbol, broker_account_name, base, requested,
+            return ExitPairReleaseResult(outcome="unanswerable")
+        reports = release.reports
+        if release.outcome == "unsupported":
+            self._exit_reservation_last_try.pop(key, None)
+            return release
+        if release.outcome == "resolved_by_fill":
+            self._exit_reservation_last_try.pop(key, None)
+            self.__dict__.setdefault("_native_oco_resolving", {})[key] = utcnow()
+            self.logger.info(
+                "[OMS-EXIT-PAIR-RESOLVED] %s %s base=%s — broker reports an OCO leg FILLED; "
+                "suppressing the redundant software sell and reconciling the exact managed row",
+                symbol, broker_account_name, base,
             )
-            return False
+            return release
         confirmed = sum(
             1 for report in reports if getattr(report, "event_type", "") == "cancelled"
         )
         refused = sum(
             1 for report in reports if getattr(report, "event_type", "") == "rejected"
         )
-        if len(reports) != requested or confirmed != requested:
+        if release.outcome != "released":
             reasons = "; ".join(
                 str(getattr(report, "reason", "") or "<no reason>") for report in reports
             )
             self.logger.warning(
                 "[OMS-CANCEL-PAIR-UNCERTAIN] %s %s base=%s requested=%d reports=%d confirmed=%d "
-                "refused=%d release_confirmed=0 — no success marker; reasons=%s",
+                "refused=%d release_confirmed=0 — software close HELD; retry_after=%.0fs; "
+                "broker_state=%s reasons=%s",
                 symbol, broker_account_name, base, requested, len(reports), confirmed, refused,
-                reasons[:1000],
+                self._EXIT_RESERVATION_RETRY_SECONDS, release.outcome, reasons[:1000],
             )
-            return False
+            return release
+        self._exit_reservation_last_try.pop(key, None)
         self._exit_reservation_released.add(key)
         self.logger.info(
             "[OMS-EXIT-RELEASE] %s %s base=%s requested=%d confirmed=%d release_confirmed=1 — "
@@ -3009,7 +3042,23 @@ class OmsRiskService:
             "close is not refused as a naked short",
             symbol, broker_account_name, base, requested, confirmed,
         )
-        return True
+        return release
+
+    @staticmethod
+    def _exit_pair_fill_detail(release: ExitPairReleaseResult) -> dict[str, object] | None:
+        filled = [report for report in release.reports if report.event_type == "filled"]
+        if len(filled) != 1:
+            return None
+        report = filled[0]
+        if report.filled_quantity <= 0 or report.fill_price is None or report.fill_price <= 0:
+            return None
+        return {
+            "symbol": report.symbol,
+            "quantity": report.filled_quantity,
+            "price": report.fill_price,
+            "filled_at": report.reported_at,
+            "broker_order_id": report.broker_order_id or report.client_order_id,
+        }
 
     def _reprotect_after_failed_release(self, acct: str, symbol: str, row) -> None:
         """Put a protective pair back on a position whose exit legs we cancelled for a close that
@@ -3048,6 +3097,7 @@ class OmsRiskService:
         because the code would look like it is still handling the case."""
         key = (broker_account_name, symbol.upper())
         self._exit_reservation_released.discard(key)
+        self.__dict__.setdefault("_exit_reservation_last_try", {}).pop(key, None)
         self._webull_protect_base.pop(key, None)
         intervals = self.__dict__.setdefault("_confirmation_unprotected_since", {})
         started_at = intervals.pop(key, None)
@@ -6400,7 +6450,7 @@ class OmsRiskService:
 
     async def _close_resolved_oco_managed_row(
         self, acct: str, symbol: str, *, detail=None, expected_row_id: str | None = None
-    ) -> None:
+    ) -> bool:
         """Close the phantom v2 managed row for a symbol whose native OCO resolved BY A FILL.
 
         ⭐ WHY THIS EXISTS (2026-07-22): the broker-created OCO fill closes the position but never
@@ -6409,11 +6459,11 @@ class OmsRiskService:
         `_v2_close_reconcile_flat`: the exit ladder resumes (the 90s grace is dwarfed by Schwab's
         ~6min fill->positions propagation) and churns ~3 rejected closes before the phantom clears.
 
-        The caller (`_refresh_native_oco_armed_state`) closes ONLY on the broker's OWN execution
-        record -- a recently-FILLED child SELL leg (`fetch_oco_resolved_by_fill_symbols`) -- NOT on
-        a positions-endpoint read. That is authoritative ("the target/stop sold; you are flat") and
-        so carries none of the FLAT_INFERRED ambiguity that made the 07-15 ERNA possible: a bracket
-        that resolved by expiry/cancel (still held) has no filled leg and is never passed here."""
+        Both callers close ONLY on the broker's OWN execution record: either the periodic poll's
+        recently-FILLED child SELL leg or the pre-close release probe's filled leg. Neither uses a
+        positions-endpoint inference. That is authoritative ("the target/stop sold") and carries
+        none of the FLAT_INFERRED ambiguity that made the 07-15 ERNA possible: a bracket resolved
+        by expiry/cancel (still held) has no filled leg and is never passed here."""
         # The broker await must stay OUTSIDE `_run_db` (see its docstring), so this is read ->
         # fetch -> write rather than one unit. Worst case the fetch fails and we close exactly as
         # before, just without a recorded exit.
@@ -6441,7 +6491,7 @@ class OmsRiskService:
             # Transient — hold the managed row open so the next sync retries the fetch, up to the
             # bounded cap, rather than closing the trade with no exit recorded.
             if self._defer_for_exit_fetch(acct, symbol):
-                return
+                return False
             detail = None
         else:
             self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
@@ -6478,8 +6528,9 @@ class OmsRiskService:
 
         closed_expected_episode = bool(await self._run_db(_close, commit=True))
         if not closed_expected_episode:
-            return
+            return False
         key = (acct, symbol)
+        getattr(self, "_native_oco_resolving", {}).pop(key, None)
         self._managed_v2_symbols.discard(key)
         self._clear_cw_flip_pending(key)
         self._cw_floor_armed.discard(key)
@@ -6495,6 +6546,7 @@ class OmsRiskService:
             "record) -> closing phantom managed row (no ladder rejects)",
             symbol, acct,
         )
+        return True
 
     async def _emit_v2_exit_on_loop(
         self,
@@ -6525,6 +6577,7 @@ class OmsRiskService:
         events: list = []
         pending_reject_alarm: _V2ExitRejectAlarm | None = None
         emit_outcome = "refused"
+        resolved_oco: tuple[dict[str, object], str] | None = None
         try:
             with self.session_factory() as session:
                 row = self.store.get_open_managed_position(
@@ -6548,28 +6601,42 @@ class OmsRiskService:
                     )
                     return "refused"
                 if kind == "SCALE":
-                    events = await self._emit_v2_managed_sell(
+                    managed_sell = await self._emit_v2_managed_sell(
                         session, row, intent_type="scale", quantity=int(sell_qty or 0),
                         reference_price=reference_price, reason=reason, bid=bid,
                         decided_at=decided_at,
                     )
-                    position.apply_scale(str(level or ""), int(sell_qty or 0), exit_price=reference_price)
-                    # #6: fill-gate the scale quantity (write_quantity=False) — the scale fill
-                    # decrements current_quantity; on submit persist only the ladder state.
-                    self.store.update_managed_position_from_position(
-                        session, row, position, write_quantity=not close_on_fill
-                    )
-                    statuses = {
-                        str(getattr(event.payload, "status", "")).strip().lower()
-                        for event in events
-                    }
-                    emit_outcome = (
-                        "closed"
-                        if "filled" in statuses
-                        else "close_submitted"
-                        if statuses - self._V2_EXIT_NON_PROGRESS_STATUSES
-                        else "refused"
-                    )
+                    events = managed_sell
+                    reservation = getattr(managed_sell, "reservation", None)
+                    if reservation is not None and reservation.outcome == "resolved_by_fill":
+                        detail = self._exit_pair_fill_detail(reservation)
+                        if detail is None:
+                            return "refused"
+                        resolved_oco = (detail, str(row.id))
+                    elif reservation is not None and reservation.outcome in {
+                        "reserved", "unanswerable"
+                    }:
+                        return "refused"
+                    else:
+                        position.apply_scale(
+                            str(level or ""), int(sell_qty or 0), exit_price=reference_price
+                        )
+                        # #6: fill-gate the scale quantity (write_quantity=False) — the scale fill
+                        # decrements current_quantity; on submit persist only the ladder state.
+                        self.store.update_managed_position_from_position(
+                            session, row, position, write_quantity=not close_on_fill
+                        )
+                        statuses = {
+                            str(getattr(event.payload, "status", "")).strip().lower()
+                            for event in events
+                        }
+                        emit_outcome = (
+                            "closed"
+                            if "filled" in statuses
+                            else "close_submitted"
+                            if statuses - self._V2_EXIT_NON_PROGRESS_STATUSES
+                            else "refused"
+                        )
                 elif self._a2_should_defer(acct, symbol):
                     # A2 backoff. The broker is refusing this exit as not-sellable; the block is
                     # broker-side ACCOUNT STATE and re-emitting at the 1-2s ladder cadence provably
@@ -6592,14 +6659,26 @@ class OmsRiskService:
                     )
                     return "refused"
                 else:  # HARD / FLOOR — full close
-                    events = await self._emit_v2_managed_sell(
+                    managed_sell = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
                         reference_price=reference_price, reason=reason, bid=bid,
                         decided_at=decided_at,
                     )
+                    events = managed_sell
                     key = (acct, symbol)
+                    reservation = getattr(managed_sell, "reservation", None)
+                    if reservation is not None and reservation.outcome == "resolved_by_fill":
+                        detail = self._exit_pair_fill_detail(reservation)
+                        if detail is None:
+                            return "refused"
+                        resolved_oco = (detail, str(row.id))
+                    elif reservation is not None and reservation.outcome in {
+                        "reserved", "unanswerable"
+                    }:
+                        return "refused"
                     rejected = any(
-                        str(getattr(ev.payload, "status", "")).lower() == "rejected" for ev in events
+                        str(getattr(ev.payload, "status", "")).lower() == "rejected"
+                        for ev in events
                     )
                     # ⛔⭐⭐ ABSOLUTE CEILING (2026-09-03 CHPT). Independent of the consecutive
                     # counter, which a truthful HELD read legitimately resets. Nothing clears this
@@ -6652,7 +6731,9 @@ class OmsRiskService:
                     )
                     if a2_hit:
                         self._a2_note_reject(acct, symbol)
-                    reconciled = rejected and await self._v2_close_reconcile_flat(session, acct, symbol, row)
+                    reconciled = rejected and await self._v2_close_reconcile_flat(
+                        session, acct, symbol, row
+                    )
                     if a2_hit and not reconciled:
                         await self._a2_maybe_escalate(acct, symbol)
                     if reconciled:
@@ -6688,24 +6769,35 @@ class OmsRiskService:
                             emit_outcome = (
                                 "closed" if "filled" in statuses else "close_submitted"
                             )
-                        if close_on_fill:
-                            # #6: do NOT close on submit — the confirmed fill closes the row.
-                            # Persist price-state only; keep the position monitored/protected.
-                            self.store.update_managed_position_from_position(
-                                session, row, position, write_quantity=False
-                            )
-                        else:
-                            self.store.close_managed_position(session, row)
-                            self._managed_v2_symbols.discard(key)
-                            self._v2_exit_end_episode(
-                                key, session=session
-                            )  # row closed — the episode ended
-                            self._clear_exit_reservation_release(acct, symbol)
-                            self._a2_clear(acct, symbol)
+                        if resolved_oco is None:
+                            if close_on_fill:
+                                # #6: do NOT close on submit — the confirmed fill closes the row.
+                                # Persist price-state only; keep the position monitored/protected.
+                                self.store.update_managed_position_from_position(
+                                    session, row, position, write_quantity=False
+                                )
+                            else:
+                                self.store.close_managed_position(session, row)
+                                self._managed_v2_symbols.discard(key)
+                                self._v2_exit_end_episode(
+                                    key, session=session
+                                )  # row closed — the episode ended
+                                self._clear_exit_reservation_release(acct, symbol)
+                                self._a2_clear(acct, symbol)
                 session.commit()
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
             self.logger.warning("v2 managed-exit emit failed for %s: %s", symbol, exc)
             return "refused"
+        if resolved_oco is not None:
+            detail, expected_row_id = resolved_oco
+            closed = await self._close_resolved_oco_managed_row(
+                acct, symbol, detail=detail, expected_row_id=expected_row_id
+            )
+            if not closed:
+                # The broker fill belonged to the prior row. Do not let its resolution grace
+                # suppress exits for the replacement position.
+                getattr(self, "_native_oco_resolving", {}).pop((acct, symbol), None)
+            return "closed" if closed else "refused"
         if pending_reject_alarm is not None:
             alarm_counts = self.__dict__.setdefault("_v2_exit_reject_alarm_count", {})
             announced = self.__dict__.setdefault("_v2_exit_reject_alarm_announced", set())
@@ -6753,7 +6845,18 @@ class OmsRiskService:
                 "[OMS-V2-MANAGED-EXIT] missing strategy/account %s/%s — no exit emitted",
                 row.strategy_code, row.broker_account_name,
             )
-            return []
+            return _ManagedSellEvents()
+        reservation: ExitPairReleaseResult | None = None
+        # Resolve the actual broker state before creating a durable intent. A held or already-filled
+        # pair must leave no stale software-sell intent behind.
+        if bool(getattr(self.settings, "oms_v2_exit_release_reservation_enabled", False)):
+            reservation = await self._release_exit_reservation_before_close(
+                session=session,
+                broker_account_name=row.broker_account_name,
+                symbol=row.symbol,
+            )
+            if reservation.outcome in {"reserved", "unanswerable", "resolved_by_fill"}:
+                return _ManagedSellEvents(reservation=reservation)
         metadata = {
             "oms_v2_managed_exit": "true",
             "reference_price": f"{float(reference_price):.4f}",
@@ -6825,16 +6928,6 @@ class OmsRiskService:
             order_type=order_type,
             time_in_force="day",
         )
-        # ⛔⭐ RELEASE THE RESERVATION FIRST. A resting exit leg holds these very shares, so without
-        # this the sell below is refused as a naked short every time (58 rejects on live:orb
-        # 2026-08-13). Flag-gated and capability-gated: with the flag off, or on an adapter with no
-        # addressable legs (Schwab/simulated), this is a no-op and the submit is byte-identical.
-        if bool(getattr(self.settings, "oms_v2_exit_release_reservation_enabled", False)):
-            await self._release_exit_reservation_before_close(
-                session=session,
-                broker_account_name=row.broker_account_name,
-                symbol=row.symbol,
-            )
         reports = await self.broker_adapter.submit_order(request)
         events = await self._record_order_reports(
             session=session, intent=intent, strategy_id=strategy.id,
@@ -6854,7 +6947,7 @@ class OmsRiskService:
         # evaluated. Counted here, beside the line that already marks the emit, so the two can
         # never disagree about what happened.
         self._p0a_census_note_submitted()
-        return events
+        return _ManagedSellEvents(events, reservation=reservation)
 
     async def _has_active_native_stop_guard_order(
         self,

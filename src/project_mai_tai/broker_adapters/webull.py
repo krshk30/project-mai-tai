@@ -31,6 +31,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from project_mai_tai.broker_adapters.protocols import (
     BrokerPositionSnapshot,
     ExecutionReport,
+    ExitPairReleaseResult,
     OrderRequest,
 )
 from project_mai_tai.settings import Settings
@@ -236,13 +237,36 @@ class WebullBrokerAdapter:
         )
         if needs_confirmation and self._CANCEL_CONFIRM_DELAY_SECONDS > 0:
             await asyncio.sleep(self._CANCEL_CONFIRM_DELAY_SECONDS)
-        final: list[ExecutionReport] = []
-        for request, report in initial:
-            if report.metadata.get("cancel_outcome") != "requested":
-                final.append(report)
-                continue
-            final.append(await self._confirm_cancel_order(account, request))
-        return final
+        # Always read both deterministic legs after the requests. A cancel refusal can mean the
+        # OCO filled between the software decision and the cancel; treating that as merely
+        # "unconfirmed" makes the OMS send a redundant close against an already-resolving position.
+        return [await self._confirm_cancel_order(account, request) for request, _ in initial]
+
+    async def release_exit_pair_for_close(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str
+    ) -> ExitPairReleaseResult:
+        """Cancel the pair and classify its post-request broker state for a software close."""
+        if self.accounts_by_name.get(broker_account_name) is None:
+            return ExitPairReleaseResult(outcome="unanswerable")
+        reports = tuple(
+            await self.cancel_exit_pair(
+                broker_account_name=broker_account_name,
+                symbol=symbol,
+                base_client_order_id=base_client_order_id,
+            )
+        )
+        filled = tuple(report for report in reports if report.event_type == "filled")
+        if len(filled) == 1:
+            return ExitPairReleaseResult(outcome="resolved_by_fill", reports=reports)
+        if len(filled) > 1 or len(reports) != 2:
+            return ExitPairReleaseResult(outcome="unanswerable", reports=reports)
+        if all(report.event_type == "cancelled" for report in reports):
+            return ExitPairReleaseResult(outcome="released", reports=reports)
+        if any(
+            report.metadata.get("cancel_outcome") == "could_not_tell" for report in reports
+        ):
+            return ExitPairReleaseResult(outcome="unanswerable", reports=reports)
+        return ExitPairReleaseResult(outcome="reserved", reports=reports)
 
     def _submit_exit_pair_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
@@ -885,20 +909,77 @@ class WebullBrokerAdapter:
         detail = OrderDetailRequest()
         detail.set_account_id(account.account_id)
         detail.set_client_order_id(request.client_order_id)
-        body = self._body(self._get_client().get_response(detail))
+        response = self._get_client().get_response(detail)
+        http_status = self._response_status(response)
+        if http_status < 200 or http_status >= 300:
+            return ExecutionReport(
+                event_type="accepted", origin="unknown",
+                client_order_id=request.client_order_id, symbol=request.symbol,
+                side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+                reason=f"cancel confirmation returned HTTP {http_status}",
+                metadata={**dict(request.metadata), "cancel_outcome": "could_not_tell"},
+            )
+        body = self._body(response)
         items = body.get("items") if isinstance(body, dict) else None
         item = items[0] if isinstance(items, list) and items and isinstance(items[0], dict) else {}
+        raw_status = str(
+            item.get("status") or item.get("order_status") or item.get("orderStatus") or ""
+        ).upper()
         status = self._map_status(item) if item else "unknown"
-        if status == "cancelled":
+        if status == "filled":
+            qty = self._decimal_or_none(item, "filled_qty", "filledQty") or Decimal("0")
+            price = self._decimal_or_none(
+                item, "filled_price", "filledPrice", "avg_fill_price", "avgFillPrice"
+            )
+            if qty <= 0 or price is None or price <= 0:
+                return ExecutionReport(
+                    event_type="accepted", origin="unknown",
+                    client_order_id=request.client_order_id, symbol=request.symbol,
+                    side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+                    reason="filled exit leg lacked a usable quantity or price",
+                    metadata={**dict(request.metadata), "cancel_outcome": "could_not_tell"},
+                )
+            broker_order_id = self._first_str(body, "order_id", "orderId")
+            return ExecutionReport(
+                event_type="filled", origin="broker",
+                client_order_id=request.client_order_id,
+                broker_order_id=broker_order_id,
+                broker_fill_id=f"{broker_order_id or request.client_order_id}:{qty}",
+                symbol=request.symbol, side=request.side, intent_type="close",
+                quantity=qty, filled_quantity=qty, fill_price=price,
+                reason="exit pair resolved by broker fill during release",
+                metadata={**dict(request.metadata), "cancel_outcome": "resolved_by_fill"},
+                reported_at=self._parse_broker_time(
+                    item.get("last_filled_time") or item.get("lastFilledTime")
+                ) or datetime.now(UTC),
+            )
+        if status in {"cancelled", "rejected"}:
             return ExecutionReport(
                 event_type="cancelled", origin="broker",
                 client_order_id=request.client_order_id, symbol=request.symbol,
                 side=request.side, intent_type=request.intent_type, quantity=request.quantity,
-                reason="cancel confirmed by broker order detail",
+                reason=f"exit leg is terminal at broker; status={status}",
                 metadata={**dict(request.metadata), "cancel_outcome": "confirmed"},
             )
+        if not item:
+            return ExecutionReport(
+                event_type="accepted", origin="unknown",
+                client_order_id=request.client_order_id, symbol=request.symbol,
+                side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+                reason="cancel requested but order detail contained no leg",
+                metadata={**dict(request.metadata), "cancel_outcome": "could_not_tell"},
+            )
+        if status == "accepted" and raw_status not in _ACCEPTED_STATUSES:
+            return ExecutionReport(
+                event_type="accepted", origin="unknown",
+                client_order_id=request.client_order_id, symbol=request.symbol,
+                side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+                reason=f"cancel confirmation returned unknown broker status={raw_status or '-'}",
+                metadata={**dict(request.metadata), "cancel_outcome": "could_not_tell"},
+            )
         return ExecutionReport(
-            event_type="accepted", origin="broker" if item else "unknown",
+            event_type="partially_filled" if status == "partially_filled" else "accepted",
+            origin="broker",
             client_order_id=request.client_order_id, symbol=request.symbol,
             side=request.side, intent_type=request.intent_type, quantity=request.quantity,
             reason=f"cancel requested but not confirmed; broker status={status}",

@@ -645,7 +645,7 @@ async def test_cancel_HTTP_417_is_rejected_not_cancelled(fake_sdk) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_pair_forced_417_never_reaches_confirmation(fake_sdk) -> None:
+async def test_cancel_pair_forced_417_with_unreadable_detail_is_not_clear(fake_sdk) -> None:
     class _C(_FakeClient):
         def get_response(self, req):
             self.last[req._kind] = req
@@ -653,11 +653,34 @@ async def test_cancel_pair_forced_417_never_reaches_confirmation(fake_sdk) -> No
             return _HttpResp(417, {"code": "ORDER_NOT_SUPPORT_REVERSE_OPTION"})
 
     client = _C({})
-    reports = await _adapter(client, _CANCEL_CONFIRM_DELAY_SECONDS=0).cancel_exit_pair(
+    release = await _adapter(client, _CANCEL_CONFIRM_DELAY_SECONDS=0).release_exit_pair_for_close(
         broker_account_name="live:orb", symbol="AAPL", base_client_order_id="protect-base",
     )
-    assert [report.event_type for report in reports] == ["rejected", "rejected"]
-    assert client.calls == {"cancel": 2}
+    assert release.outcome == "unanswerable"
+    assert [report.event_type for report in release.reports] == ["accepted", "accepted"]
+    assert all(
+        report.metadata["cancel_outcome"] == "could_not_tell"
+        for report in release.reports
+    )
+    assert client.calls == {"cancel": 2, "detail": 2}
+
+
+@pytest.mark.asyncio
+async def test_non_2xx_detail_cannot_claim_a_clear_pair_even_with_terminal_body(fake_sdk) -> None:
+    class _C(_FakeClient):
+        def get_response(self, req):
+            self.last[req._kind] = req
+            self.calls[req._kind] = self.calls.get(req._kind, 0) + 1
+            if req._kind == "detail":
+                return _HttpResp(500, {"items": [{"order_status": "CANCELLED"}]})
+            return _Resp({})
+
+    result = await _adapter(_C({}), _CANCEL_CONFIRM_DELAY_SECONDS=0).release_exit_pair_for_close(
+        broker_account_name="live:orb", symbol="AAPL", base_client_order_id="protect-base",
+    )
+
+    assert result.outcome == "unanswerable"
+    assert all(report.metadata["cancel_outcome"] == "could_not_tell" for report in result.reports)
 
 
 @pytest.mark.asyncio
@@ -978,6 +1001,50 @@ def _leg(status, price, qty="1", when="2026-07-27 15:36:30.000+0000", oid="WB-X"
         "order_status": status, "filled_qty": qty, "filled_price": price,
         "last_filled_time": when,
     }]}
+
+
+@pytest.mark.asyncio
+async def test_release_pair_reports_the_broker_fill_instead_of_clearing_it(fake_sdk) -> None:
+    client = _LegClient({
+        _BASE + "T": _leg("FILLED", "3.9300", oid="WB-T1"),
+        _BASE + "S": _leg("CANCELLED", None, qty="0", oid="WB-S1"),
+    })
+
+    result = await _adapter(client, _CANCEL_CONFIRM_DELAY_SECONDS=0).release_exit_pair_for_close(
+        broker_account_name="live:orb", symbol="BIYA", base_client_order_id=_BASE,
+    )
+
+    assert result.outcome == "resolved_by_fill"
+    filled = [report for report in result.reports if report.event_type == "filled"]
+    assert len(filled) == 1
+    assert filled[0].fill_price == Decimal("3.9300")
+    assert client.seen == [_BASE + "T", _BASE + "S"]
+
+
+@pytest.mark.asyncio
+async def test_release_pair_distinguishes_working_from_clear(fake_sdk) -> None:
+    working = _LegClient({
+        _BASE + "T": _leg("WORKING", None, qty="0"),
+        _BASE + "S": _leg("WORKING", None, qty="0"),
+    })
+    clear = _LegClient({
+        _BASE + "T": _leg("CANCELLED", None, qty="0"),
+        _BASE + "S": _leg("CANCELLED", None, qty="0"),
+    })
+
+    reserved = await _adapter(
+        working, _CANCEL_CONFIRM_DELAY_SECONDS=0
+    ).release_exit_pair_for_close(
+        broker_account_name="live:orb", symbol="BIYA", base_client_order_id=_BASE,
+    )
+    released = await _adapter(
+        clear, _CANCEL_CONFIRM_DELAY_SECONDS=0
+    ).release_exit_pair_for_close(
+        broker_account_name="live:orb", symbol="BIYA", base_client_order_id=_BASE,
+    )
+
+    assert reserved.outcome == "reserved"
+    assert released.outcome == "released"
 
 
 @pytest.mark.asyncio
