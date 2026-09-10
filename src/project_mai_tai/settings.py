@@ -208,6 +208,13 @@ class Settings(BaseSettings):
     # Fixed opening-high resting-entry paper model. The isolated env enables it; the
     # observer records modeled order decisions only and has no broker route.
     orb_resting_entry_enabled: bool = False
+    # Complete broker-disconnected paper lifecycle. The isolated ORB environment
+    # pins the settled rule; these values cannot create a broker route.
+    orb_paper_lifecycle_enabled: bool = False
+    orb_paper_target_pct: float = 5.0
+    orb_paper_stop_pct: float = 8.0
+    orb_paper_min_break_body_pct: float = 45.0
+    orb_paper_atr_exit_enabled: bool = True
     # P0.6 WINDOW FLATTEN (docs: P0.6-eod-flatten-design). ORB trades 09:30-10:00. AFTER 10:00 IT
     # SHOULD BE FLAT -- that is the rule, not a safety net. This enforces it.
     #

@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from project_mai_tai.db.models import OrbPaperEvent
 
 ORB_PAPER_ACCOUNT_NAME = "paper:orb"
+ORB_PAPER_ATR_BAR_EVENT_TYPE = "PAPER_ATR_BAR"
 ORB_PAPER_EVENT_TYPE = "PAPER_ENTRY_DECISION"
+ORB_PAPER_EXIT_EVENT_TYPE = "PAPER_EXIT_DECISION"
 ORB_PAPER_LEVEL_FINALIZED_EVENT_TYPE = "PAPER_LEVEL_FINALIZED"
 ORB_PAPER_ORDER_ADJUSTED_EVENT_TYPE = "PAPER_ORDER_ADJUSTED"
 ORB_PAPER_ORDER_PLACED_EVENT_TYPE = "PAPER_ORDER_PLACED"
@@ -19,7 +21,7 @@ ORB_PAPER_ORDER_UNANSWERABLE_EVENT_TYPE = "PAPER_ORDER_UNANSWERABLE"
 
 @dataclass(frozen=True)
 class OrbPaperDecision:
-    """A durable observation, deliberately not an order or a claimed fill."""
+    """Durable paper evidence, deliberately not a broker order or broker fill."""
 
     event_key: str
     session_date: date
@@ -61,3 +63,35 @@ class OrbPaperStore:
             )
             session.commit()
         return True
+
+    def load_lifecycle(self) -> list[OrbPaperDecision]:
+        """Load the small append-only lifecycle tape for restart reconstruction."""
+        with self.session_factory() as session:
+            rows = session.scalars(
+                select(OrbPaperEvent)
+                .where(
+                    OrbPaperEvent.event_type.in_(
+                        (
+                            ORB_PAPER_ATR_BAR_EVENT_TYPE,
+                            ORB_PAPER_EVENT_TYPE,
+                            ORB_PAPER_EXIT_EVENT_TYPE,
+                        )
+                    )
+                )
+                .order_by(OrbPaperEvent.observed_at, OrbPaperEvent.created_at)
+            ).all()
+        return [
+            OrbPaperDecision(
+                event_key=row.event_key,
+                event_type=row.event_type,
+                session_date=row.session_date,
+                symbol=row.symbol,
+                observed_at=row.observed_at,
+                entry_price=row.entry_price,
+                quantity=row.quantity,
+                attempt=row.attempt,
+                mode=row.mode,
+                detail=dict(row.payload or {}),
+            )
+            for row in rows
+        ]

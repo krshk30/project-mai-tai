@@ -91,6 +91,7 @@ def test_v2_webull_registration_does_not_depend_on_orb() -> None:
 def test_orb_modules_have_no_trade_intent_broker_or_dynamic_dispatch_path() -> None:
     paths = (
         Path("src/project_mai_tai/services/orb_app.py"),
+        Path("src/project_mai_tai/orb_paper_lifecycle.py"),
         Path("src/project_mai_tai/orb_paper_store.py"),
     )
     sources = {path: path.read_text() for path in paths}

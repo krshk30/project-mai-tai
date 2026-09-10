@@ -69,6 +69,19 @@ class OrbTickAggregator:
             return None
         return self.flush()
 
+    def current_bar(self) -> OrbBar | None:
+        """Snapshot the forming OHLCV bar without closing or mutating it."""
+        if self._bucket is None:
+            return None
+        return OrbBar(
+            timestamp=self._bucket,
+            open=self._o,
+            high=self._h,
+            low=self._l,
+            close=self._c,
+            volume=self._v,
+        )
+
     def _start(self, bucket: datetime, price: float, size: float) -> None:
         self._bucket = bucket
         self._o = self._h = self._l = self._c = price
