@@ -20,7 +20,7 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, ExitPairReleaseResult
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition, TradeIntent
+from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition, SystemIncident, TradeIntent
 from project_mai_tai.events import (
     QuoteTickEvent,
     QuoteTickPayload,
@@ -115,6 +115,11 @@ def _sell_intents(sf, symbol=SYM) -> list[TradeIntent]:
     with sf() as s:
         return list(s.scalars(select(TradeIntent).where(
             TradeIntent.symbol == symbol, TradeIntent.side == "sell")).all())
+
+
+def _incidents(sf) -> list[SystemIncident]:
+    with sf() as s:
+        return list(s.scalars(select(SystemIncident).order_by(SystemIncident.opened_at)).all())
 
 
 def _ref(intent: TradeIntent) -> Decimal:
@@ -578,7 +583,38 @@ async def test_adapter_without_pair_state_capability_keeps_the_existing_sell_pat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["reserved", "unanswerable"])
-async def test_unclear_pair_holds_the_close_without_an_intent_and_throttles(outcome: str) -> None:
+async def test_unclear_pair_holds_profit_taking_without_an_intent_and_throttles(
+    outcome: str,
+) -> None:
+    result = ExitPairReleaseResult(
+        outcome=outcome,
+        reports=(_pair_report("accepted"), _pair_report("cancelled")),
+    )
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=10.25)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, SYM, "protect-base")]
+    assert adapter.submitted == []
+    assert _sell_intents(sf) == []
+    assert _row(sf).status == "open"
+    incidents = _incidents(sf)
+    if outcome == "unanswerable":
+        assert len(incidents) == 1
+        assert incidents[0].payload["exit_action"] == "held"
+    else:
+        assert incidents == [], "confirmed protection must not page before retries exhaust"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["reserved", "unanswerable"])
+async def test_unclear_pair_never_suppresses_the_hard_stop(outcome: str) -> None:
     result = ExitPairReleaseResult(
         outcome=outcome,
         reports=(_pair_report("accepted"), _pair_report("cancelled")),
@@ -591,12 +627,132 @@ async def test_unclear_pair_holds_the_close_without_an_intent_and_throttles(outc
     _quote(svc, bid=9.40)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
-    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     assert adapter.release_calls == [(ACCT, SYM, "protect-base")]
-    assert adapter.submitted == []
-    assert _sell_intents(sf) == []
-    assert _row(sf).status == "open"
+    assert len(adapter.submitted) == 1
+    assert len(_sell_intents(sf)) == 1
+
+
+@pytest.mark.asyncio
+async def test_unanswerable_pair_opens_inc1_even_when_the_hard_stop_continues() -> None:
+    result = ExitPairReleaseResult(outcome="unanswerable")
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=9.40)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    incident = _incidents(sf)[0]
+    assert len(adapter.submitted) == 1, "INC1 must not replace the hard stop"
+    assert incident.status == "open"
+    assert incident.payload["source"] == "oms_v2_exit_release_unresolved"
+    assert incident.payload["risk_state"] == "protection_unknown"
+    assert incident.payload["protective_exit"] is True
+    assert incident.payload["attempts"] == 1
+
+
+@pytest.mark.parametrize("positive_outcome", ["released", "resolved_by_fill"])
+def test_only_positive_pair_evidence_closes_the_release_incident(
+    positive_outcome: str,
+) -> None:
+    sf = _make_sf()
+    svc = _svc(sf, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    with sf() as session:
+        row = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM))
+        assert row is not None
+        svc._sync_exit_release_incident(
+            session,
+            row,
+            ExitPairReleaseResult(outcome="unanswerable"),
+            reason="oms_v2_managed_exit:HARD_STOP",
+            protective=True,
+        )
+        session.commit()
+
+    incident = _incidents(sf)[0]
+    assert incident.status == "open"
+
+    with sf() as session:
+        row = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM))
+        assert row is not None
+        svc._sync_exit_release_incident(
+            session,
+            row,
+            ExitPairReleaseResult(outcome=positive_outcome),
+            reason="oms_v2_managed_exit:HARD_STOP",
+            protective=True,
+        )
+        session.commit()
+
+    assert _incidents(sf)[0].status == "closed"
+
+
+@pytest.mark.asyncio
+async def test_terminal_reserved_pair_pages_but_does_not_suppress_the_hard_stop(
+    monkeypatch,
+) -> None:
+    result = ExitPairReleaseResult(outcome="reserved")
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    monkeypatch.setattr(svc, "_EXIT_RESERVATION_MAX_ATTEMPTS", 1)
+    _arm(svc, sf, entry=10.0, qty=100)
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=9.40)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    incident = _incidents(sf)[0]
+    assert len(adapter.submitted) == 1
+    assert incident.payload["risk_state"] == "protection_confirmed"
+    assert incident.payload["exit_action"] == "continued"
+    assert incident.payload["terminal"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_flat_position_read_does_not_close_the_release_incident(monkeypatch) -> None:
+    sf = _make_sf()
+    svc = _svc(sf, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    with sf() as session:
+        row = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM))
+        assert row is not None
+        svc._sync_exit_release_incident(
+            session,
+            row,
+            ExitPairReleaseResult(outcome="unanswerable"),
+            reason="oms_v2_managed_exit:HARD_STOP",
+            protective=True,
+        )
+        session.commit()
+
+    async def flat_state(_acct, _symbol):
+        return object()
+
+    async def confirmed_flat(_acct, _symbol, *, established_at=None, state=None):
+        return True
+
+    async def no_fill_detail(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(svc, "_broker_symbol_position_state", flat_state)
+    monkeypatch.setattr(svc, "_broker_symbol_is_flat", confirmed_flat)
+    monkeypatch.setattr(svc, "_fetch_oco_exit_detail", no_fill_detail)
+    svc._v2_exit_close_failures[(ACCT, SYM)] = svc._V2_EXIT_RECONCILE_AFTER_FAILURES - 1
+
+    with sf() as session:
+        row = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM))
+        assert row is not None
+        assert await svc._v2_close_reconcile_flat(session, ACCT, SYM, row) is True
+        session.commit()
+
+    incident = _incidents(sf)[0]
+    assert incident.status == "open", "a flat read is not positive pair-release evidence"
+    assert incident.closed_at is None
 
 
 @pytest.mark.asyncio
@@ -610,7 +766,7 @@ async def test_unclear_pair_retries_when_the_probe_window_expires(monkeypatch) -
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
     svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
-    _quote(svc, bid=9.40)
+    _quote(svc, bid=10.25)
     clock = {"now": 100.0}
     monkeypatch.setattr(
         "project_mai_tai.oms.service.time.monotonic", lambda: clock["now"]

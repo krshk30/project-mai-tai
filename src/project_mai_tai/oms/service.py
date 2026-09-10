@@ -551,8 +551,25 @@ class OmsRiskService:
     # burn for a missed exit -- the same bug facing the other way.
     _A2_BACKOFF_SECONDS = 15.0
     # A working or unreadable Webull pair must not trigger one cancel per quote tick. This is a
-    # broker-state probe cadence, not an abandonment bound; the managed row remains owned.
+    # broker-state probe cadence; the managed row remains owned throughout.
     _EXIT_RESERVATION_RETRY_SECONDS = 10.0
+    # Reuse the established v2 exit termination budget rather than inventing an unbounded second
+    # retry loop. Exhaustion stops broker-state probes and leaves an INC1 incident open for the
+    # operator; it never authorizes a sell or declares protection clear.
+    _EXIT_RESERVATION_MAX_ATTEMPTS = _V2_EXIT_ABANDON_AFTER_FAILURES
+    _PROTECTIVE_V2_EXIT_REASONS = frozenset(
+        {
+            "oms_v2_managed_exit:CONFIRMATION_EXIT",
+            "oms_v2_managed_exit:CW_FLOOR",
+            "oms_v2_managed_exit:CW_HARD_STOP",
+            "oms_v2_managed_exit:CW_FLIP",
+            "oms_v2_managed_exit:HARD_STOP",
+            "oms_v2_managed_exit:FLOOR_BREACH",
+            "V2_EOD_CANCEL_REEXIT",
+            "V2_OVERNIGHT_FLATTEN",
+        }
+    )
+    _EXIT_RELEASE_INCIDENT_SOURCE = "oms_v2_exit_release_unresolved"
     # ⛔ OPERATOR RISK DECISION, 2026-08-06, NOT a derived value. Sits inside the bimodal gap where
     # every bound from ~90s to ~250s escalates on the SAME 7 of 11 -- so nothing is traded away
     # anywhere in that range. Do not "optimise" it against a percentile.
@@ -709,6 +726,9 @@ class OmsRiskService:
         self._webull_protect_base: dict[tuple[str, str], str] = {}
         self._exit_reservation_released: set[tuple[str, str]] = set()
         self._exit_reservation_last_try: dict[tuple[str, str], float] = {}
+        self._exit_reservation_last_outcome: dict[tuple[str, str], str] = {}
+        self._exit_reservation_attempts: dict[tuple[str, str], int] = {}
+        self._exit_reservation_terminal: dict[tuple[str, str], str] = {}
         # Consecutive TRANSIENT exit-fill fetch failures per (acct, symbol). See _defer_for_exit_fetch.
         self._oco_exit_fetch_deferrals: dict[tuple[str, str], int] = {}
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
@@ -2933,7 +2953,12 @@ class OmsRiskService:
 
     # ------------------------------------------- release the exit reservation before a software close
     async def _release_exit_reservation_before_close(
-        self, *, session, broker_account_name: str, symbol: str,
+        self,
+        *,
+        session,
+        broker_account_name: str,
+        symbol: str,
+        terminal_after_attempt: bool = False,
     ) -> ExitPairReleaseResult:
         """Cancel the resting exit legs so the ladder's own sell is not read as a naked short.
 
@@ -2947,10 +2972,11 @@ class OmsRiskService:
 
         ⛔⭐ CONFIRMED RELEASE ONCE; UNCERTAIN STATE ON A BOUNDED PROBE. The ladder re-evaluates on
         every quote tick. A confirmed release is latched for the episode, while a working or
-        unreadable pair is retried every `_EXIT_RESERVATION_RETRY_SECONDS`. That preserves a path
-        out without recreating the 18-evaluation / 18-failed-cancel burst measured on 2026-09-10.
-        Only three software closes were rejected before flat reconciliation; the defect here is
-        broker-state reconciliation, not proximity to the 20-reject ceiling.
+        unreadable pair is retried every `_EXIT_RESERVATION_RETRY_SECONDS`, up to
+        `_EXIT_RESERVATION_MAX_ATTEMPTS`. The 19:55 overnight close makes its unresolved attempt
+        terminal immediately. Terminal means operator-owned and incident-open; it never means
+        released. That preserves a path out without recreating the 18-evaluation / 18-failed-cancel
+        burst measured on 2026-09-10.
 
         A cancel acknowledgement is not enough. The broker state after the request decides whether
         the software sell may proceed, whether the OCO already filled, or whether we must hold and
@@ -2959,6 +2985,9 @@ class OmsRiskService:
         key = (broker_account_name, symbol.upper())
         if key in self._exit_reservation_released:
             return ExitPairReleaseResult(outcome="released")
+        terminal = self.__dict__.setdefault("_exit_reservation_terminal", {}).get(key)
+        if terminal in {"reserved", "unanswerable"}:
+            return ExitPairReleaseResult(outcome=terminal)
         base = self._webull_protect_base.get(key, "")
         if not base:
             # Native bracket children hang off the entry coid; bare Webull protection hangs off a
@@ -2975,8 +3004,15 @@ class OmsRiskService:
         now = time.monotonic()
         last_try = self.__dict__.setdefault("_exit_reservation_last_try", {}).get(key)
         if last_try is not None and now - last_try < self._EXIT_RESERVATION_RETRY_SECONDS:
-            return ExitPairReleaseResult(outcome="reserved")
+            # A throttled unreadable result is still unreadable. Returning `reserved` here would
+            # turn absence of evidence into positive evidence that broker protection survived.
+            last_outcome = self.__dict__.setdefault("_exit_reservation_last_outcome", {}).get(
+                key, "unanswerable"
+            )
+            return ExitPairReleaseResult(outcome=last_outcome)
         self._exit_reservation_last_try[key] = now
+        attempts = self.__dict__.setdefault("_exit_reservation_attempts", {})
+        attempts[key] = attempts.get(key, 0) + 1
         # Trigger + polarity live beside the numbers: requested=2 is the denominator; only
         # confirmed=2 means the reservation is clear. A request is not a result.
         requested = 2
@@ -2988,7 +3024,7 @@ class OmsRiskService:
         )
         release_fn = getattr(self.broker_adapter, "release_exit_pair_for_close", None)
         if release_fn is None:
-            self._exit_reservation_last_try.pop(key, None)
+            self._clear_exit_reservation_retry_state(key)
             return ExitPairReleaseResult(outcome="unsupported")
         try:
             release = await release_fn(
@@ -2998,17 +3034,21 @@ class OmsRiskService:
         except Exception:  # noqa: BLE001 - never sell into an unreadable reservation
             self.logger.warning(
                 "[OMS-EXIT-RELEASE-RAISED] %s %s base=%s — could not cancel the resting exit legs; "
-                "holding the software close and retrying after %.0fs",
+                "reservation state is unknown; retrying after %.0fs",
                 symbol, broker_account_name, base, self._EXIT_RESERVATION_RETRY_SECONDS,
                 exc_info=True,
             )
-            return ExitPairReleaseResult(outcome="unanswerable")
+            release = ExitPairReleaseResult(outcome="unanswerable")
+            self._remember_exit_reservation_uncertainty(
+                key, release.outcome, terminal_after_attempt=terminal_after_attempt
+            )
+            return release
         reports = release.reports
         if release.outcome == "unsupported":
-            self._exit_reservation_last_try.pop(key, None)
+            self._clear_exit_reservation_retry_state(key)
             return release
         if release.outcome == "resolved_by_fill":
-            self._exit_reservation_last_try.pop(key, None)
+            self._clear_exit_reservation_retry_state(key)
             self.__dict__.setdefault("_native_oco_resolving", {})[key] = utcnow()
             self.logger.info(
                 "[OMS-EXIT-PAIR-RESOLVED] %s %s base=%s — broker reports an OCO leg FILLED; "
@@ -3023,18 +3063,22 @@ class OmsRiskService:
             1 for report in reports if getattr(report, "event_type", "") == "rejected"
         )
         if release.outcome != "released":
+            terminal = self._remember_exit_reservation_uncertainty(
+                key, release.outcome, terminal_after_attempt=terminal_after_attempt
+            )
             reasons = "; ".join(
                 str(getattr(report, "reason", "") or "<no reason>") for report in reports
             )
             self.logger.warning(
                 "[OMS-CANCEL-PAIR-UNCERTAIN] %s %s base=%s requested=%d reports=%d confirmed=%d "
-                "refused=%d release_confirmed=0 — software close HELD; retry_after=%.0fs; "
+                "refused=%d release_confirmed=0 attempts=%d/%d terminal=%d — retry_after=%.0fs; "
                 "broker_state=%s reasons=%s",
                 symbol, broker_account_name, base, requested, len(reports), confirmed, refused,
+                attempts[key], self._EXIT_RESERVATION_MAX_ATTEMPTS, int(terminal),
                 self._EXIT_RESERVATION_RETRY_SECONDS, release.outcome, reasons[:1000],
             )
             return release
-        self._exit_reservation_last_try.pop(key, None)
+        self._clear_exit_reservation_retry_state(key)
         self._exit_reservation_released.add(key)
         self.logger.info(
             "[OMS-EXIT-RELEASE] %s %s base=%s requested=%d confirmed=%d release_confirmed=1 — "
@@ -3043,6 +3087,144 @@ class OmsRiskService:
             symbol, broker_account_name, base, requested, confirmed,
         )
         return release
+
+    def _remember_exit_reservation_uncertainty(
+        self,
+        key: tuple[str, str],
+        outcome: str,
+        *,
+        terminal_after_attempt: bool,
+    ) -> bool:
+        """Remember uncertainty without ever converting it into permission to sell."""
+        self.__dict__.setdefault("_exit_reservation_last_outcome", {})[key] = outcome
+        attempts = self.__dict__.setdefault("_exit_reservation_attempts", {}).get(key, 0)
+        terminal = terminal_after_attempt or attempts >= self._EXIT_RESERVATION_MAX_ATTEMPTS
+        if terminal:
+            self.__dict__.setdefault("_exit_reservation_terminal", {})[key] = outcome
+            self.logger.error(
+                "[OMS-EXIT-RELEASE-OPERATOR-REQUIRED] %s %s outcome=%s attempts=%d/%d — "
+                "automatic reservation probes are exhausted; the managed row remains owned and "
+                "INC1 stays open pending an operator decision",
+                key[1], key[0], outcome, attempts, self._EXIT_RESERVATION_MAX_ATTEMPTS,
+            )
+        return terminal
+
+    def _clear_exit_reservation_retry_state(self, key: tuple[str, str]) -> None:
+        self.__dict__.setdefault("_exit_reservation_last_try", {}).pop(key, None)
+        self.__dict__.setdefault("_exit_reservation_last_outcome", {}).pop(key, None)
+        self.__dict__.setdefault("_exit_reservation_attempts", {}).pop(key, None)
+        self.__dict__.setdefault("_exit_reservation_terminal", {}).pop(key, None)
+
+    @classmethod
+    def _is_protective_v2_exit(cls, reason: str) -> bool:
+        """Separate safety exits from profit-taking closes that duplicate the resting pair."""
+        return reason in cls._PROTECTIVE_V2_EXIT_REASONS
+
+    @classmethod
+    def _exit_release_incident(
+        cls, session: Session, acct: str, symbol: str, managed_row_id: str
+    ) -> SystemIncident | None:
+        incidents = session.scalars(
+            select(SystemIncident).where(
+                SystemIncident.service_name == SERVICE_NAME,
+                SystemIncident.status != "closed",
+            )
+        ).all()
+        return next(
+            (
+                incident
+                for incident in incidents
+                if isinstance(incident.payload, dict)
+                and incident.payload.get("source") == cls._EXIT_RELEASE_INCIDENT_SOURCE
+                and incident.payload.get("broker_account_name") == acct
+                and incident.payload.get("symbol") == symbol
+                and incident.payload.get("managed_row_id") == managed_row_id
+            ),
+            None,
+        )
+
+    def _sync_exit_release_incident(
+        self,
+        session: Session,
+        row,
+        release: ExitPairReleaseResult,
+        *,
+        reason: str,
+        protective: bool,
+    ) -> None:
+        """Keep INC1 open until the pair itself positively reports release or a fill."""
+        acct = str(row.broker_account_name)
+        symbol = str(row.symbol).upper()
+        managed_row_id = str(row.id)
+        key = (acct, symbol)
+        try:
+            with session.begin_nested():
+                incident = self._exit_release_incident(
+                    session, acct, symbol, managed_row_id
+                )
+                if release.outcome in {"released", "resolved_by_fill"}:
+                    if incident is not None:
+                        incident.status = "closed"
+                        incident.closed_at = utcnow()
+                    return
+                terminal = key in self.__dict__.setdefault(
+                    "_exit_reservation_terminal", {}
+                )
+                # A reserved pair positively proves protection survived. It becomes operator work
+                # only when automated probes exhaust; unreadable state pages immediately because
+                # either or both cancel requests may already have landed.
+                if release.outcome != "unanswerable" and not terminal:
+                    return
+                attempts = self.__dict__.setdefault("_exit_reservation_attempts", {}).get(key, 0)
+                risk_state = (
+                    "protection_unknown"
+                    if release.outcome == "unanswerable"
+                    else "protection_confirmed"
+                )
+                exit_action = "continued" if protective else "held"
+                payload = {
+                    "source": self._EXIT_RELEASE_INCIDENT_SOURCE,
+                    "broker_account_name": acct,
+                    "symbol": symbol,
+                    "managed_row_id": managed_row_id,
+                    "close_outcome": "release_unresolved",
+                    "release_outcome": release.outcome,
+                    "risk_state": risk_state,
+                    "exit_action": exit_action,
+                    "exit_reason": reason,
+                    "protective_exit": protective,
+                    "attempts": attempts,
+                    "max_attempts": self._EXIT_RESERVATION_MAX_ATTEMPTS,
+                    "terminal": terminal,
+                }
+                title = (
+                    f"Exit protection UNKNOWN: {symbol} on {acct}; check now"
+                    if risk_state == "protection_unknown"
+                    else f"Exit pair still RESERVED: {symbol} on {acct}; operator decision required"
+                )[:255]
+                if incident is None:
+                    session.add(
+                        SystemIncident(
+                            service_name=SERVICE_NAME,
+                            severity="critical",
+                            title=title,
+                            status="open",
+                            payload=payload,
+                            opened_at=utcnow(),
+                        )
+                    )
+                else:
+                    incident.severity = "critical"
+                    incident.title = title
+                    incident.status = "open"
+                    incident.closed_at = None
+                    incident.payload = payload
+        except Exception:  # noqa: BLE001 - observability must not alter the broker outcome
+            self.logger.exception(
+                "[OMS-EXIT-RELEASE-INCIDENT-FAILED] sym=%s acct=%s managed_row=%s — "
+                "INC1 may not reflect the unresolved reservation",
+                symbol, acct, managed_row_id,
+            )
 
     @staticmethod
     def _exit_pair_fill_detail(release: ExitPairReleaseResult) -> dict[str, object] | None:
@@ -3097,7 +3279,7 @@ class OmsRiskService:
         because the code would look like it is still handling the case."""
         key = (broker_account_name, symbol.upper())
         self._exit_reservation_released.discard(key)
-        self.__dict__.setdefault("_exit_reservation_last_try", {}).pop(key, None)
+        OmsRiskService._clear_exit_reservation_retry_state(self, key)
         self._webull_protect_base.pop(key, None)
         intervals = self.__dict__.setdefault("_confirmation_unprotected_since", {})
         started_at = intervals.pop(key, None)
@@ -6601,6 +6783,7 @@ class OmsRiskService:
                     )
                     return "refused"
                 if kind == "SCALE":
+                    protective = self._is_protective_v2_exit(reason)
                     managed_sell = await self._emit_v2_managed_sell(
                         session, row, intent_type="scale", quantity=int(sell_qty or 0),
                         reference_price=reference_price, reason=reason, bid=bid,
@@ -6611,11 +6794,13 @@ class OmsRiskService:
                     if reservation is not None and reservation.outcome == "resolved_by_fill":
                         detail = self._exit_pair_fill_detail(reservation)
                         if detail is None:
+                            session.commit()
                             return "refused"
                         resolved_oco = (detail, str(row.id))
                     elif reservation is not None and reservation.outcome in {
                         "reserved", "unanswerable"
-                    }:
+                    } and not protective:
+                        session.commit()
                         return "refused"
                     else:
                         position.apply_scale(
@@ -6659,6 +6844,7 @@ class OmsRiskService:
                     )
                     return "refused"
                 else:  # HARD / FLOOR — full close
+                    protective = self._is_protective_v2_exit(reason)
                     managed_sell = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
                         reference_price=reference_price, reason=reason, bid=bid,
@@ -6670,11 +6856,13 @@ class OmsRiskService:
                     if reservation is not None and reservation.outcome == "resolved_by_fill":
                         detail = self._exit_pair_fill_detail(reservation)
                         if detail is None:
+                            session.commit()
                             return "refused"
                         resolved_oco = (detail, str(row.id))
                     elif reservation is not None and reservation.outcome in {
                         "reserved", "unanswerable"
-                    }:
+                    } and not protective:
+                        session.commit()
                         return "refused"
                     rejected = any(
                         str(getattr(ev.payload, "status", "")).lower() == "rejected"
@@ -6847,15 +7035,23 @@ class OmsRiskService:
             )
             return _ManagedSellEvents()
         reservation: ExitPairReleaseResult | None = None
-        # Resolve the actual broker state before creating a durable intent. A held or already-filled
-        # pair must leave no stale software-sell intent behind.
+        protective = self._is_protective_v2_exit(reason)
+        # Resolve the actual broker state before creating a durable intent. A broker-filled pair
+        # always suppresses the redundant sell. Unresolved profit-taking waits; protective exits
+        # continue so uncertainty cannot disable the hard stop or another safety close.
         if bool(getattr(self.settings, "oms_v2_exit_release_reservation_enabled", False)):
             reservation = await self._release_exit_reservation_before_close(
                 session=session,
                 broker_account_name=row.broker_account_name,
                 symbol=row.symbol,
+                terminal_after_attempt=reason == "V2_OVERNIGHT_FLATTEN",
             )
-            if reservation.outcome in {"reserved", "unanswerable", "resolved_by_fill"}:
+            self._sync_exit_release_incident(
+                session, row, reservation, reason=reason, protective=protective
+            )
+            if reservation.outcome == "resolved_by_fill" or (
+                reservation.outcome in {"reserved", "unanswerable"} and not protective
+            ):
                 return _ManagedSellEvents(reservation=reservation)
         metadata = {
             "oms_v2_managed_exit": "true",

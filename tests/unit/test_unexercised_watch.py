@@ -160,7 +160,10 @@ def test_a_failed_delivery_is_retried_rather_than_suppressed(tmp_path, monkeypat
     assert len(attempts) == 3, "a delivered alarm must never page again"
 
 
-def _inc1_row(*, incident_id: str = "incident-1", symbol: str = "NUR") -> str:
+def _inc1_row(
+    *, incident_id: str = "incident-1", symbol: str = "NUR",
+    source: str = "oms_v2_cw_flip_uncovered",
+) -> str:
     return json.dumps(
         {
             "id": incident_id,
@@ -170,11 +173,12 @@ def _inc1_row(*, incident_id: str = "incident-1", symbol: str = "NUR") -> str:
             "symbol": symbol,
             "managed_row_id": "managed-1",
             "close_outcome": "close_failed",
+            "source": source,
         }
     )
 
 
-def test_inc1_reads_only_open_uncovered_cw_flip_incidents(monkeypatch):
+def test_inc1_reads_both_incident_types_from_the_same_pager_route(monkeypatch):
     statements: list[str] = []
 
     def capture(sql):
@@ -186,7 +190,8 @@ def test_inc1_reads_only_open_uncovered_cw_flip_incidents(monkeypatch):
     assert uw._inc1_open_incidents()[0]["id"] == "incident-1"
     assert len(statements) == 1
     assert "status != 'closed'" in statements[0]
-    assert "payload->>'source'='oms_v2_cw_flip_uncovered'" in statements[0]
+    assert "'oms_v2_cw_flip_uncovered'" in statements[0]
+    assert "'oms_v2_exit_release_unresolved'" in statements[0]
 
 
 def test_inc1_forced_incident_reaches_the_watchers_page_channel(tmp_path, monkeypatch):
@@ -205,6 +210,66 @@ def test_inc1_forced_incident_reaches_the_watchers_page_channel(tmp_path, monkey
     assert "close_failed" in pages[0][1]
     assert json.loads(state.read_text(encoding="utf-8"))["incident-1"]["delivered"] is True
     assert "open=1 delivered=1 pending=0" in status.read_text(encoding="utf-8")
+
+
+def test_exit_release_uncertainty_uses_the_existing_inc1_page_channel(tmp_path, monkeypatch):
+    row = json.loads(_inc1_row(source="oms_v2_exit_release_unresolved"))
+    row.update(
+        {
+            "title": "Exit protection UNKNOWN: NUR on live:orb; check now",
+            "release_outcome": "unanswerable",
+            "risk_state": "protection_unknown",
+            "exit_action": "continued",
+            "attempts": "2",
+            "max_attempts": "8",
+            "terminal": "false",
+        }
+    )
+    pages: list[tuple[str, str]] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [json.dumps(row)])
+    monkeypatch.setattr(uw, "page", lambda title, body: pages.append((title, body)) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+
+    assert pages[0][0].startswith("Exit protection UNKNOWN")
+    assert "may be unprotected" in pages[0][1]
+    assert "exit_action=continued" in pages[0][1]
+    assert "attempts=2/8 terminal=false" in pages[0][1]
+
+
+def test_terminal_reserved_pair_page_does_not_claim_the_position_is_unprotected(
+    tmp_path, monkeypatch
+):
+    row = json.loads(_inc1_row(source="oms_v2_exit_release_unresolved"))
+    row.update(
+        {
+            "title": "Exit pair still RESERVED: NUR on live:orb; operator decision required",
+            "release_outcome": "reserved",
+            "risk_state": "protection_confirmed",
+            "exit_action": "held",
+            "attempts": "8",
+            "max_attempts": "8",
+            "terminal": "true",
+        }
+    )
+    pages: list[str] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [json.dumps(row)])
+    monkeypatch.setattr(uw, "page", lambda _title, body: pages.append(body) or True)
+
+    assert uw.main(
+        [
+            "--inc1",
+            "--state",
+            str(tmp_path / "inc1.json"),
+            "--status",
+            str(tmp_path / "INC1_STATUS.txt"),
+        ]
+    ) == 0
+
+    assert "confirmed to remain protective" in pages[0]
+    assert "may be unprotected" not in pages[0]
+    assert "exit_action=held" in pages[0]
 
 
 def test_inc1_failed_delivery_retries_until_accepted_then_stays_silent(tmp_path, monkeypatch):

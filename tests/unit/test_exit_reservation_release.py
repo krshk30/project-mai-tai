@@ -22,6 +22,8 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
+import pytest
+
 from project_mai_tai.broker_adapters.protocols import ExitPairReleaseResult
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
@@ -95,9 +97,13 @@ def _svc(adapter, *, base: str = "protect-base") -> svc.OmsRiskService:
     return s
 
 
-def _release(s, symbol: str = "XHG") -> ExitPairReleaseResult:
+def _release(
+    s, symbol: str = "XHG", *, terminal_after_attempt: bool = False
+) -> ExitPairReleaseResult:
     return asyncio.run(s._release_exit_reservation_before_close(
-        session=object(), broker_account_name="live:orb", symbol=symbol))
+        session=object(), broker_account_name="live:orb", symbol=symbol,
+        terminal_after_attempt=terminal_after_attempt,
+    ))
 
 
 def test_it_CANCELS_the_resting_pair_before_the_close(caplog) -> None:
@@ -215,6 +221,64 @@ def test_a_RAISING_release_is_unanswerable_and_never_claimed_clear() -> None:
     s = _svc(_Boom())
     assert _release(s).outcome == "unanswerable"
     assert ("live:orb", "XHG") not in s._exit_reservation_released
+
+
+def test_throttle_preserves_unanswerable_instead_of_claiming_protection_survived() -> None:
+    class _Boom:
+        async def release_exit_pair_for_close(self, **kw):
+            raise RuntimeError("network")
+
+    s = _svc(_Boom())
+    assert _release(s).outcome == "unanswerable"
+    assert _release(s).outcome == "unanswerable"
+
+
+def test_release_probes_end_at_the_existing_v2_retry_bound(monkeypatch) -> None:
+    reports = [SimpleNamespace(event_type="rejected", reason="still working")]
+    adapter = _Adapter(reports=reports)
+    s = _svc(adapter)
+    clock = {"now": 100.0}
+    monkeypatch.setattr(svc.time, "monotonic", lambda: clock["now"])
+
+    for _ in range(s._EXIT_RESERVATION_MAX_ATTEMPTS + 3):
+        assert _release(s).outcome == "reserved"
+        clock["now"] += s._EXIT_RESERVATION_RETRY_SECONDS
+
+    key = ("live:orb", "XHG")
+    assert len(adapter.cancelled) == s._EXIT_RESERVATION_MAX_ATTEMPTS
+    assert s._exit_reservation_terminal[key] == "reserved"
+
+
+def test_session_end_attempt_enters_the_operator_owned_terminal_state() -> None:
+    reports = [SimpleNamespace(event_type="rejected", reason="still working")]
+    adapter = _Adapter(reports=reports)
+    s = _svc(adapter)
+
+    assert _release(s, terminal_after_attempt=True).outcome == "reserved"
+
+    key = ("live:orb", "XHG")
+    assert s._exit_reservation_attempts[key] == 1
+    assert s._exit_reservation_terminal[key] == "reserved"
+    assert len(adapter.cancelled) == 1
+
+
+@pytest.mark.parametrize(
+    ("reason", "protective"),
+    [
+        ("oms_v2_managed_exit:CONFIRMATION_EXIT", True),
+        ("oms_v2_managed_exit:CW_FLOOR", True),
+        ("oms_v2_managed_exit:CW_HARD_STOP", True),
+        ("oms_v2_managed_exit:CW_FLIP", True),
+        ("oms_v2_managed_exit:HARD_STOP", True),
+        ("oms_v2_managed_exit:FLOOR_BREACH", True),
+        ("V2_EOD_CANCEL_REEXIT", True),
+        ("V2_OVERNIGHT_FLATTEN", True),
+        ("oms_v2_managed_exit:CW_TARGET", False),
+        ("oms_v2_managed_exit:SCALE_PCT2", False),
+    ],
+)
+def test_protective_exit_classification_is_explicit(reason: str, protective: bool) -> None:
+    assert svc.OmsRiskService._is_protective_v2_exit(reason) is protective
 
 
 # ------------------------------------------------- re-protect what the release uncovered
