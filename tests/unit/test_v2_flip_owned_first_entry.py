@@ -232,7 +232,7 @@ def test_dbgi_stop_close_keeps_the_same_short_segment_consumed() -> None:
     assert strategy.drain_pending_intents() == []
 
 
-def test_confirmation_exit_close_releases_and_mints_a_new_first_opportunity() -> None:
+def test_two_successive_confirmation_exits_release_and_rotate_first_opportunities() -> None:
     strategy, clock, identity_writes, _owner_writes = _strategy()
     state, first_opportunity = _place_first(strategy, clock, "FALSEFLIP")
 
@@ -262,6 +262,38 @@ def test_confirmation_exit_close_releases_and_mints_a_new_first_opportunity() ->
     second_opportunity = int(second[0].metadata["fanout_segment_id"])
     assert second_opportunity > first_opportunity
     assert second[0].metadata["cw_entry_slot"] == "first"
+
+    strategy.update_position("FALSEFLIP", 2, held_qty=2)
+    _book(
+        strategy,
+        clock,
+        "FALSEFLIP",
+        _leg(PRIMARY, "false-flip-row-2", entered_ms=clock[0]),
+    )
+    strategy.update_position("FALSEFLIP", 0, held_qty=0)
+    _book(
+        strategy,
+        clock,
+        "FALSEFLIP",
+        confirmation_closes=(
+            _confirmation_close(
+                "FALSEFLIP", second_opportunity, PRIMARY, "false-flip-row-2"
+            ),
+        ),
+    )
+
+    assert state.flip_owner_phase == "idle"
+    assert state.flip_owner_opportunity_id == 0
+    assert identity_writes[-1][1:3] == (second_opportunity, False)
+
+    clock[0] += 60_000
+    _book(strategy, clock, "FALSEFLIP")
+    strategy._queue_resting_place(state, 3.566, slot="first")
+    third = strategy.drain_pending_intents()
+    assert len(third) == 1
+    third_opportunity = int(third[0].metadata["fanout_segment_id"])
+    assert third_opportunity > second_opportunity
+    assert len({first_opportunity, second_opportunity, third_opportunity}) == 3
 
 
 @pytest.mark.parametrize("mismatch", ["slot", "row", "account"])
