@@ -96,6 +96,25 @@ def _open_at_ten(service: OrbService) -> datetime:
     return fill_at
 
 
+def test_shipped_defaults_match_the_settled_dark_paper_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "MAI_TAI_ORB_PAPER_LIFECYCLE_ENABLED",
+        "MAI_TAI_ORB_PAPER_TARGET_PCT",
+        "MAI_TAI_ORB_PAPER_STOP_PCT",
+        "MAI_TAI_ORB_PAPER_MIN_BREAK_BODY_PCT",
+        "MAI_TAI_ORB_PAPER_ATR_EXIT_ENABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.orb_paper_lifecycle_enabled is False
+    assert settings.orb_paper_target_pct == 5.0
+    assert settings.orb_paper_stop_pct == 8.0
+    assert settings.orb_paper_min_break_body_pct == 45.0
+    assert settings.orb_paper_atr_exit_enabled is True
+
+
 def test_plus_five_touch_closes_at_the_executable_bid_and_reports_pnl() -> None:
     store = _Store()
     service = _service(store=store)
@@ -200,6 +219,32 @@ def test_break_bar_body_at_exactly_45_does_not_trigger_the_body_exit() -> None:
     assert "FOO" in service._paper_positions
 
 
+def test_break_bar_body_at_40_triggers_the_body_exit() -> None:
+    store = _Store()
+    service = _service(store=store)
+    for minute, high in zip(range(-5, 0), (98.0, 98.5, 99.0, 98.8, 98.7), strict=True):
+        service._on_bar("FOO", _bar(service, minute, high))
+    fill_at = service._session_open_utc() + timedelta(seconds=5)
+    aggregator = OrbTickAggregator(session_open=service._observe_open_utc())
+    service._aggregators["FOO"] = aggregator
+    aggregator.add_tick(fill_at - timedelta(seconds=2), 92.0, 100)
+    aggregator.add_tick(fill_at - timedelta(seconds=1), 80.0, 100)
+    aggregator.add_tick(fill_at, 100.0, 100)
+
+    service._check_fixed_resting_fill("FOO", 100.0, fill_at)
+    asyncio.run(service._record_pending_paper_entries())
+    position = service._paper_positions["FOO"]
+    assert position.break_body_pct == pytest.approx(40.0)
+    assert position.body_exit_pending is True
+
+    service._evaluate_paper_position_quote(
+        "FOO", bid=98.9, observed_at=fill_at + timedelta(milliseconds=100)
+    )
+    asyncio.run(service._record_pending_paper_entries())
+
+    assert store.decisions[-1].detail["exit_reason"] == "BREAK_BAR_BODY_UNDER_45_PCT"
+
+
 def test_missing_break_bar_evidence_is_visible_and_never_opens_a_gradable_position() -> None:
     store = _Store()
     service = _service(store=store)
@@ -271,10 +316,10 @@ def test_paper_atr_matches_live_v2_across_a_gap_and_the_0400_session_reset() -> 
     bars = [
         OrbBar(
             timestamp=timestamp.astimezone(UTC),
-            open=10.0 + index / 100,
-            high=10.05 + index / 100,
-            low=9.95 + index / 100,
-            close=10.0 + index / 100,
+            open=20.0 if index == len(timestamps) - 1 else 10.0 + index / 100,
+            high=20.05 if index == len(timestamps) - 1 else 10.05 + index / 100,
+            low=19.95 if index == len(timestamps) - 1 else 9.95 + index / 100,
+            close=20.0 if index == len(timestamps) - 1 else 10.0 + index / 100,
             volume=100,
         )
         for index, timestamp in enumerate(timestamps)
@@ -305,6 +350,8 @@ def test_paper_atr_matches_live_v2_across_a_gap_and_the_0400_session_reset() -> 
     assert paper_rows[8]["state"] == "long"
     assert paper_rows[9]["state"] is None
     assert paper_rows[-1]["state"] == "long"
+    assert paper_rows[-1]["loss"] == pytest.approx(0.35)
+    assert paper_rows[-1]["trail"] == pytest.approx(19.65)
 
 
 def test_paper_atr_matches_live_v2_through_a_sell_flip() -> None:
