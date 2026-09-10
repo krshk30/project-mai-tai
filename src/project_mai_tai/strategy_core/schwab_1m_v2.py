@@ -4696,6 +4696,7 @@ class SchwabV2Strategy:
             # Economic composition slot, deliberately separate from order style. The reclaim
             # implementation can rest at the broker and therefore also carries resting_entry=true.
             "cw_entry_slot": resolved_entry_slot,
+            "resting_entry": "true" if identity.get("fanout_slot") == "resting" else "false",
             "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
             **identity,
             "order_type": "limit" if session_is_eh else "market",
@@ -5453,6 +5454,7 @@ class SchwabV2IntentEmitter:
                         "broker_account_name": entry.broker_account_name,
                         "source_order_id": str(entry.order_id),
                         "source_fill_id": str(entry.fill_id),
+                        "fanout_slot_id": entry.fanout_slot_id,
                         "broker_fill_id": entry.broker_fill_id,
                         "broker_order_id": entry.broker_order_id,
                         "filled_at": entry.filled_at.isoformat(),

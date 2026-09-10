@@ -541,6 +541,9 @@ class Settings(BaseSettings):
     # Override false + restart is the kill switch. While OFF, evaluations remain durable but their
     # outbox rows are terminalized so a later enable cannot release stale dark-period exits.
     strategy_schwab_1m_v2_confirmation_exit_enabled: bool = True
+    # Discover CONF1 candidates from both configured v2 accounts and dedupe sibling fills by the
+    # durable fanout slot. Default OFF keeps the deployed Schwab-only discovery byte-identical.
+    strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled: bool = False
     # The slippage-cap band for the resting buy-stop-limit: limit = line * (1 + band%). 9-day study:
     # 0.5% = best mean / 92% fill (fills the pullback, not the spike). Tunable without code.
     strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct: float = 0.5

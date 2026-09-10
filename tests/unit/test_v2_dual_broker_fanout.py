@@ -287,6 +287,7 @@ def test_rth_resting_cross_queues_webull_market_leg():
     assert len(legs) == 1 and legs[0].metadata["order_type"] == "market"
     assert legs[0].metadata["fanout_source"] == "rth_resting"
     assert legs[0].metadata["entry_price"] == "9.5100"
+    assert legs[0].metadata["resting_entry"] == "true"
     assert st.fanout_webull_claimed is True
     # Second cross same flip -> claimed -> no re-queue.
     strat._fanout_rth_resting_cross(st, _quote(9.55))

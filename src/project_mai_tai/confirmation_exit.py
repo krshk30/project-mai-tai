@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Mapping
@@ -27,7 +28,15 @@ def is_first_slot_resting(metadata: Mapping[str, object]) -> bool:
     slot = str(metadata.get("cw_entry_slot", "")).strip().lower()
     variant = str(metadata.get("atr_variant", "")).strip().lower()
     resting = str(metadata.get("resting_entry", "")).strip().lower()
-    return slot == "first" and variant == "cw-v2-resting" and resting == "true"
+    if slot != "first" or resting != "true":
+        return False
+    if variant == "cw-v2-resting":
+        return True
+    return (
+        variant == "cw-v2-fanout"
+        and str(metadata.get("fanout_leg", "")).strip().lower() == "webull"
+        and str(metadata.get("fanout_slot", "")).strip().lower() == "resting"
+    )
 
 
 @dataclass(frozen=True)
@@ -43,6 +52,7 @@ class ConfirmationEntry:
     confirmation_bars: int
     config_id: UUID | None
     config_effective_at: datetime
+    fanout_slot_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -56,18 +66,71 @@ class ConfirmationEvaluation:
         return self.atr_state != "long"
 
 
+@dataclass(frozen=True)
+class ConfirmationDiscoveryCensus:
+    matured: int
+    evaluated: int
+    missing_opportunities: tuple[str, ...]
+
+
+def confirmation_discovery_census(
+    *,
+    entries: Iterable[ConfirmationEntry],
+    evaluated_slot_ids: set[str],
+    last_live_bar_ms: Mapping[str, int],
+) -> ConfirmationDiscoveryCensus:
+    """Compare matured logical opportunities with their durable decisions."""
+    logical_entries: dict[str, ConfirmationEntry] = {}
+    for entry in entries:
+        if entry.fanout_slot_id:
+            logical_entries.setdefault(entry.fanout_slot_id, entry)
+    matured = [
+        entry
+        for entry in logical_entries.values()
+        if last_live_bar_ms.get(entry.symbol.upper(), 0) >= entry.evaluation_bar_start_ms
+    ]
+    missing = tuple(
+        f"{entry.symbol.upper()}:{entry.fanout_slot_id}"
+        for entry in matured
+        if entry.fanout_slot_id not in evaluated_slot_ids
+    )
+    return ConfirmationDiscoveryCensus(
+        matured=len(matured),
+        evaluated=len(matured) - len(missing),
+        missing_opportunities=missing,
+    )
+
+
 class ConfirmationExitTracker:
     """Event-loop-owned one-shot registry keyed by the authoritative entry order."""
 
     def __init__(self) -> None:
-        self._pending: dict[UUID, ConfirmationEntry] = {}
-        self._seen: set[UUID] = set()
+        self._pending: dict[str, ConfirmationEntry] = {}
+        self._seen: set[str] = set()
 
-    def add(self, entry: ConfirmationEntry) -> bool:
-        if entry.order_id in self._seen:
+    @staticmethod
+    def _identity(entry: ConfirmationEntry) -> str:
+        return entry.fanout_slot_id or str(entry.order_id)
+
+    def add(
+        self,
+        entry: ConfirmationEntry,
+        *,
+        preferred_account_name: str | None = None,
+    ) -> bool:
+        identity = self._identity(entry)
+        if identity in self._seen:
+            existing = self._pending.get(identity)
+            if (
+                existing is not None
+                and preferred_account_name
+                and entry.broker_account_name == preferred_account_name
+                and existing.broker_account_name != preferred_account_name
+            ):
+                self._pending[identity] = entry
             return False
-        self._seen.add(entry.order_id)
-        self._pending[entry.order_id] = entry
+        self._seen.add(identity)
+        self._pending[identity] = entry
         return True
 
     def evaluate_bar(
@@ -75,10 +138,10 @@ class ConfirmationExitTracker:
     ) -> list[ConfirmationEvaluation]:
         normalized = symbol.upper()
         evaluations: list[ConfirmationEvaluation] = []
-        for order_id, entry in list(self._pending.items()):
+        for identity, entry in list(self._pending.items()):
             if entry.symbol.upper() != normalized or entry.evaluation_bar_start_ms != bar_start_ms:
                 continue
-            self._pending.pop(order_id, None)
+            self._pending.pop(identity, None)
             evaluations.append(
                 ConfirmationEvaluation(
                     entry=entry,
@@ -91,17 +154,20 @@ class ConfirmationExitTracker:
     def expire_before(self, *, symbol: str, bar_start_ms: int) -> list[ConfirmationEntry]:
         normalized = symbol.upper()
         expired: list[ConfirmationEntry] = []
-        for order_id, entry in list(self._pending.items()):
+        for identity, entry in list(self._pending.items()):
             if (
                 entry.symbol.upper() == normalized
                 and entry.evaluation_bar_start_ms < bar_start_ms
             ):
                 expired.append(entry)
-                self._pending.pop(order_id, None)
+                self._pending.pop(identity, None)
         return expired
 
     def discard(self, order_id: UUID) -> ConfirmationEntry | None:
-        return self._pending.pop(order_id, None)
+        for identity, entry in list(self._pending.items()):
+            if entry.order_id == order_id:
+                return self._pending.pop(identity)
+        return None
 
     @property
     def pending_count(self) -> int:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from project_mai_tai.confirmation_exit import (
     ConfirmationEvaluation,
     ConfirmationExitTracker,
     confirmation_bar_start_ms,
+    confirmation_discovery_census,
     is_first_slot_resting,
 )
 from project_mai_tai.db.base import Base
@@ -55,8 +57,113 @@ def _evaluation(*, atr_state: str = "short") -> ConfirmationEvaluation:
     )
 
 
+def _confirmation_store():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
+        schwab = BrokerAccount(
+            name="live:schwab_1m_v2", provider="schwab", environment="production"
+        )
+        webull = BrokerAccount(
+            name="live:webull", provider="webull", environment="production"
+        )
+        session.add_all([strategy, schwab, webull])
+        session.flush()
+        session.add(
+            PaperExitRuleConfig(
+                id=uuid4(),
+                target_pct=Decimal("5"),
+                stop_pct=Decimal("8"),
+                confirmation_bars=1,
+                effective_at=datetime(1970, 1, 1, tzinfo=UTC),
+                changed_by="test",
+            )
+        )
+        session.commit()
+        return factory, strategy.id, {"schwab": schwab.id, "webull": webull.id}
+
+
+def _seed_confirmation_fill(
+    factory,
+    *,
+    strategy_id,
+    account_id,
+    provider: str,
+    symbol: str,
+    slot_id: str,
+    filled_at: datetime,
+):
+    metadata = {
+        "cw_entry_slot": "first",
+        "atr_variant": "CW-v2-resting" if provider == "schwab" else "CW-v2-fanout",
+        "resting_entry": "true",
+        "fanout_slot_id": slot_id,
+    }
+    if provider == "webull":
+        metadata.update({"fanout_leg": "webull", "fanout_slot": "resting"})
+    with factory() as session:
+        intent = TradeIntent(
+            strategy_id=strategy_id,
+            broker_account_id=account_id,
+            symbol=symbol,
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("1"),
+            reason="first resting",
+            status="filled",
+            payload={"metadata": metadata},
+        )
+        session.add(intent)
+        session.flush()
+        suffix = uuid4().hex
+        order = BrokerOrder(
+            intent_id=intent.id,
+            strategy_id=strategy_id,
+            broker_account_id=account_id,
+            client_order_id=f"client-{suffix}",
+            broker_order_id=f"broker-{suffix}",
+            symbol=symbol,
+            side="buy",
+            order_type="stop_limit",
+            time_in_force="day",
+            quantity=Decimal("1"),
+            status="filled",
+            payload={"metadata": metadata},
+        )
+        session.add(order)
+        session.flush()
+        fill = Fill(
+            order_id=order.id,
+            strategy_id=strategy_id,
+            broker_account_id=account_id,
+            broker_fill_id=f"fill-{suffix}",
+            symbol=symbol,
+            side="buy",
+            quantity=Decimal("1"),
+            price=Decimal("10"),
+            filled_at=filled_at,
+            payload={"metadata": metadata},
+        )
+        session.add(fill)
+        session.commit()
+        return order.id, fill.id
+
+
 def test_live_confirmation_exit_defaults_enabled_after_operator_go() -> None:
     assert Settings().strategy_schwab_1m_v2_confirmation_exit_enabled is True
+
+
+def test_account_neutral_confirmation_discovery_ships_dark() -> None:
+    assert (
+        Settings().strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled
+        is False
+    )
 
 
 def test_dark_confirmation_records_but_cannot_reach_the_emitter() -> None:
@@ -136,6 +243,73 @@ def test_reclaim_stamp_is_never_eligible_for_confirmation() -> None:
     reclaim = {**first, "cw_entry_slot": "reclaim"}
     assert is_first_slot_resting(first) is True
     assert is_first_slot_resting(reclaim) is False
+
+
+def test_webull_fanout_first_resting_stamp_is_confirmation_eligible() -> None:
+    metadata = {
+        "cw_entry_slot": "first",
+        "atr_variant": "CW-v2-fanout",
+        "resting_entry": "true",
+        "fanout_leg": "webull",
+        "fanout_slot": "resting",
+        "fanout_slot_id": "slot-dbgi",
+    }
+
+    assert is_first_slot_resting(metadata) is True
+    assert is_first_slot_resting({**metadata, "fanout_slot": "reclaim"}) is False
+    assert is_first_slot_resting({**metadata, "resting_entry": "false"}) is False
+    assert is_first_slot_resting({**metadata, "fanout_slot_id": ""}) is True
+
+
+def test_tracker_dedupes_sibling_fills_and_promotes_the_primary_before_evaluation() -> None:
+    first = replace(_evaluation().entry, fanout_slot_id="slot-twin")
+    webull = replace(first, broker_account_name="live:webull")
+    schwab = replace(first, order_id=uuid4(), fill_id=uuid4())
+    tracker = ConfirmationExitTracker()
+
+    assert tracker.add(webull, preferred_account_name="live:schwab_1m_v2") is True
+    assert tracker.add(schwab, preferred_account_name="live:schwab_1m_v2") is False
+    assert tracker.pending_count == 1
+    evaluations = tracker.evaluate_bar(
+        symbol="LHAI",
+        bar_start_ms=first.evaluation_bar_start_ms,
+        atr_state="short",
+    )
+    assert len(evaluations) == 1
+    assert evaluations[0].entry.fill_id == schwab.fill_id
+
+
+def test_discovery_census_uses_matured_logical_opportunities_as_denominator() -> None:
+    first = replace(
+        _evaluation().entry,
+        symbol="DBGI",
+        fanout_slot_id="slot-dbgi-1",
+    )
+    sibling = replace(first, order_id=uuid4(), fill_id=uuid4())
+    missing = replace(
+        first,
+        order_id=uuid4(),
+        fill_id=uuid4(),
+        fanout_slot_id="slot-dbgi-2",
+    )
+    immature = replace(
+        first,
+        order_id=uuid4(),
+        fill_id=uuid4(),
+        symbol="TNON",
+        fanout_slot_id="slot-tnon",
+        evaluation_bar_start_ms=first.evaluation_bar_start_ms + 60_000,
+    )
+
+    census = confirmation_discovery_census(
+        entries=[first, sibling, missing, immature],
+        evaluated_slot_ids={"slot-dbgi-1"},
+        last_live_bar_ms={"DBGI": first.evaluation_bar_start_ms, "TNON": 0},
+    )
+
+    assert census.matured == 2
+    assert census.evaluated == 1
+    assert census.missing_opportunities == ("DBGI:slot-dbgi-2",)
 
 
 def test_tracker_evaluates_each_entry_once_on_exact_bar() -> None:
@@ -327,6 +501,207 @@ def test_live_fill_census_schedules_first_slot_and_excludes_reclaim() -> None:
     # The fill precedes the future effective timestamp, so it keeps the one-bar config. A config
     # change cannot silently reach backward into an open measurement.
     assert entries[0].confirmation_bars == 1
+
+
+def test_webull_only_first_rest_is_discovered_only_when_account_neutral_is_enabled() -> None:
+    factory, strategy_id, accounts = _confirmation_store()
+    now = datetime.now(UTC) - timedelta(minutes=2)
+    _seed_confirmation_fill(
+        factory,
+        strategy_id=strategy_id,
+        account_id=accounts["webull"],
+        provider="webull",
+        symbol="DBGI",
+        slot_id="slot-dbgi",
+        filled_at=now,
+    )
+    settings = Settings(
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_webull_account_name="live:webull",
+    )
+
+    assert SchwabV2BotService(settings, session_factory=factory)._load_confirmation_entries() == []
+
+    enabled = settings.model_copy(
+        update={
+            "strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled": True
+        }
+    )
+    entries = SchwabV2BotService(enabled, session_factory=factory)._load_confirmation_entries()
+    assert len(entries) == 1
+    assert entries[0].symbol == "DBGI"
+    assert entries[0].broker_account_name == "live:webull"
+    assert entries[0].fanout_slot_id == "slot-dbgi"
+
+
+def test_account_neutral_discovery_refuses_a_first_rest_with_no_opportunity_identity(
+    caplog,
+) -> None:
+    factory, strategy_id, accounts = _confirmation_store()
+    _seed_confirmation_fill(
+        factory,
+        strategy_id=strategy_id,
+        account_id=accounts["webull"],
+        provider="webull",
+        symbol="DBGI",
+        slot_id="",
+        filled_at=datetime.now(UTC) - timedelta(minutes=2),
+    )
+    service = SchwabV2BotService(
+        Settings(
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_webull_account_name="live:webull",
+            strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
+        ),
+        session_factory=factory,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        entries = service._load_confirmation_entries()
+
+    assert entries == []
+    assert "reason=missing_fanout_slot_id" in caplog.text
+
+
+def test_webull_only_first_rest_produces_one_durable_confirmation_decision() -> None:
+    factory, strategy_id, accounts = _confirmation_store()
+    _seed_confirmation_fill(
+        factory,
+        strategy_id=strategy_id,
+        account_id=accounts["webull"],
+        provider="webull",
+        symbol="DBGI",
+        slot_id="slot-dbgi",
+        filled_at=datetime.now(UTC) - timedelta(minutes=2),
+    )
+    service = SchwabV2BotService(
+        Settings(
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_webull_account_name="live:webull",
+            strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
+        ),
+        session_factory=factory,
+    )
+    entry = service._load_confirmation_entries()[0]
+    service._confirmation_last_live_bar_ms["DBGI"] = entry.evaluation_bar_start_ms
+    service._confirmation_bar_states[("DBGI", entry.evaluation_bar_start_ms)] = "short"
+    emitted = []
+
+    class _CapturingEmitter:
+        async def emit_confirmation_exit(self, evaluation) -> None:
+            emitted.append(evaluation)
+
+    service.intent_emitter = _CapturingEmitter()
+
+    asyncio.run(service._sync_confirmation_entries())
+    asyncio.run(service._sync_confirmation_entries())
+
+    assert len(emitted) == 1
+    assert emitted[0].entry.broker_account_name == "live:webull"
+    with factory() as session:
+        rows = list(session.query(V2ConfirmationExitEvaluation))
+    assert len(rows) == 1
+    assert rows[0].fanout_slot_id == "slot-dbgi"
+    assert rows[0].published_at is not None
+
+
+def test_dual_fills_produce_one_decision_candidate_per_fanout_opportunity() -> None:
+    factory, strategy_id, accounts = _confirmation_store()
+    now = datetime.now(UTC) - timedelta(minutes=2)
+    for provider, offset in (("webull", 0), ("schwab", 1)):
+        _seed_confirmation_fill(
+            factory,
+            strategy_id=strategy_id,
+            account_id=accounts[provider],
+            provider=provider,
+            symbol="TNON",
+            slot_id="slot-twin",
+            filled_at=now + timedelta(seconds=offset),
+        )
+    _seed_confirmation_fill(
+        factory,
+        strategy_id=strategy_id,
+        account_id=accounts["webull"],
+        provider="webull",
+        symbol="DBGI",
+        slot_id="slot-webull-only",
+        filled_at=now + timedelta(seconds=2),
+    )
+    service = SchwabV2BotService(
+        Settings(
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_webull_account_name="live:webull",
+            strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
+        ),
+        session_factory=factory,
+    )
+
+    entries = service._load_confirmation_entries()
+
+    assert len(entries) == 2
+    by_slot = {entry.fanout_slot_id: entry for entry in entries}
+    assert by_slot["slot-twin"].broker_account_name == "live:schwab_1m_v2"
+    assert by_slot["slot-webull-only"].broker_account_name == "live:webull"
+
+
+def test_durable_confirmation_decision_is_unique_per_fanout_opportunity() -> None:
+    factory, strategy_id, accounts = _confirmation_store()
+    filled_at = datetime.now(UTC) - timedelta(minutes=2)
+    webull_order_id, webull_fill_id = _seed_confirmation_fill(
+        factory,
+        strategy_id=strategy_id,
+        account_id=accounts["webull"],
+        provider="webull",
+        symbol="TNON",
+        slot_id="slot-twin",
+        filled_at=filled_at,
+    )
+    schwab_order_id, schwab_fill_id = _seed_confirmation_fill(
+        factory,
+        strategy_id=strategy_id,
+        account_id=accounts["schwab"],
+        provider="schwab",
+        symbol="TNON",
+        slot_id="slot-twin",
+        filled_at=filled_at + timedelta(seconds=1),
+    )
+    target = confirmation_bar_start_ms(filled_at, 1)
+    common = {
+        "broker_fill_id": "broker-fill",
+        "broker_order_id": "broker-order",
+        "symbol": "TNON",
+        "filled_at": filled_at,
+        "evaluation_bar_start_ms": target,
+        "confirmation_bars": 1,
+        "config_id": None,
+        "config_effective_at": datetime(1970, 1, 1, tzinfo=UTC),
+        "fanout_slot_id": "slot-twin",
+    }
+    webull = ConfirmationEntry(
+        order_id=webull_order_id,
+        fill_id=webull_fill_id,
+        broker_account_name="live:webull",
+        **common,
+    )
+    schwab = ConfirmationEntry(
+        order_id=schwab_order_id,
+        fill_id=schwab_fill_id,
+        broker_account_name="live:schwab_1m_v2",
+        **common,
+    )
+    service = SchwabV2BotService(session_factory=factory)
+
+    assert service._record_confirmation_evaluation(
+        ConfirmationEvaluation(webull, target, "short")
+    ) == (True, True)
+    assert service._record_confirmation_evaluation(
+        ConfirmationEvaluation(schwab, target, "short")
+    ) == (False, True)
+    with factory() as session:
+        rows = list(session.query(V2ConfirmationExitEvaluation))
+    assert len(rows) == 1
+    assert rows[0].fanout_slot_id == "slot-twin"
+    assert rows[0].source_fill_id == webull_fill_id
 
 
 def test_paper_confirmation_uses_stamped_first_fill_and_never_reclaim() -> None:
