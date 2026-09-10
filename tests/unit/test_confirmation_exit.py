@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import runpy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -34,6 +36,15 @@ from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.paper_exit import PaperExitRuntime, PaperRuleConfig, PaperSourceFill
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
+
+
+CONFIRMATION_SLOT_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "sql"
+    / "migrations"
+    / "versions"
+    / "20260910_0020_confirmation_fanout_slot.py"
+)
 
 
 def _evaluation(*, atr_state: str = "short") -> ConfirmationEvaluation:
@@ -164,6 +175,50 @@ def test_account_neutral_confirmation_discovery_ships_dark() -> None:
         Settings().strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled
         is False
     )
+
+
+def test_confirmation_slot_migration_adds_and_removes_the_unique_nullable_identity() -> None:
+    namespace = runpy.run_path(str(CONFIRMATION_SLOT_MIGRATION))
+    calls: list[tuple] = []
+
+    class _Op:
+        @staticmethod
+        def add_column(table, column) -> None:
+            calls.append(("add", table, column.name, str(column.type), column.nullable))
+
+        @staticmethod
+        def create_unique_constraint(name, table, columns) -> None:
+            calls.append(("unique", name, table, tuple(columns)))
+
+        @staticmethod
+        def drop_constraint(name, table, *, type_) -> None:
+            calls.append(("drop_unique", name, table, type_))
+
+        @staticmethod
+        def drop_column(table, column) -> None:
+            calls.append(("drop", table, column))
+
+    namespace["upgrade"].__globals__["op"] = _Op
+    namespace["downgrade"].__globals__["op"] = _Op
+    namespace["upgrade"]()
+    namespace["downgrade"]()
+
+    assert calls == [
+        ("add", "v2_confirmation_exit_evaluations", "fanout_slot_id", "VARCHAR(64)", True),
+        (
+            "unique",
+            "uq_v2_confirmation_exit_evaluations_fanout_slot_id",
+            "v2_confirmation_exit_evaluations",
+            ("fanout_slot_id",),
+        ),
+        (
+            "drop_unique",
+            "uq_v2_confirmation_exit_evaluations_fanout_slot_id",
+            "v2_confirmation_exit_evaluations",
+            "unique",
+        ),
+        ("drop", "v2_confirmation_exit_evaluations", "fanout_slot_id"),
+    ]
 
 
 def test_dark_confirmation_records_but_cannot_reach_the_emitter() -> None:
