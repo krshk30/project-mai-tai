@@ -1,0 +1,9 @@
+{
+  "pr_number": 956,
+  "range_base": "2fae102169079e798e1635fd95648fa98ed98522",
+  "range_head": "1cb8a3b224cc4f6347e500edd80177abac98cead",
+  "reviewed_at": "2026-09-11T16:08:51Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed shared-stream own-event selection and fail-closed regression-watch polarity; 92 focused tests pass, strict-bool reversion makes 26 controls red, ruff clean, controlled pair 55/3597 to 55/3658 with identical failure names."
+}
