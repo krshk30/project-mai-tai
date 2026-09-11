@@ -15,7 +15,9 @@ sys.path.insert(0, str(SCRIPTS))
 from compare_tos_modified_atr import (  # noqa: E402
     BAR_SQL,
     LIVE_GAP_BOUND_MS,
-    TOS_WILDERS_PREFETCH_BARS,
+    MODIFIED_TR_PREFIX_BARS,
+    TOS_RAW_PREFETCH_BARS,
+    TOS_WILDERS_PREFETCH_INPUTS,
     AtrStage,
     _modified_true_range,
     calculate_live_strategy,
@@ -26,7 +28,9 @@ from compare_tos_modified_atr import (  # noqa: E402
 )
 
 
-def _bar(at: datetime, close: float, *, high: float | None = None, low: float | None = None) -> OHLCVBar:
+def _bar(
+    at: datetime, close: float, *, high: float | None = None, low: float | None = None
+) -> OHLCVBar:
     return OHLCVBar(
         timestamp_ms=int(at.timestamp() * 1000),
         open=close - 0.02,
@@ -37,13 +41,41 @@ def _bar(at: datetime, close: float, *, high: float | None = None, low: float | 
     )
 
 
-def _series(start: datetime, count: int, *, step: timedelta = timedelta(minutes=1)) -> list[OHLCVBar]:
+def _series(
+    start: datetime, count: int, *, step: timedelta = timedelta(minutes=1)
+) -> list[OHLCVBar]:
     return [_bar(start + index * step, 5.0 + index * 0.01) for index in range(count)]
 
 
 def test_modified_true_range_uses_the_gap_minimizing_references() -> None:
     previous = _bar(datetime(2026, 9, 10, 14, 0, tzinfo=UTC), 10.0, high=10.2, low=9.8)
     current = _bar(datetime(2026, 9, 10, 14, 1, tzinfo=UTC), 12.0, high=12.2, low=11.8)
+
+    result = _modified_true_range(
+        current=current,
+        previous=previous,
+        average_high_low=0.4,
+    )
+
+    assert result == pytest.approx(1.4)
+
+
+def test_modified_true_range_caps_the_current_high_low_range() -> None:
+    previous = _bar(datetime(2026, 9, 10, 14, 0, tzinfo=UTC), 10.0, high=10.1, low=9.9)
+    current = _bar(datetime(2026, 9, 10, 14, 1, tzinfo=UTC), 10.0, high=11.0, low=9.0)
+
+    result = _modified_true_range(
+        current=current,
+        previous=previous,
+        average_high_low=0.4,
+    )
+
+    assert result == pytest.approx(1.0)
+
+
+def test_modified_true_range_uses_the_gap_down_half_gap_reference() -> None:
+    previous = _bar(datetime(2026, 9, 10, 14, 0, tzinfo=UTC), 10.0, high=10.2, low=9.8)
+    current = _bar(datetime(2026, 9, 10, 14, 1, tzinfo=UTC), 8.0, high=8.2, low=7.8)
 
     result = _modified_true_range(
         current=current,
@@ -138,9 +170,12 @@ def test_query_reads_only_complete_live_strategy_history() -> None:
     lowered = BAR_SQL.lower()
     assert "source = 'live'" in lowered
     assert "strategy_code = 'schwab_1m_v2'" in lowered
-    assert "bar_time >= %(history_start)s" in lowered
+    assert "history_start" not in lowered
+    assert "bar_time < %(end)s" in lowered
     assert not any(word in lowered for word in ("insert ", "update ", "delete ", "truncate "))
 
 
 def test_tos_wilders_prefetch_requirement_is_the_documented_seven_lengths() -> None:
-    assert TOS_WILDERS_PREFETCH_BARS == 7 * 5 == 35
+    assert TOS_WILDERS_PREFETCH_INPUTS == 7 * 5 == 35
+    assert MODIFIED_TR_PREFIX_BARS == 5 - 1 == 4
+    assert TOS_RAW_PREFETCH_BARS == 39

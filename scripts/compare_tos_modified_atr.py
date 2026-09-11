@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Locate the first divergence between live v2 ATR and Thinkorswim Modified ATR shapes.
 
-The calculation consumes the complete requested preceding series before displaying the comparison
+The calculation consumes the complete persisted preceding series before displaying the comparison
 window. It evaluates four paths over the same persisted live bars:
 
 * the real ``SchwabV2Strategy._update_atr_state`` implementation;
@@ -16,7 +16,6 @@ database during regular market hours.
 Example, after 16:00 ET:
 
     python scripts/compare_tos_modified_atr.py --symbol DBGI \
-      --history-start 2026-09-08T04:00:00-04:00 \
       --compare-start 2026-09-10T11:30:00-04:00 \
       --end 2026-09-10T12:10:00-04:00
 """
@@ -45,9 +44,16 @@ ET = ZoneInfo("America/New_York")
 ATR_PERIOD = 5
 ATR_FACTOR = 3.5
 LIVE_GAP_BOUND_MS = 90_000
-# Thinkorswim documents WildersAverage as using seven lengths of prefetch. Without those bars,
-# a range-start initialization difference can masquerade as a formula difference.
-TOS_WILDERS_PREFETCH_BARS = 7 * ATR_PERIOD
+# Primary specification:
+# https://toslc.thinkorswim.com/center/reference/Tech-Indicators/studies-library/A-B/ATRTrailingStop.html
+# https://toslc.thinkorswim.com/center/reference/thinkScript/Functions/Tech-Analysis/WildersAverage
+# https://toslc.thinkorswim.com/center/reference/thinkScript/tutorials/Advanced/Chapter-12---Past-Offset-and-Prefetch
+# Thinkorswim documents WildersAverage as using seven lengths of input prefetch. Modified true
+# range itself needs the preceding ``period - 1`` high/low bars before its first valid input, so a
+# comparison needs both populations before the first displayed bar.
+TOS_WILDERS_PREFETCH_INPUTS = 7 * ATR_PERIOD
+MODIFIED_TR_PREFIX_BARS = ATR_PERIOD - 1
+TOS_RAW_PREFETCH_BARS = TOS_WILDERS_PREFETCH_INPUTS + MODIFIED_TR_PREFIX_BARS
 
 BAR_SQL = """
 SELECT
@@ -62,7 +68,6 @@ WHERE strategy_code = 'schwab_1m_v2'
   AND interval_secs = 60
   AND source = 'live'
   AND symbol = %(symbol)s
-  AND bar_time >= %(history_start)s
   AND bar_time < %(end)s
 ORDER BY bar_time, id
 """
@@ -93,14 +98,14 @@ def parse_instant(value: str) -> datetime:
 def refuse_regular_market_hours(now: datetime | None = None) -> None:
     current = (now or datetime.now(UTC)).astimezone(ET)
     if current.weekday() < 5 and time(9, 30) <= current.time() < time(16, 0):
-        raise SystemExit(
-            "refusing historical ATR query during 09:30-16:00 ET; run after the close"
-        )
+        raise SystemExit("refusing historical ATR query during 09:30-16:00 ET; run after the close")
 
 
 def session_anchor_ms(timestamp_ms: int) -> int:
     current = datetime.fromtimestamp(timestamp_ms / 1000, tz=UTC).astimezone(ET)
-    anchor_date = current.date() if current.time() >= time(4, 0) else current.date() - timedelta(days=1)
+    anchor_date = (
+        current.date() if current.time() >= time(4, 0) else current.date() - timedelta(days=1)
+    )
     anchor = datetime.combine(anchor_date, time(4, 0), tzinfo=ET)
     return int(anchor.timestamp() * 1000)
 
@@ -362,13 +367,12 @@ def _print_divergence(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbol", required=True)
-    parser.add_argument("--history-start", required=True, type=parse_instant)
     parser.add_argument("--compare-start", required=True, type=parse_instant)
     parser.add_argument("--end", required=True, type=parse_instant)
     parser.add_argument("--dsn")
     args = parser.parse_args()
-    if not args.history_start <= args.compare_start < args.end:
-        parser.error("require history-start <= compare-start < end")
+    if args.compare_start >= args.end:
+        parser.error("require compare-start < end")
     refuse_regular_market_hours()
 
     with psycopg.connect(_dsn(args.dsn)) as connection, connection.cursor() as cursor:
@@ -376,7 +380,6 @@ def main() -> int:
             BAR_SQL,
             {
                 "symbol": args.symbol.upper(),
-                "history_start": args.history_start,
                 "end": args.end,
             },
         )
@@ -386,15 +389,9 @@ def main() -> int:
         return 2
 
     actual = calculate_live_strategy(bars)
-    independent_live = calculate_modified_atr(
-        bars, session_sliced=True, guard_bar_gaps=True
-    )
-    tos_session = calculate_modified_atr(
-        bars, session_sliced=True, guard_bar_gaps=False
-    )
-    tos_continuous = calculate_modified_atr(
-        bars, session_sliced=False, guard_bar_gaps=False
-    )
+    independent_live = calculate_modified_atr(bars, session_sliced=True, guard_bar_gaps=True)
+    tos_session = calculate_modified_atr(bars, session_sliced=True, guard_bar_gaps=False)
+    tos_continuous = calculate_modified_atr(bars, session_sliced=False, guard_bar_gaps=False)
     display_indexes = [
         index
         for index, bar in enumerate(bars)
@@ -404,24 +401,27 @@ def main() -> int:
     anchors = {stage.session_anchor_ms for stage in actual}
     first_display_index = display_indexes[0] if display_indexes else len(bars)
     preceding_bars = first_display_index
+    first_bar_at = datetime.fromtimestamp(bars[0].timestamp_ms / 1000, tz=UTC).astimezone(ET)
     print(
         f"ATR COMPARISON symbol={args.symbol.upper()} "
-        f"history={args.history_start.astimezone(ET).isoformat()}..{args.end.astimezone(ET).isoformat()} "
+        f"persisted_history={first_bar_at.isoformat()}..{args.end.astimezone(ET).isoformat()} "
         f"display_from={args.compare_start.astimezone(ET).isoformat()}"
     )
     print(
         f"DENOMINATORS total_input_bars={len(bars)} preceding_bars={preceding_bars} "
-        f"tos_wilders_prefetch_required={TOS_WILDERS_PREFETCH_BARS} "
+        f"tos_wilders_prefetch_inputs={TOS_WILDERS_PREFETCH_INPUTS} "
+        f"modified_tr_prefix_bars={MODIFIED_TR_PREFIX_BARS} "
+        f"raw_prefetch_required={TOS_RAW_PREFETCH_BARS} "
         f"displayed_bars={len(display_indexes)} sessions={len(anchors)} "
         f"nonadjacent_pairs={len(gaps)}"
     )
     if not display_indexes:
         print("STATUS=UNMEASURED reason=no_bars_in_display_window denominator=0")
         return 2
-    if preceding_bars < TOS_WILDERS_PREFETCH_BARS:
+    if preceding_bars < TOS_RAW_PREFETCH_BARS:
         print(
             "STATUS=UNMEASURED reason=insufficient_tos_wilders_prefetch "
-            f"preceding_bars={preceding_bars}/{TOS_WILDERS_PREFETCH_BARS}"
+            f"preceding_bars={preceding_bars}/{TOS_RAW_PREFETCH_BARS}"
         )
         return 2
     _print_divergence("actual_live_vs_independent_live", actual, independent_live)
