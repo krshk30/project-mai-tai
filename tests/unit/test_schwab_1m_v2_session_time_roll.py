@@ -22,10 +22,12 @@ from zoneinfo import ZoneInfo
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
+    FLIP_OWNER_EVIDENCE_MAX_AGE_MS,
     OHLCVBar,
     SchwabV2Strategy,
     session_start_ts_ms,
 )
+from project_mai_tai.v2_flip_entry_ownership import FlipPositionLeg
 
 _ET = ZoneInfo("America/New_York")
 
@@ -135,6 +137,45 @@ def test_time_roll_retires_a_flat_unknown_owner_without_waiting_for_a_live_bar()
     assert st.flip_owner_fill_accounts == set()
     assert identity_writes[-1] == (False, "session_reset_flat")
     assert owner_writes[-1] == (False, "session_reset_flat")
+
+
+def test_time_roll_keeps_owner_unknown_when_position_evidence_is_stale() -> None:
+    strat, identity_writes, owner_writes = _strict_strat()
+    st = _dbgi_unknown_owner(strat)
+    st.flip_owner_evidence_at_ms = NOW_MS - FLIP_OWNER_EVIDENCE_MAX_AGE_MS - 1
+
+    rolled = strat.roll_stale_session_state(NOW_MS, is_protected=_never_protected)
+
+    assert rolled == ["DBGI"]
+    assert st.flip_owner_phase == "unknown"
+    assert st.flip_owner_opportunity_id == 123
+    assert st.flip_owner_fill_accounts == {"live:orb"}
+    assert identity_writes == []
+    assert owner_writes[-1] == (True, "session_reset_without_fresh_position_evidence")
+
+
+def test_time_roll_waits_for_an_open_owned_position_to_close() -> None:
+    strat, identity_writes, owner_writes = _strict_strat()
+    st = _dbgi_unknown_owner(strat)
+    st.flip_owner_phase = "consumed"
+    st.flip_owner_position_ids = {"live:orb": "dbgi-row"}
+    st.flip_owner_open_positions = {
+        "live:orb": FlipPositionLeg(
+            account_name="live:orb",
+            managed_row_id="dbgi-row",
+            entry_time_ms=NOW_MS - 60_000,
+            quantity=1,
+        )
+    }
+
+    rolled = strat.roll_stale_session_state(NOW_MS, is_protected=_never_protected)
+
+    assert rolled == ["DBGI"]
+    assert st.flip_owner_phase == "awaiting_close"
+    assert st.flip_owner_opportunity_id == 123
+    assert st.flip_owner_position_ids == {"live:orb": "dbgi-row"}
+    assert identity_writes == []
+    assert owner_writes[-1] == (True, "session_reset_waiting_for_position_close")
 
 
 def test_historical_bar_reset_cannot_retire_current_durable_ownership() -> None:
