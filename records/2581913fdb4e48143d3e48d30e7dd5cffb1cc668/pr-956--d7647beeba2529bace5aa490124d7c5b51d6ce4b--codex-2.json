@@ -1,0 +1,9 @@
+{
+  "pr_number": 956,
+  "range_base": "d7647beeba2529bace5aa490124d7c5b51d6ce4b",
+  "range_head": "2581913fdb4e48143d3e48d30e7dd5cffb1cc668",
+  "reviewed_at": "2026-09-11T17:40:27Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed after rebase onto merged PR #958: old and new four-file diffs are byte-identical (sha256 4c2bce1b970b0ae6423bab55918cdd28d7c94569812d52c06a2992d45a38041c); 92 focused tests pass, strict-bool reversion makes 26 controls red, ruff clean, and all three Claude markers remain intact."
+}
