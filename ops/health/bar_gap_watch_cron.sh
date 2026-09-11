@@ -1,5 +1,5 @@
 #!/bin/bash
-# BAR-GAP WATCH — push an alert the moment the v2 bar series develops a hole.
+# BAR-GAP WATCH - repair immediately, page only if the hole remains after five minutes.
 #
 #   Operator ask (2026-07-30): "if any DB holes or something, you have to get the notification.
 #   You have to automatically start looking into it... you can start fixing it and let me know."
@@ -24,7 +24,7 @@
 # ⛔ Runs as ROOT from ROOT's crontab — /etc/project-mai-tai/project-mai-tai.env is root-readable
 # only. (The trade recorder sat in TRADER's crontab and could never write a byte; found 2026-07-30.)
 #
-#   `--selftest`: bypass window/holiday/cooldown and FORCE the alert path, to verify the push lands.
+#   `--selftest`: bypass window/holiday/delay and FORCE the alert path, to verify the push lands.
 set -u
 
 SELFTEST=0
@@ -33,9 +33,9 @@ SELFTEST=0
 REPO=/home/trader/project-mai-tai
 OUT=/home/trader/bar_gap_watch
 LOG="$OUT/watch.log"
-STATE="$OUT/state"                 # holds: <STATUS> <LAST_ALERT_EPOCH>
+STATE="$OUT/state"                 # <STATUS> <FIRST_SEEN_EPOCH> <PAGED> <REPAIR_AT>
 NTFY_URL="https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
-COOLDOWN_SECS=900                  # re-alert at most every 15 min while holed
+PAGE_AFTER_SECS=300
 mkdir -p "$OUT"
 
 STAMP=$(TZ=America/New_York date '+%F %H:%M:%S %Z')
@@ -70,13 +70,25 @@ VERDICT=$(nice -n 19 "$REPO"/.venv/bin/python "$REPO"/ops/health/fleet_health_ch
 LEVEL=$(printf '%s' "$VERDICT" | awk '{print $2}')
 [ -z "$LEVEL" ] && LEVEL="AMBER" && VERDICT="bar-continuity check produced no verdict"
 
-PREV_STATUS="OK"; LAST_ALERT=0; REPAIR_AT=0
-# ⛔ I2 — the 3rd field is the epoch of the last REPAIR. An older 2-field state file leaves it
-# empty, which defaults to 0 and disables the gate: degrades to the old behaviour, never to a
-# silently wrong one.
-[ -f "$STATE" ] && read -r PREV_STATUS LAST_ALERT REPAIR_AT < "$STATE" 2>/dev/null || true
-case "${REPAIR_AT:-}" in ''|*[!0-9]*) REPAIR_AT=0;; esac
 NOW=$(date +%s)
+PREV_STATUS="OK"; FIRST_SEEN=0; PAGED=0; REPAIR_AT=0
+if [ -f "$STATE" ]; then
+  read -r FIELD1 FIELD2 FIELD3 FIELD4 < "$STATE" 2>/dev/null || true
+  PREV_STATUS=${FIELD1:-OK}
+  if [ -n "${FIELD4:-}" ]; then
+    FIRST_SEEN=${FIELD2:-0}
+    PAGED=${FIELD3:-0}
+    REPAIR_AT=${FIELD4:-0}
+  else
+    # Legacy state was <STATUS> <LAST_ALERT> <REPAIR_AT>. Start a fresh five-minute
+    # observation instead of treating an old notification timestamp as gap age.
+    [ "$PREV_STATUS" != "OK" ] && FIRST_SEEN=$NOW
+    REPAIR_AT=${FIELD3:-0}
+  fi
+fi
+case "$FIRST_SEEN" in ''|*[!0-9]*) FIRST_SEEN=0;; esac
+case "$PAGED" in 0|1) ;; *) PAGED=0;; esac
+case "$REPAIR_AT" in ''|*[!0-9]*) REPAIR_AT=0;; esac
 WATCH_WINDOW_SECS=1800   # MUST match the 30-min window fleet_health_check.py inspects
 GAPPED=""; GAPPED_SQL=""
 
@@ -88,6 +100,17 @@ green_held() {  # green_held <now_epoch> <repair_epoch> <window_secs>
 }
 # ⛔ I3 helper, likewise pinned: pull the holed symbols out of report_bar_gaps.py's output.
 parse_gapped() { grep -oE '\[backfill\] [A-Z]{1,6}:' | sed -E 's/.*\] ([A-Z]+):/\1/' | sort -u | tr '\n' ' '; }
+
+# TRUE (0) only for a page-worthy transition. Detection, recovery, and market-halt
+# classifications are log-only; a persistent unresolved hole pages once.
+gap_page_due() {  # gap_page_due <level> <now> <first_seen> <paged> <halt> <selftest>
+  [ "${6:-0}" -eq 1 ] && return 0
+  [ "${5:-0}" -eq 0 ] || return 1
+  case "${1:-}" in RED|AMBER) ;; *) return 1;; esac
+  [ "${4:-0}" -eq 0 ] || return 1
+  [ "${3:-0}" -gt 0 ] || return 1
+  [ $(( $2 - $3 )) -ge "$PAGE_AFTER_SECS" ]
+}
 
 # ⛔⭐⭐ I3 — THE UNANSWERABLE LINE IS DELETED, NOT REPLACED BY A MECHANISED ONE. HERE IS WHY.
 # The old body asked the operator to "confirm [V2-ATR-BAR-GAP] fired for these names". That is
@@ -117,14 +140,19 @@ parse_gapped() { grep -oE '\[backfill\] [A-Z]{1,6}:' | sed -E 's/.*\] ([A-Z]+):/
 #   EXPOSED branch can actually fire, on a past day where it demonstrably should.
 
 send_ntfy() {  # $1=title $2=priority $3=tags $4=body
-  # ⛔ Titles must be ASCII — an em-dash silently LOSES the push (learned on the OCO watch).
-  curl -s -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
+  # Titles must be ASCII; an em-dash silently loses the push.
+  curl -sS --fail-with-body --connect-timeout 10 --max-time 30 \
+    -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
     >/dev/null 2>>"$OUT/alert.log"
 }
 
 echo "$STAMP  $VERDICT" >> "$LOG"
 
 if [ "$LEVEL" = "RED" ] || [ "$LEVEL" = "AMBER" ] || [ "$SELFTEST" -eq 1 ]; then
+  if [ "$PREV_STATUS" = "OK" ] || [ "$FIRST_SEEN" -eq 0 ]; then
+    FIRST_SEEN=$NOW
+    PAGED=0
+  fi
   # ---- AUTO-REPAIR -------------------------------------------------------------------------
   # ⛔ Safe to run unattended for three structural reasons, not because it "seems fine":
   #   1. INSERT-ONLY — ON CONFLICT DO NOTHING on the unique key, so a bar recorded LIVE can never
@@ -169,7 +197,7 @@ if [ "$LEVEL" = "RED" ] || [ "$LEVEL" = "AMBER" ] || [ "$SELFTEST" -eq 1 ]; then
       echo "$STAMP  HALT-DOWNGRADE: REST answered for all $REST_ANSWERED_ANY holed symbol(s) and had NONE of the bars => the market produced no prints (halt), not our data loss" >> "$LOG"
     fi
   fi
-  if [ "$PREV_STATUS" = "OK" ] || [ $(( NOW - LAST_ALERT )) -ge "$COOLDOWN_SECS" ] || [ "$SELFTEST" -eq 1 ]; then
+  if gap_page_due "$LEVEL" "$NOW" "$FIRST_SEEN" "$PAGED" "$HALT_DOWNGRADE" "$SELFTEST"; then
     BODY="$VERDICT
 
 AUTO-REPAIR (database only):
@@ -195,26 +223,24 @@ Undo THIS fill (scoped — never the bare source='rest' delete, which drops ever
   DELETE FROM strategy_bar_history WHERE source='rest'
     AND symbol IN (${GAPPED_SQL:-'<none parsed>'}) AND bar_time >= now() - interval '3 hours';"
     [ "$SELFTEST" -eq 1 ] && BODY="[SELFTEST] $BODY"
-    if [ "${HALT_DOWNGRADE:-0}" -eq 1 ]; then
-      BODY="MARKET QUIET / HALT - not our data loss.
-REST was asked for every holed symbol, ANSWERED, and had none of the bars, so the market produced
-no prints in those minutes. Nothing to repair and nothing to restart.
-(A REST FAILURE does NOT reach this branch - it stays RED, because a dead streamer plus a dead
-REST is indistinguishable from a quiet market and must never be downgraded.)
-
-$BODY"
-      send_ntfy "INFO v2 bar gap - market halt" "low" "information_source" "$BODY"
-      echo "$STAMP  ALERT[INFO-halt-downgrade] sent (was $LEVEL)" >> "$OUT/alert.log"
-    elif [ "$LEVEL" = "RED" ]; then
-      send_ntfy "RED v2 BAR HOLE" "urgent" "rotating_light" "$BODY"
-      echo "$STAMP  ALERT[$LEVEL] sent" >> "$OUT/alert.log"
-    else
-      send_ntfy "AMBER v2 bar gap" "default" "warning" "$BODY"
-      echo "$STAMP  ALERT[$LEVEL] sent" >> "$OUT/alert.log"
+    if [ "$LEVEL" = "RED" ]; then TITLE="RED v2 BAR HOLE"; PRIORITY="urgent"; TAGS="rotating_light"
+    else TITLE="AMBER v2 bar gap"; PRIORITY="default"; TAGS="warning"
     fi
-    LAST_ALERT=$NOW
+    if send_ntfy "$TITLE" "$PRIORITY" "$TAGS" "$BODY"; then
+      PAGED=1
+      echo "$STAMP  ALERT[$LEVEL] sent after $(( NOW - FIRST_SEEN ))s unresolved" >> "$OUT/alert.log"
+    else
+      echo "$STAMP  ALERT[$LEVEL] delivery failed; retry next run" >> "$OUT/alert.log"
+    fi
   fi
-  [ "$SELFTEST" -eq 0 ] && echo "$LEVEL $LAST_ALERT" > "$STATE"
+  if [ "$SELFTEST" -eq 0 ]; then
+    if [ "$HALT_DOWNGRADE" -eq 1 ]; then
+      echo "$STAMP  HALT log-only; no detection or recovery page" >> "$LOG"
+    elif [ "$PAGED" -eq 0 ]; then
+      echo "$STAMP  gap observed for $(( NOW - FIRST_SEEN ))s; page waits for ${PAGE_AFTER_SECS}s unresolved" >> "$LOG"
+    fi
+    echo "$LEVEL $FIRST_SEEN $PAGED $REPAIR_AT" > "$STATE"
+  fi
 else
   # ⛔⭐⭐ I2 — A VERIFICATION MUST NOT BE SATISFIABLE BY OUR OWN ACTION.
   # The check inspects the last 30 minutes. Immediately after a repair that window IS the range we
@@ -226,14 +252,11 @@ else
     if green_held "$NOW" "$REPAIR_AT" "$WATCH_WINDOW_SECS"; then
       echo "$STAMP  GREEN HELD: the ${WATCH_WINDOW_SECS}s window still overlaps the range repaired at ${REPAIR_AT} — verifying our own INSERT proves nothing. $(( REPAIR_AT + WATCH_WINDOW_SECS - NOW ))s to go." >> "$LOG"
       # stay non-OK so the all-clear can still fire once the window clears
-      echo "$PREV_STATUS $LAST_ALERT $REPAIR_AT" > "$STATE"
+      echo "$PREV_STATUS $FIRST_SEEN $PAGED $REPAIR_AT" > "$STATE"
       exit 0
     fi
-    send_ntfy "OK v2 bar series contiguous again" "default" "white_check_mark" \
-      "$VERDICT
-Verified on a window that does NOT overlap the repaired range (last repair $(( (NOW - REPAIR_AT) / 60 )) min ago; window ${WATCH_WINDOW_SECS}s)."
-    echo "$STAMP  ALERT[GREEN] recovery sent" >> "$OUT/alert.log"
+    echo "$STAMP  RECOVERED silently after $(( NOW - FIRST_SEEN ))s; no GREEN page" >> "$LOG"
   fi
-  echo "OK $LAST_ALERT $REPAIR_AT" > "$STATE"
+  echo "OK 0 0 $REPAIR_AT" > "$STATE"
 fi
 exit 0

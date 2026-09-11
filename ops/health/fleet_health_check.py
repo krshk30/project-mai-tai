@@ -21,6 +21,7 @@ broken. A check that false-alarms on normal quiet gets ignored, which defeats th
 So "strategy bars are stale" is RED only when the upstream feed is SIMULTANEOUSLY LIVE
 (trades flowing) — i.e. it cannot be a quiet market or a feed outage; it's a frozen loop.
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
@@ -28,6 +29,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from typing import Callable, NamedTuple
 from zoneinfo import ZoneInfo
 
 # --- ground-truth access (independent: subprocess, no app import) ------------- #
@@ -41,11 +43,26 @@ _SESSION_RE = re.compile(r"\bsession=(\d{4}-\d{2}-\d{2})\b")
 # obligation rather than inheriting the health of the application they monitor.
 _FULL_CLOSURES = frozenset(
     {
-        date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16), date(2026, 4, 3),
-        date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7),
-        date(2026, 11, 26), date(2026, 12, 25), date(2027, 1, 1), date(2027, 1, 18),
-        date(2027, 2, 15), date(2027, 3, 26), date(2027, 5, 31), date(2027, 6, 18),
-        date(2027, 7, 5), date(2027, 9, 6), date(2027, 11, 25), date(2027, 12, 24),
+        date(2026, 1, 1),
+        date(2026, 1, 19),
+        date(2026, 2, 16),
+        date(2026, 4, 3),
+        date(2026, 5, 25),
+        date(2026, 6, 19),
+        date(2026, 7, 3),
+        date(2026, 9, 7),
+        date(2026, 11, 26),
+        date(2026, 12, 25),
+        date(2027, 1, 1),
+        date(2027, 1, 18),
+        date(2027, 2, 15),
+        date(2027, 3, 26),
+        date(2027, 5, 31),
+        date(2027, 6, 18),
+        date(2027, 7, 5),
+        date(2027, 9, 6),
+        date(2027, 11, 25),
+        date(2027, 12, 24),
     }
 )
 
@@ -68,8 +85,10 @@ def _dsn() -> str | None:
             with open(f"/proc/{pid}/environ", "rb") as fh:
                 for kv in fh.read().split(b"\0"):
                     if kv.startswith(b"MAI_TAI_DATABASE_URL="):
-                        dsn = kv.split(b"=", 1)[1].decode().replace(
-                            "postgresql+psycopg://", "postgresql://"
+                        dsn = (
+                            kv.split(b"=", 1)[1]
+                            .decode()
+                            .replace("postgresql+psycopg://", "postgresql://")
                         )
                         break
         except OSError:
@@ -86,9 +105,7 @@ def _scalar_int(sql: str) -> int | None:
     if not dsn:
         return None
     try:
-        out = subprocess.run(
-            ["psql", dsn, "-tAc", sql], capture_output=True, text=True, timeout=15
-        )
+        out = subprocess.run(["psql", dsn, "-tAc", sql], capture_output=True, text=True, timeout=15)
     except Exception:
         return None
     if out.returncode != 0:
@@ -103,6 +120,7 @@ def _scalar_int(sql: str) -> int | None:
 
 
 # --- pure decision logic (unit-tested; no I/O) -------------------------------- #
+
 
 def classify_bar_freshness(
     bar_age_s: int | None,
@@ -131,7 +149,10 @@ def classify_bar_freshness(
     if bar_age_s < stale_amber_s:
         return ("GREEN", f"strategy bars fresh ({bar_age_s}s) with live feed")
     if bar_age_s < stale_red_s:
-        return ("AMBER", f"strategy bars slowing ({bar_age_s}s) while feed live (feed_age={feed_age_s}s)")
+        return (
+            "AMBER",
+            f"strategy bars slowing ({bar_age_s}s) while feed live (feed_age={feed_age_s}s)",
+        )
     return (
         "RED",
         f"strategy bars STALE {bar_age_s}s while upstream feed LIVE "
@@ -140,6 +161,7 @@ def classify_bar_freshness(
 
 
 # --- checks (I/O + decision) -------------------------------------------------- #
+
 
 def classify_order_lifecycle(
     stuck_count: int | None,
@@ -180,7 +202,10 @@ def classify_d6_status(contents: str | None, *, expected_session: date) -> tuple
         return ("RED", f"D6 STATUS missing; expected session={expected_session.isoformat()}")
     match = _SESSION_RE.search(contents)
     if match is None:
-        return ("RED", f"D6 STATUS has no readable session; expected={expected_session.isoformat()}")
+        return (
+            "RED",
+            f"D6 STATUS has no readable session; expected={expected_session.isoformat()}",
+        )
     try:
         observed = date.fromisoformat(match.group(1))
     except ValueError:
@@ -292,7 +317,11 @@ def check_oms_order_lifecycle() -> tuple[str, str, str]:
     )
     paper_stuck = _scalar_int(f"SELECT count(*) {joined} WHERE {where} AND NOT ({real})")
     level, detail = classify_order_lifecycle(stuck, oldest)
-    return (level, "oms-order-lifecycle", _with_paper_note(detail, paper_stuck, "stuck paper intent"))
+    return (
+        level,
+        "oms-order-lifecycle",
+        _with_paper_note(detail, paper_stuck, "stuck paper intent"),
+    )
 
 
 def classify_stops_armed(
@@ -352,8 +381,11 @@ def check_stops_armed() -> tuple[str, str, str]:
         f"SELECT count(*) {joins} AND NOT ({real}) AND a.id IS NULL AND m.id IS NULL"
     )
     level, detail = classify_stops_armed(unprotected, owned_open)
-    return (level, "stops-armed",
-            _with_paper_note(detail, paper_unprotected, "unprotected sim position"))
+    return (
+        level,
+        "stops-armed",
+        _with_paper_note(detail, paper_unprotected, "unprotected sim position"),
+    )
 
 
 def check_strategy_bar_freshness() -> tuple[str, str, str]:
@@ -369,7 +401,6 @@ def check_strategy_bar_freshness() -> tuple[str, str, str]:
     )
     level, detail = classify_bar_freshness(bar_age, feed_age)
     return (level, "strategy-bar-freshness", detail)
-
 
 
 def classify_bar_continuity(
@@ -398,7 +429,10 @@ def classify_bar_continuity(
     if worst_gap_min is None or worst_gap_min <= 1:
         return ("GREEN", f"schwab_1m_v2 bars contiguous ({bars_seen} bars, no gaps)")
     if worst_gap_min < amber_gap_min:
-        return ("GREEN", f"schwab_1m_v2 bars contiguous within tolerance (worst {worst_gap_min}min)")
+        return (
+            "GREEN",
+            f"schwab_1m_v2 bars contiguous within tolerance (worst {worst_gap_min}min)",
+        )
     if worst_gap_min < red_gap_min:
         return (
             "AMBER",
@@ -438,13 +472,26 @@ def check_bar_continuity() -> tuple[str, str, str]:
     return (level, "v2-bar-continuity", detail)
 
 
-CHECKS = [
-    check_strategy_bar_freshness,   # #1 frozen-loop detector
-    check_oms_order_lifecycle,      # #2 alive-but-not-executing detector
-    check_stops_armed,              # #3 every OMS-owned open position has an armed stop
-    check_bar_continuity,           # #4 v2 bar holes -> ATR spans them -> orders mispriced
-    check_d6_status_freshness,      # #5 independently detect a dead/stale D6 scheduler
-]
+LIVE_MONEY = "LIVE_MONEY"
+PAPER = "PAPER"
+DIAGNOSTIC = "DIAGNOSTIC"
+SCOREBOARD = "SCOREBOARD"
+
+
+class CheckSpec(NamedTuple):
+    check: Callable[[], tuple[str, str, str]]
+    alert_class: str
+
+
+# Every check declares its routing class here. There is deliberately no default: adding a check
+# without deciding whether it can page is a construction error, not an implicit live-money page.
+CHECKS = (
+    CheckSpec(check_strategy_bar_freshness, PAPER),
+    CheckSpec(check_oms_order_lifecycle, LIVE_MONEY),
+    CheckSpec(check_stops_armed, LIVE_MONEY),
+    CheckSpec(check_bar_continuity, DIAGNOSTIC),
+    CheckSpec(check_d6_status_freshness, SCOREBOARD),
+)
 
 _RANK = {"GREEN": 0, "AMBER": 1, "RED": 2}
 _EXIT = {"GREEN": 0, "AMBER": 1, "RED": 2}
@@ -452,15 +499,25 @@ _EXIT = {"GREEN": 0, "AMBER": 1, "RED": 2}
 
 def main() -> int:
     worst = "GREEN"
-    for check in CHECKS:
+    live_money_red = 0
+    for spec in CHECKS:
         try:
-            level, name, detail = check()
+            level, name, detail = spec.check()
         except Exception as exc:  # noqa: BLE001 — a check crash must not crash the runner
-            level, name, detail = ("AMBER", getattr(check, "__name__", "check"), f"check errored: {exc}")
-        print(f"VERDICT: {level} {name} {detail}")
+            level, name, detail = (
+                "AMBER",
+                getattr(spec.check, "__name__", "check"),
+                f"check errored: {exc}",
+            )
+        print(f"VERDICT: {level} {name} class={spec.alert_class} {detail}")
+        if spec.alert_class == LIVE_MONEY and level == "RED":
+            live_money_red += 1
         if _RANK[level] > _RANK[worst]:
             worst = level
-    print(f"VERDICT: {worst} fleet-function-health ({len(CHECKS)} check(s))")
+    print(
+        f"SUMMARY: {worst} fleet-function-health checks={len(CHECKS)} "
+        f"live_money_red={live_money_red}"
+    )
     return _EXIT[worst]
 
 

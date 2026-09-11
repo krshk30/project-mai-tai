@@ -18,7 +18,7 @@ extract_fn() {
     inf { print; if ($0 ~ /^\}$/) inf=0 }' "$SRC"
 }
 : > "${TMP}/lib.sh"
-for fn in green_held parse_gapped; do
+for fn in green_held parse_gapped gap_page_due; do
   extract_fn "$fn" >> "${TMP}/lib.sh"
   grep -q "^${fn}() {" "${TMP}/lib.sh" || { echo "EXTRACTION FAILED — ${fn}() not in $SRC"; exit 1; }
 done
@@ -29,6 +29,10 @@ PASS=0; FAIL=0
 ok()  { echo "  ✓ $1"; PASS=$((PASS+1)); }
 bad() { echo "  ✗ $1"; FAIL=$((FAIL+1)); }
 W=1800; NOW=1000000
+PAGE_AFTER_SECS=300
+[ "$(grep -E '^PAGE_AFTER_SECS=' "$SRC")" = "PAGE_AFTER_SECS=300" ] \
+  && ok "shipped unresolved-gap delay is exactly five minutes" \
+  || bad "shipped PAGE_AFTER_SECS must remain 300"
 
 echo "TESTING green_held (I2 — a verification must not be satisfiable by our own action)"
 # THE INCIDENT: repair at 07:40, green attempted 07:45 -> 5 min later, window still overlaps.
@@ -69,6 +73,33 @@ got=$(printf '%s\n' \
 got=$(printf '%s\n' "nothing to repair" | parse_gapped)
 [ -z "$got" ] && ok "no backfill lines -> empty (caller prints UNKNOWN, not a clean zero)" \
               || bad "expected empty, got '$got'"
+
+echo "TESTING gap_page_due (persistent transitions only)"
+gap_page_due RED "$NOW" $((NOW-299)) 0 0 0 && bad "299s must not page" \
+                                                || ok "299s unresolved -> log only"
+gap_page_due RED "$NOW" $((NOW-300)) 0 0 0 && ok "300s unresolved -> page" \
+                                                || bad "300s must page"
+gap_page_due AMBER "$NOW" $((NOW-600)) 0 0 0 && ok "persistent AMBER -> page" \
+                                                   || bad "persistent AMBER must page"
+gap_page_due RED "$NOW" $((NOW-600)) 1 0 0 && bad "active incident must not repeat" \
+                                                || ok "already paged -> silent"
+gap_page_due RED "$NOW" $((NOW-600)) 0 1 0 && bad "halt must not page" \
+                                                || ok "market halt -> log only"
+gap_page_due GREEN "$NOW" $((NOW-600)) 0 0 0 && bad "recovery must not page" \
+                                                  || ok "recovery -> log only"
+gap_page_due RED "$NOW" "$NOW" 0 0 1 && ok "selftest bypasses the delay" \
+                                             || bad "selftest must exercise delivery"
+
+calls=$(grep -cE '^[[:space:]]*if send_ntfy ' "$SRC" || true)
+[ "$calls" -eq 1 ] && ok "wrapper has one delivery call, behind gap_page_due" \
+                    || bad "expected one guarded delivery call, found $calls"
+grep -q 'OK v2 bar series contiguous again' "$SRC" \
+  && bad "recovery title must not exist" || ok "no GREEN recovery delivery remains"
+grep -q 'INFO v2 bar gap - market halt' "$SRC" \
+  && bad "halt title must not exist" || ok "no market-halt delivery remains"
+grep -q -- '--fail-with-body --connect-timeout 10 --max-time 30' "$SRC" \
+  && ok "delivery failure and timeout semantics are pinned" \
+  || bad "curl must fail on HTTP errors and remain time-bounded"
 
 echo
 echo "PASS=${PASS} FAIL=${FAIL}"

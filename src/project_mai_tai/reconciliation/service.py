@@ -17,13 +17,14 @@ from redis.exceptions import (
     RedisError,
     TimeoutError as RedisTimeoutError,
 )
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    Fill,
     OmsManagedPosition,
     ReconciliationFinding,
     ReconciliationRun,
@@ -63,8 +64,7 @@ def _is_transient_redis_reload_error(exc: RedisError) -> bool:
     """
 
     return (
-        isinstance(exc, (BusyLoadingError, RedisTimeoutError))
-        or type(exc) is RedisConnectionError
+        isinstance(exc, (BusyLoadingError, RedisTimeoutError)) or type(exc) is RedisConnectionError
     )
 
 
@@ -89,7 +89,9 @@ class ReconciliationService:
     ):
         self.settings = settings or get_settings()
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
-        self.session_factory = session_factory or build_timed_session_factory(self.settings, service="reconciler", profile="slow")
+        self.session_factory = session_factory or build_timed_session_factory(
+            self.settings, service="reconciler", profile="slow"
+        )
         self.instance_name = socket.gethostname()
         self.logger = logging.getLogger(SERVICE_NAME)
 
@@ -104,7 +106,12 @@ class ReconciliationService:
             heartbeat_details: dict[str, str]
             try:
                 result = self.run_reconciliation_cycle()
-                heartbeat_status = "degraded" if result["summary"]["total_findings"] > 0 else "healthy"
+                heartbeat_status = (
+                    "degraded"
+                    if result["summary"]["critical_findings"] > 0
+                    or result["summary"]["warning_findings"] > 0
+                    else "healthy"
+                )
                 heartbeat_details = {
                     "cutover_confidence": str(result["summary"]["cutover_confidence"]),
                     "total_findings": str(result["summary"]["total_findings"]),
@@ -240,12 +247,10 @@ class ReconciliationService:
         avg_price_tolerance = Decimal(str(self.settings.reconciliation_average_price_tolerance))
         ignored_pairs = self.settings.reconciliation_ignored_position_mismatch_pairs
         account_lookup = {
-            account.id: account
-            for account in session.scalars(select(BrokerAccount)).all()
+            account.id: account for account in session.scalars(select(BrokerAccount)).all()
         }
         strategy_lookup = {
-            strategy.id: strategy
-            for strategy in session.scalars(select(Strategy)).all()
+            strategy.id: strategy for strategy in session.scalars(select(Strategy)).all()
         }
 
         aggregates: dict[tuple[UUID, str], dict[str, Any]] = defaultdict(
@@ -270,8 +275,27 @@ class ReconciliationService:
         account_positions = {
             (position.broker_account_id, position.symbol): position
             for position in session.scalars(
-                select(AccountPosition).where(AccountPosition.quantity > 0)
+                select(AccountPosition).where(AccountPosition.quantity != 0)
             ).all()
+        }
+
+        fill_balance_rows = session.execute(
+            select(
+                Fill.broker_account_id,
+                Fill.symbol,
+                func.sum(
+                    case(
+                        (func.lower(Fill.side) == "buy", Fill.quantity),
+                        (func.lower(Fill.side) == "sell", -Fill.quantity),
+                        else_=0,
+                    )
+                ),
+            ).group_by(Fill.broker_account_id, Fill.symbol)
+        ).all()
+        fill_balances = {
+            (account_id, symbol): Decimal(str(quantity or 0))
+            for account_id, symbol, quantity in fill_balance_rows
+            if abs(Decimal(str(quantity or 0))) > tolerance
         }
 
         # ⛔⭐⭐ `virtual_positions` FALSELY READS ZERO ON A POSITION WE REALLY HOLD, and comparing
@@ -307,7 +331,7 @@ class ReconciliationService:
 
         findings: list[FindingSpec] = []
         keys = sorted(
-            set(aggregates) | set(account_positions) | set(managed_quantities),
+            set(aggregates) | set(account_positions) | set(managed_quantities) | set(fill_balances),
             key=lambda item: (str(item[0]), item[1]),
         )
         for account_id, symbol in keys:
@@ -324,15 +348,75 @@ class ReconciliationService:
             # the WETO note above: the virtual row false-zeroes inside the broker settle window while
             # oms_managed_positions stays correct, and comparing only the former manufactures a page.
             our_quantity = max(virtual_quantity, managed_quantity)
-            account_quantity = account_position.quantity if account_position is not None else Decimal("0")
+            account_quantity = (
+                account_position.quantity if account_position is not None else Decimal("0")
+            )
+            net_fill_balance = fill_balances.get((account_id, symbol), Decimal("0"))
             quantity_delta = abs(account_quantity - our_quantity)
-            if quantity_delta > tolerance:
-                severity = "critical" if account_quantity == 0 or our_quantity == 0 else "warning"
+            fill_delta = abs(account_quantity - net_fill_balance)
+            broker_has_position = abs(account_quantity) > tolerance
+            books_claim_position = our_quantity > tolerance
+            fills_claim_position = abs(net_fill_balance) > tolerance
+
+            direction: str | None = None
+            severity: str | None = None
+            title: str | None = None
+            if broker_has_position and not books_claim_position and not fills_claim_position:
+                direction = "broker_only_manual"
+                severity = "info"
+                title = (
+                    f"position present at broker with no matching fill balance of ours for {symbol} - "
+                    "not ours, taking no action"
+                )
+            elif net_fill_balance < -tolerance:
+                direction = "negative_net_fill_balance"
+                severity = "critical"
+                title = f"Our fill ledger is net short for {symbol}"
+            elif not broker_has_position and (books_claim_position or fills_claim_position):
+                direction = "broker_missing_owned_position"
+                severity = "critical"
+                title = f"Our records claim a position missing at the broker for {symbol}"
+            elif broker_has_position and not fills_claim_position and books_claim_position:
+                direction = "fill_book_ownership_conflict"
+                severity = "critical"
+                title = f"Our live book has no matching fill balance for {symbol}"
+            elif broker_has_position and fill_delta > tolerance:
+                direction = (
+                    "broker_more_than_net_fills"
+                    if account_quantity > net_fill_balance
+                    else "broker_less_than_net_fills"
+                )
+                severity = "critical"
+                title = f"Broker position disagrees with our net fills for {symbol}"
+            elif broker_has_position and not books_claim_position:
+                direction = "broker_position_untracked_by_live_books"
+                severity = "critical"
+                title = f"Owned broker position is missing from our live books for {symbol}"
+            elif broker_has_position and quantity_delta > tolerance:
+                direction = (
+                    "broker_more_than_live_books"
+                    if account_quantity > our_quantity
+                    else "broker_less_than_live_books"
+                )
+                severity = "critical"
+                title = f"Broker position disagrees with our live books for {symbol}"
+
+            if severity is not None and direction is not None and title is not None:
+                configured_entry_quantity: int | None = None
+                if account_name == "live:schwab_1m_v2":
+                    configured_entry_quantity = int(
+                        self.settings.strategy_schwab_1m_v2_default_quantity
+                    )
+                elif account_name == "live:orb":
+                    configured_entry_quantity = int(
+                        self.settings.strategy_schwab_1m_v2_webull_fanout_quantity
+                        or self.settings.strategy_schwab_1m_v2_default_quantity
+                    )
                 findings.append(
                     FindingSpec(
                         finding_type="position_quantity_mismatch",
                         severity=severity,
-                        title=f"Position quantity mismatch for {symbol}",
+                        title=title,
                         fingerprint=f"position-quantity:{account_name}:{symbol}",
                         symbol=symbol,
                         payload={
@@ -345,6 +429,17 @@ class ReconciliationService:
                             "managed_quantity": str(managed_quantity),
                             "our_quantity": str(our_quantity),
                             "quantity_delta": str(quantity_delta),
+                            "net_fill_balance": str(net_fill_balance),
+                            "fill_delta": str(fill_delta),
+                            "direction": direction,
+                            "ownership": (
+                                "manual_not_ours"
+                                if direction == "broker_only_manual"
+                                else "ours_or_conflicting"
+                            ),
+                            # Context only. Quantity shape never decides ownership: 500 and 1000
+                            # are both multiples of the live Schwab size of 2.
+                            "configured_entry_quantity": configured_entry_quantity,
                             "strategy_codes": sorted(
                                 set(aggregate["strategy_codes"] if aggregate else [])
                                 | managed_strategies.get((account_id, symbol), set())
@@ -353,8 +448,15 @@ class ReconciliationService:
                     )
                 )
 
-            if aggregate and account_position and virtual_quantity > tolerance and account_quantity > tolerance:
-                virtual_average_price = aggregate["cost"] / virtual_quantity if virtual_quantity else Decimal("0")
+            if (
+                aggregate
+                and account_position
+                and virtual_quantity > tolerance
+                and account_quantity > tolerance
+            ):
+                virtual_average_price = (
+                    aggregate["cost"] / virtual_quantity if virtual_quantity else Decimal("0")
+                )
                 price_delta = abs(account_position.average_price - virtual_average_price)
                 if price_delta > avg_price_tolerance:
                     findings.append(
@@ -367,7 +469,9 @@ class ReconciliationService:
                             payload={
                                 "account_name": account_name,
                                 "account_average_price": str(account_position.average_price),
-                                "virtual_average_price": str(virtual_average_price.quantize(Decimal("0.00000001"))),
+                                "virtual_average_price": str(
+                                    virtual_average_price.quantize(Decimal("0.00000001"))
+                                ),
                                 "price_delta": str(price_delta.quantize(Decimal("0.00000001"))),
                                 "strategy_codes": sorted(set(aggregate["strategy_codes"])),
                             },
@@ -380,12 +484,10 @@ class ReconciliationService:
         cutoff = utcnow() - timedelta(seconds=self.settings.reconciliation_stuck_order_seconds)
         findings: list[FindingSpec] = []
         account_lookup = {
-            account.id: account
-            for account in session.scalars(select(BrokerAccount)).all()
+            account.id: account for account in session.scalars(select(BrokerAccount)).all()
         }
         strategy_lookup = {
-            strategy.id: strategy
-            for strategy in session.scalars(select(Strategy)).all()
+            strategy.id: strategy for strategy in session.scalars(select(Strategy)).all()
         }
         stale_orders = session.scalars(
             select(BrokerOrder)
@@ -424,12 +526,10 @@ class ReconciliationService:
         cutoff = utcnow() - timedelta(seconds=self.settings.reconciliation_stuck_intent_seconds)
         findings: list[FindingSpec] = []
         account_lookup = {
-            account.id: account
-            for account in session.scalars(select(BrokerAccount)).all()
+            account.id: account for account in session.scalars(select(BrokerAccount)).all()
         }
         strategy_lookup = {
-            strategy.id: strategy
-            for strategy in session.scalars(select(Strategy)).all()
+            strategy.id: strategy for strategy in session.scalars(select(Strategy)).all()
         }
         stale_intents = session.scalars(
             select(TradeIntent)
@@ -465,6 +565,7 @@ class ReconciliationService:
     def _build_summary(self, session: Session, findings: list[FindingSpec]) -> dict[str, Any]:
         critical_findings = sum(1 for finding in findings if finding.severity == "critical")
         warning_findings = sum(1 for finding in findings if finding.severity == "warning")
+        info_findings = sum(1 for finding in findings if finding.severity == "info")
         cutover_confidence = max(0, 100 - critical_findings * 35 - warning_findings * 10)
         accounts_checked = int(
             session.scalar(
@@ -480,6 +581,7 @@ class ReconciliationService:
             "total_findings": len(findings),
             "critical_findings": critical_findings,
             "warning_findings": warning_findings,
+            "info_findings": info_findings,
             "cutover_confidence": cutover_confidence,
         }
 
@@ -503,6 +605,7 @@ class ReconciliationService:
             payload = {
                 "fingerprint": finding.fingerprint,
                 "finding_type": finding.finding_type,
+                "symbol": finding.symbol,
                 **finding.payload,
             }
             if incident is None:

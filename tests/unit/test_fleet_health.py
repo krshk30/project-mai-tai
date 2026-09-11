@@ -4,6 +4,7 @@ and imports NO app code, so it stays independent/unhangable); we test only its d
 functions, not the psql/redis I/O. The load-bearing property proven here is the
 NO-FALSE-ALARM discipline: stale bars are RED only when the upstream feed is simultaneously
 live (a frozen loop) — never on a quiet market / feed outage."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -37,7 +38,7 @@ def test_stale_bars_with_LIVE_feed_is_red_frozen_loop():
 def test_stale_bars_with_QUIET_feed_is_green_no_false_alarm():
     # THE no-false-alarm guarantee: bars stale but the upstream feed is quiet/stale is a
     # quiet market or a feed outage — NOT a strategy fault. Must never RED.
-    assert fhc.classify_bar_freshness(600, 400)[0] == "GREEN"   # feed stale
+    assert fhc.classify_bar_freshness(600, 400)[0] == "GREEN"  # feed stale
     assert fhc.classify_bar_freshness(600, None)[0] == "GREEN"  # no recent trades at all
 
 
@@ -51,6 +52,7 @@ def test_no_bars_is_amber_not_red():
 
 
 # --- check #2: oms-order-lifecycle (alive-but-not-executing) ------------------ #
+
 
 def test_no_stuck_intents_is_green_quiet_or_executing():
     # THE no-false-alarm guard: no stuck intents -> GREEN, whether the market is quiet
@@ -101,10 +103,13 @@ def test_d6_future_success_is_red_instead_of_blessing_the_wrong_session() -> Non
 
 def test_d6_current_nonpass_and_missing_status_are_red() -> None:
     expected = date(2026, 8, 28)
-    assert fhc.classify_d6_status(
-        "[D6-OUTCOME-ACCEPTANCE-NONPASS] session=2026-08-28 verdict=FAIL\n",
-        expected_session=expected,
-    )[0] == "RED"
+    assert (
+        fhc.classify_d6_status(
+            "[D6-OUTCOME-ACCEPTANCE-NONPASS] session=2026-08-28 verdict=FAIL\n",
+            expected_session=expected,
+        )[0]
+        == "RED"
+    )
     assert fhc.classify_d6_status(None, expected_session=expected)[0] == "RED"
 
 
@@ -118,9 +123,7 @@ def test_d6_malformed_session_is_red_not_an_amber_check_exception() -> None:
     assert "malformed" in detail
 
 
-def test_d6_binary_status_is_red_not_an_amber_check_exception(
-    monkeypatch, tmp_path
-) -> None:
+def test_d6_binary_status_is_red_not_an_amber_check_exception(monkeypatch, tmp_path) -> None:
     status = tmp_path / "STATUS.txt"
     status.write_bytes(b"\xff\xfe\x00\x80")
     monkeypatch.setattr(fhc, "_D6_STATUS_PATH", status)
@@ -137,9 +140,7 @@ def test_d6_binary_status_is_red_not_an_amber_check_exception(
     assert "encoding error=UnicodeDecodeError" in detail
 
 
-def test_d6_freshness_green_path_reads_the_current_success(
-    monkeypatch, tmp_path
-) -> None:
+def test_d6_freshness_green_path_reads_the_current_success(monkeypatch, tmp_path) -> None:
     status = tmp_path / "STATUS.txt"
     status.write_text(
         "[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-28 verdict=PASS\n",
@@ -197,7 +198,33 @@ def test_d6_other_oserror_is_red_and_names_the_io_failure(monkeypatch) -> None:
 
 
 def test_d6_freshness_check_is_registered_in_the_executed_check_list() -> None:
-    assert fhc.check_d6_status_freshness in fhc.CHECKS
+    assert fhc.check_d6_status_freshness in [spec.check for spec in fhc.CHECKS]
+
+
+def test_every_fleet_check_has_an_explicit_alert_class() -> None:
+    assert {spec.check.__name__: spec.alert_class for spec in fhc.CHECKS} == {
+        "check_strategy_bar_freshness": fhc.PAPER,
+        "check_oms_order_lifecycle": fhc.LIVE_MONEY,
+        "check_stops_armed": fhc.LIVE_MONEY,
+        "check_bar_continuity": fhc.DIAGNOSTIC,
+        "check_d6_status_freshness": fhc.SCOREBOARD,
+    }
+
+
+def test_fleet_aggregate_is_a_summary_not_a_pageable_verdict(monkeypatch, capsys) -> None:
+    checks = (
+        fhc.CheckSpec(lambda: ("RED", "paper-check", "paper issue"), fhc.PAPER),
+        fhc.CheckSpec(lambda: ("RED", "live-check", "live issue"), fhc.LIVE_MONEY),
+    )
+    monkeypatch.setattr(fhc, "CHECKS", checks)
+
+    assert fhc.main() == 2
+    output = capsys.readouterr().out
+
+    assert "VERDICT: RED paper-check class=PAPER" in output
+    assert "VERDICT: RED live-check class=LIVE_MONEY" in output
+    assert "SUMMARY: RED fleet-function-health checks=2 live_money_red=1" in output
+    assert "VERDICT: RED fleet-function-health" not in output
 
 
 def test_d6_expected_session_skips_weekend_and_full_closure() -> None:
@@ -205,6 +232,7 @@ def test_d6_expected_session_skips_weekend_and_full_closure() -> None:
 
 
 # --- check #3: stops-armed (every OMS-owned open position has an armed stop) --- #
+
 
 def test_owned_position_with_stop_is_green():
     # 2 OMS-owned open, 0 unprotected → all armed → GREEN.
@@ -297,6 +325,7 @@ def test_the_halt_downgrade_cannot_fire_on_a_REST_FAILURE() -> None:
     worst outcome for this pager. Not hypothetical: Schwab REST 401'd for 2h41m on 2026-08-03.
     Pins that the wrapper's downgrade is gated on REST_FAILED == 0."""
     from pathlib import Path
+
     wrapper = Path(__file__).resolve().parents[2] / "ops" / "health" / "bar_gap_watch_cron.sh"
     src = wrapper.read_text(encoding="utf-8")
     assert "REST fetch FAILED" in src, "the failure signal must be parsed at all"

@@ -1,5 +1,11 @@
 # Fleet health-validation system — "function-not-process"
 
+> **Historical design note.** The alert-routing, classification, and deduplication portions of
+> this document were superseded by the measured 2026-09-11 triage. The current operational policy
+> is `docs/alert-triage-2026-09-11.md`: only `LIVE_MONEY` check transitions page, aggregate results
+> and recoveries are log-only, and unresolved bar gaps page only after five minutes. This file is
+> retained for the original validation architecture and rationale.
+
 **Status:** DESIGN-FIRST (design + first checks now; build incrementally after operator approves each).
 **Author:** session 2026-07-07. Grounded in a read-only map of `/home/trader/project-mai-tai` + the `/home/trader/` ops scripts.
 **Premise:** the OMS-liveness watchdog (built 07-05) proves a service's **loop still stamps a heartbeat**. This layer proves each service is **actually doing its job** — the "process alive ≠ functioning" gap. The motivating class is the blocking-event-loop freeze: the paper strategy-engine freeze and the OMS zombie are the *same* class, and a functional check must catch a loop that has stopped doing work — even if (especially if) it still reports `status=healthy`.

@@ -1,20 +1,48 @@
 #!/bin/bash
-# Alert channel adapter — ntfy.sh push (operator-chosen 2026-07-01).
-#   Args: $1=LEVEL (RED|AMBER|GREEN|ERROR)  $2=verdict line  $3=full-output file
-#   RED/ERROR => urgent push; AMBER => default; GREEN => min (daily liveness ping).
-#   Full detail stays on-box (readiness_latest.txt); only the verdict transits ntfy.
+# Shared ntfy adapter for pre-open and seed-exposure alerts. A non-zero exit means
+# delivery was not confirmed and callers must not consume their transition latch.
 set -u
-LEVEL="$1"; VERDICT="${2:-}"; FILE="${3:-}"
-OUT=/home/trader/preopen_out
+
+LEVEL="$1"
+VERDICT="${2:-}"
+FILE="${3:-}"
+OUT="${PREOPEN_ALERT_OUT:-/home/trader/preopen_out}"
+URL="${PREOPEN_ALERT_URL:-https://ntfy.sh/mai-tai-preopen-28806a5a97b7}"
+CURL="${PREOPEN_ALERT_CURL:-curl}"
 STAMP=$(date '+%F %H:%M:%S %Z')
-echo "$STAMP  ALERT[$LEVEL]  $VERDICT" >> "$OUT/alert.log"
-URL="https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
+mkdir -p "$OUT"
+
 case "$LEVEL" in
   RED|ERROR)
-    curl -s -H "Title: 🔴 mai-tai NOT READY ($LEVEL)" -H "Priority: urgent" -H "Tags: rotating_light"       -d "${VERDICT:-readiness $LEVEL} — you have until 09:30 ET. Detail: ssh mai-tai-vps 'cat /home/trader/preopen_out/readiness_latest.txt'"       "$URL" >/dev/null 2>>"$OUT/alert.log" ;;
+    TITLE="RED mai-tai NOT READY ($LEVEL)"
+    PRIORITY="urgent"
+    TAGS="rotating_light"
+    BODY="${VERDICT:-readiness $LEVEL}; you have until 09:30 ET. Detail: $FILE"
+    ;;
   AMBER)
-    curl -s -H "Title: 🟡 mai-tai readiness: warnings" -H "Priority: default" -H "Tags: warning"       -d "$VERDICT" "$URL" >/dev/null 2>>"$OUT/alert.log" ;;
+    TITLE="AMBER mai-tai readiness warnings"
+    PRIORITY="default"
+    TAGS="warning"
+    BODY="$VERDICT"
+    ;;
   GREEN)
-    curl -s -H "Title: ✅ mai-tai fleet ready" -H "Priority: min" -H "Tags: white_check_mark"       -d "$VERDICT" "$URL" >/dev/null 2>>"$OUT/alert.log" ;;
+    TITLE="GREEN mai-tai fleet ready"
+    PRIORITY="min"
+    TAGS="white_check_mark"
+    BODY="$VERDICT"
+    ;;
+  *)
+    echo "$STAMP  ERROR unsupported alert level=$LEVEL" >> "$OUT/alert.log"
+    exit 2
+    ;;
 esac
-exit 0
+
+if "$CURL" -sS --fail-with-body --connect-timeout 10 --max-time 30 \
+  -H "Title: $TITLE" -H "Priority: $PRIORITY" -H "Tags: $TAGS" -d "$BODY" "$URL" \
+  >/dev/null 2>>"$OUT/alert.log"; then
+  echo "$STAMP  DELIVERED[$LEVEL] $VERDICT" >> "$OUT/alert.log"
+  exit 0
+fi
+
+echo "$STAMP  DELIVERY-FAILED[$LEVEL] $VERDICT" >> "$OUT/alert.log"
+exit 1

@@ -1,118 +1,98 @@
 #!/bin/bash
-# RECONCILER CRITICAL-FINDING ALERT — push the drift the reconciler already detects.
-#
-# ⭐⭐ WHY (2026-07-30). The reconciler works. On IRE it flagged
-#     `position_quantity_mismatch` severity=CRITICAL at 12:55:22 -- eight minutes after a phantom
-#     2-share fill -- and repeated it 71 times over 35 minutes. NOBODY WAS EVER TOLD. There was no
-#     alerting on reconciliation findings of any kind. The operator found the discrepancy himself,
-#     on a chart, hours later.
-#
-# ⛔ The detection was never the missing piece. The PATH FROM FINDING TO HUMAN was.
-#   (Standing question: "has the other bot already solved this?" -- here, yes. Do not rebuild it.)
-#
-# ⭐ WHY FINGERPRINT-DEDUPED AND CRITICAL-ONLY. Raw volume on 2026-07-30:
-#       stuck_intent                warning   3954
-#       position_quantity_mismatch  CRITICAL  1149
-#       stuck_order                 warning     69
-#       average_price_mismatch      warning     64
-#   -- but only **7 DISTINCT critical fingerprints** all day. Alerting per finding would push 1149
-#   times and be muted within a week; alerting per fingerprint pushes 7. The reconciler already
-#   emits a stable `fingerprint` (e.g. `position-quantity:live:schwab_1m_v2:IRE`) -- use it.
-#
-# ⛔ Guards enforced HERE in ET; crontab is deliberately `*/5 * * * *`. CRON_TZ is IGNORED on this
-# box, so a crontab hour range is a UTC range and cannot express an ET window.
-# ⛔ Runs as ROOT from root's crontab -- the env file is root-readable only.
-#
-#   `--selftest`: bypass window/cooldown and force one push.
+# Page actionable, live-money reconciliation incidents once per active transition.
+# Manual broker positions are classified INFO by the reconciler and never reach this
+# wrapper. A delivery is recorded only after ntfy accepts it.
 set -u
 
 SELFTEST=0
 [ "${1:-}" = "--selftest" ] && SELFTEST=1
 
-OUT=/home/trader/reconcile_alert
+OUT="${RECONCILE_ALERT_OUT:-/home/trader/reconcile_alert}"
 LOG="$OUT/watch.log"
-SEEN="$OUT/seen"                   # fingerprints already alerted: "<epoch> <fingerprint>"
-NTFY_URL="https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
-COOLDOWN_SECS=3600                 # re-alert an UNRESOLVED fingerprint at most hourly
-LOOKBACK_MIN=10
-mkdir -p "$OUT"; touch "$SEEN"
+ACTIVE="$OUT/paged.active"
+CURL="${RECONCILE_ALERT_CURL:-curl}"
+NTFY_URL="${RECONCILE_ALERT_NTFY_URL:-https://ntfy.sh/mai-tai-preopen-28806a5a97b7}"
+mkdir -p "$OUT"
+touch "$ACTIVE"
 
 STAMP=$(TZ=America/New_York date '+%F %H:%M:%S %Z')
 TODAY=$(TZ=America/New_York date +%F)
 ETMIN=$(( 10#$(TZ=America/New_York date '+%H') * 60 + 10#$(TZ=America/New_York date '+%M') ))
 ETDOW=$(TZ=America/New_York date '+%u')
 
-if [ "$SELFTEST" -eq 0 ]; then
+if [ "$SELFTEST" -eq 0 ] && [ "${RECONCILE_ALERT_TEST_MODE:-0}" != "1" ]; then
   [ "$ETDOW" -gt 5 ] && exit 0
-  # 07:00 (420) .. 20:30 (1230) ET — a position can exist through the EH tail, and drift on a
-  # position we hold overnight is exactly the thing worth waking up for.
+  # A position can remain exposed through the extended-hours tail.
   { [ "$ETMIN" -lt 420 ] || [ "$ETMIN" -ge 1230 ]; } && exit 0
   HOLIDAYS_2026="2026-01-01 2026-01-19 2026-02-16 2026-04-03 2026-05-25 2026-06-19 2026-07-03 2026-09-07 2026-11-26 2026-12-25"
-  case "$HOLIDAYS_2026" in *"$TODAY"*) exit 0 ;; esac
+  case " $HOLIDAYS_2026 " in *" $TODAY "*) exit 0 ;; esac
 fi
 
 if [ -f "$LOG" ] && [ "$(stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 5000000 ]; then
   mv -f "$LOG" "$LOG.1"
 fi
 
-# ⛔⭐ EXCLUDE THE OPERATOR'S OWN POSITIONS. They mismatch by DESIGN -- the broker holds them and
-# our books correctly do not (the OMS acts only on positions it placed). CYN alone would push once
-# an hour forever and mute this channel inside a week. Sourced from MAI_TAI_PROTECTED_SYMBOLS so
-# the exclusion list and the trading hard-block can never drift apart.
-# ⚠️ A manual position NOT in PROTECTED_SYMBOLS still alerts -- correctly. On 2026-07-30 the
-# operator held TE -3000 which was NOT protected; that is a gap to close, not noise to hide.
-PROTECTED=$(sudo -n grep -E '^MAI_TAI_PROTECTED_SYMBOLS=' /etc/project-mai-tai/project-mai-tai.env 2>/dev/null             | head -1 | cut -d= -f2- | tr -d '"'"'"'"'"'" )
-EXCLUDE_SQL=""
-if [ -n "$PROTECTED" ]; then
-  EXCLUDE_SQL=" AND coalesce(symbol,'-') NOT IN ('$(printf '%s' "$PROTECTED" | sed "s/,/','/g")')"
-fi
-
-DSN=$(sudo -n grep -E '^MAI_TAI_DATABASE_URL=' /etc/project-mai-tai/project-mai-tai.env 2>/dev/null \
-      | head -1 | cut -d= -f2- | sed 's|postgresql+psycopg://|postgresql://|')
-[ -z "$DSN" ] && { echo "$STAMP  ERROR: no DSN" >> "$LOG"; exit 1; }
-
 send_ntfy() {  # $1=title $2=priority $3=tags $4=body
-  # ⛔ Titles must be ASCII — an em-dash silently LOSES the push (learned on the OCO watch).
-  curl -s -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
+  "$CURL" -sS --fail-with-body --connect-timeout 10 --max-time 30 \
+    -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
     >/dev/null 2>>"$OUT/alert.log"
 }
 
-NOW=$(date +%s)
-
-# One row per DISTINCT critical fingerprint seen recently, newest payload wins.
-ROWS=$(psql "$DSN" -tAF'|' -c "
-  SELECT DISTINCT ON (payload->>'fingerprint')
-         payload->>'fingerprint', finding_type, coalesce(symbol,'-'),
-         coalesce(payload->>'title', finding_type)
-  FROM reconciliation_findings
-  WHERE severity='critical'
-    AND created_at >= now() - make_interval(mins => ${LOOKBACK_MIN})${EXCLUDE_SQL}
-  ORDER BY payload->>'fingerprint', created_at DESC;" 2>>"$LOG")
-
 if [ "$SELFTEST" -eq 1 ]; then
-  ROWS="selftest:fingerprint|position_quantity_mismatch|TEST|[SELFTEST] Position quantity mismatch"
+  ROWS="selftest:fingerprint|position_quantity_mismatch|TEST|[SELFTEST] owned position mismatch|live:orb|broker_missing_owned_position|0|1|1"
+elif [ "${RECONCILE_ALERT_ROWS+x}" = "x" ]; then
+  ROWS=$RECONCILE_ALERT_ROWS
+else
+  DSN=$(sudo -n grep -E '^MAI_TAI_DATABASE_URL=' /etc/project-mai-tai/project-mai-tai.env 2>>"$LOG" \
+        | head -1 | cut -d= -f2- | sed 's|postgresql+psycopg://|postgresql://|')
+  [ -z "$DSN" ] && { echo "$STAMP  ERROR: no DSN" >> "$LOG"; exit 1; }
+
+  # Open incidents are the reconciler's durable transition state. Using recent finding rows
+  # would falsely clear an active page whenever one poll was late.
+  ROWS=$(psql "$DSN" -tAF'|' -c "
+    SELECT payload->>'fingerprint', payload->>'finding_type', coalesce(payload->>'symbol','-'),
+           title, payload->>'account_name', coalesce(payload->>'direction','unknown'),
+           coalesce(payload->>'account_quantity','0'), coalesce(payload->>'our_quantity','0'),
+           coalesce(payload->>'net_fill_balance','0')
+      FROM system_incidents
+     WHERE service_name='reconciler'
+       AND severity='critical'
+       AND status IN ('open','acknowledged')
+       AND payload->>'account_name' IN ('live:schwab_1m_v2','live:orb')
+     ORDER BY payload->>'fingerprint';" 2>>"$LOG")
 fi
 
-[ -z "$ROWS" ] && { echo "$STAMP  no critical findings in the last ${LOOKBACK_MIN}m" >> "$LOG"; exit 0; }
+CURRENT="$OUT/current.active"
+NEXT="$OUT/next.active"
+: > "$CURRENT"
+: > "$NEXT"
 
-echo "$ROWS" | while IFS='|' read -r FP KIND SYM TITLE; do
-  [ -z "$FP" ] && continue
-  LAST=$(grep -F " $FP" "$SEEN" 2>/dev/null | tail -1 | awk '{print $1}')
-  if [ -n "$LAST" ] && [ "$SELFTEST" -eq 0 ] && [ $(( NOW - LAST )) -lt "$COOLDOWN_SECS" ]; then
-    continue
-  fi
-  BODY="$TITLE
-type=$KIND symbol=$SYM
+if [ -n "$ROWS" ]; then
+  printf '%s\n' "$ROWS" | while IFS='|' read -r FP KIND SYM TITLE ACCOUNT DIRECTION BROKER BOOK FILLS; do
+    [ -z "$FP" ] && continue
+    printf '%s\n' "$FP" >> "$CURRENT"
+    if grep -Fxq "$FP" "$ACTIVE"; then
+      printf '%s\n' "$FP" >> "$NEXT"
+      continue
+    fi
+
+    BODY="$TITLE
+type=$KIND symbol=$SYM account=$ACCOUNT direction=$DIRECTION
+broker_quantity=$BROKER live_book_quantity=$BOOK net_fill_balance=$FILLS
 fingerprint=$FP
 
-The reconciler DETECTS drift but never repairs it -- this is a report, nothing has been changed.
-Broker truth vs our books: ssh mai-tai-vps then compare account_positions with virtual_positions.
-⛔ A position the OMS does not know about is one it will NOT exit. Check before the close."
-  send_ntfy "RED reconcile drift: $SYM" "urgent" "rotating_light" "$BODY"
-  echo "$NOW $FP" >> "$SEEN"
-  echo "$STAMP  ALERT sent $KIND $SYM $FP" >> "$OUT/alert.log"
-done
+The reconciler reports only; nothing has been changed. A nonzero ownership signal that disagrees with the broker is a live-money finding."
+    if send_ntfy "RED reconcile drift: $SYM" "urgent" "rotating_light" "$BODY"; then
+      printf '%s\n' "$FP" >> "$NEXT"
+      echo "$STAMP  ALERT sent $KIND $ACCOUNT $SYM $FP" >> "$OUT/alert.log"
+    else
+      echo "$STAMP  ALERT delivery failed $FP; retry next run" >> "$OUT/alert.log"
+    fi
+  done
+else
+  echo "$STAMP  no active critical live-money reconciliation incidents" >> "$LOG"
+fi
 
-# keep the seen-file bounded
-tail -500 "$SEEN" > "$SEEN.tmp" 2>/dev/null && mv -f "$SEEN.tmp" "$SEEN"
+sort -u "$NEXT" -o "$NEXT"
+mv -f "$NEXT" "$ACTIVE"
 exit 0
