@@ -15,6 +15,7 @@ sys.path.insert(0, str(SCRIPTS))
 from compare_tos_modified_atr import (  # noqa: E402
     BAR_SQL,
     LIVE_GAP_BOUND_MS,
+    TOS_WILDERS_PREFETCH_BARS,
     AtrStage,
     _modified_true_range,
     calculate_live_strategy,
@@ -139,3 +140,7 @@ def test_query_reads_only_complete_live_strategy_history() -> None:
     assert "strategy_code = 'schwab_1m_v2'" in lowered
     assert "bar_time >= %(history_start)s" in lowered
     assert not any(word in lowered for word in ("insert ", "update ", "delete ", "truncate "))
+
+
+def test_tos_wilders_prefetch_requirement_is_the_documented_seven_lengths() -> None:
+    assert TOS_WILDERS_PREFETCH_BARS == 7 * 5 == 35

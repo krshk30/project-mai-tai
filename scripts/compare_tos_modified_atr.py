@@ -45,6 +45,9 @@ ET = ZoneInfo("America/New_York")
 ATR_PERIOD = 5
 ATR_FACTOR = 3.5
 LIVE_GAP_BOUND_MS = 90_000
+# Thinkorswim documents WildersAverage as using seven lengths of prefetch. Without those bars,
+# a range-start initialization difference can masquerade as a formula difference.
+TOS_WILDERS_PREFETCH_BARS = 7 * ATR_PERIOD
 
 BAR_SQL = """
 SELECT
@@ -339,6 +342,21 @@ def _print_divergence(
         f"{label}: DIVERGED stage={stage} index={index} at={at.isoformat()} "
         f"bars={len(actual)}/{len(comparison)}"
     )
+    if index < len(actual) and index < len(comparison):
+        lhs = actual[index]
+        rhs = comparison[index]
+        print(
+            "  actual="
+            f"reset:{int(lhs.reset)},tr:{_format_value(lhs.modified_tr)},"
+            f"wilders:{_format_value(lhs.wilders)},loss:{_format_value(lhs.loss)},"
+            f"trail:{_format_value(lhs.trail)},state:{lhs.state or '-'},flip:{lhs.flip or '-'}"
+        )
+        print(
+            "  comparison="
+            f"reset:{int(rhs.reset)},tr:{_format_value(rhs.modified_tr)},"
+            f"wilders:{_format_value(rhs.wilders)},loss:{_format_value(rhs.loss)},"
+            f"trail:{_format_value(rhs.trail)},state:{rhs.state or '-'},flip:{rhs.flip or '-'}"
+        )
 
 
 def main() -> int:
@@ -384,15 +402,28 @@ def main() -> int:
     ]
     gaps = [stage for stage in actual if stage.gap_ms > LIVE_GAP_BOUND_MS]
     anchors = {stage.session_anchor_ms for stage in actual}
+    first_display_index = display_indexes[0] if display_indexes else len(bars)
+    preceding_bars = first_display_index
     print(
         f"ATR COMPARISON symbol={args.symbol.upper()} "
         f"history={args.history_start.astimezone(ET).isoformat()}..{args.end.astimezone(ET).isoformat()} "
         f"display_from={args.compare_start.astimezone(ET).isoformat()}"
     )
     print(
-        f"DENOMINATORS complete_preceding_bars={len(bars)} displayed_bars={len(display_indexes)} "
-        f"sessions={len(anchors)} nonadjacent_pairs={len(gaps)}"
+        f"DENOMINATORS total_input_bars={len(bars)} preceding_bars={preceding_bars} "
+        f"tos_wilders_prefetch_required={TOS_WILDERS_PREFETCH_BARS} "
+        f"displayed_bars={len(display_indexes)} sessions={len(anchors)} "
+        f"nonadjacent_pairs={len(gaps)}"
     )
+    if not display_indexes:
+        print("STATUS=UNMEASURED reason=no_bars_in_display_window denominator=0")
+        return 2
+    if preceding_bars < TOS_WILDERS_PREFETCH_BARS:
+        print(
+            "STATUS=UNMEASURED reason=insufficient_tos_wilders_prefetch "
+            f"preceding_bars={preceding_bars}/{TOS_WILDERS_PREFETCH_BARS}"
+        )
+        return 2
     _print_divergence("actual_live_vs_independent_live", actual, independent_live)
     _print_divergence("actual_live_vs_tos_modified_session_sliced", actual, tos_session)
     _print_divergence("actual_live_vs_tos_modified_continuous", actual, tos_continuous)
