@@ -420,6 +420,9 @@ def test_webull_fanout_qty_defaults_to_schwab_qty_and_is_overridable():
 
 # ============================================================ OMS: not-tradable classifier
 @pytest.mark.parametrize("reason", [
+    "Webull order rejected: CAN_NOT_CREATE_A_OPEN_ORDER (http 417)",
+    "Webull order rejected: can not create a open order (http 417)",
+    "This symbol is restricted to closing orders only.",
     "Webull order rejected: NO_SUCH_TICKER symbol not found (http 400)",
     "Webull order rejected: the instrument is not tradable (http 400)",
     "INVALID_SYMBOL",
@@ -443,6 +446,11 @@ def test_webull_ineligible_reason_vetoes_transient_and_config(reason):
 def test_429_veto_wins_even_with_a_not_tradable_substring():
     # A reason that contains BOTH a not-tradable phrase AND a 429 marker must be vetoed (429 wins).
     reason = "Webull order rejected: not tradable — TOO_MANY_REQUESTS (http 429)"
+    assert OmsRiskService._is_webull_ineligible_reason(reason) is False
+
+
+def test_transient_veto_wins_even_with_the_closing_only_code():
+    reason = "CAN_NOT_CREATE_A_OPEN_ORDER temporarily unavailable (http 417)"
     assert OmsRiskService._is_webull_ineligible_reason(reason) is False
 
 

@@ -22,7 +22,12 @@ import project_mai_tai.oms.service as oms_service
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerOrder, TradeIntent
+from project_mai_tai.db.models import (
+    AccountPosition,
+    BrokerOrder,
+    TradeIntent,
+    VirtualPosition,
+)
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.oms.store import OmsStore
@@ -85,6 +90,43 @@ class _RejectingAdapter:
         return []
 
 
+class _WebullClosingOnlyAdapter:
+    def __init__(self, *, reject_close: bool = False) -> None:
+        self.reject_close = reject_close
+        self.requests: list[object] = []
+
+    async def submit_order(self, request):  # type: ignore[no-untyped-def]
+        self.requests.append(request)
+        rejected = request.intent_type == "open" or self.reject_close
+        return [
+            ExecutionReport(
+                event_type="rejected" if rejected else "accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id=f"webull-{len(self.requests)}",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=(
+                    "Webull order rejected: CAN_NOT_CREATE_A_OPEN_ORDER "
+                    "CAN_NOT_CREATE_A_OPEN_ORDER (http 417)"
+                    if rejected
+                    else request.reason
+                ),
+                metadata=dict(request.metadata),
+                origin="broker",
+            )
+        ]
+
+    async def fetch_order_update(self, request):  # type: ignore[no-untyped-def]
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str) -> list[object]:
+        del broker_account_name
+        return []
+
+
 def _session_factory() -> sessionmaker[Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -135,6 +177,55 @@ def _v2_open(
     )
 
 
+def _v2_close(symbol: str, *, account: str = "live:orb") -> TradeIntentEvent:
+    return TradeIntentEvent(
+        source_service="oms-risk",
+        payload=TradeIntentPayload(
+            strategy_code="schwab_1m_v2",
+            broker_account_name=account,
+            symbol=symbol,
+            side="sell",
+            quantity=Decimal("1"),
+            intent_type="close",
+            reason="CW_HARD_STOP",
+            metadata={"order_type": "market", "reference_price": "1.00"},
+        ),
+    )
+
+
+def _seed_owned_position(
+    factory: sessionmaker[Session], service: OmsRiskService, symbol: str
+) -> None:
+    with factory() as session:
+        strategy = service.store.ensure_strategy(session, "schwab_1m_v2")
+        account = service.store.ensure_broker_account(
+            session,
+            "live:orb",
+            provider="webull",
+            environment="live",
+        )
+        session.add_all(
+            [
+                VirtualPosition(
+                    strategy_id=strategy.id,
+                    broker_account_id=account.id,
+                    symbol=symbol,
+                    quantity=Decimal("1"),
+                    average_price=Decimal("1.00"),
+                    realized_pnl=Decimal("0"),
+                ),
+                AccountPosition(
+                    broker_account_id=account.id,
+                    symbol=symbol,
+                    quantity=Decimal("1"),
+                    average_price=Decimal("1.00"),
+                    market_value=Decimal("1.00"),
+                ),
+            ]
+        )
+        session.commit()
+
+
 def _stored_intent(factory: sessionmaker[Session], symbol: str) -> TradeIntent:
     with factory() as session:
         intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == symbol))
@@ -146,6 +237,66 @@ def _stored_intent(factory: sessionmaker[Session], symbol: str) -> TradeIntent:
 @pytest.fixture(autouse=True)
 def _fillable_session(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(OmsRiskService, "_market_is_fillable", lambda self, now=None: True)
+
+
+@pytest.mark.asyncio
+async def test_webull_closing_only_latch_suppresses_opens_but_never_a_close() -> None:
+    """BDRX 09-11: learn once, stop retrying opens, and preserve every way out."""
+    factory = _session_factory()
+    adapter = _WebullClosingOnlyAdapter()
+    service = _service(
+        factory,
+        adapter=adapter,
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    service._fanout_webull_collision_reason = lambda **kwargs: None  # type: ignore[method-assign]
+
+    first = await service.process_trade_intent(_v2_open("BDRX"))
+    assert first[-1].payload.status == "rejected"
+    assert [request.intent_type for request in adapter.requests] == ["open"]
+
+    second = await service.process_trade_intent(_v2_open("BDRX"))
+    assert second[-1].payload.reason == "webull_ineligible_cached"
+    assert [request.intent_type for request in adapter.requests] == ["open"]
+
+    _seed_owned_position(factory, service, "BDRX")
+    close = await service.process_trade_intent(_v2_close("BDRX"))
+    assert close[-1].payload.status == "accepted"
+    assert [request.intent_type for request in adapter.requests] == ["open", "close"]
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_close_can_never_create_the_open_only_latch() -> None:
+    factory = _session_factory()
+    adapter = _WebullClosingOnlyAdapter(reject_close=True)
+    service = _service(
+        factory,
+        adapter=adapter,
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    _seed_owned_position(factory, service, "EXIT")
+
+    close = await service.process_trade_intent(_v2_close("EXIT"))
+
+    assert close[-1].payload.status == "rejected"
+    with factory() as session:
+        account = service.store.ensure_broker_account(
+            session,
+            "live:orb",
+            provider="webull",
+            environment="live",
+        )
+        assert (
+            service.store.get_webull_ineligible_entry(
+                session,
+                broker_account_id=account.id,
+                symbol="EXIT",
+                session_date=service._current_session_day(),
+            )
+            is None
+        )
 
 
 @pytest.mark.asyncio
