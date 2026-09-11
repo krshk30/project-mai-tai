@@ -52,6 +52,9 @@ class FlipPositionBook:
     confirmation_closes_by_symbol: Mapping[
         str, tuple[FlipConfirmationClose, ...]
     ] = field(default_factory=dict)
+    terminal_unfilled_opportunities_by_symbol: Mapping[
+        str, frozenset[int]
+    ] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
