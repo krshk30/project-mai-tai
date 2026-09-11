@@ -381,15 +381,58 @@ def _dsn(arg: str | None) -> str:
     return raw.replace("postgresql+psycopg://", "postgresql://")
 
 
-def _read_newest_event(redis_url: str, stream: str) -> str | None:
+# How far back to look for OUR event on the shared stream. The stream carries every strategy's
+# isolated bot state, so the newest entry is frequently another bot's. 2026-09-11: reading only the
+# head made the detector REFUSE all morning because `orb` had written last — and it refused on the
+# one day TNON was carrying a live 11.9d seed gap, i.e. blind on exactly the defect it guards.
+SHARED_STREAM_SCAN_ENTRIES = 50
+
+
+def select_newest_own_event(entries: "list[tuple[str, dict[str, str]]]") -> str | None:
+    """Newest `isolated_bot_state` event for OUR strategy from a shared-stream page, else None.
+
+    ⛔⭐ THIS SELECTS, IT DOES NOT VALIDATE. Everything `parse_watchlist_event` refuses on —
+    freshness, a missing watchlist field, an unparseable payload — must still be refused there on
+    the event we hand back. Filtering here is only about finding the right event among other bots'.
+    ⛔ A neighbour's malformed or unparseable event must NOT blind us: it is skipped, not raised on.
+    Refusing because `polygon_30s` wrote garbage would be the shared-stream bug facing the other way.
+    ⛔ Order is preserved: `xrevrange` returns newest-first, so the FIRST match is the newest one.
+    """
+    for _entry_id, fields in entries:
+        raw = fields.get("data")
+        if not raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("event_type") != "isolated_bot_state":
+            continue
+        payload = event.get("payload")
+        if isinstance(payload, dict) and payload.get("strategy_code") == STRATEGY_CODE:
+            return raw
+    return None
+
+
+def _read_newest_event(
+    redis_url: str, stream: str, *, scan_entries: int = SHARED_STREAM_SCAN_ENTRIES
+) -> str | None:
     import redis  # imported lazily so the pure functions stay testable without the dependency
 
     client = redis.Redis.from_url(redis_url, decode_responses=True)
-    entries = client.xrevrange(stream, "+", "-", count=1)
+    entries = client.xrevrange(stream, "+", "-", count=scan_entries)
     if not entries:
         return None
-    _entry_id, fields = entries[0]
-    return fields.get("data")
+    own = select_newest_own_event(entries)
+    if own is None:
+        raise DetectorBlind(
+            f"no {STRATEGY_CODE!r} isolated_bot_state event within the newest {len(entries)} "
+            "entries of this SHARED stream — the bot may not have published since boot. "
+            "⛔ Another strategy's event is NOT a substitute: reading it would sweep its watchlist."
+        )
+    return own
 
 
 def main() -> int:

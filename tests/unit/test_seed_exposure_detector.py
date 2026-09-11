@@ -23,6 +23,7 @@ from scripts.seed_exposure_detector import (
     SweepRow,
     check_constants,
     parse_watchlist_event,
+    select_newest_own_event,
 )
 
 NOW = datetime(2026, 8, 19, 11, 30, 0, tzinfo=UTC)  # 07:30 ET
@@ -326,3 +327,78 @@ def test_missing_dsn_raises_detector_blind_not_systemexit(monkeypatch):
 
 def test_dsn_normalises_the_sqlalchemy_scheme():
     assert _dsn("postgresql+psycopg://u:p@h/db") == "postgresql://u:p@h/db"
+
+# --------------------------------------------------- §131b the shared stream carries other bots
+# 2026-09-11: the detector read only the HEAD of `mai_tai:strategy-state-isolated`. `orb` had
+# written last, so it REFUSED from 04:00 ET onward — on the one morning TNON carried a live 11.9d
+# gap inside its 250-bar seed window, i.e. blind on exactly the defect it exists to catch.
+# ⛔ The fix must SEE CORRECTLY without relaxing any refusal: no own event, or a stale one, still
+# refuses. These controls pin both halves.
+def _entry(entry_id, event):
+    return (entry_id, {"data": json.dumps(event)})
+
+
+def _own_event(symbols=("TNON",), produced_at="2026-09-11T10:00:00+00:00"):
+    return {
+        "event_type": "isolated_bot_state",
+        "produced_at": produced_at,
+        "payload": {"strategy_code": "schwab_1m_v2", "watchlist": list(symbols)},
+    }
+
+
+def _other_event(code="orb"):
+    return {
+        "event_type": "isolated_bot_state",
+        "produced_at": "2026-09-11T10:00:30+00:00",
+        "payload": {"strategy_code": code, "watchlist": ["ZZZZ"]},
+    }
+
+
+def test_finds_our_event_behind_another_bots_newest_event():
+    """THE 2026-09-11 CASE: orb wrote last; ours is one entry behind and must still be found."""
+    entries = [_entry("2-0", _other_event()), _entry("1-0", _own_event())]
+
+    raw = select_newest_own_event(entries)
+
+    assert raw is not None
+    assert json.loads(raw)["payload"]["strategy_code"] == "schwab_1m_v2"
+
+
+def test_returns_the_newest_of_several_of_our_own_events():
+    older = _own_event(symbols=("OLD",), produced_at="2026-09-11T09:00:00+00:00")
+    newer = _own_event(symbols=("NEW",), produced_at="2026-09-11T10:00:00+00:00")
+    entries = [_entry("3-0", _other_event()), _entry("2-0", newer), _entry("1-0", older)]
+
+    raw = select_newest_own_event(entries)
+
+    assert json.loads(raw)["payload"]["watchlist"] == ["NEW"]
+
+
+def test_returns_none_when_only_other_bots_are_on_the_page():
+    """⛔ Absence of OUR event must stay a refusal — never fall back to a neighbour's watchlist."""
+    entries = [_entry("2-0", _other_event()), _entry("1-0", _other_event("polygon_30s"))]
+
+    assert select_newest_own_event(entries) is None
+
+
+def test_a_neighbours_malformed_event_does_not_blind_us():
+    """⛔ Refusing because another bot wrote garbage would be the same bug facing the other way."""
+    entries = [
+        ("3-0", {"data": "{not json"}),
+        ("2-0", {}),
+        _entry("1-0", _own_event()),
+    ]
+
+    assert select_newest_own_event(entries) is not None
+
+
+def test_selection_does_not_validate_freshness_the_parser_still_must():
+    """The selector hands back a STALE own event; parse_watchlist_event is what refuses it."""
+    stale = _own_event(produced_at="2026-09-11T00:00:00+00:00")
+    raw = select_newest_own_event([_entry("1-0", stale)])
+    assert raw is not None
+
+    with pytest.raises(DetectorBlind):
+        parse_watchlist_event(
+            raw, datetime(2026, 9, 11, 10, 0, tzinfo=UTC), 90
+        )
