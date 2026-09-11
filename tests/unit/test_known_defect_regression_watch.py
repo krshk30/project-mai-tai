@@ -51,12 +51,13 @@ def database_metrics(**overrides: int) -> dict[str, int]:
 
 
 def test_catalog_has_every_requested_defect_and_every_row_declares_both_polarities() -> None:
-    assert len(watch.CATALOG) == 16
-    assert len({row.key for row in watch.CATALOG}) == 16
+    assert len(watch.CATALOG) == 17
+    assert len({row.key for row in watch.CATALOG}) == 17
     assert {row.mode for row in watch.CATALOG} == {"ARMED", "DELEGATED", "UNARMED"}
     assert {row.key for row in watch.CATALOG if row.mode == "ARMED"} == {
         "BOOT1",
         "ROLL1",
+        "OWNERROLL1",
         "PHANTOM1",
         "RESERVE1",
         "W4291",
@@ -125,6 +126,64 @@ def test_session_roll_requires_the_exact_current_anchor() -> None:
 def test_session_roll_is_unexercised_before_its_due_time() -> None:
     before = datetime(2026, 9, 11, 8, 5, tzinfo=UTC)  # 04:05 ET
     assert watch.evaluate_session_roll([], now=before, market_day=True).verdict == watch.UNEXERCISED
+
+
+def test_owner_roll_reports_guard_working_only_when_rolled_owners_stay_cleared() -> None:
+    anchor = watch.session_anchor(NOW)
+    anchor_ms = int(anchor.timestamp() * 1000)
+    observed = watch.parse_log_lines(
+        [
+            "2026-09-11 08:00:02,000 INFO x "
+            f"[V2-SESSION-ROLL] boundary_crossed=True rolled=2 symbols=DBGI,TNON "
+            f"(anchor={anchor_ms} watchlist=2)",
+        ],
+        since=SINCE,
+        until=NOW,
+    )
+
+    result = watch.evaluate_owner_roll(observed, now=NOW, market_day=True)
+
+    assert result.verdict == watch.GUARD_WORKING
+    assert (result.evaluated, result.guard_working, result.recurrence) == (2, 2, 0)
+
+
+def test_owner_roll_detects_the_live_pre_fix_repopulation_sequence() -> None:
+    anchor = watch.session_anchor(NOW)
+    anchor_ms = int(anchor.timestamp() * 1000)
+    observed = watch.parse_log_lines(
+        [
+            "2026-09-11 08:00:02,126 INFO x "
+            f"[V2-SESSION-ROLL] boundary_crossed=True rolled=2 symbols=DBGI,TNON "
+            f"(anchor={anchor_ms} watchlist=2)",
+            "2026-09-11 08:00:02,226 ERROR x "
+            "[V2-FLIP-OWNER-UNKNOWN] DBGI opportunity_id=1 entry_allowed=0 "
+            "reason=watchlist_removed_before_position_episode_ended",
+            "2026-09-11 08:00:07,235 INFO x "
+            "[V2-FLIP-OWNER-RECOVERY] TNON evaluated=1 recovered=1 pending=0 "
+            "entry_allowed=0 reason=flat_owner_kept_consumed",
+        ],
+        since=SINCE,
+        until=NOW,
+    )
+
+    result = watch.evaluate_owner_roll(observed, now=NOW, market_day=True)
+
+    assert result.verdict == watch.RECURRENCE
+    assert (result.evaluated, result.guard_working, result.recurrence) == (2, 0, 2)
+    assert "recurred=DBGI,TNON" in result.detail
+
+
+def test_owner_roll_is_unexercised_when_no_stale_owner_needed_rolling() -> None:
+    anchor = watch.session_anchor(NOW)
+    anchor_ms = int(anchor.timestamp() * 1000)
+    observed = lines(
+        (5, f"[V2-SESSION-ROLL] boundary_crossed=True rolled=0 symbols=- (anchor={anchor_ms}"),
+    )
+
+    result = watch.evaluate_owner_roll(observed, now=NOW, market_day=True)
+
+    assert result.verdict == watch.UNEXERCISED
+    assert result.evaluated == 0
 
 
 def test_seed_guard_marker_is_benign_and_fail_open_is_recurrence() -> None:
@@ -263,9 +322,9 @@ def test_static_rows_are_never_reported_as_clean() -> None:
     assert all(row.evaluated == 0 for row in rows)
 
 
-def test_failed_evidence_keeps_all_sixteen_rows_visible() -> None:
+def test_failed_evidence_keeps_every_catalog_row_visible() -> None:
     rows = watch.failed_evidence_readings("database unavailable")
-    assert len(rows) == len(watch.CATALOG) == 16
+    assert len(rows) == len(watch.CATALOG) == 17
     assert {row.key for row in rows} == {row.key for row in watch.CATALOG}
     assert all(
         row.verdict == watch.COULD_NOT_TELL
@@ -300,9 +359,10 @@ def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None
 
     rows = {row.key: row for row in watch.collect_readings(NOW)}
 
-    assert len(rows) == 16
+    assert len(rows) == 17
     assert rows["BOOT1"].verdict == watch.COULD_NOT_TELL
     assert rows["ROLL1"].verdict == watch.COULD_NOT_TELL
+    assert rows["OWNERROLL1"].verdict == watch.COULD_NOT_TELL
     assert rows["SEED1"].verdict == watch.COULD_NOT_TELL
     assert rows["W4291"].verdict == watch.OBSERVED_CLEAN
     assert rows["RESERVE1"].verdict == watch.UNEXERCISED
@@ -342,7 +402,8 @@ def test_pre_anchor_boot_is_kept_without_polluting_current_session_counts(monkey
                 "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=4 confirmed=4",
                 "2026-09-11 07:51:00,000 INFO x [V2-BOOT-HOLD] released restoration_complete=1",
                 f"2026-09-11 08:01:00,000 INFO x "
-                f"[V2-SESSION-ROLL] boundary_crossed=True rolled=0 (anchor={anchor_ms}",
+                f"[V2-SESSION-ROLL] boundary_crossed=True rolled=0 symbols=- "
+                f"(anchor={anchor_ms}",
                 "2026-09-11 08:02:00,000 INFO x "
                 "[V2-DB-SEED-GAP-CENSUS] truncations=0 of 3 seed evaluations since boot",
             ]
@@ -370,6 +431,7 @@ def test_pre_anchor_boot_is_kept_without_polluting_current_session_counts(monkey
     assert calls[0] == anchor - timedelta(hours=6)
     assert rows["BOOT1"].verdict == watch.GUARD_WORKING
     assert rows["ROLL1"].verdict == watch.GUARD_WORKING
+    assert rows["OWNERROLL1"].verdict == watch.UNEXERCISED
     assert rows["SEED1"].evaluated == 3
 
 

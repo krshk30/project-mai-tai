@@ -105,6 +105,14 @@ CATALOG: tuple[RegressionSpec, ...] = (
         "no boundary line exists by 04:10 ET on a market day",
     ),
     RegressionSpec(
+        "OWNERROLL1",
+        "stale entry ownership survives the time-driven session roll",
+        "ARMED",
+        "V2-SESSION-ROLL rolled symbols followed through the 04:10 ET grace window",
+        "every rolled symbol stays free of old-owner UNKNOWN/RECOVERY markers after the boundary",
+        "a rolled symbol resumes V2-FLIP-OWNER-UNKNOWN or V2-FLIP-OWNER-RECOVERY before 04:10 ET",
+    ),
+    RegressionSpec(
         "DISARM1",
         "an armed segment clears without a durable disarm",
         "UNARMED",
@@ -227,6 +235,9 @@ SPEC_BY_KEY = {spec.key: spec for spec in CATALOG}
 
 _LOG_TS = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:[,.](\d{1,6}))?")
 _SESSION_ROLL = re.compile(r"\[V2-SESSION-ROLL\].*boundary_crossed=True.*anchor=(\d+)")
+_SESSION_ROLL_SYMBOLS = re.compile(
+    r"\[V2-SESSION-ROLL\].*boundary_crossed=True rolled=(\d+) symbols=([^ ]+).*anchor=(\d+)"
+)
 _SEED_CENSUS = re.compile(r"\[V2-DB-SEED-GAP-CENSUS\] truncations=(\d+) of (\d+)")
 _BROKER_CENSUS_WEBULL = re.compile(r"live:orb: ok=(\d+) failed=(\d+) consecutive_now=(\d+)")
 
@@ -331,6 +342,73 @@ def evaluate_session_roll(
         guard_working=int(bool(matches)),
         recurrence=int(not matches),
         detail=f"expected_anchor={anchor.isoformat()} boundary_lines={len(matches)}",
+    )
+
+
+def evaluate_owner_roll(
+    lines: Sequence[TimedLine], *, now: datetime, market_day: bool
+) -> Reading:
+    anchor = session_anchor(now)
+    due = market_day and now >= anchor + timedelta(minutes=SESSION_ROLL_GRACE_MINUTES)
+    if not due:
+        return _reading(
+            "OWNERROLL1",
+            evaluated=0,
+            guard_working=0,
+            recurrence=0,
+            detail=f"not due for market session anchor={anchor.isoformat()}",
+        )
+    anchor_ms = int(anchor.timestamp() * 1000)
+    boundary: tuple[TimedLine, int, tuple[str, ...]] | None = None
+    for line in lines:
+        match = _SESSION_ROLL_SYMBOLS.search(line.text)
+        if match is None or int(match.group(3)) != anchor_ms:
+            continue
+        rolled = int(match.group(1))
+        symbols = tuple(symbol for symbol in match.group(2).split(",") if symbol != "-")
+        boundary = (line, rolled, symbols)
+    if boundary is None:
+        return _reading(
+            "OWNERROLL1",
+            evaluated=0,
+            guard_working=0,
+            recurrence=0,
+            detail=f"current boundary evidence missing for anchor={anchor.isoformat()}",
+            unknown=True,
+        )
+    boundary_line, rolled, symbols = boundary
+    if rolled != len(symbols):
+        return _reading(
+            "OWNERROLL1",
+            evaluated=rolled,
+            guard_working=0,
+            recurrence=0,
+            detail=f"rolled={rolled} but only {len(symbols)} symbol identities were logged",
+            unknown=True,
+        )
+    observed_until = min(now, anchor + timedelta(minutes=SESSION_ROLL_GRACE_MINUTES))
+    recurred = {
+        symbol
+        for symbol in symbols
+        if any(
+            boundary_line.at < line.at <= observed_until
+            and (
+                f"[V2-FLIP-OWNER-UNKNOWN] {symbol} " in line.text
+                or f"[V2-FLIP-OWNER-RECOVERY] {symbol} " in line.text
+            )
+            for line in lines
+        )
+    }
+    return _reading(
+        "OWNERROLL1",
+        evaluated=rolled,
+        guard_working=rolled - len(recurred),
+        recurrence=len(recurred),
+        detail=(
+            f"rolled={rolled} stable={rolled - len(recurred)} "
+            f"recurred={','.join(sorted(recurred)) or 'none'} "
+            f"observed_until={observed_until.isoformat()}"
+        ),
     )
 
 
@@ -702,13 +780,17 @@ def collect_readings(now: datetime) -> list[Reading]:
         )
     except Exception as exc:  # noqa: BLE001 - poison only the rows that use this source
         detail = f"v2 logs unreadable: {type(exc).__name__}: {exc}"
-        readings.extend(unknown_reading(key, detail) for key in ("BOOT1", "ROLL1", "SEED1"))
+        readings.extend(
+            unknown_reading(key, detail)
+            for key in ("BOOT1", "ROLL1", "OWNERROLL1", "SEED1")
+        )
     else:
         v2 = [line for line in v2_with_boot if line.at >= since]
         readings.extend(
             (
                 evaluate_boot(v2_with_boot, now=now),
                 evaluate_session_roll(v2, now=now, market_day=_market_day(now)),
+                evaluate_owner_roll(v2, now=now, market_day=_market_day(now)),
                 evaluate_seed(v2),
             )
         )
