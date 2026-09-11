@@ -106,6 +106,7 @@ def _book(
     *legs: FlipPositionLeg,
     readable: bool = True,
     confirmation_closes: tuple[FlipConfirmationClose, ...] = (),
+    terminal_unfilled_opportunities: frozenset[int] = frozenset(),
 ) -> None:
     strategy.apply_flip_position_book(
         FlipPositionBook(
@@ -114,6 +115,11 @@ def _book(
             legs_by_symbol={symbol: tuple(legs)} if legs else {},
             confirmation_closes_by_symbol=(
                 {symbol: confirmation_closes} if confirmation_closes else {}
+            ),
+            terminal_unfilled_opportunities_by_symbol=(
+                {symbol: terminal_unfilled_opportunities}
+                if terminal_unfilled_opportunities
+                else {}
             ),
         )
     )
@@ -214,6 +220,62 @@ def test_ftft_flip_consumes_the_first_entry_until_the_next_sell_flip() -> None:
     strategy._cw_v2_track(state, _signal("SELL", state="short"))
     assert state.flip_owner_phase == "idle"
     assert state.flip_owner_opportunity_id == 0
+
+
+def test_ftft_watchlist_churn_releases_only_after_every_rest_is_terminal_unfilled(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
+    strategy, clock, identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "FTFT")
+    assert len(strategy.drain_webull_direct_intents()) == 1
+
+    strategy.release_and_drop_symbol("FTFT")
+
+    assert state.flip_owner_phase == "unknown"
+    assert strategy.unknown_flip_owner_opportunities() == {"FTFT": opportunity}
+    assert strategy.drain_pending_intents()[0].intent_type == "cancel"
+    assert strategy.drain_webull_direct_intents()[0].intent_type == "cancel"
+
+    _book(strategy, clock, "FTFT")
+    assert state.flip_owner_phase == "unknown"
+    assert not any(not active for _symbol, _segment, active, _reason in identity_writes)
+
+    _book(
+        strategy,
+        clock,
+        "FTFT",
+        terminal_unfilled_opportunities=frozenset({opportunity}),
+    )
+
+    assert state.flip_owner_phase == "idle"
+    assert strategy.unknown_flip_owner_opportunities() == {}
+    assert identity_writes[-1][1:] == (
+        opportunity,
+        False,
+        "terminal_unfilled_first_rest_after_watchlist_removal",
+    )
+    assert "[V2-FLIP-OWNER-RELEASED] FTFT" in caplog.text
+    assert "previous_phase=unknown" in caplog.text
+    assert "entry_allowed=1" in caplog.text
+
+
+def test_terminal_unfilled_evidence_cannot_release_an_owner_with_fill_evidence() -> None:
+    strategy, clock, identity_writes, _owner_writes = _strategy()
+    state, opportunity = _place_first(strategy, clock, "LATEFILL")
+    strategy.release_and_drop_symbol("LATEFILL")
+    strategy.drain_pending_intents()
+    state.flip_owner_fill_accounts.add(PRIMARY)
+
+    _book(
+        strategy,
+        clock,
+        "LATEFILL",
+        terminal_unfilled_opportunities=frozenset({opportunity}),
+    )
+
+    assert state.flip_owner_phase == "unknown"
+    assert not any(not active for _symbol, _segment, active, _reason in identity_writes)
 
 
 def test_dbgi_stop_close_keeps_the_same_short_segment_consumed() -> None:
@@ -723,7 +785,10 @@ def test_dual_preflip_confirmation_releases_after_both_siblings_close() -> None:
     assert state.flip_owner_opportunity_id == 0
 
 
-def test_tnon_sell_flip_clears_a_flat_unknown_owner_for_the_new_segment() -> None:
+def test_tnon_sell_flip_clears_a_flat_unknown_owner_for_the_new_segment(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
     strategy, clock, _identity_writes, _owner_writes = _strategy()
     state, opportunity = _place_first(strategy, clock, "TNONSELL")
     strategy.update_position("TNONSELL", 2, held_qty=2)
@@ -739,6 +804,8 @@ def test_tnon_sell_flip_clears_a_flat_unknown_owner_for_the_new_segment() -> Non
 
     assert state.flip_owner_phase == "idle"
     assert state.flip_owner_opportunity_id == 0
+    assert "[V2-FLIP-OWNER-RELEASED] TNONSELL" in caplog.text
+    assert "reason=sell_flip_flat_unknown_owner" in caplog.text
 
 
 def test_unknown_or_stale_position_evidence_refuses_a_first_rest() -> None:

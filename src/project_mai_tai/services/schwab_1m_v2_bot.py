@@ -63,6 +63,7 @@ from project_mai_tai.fanout_outcome_consumer import (
     FanoutOutcomeJournal,
     identity_from_metadata,
 )
+from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipConfirmationClose,
@@ -104,6 +105,7 @@ from project_mai_tai.strategy_core.order_routing import (
 )
 from project_mai_tai.strategy_core import entry_gate
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
+    FLIP_OWNER_ROW_SETTLE_MS,
     MAX_BAR_AGE_SECONDS_FOR_EMIT,
     PostCloseEntryRelease,
     SERVICE_NAME,
@@ -1671,7 +1673,11 @@ class SchwabV2BotService:
                 False,
             )
         ):
-            position_book = await asyncio.to_thread(self._fetch_flip_position_book)
+            unknown_opportunities = self.strategy.unknown_flip_owner_opportunities()
+            position_book = await asyncio.to_thread(
+                self._fetch_flip_position_book,
+                unknown_opportunities,
+            )
             self.strategy.apply_flip_position_book(position_book)
         if getattr(self, "session_factory", None) is not None:
             await self._sync_confirmation_entries()
@@ -2120,7 +2126,10 @@ class SchwabV2BotService:
             return None
         return positions, held
 
-    def _fetch_flip_position_book(self) -> FlipPositionBook:
+    def _fetch_flip_position_book(
+        self,
+        unknown_opportunities: dict[str, int] | None = None,
+    ) -> FlipPositionBook:
         """Read open strategy-owned position episodes for both fan-out accounts at once."""
 
         observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
@@ -2177,6 +2186,16 @@ class SchwabV2BotService:
                         == "oms_v2_managed_exit:CONFIRMATION_EXIT",
                     )
                 ).all()
+                terminal_unfilled: dict[str, frozenset[int]] = {}
+                terminal_evaluated = 0
+                if unknown_opportunities:
+                    terminal_unfilled, terminal_evaluated = (
+                        self._terminal_unfilled_first_rest_opportunities(
+                            session,
+                            account_names=accounts,
+                            unknown_opportunities=unknown_opportunities,
+                        )
+                    )
         except Exception:  # noqa: BLE001 - an unreadable owner is an entry refusal
             logger.exception(
                 "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=0 known=0 unknown=1 "
@@ -2288,13 +2307,16 @@ class SchwabV2BotService:
         observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
         logger.info(
             "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=%d known=1 unknown=0 symbols=%d "
-            "confirmation_evaluated=%d confirmation_closes=%d skipped_unbound=%d malformed=%d",
+            "confirmation_evaluated=%d confirmation_closes=%d skipped_unbound=%d malformed=%d "
+            "unfilled_opportunities_evaluated=%d terminal_unfilled=%d",
             len(rows),
             len(by_symbol),
             confirmation_evaluated,
             sum(len(values) for values in closes_by_symbol.values()),
             confirmation_skipped_unbound,
             confirmation_malformed,
+            terminal_evaluated,
+            sum(len(values) for values in terminal_unfilled.values()),
         )
         return FlipPositionBook(
             observed_at_ms=observed_at_ms,
@@ -2303,6 +2325,161 @@ class SchwabV2BotService:
             confirmation_closes_by_symbol={
                 symbol: tuple(closes) for symbol, closes in closes_by_symbol.items()
             },
+            terminal_unfilled_opportunities_by_symbol=terminal_unfilled,
+        )
+
+    def _terminal_unfilled_first_rest_opportunities(
+        self,
+        session: Session,
+        *,
+        account_names: tuple[str, ...],
+        unknown_opportunities: dict[str, int],
+    ) -> tuple[dict[str, frozenset[int]], int]:
+        """Prove every expected first-rest leg is terminal without any fill.
+
+        A cancel draft is not evidence that its target left the broker. Missing intents, active
+        intents/orders, malformed identities, and any fill therefore keep the opportunity out of
+        the returned set. The strategy may use only membership in this set to release an unfilled
+        owner after watchlist churn.
+        """
+
+        primary = str(self.settings.strategy_schwab_1m_v2_account_name or "").strip()
+        expected_accounts = {primary} if primary else set()
+        if bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_dual_broker_fanout_enabled",
+                False,
+            )
+        ) and bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_webull_resting_mirror_enabled",
+                False,
+            )
+        ):
+            webull = str(
+                getattr(
+                    self.settings,
+                    "strategy_schwab_1m_v2_webull_account_name",
+                    "",
+                )
+                or ""
+            ).strip()
+            if webull:
+                expected_accounts.add(webull)
+        if not expected_accounts:
+            return {}, 0
+
+        rows = session.execute(
+            select(TradeIntent, BrokerAccount)
+            .join(BrokerAccount, BrokerAccount.id == TradeIntent.broker_account_id)
+            .join(Strategy, Strategy.id == TradeIntent.strategy_id)
+            .where(
+                Strategy.code == STRATEGY_CODE,
+                BrokerAccount.name.in_(account_names),
+                TradeIntent.symbol.in_(tuple(unknown_opportunities)),
+                TradeIntent.intent_type == "open",
+                TradeIntent.created_at >= _current_scanner_session_start_utc(),
+            )
+        ).all()
+        grouped: dict[
+            tuple[str, int], dict[str, list[TradeIntent]]
+        ] = {}
+        intents_by_id: dict[object, TradeIntent] = {}
+        for intent, account in rows:
+            payload = dict(intent.payload or {})
+            metadata = payload.get("metadata")
+            symbol = str(intent.symbol or "").strip().upper()
+            if not isinstance(metadata, dict) or not symbol:
+                continue
+            segment_value = str(metadata.get("fanout_segment_id", "")).strip()
+            slot = str(metadata.get("fanout_slot", "")).strip().lower()
+            slot_id = str(metadata.get("fanout_slot_id", "")).strip()
+            if slot != "resting" or not segment_value or not slot_id:
+                continue
+            try:
+                opportunity_id = int(segment_value)
+            except ValueError:
+                continue
+            if unknown_opportunities.get(symbol) != opportunity_id:
+                continue
+            expected_slot_id = fanout_slot_id(
+                strategy_code=STRATEGY_CODE,
+                symbol=symbol,
+                segment_id=opportunity_id,
+                slot="resting",
+            )
+            if slot_id != expected_slot_id:
+                continue
+            grouped.setdefault((symbol, opportunity_id), {}).setdefault(
+                str(account.name), []
+            ).append(intent)
+            intents_by_id[intent.id] = intent
+
+        orders_by_intent: dict[object, list[BrokerOrder]] = {}
+        filled_order_ids: set[object] = set()
+        if intents_by_id:
+            orders = session.scalars(
+                select(BrokerOrder).where(
+                    BrokerOrder.intent_id.in_(tuple(intents_by_id))
+                )
+            ).all()
+            for order in orders:
+                orders_by_intent.setdefault(order.intent_id, []).append(order)
+            order_ids = tuple(order.id for order in orders)
+            if order_ids:
+                filled_order_ids = set(
+                    session.scalars(
+                        select(Fill.order_id).where(Fill.order_id.in_(order_ids))
+                    ).all()
+                )
+
+        terminal_order_statuses = {"cancelled", "canceled", "rejected", "expired"}
+        terminal_cutoff = datetime.now(UTC) - timedelta(
+            milliseconds=FLIP_OWNER_ROW_SETTLE_MS
+        )
+
+        def _settled_before_cutoff(value: datetime | None) -> bool:
+            if value is None:
+                return False
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=UTC)
+            return value <= terminal_cutoff
+
+        def _terminal_unfilled(intent: TradeIntent) -> bool:
+            intent_status = str(intent.status or "").strip().lower()
+            related_orders = orders_by_intent.get(intent.id, [])
+            if any(order.id in filled_order_ids for order in related_orders):
+                return False
+            if not related_orders:
+                return intent_status == "rejected" and _settled_before_cutoff(
+                    intent.updated_at
+                )
+            return bool(
+                intent_status in {"cancelled", "canceled", "rejected"}
+                and _settled_before_cutoff(intent.updated_at)
+                and all(
+                    str(order.status or "").strip().lower()
+                    in terminal_order_statuses
+                    and _settled_before_cutoff(order.updated_at)
+                    for order in related_orders
+                )
+            )
+
+        terminal: dict[str, set[int]] = {}
+        for (symbol, opportunity_id), by_account in grouped.items():
+            if not expected_accounts.issubset(by_account):
+                continue
+            if all(
+                _terminal_unfilled(intent)
+                for account in expected_accounts
+                for intent in by_account[account]
+            ):
+                terminal.setdefault(symbol, set()).add(opportunity_id)
+        return (
+            {symbol: frozenset(values) for symbol, values in terminal.items()},
+            len(unknown_opportunities),
         )
 
     async def _scanner_consumer_loop(self) -> None:

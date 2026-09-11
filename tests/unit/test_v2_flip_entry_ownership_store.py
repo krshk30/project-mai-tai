@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ast
 import inspect
 import textwrap
@@ -22,12 +23,14 @@ from project_mai_tai.db.models import (
     Strategy,
     TradeIntent,
 )
+from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipEntryOwnershipRecord,
     FlipEntryOwnershipStore,
+    FlipPositionBook,
     SNAPSHOT_TYPE,
 )
 
@@ -152,6 +155,229 @@ def test_service_position_book_reads_both_live_accounts_in_one_population() -> N
         "live:schwab_1m_v2",
         "live:orb",
     }
+
+
+def _seed_first_rest_open(
+    session,
+    *,
+    strategy: Strategy,
+    account: BrokerAccount,
+    symbol: str,
+    opportunity_id: int,
+    status: str,
+    order_status: str | None,
+    with_fill: bool = False,
+    terminal_age_seconds: int = 30,
+) -> None:
+    terminal_at = datetime.now(UTC) - timedelta(seconds=terminal_age_seconds)
+    slot_id = fanout_slot_id(
+        strategy_code="schwab_1m_v2",
+        symbol=symbol,
+        segment_id=opportunity_id,
+        slot="resting",
+    )
+    intent = TradeIntent(
+        strategy_id=strategy.id,
+        broker_account_id=account.id,
+        symbol=symbol,
+        side="buy",
+        intent_type="open",
+        quantity=Decimal("1"),
+        reason="schwab_1m_v2 ATR Flip CW-v2-resting",
+        status=status,
+        payload={
+            "metadata": {
+                "fanout_leg": "webull" if account.provider == "webull" else "primary",
+                "fanout_segment_id": str(opportunity_id),
+                "fanout_slot": "resting",
+                "fanout_slot_id": slot_id,
+            }
+        },
+        created_at=datetime.now(UTC),
+        updated_at=terminal_at,
+    )
+    session.add(intent)
+    session.flush()
+    if order_status is None:
+        return
+    order = BrokerOrder(
+        intent_id=intent.id,
+        strategy_id=strategy.id,
+        broker_account_id=account.id,
+        client_order_id=f"{symbol}-{account.provider}-{opportunity_id}",
+        broker_order_id=f"broker-{symbol}-{account.provider}-{opportunity_id}",
+        symbol=symbol,
+        side="buy",
+        order_type="stop_limit",
+        time_in_force="day",
+        quantity=Decimal("1"),
+        status=order_status,
+        payload={},
+        updated_at=terminal_at,
+    )
+    session.add(order)
+    session.flush()
+    if with_fill:
+        session.add(
+            Fill(
+                order_id=order.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                broker_fill_id=f"fill-{symbol}-{account.provider}-{opportunity_id}",
+                symbol=symbol,
+                side="buy",
+                quantity=Decimal("1"),
+                price=Decimal("2.78"),
+                filled_at=datetime.now(UTC),
+                payload={},
+            )
+        )
+
+
+def _terminal_evidence_bot(factory) -> SchwabV2BotService:
+    return SchwabV2BotService(
+        Settings(
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+            strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+            strategy_schwab_1m_v2_webull_resting_mirror_enabled=True,
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_webull_account_name="live:orb",
+        ),
+        session_factory=factory,
+    )
+
+
+def test_position_book_proves_both_first_rest_legs_terminal_without_a_fill(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
+    factory = _factory()
+    opportunity_id = int(datetime.now(UTC).timestamp() * 1000)
+    with factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
+        primary = BrokerAccount(
+            name="live:schwab_1m_v2", provider="schwab", environment="production"
+        )
+        webull = BrokerAccount(
+            name="live:orb", provider="webull", environment="production"
+        )
+        session.add_all([strategy, primary, webull])
+        session.flush()
+        for account in (primary, webull):
+            _seed_first_rest_open(
+                session,
+                strategy=strategy,
+                account=account,
+                symbol="FTFT",
+                opportunity_id=opportunity_id,
+                status="cancelled",
+                order_status="cancelled",
+            )
+        session.commit()
+
+    book = _terminal_evidence_bot(factory)._fetch_flip_position_book(
+        {"FTFT": opportunity_id}
+    )
+
+    assert book.terminal_unfilled_opportunities_by_symbol == {
+        "FTFT": frozenset({opportunity_id})
+    }
+    assert "unfilled_opportunities_evaluated=1 terminal_unfilled=1" in caplog.text
+
+
+def test_position_poll_queries_terminal_orders_only_for_exact_unknown_owners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = _terminal_evidence_bot(None)
+    state = bot.strategy.watchlist_state("FTFT")
+    state.flip_owner_phase = "unknown"
+    state.flip_owner_opportunity_id = 12345
+    captured: list[dict[str, int]] = []
+    monkeypatch.setattr(bot, "_fetch_position_maps", lambda: ({}, {}))
+    monkeypatch.setattr(bot, "_fetch_managed_symbols", lambda: set())
+    monkeypatch.setattr(bot, "_roll_stale_session_state", lambda *_args: None)
+    monkeypatch.setattr(
+        bot,
+        "_fetch_flip_position_book",
+        lambda candidates: captured.append(dict(candidates))
+        or FlipPositionBook(
+            observed_at_ms=int(datetime.now(UTC).timestamp() * 1000),
+            readable=True,
+            legs_by_symbol={},
+        ),
+    )
+
+    asyncio.run(bot._position_poll_pass())
+
+    assert captured == [{"FTFT": 12345}]
+
+
+def test_position_book_skips_entry_history_when_no_owner_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = _terminal_evidence_bot(_factory())
+    monkeypatch.setattr(
+        bot,
+        "_terminal_unfilled_first_rest_opportunities",
+        lambda *_args, **_kwargs: pytest.fail("entry history was scanned without an unknown owner"),
+    )
+
+    book = bot._fetch_flip_position_book()
+
+    assert book.readable is True
+    assert book.terminal_unfilled_opportunities_by_symbol == {}
+
+
+@pytest.mark.parametrize(
+    "incomplete", ["missing_sibling", "working", "filled", "still_settling"]
+)
+def test_position_book_refuses_incomplete_or_filled_terminal_evidence(
+    incomplete: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
+    factory = _factory()
+    opportunity_id = int(datetime.now(UTC).timestamp() * 1000)
+    with factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
+        primary = BrokerAccount(
+            name="live:schwab_1m_v2", provider="schwab", environment="production"
+        )
+        webull = BrokerAccount(
+            name="live:orb", provider="webull", environment="production"
+        )
+        session.add_all([strategy, primary, webull])
+        session.flush()
+        _seed_first_rest_open(
+            session,
+            strategy=strategy,
+            account=primary,
+            symbol="FTFT",
+            opportunity_id=opportunity_id,
+            status="cancelled",
+            order_status="cancelled",
+            with_fill=incomplete == "filled",
+            terminal_age_seconds=0 if incomplete == "still_settling" else 30,
+        )
+        if incomplete != "missing_sibling":
+            _seed_first_rest_open(
+                session,
+                strategy=strategy,
+                account=webull,
+                symbol="FTFT",
+                opportunity_id=opportunity_id,
+                status="submitted" if incomplete == "working" else "cancelled",
+                order_status="working" if incomplete == "working" else "cancelled",
+                terminal_age_seconds=0 if incomplete == "still_settling" else 30,
+            )
+        session.commit()
+
+    book = _terminal_evidence_bot(factory)._fetch_flip_position_book(
+        {"FTFT": opportunity_id}
+    )
+
+    assert book.terminal_unfilled_opportunities_by_symbol == {}
+    assert "unfilled_opportunities_evaluated=1 terminal_unfilled=0" in caplog.text
 
 
 def test_malformed_open_managed_row_still_fails_the_position_book_closed() -> None:
