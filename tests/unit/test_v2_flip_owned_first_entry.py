@@ -283,6 +283,7 @@ def test_cw_probe_covers_every_resting_admission_state_field(caplog) -> None:
     state = strategy.watchlist_state("PROBE")
     state.cw_resting_taken = True
     state.cw_reclaim_taken = True
+    state.resting_below_floor_bars = 2
     strategy._macd_probe_symbols = {"PROBE"}
     with caplog.at_level(logging.INFO):
         strategy._cw_state_probe(state)
@@ -293,6 +294,7 @@ def test_cw_probe_covers_every_resting_admission_state_field(caplog) -> None:
     )
     assert "cw_resting_taken=True" in line
     assert "cw_reclaim_taken=True" in line
+    assert "resting_below_floor_bars=2" in line
 
 
 def test_ftft_flip_consumes_the_first_entry_until_the_next_sell_flip() -> None:

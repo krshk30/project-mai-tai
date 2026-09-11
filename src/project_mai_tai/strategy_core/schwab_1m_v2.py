@@ -3663,7 +3663,7 @@ class SchwabV2Strategy:
             "bars_since_exit=%d reclaim_gap=%d entries_held=%s pos_qty=%s atr_state=%s "
             "atr_state_age=%d atr_trail=%s bars=%d cw_arm_bar_ts=%d "
             "cw_resting_suppressed_segment_id=%d cw_resting_taken=%s cw_reclaim_taken=%s "
-            "fanout_segment_id=%d position_qty_held=%s resting_active=%s "
+            "resting_below_floor_bars=%d fanout_segment_id=%d position_qty_held=%s resting_active=%s "
             "resting_flip_ms=%d resting_level=%.4f resting_slot=%s "
             "flip_owner_evidence_at_ms=%d flip_owner_evidence_readable=%s "
             "flip_owner_open_positions=%d flip_owner_phase=%s",
@@ -3674,7 +3674,8 @@ class SchwabV2Strategy:
             self._entries_held, state.position_qty,
             state.atr_state, state.atr_state_age, state.atr_trail, len(state.bars),
             state.cw_arm_bar_ts, state.cw_resting_suppressed_segment_id,
-            state.cw_resting_taken, state.cw_reclaim_taken, state.fanout_segment_id,
+            state.cw_resting_taken, state.cw_reclaim_taken, state.resting_below_floor_bars,
+            state.fanout_segment_id,
             state.position_qty_held, state.resting_active, state.resting_flip_ms,
             state.resting_level, state.resting_slot, state.flip_owner_evidence_at_ms,
             state.flip_owner_evidence_readable, len(state.flip_owner_open_positions),
