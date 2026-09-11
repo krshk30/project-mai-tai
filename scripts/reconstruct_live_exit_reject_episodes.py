@@ -153,10 +153,7 @@ def refuse_regular_market_hours(now: datetime | None = None) -> None:
 
 
 def normalize_reason(value: str) -> str:
-    return (
-        " ".join(str(value or "<missing reject reason>").split())
-        or "<missing reject reason>"
-    )
+    return " ".join(str(value or "<missing reject reason>").split()) or "<missing reject reason>"
 
 
 def _identity(row: RejectRow) -> tuple[str, str]:
@@ -170,9 +167,7 @@ def _identity(row: RejectRow) -> tuple[str, str]:
     return f"unbound:{fallback}", "unbound_order"
 
 
-def build_episodes(
-    rows: Iterable[RejectRow], *, cutover: datetime
-) -> list[RejectEpisode]:
+def build_episodes(rows: Iterable[RejectRow], *, cutover: datetime) -> list[RejectEpisode]:
     episodes: dict[tuple[str, str, str, str, str], RejectEpisode] = {}
     for row in rows:
         window = "pre_946" if row.event_at < cutover else "post_946"
@@ -211,19 +206,27 @@ def _print_account_summary(episodes: list[RejectEpisode]) -> None:
         grouped.setdefault((episode.window, episode.account), []).append(episode)
 
     print("\nACCOUNT / WINDOW (logical episodes; raw rows remain separate)")
-    print("window    account                  episodes bound unbound venue client unknown raw_events orders")
+    print(
+        "window    account                  episodes bound unbound venue_ep client_ep "
+        "mixed_ep broker_events client_events unknown_events raw_events orders"
+    )
     for (window, account), items in sorted(grouped.items()):
         raw_events = sum(len(item.event_ids) for item in items)
         orders = len({order for item in items for order in item.order_ids})
         classes = Counter(item.provenance for item in items)
         mixed_or_unknown = sum(
-            count for name, count in classes.items() if name == "unknown" or name.startswith("mixed:")
+            count for name, count in classes.items() if name.startswith("mixed:")
         )
+        source_events = Counter()
+        for item in items:
+            source_events.update(item.event_sources)
         print(
             f"{window:9} {account:24} {len(items):8d} "
             f"{sum(item.bound for item in items):5d} {sum(not item.bound for item in items):7d} "
             f"{classes['venue_refusal']:5d} {classes['client_abort']:6d} "
-            f"{mixed_or_unknown:7d} {raw_events:10d} {orders:6d}"
+            f"{mixed_or_unknown:8d} {source_events['broker']:13d} "
+            f"{source_events['client']:13d} {source_events['unknown']:14d} "
+            f"{raw_events:10d} {orders:6d}"
         )
 
 
@@ -240,10 +243,7 @@ def _print_reason_summary(episodes: list[RejectEpisode]) -> None:
     print("window    account                  provenance       episodes raw_events reason")
     for key in sorted(summary):
         window, account, provenance, reason = key
-        print(
-            f"{window:9} {account:24} {provenance:16} "
-            f"{summary[key]:8d} {raw[key]:10d} {reason}"
-        )
+        print(f"{window:9} {account:24} {provenance:16} {summary[key]:8d} {raw[key]:10d} {reason}")
 
 
 def _print_episode_detail(episodes: list[RejectEpisode]) -> None:

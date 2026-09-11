@@ -16,6 +16,7 @@ from reconstruct_live_exit_reject_episodes import (  # noqa: E402
     RejectRow,
     build_episodes,
     normalize_reason,
+    _print_account_summary,
     parse_instant,
     refuse_regular_market_hours,
 )
@@ -83,6 +84,28 @@ def test_client_abort_never_counts_as_a_venue_refusal() -> None:
 
     assert episode.provenance == "client_abort"
     assert episode.provenance != "venue_refusal"
+
+
+def test_account_summary_keeps_raw_client_and_broker_denominators(
+    capsys,
+) -> None:
+    episodes = build_episodes(
+        [
+            _row(event_id="broker", at=PR_946_MERGED_AT, source="broker"),
+            _row(
+                event_id="client",
+                at=PR_946_MERGED_AT + timedelta(seconds=1),
+                source="client",
+            ),
+        ],
+        cutover=PR_946_MERGED_AT,
+    )
+
+    _print_account_summary(episodes)
+
+    output = capsys.readouterr().out
+    assert "broker_events client_events unknown_events" in output
+    assert "1             1              0" in output
 
 
 def test_unknown_provenance_stays_unknown() -> None:
