@@ -8,7 +8,7 @@
 #   09:12 ET that half of the year). Skips NYSE full-closure holidays.
 #   Verdict exit 0/1/2 (green/amber/red) routes to preopen_alert.sh.
 set -u
-OUT=/home/trader/preopen_out
+OUT="${PREOPEN_READINESS_OUT:-/home/trader/preopen_out}"
 mkdir -p "$OUT"
 STAMP=$(TZ=America/New_York date '+%F %H:%M:%S %Z')
 TODAY=$(TZ=America/New_York date +%F)
@@ -16,7 +16,8 @@ ETH=$(TZ=America/New_York date '+%H')
 ETM=$(TZ=America/New_York date '+%M')
 
 # ---- ET wall-clock guard: only run at ~09:12 ET (tolerates cron jitter) ----
-if [ "$ETH" != "09" ] || [ "$ETM" -lt 5 ] || [ "$ETM" -gt 20 ]; then
+if [ "${PREOPEN_READINESS_TEST_MODE:-0}" != "1" ] \
+  && { [ "$ETH" != "09" ] || [ "$ETM" -lt 5 ] || [ "$ETM" -gt 20 ]; }; then
   echo "$STAMP  guard: not ~09:12 ET (now ${ETH}:${ETM} ET) — skip" >> "$OUT/cron.log"
   exit 0
 fi
@@ -24,15 +25,28 @@ fi
 # ---- NYSE full-closure holidays (half-days NOT skipped). UPDATE ANNUALLY. ----
 HOLIDAYS_2026="2026-01-01 2026-01-19 2026-02-16 2026-04-03 2026-05-25 2026-06-19 2026-07-03 2026-09-07 2026-11-26 2026-12-25"
 HOLIDAYS_2027="2027-01-01 2027-01-18 2027-02-15 2027-03-26 2027-05-31 2027-06-18 2027-07-05 2027-09-06 2027-11-25 2027-12-24"
-case " $HOLIDAYS_2026 $HOLIDAYS_2027 " in
-  *" $TODAY "*)
-    echo "$STAMP  HOLIDAY $TODAY — skipped (no alert)" >> "$OUT/cron.log"
-    exit 0 ;;
-esac
+if [ "${PREOPEN_READINESS_TEST_MODE:-0}" != "1" ]; then
+  case " $HOLIDAYS_2026 $HOLIDAYS_2027 " in
+    *" $TODAY "*)
+      echo "$STAMP  HOLIDAY $TODAY — skipped (no alert)" >> "$OUT/cron.log"
+      exit 0 ;;
+  esac
+fi
+
+DELIVERED="$OUT/delivered-$TODAY"
+if [ -f "$DELIVERED" ]; then
+  echo "$STAMP  readiness already delivered for $TODAY; skip" >> "$OUT/cron.log"
+  exit 0
+fi
 
 OUTFILE="$OUT/readiness_latest.txt"
-python3 /home/trader/preopen_readiness_check.py > "$OUTFILE" 2>&1
-CODE=$?
+if [ "${PREOPEN_READINESS_RESULT_FILE+x}" = "x" ]; then
+  cp "$PREOPEN_READINESS_RESULT_FILE" "$OUTFILE"
+  CODE=${PREOPEN_READINESS_RESULT_CODE:-2}
+else
+  python3 /home/trader/preopen_readiness_check.py > "$OUTFILE" 2>&1
+  CODE=$?
+fi
 VERDICT=$(grep '^VERDICT:' "$OUTFILE" | head -1)
 echo "$STAMP  exit=$CODE  $VERDICT" >> "$OUT/cron.log"
 
@@ -66,7 +80,10 @@ REPO=/home/trader/project-mai-tai
 # have left this slot broken and the daily AMBER intact.
 # ⛔ Runs as ROOT from ROOT's crontab; the env file is root-readable only.
 SEED_ENV_FILE=/etc/project-mai-tai/project-mai-tai.env
-if [ ! -r "$SEED_ENV_FILE" ]; then
+if [ "${PREOPEN_SEED_RESULT_FILE+x}" = "x" ]; then
+  cp "$PREOPEN_SEED_RESULT_FILE" "$SEED_OUT"
+  SEED_CODE=${PREOPEN_SEED_RESULT_CODE:-2}
+elif [ ! -r "$SEED_ENV_FILE" ]; then
   printf '  ⛔ CANNOT SEE — REFUSING: service env NOT READABLE at %s\n' "$SEED_ENV_FILE" > "$SEED_OUT"
   SEED_CODE=2   # ⛔ unreadable env = CANNOT SEE, never GREEN
 elif [ -x "$REPO/.venv/bin/python" ] && [ -f "$REPO/scripts/seed_exposure_detector.py" ]; then
@@ -96,5 +113,10 @@ case "$SEED_CODE" in
   *) [ "$LEVEL" = "GREEN" ] && LEVEL=RED   ; VERDICT="$VERDICT | SEED-EXPOSURE: crashed" ;;
 esac
 
-/home/trader/preopen_alert.sh "$LEVEL" "$VERDICT" "$OUTFILE"
-exit 0
+ALERT="${PREOPEN_READINESS_ALERT:-$REPO/ops/health/preopen_alert.sh}"
+if "$ALERT" "$LEVEL" "$VERDICT" "$OUTFILE"; then
+  : > "$DELIVERED"
+  exit 0
+fi
+echo "$STAMP  readiness delivery failed; retry remains armed" >> "$OUT/cron.log"
+exit 1

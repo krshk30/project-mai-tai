@@ -24,8 +24,8 @@
 # so a NEW exposure always alerts and a standing one does not re-alert.
 set -u
 
-REPO=/home/trader/project-mai-tai
-OUT=/home/trader/seed_exposure_out
+REPO="${SEED_EXPOSURE_REPO:-/home/trader/project-mai-tai}"
+OUT="${SEED_EXPOSURE_OUT:-/home/trader/seed_exposure_out}"
 mkdir -p "$OUT"
 STAMP=$(TZ=America/New_York date '+%F %H:%M:%S %Z')
 TODAY=$(TZ=America/New_York date +%F)
@@ -33,19 +33,22 @@ ETH=$(TZ=America/New_York date '+%H')
 DOW=$(TZ=America/New_York date '+%u')      # 1-5 = Mon-Fri
 
 # ---- ET window guard: 04:00-10:59 ET, weekdays only ----
-if [ "$DOW" -gt 5 ]; then exit 0; fi
-if [ "$ETH" -lt 4 ] || [ "$ETH" -gt 10 ]; then exit 0; fi
+if [ "${SEED_EXPOSURE_TEST_MODE:-0}" != "1" ]; then
+  if [ "$DOW" -gt 5 ]; then exit 0; fi
+  if [ "$ETH" -lt 4 ] || [ "$ETH" -gt 10 ]; then exit 0; fi
+fi
 
 # ---- NYSE full-closure holidays (half-days NOT skipped). UPDATE ANNUALLY. ----
 HOLIDAYS_2026="2026-01-01 2026-01-19 2026-02-16 2026-04-03 2026-05-25 2026-06-19 2026-07-03 2026-09-07 2026-11-26 2026-12-25"
 HOLIDAYS_2027="2027-01-01 2027-01-18 2027-02-15 2027-03-26 2027-05-31 2027-06-18 2027-07-05 2027-09-06 2027-11-25 2027-12-24"
-case " $HOLIDAYS_2026 $HOLIDAYS_2027 " in
-  *" $TODAY "*) exit 0 ;;
-esac
+if [ "${SEED_EXPOSURE_TEST_MODE:-0}" != "1" ]; then
+  case " $HOLIDAYS_2026 $HOLIDAYS_2027 " in
+    *" $TODAY "*) exit 0 ;;
+  esac
+fi
 
 OUTFILE="$OUT/latest.txt"
-SEEN="$OUT/alerted-$TODAY.txt"      # per-ET-session alert state; old files are harmless
-touch "$SEEN"
+ACTIVE="$OUT/active-$TODAY.txt"     # the currently paged transition, not a history set
 
 # ⛔⭐⭐ THE DETECTOR NEEDS THE SERVICE ENV — WITHOUT IT THIS WATCH IS BLIND.
 # The detector reads Postgres (MAI_TAI_DATABASE_URL) and Redis, and both live in the service env
@@ -57,7 +60,7 @@ touch "$SEEN"
 # what was missing was the env. `bar_gap_watch_cron.sh` has always sourced it the same way, under
 # the same `set -u`, every 5 minutes — this is the established pattern, not a new one.
 # ⛔ Runs as ROOT from ROOT's crontab; the env file is root-readable only.
-ENV_FILE=/etc/project-mai-tai/project-mai-tai.env
+ENV_FILE="${SEED_EXPOSURE_ENV_FILE:-/etc/project-mai-tai/project-mai-tai.env}"
 
 # ⛔⭐ A WRAPPER-SIDE REFUSAL MUST SPEAK THE DETECTOR'S OWN DIALECT.
 # The summary/dedup key below is `grep -E '^\s+(VERDICT|⛔ CANNOT SEE)'` — two leading spaces then
@@ -70,7 +73,10 @@ refuse() {
   printf '  ⛔ CANNOT SEE — REFUSING: %s\n' "$1" > "$OUTFILE"
 }
 
-if [ ! -r "$ENV_FILE" ]; then
+if [ "${SEED_EXPOSURE_RESULT_FILE+x}" = "x" ]; then
+  cp "$SEED_EXPOSURE_RESULT_FILE" "$OUTFILE"
+  CODE=${SEED_EXPOSURE_RESULT_CODE:-2}
+elif [ ! -r "$ENV_FILE" ]; then
   # ⛔ An unreadable env is CANNOT SEE, never quiet — the same rule as a missing tool. This is the
   # branch that would have caught the defect above on day one instead of on day ten.
   refuse "service env NOT READABLE at $ENV_FILE (must run as root from root's crontab)"
@@ -92,26 +98,34 @@ fi
 echo "$STAMP  exit=$CODE" >> "$OUT/cron.log"
 
 case "$CODE" in
-  0) exit 0 ;;                                   # quiet: swept, nothing exposed
+  0)
+    rm -f "$ACTIVE"
+    exit 0
+    ;;
   1) LEVEL=AMBER ;;
   2) LEVEL=RED   ;;
   *) LEVEL=RED   ;;                              # crash
 esac
 
-# ---- alert on CHANGE only ----
-# The key is the detector's own verdict line plus the exposed symbol names, so a NEW name always
-# produces a NEW key and therefore a NEW alert; an unchanged picture stays quiet.
+# Alert once per active transition. A clean evaluation clears the latch, so recurrence of the
+# same condition can page again in the same session.
 KEY=$(grep -E '^\s+(VERDICT|⛔ CANNOT SEE)' "$OUTFILE" | head -1)
 KEY="$KEY|$(grep -oE '^\s+[A-Z0-9]+ +window=' "$OUTFILE" | awk '{print $1}' | sort | tr '\n' ',')"
-if grep -Fqx "$KEY" "$SEEN" 2>/dev/null; then
-  exit 0                                          # already alerted this session, unchanged
+if [ -f "$ACTIVE" ] && grep -Fqx "$KEY" "$ACTIVE" 2>/dev/null; then
+  exit 0
 fi
-echo "$KEY" >> "$SEEN"
 
 SUMMARY=$(grep -E '^\s+(VERDICT|⛔ CANNOT SEE)' "$OUTFILE" | head -1)
-if [ -x /home/trader/preopen_alert.sh ]; then
-  /home/trader/preopen_alert.sh "$LEVEL" "SEED-EXPOSURE $SUMMARY" "$OUTFILE"
+ALERT="${SEED_EXPOSURE_ALERT:-$REPO/ops/health/preopen_alert.sh}"
+if [ -x "$ALERT" ]; then
+  if "$ALERT" "$LEVEL" "SEED-EXPOSURE $SUMMARY" "$OUTFILE"; then
+    printf '%s\n' "$KEY" > "$ACTIVE"
+  else
+    echo "$STAMP  $LEVEL  delivery failed; transition remains unconsumed" >> "$OUT/cron.log"
+    exit 1
+  fi
 else
   echo "$STAMP  $LEVEL  SEED-EXPOSURE $SUMMARY  (no alert transport)" >> "$OUT/cron.log"
+  exit 1
 fi
 exit 0

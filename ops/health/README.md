@@ -79,27 +79,34 @@ never hand-edit the deployed copy.
    the installed bytes, and restarts no service.
 
 ## fleet_health_check.py — the F3 framework
-A check registry: each check verdicts GREEN/AMBER/RED against ground truth; `main()` prints one
-`VERDICT:` line per check + an aggregate and exits worst (0/1/2) → the cron routes to ntfy.
-**Design constraint:** a check is RED *only* when genuinely broken (never on normal quiet), or
-it gets ignored. Checks are added incrementally.
+A check registry: each check verdicts GREEN/AMBER/RED against ground truth and declares its alert
+class. `main()` prints one `VERDICT:` line per check plus a non-pageable `SUMMARY:` line. The cron
+pages only transitions into RED for checks classified `LIVE_MONEY`; aggregate counts never page.
+Recovery is log-only. See `docs/alert-triage-2026-09-11.md` for the settled classification and
+deduplication policy.
 
-- **#1 strategy-bar-freshness** (live) — polygon_30s must keep persisting 30s bars. RED only
+- **#1 strategy-bar-freshness** (`PAPER`, log-only) — polygon_30s must keep persisting 30s bars. RED only
   when the bars are stale AND the independent Polygon capture (`market_capture_trades`) is
   SIMULTANEOUSLY live → a frozen loop (the "reports healthy while dead" class). A quiet
   market / feed outage → GREEN (staleness not attributable to the strategy).
-- **#2 oms-order-lifecycle** (planned) — intents-in-but-no-orders/fills-out for >N min (the
+- **#2 oms-order-lifecycle** (`LIVE_MONEY`, planned) — intents-in-but-no-orders/fills-out for >N min (the
   07-01 zombie signature); keyed on relative progress, never absolute counts (no-quiet-alarm).
-- **#3 stops-armed** (planned) — every OMS-OWNED open position (`oms_managed_positions` +
+- **#3 stops-armed** (`LIVE_MONEY`, planned) — every OMS-OWNED open position (`oms_managed_positions` +
   F2's `oms_armed_stops`) has an armed stop. OMS-owned only (scoping invariant — a manual
   position must never trip "unprotected").
+
+`v2-bar-continuity` is `DIAGNOSTIC` and D6 outcome acceptance is `SCOREBOARD`; both are log-only
+even when their local result is RED. A check's class is explicit output, not inferred from its
+name or from the aggregate exit code.
 
 ## Deploy (F3 = adding a cron, no service restart)
 Crontab (trader), dual-UTC for DST (the ET guard inside runs the body only in-window):
 ```
 */5 13-21 * * 1-5 /home/trader/project-mai-tai/ops/health/fleet_health_cron.sh
 ```
-`fleet_health_cron.sh --selftest` sends a RED push to verify phone delivery (no DB/Redis).
+`fleet_health_cron.sh --selftest` deliberately sends one benign end-to-end test notification;
+normal scheduled runs page only actionable `LIVE_MONEY` RED transitions. Delivery and transition
+semantics are also covered by the wrapper controls.
 Rollback: remove the crontab line. No live-service impact.
 
 ### D6 outcome-acceptance install order

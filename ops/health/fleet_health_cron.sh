@@ -1,101 +1,111 @@
 #!/bin/bash
-# Fleet FUNCTION-health — cron target (F3). Runs fleet_health_check.py (validates
-# FUNCTION vs ground truth, not self-report) and pushes ntfy on a genuine RED.
+# Fleet function-health cron target. The evaluator reports every check, but only an
+# explicitly classified LIVE_MONEY RED can page. PAPER, DIAGNOSTIC, SCOREBOARD, and
+# the aggregate summary remain on-box evidence.
 #
-#   Independent monitoring (stdlib + psql/redis-cli), read-only — NOT a service, so it
-#   can't hang the way the thing it watches can. Same machinery as the OMS-liveness
-#   watchdog: ET wall-clock window guard (CRON_TZ is ignored on this box), NYSE holiday
-#   skip, anti-spam state (alert healthy->RED, cooldown while RED, one GREEN recovery).
-#
-#   Window: 09:35 <= ET < 16:05 (after the open settles, through the close) — when bars
-#   are expected. Each check is ALSO self-gating (check #1 only reds when the upstream
-#   feed is simultaneously live), so the window is just noise-avoidance, not correctness.
-#
-#   `--selftest`: bypass guard/holiday, FORCE a RED push (phone-landing check). No DB/Redis.
+# Alerting is transition-based: one page when a live-money condition becomes RED,
+# silence while it remains RED, and silent recovery. Delivery must be accepted before
+# the transition is recorded, so a failed page retries on the next run.
 set -u
 
 SELFTEST=0
 [ "${1:-}" = "--selftest" ] && SELFTEST=1
 
-CHECK=/home/trader/project-mai-tai/ops/health/fleet_health_check.py
-NTFY_URL="https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
-COOLDOWN_SECS=900   # re-alert at most every 15 min while RED
-OUT=/home/trader/fleet_health
-STATE="$OUT/state"  # holds: <STATUS> <LAST_ALERT_EPOCH>
+CHECK="${FLEET_HEALTH_CHECK:-/home/trader/project-mai-tai/ops/health/fleet_health_check.py}"
+PYTHON="${FLEET_HEALTH_PYTHON:-python3}"
+CURL="${FLEET_HEALTH_CURL:-curl}"
+NTFY_URL="${FLEET_HEALTH_NTFY_URL:-https://ntfy.sh/mai-tai-preopen-28806a5a97b7}"
+OUT="${FLEET_HEALTH_OUT:-/home/trader/fleet_health}"
+ACTIVE="$OUT/paged.active"
 mkdir -p "$OUT"
+touch "$ACTIVE"
 
 STAMP=$(TZ=America/New_York date '+%F %H:%M:%S %Z')
 TODAY=$(TZ=America/New_York date +%F)
 ETMIN=$(( 10#$(TZ=America/New_York date '+%H') * 60 + 10#$(TZ=America/New_York date '+%M') ))
 
 send_ntfy() {  # $1=title $2=priority $3=tags $4=body
-  curl -s -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
+  "$CURL" -sS --fail-with-body --connect-timeout 10 --max-time 30 \
+    -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
     >/dev/null 2>>"$OUT/alert.log"
 }
 
 if [ "$SELFTEST" -eq 1 ]; then
-  # Benign GREEN confirmation — a selftest verifies the end-to-end alerting path LANDS; it
-  # must NOT look like a real alarm (default priority so it reliably lands, not min).
-  send_ntfy "✅ mai-tai function-health SELFTEST" "default" "white_check_mark" \
-    "[SELFTEST] end-to-end alerting path OK — benign confirmation, no action needed."
-  echo "$STAMP  SELFTEST green-confirmation push sent" >> "$OUT/cron.log"
-  exit 0
+  send_ntfy "mai-tai function-health SELFTEST" "default" "white_check_mark" \
+    "[SELFTEST] end-to-end alerting path OK; benign confirmation, no action needed."
+  RESULT=$?
+  echo "$STAMP  SELFTEST delivery_exit=$RESULT" >> "$OUT/cron.log"
+  exit "$RESULT"
 fi
 
-# ---- ET window guard: 09:35 (575) <= ET < 16:05 (965) ----
-if [ "$ETMIN" -lt 575 ] || [ "$ETMIN" -ge 965 ]; then
-  echo "$STAMP  guard: outside 09:35-16:05 ET (now ${ETMIN}min ET) — skip" >> "$OUT/cron.log"
-  exit 0
+if [ "${FLEET_HEALTH_TEST_MODE:-0}" != "1" ]; then
+  # 09:35 <= ET < 16:05. Every evaluator also applies its own correctness guard.
+  if [ "$ETMIN" -lt 575 ] || [ "$ETMIN" -ge 965 ]; then
+    echo "$STAMP  guard: outside 09:35-16:05 ET (now ${ETMIN}min ET); skip" >> "$OUT/cron.log"
+    exit 0
+  fi
+  HOLIDAYS_2026="2026-01-01 2026-01-19 2026-02-16 2026-04-03 2026-05-25 2026-06-19 2026-07-03 2026-09-07 2026-11-26 2026-12-25"
+  HOLIDAYS_2027="2027-01-01 2027-01-18 2027-02-15 2027-03-26 2027-05-31 2027-06-18 2027-07-05 2027-09-06 2027-11-25 2027-12-24"
+  case " $HOLIDAYS_2026 $HOLIDAYS_2027 " in
+    *" $TODAY "*)
+      echo "$STAMP  HOLIDAY $TODAY; skipped" >> "$OUT/cron.log"
+      exit 0
+      ;;
+  esac
 fi
-# ---- NYSE full-closure holidays (reused list; UPDATE ANNUALLY) ----
-HOLIDAYS_2026="2026-01-01 2026-01-19 2026-02-16 2026-04-03 2026-05-25 2026-06-19 2026-07-03 2026-09-07 2026-11-26 2026-12-25"
-HOLIDAYS_2027="2027-01-01 2027-01-18 2027-02-15 2027-03-26 2027-05-31 2027-06-18 2027-07-05 2027-09-06 2027-11-25 2027-12-24"
-case " $HOLIDAYS_2026 $HOLIDAYS_2027 " in
-  *" $TODAY "*)
-    echo "$STAMP  HOLIDAY $TODAY — skipped" >> "$OUT/cron.log"; exit 0 ;;
-esac
 
 OUTFILE="$OUT/latest.txt"
-python3 "$CHECK" > "$OUTFILE" 2>&1
+"$PYTHON" "$CHECK" > "$OUTFILE" 2>&1
 CODE=$?
-VERDICT=$(grep '^VERDICT:' "$OUTFILE" | tail -1)   # the aggregate line
-echo "$STAMP  exit=$CODE  $VERDICT" >> "$OUT/cron.log"
+SUMMARY=$(grep '^SUMMARY:' "$OUTFILE" | tail -1)
+VERDICT_COUNT=$(grep -c '^VERDICT:' "$OUTFILE" || true)
+echo "$STAMP  exit=$CODE verdicts=$VERDICT_COUNT ${SUMMARY:-<no-summary>}" >> "$OUT/cron.log"
 
-PREV_STATUS="OK"; LAST_ALERT=0
-[ -f "$STATE" ] && read -r PREV_STATUS LAST_ALERT < "$STATE" 2>/dev/null || true
-NOW=$(date +%s)
+CURRENT="$OUT/current.active"
+NEXT="$OUT/next.active"
+: > "$CURRENT"
+: > "$NEXT"
 
-# Alert policy (keep pushes to genuine, actionable transitions):
-#   exit 0 GREEN -> OK (+ one recovery push on RED->GREEN)
-#   exit 1 AMBER -> on-box log ONLY, no push (precursor; treated OK for anti-spam)
-#   exit 2 RED   -> urgent push (with a real VERDICT), anti-spammed
-#   other/crash  -> urgent push labeled MONITOR ERROR (distinct from fleet-unhealthy, so a
-#                   broken check is never mistaken for a broken fleet)
-if [ "$CODE" -eq 0 ] || [ "$CODE" -eq 1 ]; then
-  STATUS=OK
-else
-  STATUS=RED
-fi
-
-if [ "$STATUS" = "RED" ]; then
-  if [ "$PREV_STATUS" != "RED" ] || [ $(( NOW - LAST_ALERT )) -ge "$COOLDOWN_SECS" ]; then
-    if [ -z "$VERDICT" ]; then
-      send_ntfy "⚠️ mai-tai health-check ERROR" "urgent" "rotating_light" \
-        "fleet_health_check produced no verdict (exit=$CODE) — the MONITOR may be broken, not necessarily the fleet. ssh mai-tai-vps 'cat $OUTFILE'"
-      echo "$STAMP  ALERT[MONITOR-ERROR] sent exit=$CODE" >> "$OUT/alert.log"
+case "$CODE" in
+  0|1|2)
+    if [ -z "$SUMMARY" ] || [ "$VERDICT_COUNT" -eq 0 ]; then
+      printf '%s|%s\n' "monitor-error" "fleet_health_check produced incomplete output (exit=$CODE)" > "$CURRENT"
     else
-      send_ntfy "🔴 mai-tai FUNCTION UNHEALTHY" "urgent" "rotating_light" \
-        "$VERDICT — detail: ssh mai-tai-vps 'cat $OUTFILE'"
-      echo "$STAMP  ALERT[RED] sent  $VERDICT" >> "$OUT/alert.log"
+      grep '^VERDICT: RED .* class=LIVE_MONEY ' "$OUTFILE" \
+        | awk '{name=$3; print "live-money:" name "|" $0}' > "$CURRENT" || true
     fi
-    LAST_ALERT=$NOW
+    ;;
+  *)
+    printf '%s|%s\n' "monitor-error" "fleet_health_check failed (exit=$CODE)" > "$CURRENT"
+    ;;
+esac
+
+while IFS='|' read -r FP DETAIL; do
+  [ -z "$FP" ] && continue
+  if grep -Fxq "$FP" "$ACTIVE"; then
+    printf '%s\n' "$FP" >> "$NEXT"
+    continue
   fi
-  echo "RED $LAST_ALERT" > "$STATE"
-else
-  if [ "$PREV_STATUS" = "RED" ]; then
-    send_ntfy "✅ mai-tai function-health recovered" "default" "white_check_mark" "$VERDICT"
-    echo "$STAMP  ALERT[GREEN] recovery sent  $VERDICT" >> "$OUT/alert.log"
+
+  if [ "$FP" = "monitor-error" ]; then
+    TITLE="mai-tai health-check ERROR"
+    BODY="$DETAIL. The monitor may be broken; inspect $OUTFILE."
+  else
+    NAME=${FP#live-money:}
+    TITLE="RED mai-tai live-money check: $NAME"
+    BODY="$DETAIL
+
+This is an actionable live-money finding. PAPER, DIAGNOSTIC, SCOREBOARD, and aggregate results never page."
   fi
-  echo "OK $LAST_ALERT" > "$STATE"
-fi
+
+  if send_ntfy "$TITLE" "urgent" "rotating_light" "$BODY"; then
+    printf '%s\n' "$FP" >> "$NEXT"
+    echo "$STAMP  ALERT sent $FP" >> "$OUT/alert.log"
+  else
+    echo "$STAMP  ALERT delivery failed $FP; retry next run" >> "$OUT/alert.log"
+  fi
+done < "$CURRENT"
+
+sort -u "$NEXT" -o "$NEXT"
+mv -f "$NEXT" "$ACTIVE"
 exit 0
