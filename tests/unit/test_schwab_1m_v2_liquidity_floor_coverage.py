@@ -14,18 +14,20 @@ all. A floor that guards only dead code is not a floor.
 never reached it. (Operator confirmed the floor stays at 5000 -- coverage was the bug, not the
 number.)
 
-⛔ THE ARM-ONLY RULE. On the resting path the floor gates the initial ARM only, never a reprice or
-a cancel. An order already working must keep being managed even if the tape thins, or we recreate
-the #580 orphan: a live buy-stop at the broker that nobody reprices.
+⛔ THE MANAGED-REST RULE. The floor gates the initial arm immediately. Once the order is working,
+one or two thin completed bars leave it managed and eligible for repricing; three consecutive thin
+bars cancel it. A liquid bar resets that streak. Nothing may silently abandon the broker order,
+which would recreate the #580 orphan.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
+from project_mai_tai.v2_flip_entry_ownership import FlipPositionBook
 
 _ET = ZoneInfo("America/New_York")
 IN_WIN = int(datetime(2026, 7, 10, 11, 0, tzinfo=_ET).timestamp() * 1000)
@@ -54,9 +56,9 @@ def _q():
                  quote_time_ms=IN_WIN + 1000)
 
 
-def _sig(trail):
+def _sig(trail, *, state="short"):
     return {"touch": False, "touch_price": None, "flip": None, "flip_level": None,
-            "trail": trail, "loss": 0.5, "state": "short", "state_age": 3}
+            "trail": trail, "loss": 0.5, "state": state, "state_age": 3}
 
 
 def _rest_tick(strat, state, *, trail, volume):
@@ -102,13 +104,140 @@ def test_resting_still_arms_on_a_liquid_bar() -> None:
 
 
 def test_a_working_order_is_still_managed_when_the_tape_thins() -> None:
-    """⛔ ARM-ONLY. Once resting, a thin bar must NOT strand the order -- that is the #580 orphan."""
+    """A thin bar cannot bypass a required reprice and strand the working order."""
     strat = _strat()
     st = strat.watchlist_state("CNET")
     _rest_tick(strat, st, trail=1.4034, volume=10_339)
     assert st.resting_active is True
     drafts = _rest_tick(strat, st, trail=1.2000, volume=CNET_THIN)   # trail drops, tape thins
     assert drafts, "the order was abandoned on a thin bar instead of being repriced/cancelled"
+
+
+def test_working_rest_cancels_on_the_third_consecutive_thin_bar() -> None:
+    strat = _strat()
+    st = strat.watchlist_state("FTFT")
+    _rest_tick(strat, st, trail=2.884325, volume=25_750)
+
+    assert _rest_tick(strat, st, trail=2.884325, volume=5_515) == []
+    assert st.resting_active is True
+    assert st.resting_below_floor_bars == 1
+    assert _rest_tick(strat, st, trail=2.884325, volume=8_974) == []
+    assert st.resting_active is True
+    assert st.resting_below_floor_bars == 2
+
+    drafts = _rest_tick(strat, st, trail=2.884325, volume=2_301)
+    assert len(drafts) == 1
+    assert drafts[0].intent_type == "cancel"
+    assert drafts[0].metadata["reason"] == "liquidity_floor"
+    assert st.resting_active is False
+
+
+def test_a_good_bar_resets_the_thin_bar_streak() -> None:
+    strat = _strat()
+    st = strat.watchlist_state("FTFT")
+    _rest_tick(strat, st, trail=2.884325, volume=25_750)
+
+    assert _rest_tick(strat, st, trail=2.884325, volume=8_974) == []
+    assert _rest_tick(strat, st, trail=2.884325, volume=2_301) == []
+    assert st.resting_below_floor_bars == 2
+    assert _rest_tick(strat, st, trail=2.884325, volume=25_750) == []
+    assert st.resting_below_floor_bars == 0
+
+    assert _rest_tick(strat, st, trail=2.884325, volume=5_515) == []
+    assert _rest_tick(strat, st, trail=2.884325, volume=8_974) == []
+    drafts = _rest_tick(strat, st, trail=2.884325, volume=2_301)
+    assert len(drafts) == 1 and drafts[0].intent_type == "cancel"
+
+
+def test_volume_pull_replaces_without_consuming_the_first_slot(caplog) -> None:
+    strat = _strat(
+        strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    strat.configure_fanout_identity_persistence(lambda *_args: None)
+    strat.configure_flip_entry_ownership(lambda *_args: None, restore_readable=True)
+    st = strat.watchlist_state("FTFT")
+    strat.apply_flip_position_book(
+        FlipPositionBook(observed_at_ms=1_000_000, readable=True, legs_by_symbol={})
+    )
+
+    assert _rest_tick(strat, st, trail=2.884325, volume=25_750)[0].intent_type == "open"
+    assert _rest_tick(strat, st, trail=2.884325, volume=5_515) == []
+    assert _rest_tick(strat, st, trail=2.884325, volume=8_974) == []
+    assert _rest_tick(strat, st, trail=2.884325, volume=2_301)[0].intent_type == "cancel"
+    assert st.cw_resting_taken is False
+
+    with caplog.at_level("INFO"):
+        drafts = _rest_tick(strat, st, trail=2.884325, volume=61_849)
+    assert len(drafts) == 1 and drafts[0].intent_type == "open"
+    assert st.resting_active is True
+    assert not any(
+        "reason=first_slot_already_consumed" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_ftft_20260911_real_tape_stays_resting_through_the_flip() -> None:
+    """Production rows for the 14:39-14:41 ET incident; DB timestamps are minute starts."""
+
+    strat = _strat(
+        strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+        strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled=True,
+        strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False,
+        strategy_schwab_1m_v2_hold_confirm_enabled=False,
+        strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct=0.5,
+        strategy_schwab_1m_v2_atr_flip_vol_floor=10_000,
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    strat.configure_fanout_identity_persistence(lambda *_args: None)
+    strat.configure_flip_entry_ownership(lambda *_args: None, restore_readable=True)
+    strat._resting_in_window = lambda now=None: True
+    st = strat.watchlist_state("FTFT")
+
+    rows = (
+        # bar start UTC, open, high, low, close, volume, ATR state
+        ("2026-09-11T18:36:00+00:00", 2.8550, 2.8698, 2.8504, 2.8601, 8_974, "short"),
+        ("2026-09-11T18:37:00+00:00", 2.8601, 2.8699, 2.8600, 2.8699, 2_301, "short"),
+        ("2026-09-11T18:38:00+00:00", 2.8700, 2.8700, 2.8500, 2.8600, 25_750, "short"),
+        ("2026-09-11T18:39:00+00:00", 2.8600, 2.8600, 2.8503, 2.8550, 5_515, "short"),
+        ("2026-09-11T18:40:00+00:00", 2.8501, 2.9300, 2.8501, 2.9100, 61_849, "long"),
+    )
+    drafts = []
+    for raw_ts, open_, high, low, close, volume, atr_state in rows:
+        bar_ms = int(datetime.fromisoformat(raw_ts).astimezone(UTC).timestamp() * 1000)
+        event_ms = bar_ms + 60_000
+        strat._now_ms = lambda event_ms=event_ms: event_ms
+        strat.apply_flip_position_book(
+            FlipPositionBook(observed_at_ms=event_ms, readable=True, legs_by_symbol={})
+        )
+        st.bars.append(
+            OHLCVBar(
+                timestamp_ms=bar_ms,
+                open=open_,
+                high=high,
+                low=low,
+                close=close,
+                volume=volume,
+            )
+        )
+        strat._cw_v2_resting_track(
+            st,
+            _sig(trail=2.884325, state=atr_state),
+        )
+        drafts.extend(strat.drain_pending_intents())
+
+    assert [(draft.intent_type, draft.metadata.get("reason")) for draft in drafts] == [
+        ("open", None)
+    ]
+    assert drafts[0].metadata["stop_price"] == "2.8843"
+    assert drafts[0].metadata["limit_price"] == "2.8987"
+    assert st.resting_active is True
+    assert st.resting_below_floor_bars == 0
+    assert st.resting_flip_ms == int(
+        datetime.fromisoformat("2026-09-11T18:41:00+00:00").timestamp() * 1000
+    )
 
 
 # ------------------------------------------------------------------ FAN-OUT leg

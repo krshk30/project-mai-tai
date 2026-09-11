@@ -413,15 +413,22 @@ def _in_window(strat):
     return strat
 
 
-def test_a_resting_order_is_CANCELLED_when_liquidity_dries_up():
-    """THE REGRESSION: while resting, a below-floor bar must cancel the order."""
+def test_a_resting_order_is_CANCELLED_after_three_thin_bars():
+    """A managed rest survives two thin bars, then cancels rather than becoming a #580 orphan."""
     strat = _in_window(_strat(strategy_schwab_1m_v2_atr_flip_vol_floor=10_000,
                    strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True))
     st = strat.watchlist_state("APLX")
     st.resting_active = True
     st.resting_level = 9.03
-    st.bars.append(_bar(9.05, vol=100, ts=99))          # 100 shares — far below the 10k floor
     strat._pending_intents.clear()
+
+    for ts in (99, 100):
+        st.bars.append(_bar(9.05, vol=100, ts=ts))      # 100 shares — far below the 10k floor
+        strat._cw_v2_resting_track(st, _sig(state="short", trail=9.03))
+        assert st.resting_active is True
+        assert strat._pending_intents == []
+
+    st.bars.append(_bar(9.05, vol=100, ts=101))
     strat._cw_v2_resting_track(st, _sig(state="short", trail=9.03))
     assert st.resting_active is False, "a thin tape must not leave the order working"
     assert any(

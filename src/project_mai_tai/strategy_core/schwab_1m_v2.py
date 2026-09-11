@@ -152,6 +152,8 @@ class SchwabV2Config:
 # on 2026-07-30 was 2 minutes). True range is never computed across such a gap — see
 # `_update_atr_state` and [[project_mai_tai_restart_bar_gap_checklist]].
 _ATR_MAX_BAR_GAP_MS = 90_000
+_RESTING_LIQUIDITY_CANCEL_BARS = 3
+
 
 @dataclass
 class OHLCVBar:
@@ -294,6 +296,7 @@ class SymbolState:
     # see docs/v2-reactive-resting-entry-design.md §4 (#580 / EGG-POLA).
     resting_active: bool = False               # a resting entry is armed (broker order OR EH soft-rest)
     resting_level: float = 0.0                 # the stop price (the ATR line) the resting order sits at
+    resting_below_floor_bars: int = 0          # consecutive completed thin bars while the rest works
     # ⛔⭐ SET AT PLACEMENT, READ AT CANCEL. `resting_active` is True for BOTH an RTH broker order and
     # an EH in-memory soft-rest, so it cannot answer "is something live at the BROKER?". Asking the
     # CURRENT session at cancel time is wrong: an order placed in RTH and disarmed after 16:00 is a
@@ -2986,6 +2989,7 @@ class SchwabV2Strategy:
         state.resting_is_broker_order = False
         state.resting_slot = "first"
         state.last_resting_placed_slot = "first"
+        state.resting_below_floor_bars = 0
 
     def roll_stale_session_state(
         self,
@@ -4010,6 +4014,7 @@ class SchwabV2Strategy:
         state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel
         state.last_resting_placed_slot = slot
         state.resting_level = line
+        state.resting_below_floor_bars = 0
         if self._eh_resting_enabled and self._resting_session_is_eh():
             state.resting_is_broker_order = False      # soft-rest: nothing goes to the broker
             # EH SOFTWARE REST (P-B2): a broker buy-stop-limit can't trigger in extended hours, so we do
@@ -4134,6 +4139,7 @@ class SchwabV2Strategy:
         state.resting_level = 0.0
         state.resting_is_broker_order = False
         state.resting_slot = "first"
+        state.resting_below_floor_bars = 0
         # ⛔⭐ BRANCH ON WHAT WAS PLACED, NOT ON THE CURRENT SESSION.
         # This used to read `self._resting_session_is_eh()` — the session NOW — on the premise that
         # "in EH nothing is live at the broker". True of an order PLACED in EH; false of one placed
@@ -4245,6 +4251,7 @@ class SchwabV2Strategy:
                 state.resting_active = False
                 state.resting_level = 0.0
                 state.resting_flip_ms = 0
+                state.resting_below_floor_bars = 0
             return
         if not self._resting_in_window():   # wall-clock; never rest on stale/replayed bars
             if state.resting_active:
@@ -4330,12 +4337,16 @@ class SchwabV2Strategy:
             #   IREG  placed 13:16 -> filled 13:19
             # The reactive path is unaffected — it is a market order checked at emit, which IS fill.
             #
-            # ⛔ CANCEL, never `return`. Silently skipping would leave a live buy-stop at the broker
-            # that nothing reprices — exactly the #580 orphan the arm-only comment above warns
-            # about. Cancelling keeps the order MANAGED, which is the whole point of that warning.
-            if not self._liquidity_floor_ok(state):
-                self._queue_resting_cancel(state, reason="liquidity_floor")
-                return
+            # Keep the managed rest through one or two thin bars; cancel only when three completed
+            # bars in a row miss the floor. A liquid bar resets the streak. Repricing remains live
+            # throughout, so this delay cannot recreate the unmanaged #580 broker-order orphan.
+            if self._liquidity_floor_ok(state):
+                state.resting_below_floor_bars = 0
+            else:
+                state.resting_below_floor_bars += 1
+                if state.resting_below_floor_bars >= _RESTING_LIQUIDITY_CANCEL_BARS:
+                    self._queue_resting_cancel(state, reason="liquidity_floor")
+                    return
             # STABLE-REST: re-place only on a meaningful trail move; else leave it out there.
             if (state.resting_level > 0.0
                     and abs(trail - state.resting_level) / state.resting_level >= self._resting_reprice_frac):
@@ -4343,6 +4354,7 @@ class SchwabV2Strategy:
             return
         if st == "long":
             # HOLD-THROUGH-FLIP: the up-flip is the fill. Do NOT cancel; start the settle grace.
+            state.resting_below_floor_bars = 0
             if state.resting_active and state.resting_flip_ms == 0:
                 state.resting_flip_ms = self._now_ms()
             return
