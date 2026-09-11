@@ -354,11 +354,13 @@ def _bar_continuity(runner: Runner, restart: datetime) -> tuple[int, int, int, i
 def snapshot(path: Path, runner: Runner = run_checked) -> bool:
     captured = datetime.now(UTC)
     accounts_found, managed_open, positions_nonzero = _flat_counts(runner)
+    migration_head, _, _, _ = _migration_evidence(runner, columns=[], constraints=[])
     flat = accounts_found == len(LIVE_ACCOUNTS) and managed_open == 0 and positions_nonzero == 0
     payload = {
         "schema_version": 2,
         "captured_at_utc": captured.isoformat(),
         "captured_at_et": captured.astimezone(ET).isoformat(),
+        "alembic_version": migration_head,
         "live_exposure": {
             "accounts_found": accounts_found,
             "accounts_expected": len(LIVE_ACCOUNTS),
@@ -374,7 +376,8 @@ def snapshot(path: Path, runner: Runner = run_checked) -> bool:
         f"captured services={len(DEFAULT_SERVICES)}/{len(DEFAULT_SERVICES)}; "
         f"live accounts={accounts_found}/{len(LIVE_ACCOUNTS)}; "
         f"open managed rows={managed_open}; "
-        f"nonzero account-position rows={positions_nonzero}; at "
+        f"nonzero account-position rows={positions_nonzero}; "
+        f"alembic_version={migration_head}; at "
         f"{format_moment(captured)} -> {path}"
     )
     return flat
@@ -389,7 +392,7 @@ def _load_snapshot(path: Path) -> dict:
         raise EvidenceUnknown(f"snapshot {path} has an unsupported shape")
     missing_services = set(DEFAULT_SERVICES) - set(payload["services"])
     exposure = payload.get("live_exposure")
-    if missing_services or not isinstance(exposure, dict):
+    if missing_services or not isinstance(exposure, dict) or not payload.get("alembic_version"):
         raise EvidenceUnknown(
             f"snapshot {path} is missing services or pre-restart exposure evidence"
         )
@@ -527,12 +530,23 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     migration_head, schema_found, schema_total, schema_missing = _migration_evidence(
         runner, columns=args.schema_column, constraints=args.schema_constraint
     )
+    prior_migration_head = str(before["alembic_version"])
     migration_ok = migration_head == args.expected_alembic_head
+    migration_transition_ok = (
+        migration_head == prior_migration_head
+        if args.no_schema_change
+        else migration_head != prior_migration_head
+    )
     schema_ok = schema_found == schema_total
     if not migration_ok:
         failures.append(f"alembic head is {migration_head}, expected {args.expected_alembic_head}")
     if not schema_ok:
         failures.append("migration schema object missing: " + ",".join(schema_missing))
+    if not migration_transition_ok:
+        failures.append(
+            "alembic head movement contradicts the declared schema-change mode: "
+            f"{prior_migration_head}->{migration_head}"
+        )
     schema_text = (
         f"schema objects found={schema_found}/{schema_total}"
         if schema_total
@@ -541,8 +555,9 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     rows.append(
         (
             "Migration",
-            f"alembic_version={migration_head} expected={args.expected_alembic_head}; {schema_text}",
-            "PASS" if migration_ok and schema_ok else "FAIL",
+            f"alembic_version={prior_migration_head}->{migration_head} "
+            f"expected={args.expected_alembic_head}; {schema_text}",
+            "PASS" if migration_ok and migration_transition_ok and schema_ok else "FAIL",
         )
     )
 

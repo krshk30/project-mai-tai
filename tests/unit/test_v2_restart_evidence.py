@@ -110,6 +110,7 @@ def _report_fixture(monkeypatch, tmp_path: Path):
             {
                 "schema_version": 2,
                 "captured_at_utc": datetime(2026, 9, 11, tzinfo=UTC).isoformat(),
+                "alembic_version": "20260910_0020",
                 "live_exposure": {
                     "accounts_found": 2,
                     "accounts_expected": 2,
@@ -179,7 +180,7 @@ def test_report_contains_every_required_denominator(monkeypatch, tmp_path: Path,
     assert "unchanged PID=8/8" in output
     assert "before resolved=2/2 open managed rows=0 nonzero account-position rows=0" in output
     assert "after resolved=2/2 open managed rows=0 nonzero account-position rows=0" in output
-    assert "alembic_version=20260910_0020" in output
+    assert "alembic_version=20260910_0020->20260910_0020" in output
     assert "schema objects=0/0" in output
     assert "matched=1/1" in output and "pid=900" in output
     assert "rest_warmed=3/evaluated=3" in output
@@ -229,6 +230,37 @@ def test_report_fails_when_pre_restart_snapshot_was_not_flat(monkeypatch, tmp_pa
     assert vre.report(args, runner=lambda command: "") == 1
 
 
+def test_no_schema_change_fails_if_the_migration_head_moved(monkeypatch, tmp_path: Path) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        vre,
+        "_migration_evidence",
+        lambda runner, columns, constraints: ("20260911_0021", 0, 0, []),
+    )
+    args.expected_alembic_head = "20260911_0021"
+
+    assert vre.report(args, runner=lambda command: "") == 1
+
+
+def test_declared_migration_requires_head_movement_and_named_schema_evidence(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    args.no_schema_change = False
+    args.schema_column = ["oms_managed_positions.fanout_slot_id"]
+    args.expected_alembic_head = "20260911_0021"
+    monkeypatch.setattr(
+        vre,
+        "_migration_evidence",
+        lambda runner, columns, constraints: ("20260911_0021", 1, 1, []),
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 0
+    output = capsys.readouterr().out
+    assert "alembic_version=20260910_0020->20260911_0021" in output
+    assert "schema objects found=1/1" in output
+
+
 def test_snapshot_records_pre_restart_flatness_denominators(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         vre,
@@ -243,12 +275,18 @@ def test_snapshot_records_pre_restart_flatness_denominators(monkeypatch, tmp_pat
         ),
     )
     monkeypatch.setattr(vre, "_flat_counts", lambda runner: (2, 0, 0))
+    monkeypatch.setattr(
+        vre,
+        "_migration_evidence",
+        lambda runner, columns, constraints: ("20260910_0020", 0, 0, []),
+    )
     target = tmp_path / "snapshot.json"
 
     assert vre.snapshot(target, runner=lambda command: "") is True
 
     payload = json.loads(target.read_text(encoding="utf-8"))
     assert payload["schema_version"] == 2
+    assert payload["alembic_version"] == "20260910_0020"
     assert payload["live_exposure"] == {
         "accounts_found": 2,
         "accounts_expected": 2,
@@ -273,6 +311,11 @@ def test_snapshot_fails_immediately_when_a_live_account_is_not_flat(
         ),
     )
     monkeypatch.setattr(vre, "_flat_counts", lambda runner: (2, 1, 0))
+    monkeypatch.setattr(
+        vre,
+        "_migration_evidence",
+        lambda runner, columns, constraints: ("20260910_0020", 0, 0, []),
+    )
 
     assert vre.snapshot(tmp_path / "snapshot.json", runner=lambda command: "") is False
 

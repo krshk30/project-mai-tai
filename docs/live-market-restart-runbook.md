@@ -245,6 +245,8 @@ The report is deliberately strict:
 - it names ET and UTC timestamps rather than inheriting the box's UTC clock
 - it counts open managed rows and nonzero account-position rows across both live accounts before
   and after the restart, so a later flat book cannot hide exposure present at restart time
+- it records the migration head before and after, requires no movement for `--no-schema-change`,
+  and requires movement plus named schema objects for a migration deploy
 - it compares all nine fleet PIDs with the pre-restart snapshot, so an "untouched" service is
   measured rather than assumed
 - it reads feature flags from `/proc/<newpid>/environ`, never from the env file
