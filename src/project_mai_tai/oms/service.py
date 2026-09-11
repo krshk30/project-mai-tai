@@ -5102,6 +5102,16 @@ class OmsRiskService:
                     reason="oms_v2_managed_exit:CONFIRMATION_EXIT",
                     bid=bid,
                     close_on_fill=close_on_fill,
+                    confirmation_context={
+                        "flip_owner_confirmation_exit": "true",
+                        "confirmation_fanout_slot_id": str(
+                            confirmation.get("fanout_slot_id", "") or ""
+                        ),
+                        "confirmation_managed_row_id": bound_row_id,
+                        "confirmation_source_fill_id": str(
+                            confirmation.get("source_fill_id", "") or ""
+                        ),
+                    },
                 )
                 if fanout_decision is not None:
                     self._finish_or_recover_confirmation_leg(
@@ -6745,6 +6755,7 @@ class OmsRiskService:
         sell_qty: int | None = None,
         level: str | None = None,
         expected_managed_row_id: str = "",
+        confirmation_context: dict[str, str] | None = None,
     ) -> str:
         """The RARE v2 exit-emit, kept ON-LOOP (single session, one commit) exactly as
         before PR-A: it reaches the shared ``_record_order_reports``, which mutates
@@ -6849,6 +6860,7 @@ class OmsRiskService:
                         session, row, intent_type="close", quantity=int(position.quantity),
                         reference_price=reference_price, reason=reason, bid=bid,
                         decided_at=decided_at,
+                        confirmation_context=confirmation_context,
                     )
                     events = managed_sell
                     key = (acct, symbol)
@@ -7010,6 +7022,7 @@ class OmsRiskService:
         reason: str,
         bid: float | None = None,
         decided_at: datetime | None = None,
+        confirmation_context: dict[str, str] | None = None,
     ) -> list:
         """THE SINGLE place a v2 managed-exit SELL is built. The order's
         broker_account_name is ALWAYS the managed row's account — the safe-by-
@@ -7059,6 +7072,8 @@ class OmsRiskService:
             "order_type": "market",
             "time_in_force": "day",
         }
+        if confirmation_context:
+            metadata.update(confirmation_context)
         order_type = "market"
         session_code = _extended_hours_session()
         if session_code is not None and bid and bid > 0:

@@ -20,6 +20,7 @@ from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, OmsManagedPosition, TradeIntent
 from project_mai_tai.oms import service as service_module
 from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 
 SCHWAB = "live:schwab_1m_v2"
@@ -106,6 +107,43 @@ class _FanoutAdapter:
                 average_price=Decimal("10"),
             )
         ]
+
+
+class _DelayedFillAdapter(_FanoutAdapter):
+    async def submit_order(self, request):
+        self.submitted.append(request)
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                origin="broker",
+                client_order_id=request.client_order_id,
+                broker_order_id=f"exit-{request.broker_account_name}",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                filled_quantity=Decimal("0"),
+                reason="accepted",
+                metadata={},
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        return ExecutionReport(
+            event_type="filled",
+            origin="broker",
+            client_order_id=request.client_order_id,
+            broker_order_id=f"exit-{request.broker_account_name}",
+            broker_fill_id=f"fill-{request.broker_account_name}",
+            symbol=request.symbol,
+            side=request.side,
+            intent_type=request.intent_type,
+            quantity=request.quantity,
+            filled_quantity=request.quantity,
+            fill_price=Decimal("9.90"),
+            reason="filled",
+            metadata={},
+        )
 
 
 def _make_sf() -> sessionmaker:
@@ -201,6 +239,17 @@ def _sell_accounts(sf: sessionmaker) -> list[str]:
         return list(rows)
 
 
+def _confirmation_close_metadata(sf: sessionmaker) -> dict[str, dict[str, object]]:
+    with sf() as session:
+        rows = session.execute(
+            select(BrokerAccount.name, BrokerOrder.payload)
+            .join(BrokerOrder, BrokerOrder.broker_account_id == BrokerAccount.id)
+            .join(TradeIntent, TradeIntent.id == BrokerOrder.intent_id)
+            .where(TradeIntent.reason == "oms_v2_managed_exit:CONFIRMATION_EXIT")
+        ).all()
+        return {account: dict(payload or {}) for account, payload in rows}
+
+
 async def _arm_decision(service: OmsRiskService) -> None:
     await service._handle_stream_message(
         {
@@ -210,6 +259,7 @@ async def _arm_decision(service: OmsRiskService) -> None:
                     "symbol": SYMBOL,
                     "broker_account_name": SCHWAB,
                     "source_fill_id": "schwab-decision-fill",
+                    "fanout_slot_id": "imrn-first-slot",
                     "broker_order_id": "schwab-entry-1",
                     "evaluated_at_ms": "1",
                     "atr_state": "short",
@@ -417,9 +467,9 @@ async def test_controlled_fanout_flag_pair_closes_only_managed_accounts(
     await _arm_decision(service)
 
     pending = service._confirmation_exit_pending
+    bound = _open_row_ids(sf)
     assert list(pending) == [(account, SYMBOL) for account in expected_accounts]
     if fanout:
-        bound = _open_row_ids(sf)
         assert pending[(SCHWAB, SYMBOL)]["bound_managed_row_id"] == bound[SCHWAB]
         assert pending[(WEBULL, SYMBOL)]["bound_managed_row_id"] == bound[WEBULL]
         assert bound[SCHWAB] != bound[WEBULL]
@@ -429,6 +479,42 @@ async def test_controlled_fanout_flag_pair_closes_only_managed_accounts(
 
     assert _sell_accounts(sf) == expected_accounts
     assert [request.broker_account_name for request in adapter.submitted] == expected_accounts
+    metadata = _confirmation_close_metadata(sf)
+    for account in expected_accounts:
+        assert metadata[account]["flip_owner_confirmation_exit"] == "true"
+        assert metadata[account]["confirmation_fanout_slot_id"] == "imrn-first-slot"
+        assert metadata[account]["confirmation_managed_row_id"] == bound[account]
+
+
+@pytest.mark.asyncio
+async def test_delayed_confirmation_fill_keeps_owner_identity_for_the_position_book(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _DelayedFillAdapter()
+    service, sf = _service(fanout=False, adapter=adapter)
+    await _arm_decision(service)
+    expected_row_id = _open_row_ids(sf)[SCHWAB]
+
+    await service._evaluate_v2_managed_exit(SCHWAB, SYMBOL)
+    assert _confirmation_close_metadata(sf)[SCHWAB]["confirmation_managed_row_id"] == (
+        expected_row_id
+    )
+    await service.sync_broker_orders(account_names=[SCHWAB])
+
+    bot = SchwabV2BotService(
+        Settings(
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+            strategy_schwab_1m_v2_account_name=SCHWAB,
+            strategy_schwab_1m_v2_webull_account_name=WEBULL,
+        ),
+        session_factory=sf,
+    )
+    book = bot._fetch_flip_position_book()
+    close = book.confirmation_closes_by_symbol[SYMBOL][0]
+    assert close.account_name == SCHWAB
+    assert close.managed_row_id == expected_row_id
+    assert close.fanout_slot_id == "imrn-first-slot"
 
 
 @pytest.mark.asyncio
