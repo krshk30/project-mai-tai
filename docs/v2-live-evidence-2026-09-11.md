@@ -1,7 +1,10 @@
 # V2 live evidence: 2026-09-11
 
 Captured read-only from the production database and the live `schwab-1m-v2.log` and
-`oms.log` before log rotation. The production checkout was `1940d46e44d28a1e3e011d3299575656bcbc4e35`.
+`oms.log` before log rotation. The box reflog shows the checkout fast-forwarded from
+`a93fe95` to `1940d46e44d28a1e3e011d3299575656bcbc4e35` at 10:13:31 UTC. Running v2 PID
+`646497` started nine seconds later at 10:13:40 UTC and had `NRestarts=0`, so both the
+checkout and the process that produced this evidence were on `1940d46`.
 
 ## FTFT trade
 
