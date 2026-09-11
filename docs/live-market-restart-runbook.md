@@ -214,6 +214,46 @@ If runtime positions disappear but account positions remain:
 
 ## Schwab 1-Min v2 Boot Hold
 
+### Durable restart evidence
+
+Do not close a v2 restart from a hand-written checklist. Capture the fleet before the restart and
+grade it afterward with the checked-in evidence collector:
+
+```bash
+sudo .venv/bin/python ops/health/v2_restart_evidence.py snapshot \
+  --output /tmp/v2-restart-before.json
+
+sudo .venv/bin/python ops/health/v2_restart_evidence.py report \
+  --snapshot /tmp/v2-restart-before.json \
+  --restarted schwab-1m-v2 \
+  --expect-flag schwab-1m-v2:MAI_TAI_STRATEGY_SCHWAB_1M_V2_FLIP_OWNED_FIRST_ENTRY_ENABLED=true \
+  --expected-alembic-head 20260910_0020 \
+  --no-schema-change \
+  --output /tmp/v2-restart-evidence.md
+```
+
+Add every restarted service with another `--restarted`, and name each required live-process flag
+with another `--expect-flag`. For a deploy containing a migration, replace `--no-schema-change`
+with every object the migration added, for example `--schema-column table.column` and
+`--schema-constraint table.constraint`.
+
+The report is deliberately strict:
+
+- it names ET and UTC timestamps rather than inheriting the box's UTC clock
+- it counts open managed rows and nonzero account-position rows across both live accounts
+- it compares all nine fleet PIDs with the pre-restart snapshot, so an "untouched" service is
+  measured rather than assumed
+- it reads feature flags from `/proc/<newpid>/environ`, never from the env file
+- it reports REST warmup as `rest_warmed/evaluated`, pending symbols, timeout releases, and the
+  300-second bound
+- it quotes the literal post-restart `restoration_complete=1` BOOT-HOLD release line
+- it counts all same-session bar gaps and separately counts gaps that span the restart
+- it scopes each traceback header to its nearest preceding timestamped line; an undated traceback
+  makes the report `UNMEASURED` instead of silently becoming pre- or post-restart
+
+Exit `0` is a complete report with no failed checks, `1` is a measured failure, and `2` means the
+instrument could not establish one or more measurements. Never replace exit `2` with a zero.
+
 - Do not restart `project-mai-tai-schwab-1m-v2.service` between 07:00 and 16:00 ET
   without a new explicit operator decision. Premarket entries are live from 07:00.
 - After a restart, require `[V2-BOOT-RESTORE] restoration_complete=1` before treating
