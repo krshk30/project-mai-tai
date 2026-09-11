@@ -37,7 +37,7 @@ from sqlalchemy import text
 
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
-from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+from project_mai_tai.services.schwab_1m_v2_bot import DB_SEED_BAR_LIMIT, SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SymbolState
 from project_mai_tai.v2_flip_entry_ownership import FlipPositionBook
@@ -420,22 +420,47 @@ def _live_markers(symbol: str, session_date_et: str, log_glob: str) -> tuple[lis
     return sorted(set(caps)), suppressions[0]
 
 
-def _query_bars(settings: Settings, symbol: str, session_date_et: str) -> tuple[TapeBar, ...]:
+def _query_bars(
+    settings: Settings,
+    symbol: str,
+    session_date_et: str,
+    cap_at_ms: int,
+) -> tuple[TapeBar, ...]:
     day = datetime.strptime(session_date_et, "%Y-%m-%d").replace(tzinfo=EASTERN)
-    start = day.replace(hour=4, minute=0, second=0, microsecond=0)
     end = day.replace(hour=16, minute=0, second=0, microsecond=0)
+    cap_at = datetime.fromtimestamp(cap_at_ms / 1000.0, UTC)
+    seed_cutoff = datetime.fromtimestamp((cap_at_ms - BAR_CLOSE_OFFSET_MS) / 1000.0, UTC)
     session_factory = build_session_factory(settings)
     with session_factory() as session:
-        rows = session.execute(
+        # `_seed_strategy_bars_from_db` reads the last 250 persisted bars without a day boundary.
+        # The 06:51 TNON cap therefore used the prior session: today's first stored bar was 07:00.
+        # Reconstruct that exact population instead of turning a calendar-day slice into a fake
+        # seed. The post-cap query then supplies the real live bars that reached the decision.
+        seed_rows = session.execute(
             text(
                 "SELECT CAST(extract(epoch from bar_time)*1000 AS bigint), "
                 "open_price::text, high_price::text, low_price::text, close_price::text, "
                 "volume, source FROM strategy_bar_history "
                 "WHERE strategy_code='schwab_1m_v2' AND interval_secs=60 AND symbol=:symbol "
-                "AND bar_time>=:start AND bar_time<:end ORDER BY bar_time"
+                "AND bar_time<=:seed_cutoff ORDER BY bar_time DESC LIMIT :seed_limit"
             ),
-            {"symbol": symbol, "start": start, "end": end},
+            {
+                "symbol": symbol,
+                "seed_cutoff": seed_cutoff,
+                "seed_limit": DB_SEED_BAR_LIMIT,
+            },
         ).all()
+        live_rows = session.execute(
+            text(
+                "SELECT CAST(extract(epoch from bar_time)*1000 AS bigint), "
+                "open_price::text, high_price::text, low_price::text, close_price::text, "
+                "volume, source FROM strategy_bar_history "
+                "WHERE strategy_code='schwab_1m_v2' AND interval_secs=60 AND symbol=:symbol "
+                "AND bar_time>=:cap_at AND bar_time<:end ORDER BY bar_time"
+            ),
+            {"symbol": symbol, "cap_at": cap_at, "end": end},
+        ).all()
+    rows = sorted((*seed_rows, *live_rows), key=lambda row: int(row[0]))
     return tuple(
         TapeBar(
             timestamp_ms=int(ts),
@@ -464,13 +489,19 @@ def capture_tape(
         if key.startswith("strategy_schwab_1m_v2_")
     }
     _assert_production_settings(resolved_settings)
-    bars = _query_bars(settings, symbol, session_date_et)
-    if not bars:
-        raise RuntimeError(f"strategy_bar_history has no {symbol} rows for {session_date_et}")
     caps, live_suppression_minute = _live_markers(symbol, session_date_et, log_glob)
 
     last_error: BaseException | None = None
-    for cap_at_ms, cap_stage in caps:
+    # A symbol can churn through the watchlist and be capped more than once before entry hours.
+    # The incident is owned by the last cap before the live suppression, not an older equivalent
+    # seed population that happened to reproduce it. Evaluate newest first and record that cap.
+    for cap_at_ms, cap_stage in reversed(caps):
+        bars = _query_bars(settings, symbol, session_date_et, cap_at_ms)
+        if not bars:
+            last_error = RuntimeError(
+                f"strategy_bar_history has no {symbol} rows around cap {cap_at_ms}"
+            )
+            continue
         provisional = IncidentTape(
             schema_version=1,
             symbol=symbol,
