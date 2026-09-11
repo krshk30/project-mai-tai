@@ -47,6 +47,38 @@ def _strat(**overrides) -> SchwabV2Strategy:
     return SchwabV2Strategy(Settings(**kwargs))
 
 
+def _strict_strat() -> tuple[SchwabV2Strategy, list[tuple[bool, str]], list[tuple[bool, str]]]:
+    strat = _strat(
+        strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    identity_writes: list[tuple[bool, str]] = []
+    owner_writes: list[tuple[bool, str]] = []
+    strat._now_ms = lambda: NOW_MS
+    strat.configure_fanout_identity_persistence(
+        lambda _symbol, _segment, active, reason: identity_writes.append((active, reason))
+    )
+    strat.configure_flip_entry_ownership(
+        lambda _record, active, reason: owner_writes.append((active, reason)),
+        restore_readable=True,
+    )
+    return strat, identity_writes, owner_writes
+
+
+def _dbgi_unknown_owner(strat: SchwabV2Strategy):
+    st = _armed_stale(strat, "DBGI")
+    st.fanout_segment_id = 123
+    st.flip_owner_opportunity_id = 123
+    st.flip_owner_phase = "unknown"
+    st.flip_owner_first_rest_placed = True
+    st.flip_owner_fill_accounts = {"live:orb"}
+    st.flip_owner_evidence_readable = True
+    st.flip_owner_evidence_at_ms = NOW_MS
+    st.flip_owner_open_positions = {}
+    return st
+
+
 def _armed_stale(strat: SchwabV2Strategy, symbol: str = "FUSE"):
     """A symbol armed in an EARLIER session that has since gone silent."""
     st = strat.watchlist_state(symbol)
@@ -88,6 +120,44 @@ def test_a_stale_armed_symbol_rolls_with_NO_bar_arriving() -> None:
     assert st.cw_segment_high == 0.0
     assert st.atr_session_anchor_ms == TODAY_ANCHOR
     assert st.atr_trail is None and st.atr_state is None
+
+
+def test_time_roll_retires_a_flat_unknown_owner_without_waiting_for_a_live_bar() -> None:
+    """DBGI 09-11: the 04:00 clock roll must clear yesterday's unresolvable owner."""
+    strat, identity_writes, owner_writes = _strict_strat()
+    st = _dbgi_unknown_owner(strat)
+
+    rolled = strat.roll_stale_session_state(NOW_MS, is_protected=_never_protected)
+
+    assert rolled == ["DBGI"]
+    assert st.flip_owner_phase == "idle"
+    assert st.flip_owner_opportunity_id == 0
+    assert st.flip_owner_fill_accounts == set()
+    assert identity_writes[-1] == (False, "session_reset_flat")
+    assert owner_writes[-1] == (False, "session_reset_flat")
+
+
+def test_historical_bar_reset_cannot_retire_current_durable_ownership() -> None:
+    """Warmup remains non-authoritative even though the clock-driven reset is authoritative."""
+    strat, identity_writes, owner_writes = _strict_strat()
+    st = _dbgi_unknown_owner(strat)
+    historical = OHLCVBar(
+        timestamp_ms=STALE_MS,
+        open=1.0,
+        high=1.1,
+        low=0.9,
+        close=1.05,
+        volume=25_000,
+    )
+    st.bars.append(historical)
+    st.atr_session_anchor_ms = 0
+
+    strat._update_atr_state(st, historical, observation_phase="replay")
+
+    assert st.flip_owner_phase == "unknown"
+    assert st.flip_owner_opportunity_id == 123
+    assert identity_writes == []
+    assert owner_writes == []
 
 
 def test_a_symbol_already_in_THIS_session_is_untouched() -> None:

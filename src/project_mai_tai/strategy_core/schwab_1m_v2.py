@@ -2791,7 +2791,13 @@ class SchwabV2Strategy:
 
     # ------------------------------------------------------ ATR Flip (Track 1)
 
-    def _apply_session_anchor_reset(self, state: SymbolState, anchor: int) -> None:
+    def _apply_session_anchor_reset(
+        self,
+        state: SymbolState,
+        anchor: int,
+        *,
+        owner_boundary_is_current: bool | None = None,
+    ) -> None:
         """The 04:00-ET session reset, extracted VERBATIM from `_update_atr_state`.
 
         ⛔⭐ WHY THIS IS A METHOD. The reset has two drivers and they MUST stay identical:
@@ -2806,6 +2812,11 @@ class SchwabV2Strategy:
         clear some fields on one path and not the other, leaving a half-reset segment that
         reads armed with no trail. Both callers go through here.
         """
+        if owner_boundary_is_current is None:
+            # Preserve the original bar-driven behavior for callers that do not have an
+            # independent clock-boundary proof. The time-driven sweep opts in explicitly.
+            owner_boundary_is_current = self._fanout_identity_bar_is_live(state)
+
         period = self._atr_period
         state.atr_session_anchor_ms = anchor
         state.atr_hl = deque(maxlen=period)
@@ -2856,7 +2867,7 @@ class SchwabV2Strategy:
                 or state.flip_owner_fill_accounts
                 or state.flip_owner_position_ids
             )
-            if owner_active and self._fanout_identity_bar_is_live(state):
+            if owner_active and owner_boundary_is_current:
                 if not self._flip_owner_evidence_fresh(state):
                     self._set_flip_owner_unknown(
                         state,
@@ -2937,7 +2948,15 @@ class SchwabV2Strategy:
                 continue
             if is_protected(symbol, state):
                 continue
-            self._apply_session_anchor_reset(state, anchor)
+            # This sweep is itself the current-session boundary proof. Requiring a live bar here
+            # makes the clock-driven path unable to retire ownership for the silent symbols it was
+            # created to recover. Fresh flat position evidence still decides whether retirement is
+            # safe below.
+            self._apply_session_anchor_reset(
+                state,
+                anchor,
+                owner_boundary_is_current=True,
+            )
             rolled.append(symbol)
         return rolled
 
@@ -2966,7 +2985,11 @@ class SchwabV2Strategy:
         # Session reset (mirror VWAP's anchor roll → reproduces fetch_day's slice).
         anchor = session_start_ts_ms(cur.timestamp_ms)
         if anchor != state.atr_session_anchor_ms:
-            self._apply_session_anchor_reset(state, anchor)
+            self._apply_session_anchor_reset(
+                state,
+                anchor,
+                owner_boundary_is_current=self._fanout_identity_bar_is_live(state),
+            )
 
         # --- modified true range (needs prior SESSION bar + SMA(high-low, period)) ---
         hl_cur = cur.high - cur.low
