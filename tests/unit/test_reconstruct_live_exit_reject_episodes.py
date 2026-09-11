@@ -169,6 +169,8 @@ def test_query_is_read_only_and_carries_every_required_split() -> None:
     assert "orders.side = 'sell'" in RAW_REJECT_SQL
     assert "account.name = ANY" in RAW_REJECT_SQL
     assert "oms_managed_positions" in RAW_REJECT_SQL
+    assert "event.event_at <= managed.updated_at" in RAW_REJECT_SQL
+    assert "orders.payload->>'fanout_slot_id'" in RAW_REJECT_SQL
     assert "confirmation_fanout_slot_id" in RAW_REJECT_SQL
 
 

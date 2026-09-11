@@ -50,15 +50,14 @@ SELECT
     coalesce(
         nullif(event.payload->>'reason', ''),
         nullif(orders.payload->>'reject_reason', ''),
-        nullif(intent.reason, ''),
-        '<missing reason>'
+        '<missing reject reason>'
     ),
     orders.client_order_id,
     position.id::text,
     position.entry_time,
     coalesce(
-        nullif(orders.payload->'metadata'->>'confirmation_fanout_slot_id', ''),
-        nullif(orders.payload->'metadata'->>'fanout_slot_id', ''),
+        nullif(orders.payload->>'confirmation_fanout_slot_id', ''),
+        nullif(orders.payload->>'fanout_slot_id', ''),
         nullif(intent.payload->'metadata'->>'confirmation_fanout_slot_id', ''),
         nullif(intent.payload->'metadata'->>'fanout_slot_id', ''),
         ''
@@ -75,6 +74,7 @@ LEFT JOIN LATERAL (
       AND managed.broker_account_name = account.name
       AND managed.symbol = orders.symbol
       AND managed.entry_time <= event.event_at
+      AND (managed.status = 'open' OR event.event_at <= managed.updated_at)
     ORDER BY managed.entry_time DESC, managed.created_at DESC, managed.id DESC
     LIMIT 1
 ) AS position ON true
@@ -115,6 +115,7 @@ class RejectEpisode:
     identity_source: str
     first_at: datetime
     last_at: datetime
+    position_entry_at: datetime | None = None
     event_ids: set[str] = field(default_factory=set)
     order_ids: set[str] = field(default_factory=set)
     event_sources: Counter[str] = field(default_factory=Counter)
@@ -152,7 +153,10 @@ def refuse_regular_market_hours(now: datetime | None = None) -> None:
 
 
 def normalize_reason(value: str) -> str:
-    return " ".join(str(value or "<missing reason>").split()) or "<missing reason>"
+    return (
+        " ".join(str(value or "<missing reject reason>").split())
+        or "<missing reject reason>"
+    )
 
 
 def _identity(row: RejectRow) -> tuple[str, str]:
@@ -186,6 +190,7 @@ def build_episodes(
                 identity_source=identity_source,
                 first_at=row.event_at,
                 last_at=row.event_at,
+                position_entry_at=row.position_entry_at,
             )
             episodes[key] = episode
         episode.first_at = min(episode.first_at, row.event_at)
@@ -251,6 +256,7 @@ def _print_episode_detail(episodes: list[RejectEpisode]) -> None:
             f"{episode.window} {episode.account} {episode.symbol} "
             f"{episode.first_at.astimezone(ET):%Y-%m-%d %H:%M:%S %Z}.."
             f"{episode.last_at.astimezone(ET):%H:%M:%S %Z} "
+            f"entry={episode.position_entry_at.astimezone(ET).isoformat() if episode.position_entry_at else '-'} "
             f"identity={episode.identity_source}:{episode.identity} "
             f"provenance={episode.provenance} raw_events={len(episode.event_ids)} "
             f"orders={len(episode.order_ids)} reasons={reasons}"
@@ -268,7 +274,7 @@ def rows_from_query(records: Iterable[tuple[object, ...]]) -> list[RejectRow]:
             strategy=str(record[5] or ""),
             symbol=str(record[6] or "").upper(),
             event_source=str(record[7] or "unknown").lower(),
-            reason=str(record[8] or "<missing reason>"),
+            reason=str(record[8] or "<missing reject reason>"),
             client_order_id=str(record[9] or ""),
             position_id=str(record[10] or ""),
             position_entry_at=record[11],  # type: ignore[arg-type]
