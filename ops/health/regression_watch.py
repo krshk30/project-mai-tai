@@ -128,7 +128,18 @@ def evaluate(row: Row, facts: dict[str, object]) -> Reading:
     if value.get("readable") is not True:
         return Reading(row, CANNOT_TELL, str(value.get("detail") or "source unreadable"))
 
-    if value.get("recurred") is True:
+    # ⛔⭐⭐ `recurred` MUST BE PRESENT AND BOOLEAN. Reviewed 2026-09-11 by codex-2, and the finding
+    # was mine to be embarrassed by: the first cut fell through to OK when `recurred` was MISSING,
+    # None, or a non-bool, because it tested `is True` and let everything else past. That is this
+    # module's own thesis — absence is not safety — violated inside the module that exists to
+    # enforce it. A collector that reports "readable" without answering the question has NOT
+    # answered it.
+    recurred = value.get("recurred")
+    if not isinstance(recurred, bool):
+        kind = "missing" if "recurred" not in value else type(recurred).__name__
+        return Reading(row, CANNOT_TELL, f"`recurred` is {kind}, not a bool", dict(value))
+
+    if recurred:
         return Reading(row, RECURRENCE, str(value.get("detail") or ""), dict(value))
     return Reading(row, OK, str(value.get("detail") or ""), dict(value))
 

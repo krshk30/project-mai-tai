@@ -85,3 +85,36 @@ def test_unparseable_facts_refuse_rather_than_pass(capsys, monkeypatch) -> None:
     monkeypatch.setattr("sys.stdin", type("S", (), {"read": staticmethod(lambda: "{not json")})())
     assert main([]) == 2
     assert "CANNOT TELL" in capsys.readouterr().out
+
+
+# ------------------------------------------------- P1 found by codex-2 in review, 2026-09-11
+# The first cut fell through to OK whenever `recurred` was MISSING, None, or a non-bool. A
+# collector that reports "readable" without answering the question has not answered it, and this
+# module exists precisely to stop absence reading as safety.
+@pytest.mark.parametrize(
+    ("fact", "label"),
+    [
+        ({"readable": True}, "recurred key absent"),
+        ({"readable": True, "recurred": None}, "recurred is None"),
+        ({"readable": True, "recurred": "yes"}, "recurred is a string"),
+        ({"readable": True, "recurred": 1}, "recurred is an int"),
+        ({"readable": True, "recurred": []}, "recurred is a list"),
+    ],
+)
+@pytest.mark.parametrize("row", _ARMED, ids=[r.id for r in _ARMED])
+def test_an_unanswered_recurred_is_cannot_tell_not_ok(row: Row, fact: dict, label: str) -> None:
+    reading = evaluate(row, {row.id: fact})
+    assert reading.verdict == CANNOT_TELL, f"{label} reported {reading.verdict}"
+    assert "recurred" in reading.detail
+
+
+@pytest.mark.parametrize("row", _ARMED, ids=[r.id for r in _ARMED])
+def test_only_a_real_bool_decides(row: Row) -> None:
+    assert evaluate(row, {row.id: {"readable": True, "recurred": False}}).verdict == OK
+    assert evaluate(row, {row.id: {"readable": True, "recurred": True}}).verdict == RECURRENCE
+
+
+def test_an_unanswered_row_does_not_exit_zero() -> None:
+    """⛔ The exit code is what a cron reads; a false OK there is a false all-clear."""
+    readings = [evaluate(r, {r.id: {"readable": True}}) for r in _ARMED]
+    assert exit_code(readings) == 2
