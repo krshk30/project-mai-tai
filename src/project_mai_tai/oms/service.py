@@ -144,6 +144,8 @@ A2_NOT_SELLABLE_REASON_SUBSTRINGS = (
 # Matched against the reason lower-cased AND with "_" normalized to " ", so Webull's SCREAMING_SNAKE
 # codes (NO_SUCH_TICKER, INVALID_SYMBOL) and free-text both hit.
 WEBULL_INELIGIBLE_REASON_SUBSTRINGS = (
+    "can not create a open order",  # CAN_NOT_CREATE_A_OPEN_ORDER after normalization
+    "restricted to closing orders only",  # Webull UI wording for the same policy
     "no such ticker",
     "not tradable",
     "symbol not found",
@@ -10767,12 +10769,15 @@ class OmsRiskService:
                     first_seen_at=report.reported_at,
                 )
             # Dual-broker fan-out: symmetric Webull ineligible-today cache. Only a CLEAR
-            # not-tradable Webull reject (never 429/transient — the classifier vetoes those) on a
-            # Webull-provider account marks the name ineligible for the day. Discovery is still
+            # not-tradable Webull OPEN reject (never 429/transient — the classifier vetoes those)
+            # on a Webull-provider account marks only future opens ineligible for the day. A close
+            # never writes or reads this cache: closing-only symbols must keep every way out.
+            # Discovery is still
             # learn-by-failing; under fan-out the Schwab leg fired in parallel so the discovery
             # trade is not lost. Byte-identical when nothing routes to a Webull account.
             if (
                 report.event_type == "rejected"
+                and request.intent_type == "open"
                 and bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False))
                 and self._is_webull_ineligible_reason(report.reason)
                 and self.settings.provider_for_account(
