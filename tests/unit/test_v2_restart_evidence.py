@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -8,10 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
-
-MODULE_PATH = (
-    Path(__file__).resolve().parents[2] / "ops" / "health" / "v2_restart_evidence.py"
+from project_mai_tai.services.schwab_1m_v2_bot import (
+    BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS,
+    REST_WARMUP_FRESH_THRESHOLD_SECS,
 )
+
+
+MODULE_PATH = Path(__file__).resolve().parents[2] / "ops" / "health" / "v2_restart_evidence.py"
 SPEC = importlib.util.spec_from_file_location("v2_restart_evidence", MODULE_PATH)
 vre = importlib.util.module_from_spec(SPEC)
 sys.modules["v2_restart_evidence"] = vre
@@ -40,9 +44,7 @@ def test_traceback_is_scoped_by_its_nearest_preceding_timestamp() -> None:
     )
 
     assert evidence.timestamped_records == 2
-    assert evidence.traceback_times_utc == (
-        datetime(2026, 9, 11, 0, 25, 1, tzinfo=UTC),
-    )
+    assert evidence.traceback_times_utc == (datetime(2026, 9, 11, 0, 25, 1, tzinfo=UTC),)
 
 
 def test_traceback_without_a_preceding_timestamp_is_unmeasured() -> None:
@@ -85,7 +87,8 @@ def test_expected_process_flag_requires_service_key_and_value() -> None:
 
 
 def test_warmup_bound_is_the_deployed_five_minute_contract() -> None:
-    assert vre.REST_WARMUP_BOUND_SECONDS == 300
+    assert vre.REST_WARMUP_FRESH_AGE_SECONDS == int(REST_WARMUP_FRESH_THRESHOLD_SECS) == 300
+    assert vre.BOOT_WARMUP_FALLBACK_BOUND_SECONDS == int(BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS) == 369
 
 
 def _report_fixture(monkeypatch, tmp_path: Path):
@@ -105,8 +108,14 @@ def _report_fixture(monkeypatch, tmp_path: Path):
     snapshot.write_text(
         __import__("json").dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "captured_at_utc": datetime(2026, 9, 11, tzinfo=UTC).isoformat(),
+                "live_exposure": {
+                    "accounts_found": 2,
+                    "accounts_expected": 2,
+                    "open_managed_rows": 0,
+                    "nonzero_account_position_rows": 0,
+                },
                 "services": old,
             }
         ),
@@ -119,7 +128,9 @@ def _report_fixture(monkeypatch, tmp_path: Path):
             active_state="active",
             sub_state="running",
             n_restarts=0,
-            started_at_utc=(start if name == vre.V2_SERVICE else datetime(2026, 9, 1, tzinfo=UTC)).isoformat(),
+            started_at_utc=(
+                start if name == vre.V2_SERVICE else datetime(2026, 9, 1, tzinfo=UTC)
+            ).isoformat(),
         )
         for name, row in old.items()
     }
@@ -166,12 +177,15 @@ def test_report_contains_every_required_denominator(monkeypatch, tmp_path: Path,
     output = capsys.readouterr().out
     assert "new active/running PID=1/1" in output
     assert "unchanged PID=8/8" in output
-    assert "resolved=2/2; open managed rows=0; nonzero account-position rows=0" in output
+    assert "before resolved=2/2 open managed rows=0 nonzero account-position rows=0" in output
+    assert "after resolved=2/2 open managed rows=0 nonzero account-position rows=0" in output
     assert "alembic_version=20260910_0020" in output
     assert "schema objects=0/0" in output
     assert "matched=1/1" in output and "pid=900" in output
     assert "rest_warmed=3/evaluated=3" in output
-    assert "warmup_pending_symbols=-" in output and "bound=300s" in output
+    assert "warmup_pending_symbols=-" in output
+    assert "fresh_bar_age_bound=300s" in output
+    assert "seeded fallback=not used" in output
     assert "release markers=1/3" in output and "restoration_complete=1" in output
     assert "gaps>90s=2/99" in output and "gaps spanning restart=0/2" in output
     assert "headers=0/3" in output and "nearest-preceding timestamp scope" in output
@@ -192,6 +206,77 @@ def test_report_fails_if_an_untouched_service_restarted(monkeypatch, tmp_path: P
     assert vre.report(args, runner=lambda command: "") == 1
 
 
+def test_report_fails_if_restarted_service_has_auto_restarts(monkeypatch, tmp_path: Path) -> None:
+    args, current, _ = _report_fixture(monkeypatch, tmp_path)
+    current[vre.V2_SERVICE] = vre.ServiceState(
+        service=vre.V2_SERVICE,
+        pid=900,
+        active_state="active",
+        sub_state="running",
+        n_restarts=1,
+        started_at_utc=datetime(2026, 9, 11, 0, 25, tzinfo=UTC).isoformat(),
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 1
+
+
+def test_report_fails_when_pre_restart_snapshot_was_not_flat(monkeypatch, tmp_path: Path) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    payload = json.loads(args.snapshot.read_text(encoding="utf-8"))
+    payload["live_exposure"]["open_managed_rows"] = 1
+    args.snapshot.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert vre.report(args, runner=lambda command: "") == 1
+
+
+def test_snapshot_records_pre_restart_flatness_denominators(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        vre,
+        "service_state",
+        lambda name, runner: vre.ServiceState(
+            service=name,
+            pid=100,
+            active_state="active",
+            sub_state="running",
+            n_restarts=0,
+            started_at_utc=datetime(2026, 9, 11, tzinfo=UTC).isoformat(),
+        ),
+    )
+    monkeypatch.setattr(vre, "_flat_counts", lambda runner: (2, 0, 0))
+    target = tmp_path / "snapshot.json"
+
+    assert vre.snapshot(target, runner=lambda command: "") is True
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
+    assert payload["live_exposure"] == {
+        "accounts_found": 2,
+        "accounts_expected": 2,
+        "open_managed_rows": 0,
+        "nonzero_account_position_rows": 0,
+    }
+
+
+def test_snapshot_fails_immediately_when_a_live_account_is_not_flat(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        vre,
+        "service_state",
+        lambda name, runner: vre.ServiceState(
+            service=name,
+            pid=100,
+            active_state="active",
+            sub_state="running",
+            n_restarts=0,
+            started_at_utc=datetime(2026, 9, 11, tzinfo=UTC).isoformat(),
+        ),
+    )
+    monkeypatch.setattr(vre, "_flat_counts", lambda runner: (2, 1, 0))
+
+    assert vre.snapshot(tmp_path / "snapshot.json", runner=lambda command: "") is False
+
+
 def test_report_fails_if_a_traceback_is_after_the_restart(monkeypatch, tmp_path: Path) -> None:
     args, _, logs = _report_fixture(monkeypatch, tmp_path)
     logs[vre.V2_SERVICE][0][1].extend(
@@ -200,5 +285,47 @@ def test_report_fails_if_a_traceback_is_after_the_restart(monkeypatch, tmp_path:
             "Traceback (most recent call last):",
         ]
     )
+
+    assert vre.report(args, runner=lambda command: "") == 1
+
+
+def test_report_refuses_an_inconsistent_warmup_completion(monkeypatch, tmp_path: Path) -> None:
+    args, _, logs = _report_fixture(monkeypatch, tmp_path)
+    logs[vre.V2_SERVICE][0][1][0] = (
+        "2026-09-11 00:25:01,000 INFO [V2-BOOT-RESTORE] restoration_complete=1 "
+        "evaluated=3 confirmed=3 rest_warmed=2 timeout_released=0 could_not_tell=0"
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 1
+
+
+def test_timeout_release_requires_matching_bound_and_symbols(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, _, logs = _report_fixture(monkeypatch, tmp_path)
+    logs[vre.V2_SERVICE][0][1][:1] = [
+        "2026-09-11 00:25:01,000 ERROR [V2-BOOT-REST-WARMUP-TIMEOUT] "
+        "outcome=warmup_gate_released elapsed_seconds=369.0 bound_seconds=369 "
+        "evaluated=3 confirmed=3 released=1 symbols=YYGH",
+        "2026-09-11 00:25:01,500 INFO [V2-BOOT-RESTORE] restoration_complete=1 "
+        "evaluated=3 confirmed=3 rest_warmed=2 timeout_released=1 could_not_tell=0",
+    ]
+
+    assert vre.report(args, runner=lambda command: "") == 0
+    output = capsys.readouterr().out
+    assert "seeded fallback released=1/3; symbols=YYGH; bound=369s" in output
+
+
+def test_timeout_release_cannot_claim_more_symbols_than_it_names(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args, _, logs = _report_fixture(monkeypatch, tmp_path)
+    logs[vre.V2_SERVICE][0][1][:1] = [
+        "2026-09-11 00:25:01,000 ERROR [V2-BOOT-REST-WARMUP-TIMEOUT] "
+        "outcome=warmup_gate_released elapsed_seconds=369.0 bound_seconds=369 "
+        "evaluated=3 confirmed=3 released=2 symbols=YYGH",
+        "2026-09-11 00:25:01,500 INFO [V2-BOOT-RESTORE] restoration_complete=1 "
+        "evaluated=3 confirmed=3 rest_warmed=1 timeout_released=2 could_not_tell=0",
+    ]
 
     assert vre.report(args, runner=lambda command: "") == 1

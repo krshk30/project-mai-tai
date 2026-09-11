@@ -232,6 +232,9 @@ sudo .venv/bin/python ops/health/v2_restart_evidence.py report \
   --output /tmp/v2-restart-evidence.md
 ```
 
+The `snapshot` command must exit `0` before the restart. A non-flat live account exits `1` while
+still preserving the measured evidence file; an unreadable measurement exits `2`.
+
 Add every restarted service with another `--restarted`, and name each required live-process flag
 with another `--expect-flag`. For a deploy containing a migration, replace `--no-schema-change`
 with every object the migration added, for example `--schema-column table.column` and
@@ -240,12 +243,13 @@ with every object the migration added, for example `--schema-column table.column
 The report is deliberately strict:
 
 - it names ET and UTC timestamps rather than inheriting the box's UTC clock
-- it counts open managed rows and nonzero account-position rows across both live accounts
+- it counts open managed rows and nonzero account-position rows across both live accounts before
+  and after the restart, so a later flat book cannot hide exposure present at restart time
 - it compares all nine fleet PIDs with the pre-restart snapshot, so an "untouched" service is
   measured rather than assumed
 - it reads feature flags from `/proc/<newpid>/environ`, never from the env file
-- it reports REST warmup as `rest_warmed/evaluated`, pending symbols, timeout releases, and the
-  300-second bound
+- it reports REST warmup as `rest_warmed/evaluated`, pending symbols, the 300-second fresh-bar
+  age bound, and the distinct 369-second seeded-fallback wait with its released symbols
 - it quotes the literal post-restart `restoration_complete=1` BOOT-HOLD release line
 - it counts all same-session bar gaps and separately counts gaps that span the restart
 - it scopes each traceback header to its nearest preceding timestamped line; an undated traceback

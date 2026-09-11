@@ -6,6 +6,7 @@ snapshot makes "services deliberately not restarted" falsifiable; a post-deploy 
 prove that a service stayed up. Every report line carries the population it measured. Instrument
 failures exit 2 and never degrade to a clean zero.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,7 +24,8 @@ ET = ZoneInfo("America/New_York")
 UNIT_PREFIX = "project-mai-tai-"
 V2_SERVICE = "schwab-1m-v2"
 V2_STRATEGY_CODE = "schwab_1m_v2"
-REST_WARMUP_BOUND_SECONDS = 300
+REST_WARMUP_FRESH_AGE_SECONDS = 300
+BOOT_WARMUP_FALLBACK_BOUND_SECONDS = 369
 LIVE_ACCOUNTS = ("live:schwab_1m_v2", "live:orb")
 DEFAULT_SERVICES = (
     "control",
@@ -73,8 +75,7 @@ def run_checked(args: Sequence[str], *, timeout: int = 30) -> str:
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip().splitlines()
         raise EvidenceUnknown(
-            f"{args[0]!r} exited {completed.returncode}: "
-            f"{detail[0] if detail else '<no output>'}"
+            f"{args[0]!r} exited {completed.returncode}: {detail[0] if detail else '<no output>'}"
         )
     return completed.stdout
 
@@ -100,7 +101,9 @@ def service_state(service: str, runner: Runner = run_checked) -> ServiceState:
         pid = int(_systemctl_value(service, "MainPID", runner))
         n_restarts = int(_systemctl_value(service, "NRestarts", runner))
     except ValueError as exc:
-        raise EvidenceUnknown(f"systemd returned a non-numeric PID/restart count for {service}") from exc
+        raise EvidenceUnknown(
+            f"systemd returned a non-numeric PID/restart count for {service}"
+        ) from exc
     started = _parse_systemd_time(_systemctl_value(service, "ExecMainStartTimestamp", runner))
     return ServiceState(
         service=service,
@@ -298,9 +301,7 @@ def _parse_expected_flag(value: str) -> tuple[str, str, str]:
         service, assignment = value.split(":", 1)
         key, expected = assignment.split("=", 1)
     except ValueError as exc:
-        raise EvidenceUnknown(
-            f"--expect-flag must be SERVICE:KEY=VALUE, got {value!r}"
-        ) from exc
+        raise EvidenceUnknown(f"--expect-flag must be SERVICE:KEY=VALUE, got {value!r}") from exc
     if not service or not key:
         raise EvidenceUnknown(f"incomplete --expect-flag {value!r}")
     return service, key, expected
@@ -350,20 +351,33 @@ def _bar_continuity(runner: Runner, restart: datetime) -> tuple[int, int, int, i
         raise EvidenceUnknown("bar-continuity query returned a non-numeric count") from exc
 
 
-def snapshot(path: Path, runner: Runner = run_checked) -> None:
+def snapshot(path: Path, runner: Runner = run_checked) -> bool:
     captured = datetime.now(UTC)
+    accounts_found, managed_open, positions_nonzero = _flat_counts(runner)
+    flat = accounts_found == len(LIVE_ACCOUNTS) and managed_open == 0 and positions_nonzero == 0
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "captured_at_utc": captured.isoformat(),
         "captured_at_et": captured.astimezone(ET).isoformat(),
+        "live_exposure": {
+            "accounts_found": accounts_found,
+            "accounts_expected": len(LIVE_ACCOUNTS),
+            "open_managed_rows": managed_open,
+            "nonzero_account_position_rows": positions_nonzero,
+        },
         "services": {name: asdict(service_state(name, runner)) for name in DEFAULT_SERVICES},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
-        f"captured services={len(DEFAULT_SERVICES)}/{len(DEFAULT_SERVICES)} at "
+        f"{'PASS' if flat else 'FAIL'}: "
+        f"captured services={len(DEFAULT_SERVICES)}/{len(DEFAULT_SERVICES)}; "
+        f"live accounts={accounts_found}/{len(LIVE_ACCOUNTS)}; "
+        f"open managed rows={managed_open}; "
+        f"nonzero account-position rows={positions_nonzero}; at "
         f"{format_moment(captured)} -> {path}"
     )
+    return flat
 
 
 def _load_snapshot(path: Path) -> dict:
@@ -371,8 +385,22 @@ def _load_snapshot(path: Path) -> dict:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise EvidenceUnknown(f"could not read snapshot {path}: {exc}") from exc
-    if payload.get("schema_version") != 1 or not isinstance(payload.get("services"), dict):
+    if payload.get("schema_version") != 2 or not isinstance(payload.get("services"), dict):
         raise EvidenceUnknown(f"snapshot {path} has an unsupported shape")
+    missing_services = set(DEFAULT_SERVICES) - set(payload["services"])
+    exposure = payload.get("live_exposure")
+    if missing_services or not isinstance(exposure, dict):
+        raise EvidenceUnknown(
+            f"snapshot {path} is missing services or pre-restart exposure evidence"
+        )
+    exposure_fields = {
+        "accounts_found",
+        "accounts_expected",
+        "open_managed_rows",
+        "nonzero_account_position_rows",
+    }
+    if not exposure_fields.issubset(exposure):
+        raise EvidenceUnknown(f"snapshot {path} has incomplete pre-restart exposure evidence")
     return payload
 
 
@@ -380,11 +408,25 @@ def _fields(line: str) -> dict[str, str]:
     return dict(FIELD.findall(line))
 
 
+def _integer_fields(line: str, *names: str) -> dict[str, int]:
+    values = _fields(line)
+    parsed: dict[str, int] = {}
+    for name in names:
+        raw = values.get(name)
+        try:
+            parsed[name] = int(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise EvidenceUnknown(f"restart marker has no numeric {name}: {line!r}") from exc
+    return parsed
+
+
 def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     before = _load_snapshot(args.snapshot)
     restarted = set(args.restarted)
     if V2_SERVICE not in restarted:
-        raise EvidenceUnknown(f"C6 is the v2 restart artifact; --restarted must include {V2_SERVICE}")
+        raise EvidenceUnknown(
+            f"C6 is the v2 restart artifact; --restarted must include {V2_SERVICE}"
+        )
     unknown_services = restarted - set(DEFAULT_SERVICES)
     if unknown_services:
         raise EvidenceUnknown(f"unknown restarted service(s): {','.join(sorted(unknown_services))}")
@@ -406,7 +448,13 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     for service in sorted(restarted):
         old_pid = int(before_services[service]["pid"])
         state = current[service]
-        good = state.pid > 0 and state.pid != old_pid and state.active_state == "active" and state.sub_state == "running"
+        good = (
+            state.pid > 0
+            and state.pid != old_pid
+            and state.active_state == "active"
+            and state.sub_state == "running"
+            and state.n_restarts == 0
+        )
         restarted_ok += int(good)
         if not good:
             failures.append(f"{service} did not return active/running on a new PID")
@@ -431,6 +479,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         if int(before_services[name]["pid"]) == current[name].pid
         and current[name].active_state == "active"
         and current[name].sub_state == "running"
+        and int(before_services[name]["n_restarts"]) == current[name].n_restarts
     ]
     changed = [name for name in untouched if name not in unchanged]
     if changed:
@@ -446,15 +495,31 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         )
     )
 
+    before_exposure = before["live_exposure"]
+    before_flat = (
+        int(before_exposure["accounts_found"]) == len(LIVE_ACCOUNTS)
+        and int(before_exposure["accounts_expected"]) == len(LIVE_ACCOUNTS)
+        and int(before_exposure["open_managed_rows"]) == 0
+        and int(before_exposure["nonzero_account_position_rows"]) == 0
+    )
     accounts_found, managed_open, positions_nonzero = _flat_counts(runner)
-    flat_ok = accounts_found == len(LIVE_ACCOUNTS) and managed_open == 0 and positions_nonzero == 0
+    after_flat = (
+        accounts_found == len(LIVE_ACCOUNTS) and managed_open == 0 and positions_nonzero == 0
+    )
+    flat_ok = before_flat and after_flat
     if not flat_ok:
-        failures.append("live accounts are not provably flat")
+        failures.append("live accounts are not provably flat before and after restart")
     rows.append(
         (
-            "Both live accounts flat",
-            f"accounts={','.join(LIVE_ACCOUNTS)}; resolved={accounts_found}/{len(LIVE_ACCOUNTS)}; "
-            f"open managed rows={managed_open}; nonzero account-position rows={positions_nonzero}",
+            "Both live accounts flat before/after",
+            f"accounts={','.join(LIVE_ACCOUNTS)}; "
+            f"before resolved={before_exposure['accounts_found']}/{len(LIVE_ACCOUNTS)} "
+            f"open managed rows={before_exposure['open_managed_rows']} "
+            "nonzero account-position rows="
+            f"{before_exposure['nonzero_account_position_rows']}; "
+            f"after resolved={accounts_found}/{len(LIVE_ACCOUNTS)} "
+            f"open managed rows={managed_open} "
+            f"nonzero account-position rows={positions_nonzero}",
             "PASS" if flat_ok else "FAIL",
         )
     )
@@ -465,9 +530,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     migration_ok = migration_head == args.expected_alembic_head
     schema_ok = schema_found == schema_total
     if not migration_ok:
-        failures.append(
-            f"alembic head is {migration_head}, expected {args.expected_alembic_head}"
-        )
+        failures.append(f"alembic head is {migration_head}, expected {args.expected_alembic_head}")
     if not schema_ok:
         failures.append("migration schema object missing: " + ",".join(schema_missing))
     schema_text = (
@@ -515,24 +578,93 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         and "evaluated=" in row[1]
         and "rest_warmed=" in row[1]
     ]
-    released = [row for row in v2_lines if "[V2-BOOT-HOLD] released" in row[1] and "restoration_complete=1" in row[1]]
+    timeout_markers = [
+        row
+        for row in v2_lines
+        if "[V2-BOOT-REST-WARMUP-TIMEOUT]" in row[1] and "outcome=warmup_gate_released" in row[1]
+    ]
+    warmup_ok = False
+    completion_stamp: datetime | None = None
     if not complete:
         failures.append("no post-restart restoration_complete=1 line")
         warmup_text = f"complete markers=0/{len(v2_lines)} post-restart timestamped records"
     else:
         stamp, line = complete[-1]
-        values = _fields(line)
-        evaluated = values.get("evaluated", "unknown")
-        rest_warmed = values.get("rest_warmed", "unknown")
-        timeout_released = values.get("timeout_released", "unknown")
+        completion_stamp = stamp
+        counts = _integer_fields(
+            line,
+            "evaluated",
+            "confirmed",
+            "rest_warmed",
+            "timeout_released",
+            "could_not_tell",
+        )
+        evaluated = counts["evaluated"]
+        confirmed = counts["confirmed"]
+        rest_warmed = counts["rest_warmed"]
+        timeout_released = counts["timeout_released"]
+        ready = rest_warmed + timeout_released
+        warmup_pending = evaluated - ready
+        warmup_ok = (
+            evaluated > 0
+            and confirmed == evaluated
+            and counts["could_not_tell"] == 0
+            and rest_warmed >= 0
+            and timeout_released >= 0
+            and warmup_pending == 0
+        )
+        timeout_text = "seeded fallback=not used"
+        if timeout_released:
+            prior_timeout_markers = [row for row in timeout_markers if row[0] <= stamp]
+            if not prior_timeout_markers:
+                warmup_ok = False
+                timeout_text = "seeded fallback marker=missing"
+            else:
+                timeout_stamp, timeout_line = prior_timeout_markers[-1]
+                timeout_counts = _integer_fields(
+                    timeout_line,
+                    "bound_seconds",
+                    "evaluated",
+                    "confirmed",
+                    "released",
+                )
+                symbols = _fields(timeout_line).get("symbols", "")
+                timeout_symbols = [
+                    symbol for symbol in symbols.split(",") if symbol and symbol != "-"
+                ]
+                timeout_ok = (
+                    timeout_counts["bound_seconds"] == BOOT_WARMUP_FALLBACK_BOUND_SECONDS
+                    and timeout_counts["evaluated"] == evaluated
+                    and timeout_counts["confirmed"] == evaluated
+                    and timeout_counts["released"] == timeout_released
+                    and len(timeout_symbols) == timeout_released
+                )
+                warmup_ok = warmup_ok and timeout_ok
+                timeout_text = (
+                    f"seeded fallback released={timeout_counts['released']}/{evaluated}; "
+                    f"symbols={symbols or '<missing>'}; "
+                    f"bound={timeout_counts['bound_seconds']}s; "
+                    f"marker at {format_moment(timeout_stamp)}"
+                )
+        if not warmup_ok:
+            failures.append("REST warmup completion population is inconsistent or unproven")
         warmup_text = (
             f"rest_warmed={rest_warmed}/evaluated={evaluated}; "
             f"timeout_released={timeout_released}/evaluated={evaluated}; "
-            f"warmup_pending=0/{evaluated}; warmup_pending_symbols=-; "
-            f"bound={REST_WARMUP_BOUND_SECONDS}s; "
+            f"warmup_pending={warmup_pending}/{evaluated}; warmup_pending_symbols=-; "
+            f"fresh_bar_age_bound={REST_WARMUP_FRESH_AGE_SECONDS}s; "
+            f"{timeout_text}; "
             f"marker at {format_moment(stamp)}"
         )
-    rows.append(("REST warmup", warmup_text, "PASS" if complete else "FAIL"))
+    rows.append(("REST warmup", warmup_text, "PASS" if warmup_ok else "FAIL"))
+
+    released = [
+        row
+        for row in v2_lines
+        if "[V2-BOOT-HOLD] released" in row[1]
+        and "restoration_complete=1" in row[1]
+        and (completion_stamp is None or row[0] >= completion_stamp)
+    ]
 
     if not released:
         failures.append("no literal post-restart BOOT-HOLD release with restoration_complete=1")
@@ -599,7 +731,9 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         "| Check | Measured evidence | Result |",
         "| --- | --- | --- |",
     ]
-    output.extend(f"| {name} | {evidence.replace('|', '/')} | {status} |" for name, evidence, status in rows)
+    output.extend(
+        f"| {name} | {evidence.replace('|', '/')} | {status} |" for name, evidence, status in rows
+    )
     if failures:
         output.extend(["", "Failures:", *(f"- {failure}" for failure in failures)])
     rendered = "\n".join(output) + "\n"
@@ -631,8 +765,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "snapshot":
-            snapshot(args.output)
-            return 0
+            return 0 if snapshot(args.output) else 1
         return report(args)
     except EvidenceUnknown as exc:
         print(f"UNMEASURED: {exc}", file=sys.stderr)
