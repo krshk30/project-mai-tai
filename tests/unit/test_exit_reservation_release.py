@@ -19,7 +19,10 @@ are placed under DETERMINISTIC coids, so they can be ADDRESSED BY NAME.
 from __future__ import annotations
 
 import asyncio
+import ast
 import logging
+from collections import defaultdict
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +31,75 @@ from project_mai_tai.broker_adapters.protocols import ExitPairReleaseResult
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.oms import service as svc
+
+
+_MANAGED_EXIT_PREFIX = "oms_v2_managed_exit:"
+# Profit-taking is the redundant close that must wait while a broker OCO still reserves shares.
+_EXPLICIT_NON_PROTECTIVE_REASONS = {
+    f"{_MANAGED_EXIT_PREFIX}CW_TARGET",
+    f"{_MANAGED_EXIT_PREFIX}SCALE_*",
+}
+
+
+def _bind_string_constants(target: ast.expr, value: ast.expr, out: dict[str, set[str]]) -> None:
+    if isinstance(target, ast.Name) and isinstance(value, ast.Constant):
+        if isinstance(value.value, str):
+            out[target.id].add(value.value)
+        return
+    if isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
+        for child_target, child_value in zip(target.elts, value.elts, strict=False):
+            _bind_string_constants(child_target, child_value, out)
+
+
+def _joined_string_template(value: ast.JoinedStr) -> str:
+    parts: list[str] = []
+    for part in value.values:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            parts.append(part.value)
+        elif isinstance(part, ast.FormattedValue) and isinstance(part.value, ast.Name):
+            parts.append(f"{{{part.value.id}}}")
+        else:
+            parts.append("{unresolved}")
+    return "".join(parts)
+
+
+def _called_name(node: ast.Call) -> str:
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    return ""
+
+
+def _emitted_managed_exit_reasons() -> set[str]:
+    """Discover the reason contract from emit call sites, not from the classifier itself."""
+    source_root = Path(__file__).parents[2] / "src" / "project_mai_tai"
+    emitted: set[str] = set()
+    for path in source_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        bindings: dict[str, set[str]] = defaultdict(set)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    _bind_string_constants(target, node.value, bindings)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or _called_name(node) != "_emit_v2_exit_on_loop":
+                continue
+            reason = next((kw.value for kw in node.keywords if kw.arg == "reason"), None)
+            if isinstance(reason, ast.Constant) and isinstance(reason.value, str):
+                if reason.value.startswith(_MANAGED_EXIT_PREFIX):
+                    emitted.add(reason.value)
+            elif isinstance(reason, ast.JoinedStr):
+                template = _joined_string_template(reason)
+                if template == f"{_MANAGED_EXIT_PREFIX}{{tag}}":
+                    emitted.update(f"{_MANAGED_EXIT_PREFIX}{tag}" for tag in bindings["tag"])
+                elif template == f"{_MANAGED_EXIT_PREFIX}SCALE_{{level}}":
+                    emitted.add(f"{_MANAGED_EXIT_PREFIX}SCALE_*")
+                elif template.startswith(_MANAGED_EXIT_PREFIX):
+                    emitted.add(template)
+            elif reason is not None:
+                emitted.add(f"unresolved:{ast.dump(reason, include_attributes=False)}")
+    return emitted
 
 
 # --------------------------------------------------------------- the adapter can address the legs
@@ -281,6 +353,21 @@ def test_session_end_attempt_enters_the_operator_owned_terminal_state() -> None:
 )
 def test_protective_exit_classification_is_explicit(reason: str, protective: bool) -> None:
     assert svc.OmsRiskService._is_protective_v2_exit(reason) is protective
+
+
+def test_every_emitted_managed_exit_reason_is_explicitly_classified() -> None:
+    emitted = _emitted_managed_exit_reasons()
+
+    assert _EXPLICIT_NON_PROTECTIVE_REASONS <= emitted
+    assert svc.OmsRiskService._is_protective_v2_exit(f"{_MANAGED_EXIT_PREFIX}CW_TARGET") is False
+    assert svc.OmsRiskService._is_protective_v2_exit(f"{_MANAGED_EXIT_PREFIX}SCALE_PCT2") is False
+    unclassified = {
+        reason
+        for reason in emitted
+        if reason not in _EXPLICIT_NON_PROTECTIVE_REASONS
+        and not svc.OmsRiskService._is_protective_v2_exit(reason)
+    }
+    assert unclassified == set(), f"managed-exit reasons need classification: {unclassified}"
 
 
 # ------------------------------------------------- re-protect what the release uncovered
