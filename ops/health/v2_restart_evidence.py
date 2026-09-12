@@ -38,6 +38,7 @@ DEFAULT_SERVICES = (
     "strategy",
     "tv-alerts",
 )
+INTENTIONALLY_INACTIVE_SERVICES = frozenset({"tv-alerts"})
 LOG_TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d{3}")
 FIELD = re.compile(r"\b([a-z_]+)=([^ ]+)")
 
@@ -104,14 +105,34 @@ def service_state(service: str, runner: Runner = run_checked) -> ServiceState:
         raise EvidenceUnknown(
             f"systemd returned a non-numeric PID/restart count for {service}"
         ) from exc
-    started = _parse_systemd_time(_systemctl_value(service, "ExecMainStartTimestamp", runner))
+    active_state = _systemctl_value(service, "ActiveState", runner)
+    sub_state = _systemctl_value(service, "SubState", runner)
+    started_raw = runner(
+        [
+            "systemctl",
+            "show",
+            f"{UNIT_PREFIX}{service}.service",
+            "-p",
+            "ExecMainStartTimestamp",
+            "--value",
+        ]
+    ).strip()
+    deliberately_inactive = (
+        service in INTENTIONALLY_INACTIVE_SERVICES
+        and pid == 0
+        and active_state == "inactive"
+        and sub_state == "dead"
+    )
+    if not started_raw and not deliberately_inactive:
+        raise EvidenceUnknown(f"systemd returned no ExecMainStartTimestamp for {service}")
+    started = _parse_systemd_time(started_raw).isoformat() if started_raw else ""
     return ServiceState(
         service=service,
         pid=pid,
-        active_state=_systemctl_value(service, "ActiveState", runner),
-        sub_state=_systemctl_value(service, "SubState", runner),
+        active_state=active_state,
+        sub_state=sub_state,
         n_restarts=n_restarts,
-        started_at_utc=started.isoformat(),
+        started_at_utc=started,
     )
 
 
@@ -480,8 +501,8 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         name
         for name in untouched
         if int(before_services[name]["pid"]) == current[name].pid
-        and current[name].active_state == "active"
-        and current[name].sub_state == "running"
+        and before_services[name]["active_state"] == current[name].active_state
+        and before_services[name]["sub_state"] == current[name].sub_state
         and int(before_services[name]["n_restarts"]) == current[name].n_restarts
     ]
     changed = [name for name in untouched if name not in unchanged]
