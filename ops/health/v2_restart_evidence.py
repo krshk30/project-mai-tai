@@ -175,7 +175,9 @@ def parse_log_files(
     return TracebackEvidence(timestamped_records, tuple(traceback_times))
 
 
-def _log_files(service: str, runner: Runner) -> list[tuple[str, list[str]]]:
+def _log_files(
+    service: str, runner: Runner, *, since: datetime | None = None
+) -> list[tuple[str, list[str]]]:
     root = "/var/log/project-mai-tai"
     listing = runner(
         [
@@ -203,8 +205,12 @@ def _log_files(service: str, runner: Runner) -> list[tuple[str, list[str]]]:
     if not found:
         raise EvidenceUnknown(f"no log files found for {service}")
 
+    cutoff = since.astimezone(UTC).timestamp() if since is not None else None
     result: list[tuple[str, list[str]]] = []
-    for _, path in sorted(found):
+    for modified_at, path in sorted(found):
+        # A file last modified before process start cannot contain post-start evidence.
+        if cutoff is not None and modified_at < cutoff:
+            continue
         raw = runner(["sudo", "-n", "zcat", "-f", "--", path])
         result.append((path, raw.splitlines()))
     return result
@@ -610,7 +616,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     )
 
     v2_start = datetime.fromisoformat(current[V2_SERVICE].started_at_utc).astimezone(UTC)
-    v2_files = _log_files(V2_SERVICE, runner)
+    v2_files = _log_files(V2_SERVICE, runner, since=v2_start)
     v2_lines = _timestamped_lines_after(v2_files, v2_start)
     complete = [
         row
@@ -743,7 +749,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     traceback_detail: list[str] = []
     for service in sorted(restarted):
         start = datetime.fromisoformat(current[service].started_at_utc).astimezone(UTC)
-        evidence = parse_log_files(_log_files(service, runner), since=start)
+        evidence = parse_log_files(_log_files(service, runner, since=start), since=start)
         traceback_total += len(evidence.traceback_times_utc)
         timestamped_total += evidence.timestamped_records
         traceback_detail.append(
