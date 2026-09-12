@@ -81,6 +81,49 @@ def test_systemd_timestamp_parser_refuses_a_non_utc_box_clock() -> None:
         vre._parse_systemd_time("Thu 2026-09-10 20:25:00 EDT")
 
 
+def _systemd_runner(values: dict[str, str]):
+    def runner(command) -> str:
+        return values[command[-2]]
+
+    return runner
+
+
+def test_deliberately_inactive_service_needs_no_start_timestamp() -> None:
+    state = vre.service_state(
+        "tv-alerts",
+        runner=_systemd_runner(
+            {
+                "MainPID": "0",
+                "NRestarts": "0",
+                "ActiveState": "inactive",
+                "SubState": "dead",
+                "ExecMainStartTimestamp": "",
+            }
+        ),
+    )
+
+    assert state.pid == 0
+    assert state.active_state == "inactive"
+    assert state.sub_state == "dead"
+    assert state.started_at_utc == ""
+
+
+def test_required_service_without_a_start_timestamp_is_unmeasured() -> None:
+    with pytest.raises(vre.EvidenceUnknown, match="no ExecMainStartTimestamp for strategy"):
+        vre.service_state(
+            "strategy",
+            runner=_systemd_runner(
+                {
+                    "MainPID": "0",
+                    "NRestarts": "0",
+                    "ActiveState": "inactive",
+                    "SubState": "dead",
+                    "ExecMainStartTimestamp": "",
+                }
+            ),
+        )
+
+
 def test_expected_process_flag_requires_service_key_and_value() -> None:
     assert vre._parse_expected_flag("schwab-1m-v2:FEATURE=true") == (
         "schwab-1m-v2",
@@ -207,6 +250,52 @@ def test_report_fails_if_an_untouched_service_restarted(monkeypatch, tmp_path: P
         sub_state="running",
         n_restarts=0,
         started_at_utc=datetime(2026, 9, 11, 0, 25, tzinfo=UTC).isoformat(),
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 1
+
+
+def test_report_accepts_a_deliberately_inactive_service_that_stays_unchanged(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args, current, _ = _report_fixture(monkeypatch, tmp_path)
+    payload = json.loads(args.snapshot.read_text(encoding="utf-8"))
+    inactive = {
+        "service": "tv-alerts",
+        "pid": 0,
+        "active_state": "inactive",
+        "sub_state": "dead",
+        "n_restarts": 0,
+        "started_at_utc": "",
+    }
+    payload["services"]["tv-alerts"] = inactive
+    args.snapshot.write_text(json.dumps(payload), encoding="utf-8")
+    current["tv-alerts"] = vre.ServiceState(**inactive)
+
+    assert vre.report(args, runner=lambda command: "") == 0
+
+
+def test_report_fails_if_a_deliberately_inactive_service_starts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args, current, _ = _report_fixture(monkeypatch, tmp_path)
+    payload = json.loads(args.snapshot.read_text(encoding="utf-8"))
+    payload["services"]["tv-alerts"] = {
+        "service": "tv-alerts",
+        "pid": 0,
+        "active_state": "inactive",
+        "sub_state": "dead",
+        "n_restarts": 0,
+        "started_at_utc": "",
+    }
+    args.snapshot.write_text(json.dumps(payload), encoding="utf-8")
+    current["tv-alerts"] = vre.ServiceState(
+        service="tv-alerts",
+        pid=901,
+        active_state="active",
+        sub_state="running",
+        n_restarts=0,
+        started_at_utc=datetime(2026, 9, 12, tzinfo=UTC).isoformat(),
     )
 
     assert vre.report(args, runner=lambda command: "") == 1
