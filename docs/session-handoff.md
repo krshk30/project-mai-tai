@@ -15,12 +15,12 @@
 
 ---
 
-# ✅ PRODUCTION — main and box IN SYNC at `5dae7c9a`
+# ✅ PRODUCTION — box at `5dae7c9a`; main intentionally ahead by DOCS-ONLY commits
 
 | | |
 |---|---|
 | box (deployed) | **`5dae7c9a`** — read FROM THE BOX 2026-09-12 16:42 ET, branch `main`, checkout clean (0 files) |
-| GitHub main | **`5dae7c9a`** at the time of writing |
+| GitHub main | **`5dae7c9a`** at the time of writing. ⭐ **Merging this handoff PR moves main ahead of the box BY DESIGN.** A docs-only divergence is the normal state and is NOT a deploy gap: compare with `git diff --name-only <box-sha> origin/main` and treat the box as behind only if something outside `docs/` appears |
 | ⛔ **box pin** | **The box must STAY at `5dae7c9a` until Monday's pre-open gate passes.** The gate pins `EXPECTED_SHA=5dae7c9a`; a docs-only merge (this PR included) moves *main* ahead, which is fine, but **do not `git pull` on the box before the gate is green.** Sync the box after Monday pre-open, not before |
 | open PRs | **none** (this handoff PR excepted) |
 | exposure | **16:42 ET:** both live accounts flat — open managed rows **0**, nonzero `account_positions` rows **0**, both accounts resolved |
@@ -182,29 +182,37 @@ box, so the `13-21` UTC hour range only trims idle runs and is not the authority
 
 ---
 
-# ✅ F1 — FIXED BY #930 AND DEPLOYED, BUT NEVER EXERCISED
+# ✅ F1 — FIXED BY #930, DEPLOYED, AND **EXERCISED** ON LIVE TAPE
 
-⛔ **The previous version of this file reopened F1 as a live defect. That was wrong, and `codex-2`
-caught it in review of #966.** #930 (*F1/F2: make ATR SELL observations account-neutral*, merged
-2026-09-09 16:02 UTC) replaced the strategy-owned, Schwab-sized `v2_cw_flip` close draft with a
-single account-neutral `v2_atr_sell_observation`. OMS evaluates **every** configured v2 account
-independently and binds only the managed row open when the stamped bar closed.
+⛔ **This section has now been wrong twice.** The 09-12 draft reopened F1 as a live defect; my first
+correction then said it had "fired 0 times". Both wrong, both caught by `codex-2`. The zero came
+from grepping `atr_sell_observation` — the **wire event type, which is never logged** — and from
+plain `grep` against **gzipped** rotated logs, which reads nothing. The emitted markers are
+`[OMS-V2-CW-FLIP-EVALUATED]` and `[OMS-V2-CW-FLIP-LEG]`, and rotated files need `zgrep`.
 
-Verified on the box 2026-09-12:
+Measured on the box 2026-09-12, all `oms.log*` since #930 deployed (2026-09-09 23:03 UTC):
 
-| check | result |
+| | |
 |---|---|
-| `v2_atr_sell_observation` handled in `oms/service.py` | present (line 1113) |
-| old `emit_cw_flip` / `_maybe_cw_flip_close` in the strategy | **0 occurrences** — removed, not left dormant |
-| times it has fired on live tape | **0** |
+| ATR-SELL decisions evaluated | **43** (09-09 ×1 · 09-10 ×12 · 09-11 ×29 · 09-12 ×1) |
+| leg evaluations | **86** — ⭐ **43 `live:schwab_1m_v2` and 43 `live:orb`, exactly balanced** |
+| outcomes | 83 `not_owned`, **3 `armed`** |
+| the 3 armed | FTFT 09-11 **18:13 — BOTH legs, schwab AND orb** · FTFT 09-11 19:20 schwab |
+| ⛔ Webull-only-held decisions | **0** |
 
-⇒ **Status is DEPLOYED and UNEXERCISED, not open.** The YMAT 09-09 proof (`pos_qty=0`, flip SELL,
-no exit) describes the **pre-fix** behaviour and must not be quoted as current.
+⇒ **The account-neutrality itself is PROVEN live, not merely deployed.** Every decision reaches both
+accounts independently (43/43), and a Webull leg has actually been armed for close. ⛔ `30` is the
+count in the current uncompressed file only; the full figure since deploy is **43**.
 
-⚠ Note the distinction that made this easy to get wrong: `_fetch_position_maps` is **still**
-scoped to the v2 account, and that is deliberate — it is the ENTRY-decision signal, and its own
-docstring says cross-venue fan-out intents must not enter it. The EXIT path is what #930 made
-account-neutral. Entry-scoped and exit-neutral are both correct at the same time.
+⇒ **What remains unexercised is only the exact original F1 shape:** a decision where `live:orb` is
+armed while `live:schwab_1m_v2` reads `not_owned`. That has occurred **zero** times. The YMAT 09-09
+evidence is the PRE-FIX proof of that shape and must not be quoted as current.
+
+## ⭐⭐ THE DISTINCTION THAT MADE THIS EASY TO GET WRONG — still true, do not "fix" it
+`_fetch_position_maps` **is still scoped** to the v2 account, **deliberately**: its own docstring
+says cross-venue fan-out intents must not enter the ENTRY-decision signal. #930 made the **EXIT**
+path account-neutral. **Entry-scoped and exit-neutral are both correct at once** — seeing that
+filter still present is NOT evidence the defect returned.
 
 # ⛔ CONFIRMATION-EXIT RACE — open, live, unowned
 
@@ -233,7 +241,7 @@ and prove one protection cancellation and one Webull close attempt.**
 | **Webull one-sided entries** — measured; zero venue rejections; cause is our slot | **#955 / #960** — replay-proven only; **never run on live money** (see the Monday table above) |
 | **DRIFT1** — false-clean fixed and now scheduled | **GATE1 watcher** — armed; no qualifying shape has ever existed |
 | **HALT-FILTER / HALT-DETECTOR** — session-boundary artefact fixed at source | **INC1** — installed; synthetic incident opened and closed, no real one yet |
-| **F1 mechanism** — root cause proven on YMAT **and FIXED by #930** | **#930 account-neutral ATR exit** — deployed; has fired **0** times on live tape |
+| **F1 / #930 account-neutral ATR exit** — fixed, deployed, and **exercised**: 43 decisions, 43/43 legs per account, 3 armed incl. a Webull leg | **the Webull-only-held shape** — `live:orb` armed while schwab reads `not_owned`: **0** occurrences |
 | **#933 controls** — all five admission branches + the reactive guard mutation-red | **CONF3 / SIL1 / released-leg recovery / HDL1** — still never fired |
 
 ⛔ **UNKNOWN is not PASS.** Read `STATUS.txt`; do not infer health from the absence of a page.
@@ -246,7 +254,7 @@ and prove one protection cancellation and one Webull close attempt.**
 
 | item | question | owner |
 |---|---|---|
-| ~~**F1/F2 one-sided lifecycle**~~ | ✅ **CLOSED by #930**, deployed, never exercised. Was wrongly reopened in the 09-12 draft of this file | — |
+| ~~**F1/F2 one-sided lifecycle**~~ | ✅ **CLOSED by #930** — deployed **and exercised** (43 decisions, both accounts, 3 armed). Only the Webull-only-held shape is still unseen | — |
 | **confirmation-exit race** | per-account in-flight ownership held to terminal close | unassigned |
 | **STOPMKT probe** | operator deferred: does a stop-market entry change the fill? | deferred by operator |
 | **PROV1** | arming on flips reconstructed from db-seed (649 occurrences) | unassigned |
