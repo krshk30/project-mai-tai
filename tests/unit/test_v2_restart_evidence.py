@@ -60,6 +60,61 @@ def test_missing_service_logs_are_unmeasured() -> None:
         vre._log_files("strategy", runner=lambda command: "")
 
 
+def test_log_reader_skips_rotations_proven_older_than_the_restart() -> None:
+    restart = datetime(2026, 9, 12, 21, 17, 54, tzinfo=UTC)
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> str:
+        commands.append(command)
+        if command[2] == "find":
+            return (
+                f"{restart.timestamp() - 1}|"
+                "/var/log/project-mai-tai/reconciler.log-20260731.gz\n"
+                f"{restart.timestamp()}|/var/log/project-mai-tai/reconciler.log\n"
+            )
+        assert command[-1] == "/var/log/project-mai-tai/reconciler.log"
+        return "2026-09-12 21:17:54,000 INFO started"
+
+    files = vre._log_files("reconciler", runner=runner, since=restart)
+
+    assert files == [
+        (
+            "/var/log/project-mai-tai/reconciler.log",
+            ["2026-09-12 21:17:54,000 INFO started"],
+        )
+    ]
+    assert not any(command[-1].endswith("20260731.gz") for command in commands)
+
+
+def test_log_reader_reports_zero_records_when_every_rotation_predates_restart() -> None:
+    restart = datetime(2026, 9, 12, 21, 17, 54, tzinfo=UTC)
+
+    def runner(command: list[str]) -> str:
+        assert command[2] == "find"
+        return f"{restart.timestamp() - 1}|/var/log/project-mai-tai/reconciler.log\n"
+
+    files = vre._log_files("reconciler", runner=runner, since=restart)
+
+    assert files == []
+    evidence = vre.parse_log_files(files, since=restart)
+    assert evidence.timestamped_records == 0
+    assert evidence.traceback_times_utc == ()
+
+
+def test_log_reader_keeps_an_ambiguous_file_at_the_restart_boundary() -> None:
+    restart = datetime(2026, 9, 12, 21, 17, 54, tzinfo=UTC)
+
+    def runner(command: list[str]) -> str:
+        if command[2] == "find":
+            return f"{restart.timestamp()}|/var/log/project-mai-tai/reconciler.log\n"
+        return "Traceback (most recent call last):"
+
+    files = vre._log_files("reconciler", runner=runner, since=restart)
+
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files(files, since=restart)
+
+
 def test_log_timestamp_context_does_not_leak_between_rotations() -> None:
     with pytest.raises(vre.EvidenceUnknown, match="strategy.log contains a traceback"):
         vre.parse_log_files(
@@ -249,7 +304,12 @@ def _report_fixture(monkeypatch, tmp_path: Path):
         "2026-09-11 00:25:03,000 INFO healthy",
     ]
     logs = {vre.V2_SERVICE: [("schwab-1m-v2.log", clean_log)]}
-    monkeypatch.setattr(vre, "_log_files", lambda service, runner: logs[service])
+    def log_files(service, runner, *, since):
+        expected = datetime.fromisoformat(current[service].started_at_utc).astimezone(UTC)
+        assert since == expected
+        return logs[service]
+
+    monkeypatch.setattr(vre, "_log_files", log_files)
     monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: (3, 99, 2, 3, 0))
     args = SimpleNamespace(
         snapshot=snapshot,
