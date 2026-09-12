@@ -20,6 +20,8 @@ state writer from `ops/health/unexercised_watch.py`. It creates no second notifi
 | `BOOT1` | ARMED | ordered boot restore/hold lines | complete before release | early release or no release within 5m |
 | `ROLL1` | ARMED | current-session roll line | boundary line exists, including `rolled=0` | no line by 04:10 ET |
 | `OWNERROLL1` | ARMED | symbols named by the current-session roll | every rolled owner stays cleared through 04:10 ET | a rolled symbol resumes old-owner UNKNOWN/RECOVERY |
+| `SLOTCLEAR1` | ARMED | fresh SELL, owner-fill, and slot-consumed markers | no refusal after SELL, or refusal only after a real fill | first slot remains consumed after SELL without an intervening fill |
+| `LIQPULL1` | ARMED | liquidity cancels with streak counts and state-probe resets | cancel at 3+ or a good bar resets the streak | liquidity cancel before three consecutive thin bars |
 | `DISARM1` | UNARMED | arm/disarm markers | cause-specific disarm | a live arm and silent clear are not distinguishable yet |
 | `ORPHAN1` | DELEGATED | broker order ownership | no stale unowned order | `orphan_order_check.py` red shape |
 | `CAP1` | DELEGATED | fill-time segment composition | legal slot composition | `v2_entry_fix_watch.py` breach |
@@ -40,11 +42,14 @@ state writer from `ops/health/unexercised_watch.py`. It creates no second notifi
 1. Merge the watch without installing it during the live session.
 2. Over the weekend, run `sudo ops/health/install_known_defect_regression_watch.sh`. It installs
    one dedicated `/etc/cron.d` file at five-minute cadence and never rewrites a shared crontab.
-3. Run `known_defect_regression_watch_cron.sh --selftest`; the phone message must explicitly say
+3. Read the running v2 process environment and require both `ATR_FLIP_PROBE_SYMBOLS=*` and
+   `MACD_PROBE_SYMBOLS=*`. `SLOTCLEAR1` and the good-reset half of `LIQPULL1` depend on those
+   fleet-wide denominators; absent probes leave them unexercised rather than inventing a pass.
+4. Run `known_defect_regression_watch_cron.sh --selftest`; the phone message must explicitly say
    no live defect was observed.
-4. Run once with `--no-page` and inspect `STATUS.txt`. It must contain all 17 rows. `UNARMED` and
+5. Run once with `--no-page` and inspect `STATUS.txt`. It must contain all 19 rows. `UNARMED` and
    `DELEGATED` are inventory states, not passes.
-5. On Monday, a recurrence pages once per episode; failed delivery retries next run, and a cleared
+6. On Monday, a recurrence pages once per episode; failed delivery retries next run, and a cleared
    episode re-arms. Evidence loss returns non-zero and never becomes a measured zero.
 
 The cron runs every five minutes, but the wrapper evaluates only 03:50-20:15 ET on weekdays. The
