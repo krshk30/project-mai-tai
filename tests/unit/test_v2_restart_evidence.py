@@ -55,6 +55,11 @@ def test_traceback_without_a_preceding_timestamp_is_unmeasured() -> None:
         )
 
 
+def test_missing_service_logs_are_unmeasured() -> None:
+    with pytest.raises(vre.EvidenceUnknown, match="no log files found for strategy"):
+        vre._log_files("strategy", runner=lambda command: "")
+
+
 def test_log_timestamp_context_does_not_leak_between_rotations() -> None:
     with pytest.raises(vre.EvidenceUnknown, match="strategy.log contains a traceback"):
         vre.parse_log_files(
@@ -318,6 +323,11 @@ def test_snapshot_fails_immediately_when_a_live_account_is_not_flat(
     )
 
     assert vre.snapshot(tmp_path / "snapshot.json", runner=lambda command: "") is False
+
+
+def test_non_numeric_flat_state_is_unmeasured() -> None:
+    with pytest.raises(vre.EvidenceUnknown, match="non-numeric count"):
+        vre._flat_counts(runner=lambda command: "2|unknown|0")
 
 
 def test_report_fails_if_a_traceback_is_after_the_restart(monkeypatch, tmp_path: Path) -> None:
