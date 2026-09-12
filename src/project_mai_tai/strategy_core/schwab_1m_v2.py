@@ -4176,6 +4176,7 @@ class SchwabV2Strategy:
         was_broker_order = state.resting_is_broker_order
         was_webull_resting = state.webull_resting_active
         webull_reason = reason
+        was_below_floor_bars = state.resting_below_floor_bars
         state.webull_resting_active = False
         was_slot = state.resting_slot
         state.resting_active = False
@@ -4210,11 +4211,25 @@ class SchwabV2Strategy:
             # Declared rather than left implied. [[feedback_a_watch_that_fails_to_a_false_clean]]
             if reason == "flip_no_fill":
                 reason = "flip_no_fill_soft_rest"
-            logger.info("[V2-RESTING-EH-DISARM] %s slot=%s reason=%s level=%.4f",
-                        state.symbol, was_slot, reason, was_level)
+            logger.info(
+                "[V2-RESTING-EH-DISARM] %s slot=%s reason=%s "
+                "resting_below_floor_bars=%d level=%.4f",
+                state.symbol,
+                was_slot,
+                reason,
+                was_below_floor_bars,
+                was_level,
+            )
         else:
-            logger.info("[V2-RESTING-CANCEL] %s slot=%s reason=%s level=%.4f",
-                        state.symbol, was_slot, reason, was_level)
+            logger.info(
+                "[V2-RESTING-CANCEL] %s slot=%s reason=%s "
+                "resting_below_floor_bars=%d level=%.4f",
+                state.symbol,
+                was_slot,
+                reason,
+                was_below_floor_bars,
+                was_level,
+            )
             self._pending_intents.append(TradeIntentDraft(
                 symbol=state.symbol, side="buy", intent_type="cancel",
                 quantity=Decimal(str(self._atr_qty)),

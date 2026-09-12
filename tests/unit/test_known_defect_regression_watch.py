@@ -29,6 +29,14 @@ def lines(*payloads: tuple[int, str]):
     return watch.parse_log_lines(raw, since=SINCE, until=NOW)
 
 
+def atr_sell(symbol: str, hour: int) -> str:
+    bar_at = datetime(2026, 9, 11, hour, tzinfo=UTC)
+    return (
+        f"[V2-ATR-PROBE] sym={symbol} ts_ms={int(bar_at.timestamp() * 1000)} "
+        "state=short flip=SELL fired_seg=false"
+    )
+
+
 def reading(key: str, verdict: str) -> object:
     recurrence = int(verdict == watch.RECURRENCE)
     return watch.Reading(
@@ -55,13 +63,15 @@ def database_metrics(**overrides: int) -> dict[str, int]:
 
 
 def test_catalog_has_every_requested_defect_and_every_row_declares_both_polarities() -> None:
-    assert len(watch.CATALOG) == 17
-    assert len({row.key for row in watch.CATALOG}) == 17
+    assert len(watch.CATALOG) == 19
+    assert len({row.key for row in watch.CATALOG}) == 19
     assert {row.mode for row in watch.CATALOG} == {"ARMED", "DELEGATED", "UNARMED"}
     assert {row.key for row in watch.CATALOG if row.mode == "ARMED"} == {
         "BOOT1",
         "ROLL1",
         "OWNERROLL1",
+        "SLOTCLEAR1",
+        "LIQPULL1",
         "PHANTOM1",
         "RESERVE1",
         "W4291",
@@ -188,6 +198,134 @@ def test_owner_roll_is_unexercised_when_no_stale_owner_needed_rolling() -> None:
 
     assert result.verdict == watch.UNEXERCISED
     assert result.evaluated == 0
+
+
+def test_fresh_sell_with_no_entry_then_slot_consumed_is_recurrence() -> None:
+    result = watch.evaluate_fresh_sell_slot_clear(
+        lines(
+            (5, atr_sell("TNON", 5)),
+            (
+                6,
+                "[V2-RESTING-SLOT-CONSUMED] TNON attempted=1 suppressed=1 "
+                "reason=first_slot_already_consumed",
+            ),
+        )
+    )
+
+    assert result.verdict == watch.RECURRENCE
+    assert (result.evaluated, result.guard_working, result.recurrence) == (1, 0, 1)
+    assert "TNON@" in result.detail
+
+
+def test_fresh_sell_without_suppression_is_guard_working() -> None:
+    result = watch.evaluate_fresh_sell_slot_clear(lines((5, atr_sell("TNON", 5))))
+
+    assert result.verdict == watch.GUARD_WORKING
+    assert (result.evaluated, result.guard_working, result.recurrence) == (1, 1, 0)
+
+
+def test_slot_consumed_after_a_real_entry_is_benign() -> None:
+    result = watch.evaluate_fresh_sell_slot_clear(
+        lines(
+            (5, atr_sell("TNON", 5)),
+            (6, "[V2-FLIP-OWNER-FILL] TNON opportunity_id=123 account=live:orb"),
+            (
+                7,
+                "[V2-RESTING-SLOT-CONSUMED] TNON attempted=1 suppressed=1 "
+                "reason=first_slot_already_consumed",
+            ),
+        )
+    )
+
+    assert result.verdict == watch.GUARD_WORKING
+    assert result.recurrence == 0
+    assert "consumed_after_fill=1" in result.detail
+
+
+def test_replayed_sell_probe_does_not_count_as_a_fresh_segment() -> None:
+    stale_bar_ms = int(datetime(2026, 9, 10, 19, 59, tzinfo=UTC).timestamp() * 1000)
+    result = watch.evaluate_fresh_sell_slot_clear(
+        lines(
+            (
+                5,
+                f"[V2-ATR-PROBE] sym=TNON ts_ms={stale_bar_ms} "
+                "state=short flip=SELL fired_seg=false",
+            )
+        )
+    )
+
+    assert result.verdict == watch.UNEXERCISED
+    assert result.evaluated == 0
+
+
+def test_fresh_sell_window_matches_the_live_entry_bar_horizon() -> None:
+    from project_mai_tai.strategy_core.schwab_1m_v2 import MAX_BAR_AGE_SECONDS_FOR_EMIT
+
+    assert watch.FRESH_SELL_MAX_BAR_AGE_SECONDS == MAX_BAR_AGE_SECONDS_FOR_EMIT
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_liquidity_cancel_before_three_thin_bars_is_recurrence(count: int) -> None:
+    result = watch.evaluate_liquidity_pull(
+        lines(
+            (
+                5,
+                "[V2-RESTING-CANCEL] FTFT slot=first reason=liquidity_floor "
+                f"resting_below_floor_bars={count} level=2.8843",
+            )
+        )
+    )
+
+    assert result.verdict == watch.RECURRENCE
+    assert (result.evaluated, result.guard_working, result.recurrence) == (1, 0, 1)
+
+
+@pytest.mark.parametrize("marker", ["V2-RESTING-CANCEL", "V2-RESTING-EH-DISARM"])
+def test_liquidity_cancel_at_three_bars_is_guard_working(marker: str) -> None:
+    result = watch.evaluate_liquidity_pull(
+        lines(
+            (
+                5,
+                f"[{marker}] FTFT slot=first reason=liquidity_floor "
+                "resting_below_floor_bars=3 level=2.8843",
+            )
+        )
+    )
+
+    assert result.verdict == watch.GUARD_WORKING
+    assert (result.evaluated, result.guard_working, result.recurrence) == (1, 1, 0)
+
+
+def test_good_bar_resetting_a_short_liquidity_streak_is_guard_working() -> None:
+    result = watch.evaluate_liquidity_pull(
+        lines(
+            (
+                5,
+                "[V2-CW-STATE-PROBE] sym=FTFT resting_below_floor_bars=2 resting_active=True",
+            ),
+            (
+                6,
+                "[V2-CW-STATE-PROBE] sym=FTFT resting_below_floor_bars=0 resting_active=True",
+            ),
+        )
+    )
+
+    assert result.verdict == watch.GUARD_WORKING
+    assert "good_bar_resets=FTFT:2->0" in result.detail
+
+
+def test_liquidity_cancel_without_its_streak_is_cannot_tell() -> None:
+    result = watch.evaluate_liquidity_pull(
+        lines(
+            (
+                5,
+                "[V2-RESTING-CANCEL] FTFT slot=first reason=liquidity_floor level=2.8843",
+            )
+        )
+    )
+
+    assert result.verdict == watch.COULD_NOT_TELL
+    assert "unmeasured_cancels=1" in result.detail
 
 
 def test_seed_guard_marker_is_benign_and_fail_open_is_recurrence() -> None:
@@ -328,7 +466,7 @@ def test_static_rows_are_never_reported_as_clean() -> None:
 
 def test_failed_evidence_keeps_every_catalog_row_visible() -> None:
     rows = watch.failed_evidence_readings("database unavailable")
-    assert len(rows) == len(watch.CATALOG) == 17
+    assert len(rows) == len(watch.CATALOG) == 19
     assert {row.key for row in rows} == {row.key for row in watch.CATALOG}
     assert all(
         row.verdict == watch.COULD_NOT_TELL
@@ -426,10 +564,12 @@ def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None
 
     rows = {row.key: row for row in watch.collect_readings(NOW)}
 
-    assert len(rows) == 17
+    assert len(rows) == 19
     assert rows["BOOT1"].verdict == watch.COULD_NOT_TELL
     assert rows["ROLL1"].verdict == watch.COULD_NOT_TELL
     assert rows["OWNERROLL1"].verdict == watch.COULD_NOT_TELL
+    assert rows["SLOTCLEAR1"].verdict == watch.COULD_NOT_TELL
+    assert rows["LIQPULL1"].verdict == watch.COULD_NOT_TELL
     assert rows["SEED1"].verdict == watch.COULD_NOT_TELL
     assert rows["W4291"].verdict == watch.OBSERVED_CLEAN
     assert rows["RESERVE1"].verdict == watch.UNEXERCISED
@@ -454,6 +594,35 @@ def test_database_census_is_read_only_broker_origin_and_live_account_scoped(monk
 
     monkeypatch.setattr(watch.subprocess, "run", run)
     assert watch._query_database(SINCE) == payload
+
+
+@pytest.mark.parametrize("malformation", ["missing", "string", "bool", "negative"])
+def test_database_census_refuses_a_malformed_metric_payload(monkeypatch, malformation: str) -> None:
+    payload = {
+        key: value
+        for key, value in database_metrics().items()
+        if not key.startswith("confirmed_exit_releases_")
+    }
+    key = "managed_exit_orders_schwab"
+    if malformation == "missing":
+        payload.pop(key)
+    elif malformation == "string":
+        payload[key] = "0"
+    elif malformation == "bool":
+        payload[key] = True
+    else:
+        payload[key] = -1
+
+    monkeypatch.setattr(
+        watch.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stderr="", stdout=f"{watch.json.dumps(payload)}\n"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="metric set or value types are invalid"):
+        watch._query_database(SINCE)
 
 
 def test_pre_anchor_boot_is_kept_without_polluting_current_session_counts(monkeypatch) -> None:

@@ -33,6 +33,7 @@ BOOT_RELEASE_GRACE_SECONDS = 300
 SESSION_ROLL_GRACE_MINUTES = 10
 WEBULL_429_BURST_COUNT = 10
 WEBULL_429_BURST_SECONDS = 60
+FRESH_SELL_MAX_BAR_AGE_SECONDS = 180
 LIVE_ACCOUNTS = ("live:schwab_1m_v2", "live:orb")
 
 RECURRENCE = "RECURRENCE"
@@ -88,6 +89,15 @@ class Reading:
     detail: str
 
 
+@dataclass
+class _SellEpisode:
+    symbol: str
+    at: datetime
+    filled: bool = False
+    recurred: bool = False
+    consumed_after_fill: bool = False
+
+
 CATALOG: tuple[RegressionSpec, ...] = (
     RegressionSpec(
         "BOOT1",
@@ -112,6 +122,22 @@ CATALOG: tuple[RegressionSpec, ...] = (
         "V2-SESSION-ROLL rolled symbols followed through the 04:10 ET grace window",
         "every rolled symbol stays free of old-owner UNKNOWN/RECOVERY markers after the boundary",
         "a rolled symbol resumes V2-FLIP-OWNER-UNKNOWN or V2-FLIP-OWNER-RECOVERY before 04:10 ET",
+    ),
+    RegressionSpec(
+        "SLOTCLEAR1",
+        "a fresh SELL leaves the reconstructed first-entry slot consumed",
+        "ARMED",
+        "fleet-wide V2-ATR-PROBE SELL lines joined to owner fills and slot-consumed refusals",
+        "a fresh SELL has no refusal, or the refusal follows a real owner fill",
+        "first_slot_already_consumed appears after a fresh SELL and before any owner fill",
+    ),
+    RegressionSpec(
+        "LIQPULL1",
+        "the resting liquidity guard cancels before three consecutive thin bars",
+        "ARMED",
+        "liquidity-floor cancels with streak counts plus state-probe streak resets",
+        "a cancel carries a streak of at least three, or a good bar resets a shorter streak",
+        "a liquidity-floor cancel carries resting_below_floor_bars below three",
     ),
     RegressionSpec(
         "DISARM1",
@@ -241,6 +267,23 @@ _SESSION_ROLL_SYMBOLS = re.compile(
 )
 _SEED_CENSUS = re.compile(r"\[V2-DB-SEED-GAP-CENSUS\] truncations=(\d+) of (\d+)")
 _BROKER_CENSUS_WEBULL = re.compile(r"live:orb: ok=(\d+) failed=(\d+) consecutive_now=(\d+)")
+_ATR_SELL = re.compile(r"\[V2-ATR-PROBE\]\s+sym=([^ ]+)\s+ts_ms=(\d+).*\bflip=SELL\b")
+_FLIP_OWNER_FILL = re.compile(r"\[V2-FLIP-OWNER-FILL\]\s+([^ ]+)\b")
+_SLOT_CONSUMED = re.compile(
+    r"\[V2-RESTING-SLOT-CONSUMED\]\s+([^ ]+).*"
+    r"\breason=first_slot_already_consumed\b"
+)
+_LIQUIDITY_CANCEL_RAW = re.compile(
+    r"\[V2-(?:RESTING-CANCEL|RESTING-EH-DISARM)\].*\breason=liquidity_floor\b"
+)
+_LIQUIDITY_CANCEL = re.compile(
+    r"\[V2-(?:RESTING-CANCEL|RESTING-EH-DISARM)\]\s+([^ ]+).*"
+    r"\breason=liquidity_floor\s+resting_below_floor_bars=(\d+)\b"
+)
+_CW_STATE_PROBE = re.compile(
+    r"\[V2-CW-STATE-PROBE\]\s+sym=([^ ]+).*"
+    r"\bresting_below_floor_bars=(\d+).*\bresting_active=(True|False)\b"
+)
 
 
 def parse_log_lines(lines: Iterable[str], *, since: datetime, until: datetime) -> list[TimedLine]:
@@ -408,6 +451,93 @@ def evaluate_owner_roll(lines: Sequence[TimedLine], *, now: datetime, market_day
             f"recurred={','.join(sorted(recurred)) or 'none'} "
             f"observed_until={observed_until.isoformat()}"
         ),
+    )
+
+
+def evaluate_fresh_sell_slot_clear(lines: Sequence[TimedLine]) -> Reading:
+    episodes: list[_SellEpisode] = []
+    current: dict[str, _SellEpisode] = {}
+    for line in lines:
+        if match := _ATR_SELL.search(line.text):
+            bar_at = datetime.fromtimestamp(int(match.group(2)) / 1000, UTC)
+            age_seconds = (line.at - bar_at).total_seconds()
+            if not 0 <= age_seconds <= FRESH_SELL_MAX_BAR_AGE_SECONDS:
+                continue
+            episode = _SellEpisode(symbol=match.group(1), at=line.at)
+            episodes.append(episode)
+            current[episode.symbol] = episode
+            continue
+        if match := _FLIP_OWNER_FILL.search(line.text):
+            if episode := current.get(match.group(1)):
+                episode.filled = True
+            continue
+        if match := _SLOT_CONSUMED.search(line.text):
+            if episode := current.get(match.group(1)):
+                if episode.filled:
+                    episode.consumed_after_fill = True
+                else:
+                    episode.recurred = True
+
+    recurred = [episode for episode in episodes if episode.recurred]
+    consumed_after_fill = sum(episode.consumed_after_fill for episode in episodes)
+    recurrence_detail = ",".join(
+        f"{episode.symbol}@{episode.at.isoformat()}" for episode in recurred
+    )
+    return _reading(
+        "SLOTCLEAR1",
+        evaluated=len(episodes),
+        guard_working=len(episodes) - len(recurred),
+        recurrence=len(recurred),
+        detail=(
+            f"fresh_sells={len(episodes)} clean={len(episodes) - len(recurred)} "
+            f"consumed_after_fill={consumed_after_fill} "
+            f"recurred={recurrence_detail or 'none'}"
+        ),
+    )
+
+
+def evaluate_liquidity_pull(lines: Sequence[TimedLine]) -> Reading:
+    evaluated = guard = bad = unmeasured = 0
+    resets: list[str] = []
+    early: list[str] = []
+    last_probe: dict[str, tuple[int, bool]] = {}
+    for line in lines:
+        if match := _CW_STATE_PROBE.search(line.text):
+            symbol = match.group(1)
+            count = int(match.group(2))
+            active = match.group(3) == "True"
+            prior = last_probe.get(symbol)
+            if prior is not None and prior[1] and active and prior[0] > 0 and count == 0:
+                evaluated += 1
+                guard += 1
+                resets.append(f"{symbol}:{prior[0]}->0")
+            last_probe[symbol] = (count, active)
+
+        if not _LIQUIDITY_CANCEL_RAW.search(line.text):
+            continue
+        match = _LIQUIDITY_CANCEL.search(line.text)
+        if match is None:
+            unmeasured += 1
+            continue
+        symbol = match.group(1)
+        count = int(match.group(2))
+        evaluated += 1
+        if count < 3:
+            bad += 1
+            early.append(f"{symbol}:{count}@{line.at.isoformat()}")
+        else:
+            guard += 1
+
+    return _reading(
+        "LIQPULL1",
+        evaluated=evaluated,
+        guard_working=guard,
+        recurrence=bad,
+        detail=(
+            f"streak_decisions={evaluated} valid={guard} early={','.join(early) or 'none'} "
+            f"good_bar_resets={','.join(resets) or 'none'} unmeasured_cancels={unmeasured}"
+        ),
+        unknown=unmeasured > 0,
     )
 
 
@@ -745,7 +875,9 @@ def _query_database(since: datetime) -> dict[str, int]:
         "virtual_zero_held_rows_schwab",
         "virtual_zero_held_rows_webull",
     }
-    if set(parsed) != expected or any(not isinstance(parsed[key], int) for key in expected):
+    if set(parsed) != expected or any(
+        type(parsed[key]) is not int or parsed[key] < 0 for key in expected
+    ):
         raise RuntimeError("database metric set or value types are invalid")
     return parsed
 
@@ -822,7 +954,15 @@ def collect_readings(now: datetime) -> list[Reading]:
     except Exception as exc:  # noqa: BLE001 - poison only the rows that use this source
         detail = f"v2 logs unreadable: {type(exc).__name__}: {exc}"
         readings.extend(
-            unknown_reading(key, detail) for key in ("BOOT1", "ROLL1", "OWNERROLL1", "SEED1")
+            unknown_reading(key, detail)
+            for key in (
+                "BOOT1",
+                "ROLL1",
+                "OWNERROLL1",
+                "SLOTCLEAR1",
+                "LIQPULL1",
+                "SEED1",
+            )
         )
     else:
         v2 = [line for line in v2_with_boot if line.at >= since]
@@ -831,6 +971,8 @@ def collect_readings(now: datetime) -> list[Reading]:
                 evaluate_boot(v2_with_boot, now=now),
                 evaluate_session_roll(v2, now=now, market_day=_market_day(now)),
                 evaluate_owner_roll(v2, now=now, market_day=_market_day(now)),
+                evaluate_fresh_sell_slot_clear(v2),
+                evaluate_liquidity_pull(v2),
                 evaluate_seed(v2),
             )
         )

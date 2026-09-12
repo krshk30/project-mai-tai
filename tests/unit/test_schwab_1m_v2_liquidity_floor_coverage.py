@@ -113,7 +113,7 @@ def test_a_working_order_is_still_managed_when_the_tape_thins() -> None:
     assert drafts, "the order was abandoned on a thin bar instead of being repriced/cancelled"
 
 
-def test_working_rest_cancels_on_the_third_consecutive_thin_bar() -> None:
+def test_working_rest_cancels_on_the_third_consecutive_thin_bar(caplog) -> None:
     strat = _strat()
     st = strat.watchlist_state("FTFT")
     _rest_tick(strat, st, trail=2.884325, volume=25_750)
@@ -125,11 +125,28 @@ def test_working_rest_cancels_on_the_third_consecutive_thin_bar() -> None:
     assert st.resting_active is True
     assert st.resting_below_floor_bars == 2
 
-    drafts = _rest_tick(strat, st, trail=2.884325, volume=2_301)
+    with caplog.at_level("INFO"):
+        drafts = _rest_tick(strat, st, trail=2.884325, volume=2_301)
     assert len(drafts) == 1
     assert drafts[0].intent_type == "cancel"
     assert drafts[0].metadata["reason"] == "liquidity_floor"
     assert st.resting_active is False
+    assert "reason=liquidity_floor resting_below_floor_bars=3" in caplog.text
+
+
+def test_soft_rest_disarm_logs_the_liquidity_streak_before_reset(caplog) -> None:
+    strat = _strat()
+    st = strat.watchlist_state("FTFT")
+    st.resting_active = True
+    st.resting_is_broker_order = False
+    st.resting_level = 2.884325
+    st.resting_below_floor_bars = 3
+
+    with caplog.at_level("INFO"):
+        strat._queue_resting_cancel(st, reason="liquidity_floor")
+
+    assert "[V2-RESTING-EH-DISARM] FTFT" in caplog.text
+    assert "reason=liquidity_floor resting_below_floor_bars=3" in caplog.text
 
 
 def test_a_good_bar_resets_the_thin_bar_streak() -> None:
