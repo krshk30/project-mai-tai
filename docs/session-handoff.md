@@ -240,14 +240,12 @@ and prove one protection cancellation and one Webull close attempt.**
 | **confirmation-exit race** | per-account in-flight ownership held to terminal close | unassigned |
 | **STOPMKT probe** | operator deferred: does a stop-market entry change the fill? | deferred by operator |
 | **PROV1** | arming on flips reconstructed from db-seed (649 occurrences) | unassigned |
-| **liquidity floor** | the cancel-on-floor-fail pattern; floor 10,000 | unassigned |
+| **liquidity floor** | ⭐ the *cancel* half is addressed by **#960** (pull only after 3 consecutive sub-floor bars, one good bar re-places) and watched by **LIQPULL1** — replay-proven, unexercised live. The floor VALUE (10,000) and the arm-time staleness remain open | unassigned |
 | **0.5% stop-limit band** | strands the entry on fast moves (YMAT flip bar) | unassigned |
 | **F6 / F8 / F9 / F10** | stale `current_profit_pct`; Webull manual-order ingestion | unassigned |
 | **BNC 11:03 · claim overhang · fan-out size · ELIG · AMEND1 · REJ1 silence** | carried from 09-08, unchanged | unassigned |
 
 ⭐ **`drift audit` is CLOSED** — #924 scheduled it; it is no longer unscheduled.
-
----
 
 ---
 
