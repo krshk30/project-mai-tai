@@ -1,0 +1,3 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+*/5 * * * * root /home/trader/project-mai-tai/ops/health/known_defect_regression_watch_cron.sh >> /var/log/project-mai-tai/known-defect-regression-watch.log 2>&1
