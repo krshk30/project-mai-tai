@@ -34,6 +34,7 @@ SESSION_ROLL_GRACE_MINUTES = 10
 WEBULL_429_BURST_COUNT = 10
 WEBULL_429_BURST_SECONDS = 60
 FRESH_SELL_MAX_BAR_AGE_SECONDS = 180
+LIQUIDITY_PULL_BARS = 3
 LIVE_ACCOUNTS = ("live:schwab_1m_v2", "live:orb")
 
 RECURRENCE = "RECURRENCE"
@@ -522,7 +523,7 @@ def evaluate_liquidity_pull(lines: Sequence[TimedLine]) -> Reading:
         symbol = match.group(1)
         count = int(match.group(2))
         evaluated += 1
-        if count < 3:
+        if count < LIQUIDITY_PULL_BARS:
             bad += 1
             early.append(f"{symbol}:{count}@{line.at.isoformat()}")
         else:

@@ -264,6 +264,12 @@ def test_fresh_sell_window_matches_the_live_entry_bar_horizon() -> None:
     assert watch.FRESH_SELL_MAX_BAR_AGE_SECONDS == MAX_BAR_AGE_SECONDS_FOR_EMIT
 
 
+def test_liquidity_pull_threshold_matches_the_strategy_rule() -> None:
+    from project_mai_tai.strategy_core import schwab_1m_v2
+
+    assert watch.LIQUIDITY_PULL_BARS == schwab_1m_v2._RESTING_LIQUIDITY_CANCEL_BARS
+
+
 @pytest.mark.parametrize("count", [1, 2])
 def test_liquidity_cancel_before_three_thin_bars_is_recurrence(count: int) -> None:
     result = watch.evaluate_liquidity_pull(
