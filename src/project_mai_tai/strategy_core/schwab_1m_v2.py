@@ -1020,8 +1020,7 @@ class SchwabV2Strategy:
         self._release_fanout_webull_claim(state, reason=reason)
         self._clear_fanout_segment_id(state, reason=reason, persist=False)
         self._reset_fanout_webull_slots(state)
-        state.cw_resting_taken = False
-        state.cw_reclaim_taken = False
+        self._clear_cw_slot_claims(state)
         state.cw_v2_emit_claimed = False
         state.cw_v2_emit_ms = 0
         self._clear_flip_owner_memory(state)
@@ -1704,11 +1703,41 @@ class SchwabV2Strategy:
             len(open_ids),
         )
 
+    @staticmethod
+    def _clear_cw_slot_claims(state: SymbolState) -> None:
+        """Release both entry-composition latches at a proven opportunity boundary.
+
+        The reconstructed-segment seed cap deliberately sets both slot bits without minting an
+        opportunity. A later genuine SELL starts a new short segment and must release that cap.
+        Owner retirement uses the same reset so the gate and every valid release stay paired.
+        """
+        state.cw_resting_taken = False
+        state.cw_reclaim_taken = False
+        state.cw_resting_suppressed_segment_id = 0
+
     def _end_flip_owner_on_sell(self, state: SymbolState) -> None:
         if not self._flip_owned_first_entry_enabled:
             return
         phase = state.flip_owner_phase
         if phase == "idle":
+            contradictory_owner_state = bool(
+                state.flip_owner_opportunity_id
+                or state.fanout_segment_id
+                or state.flip_owner_flip_bar_ts
+                or state.flip_owner_provisional_started_ms
+                or state.flip_owner_fill_accounts
+                or state.flip_owner_position_ids
+                or state.flip_owner_position_entry_ms
+                or state.flip_owner_open_positions
+                or state.flip_owner_first_rest_placed
+            )
+            if contradictory_owner_state:
+                self._set_flip_owner_unknown(
+                    state,
+                    reason="sell_flip_idle_owner_contains_evidence",
+                )
+                return
+            self._clear_cw_slot_claims(state)
             return
         if not self._flip_owner_evidence_fresh(state):
             self._set_flip_owner_unknown(
@@ -3631,12 +3660,26 @@ class SchwabV2Strategy:
         logger.info(
             "[V2-CW-STATE-PROBE] sym=%s armed=%s bars_waited=%d trig=%.4f seg_high=%.4f "
             "flip_level=%.4f entries_this_flip=%d max_per_flip=%d emit_claimed=%s "
-            "bars_since_exit=%d reclaim_gap=%d entries_held=%s pos_qty=%s",
+            "bars_since_exit=%d reclaim_gap=%d entries_held=%s pos_qty=%s atr_state=%s "
+            "atr_state_age=%d atr_trail=%s bars=%d cw_arm_bar_ts=%d "
+            "cw_resting_suppressed_segment_id=%d cw_resting_taken=%s cw_reclaim_taken=%s "
+            "resting_below_floor_bars=%d fanout_segment_id=%d position_qty_held=%s resting_active=%s "
+            "resting_flip_ms=%d resting_level=%.4f resting_slot=%s "
+            "flip_owner_evidence_at_ms=%d flip_owner_evidence_readable=%s "
+            "flip_owner_open_positions=%d flip_owner_phase=%s",
             state.symbol, state.cw_armed, state.cw_bars_waited, state.cw_trigger,
             state.cw_segment_high, state.cw_flip_level, state.cw_entries_this_flip,
             self._cw_v2_max_entries_per_flip, state.cw_v2_emit_claimed,
             state.cw_v2_bars_since_exit, self._cw_v2_reclaim_gap_bars,
             self._entries_held, state.position_qty,
+            state.atr_state, state.atr_state_age, state.atr_trail, len(state.bars),
+            state.cw_arm_bar_ts, state.cw_resting_suppressed_segment_id,
+            state.cw_resting_taken, state.cw_reclaim_taken, state.resting_below_floor_bars,
+            state.fanout_segment_id,
+            state.position_qty_held, state.resting_active, state.resting_flip_ms,
+            state.resting_level, state.resting_slot, state.flip_owner_evidence_at_ms,
+            state.flip_owner_evidence_readable, len(state.flip_owner_open_positions),
+            state.flip_owner_phase,
         )
 
     def _liquidity_floor_ok(self, state: SymbolState) -> bool:

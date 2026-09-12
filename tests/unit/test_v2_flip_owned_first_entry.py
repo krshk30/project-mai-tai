@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import ast
+import inspect
+import logging
+import textwrap
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -173,6 +177,124 @@ def _buy_flip(strategy: SchwabV2Strategy, state: SymbolState, clock: list[int]) 
     clock[0] += 1_000
     state.bars.append(_bar(clock[0]))
     strategy._cw_v2_track(state, _signal("BUY", state="long"))
+
+
+def _seed_cap(
+    strategy: SchwabV2Strategy,
+    clock: list[int],
+    symbol: str,
+) -> SymbolState:
+    from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+
+    state = strategy.watchlist_state(symbol)
+    state.bars.append(_bar(clock[0]))
+    state.cw_armed = True
+    state.cw_arm_bar_ts = clock[0] - 60_000
+    strategy._cw_armed_segment_safety_enabled = True
+    strategy._boot_ms = clock[0]
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy = strategy
+    bot._watch_start_ms = {symbol: clock[0]}
+    bot._cap_reconstructed_segment(symbol, stage="db-seed")
+    assert state.cw_resting_taken is True
+    assert state.cw_reclaim_taken is True
+    return state
+
+
+def test_seed_cap_still_suppresses_first_rest_before_a_fresh_sell() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _seed_cap(strategy, clock, "NCRA")
+    _book(strategy, clock, "NCRA")
+
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+
+    assert strategy.drain_pending_intents() == []
+    assert state.cw_resting_taken is True
+    assert state.cw_reclaim_taken is True
+
+
+def test_fresh_sell_releases_ownerless_seed_cap_and_places_first_rest() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _seed_cap(strategy, clock, "TNON")
+    _book(strategy, clock, "TNON")
+
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+
+    assert state.flip_owner_phase == "idle"
+    assert state.cw_resting_taken is False
+    assert state.cw_reclaim_taken is False
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+    intents = strategy.drain_pending_intents()
+    assert len(intents) == 1
+    assert intents[0].metadata["cw_entry_slot"] == "first"
+
+
+def test_fresh_sell_does_not_clear_contradictory_idle_owner_state() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _seed_cap(strategy, clock, "UNKNOWN")
+    state.flip_owner_opportunity_id = clock[0] - 1
+    _book(strategy, clock, "UNKNOWN")
+
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+
+    assert state.flip_owner_phase == "unknown"
+    assert state.cw_resting_taken is True
+    assert state.cw_reclaim_taken is True
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+    assert strategy.drain_pending_intents() == []
+
+
+def _loaded_state_fields(method: object) -> set[str]:
+    tree = ast.parse(textwrap.dedent(inspect.getsource(method)))
+    return {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.ctx, ast.Load)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "state"
+    }
+
+
+def test_cw_probe_covers_every_resting_admission_state_field(caplog) -> None:
+    admission_methods = (
+        SchwabV2Strategy._cw_v2_resting_track,
+        SchwabV2Strategy._cw_v2_reclaim_resting_track,
+        SchwabV2Strategy._strict_first_rest_admitted,
+        SchwabV2Strategy._flip_owner_evidence_fresh,
+    )
+    gate_fields = set().union(*(_loaded_state_fields(method) for method in admission_methods))
+    probe_source = inspect.getsource(SchwabV2Strategy._cw_state_probe)
+    existing_aliases = {
+        "cw_armed": "armed",
+        "cw_bars_waited": "bars_waited",
+        "cw_segment_high": "seg_high",
+        "position_qty": "pos_qty",
+        "symbol": "sym",
+    }
+    missing = {
+        field
+        for field in gate_fields
+        if f"{existing_aliases.get(field, field)}=" not in probe_source
+    }
+    assert not missing, f"CW probe hides entry-admission state: {sorted(missing)}"
+
+    strategy, _clock, _identity_writes, _owner_writes = _strategy()
+    state = strategy.watchlist_state("PROBE")
+    state.cw_resting_taken = True
+    state.cw_reclaim_taken = True
+    state.resting_below_floor_bars = 2
+    strategy._macd_probe_symbols = {"PROBE"}
+    with caplog.at_level(logging.INFO):
+        strategy._cw_state_probe(state)
+    line = next(
+        record.getMessage()
+        for record in caplog.records
+        if "[V2-CW-STATE-PROBE]" in record.getMessage()
+    )
+    assert "cw_resting_taken=True" in line
+    assert "cw_reclaim_taken=True" in line
+    assert "resting_below_floor_bars=2" in line
 
 
 def test_ftft_flip_consumes_the_first_entry_until_the_next_sell_flip() -> None:
