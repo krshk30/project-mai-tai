@@ -20,7 +20,8 @@
 | | |
 |---|---|
 | box (deployed) | **`5dae7c9a`** — read FROM THE BOX 2026-09-12 16:42 ET, branch `main`, checkout clean (0 files) |
-| GitHub main | **`5dae7c9a`** — identical |
+| GitHub main | **`5dae7c9a`** at the time of writing |
+| ⛔ **box pin** | **The box must STAY at `5dae7c9a` until Monday's pre-open gate passes.** The gate pins `EXPECTED_SHA=5dae7c9a`; a docs-only merge (this PR included) moves *main* ahead, which is fine, but **do not `git pull` on the box before the gate is green.** Sync the box after Monday pre-open, not before |
 | open PRs | **none** (this handoff PR excepted) |
 | exposure | **16:42 ET:** both live accounts flat — open managed rows **0**, nonzero `account_positions` rows **0**, both accounts resolved |
 | merges 09-12 | **#951** known-defect regression watch · **#964** SLOTCLEAR1/LIQPULL1 rows + DB-evidence hardening · **#965** liquidity threshold parity. All three independently reviewed and pinned by `claude-1` |
@@ -103,9 +104,10 @@ code before acceptance:
    alembic head with no schema change · **five** running-process flags · REST warmup population ·
    **ordered** BOOT-HOLD release · bar continuity across the restart · tracebacks · fresh 19-row
    watch status under 420s with zero recurrence and zero blind readings.
-   ⭐ **Bar continuity must show zero restart-spanning gaps.** Saturday's dry run read
-   `N/A_OFF_SESSION` legitimately — the restart happened outside a trading session, so there
-   were no adjacent bar pairs to bracket. On Monday that check becomes meaningful.
+   ⭐ **Only `gaps spanning restart = 0` is required.** ⛔ The bracketing check will STILL read
+   `N/A_OFF_SESSION` on Monday and that is correct — it grades the **Saturday** restart, which
+   happened outside a trading session, so no adjacent bar pair can ever bracket it. Do not
+   wait for it to turn green and do not treat `N/A_OFF_SESSION` as a failure.
 4. If blocked, **rerun after the scanner watchlist arrives.** ⛔ Do not manually bypass the hold.
    If still blocked at 07:00, **v2 is not entry-ready** — that is the honest outcome, not a
    formality to clear.
@@ -180,21 +182,29 @@ box, so the `13-21` UTC hour range only trims idle runs and is not the authority
 
 ---
 
-# ⛔ F1 — THE v2 POSITION COUNT IS SCHWAB-ONLY, AND THE TREND EXIT IS BLIND TO A WEBULL-ONLY FILL
+# ✅ F1 — FIXED BY #930 AND DEPLOYED, BUT NEVER EXERCISED
 
-`_fetch_position_maps` (`schwab_1m_v2_bot.py:1814`) filters **both** halves to
-`live:schwab_1m_v2`. A Webull-only fill therefore reads `position_qty=0`, and
-`schwab_1m_v2.py:2319` returns `None` before it can emit an exit.
+⛔ **The previous version of this file reopened F1 as a live defect. That was wrong, and `codex-2`
+caught it in review of #966.** #930 (*F1/F2: make ATR SELL observations account-neutral*, merged
+2026-09-09 16:02 UTC) replaced the strategy-owned, Schwab-sized `v2_cw_flip` close draft with a
+single account-neutral `v2_atr_sell_observation`. OMS evaluates **every** configured v2 account
+independently and binds only the managed row open when the stamped bar closed.
 
-**Proven live 2026-09-09 on YMAT:** ATR flipped SELL, `pos_qty=0`, **no exit fired**.
+Verified on the box 2026-09-12:
 
-⛔ **The hard stop, target and ladder DO work** — 57 filled pre-market Webull sells. **Only the flip
-is blind.** The flat check, coverage and reconciler are whole. Owner: `codex-2` (one-sided
-lifecycle). ⚠ This was never explained to the operator until today; do not let it go quiet again.
+| check | result |
+|---|---|
+| `v2_atr_sell_observation` handled in `oms/service.py` | present (line 1113) |
+| old `emit_cw_flip` / `_maybe_cw_flip_close` in the strategy | **0 occurrences** — removed, not left dormant |
+| times it has fired on live tape | **0** |
 
----
+⇒ **Status is DEPLOYED and UNEXERCISED, not open.** The YMAT 09-09 proof (`pos_qty=0`, flip SELL,
+no exit) describes the **pre-fix** behaviour and must not be quoted as current.
 
----
+⚠ Note the distinction that made this easy to get wrong: `_fetch_position_maps` is **still**
+scoped to the v2 account, and that is deliberate — it is the ENTRY-decision signal, and its own
+docstring says cross-venue fan-out intents must not enter it. The EXIT path is what #930 made
+account-neutral. Entry-scoped and exit-neutral are both correct at the same time.
 
 # ⛔ CONFIRMATION-EXIT RACE — open, live, unowned
 
@@ -223,7 +233,7 @@ and prove one protection cancellation and one Webull close attempt.**
 | **Webull one-sided entries** — measured; zero venue rejections; cause is our slot | **#955 / #960** — replay-proven only; **never run on live money** (see the Monday table above) |
 | **DRIFT1** — false-clean fixed and now scheduled | **GATE1 watcher** — armed; no qualifying shape has ever existed |
 | **HALT-FILTER / HALT-DETECTOR** — session-boundary artefact fixed at source | **INC1** — installed; synthetic incident opened and closed, no real one yet |
-| **F1 mechanism** — root cause proven live on YMAT | **STOPASK (#929)** — observability only, unexercised |
+| **F1 mechanism** — root cause proven on YMAT **and FIXED by #930** | **#930 account-neutral ATR exit** — deployed; has fired **0** times on live tape |
 | **#933 controls** — all five admission branches + the reactive guard mutation-red | **CONF3 / SIL1 / released-leg recovery / HDL1** — still never fired |
 
 ⛔ **UNKNOWN is not PASS.** Read `STATUS.txt`; do not infer health from the absence of a page.
@@ -236,7 +246,7 @@ and prove one protection cancellation and one Webull close attempt.**
 
 | item | question | owner |
 |---|---|---|
-| **F1/F2 one-sided lifecycle** | the fix for the blind trend exit | `codex-2` |
+| ~~**F1/F2 one-sided lifecycle**~~ | ✅ **CLOSED by #930**, deployed, never exercised. Was wrongly reopened in the 09-12 draft of this file | — |
 | **confirmation-exit race** | per-account in-flight ownership held to terminal close | unassigned |
 | **STOPMKT probe** | operator deferred: does a stop-market entry change the fill? | deferred by operator |
 | **PROV1** | arming on flips reconstructed from db-seed (649 occurrences) | unassigned |
