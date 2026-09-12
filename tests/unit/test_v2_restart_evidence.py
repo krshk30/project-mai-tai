@@ -108,6 +108,38 @@ def test_deliberately_inactive_service_needs_no_start_timestamp() -> None:
     assert state.started_at_utc == ""
 
 
+def test_deliberately_inactive_service_with_a_stale_pid_is_unmeasured() -> None:
+    with pytest.raises(vre.EvidenceUnknown, match="no ExecMainStartTimestamp for tv-alerts"):
+        vre.service_state(
+            "tv-alerts",
+            runner=_systemd_runner(
+                {
+                    "MainPID": "123",
+                    "NRestarts": "0",
+                    "ActiveState": "inactive",
+                    "SubState": "dead",
+                    "ExecMainStartTimestamp": "",
+                }
+            ),
+        )
+
+
+def test_deliberately_inactive_service_in_an_unexpected_substate_is_unmeasured() -> None:
+    with pytest.raises(vre.EvidenceUnknown, match="no ExecMainStartTimestamp for tv-alerts"):
+        vre.service_state(
+            "tv-alerts",
+            runner=_systemd_runner(
+                {
+                    "MainPID": "0",
+                    "NRestarts": "0",
+                    "ActiveState": "inactive",
+                    "SubState": "failed",
+                    "ExecMainStartTimestamp": "",
+                }
+            ),
+        )
+
+
 def test_required_service_without_a_start_timestamp_is_unmeasured() -> None:
     with pytest.raises(vre.EvidenceUnknown, match="no ExecMainStartTimestamp for strategy"):
         vre.service_state(
@@ -137,6 +169,20 @@ def test_expected_process_flag_requires_service_key_and_value() -> None:
 def test_warmup_bound_is_the_deployed_five_minute_contract() -> None:
     assert vre.REST_WARMUP_FRESH_AGE_SECONDS == int(REST_WARMUP_FRESH_THRESHOLD_SECS) == 300
     assert vre.BOOT_WARMUP_FALLBACK_BOUND_SECONDS == int(BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS) == 369
+
+
+@pytest.mark.parametrize(
+    ("restart", "expected"),
+    [
+        (datetime(2026, 9, 12, 15, 11, tzinfo=UTC), False),  # Saturday 11:11 ET
+        (datetime(2026, 9, 14, 15, 11, tzinfo=UTC), True),  # Monday 11:11 ET
+        (datetime(2026, 11, 26, 15, 11, tzinfo=UTC), False),  # Thanksgiving
+    ],
+)
+def test_restart_bar_session_uses_the_shared_market_calendar(
+    restart: datetime, expected: bool
+) -> None:
+    assert vre._restart_inside_bar_session(restart) is expected
 
 
 def _report_fixture(monkeypatch, tmp_path: Path):
@@ -218,6 +264,30 @@ def _report_fixture(monkeypatch, tmp_path: Path):
     return args, current, logs
 
 
+def _move_v2_report_start(current, logs, start: datetime) -> None:
+    current[vre.V2_SERVICE] = vre.ServiceState(
+        service=vre.V2_SERVICE,
+        pid=900,
+        active_state="active",
+        sub_state="running",
+        n_restarts=0,
+        started_at_utc=start.isoformat(),
+    )
+    stamp = start.strftime("%Y-%m-%d %H:%M:%S")
+    logs[vre.V2_SERVICE] = [
+        (
+            "schwab-1m-v2.log",
+            [
+                f"{stamp},100 INFO [V2-BOOT-RESTORE] restoration_complete=1 "
+                "evaluated=3 confirmed=3 rest_warmed=3 timeout_released=0 could_not_tell=0",
+                f"{stamp},200 INFO [V2-BOOT-HOLD] released - "
+                "restoration_complete=1 reconstructed_uncapped=0",
+                f"{stamp},300 INFO healthy",
+            ],
+        )
+    ]
+
+
 def test_report_contains_every_required_denominator(monkeypatch, tmp_path: Path, capsys) -> None:
     args, _, _ = _report_fixture(monkeypatch, tmp_path)
 
@@ -239,6 +309,37 @@ def test_report_contains_every_required_denominator(monkeypatch, tmp_path: Path,
     assert "gaps>90s=2/99" in output and "gaps spanning restart=0/2" in output
     assert "headers=0/3" in output and "nearest-preceding timestamp scope" in output
     assert "2026-09-10 20:25:00 EDT (2026-09-11 00:25:00 UTC)" in output
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        datetime(2026, 9, 12, 15, 11, tzinfo=UTC),
+        datetime(2026, 11, 26, 15, 11, tzinfo=UTC),
+    ],
+)
+def test_report_does_not_require_bar_brackets_outside_a_market_session(
+    monkeypatch, tmp_path: Path, capsys, start: datetime
+) -> None:
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    _move_v2_report_start(current, logs, start)
+    monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: (0, 0, 0, 0, 0))
+
+    assert vre.report(args, runner=lambda command: "") == 0
+    output = capsys.readouterr().out
+    assert "| Bar continuity |" in output
+    assert "| N/A_OFF_SESSION |" in output
+
+
+def test_report_requires_bar_brackets_during_a_weekday_market_session(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    _move_v2_report_start(current, logs, datetime(2026, 9, 14, 15, 11, tzinfo=UTC))
+    monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: (0, 0, 0, 0, 0))
+
+    assert vre.report(args, runner=lambda command: "") == 1
+    assert "no adjacent live-bar pair brackets the in-session v2 restart" in capsys.readouterr().out
 
 
 def test_report_fails_if_an_untouched_service_restarted(monkeypatch, tmp_path: Path) -> None:
