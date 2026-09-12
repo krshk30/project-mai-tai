@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 from zoneinfo import ZoneInfo
 
+from project_mai_tai.strategy_core.time_utils import is_fillable_et_session
+
 ET = ZoneInfo("America/New_York")
 UNIT_PREFIX = "project-mai-tai-"
 V2_SERVICE = "schwab-1m-v2"
@@ -372,6 +374,10 @@ def _bar_continuity(runner: Runner, restart: datetime) -> tuple[int, int, int, i
         raise EvidenceUnknown("bar-continuity query returned a non-numeric count") from exc
 
 
+def _restart_inside_bar_session(restart: datetime) -> bool:
+    return is_fillable_et_session(restart, 4, 20)
+
+
 def snapshot(path: Path, runner: Runner = run_checked) -> bool:
     captured = datetime.now(UTC)
     accounts_found, managed_open, positions_nonzero = _flat_counts(runner)
@@ -714,8 +720,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     rows.append(("BOOT-HOLD released", hold_text, "PASS" if released else "FAIL"))
 
     symbols, pairs, gaps, brackets, spanning = _bar_continuity(runner, v2_start)
-    local_start = v2_start.astimezone(ET)
-    restart_inside_bar_session = 4 <= local_start.hour < 20
+    restart_inside_bar_session = _restart_inside_bar_session(v2_start)
     bar_ok = spanning == 0 and (not restart_inside_bar_session or brackets > 0)
     if spanning:
         failures.append(f"{spanning} bar gap(s) span the v2 restart")
