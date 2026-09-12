@@ -10,6 +10,8 @@ import subprocess
 from types import SimpleNamespace
 import sys
 
+import pytest
+
 
 SCRIPT = Path(__file__).resolve().parents[2] / "ops" / "health" / "known_defect_regression_watch.py"
 SPEC = importlib.util.spec_from_file_location("known_defect_regression_watch", SCRIPT)
@@ -29,7 +31,9 @@ def lines(*payloads: tuple[int, str]):
 
 def reading(key: str, verdict: str) -> object:
     recurrence = int(verdict == watch.RECURRENCE)
-    return watch.Reading(key, verdict, 1, int(not recurrence), recurrence, "evidence")
+    return watch.Reading(
+        key, verdict, 1, int(not recurrence), recurrence, recurrence > 0, "evidence"
+    )
 
 
 def database_metrics(**overrides: int) -> dict[str, int]:
@@ -333,6 +337,69 @@ def test_failed_evidence_keeps_every_catalog_row_visible() -> None:
     )
 
 
+def test_reading_contract_requires_every_catalog_row_exactly_once() -> None:
+    rows = watch.failed_evidence_readings("database unavailable")
+
+    with pytest.raises(RuntimeError, match="missing=BOOT1"):
+        watch.validate_readings([row for row in rows if row.key != "BOOT1"])
+    with pytest.raises(RuntimeError, match="duplicates=BOOT1"):
+        watch.validate_readings([*rows, rows[0]])
+
+
+@pytest.mark.parametrize("recurred", [None, "yes", 0, 1, [], {}])
+def test_reading_contract_requires_recurred_to_be_an_explicit_boolean(recurred) -> None:
+    rows = watch.failed_evidence_readings("database unavailable")
+    original = next(row for row in rows if row.key == "BOOT1")
+    malformed = watch.Reading(
+        original.key,
+        original.verdict,
+        original.evaluated,
+        original.guard_working,
+        original.recurrence,
+        recurred,
+        original.detail,
+    )
+
+    with pytest.raises(RuntimeError, match="recurred must be present and boolean"):
+        watch.validate_readings([malformed if row.key == malformed.key else row for row in rows])
+
+
+def test_main_turns_a_malformed_collector_answer_into_cannot_tell(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    rows = watch.failed_evidence_readings("unused")
+    original = next(row for row in rows if row.key == "BOOT1")
+    malformed = watch.Reading(
+        original.key,
+        original.verdict,
+        original.evaluated,
+        original.guard_working,
+        original.recurrence,
+        None,
+        original.detail,
+    )
+    monkeypatch.setattr(
+        watch,
+        "collect_readings",
+        lambda _now: [malformed if row.key == malformed.key else row for row in rows],
+    )
+
+    rc = watch.main(
+        [
+            "--state",
+            str(tmp_path / "state.json"),
+            "--status",
+            str(tmp_path / "STATUS.txt"),
+            "--no-page",
+        ]
+    )
+
+    assert rc == 2
+    output = capsys.readouterr().out
+    assert "[COULD_NOT_TELL] BOOT1" in output
+    assert "recurred must be present and boolean" in output
+
+
 def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None:
     def logs(service: str, since: datetime):
         del since
@@ -533,7 +600,7 @@ def test_could_not_tell_pages_and_is_not_rendered_as_clean(tmp_path) -> None:
     state = tmp_path / "state.json"
     status = tmp_path / "STATUS.txt"
     pages: list[str] = []
-    row = watch.Reading("BOOT1", watch.COULD_NOT_TELL, 0, 0, 0, "log unreadable")
+    row = watch.Reading("BOOT1", watch.COULD_NOT_TELL, 0, 0, 0, False, "log unreadable")
     rc = watch._run_watch(
         [row],
         now=NOW,
@@ -560,6 +627,11 @@ def test_delivery_is_imported_and_wrapper_has_no_second_notifier() -> None:
     )
     assert not re.search(r"(^|[;&|]\s*)curl\b", wrapper_code)
     assert "ntfy.sh" not in wrapper_code
+
+
+def test_repository_has_one_authoritative_regression_watch() -> None:
+    assert SCRIPT.exists()
+    assert not SCRIPT.with_name("regression_watch.py").exists()
 
 
 def test_cron_install_owns_one_file_and_preserves_unrelated_cron(tmp_path) -> None:

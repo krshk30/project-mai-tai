@@ -84,6 +84,7 @@ class Reading:
     evaluated: int
     guard_working: int
     recurrence: int
+    recurred: bool
     detail: str
 
 
@@ -276,7 +277,7 @@ def _reading(
         verdict = GUARD_WORKING
     else:
         verdict = OBSERVED_CLEAN
-    return Reading(key, verdict, evaluated, guard_working, recurrence, detail)
+    return Reading(key, verdict, evaluated, guard_working, recurrence, recurrence > 0, detail)
 
 
 def evaluate_boot(lines: Sequence[TimedLine], *, now: datetime) -> Reading:
@@ -345,9 +346,7 @@ def evaluate_session_roll(
     )
 
 
-def evaluate_owner_roll(
-    lines: Sequence[TimedLine], *, now: datetime, market_day: bool
-) -> Reading:
+def evaluate_owner_roll(lines: Sequence[TimedLine], *, now: datetime, market_day: bool) -> Reading:
     anchor = session_anchor(now)
     due = market_day and now >= anchor + timedelta(minutes=SESSION_ROLL_GRACE_MINUTES)
     if not due:
@@ -563,16 +562,16 @@ def static_readings() -> list[Reading]:
     rows: list[Reading] = []
     for spec in CATALOG:
         if spec.mode == "UNARMED":
-            rows.append(Reading(spec.key, UNARMED, 0, 0, 0, spec.recurrence_shape))
+            rows.append(Reading(spec.key, UNARMED, 0, 0, 0, False, spec.recurrence_shape))
         elif spec.mode == "DELEGATED":
-            rows.append(Reading(spec.key, DELEGATED, 0, 0, 0, spec.delegated_to))
+            rows.append(Reading(spec.key, DELEGATED, 0, 0, 0, False, spec.delegated_to))
     return rows
 
 
 def failed_evidence_readings(detail: str) -> list[Reading]:
     rows = static_readings()
     rows.extend(
-        Reading(spec.key, COULD_NOT_TELL, 0, 0, 0, detail)
+        Reading(spec.key, COULD_NOT_TELL, 0, 0, 0, False, detail)
         for spec in CATALOG
         if spec.mode == "ARMED"
     )
@@ -580,7 +579,49 @@ def failed_evidence_readings(detail: str) -> list[Reading]:
 
 
 def unknown_reading(key: str, detail: str) -> Reading:
-    return Reading(key, COULD_NOT_TELL, 0, 0, 0, detail)
+    return Reading(key, COULD_NOT_TELL, 0, 0, 0, False, detail)
+
+
+def validate_readings(readings: Sequence[Reading]) -> list[Reading]:
+    """Refuse an incomplete or malformed answer from the collector."""
+    rows = list(readings)
+    expected = set(SPEC_BY_KEY)
+    actual = [row.key for row in rows]
+    missing = sorted(expected - set(actual))
+    unknown = sorted(set(actual) - expected)
+    duplicates = sorted(key for key in set(actual) if actual.count(key) > 1)
+    if missing or unknown or duplicates:
+        raise RuntimeError(
+            "reading population mismatch "
+            f"missing={','.join(missing) or '-'} "
+            f"unknown={','.join(unknown) or '-'} "
+            f"duplicates={','.join(duplicates) or '-'}"
+        )
+
+    armed_verdicts = {
+        RECURRENCE,
+        GUARD_WORKING,
+        OBSERVED_CLEAN,
+        UNEXERCISED,
+        COULD_NOT_TELL,
+    }
+    for row in rows:
+        for field in ("evaluated", "guard_working", "recurrence"):
+            value = getattr(row, field)
+            if type(value) is not int or value < 0:
+                raise RuntimeError(f"{row.key}.{field} must be a nonnegative int")
+        if type(row.recurred) is not bool:
+            raise RuntimeError(f"{row.key}.recurred must be present and boolean")
+        if row.recurred != (row.recurrence > 0):
+            raise RuntimeError(f"{row.key}.recurred disagrees with recurrence count")
+        if (row.verdict == RECURRENCE) != row.recurred:
+            raise RuntimeError(f"{row.key}.verdict disagrees with recurred")
+
+        mode = SPEC_BY_KEY[row.key].mode
+        allowed = armed_verdicts if mode == "ARMED" else {mode}
+        if row.verdict not in allowed:
+            raise RuntimeError(f"{row.key}.verdict {row.verdict!r} is invalid for mode {mode}")
+    return sorted(rows, key=lambda row: list(SPEC_BY_KEY).index(row.key))
 
 
 DATABASE_SQL = r"""
@@ -781,8 +822,7 @@ def collect_readings(now: datetime) -> list[Reading]:
     except Exception as exc:  # noqa: BLE001 - poison only the rows that use this source
         detail = f"v2 logs unreadable: {type(exc).__name__}: {exc}"
         readings.extend(
-            unknown_reading(key, detail)
-            for key in ("BOOT1", "ROLL1", "OWNERROLL1", "SEED1")
+            unknown_reading(key, detail) for key in ("BOOT1", "ROLL1", "OWNERROLL1", "SEED1")
         )
     else:
         v2 = [line for line in v2_with_boot if line.at >= since]
@@ -948,7 +988,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         now = datetime.now(UTC)
         try:
-            readings = collect_readings(now)
+            readings = validate_readings(collect_readings(now))
         except Exception as exc:  # noqa: BLE001 - unreadable evidence is never a clean run
             readings = failed_evidence_readings(
                 f"evidence collection failed: {type(exc).__name__}: {exc}"

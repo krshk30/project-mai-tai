@@ -5,6 +5,13 @@ alert on a marker merely because the marker exists. Every row records the eviden
 `GUARD_WORKING` polarity, and the distinct `RECURRENCE` polarity. A row that lacks that last
 discriminator is `UNARMED`; it cannot report a clean zero.
 
+This is the repository's one authoritative regression watch. The earlier facts-on-stdin
+`regression_watch.py` evaluator was removed because no production collector fed it. The separate
+seed-exposure detector fix remains in place; it is independent evidence used by its own check.
+Every collected row must be present exactly once and carry an explicit boolean `recurred` answer
+consistent with its numeric recurrence count. Missing, duplicate, or malformed answers turn all
+armed rows into `COULD_NOT_TELL`; they never become an all-clear.
+
 The watch is read-only and imports the pager, delivery-result handling, state loader, and atomic
 state writer from `ops/health/unexercised_watch.py`. It creates no second notification route.
 
