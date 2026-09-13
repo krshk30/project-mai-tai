@@ -3,71 +3,210 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-> ⛔⭐⭐⭐ **RECLAIM1 (#933) IS DEPLOYED AND DELIBERATELY DARK.** It implements the operator's
-> 2026-09-09 ruling — *one trade per ATR segment, the first resting entry only, reclaim no way* —
-> behind `strategy_schwab_1m_v2_flip_owned_first_entry_enabled`, which **defaults `False` and is
-> ABSENT from the env**, so nothing overrides the default. The running v2 emits **zero**
-> `V2-FLIP-OWNER-*` markers. Merging and deploying it changed no trading behaviour.
-> **Enabling it is an operator decision that has not been made.**
->
-> ⚠ Live `schwab_1m_v2` therefore still runs the 09-08 profile: `+5%` target · `−8%` hard stop ·
-> reclaim OFF · one entry per ATR segment (via the old `_cw_v2_max_entries_per_flip` path, **not**
-> RECLAIM1). Maximum loss per trade remains 60% larger than before 09-08.
+**Written by `claude-1`, 2026-09-12 16:55 ET.** Weekend batch `2026-09-12-known-defect-watch`.
+`codex-2` integrated and merged; the author never reviews or merges their own work.
 
-**Written by `claude-1`, 2026-09-09 19:20 ET.** Batch `2026-09-09-reclaim1-dark-gate1-live`.
-Integrator for this rotation. Needs `codex-2`'s review before merge — the author never reviews.
+> ⛔⭐⭐⭐ **RECLAIM1 IS LIVE, NOT DARK.** The previous version of this file said
+> `flip_owned_first_entry_enabled` was *absent and defaulted `False`*. **That is wrong as of today.**
+> Read from the running v2 process (pid `1089323`) on 2026-09-12 20:55 UTC:
+> `MAI_TAI_STRATEGY_SCHWAB_1M_V2_FLIP_OWNED_FIRST_ENTRY_ENABLED=true`.
+> This implements the operator's standing ruling — *one trade per ATR segment, the first resting
+> entry only, no reclaim anywhere in the system.* Do not describe it as dark again.
 
 ---
 
-# ✅ PRODUCTION — main and box IN SYNC at `7a879a22`
+# ✅ PRODUCTION — RUNTIME SHA is `2d54d29c` (main may sit ahead by docs-only commits)
+
+**Written by `claude-1`, 2026-09-13 (Sunday). Monday 2026-09-14 is the first live session.**
 
 | | |
 |---|---|
-| box (deployed) | **`7a879a22d75662c8ca4b7fd7488d27b9a0c1cbc1`** — read FROM THE BOX 2026-09-09 19:10 ET, branch `main`, checkout clean |
-| GitHub main | **`7a879a22`** — **identical**. Everything merged today is deployed |
-| open PRs | **none** (this handoff PR excepted) |
-| exposure | **19:12 ET:** virtual positions **0** · open broker orders **0** · open/pending intents **0** · **0 tracebacks** in oms since the 23:03 UTC restart |
-| merges 09-09 (**10**) | #924 DRIFT1 · #925 ORB-LEFT · #926 HALT-FILTER · #927 HALT-DETECTOR · #928 INC1 · #929 STOPASK · #930 F1/F2 account-neutral · **#931 GATE1 watch** · **#933 RECLAIM1 (dark)** · #934 Webull investigation. #932 CLOSED as superseded by #933 |
-| deploys 09-09 | **THREE windows, not one** — from the box's own reflog (all ET; the box clock is `Etc/UTC`). **(1) 06:54** → `fd22eb4` (#924/#925); ORB restarted 9s later at 10:54:27 UTC for `orb_app.py`. **(2) 07:27** → `72b13393` (#926); **pull only, no restart** — it is an `ops/health` script. **(3) 19:03** → `7a879a22` (the remaining six); oms+strategy **23:03:42 UTC**, v2 **23:05:54 UTC** |
-| ⚠ restart scope | The `oms` target restarts **oms AND strategy** together. Do not plan around "oms only" |
-| ⛔ ORB | **running, and it is the PAPER path** — `[ORB-PAPER-ENTRY] … RECORDED_NOT_A_FILL`. Restarted **06:54 ET** (10:54 UTC) for the ORB-LEFT work (#925), and again earlier at 05:22 ET (09:22 UTC) by the operator. Not live money. Any memory saying the service is disabled is stale |
+| box (deployed) | **`2d54d29c`** — read FROM THE BOX 2026-09-13 22:54 UTC, branch `main`, checkout clean (0 files) |
+| GitHub main | **`2d54d29c`** at the time of writing. ⭐ **Merging this handoff PR moves main ahead of the box BY DESIGN — see the DOCS-ONLY DIVERGENCE rule below. It is not a deploy gap and needs no sync and no restart** |
+| gate pin | `preopen.sh` pins `EXPECTED_SHA=2d54d29cd58caa20a70cf3cd61f5ba1aa11c8a7f` matching the box, **and** carries `--expected-quiet-service reconciler`. Updated atomically with the sync |
+| open PRs | **none** — this handoff PR excepted |
+| exposure | both live accounts flat — 0 non-closed managed rows, 0 nonzero `account_positions`, 0 working broker orders |
+| merges 09-12 → 09-13 | **#951** watch · **#964** SLOTCLEAR1/LIQPULL1 rows · **#965** threshold parity · **#967** log scoping · **#968** zero-record labelling · **#969** expected-quiet services. All independently reviewed and pinned by `claude-1` |
 
-| service | pid | started (UTC) | | service | pid |
-|---|---|---|---|---|---|
-| oms | **180952** | **23:03:42** | | market-data | 2202865 |
-| strategy | **180963** | **23:03:42** | | market-capture | 2202817 |
-| schwab-1m-v2 | **181816** | **23:05:54** | | reconciler | 2202771 |
-| control | 4001261 | 18:57:00 (09-08) | | orb | (paper) 10:54:27 UTC = 06:54 ET |
+## Restarts — THREE services, in two windows, both on 09-12
 
-All three restarted services: `active`, `NRestarts=0`. v2 warmed **3/3**, streamer connected, one
-REST gap-fill recorded during restart. No migrations ran.
+⛔ The earlier draft of this file said "v2 only". That was true of the 16:34 window only.
 
----
+| window (ET) | services | why |
+|---|---|---|
+| **16:34:27** | `schwab-1m-v2` | #964 adds `resting_below_floor_bars=` to the resting-cancel lines; without it **LIQPULL1** cannot read the streak and pages `COULD_NOT_TELL` on every liquidity cancel |
+| **17:17:54** | `oms`, `reconciler` | **#957** had been on disk but unloaded — oms started 18.4h before it merged. **#961** (page only actionable alert transitions) had never loaded at all: the reconciler had been up since **08-30**, 13 days |
 
-# FLAGS — read from the RUNNING v2 process (pid 181816), not the env file
+⚠ `project-mai-tai-oms.service` does **NOT** restart `strategy` with it — that is the oms *target*.
+Only two services restarted in that window. `strategy` was verified not to load any changed module
+(`schwab_1m_v2`, `v2_flip_entry_ownership`, `reconciliation`), so nothing stale runs there.
+
+| service | pid | started (UTC) | | service | pid | started (UTC) |
+|---|---|---|---|---|---|---|
+| **schwab-1m-v2** | **1089323** | 09-12 20:34:27 | | orb (paper) | 609358 | 09-11 06:30:47 |
+| **oms** | **1105862** | 09-12 21:17:54 | | market-data | 2202865 | 08-30 19:54:39 |
+| **reconciler** | **1105870** | 09-12 21:17:55 | | market-capture | 2202817 | 08-30 19:54:38 |
+| strategy | 555227 | 09-11 00:14:59 | | control | 311547 | 09-10 12:16:19 |
+
+## Post-sync evidence (gate run 2026-09-13 22:54 UTC, re-derived by `claude-1`, not carried over)
+
+| row | result |
+|---|---|
+| Restarted services | **PASS 3/3** |
+| Services not restarted | **PASS 6/6** |
+| Both accounts flat before AND after | **PASS** — 0 managed rows, 0 broker positions, 0 working orders |
+| Migration | **PASS** — `20260910_0020`, no schema change |
+| Running-process flags | **PASS 5/5** |
+| Bar continuity | `N/A_OFF_SESSION` — grades the **Saturday** restart, which was off-session. ⛔ It stays N/A on Monday; only `gaps spanning restart = 0` is required |
+| Tracebacks | **`PARTIAL_N/A`** — v2 and oms both **0 tracebacks** against real denominators; `reconciler=N/A_EXPECTED_QUIET(0/0)` |
+| REST warmup · BOOT-HOLD released | **FAIL** — the only two, both Monday-dependent |
+
+⚠ **Record counts are point-in-time and grow constantly**, so exact denominators are stale the
+moment they are written — I measured different totals from `codex-2` an hour apart for this reason.
+What is durable is the SHAPE: zero tracebacks, both trading services measured against real
+denominators, reconciler expected-quiet.
+
+⛔ The **reconciler writes no log at all** — 0 bytes since 08-28 — so its row is *unmeasured*, not
+*verified clean*. #969 makes that distinction explicit and makes an **undeclared** silence FAIL, so
+if oms or v2 ever goes silent the gate reds instead of quietly passing.
+
+# FLAGS — read from the RUNNING processes, not the env file (2026-09-13 22:54 UTC)
 
 | flag | value | note |
 |---|---|---|
-| `CW_V2_RECLAIM_ENABLED` | **false** | also halves `_cw_v2_max_entries_per_flip` to 1 — two changes, not one |
-| `flip_owned_first_entry_enabled` | **absent → default `False`** | RECLAIM1 dark |
-| `OMS_V2_CW_TARGET_PCT` | **5.0** | |
-| `OMS_V2_CW_HARD_STOP_PCT` | **8.0** | |
-| `OMS_V2_RTH_EDGE_BRACKET_ENABLED` | **false** | #647 Gate 1 NOT waived — see below |
-| `ATR_FLIP_VOL_FLOOR` | **10000** | |
-| `CW_V2_RECLAIM_GAP_BARS` | 1 | |
+| `FLIP_OWNED_FIRST_ENTRY_ENABLED` | **`true`** | ⛔ **RECLAIM1 LIVE.** Was `absent/False` on 09-09 |
+| `CW_V2_RECLAIM_ENABLED` | `false` | no reclaim in the system, per the operator's ruling |
+| `CONFIRMATION_ACCOUNT_NEUTRAL_DISCOVERY_ENABLED` | `true` | #945 |
+| `ATR_FLIP_PROBE_SYMBOLS` | `*` | ⭐ **fleet-wide, and load-bearing** — SLOTCLEAR1 has no denominator without it |
+| `MACD_PROBE_SYMBOLS` | `*` | ⭐ same; five flags are required at pre-open, not four |
+| `ATR_FLIP_VOL_FLOOR` | `10000` | |
+| `CW_V2_RECLAIM_GAP_BARS` | `1` | |
+| `OMS_V2_CW_TARGET_PCT` / `HARD_STOP_PCT` | `5.0` / `8.0` | read from the **oms** process |
+| `OMS_V2_RTH_EDGE_BRACKET_ENABLED` | `false` | #647 Gate 1 still not waived |
 
 ---
 
-# ⭐⭐ TODAY IN ONE LINE
+# 🔔 KNOWN-DEFECT REGRESSION WATCH — INSTALLED 2026-09-12 20:35 UTC
 
-Ten PRs merged and deployed across three windows; RECLAIM1 built to the operator's one-entry-per-flip ruling and
-shipped **dark** with a fail-safe; the Gate 1 watcher armed; and the Webull one-sided-entry question
-answered — **zero venue rejections in 54 orders**, the two missing legs were our own consumed
-fan-out slot.
+One dedicated `/etc/cron.d/project-mai-tai-known-defect-regression-watch`, `root:root 0644`,
+sha256-identical to the reviewed source, **shared crontab untouched**. Self-test delivered and
+**confirmed received on the operator's phone**.
+
+```
+*/5 * * * * root /home/trader/project-mai-tai/ops/health/known_defect_regression_watch_cron.sh
+```
+
+⛔ **The cron runs every 5 minutes but the wrapper only evaluates 03:50–20:15 ET on weekdays**
+(`CRON_TZ` is ignored on this box, so the guard lives inside the wrapper). `STATUS.txt` will sit
+frozen all weekend at the 20:36 UTC dry run. **That is correct, not a fault.**
+
+**Dry run: 19/19 rows** — 1 `OBSERVED_CLEAN`, 9 `UNEXERCISED`, 5 `UNARMED`, 4 `DELEGATED`; zero
+`RECURRENCE`, zero `COULD_NOT_TELL`. The only row with a real denominator is `W4291`
+(3,020 Webull position reads, 0 backoff markers). ⛔ **`UNARMED` and `DELEGATED` are inventory
+states, never passes.**
 
 ---
 
-# 🔔 GATE 1 WATCHER IS LIVE — first page possible 09:30 ET tomorrow
+# ⭐⭐ MONDAY 2026-09-14 PRE-OPEN — the corrected list
+
+⛔ `codex-2`'s fail-closed gate **supersedes** `claude-1`'s original helper, which is preserved at
+`/home/trader/preopen.sh.claude-20260912`. Four defects in the original, all verified against the
+code before acceptance:
+
+1. **Four flags, not five** — `MACD_PROBE_SYMBOLS` was omitted.
+2. **Managed rows only** — it never checked `account_positions`, so a broker position with no
+   managed row read as flat.
+3. ⛔ **Restore-before-release ordering unproven** — `tail -1 | grep released` would have PASSED a
+   release that *preceded* restoration, which is precisely the `BOOT1` defect. The replacement
+   requires `row[0] >= completion_stamp`.
+4. **Fail-open error suppression** — a failed query printed nothing and was read as flat. The
+   replacement also uses `2>/dev/null`, but value-tests every result, so an error becomes an empty
+   string that **fails** the check. Same construct, opposite polarity.
+
+## The steps
+
+1. **~06:30 ET:** `ssh mai-tai-vps /home/trader/preopen.sh`
+2. Require the literal final line **`PASS: Monday pre-open gate is green.`** Anything else is
+   `BLOCKED`. **Exit 1 is the gate working.**
+3. It verifies in one pass: run window before 07:00 · SHA `2d54d29c` and clean tree · v2 identity
+   pid `1089323`, `NRestarts=0`, exact start timestamp · installed watch hash/mode/schedule ·
+   restarted vs untouched service pids · **both accounts flat, managed rows AND broker positions** ·
+   alembic head with no schema change · **five** running-process flags · REST warmup population ·
+   **ordered** BOOT-HOLD release · bar continuity across the restart · tracebacks · fresh 19-row
+   watch status under 420s with zero recurrence and zero blind readings.
+   ⭐ **Only `gaps spanning restart = 0` is required.** ⛔ The bracketing check will STILL read
+   `N/A_OFF_SESSION` on Monday and that is correct — it grades the **Saturday** restart, which
+   happened outside a trading session, so no adjacent bar pair can ever bracket it. Do not
+   wait for it to turn green and do not treat `N/A_OFF_SESSION` as a failure.
+4. If blocked, **rerun after the scanner watchlist arrives.** ⛔ Do not manually bypass the hold.
+   If still blocked at 07:00, **v2 is not entry-ready** — that is the honest outcome, not a
+   formality to clear.
+
+⛔ **The Saturday restart did NOT pre-drain the boot hold.** The hold releases only on restoration
+completing against a **non-empty evaluated population**; a weekend has no scanner watchlist
+(`scanner_evaluated=0 reason=empty_evaluated_population_after_exclusions`). It re-HELDs every ~60s
+all weekend and releases Monday exactly as it would have after a Monday restart. **09-11's took
+18.8 minutes.** [[a gate whose release depends on DATA cannot be pre-satisfied by running earlier]]
+
+⭐⭐ **DOCS-ONLY DIVERGENCE IS EXPECTED — do NOT sync or restart for it.** The RUNTIME SHA is
+`2d54d29c`. Merging a docs-only PR (this handoff included) moves **main** ahead of it immediately,
+and that is the normal, correct state. It is **not** a deploy gap.
+
+- **Monday's gate is unaffected.** `EXPECTED_SHA` is checked against the **box checkout**, not
+  against GitHub main. Main moving ahead cannot turn the gate red.
+- **Test it the right way:** `git diff --name-only <box-sha> origin/main`. Treat the box as behind
+  **only if something outside `docs/` appears**.
+- ⛔ **Do not `git pull` on the box to "fix" a docs-only divergence.** A sync drags in the
+  `EXPECTED_SHA` and `--expected-quiet-service` pairing below, and a needless sync before a live
+  session is risk taken for nothing.
+
+⛔ **SYNC RULE — the gate's config moves WITH the checkout, in one action.** Applied twice now
+(`5dae7c9a` → `d87d8d1b` → `2d54d29c`), each time without restarting a service. Sync the checkout
+and leave `EXPECTED_SHA` behind and the gate fails on **checkout identity** rather than on anything
+real — an alarming red that means nothing.
+
+⭐ #969 added a second thing that travels with it: `--expected-quiet-service reconciler`. This is
+not optional decoration. I ran the tool on the box **both ways** before it merged: without the flag
+the reconciler reads `UNMEASURED(0/0)` and **FAILS** the Tracebacks row; with it, it reads
+`N/A_EXPECTED_QUIET(0/0)` and the run is left with only the Monday-dependent failures. **Code, flag
+and `EXPECTED_SHA` land together or not at all.**
+
+⚠ **Two properties of the gate.** It pins `EXPECTED_PID` and the exact start timestamp, so a weekend
+reboot (unattended upgrades have restarted this fleet before) fails it loudly rather than passing on
+a different process — re-verify, never relax the pin. And `EXPECTED_DATE=2026-09-14` makes it a
+**one-day** gate; it refuses to run Tuesday and is not a daily tool.
+
+---
+
+# ⛔⭐⭐ WHAT MONDAY CAN AND CANNOT PROVE — event-specific, no day-level verdict
+
+| fix | what it needs to be exercised | status |
+|---|---|---|
+| **#955** fresh-SELL latch clear | a seed-capped symbol takes a fresh SELL **and then places** | replay-proven only; first live money |
+| **#960** 3-bar volume pull | the thin-volume sequence | replay-proven only |
+| **#945** account-neutral confirmation discovery | **a Webull-only fill** — has never once occurred | deployed, unexercised |
+| **#946 / #947** | their **own** OCO and false-flip conditions | ⛔ unproven; a Webull-only fill does **not** validate them |
+| **SLOTCLEAR1 / LIQPULL1** | a fresh SELL; a liquidity cancel | never seen live tape — Saturday proved they *execute*, not that they *catch* |
+
+⛔ **Grade the first qualifying entry as a single event, not the day.**
+
+---
+
+# 🔔 ALERT INTERPRETATION
+
+The watch pages **once per episode**; failed delivery retries next run and a cleared episode
+re-arms. ⇒ **Repeated pages on the same row _without an intervening clear_ mean delivery or state
+trouble** — check `state.json` before treating it as a defect. ⭐ But if the condition clears,
+re-arms, and then genuinely recurs, **a second page is correct** and is a real defect, not noise. Any `COULD_NOT_TELL` is a **lost evidence
+source**: not a pass, not noise, wants a look the same day.
+
+⭐ Separately, the operator's standing tolerance is **~10 alerts/day across ALL fleet alerting**
+(stated 09-11 against a 34-alert day). ⛔ **This watch's own clean-day target is ZERO**, not a share
+of the ten. Any page from it is an event; if it starts contributing volume, that **is** the signal.
+
+---
+
+# 🔔 GATE 1 WATCHER IS LIVE — installed 2026-09-09, still armed and unexercised
 
 `#931`, installed 19:07 ET. **Exactly one** cron entry, verified:
 
@@ -94,36 +233,39 @@ box, so the `13-21` UTC hour range only trims idle runs and is not the authority
 
 ---
 
-# ⛔ RECLAIM1 — what it does, and what it does NOT do
-
-**Does:** admits only the first ATR-trail resting entry per confirmed ATR BUY segment; refuses the
-rested reclaim (`slot != "first"`) **and** the reactive reclaim (an unconditional guard in
-`_cw_v2_quote`). FTFT 12:10 and SUNE 13:07 would have been refused on **both** brokers rather than
-filling Schwab alone. It intentionally reduces trades.
-
-**Does NOT:** make Webull chase a missing reclaim; change exits; change sizing; do anything at all
-while the flag is off.
-
-**Fail-safe:** one flag, default off, absent from the env. Reverting is a flag flip, not a redeploy.
-
-⛔ **Turning it on is a live-money behaviour change and needs a deliberate decision.** It has never
-run against a live tape.
-
 ---
 
-# ⛔ F1 — THE v2 POSITION COUNT IS SCHWAB-ONLY, AND THE TREND EXIT IS BLIND TO A WEBULL-ONLY FILL
+# ✅ F1 — FIXED BY #930, DEPLOYED, AND **EXERCISED** ON LIVE TAPE
 
-`_fetch_position_maps` (`schwab_1m_v2_bot.py:1814`) filters **both** halves to
-`live:schwab_1m_v2`. A Webull-only fill therefore reads `position_qty=0`, and
-`schwab_1m_v2.py:2319` returns `None` before it can emit an exit.
+⛔ **This section has now been wrong twice.** The 09-12 draft reopened F1 as a live defect; my first
+correction then said it had "fired 0 times". Both wrong, both caught by `codex-2`. The zero came
+from grepping `atr_sell_observation` — the **wire event type, which is never logged** — and from
+plain `grep` against **gzipped** rotated logs, which reads nothing. The emitted markers are
+`[OMS-V2-CW-FLIP-EVALUATED]` and `[OMS-V2-CW-FLIP-LEG]`, and rotated files need `zgrep`.
 
-**Proven live 2026-09-09 on YMAT:** ATR flipped SELL, `pos_qty=0`, **no exit fired**.
+Measured on the box 2026-09-12, all `oms.log*` since #930 deployed (2026-09-09 23:03 UTC):
 
-⛔ **The hard stop, target and ladder DO work** — 57 filled pre-market Webull sells. **Only the flip
-is blind.** The flat check, coverage and reconciler are whole. Owner: `codex-2` (one-sided
-lifecycle). ⚠ This was never explained to the operator until today; do not let it go quiet again.
+| | |
+|---|---|
+| ATR-SELL decisions evaluated | **43** (09-09 ×1 · 09-10 ×12 · 09-11 ×29 · 09-12 ×1) |
+| leg evaluations | **86** — ⭐ **43 `live:schwab_1m_v2` and 43 `live:orb`, exactly balanced** |
+| outcomes | 83 `not_owned`, **3 `armed`** |
+| the 3 armed | FTFT 09-11 **18:13 — BOTH legs, schwab AND orb** · FTFT 09-11 19:20 schwab |
+| ⛔ Webull-only-held decisions | **0** |
 
----
+⇒ **The account-neutrality itself is PROVEN live, not merely deployed.** Every decision reaches both
+accounts independently (43/43), and a Webull leg has actually been armed for close. ⛔ `30` is the
+count in the current uncompressed file only; the full figure since deploy is **43**.
+
+⇒ **What remains unexercised is only the exact original F1 shape:** a decision where `live:orb` is
+armed while `live:schwab_1m_v2` reads `not_owned`. That has occurred **zero** times. The YMAT 09-09
+evidence is the PRE-FIX proof of that shape and must not be quoted as current.
+
+## ⭐⭐ THE DISTINCTION THAT MADE THIS EASY TO GET WRONG — still true, do not "fix" it
+`_fetch_position_maps` **is still scoped** to the v2 account, **deliberately**: its own docstring
+says cross-venue fan-out intents must not enter the ENTRY-decision signal. #930 made the **EXIT**
+path account-neutral. **Entry-scoped and exit-neutral are both correct at once** — seeing that
+filter still present is NOT evidence the defect returned.
 
 # ⛔ CONFIRMATION-EXIT RACE — open, live, unowned
 
@@ -143,38 +285,21 @@ and prove one protection cancellation and one Webull close attempt.**
 
 ---
 
-# ⭐⭐ THE WEBULL ENTRY INVESTIGATION — settled numbers (#934)
-
-24 logical producer episodes (67 raw intents → 22 slot identities + 2 suppressed), FTFT/SUNE/YMAT:
-
-| | episodes | Webull fills | blocked while held | consumed slot | rested, unfilled |
-|---|---:|---:|---:|---:|---:|
-| FTFT | 7 | 5 | 0 | 1 | 1 |
-| SUNE | 5 | 4 | 0 | 1 | 0 |
-| YMAT | 12 | 4 | 7 | 0 | 1 |
-
-⛔ **ZERO Webull venue rejections among 54 buy orders.** Schwab filled 11 entry episodes, Webull
-matched **9** — the only two gaps are FTFT `12:10:08` and SUNE `13:07:16`, both our own consumed
-fan-out slot. The 7 YMAT blocks were the managed-position collision guard working correctly; **do
-not weaken it to raise the fill count.**
-
-⭐ **The subtlety that makes this make sense:** `_SLOT_BY_SOURCE` maps `rth_resting → "resting"` and
-`reactive → "reclaim"`. The **fan-out** slot vocabulary is not the **CW entry** slot vocabulary
-(`first`/`reclaim`), so a rested *reclaim* collides with the *first* entry in fan-out identity space.
-
 ---
 
 # ⭐⭐ STATUS SPLIT — ANSWERED vs UNEXERCISED. Do not collapse these.
 
 | ✅ ANSWERED **and CLOSED** | ⛔ DEPLOYED and **UNEXERCISED** |
 |---|---|
-| **Webull one-sided entries** — measured; zero venue rejections; cause is our slot | **RECLAIM1** — deployed **dark**; never run on a live tape |
+| **Webull one-sided entries** — measured; zero venue rejections; cause is our slot | **#955 / #960** — replay-proven only; **never run on live money** (see the Monday table above) |
 | **DRIFT1** — false-clean fixed and now scheduled | **GATE1 watcher** — armed; no qualifying shape has ever existed |
 | **HALT-FILTER / HALT-DETECTOR** — session-boundary artefact fixed at source | **INC1** — installed; synthetic incident opened and closed, no real one yet |
-| **F1 mechanism** — root cause proven live on YMAT | **STOPASK (#929)** — observability only, unexercised |
+| **F1 / #930 account-neutral ATR exit** — fixed, deployed, and **exercised**: 43 decisions, 43/43 legs per account, 3 armed incl. a Webull leg | **the Webull-only-held shape** — `live:orb` armed while schwab reads `not_owned`: **0** occurrences |
 | **#933 controls** — all five admission branches + the reactive guard mutation-red | **CONF3 / SIL1 / released-leg recovery / HDL1** — still never fired |
 
 ⛔ **UNKNOWN is not PASS.** Read `STATUS.txt`; do not infer health from the absence of a page.
+
+---
 
 ---
 
@@ -182,11 +307,11 @@ not weaken it to raise the fill count.**
 
 | item | question | owner |
 |---|---|---|
-| **F1/F2 one-sided lifecycle** | the fix for the blind trend exit | `codex-2` |
+| ~~**F1/F2 one-sided lifecycle**~~ | ✅ **CLOSED by #930** — deployed **and exercised** (43 decisions, both accounts, 3 armed). Only the Webull-only-held shape is still unseen | — |
 | **confirmation-exit race** | per-account in-flight ownership held to terminal close | unassigned |
 | **STOPMKT probe** | operator deferred: does a stop-market entry change the fill? | deferred by operator |
 | **PROV1** | arming on flips reconstructed from db-seed (649 occurrences) | unassigned |
-| **liquidity floor** | the cancel-on-floor-fail pattern; floor 10,000 | unassigned |
+| **liquidity floor** | ⭐ the *cancel* half is addressed by **#960** (pull only after 3 consecutive sub-floor bars, one good bar re-places) and watched by **LIQPULL1** — replay-proven, unexercised live. The floor VALUE (10,000) and the arm-time staleness remain open | unassigned |
 | **0.5% stop-limit band** | strands the entry on fast moves (YMAT flip bar) | unassigned |
 | **F6 / F8 / F9 / F10** | stale `current_profit_pct`; Webull manual-order ingestion | unassigned |
 | **BNC 11:03 · claim overhang · fan-out size · ELIG · AMEND1 · REJ1 silence** | carried from 09-08, unchanged | unassigned |
@@ -195,50 +320,17 @@ not weaken it to raise the fill count.**
 
 ---
 
-# ⚠️ VERIFICATION FAILURES OF MINE TODAY, RECORDED SO THEY ARE NOT REPEATED
+# ⚠️ VERIFICATION FAILURES OF MINE, RECORDED SO THEY ARE NOT REPEATED
 
-1. **I verified a proxy for a rule and stated the conclusion anyway.** I told codex no rebase was
-   needed on #931 because `git log base..head` resolved to my three commits. The gate requires the
-   base to be an **ancestor** of the head (`review_pin_gate.py:218`); a resolving range does not
-   imply it. ⇒ *Run the gate's own check: `git merge-base --is-ancestor $BASE $HEAD`.*
-2. **I committed a mutated wrapper** — `exit 0` in place of the market-hours guard, which would have
-   made the Gate 1 watch do nothing on every run, silently. I had piped my mutation script through
-   `head -4`; SIGPIPE killed it before the restore. My own tests caught it. ⇒ *A mutation harness
-   needs a `trap`, and never a pipe that can die early.*
-3. **A permissions false-zero.** My first grep for `fanout_webull_collision_managed` and
-   `pair_cancel_unconfirmed` returned zero because the logs are root-only and I ran as `trader`.
-   ⇒ *A zero from a tool that cannot read the source is UNKNOWN, not absence.*
-4. **Two false readings during deploy verification**, both re-derived before reporting: `oms` and
-   `strategy` read "inactive" because I guessed unit names (they are `project-mai-tai-oms` /
-   `-strategy`), and "38 tracebacks" was a whole-file count — the post-restart window is **0**.
-5. **I shipped a test suite that only ran during market hours.** #931's wrapper controls drove the
-   real clock, so after the close the four transition tests silently stopped running; CI had passed
-   only because it ran in-window. ⇒ *A control whose result depends on WHEN it runs is not a
-   control.* Found by codex, not by me.
-6. **I missed that reclaim was already off** when the operator asked me to investigate entries.
-   ⇒ *"You need to think about all the direction, not just one direction."*
-7. **I read the box's UTC clock and labelled it ET.** `systemctl`'s ORB timestamp is `10:54:27 UTC`
-   = **06:54 ET**; I reported "10:54 ET" in the handoff, the log and a memory. I had converted
-   correctly for the SUNE log lines an hour earlier, so this was inconsistency, not ignorance.
-   ⇒ *The box clock is `Etc/UTC`. Convert EVERY timestamp read from it, including systemd's.*
-8. **I said "one deploy window" without checking.** There were **three** (06:54, 07:27, 19:03 ET),
-   provable from `git reflog` on the box in one command. I generalised from the window I had
-   watched. ⇒ *Ask what the ARTEFACT says, not what I remember doing.*
-9. **I announced Gate 1 as arming at 09:00 ET** — the cron hour, not the wrapper's guard, which
-   refuses until 09:30. I wrote that guard. ⇒ *A schedule is not a behaviour; read the code that
-   runs, not the line that launches it.* All four caught by codex-2 on #935, none by me.
-
----
-
-# ▶ NEXT SESSION — Thursday 2026-09-10
-
-1. 🔔 **Gate 1 can first page at 09:30 ET** (the cron starts 09:00; the watcher refuses until 09:30). If it pages, the qualifying window is open **only while that
-   position is** — take the `previewOrder` by hand, immediately. Preview, never a live probe.
-2. ⛔ **Decide RECLAIM1.** It is deployed, dark, controlled and reversible by one flag. It has never
-   run live. This is an operator decision, not an agent one.
-3. **First full session on the deployed six-PR stack.** Nothing from before 23:03 UTC tonight is a
-   baseline for it.
-4. **F1 one-sided lifecycle** (codex) and the **confirmation-exit race** are the open live defects.
-5. Watch `INC1` and `#914`'s four conditions. Read `STATUS.txt`; silence is not green.
-
-⛔ Watch items live here, not in [`handoff-open-items.md`](handoff-open-items.md).
+1. **I claimed a Saturday restart removes the Monday boot-hold risk.** Wrong — `codex-2` caught it.
+   The hold is gated on data, not uptime. I read the clock instead of the release condition.
+2. **I wrote a pre-open helper with four fail-open defects** (above), including a boot-hold check
+   that could not come out false in the one direction that matters.
+3. **I bundled #945/#946/#947 under one trigger.** Absence of a Webull-only fill is not evidence
+   about #946 or #947.
+4. **A controlled pair reported `new_failures=0` from worktrees whose Python had no pytest.** A void
+   harness, not a clean result. The venv `.pth` also hardcodes the *main* checkout's `src`, so a
+   worktree run without `PYTHONPATH` silently compares main against main. **Assert the imported
+   path before trusting any count.**
+5. **`no tests ran in 0.00s` read as five clean mutation results.** zsh does not word-split an
+   unquoted variable, so two test paths became one bogus argument.
