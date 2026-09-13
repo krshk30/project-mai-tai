@@ -314,6 +314,7 @@ def _report_fixture(monkeypatch, tmp_path: Path):
     args = SimpleNamespace(
         snapshot=snapshot,
         restarted=[vre.V2_SERVICE],
+        expected_quiet_service=[],
         expect_flag=[f"{vre.V2_SERVICE}:MAI_TAI_TEST_FLAG=true"],
         expected_alembic_head="20260910_0020",
         schema_column=[],
@@ -372,7 +373,7 @@ def test_report_contains_every_required_denominator(monkeypatch, tmp_path: Path,
     assert "2026-09-10 20:25:00 EDT (2026-09-11 00:25:00 UTC)" in output
 
 
-def test_report_marks_a_restarted_service_without_log_records_partially_unmeasured(
+def test_report_allows_a_declared_quiet_service_without_log_records(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     args, current, logs = _report_fixture(monkeypatch, tmp_path)
@@ -387,14 +388,83 @@ def test_report_marks_a_restarted_service_without_log_records_partially_unmeasur
     )
     logs["reconciler"] = []
     args.restarted.append("reconciler")
+    args.expected_quiet_service.append("reconciler")
 
     assert vre.report(args, runner=lambda command: "") == 0
 
     output = capsys.readouterr().out
     traceback_row = next(line for line in output.splitlines() if line.startswith("| Tracebacks |"))
-    assert "reconciler=N/A(0/0)" in traceback_row
+    assert "reconciler=N/A_EXPECTED_QUIET(0/0)" in traceback_row
     assert "| PARTIAL_N/A |" in traceback_row
     assert "| PASS |" not in traceback_row
+
+
+def test_report_fails_when_an_unexpected_service_has_no_log_records(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    start = datetime(2026, 9, 11, 0, 25, tzinfo=UTC)
+    current["oms"] = vre.ServiceState(
+        service="oms",
+        pid=901,
+        active_state="active",
+        sub_state="running",
+        n_restarts=0,
+        started_at_utc=start.isoformat(),
+    )
+    logs["oms"] = []
+    args.restarted.append("oms")
+
+    assert vre.report(args, runner=lambda command: "") == 1
+
+    output = capsys.readouterr().out
+    traceback_row = next(line for line in output.splitlines() if line.startswith("| Tracebacks |"))
+    assert "oms=UNMEASURED(0/0)" in traceback_row
+    assert "| FAIL |" in traceback_row
+    assert "unexpected-silent service(s): oms" in output
+
+
+def test_expected_quiet_declaration_cannot_name_an_untouched_service(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    args.expected_quiet_service.append("reconciler")
+
+    with pytest.raises(vre.EvidenceUnknown, match="was not declared restarted: reconciler"):
+        vre.report(args, runner=lambda command: "")
+
+
+def test_expected_quiet_service_still_fails_on_a_real_traceback(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    start = datetime(2026, 9, 11, 0, 25, tzinfo=UTC)
+    current["reconciler"] = vre.ServiceState(
+        service="reconciler",
+        pid=901,
+        active_state="active",
+        sub_state="running",
+        n_restarts=0,
+        started_at_utc=start.isoformat(),
+    )
+    logs["reconciler"] = [
+        (
+            "reconciler.log",
+            [
+                "2026-09-11 00:25:01,000 ERROR failed",
+                "Traceback (most recent call last):",
+            ],
+        )
+    ]
+    args.restarted.append("reconciler")
+    args.expected_quiet_service.append("reconciler")
+
+    assert vre.report(args, runner=lambda command: "") == 1
+
+    output = capsys.readouterr().out
+    traceback_row = next(line for line in output.splitlines() if line.startswith("| Tracebacks |"))
+    assert "reconciler=1/1" in traceback_row
+    assert "| FAIL |" in traceback_row
 
 
 @pytest.mark.parametrize(
