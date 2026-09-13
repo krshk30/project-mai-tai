@@ -15,30 +15,43 @@
 
 ---
 
-# ✅ PRODUCTION — box at `5dae7c9a`; main intentionally ahead by DOCS-ONLY commits
+# ✅ PRODUCTION — box and main BOTH at `d87d8d1b`
+
+**Written by `claude-1`, 2026-09-13 (Sunday). Monday 2026-09-14 is the first live session.**
 
 | | |
 |---|---|
-| box (deployed) | **`5dae7c9a`** — read FROM THE BOX 2026-09-12 16:42 ET, branch `main`, checkout clean (0 files) |
-| GitHub main | **`5dae7c9a`** at the time of writing. ⭐ **Merging this handoff PR moves main ahead of the box BY DESIGN.** A docs-only divergence is the normal state and is NOT a deploy gap: compare with `git diff --name-only <box-sha> origin/main` and treat the box as behind only if something outside `docs/` appears |
-| ⛔ **box pin** | **The box must STAY at `5dae7c9a` until Monday's pre-open gate passes.** The gate pins `EXPECTED_SHA=5dae7c9a`; a docs-only merge (this PR included) moves *main* ahead, which is fine, but **do not `git pull` on the box before the gate is green.** Sync the box after Monday pre-open, not before |
-| open PRs | **none** (this handoff PR excepted) |
-| exposure | **16:42 ET:** both live accounts flat — open managed rows **0**, nonzero `account_positions` rows **0**, both accounts resolved |
-| merges 09-12 | **#951** known-defect regression watch · **#964** SLOTCLEAR1/LIQPULL1 rows + DB-evidence hardening · **#965** liquidity threshold parity. All three independently reviewed and pinned by `claude-1` |
-| deploy 09-12 | **one window, 16:34:27 ET** (20:34:27 UTC). **v2 only** was restarted; oms, strategy, ORB, reconciler, market-data, market-capture and control were **not** touched |
-| ⚠ why a restart was needed | #964 adds `resting_below_floor_bars=` to the two resting-cancel log lines. Without it the **LIQPULL1** watch row cannot read the streak and pages `COULD_NOT_TELL` on every liquidity cancel |
+| box (deployed) | **`d87d8d1b`** — read FROM THE BOX 2026-09-13, branch `main`, checkout clean (0 files) |
+| GitHub main | **`d87d8d1b`** — in sync |
+| gate pin | `preopen.sh` has `EXPECTED_SHA=d87d8d1b8cfeacce7d658a7396d8663d02b76029`, matching the box |
+| open PRs | **#969** (expected-quiet services, pinned, awaiting merge) · this handoff PR |
+| exposure | both live accounts flat — 0 non-closed managed rows, 0 nonzero `account_positions`, 0 working broker orders |
+| merges 09-12 → 09-13 | **#951** watch · **#964** SLOTCLEAR1/LIQPULL1 rows · **#965** threshold parity · **#967** log scoping · **#968** zero-record labelling. All independently reviewed and pinned by `claude-1` |
 
-| service | pid | | service | pid |
-|---|---|---|---|---|
-| **schwab-1m-v2** | **1089323** (restarted 20:34:27 UTC, `NRestarts=0`) | | oms | 555216 |
-| strategy | 555227 | | market-data | 2202865 |
-| market-capture | 2202817 | | reconciler | 2202771 |
-| orb (paper) | 609358 | | control | 311547 |
+## Restarts — THREE services, in two windows, both on 09-12
 
-Zero post-restart tracebacks (0/249 timestamped records). No migrations ran; alembic head
-`20260910_0020` unchanged.
+⛔ The earlier draft of this file said "v2 only". That was true of the 16:34 window only.
 
----
+| window (ET) | services | why |
+|---|---|---|
+| **16:34:27** | `schwab-1m-v2` | #964 adds `resting_below_floor_bars=` to the resting-cancel lines; without it **LIQPULL1** cannot read the streak and pages `COULD_NOT_TELL` on every liquidity cancel |
+| **17:17:54** | `oms`, `reconciler` | **#957** had been on disk but unloaded — oms started 18.4h before it merged. **#961** (page only actionable alert transitions) had never loaded at all: the reconciler had been up since **08-30**, 13 days |
+
+⚠ `project-mai-tai-oms.service` does **NOT** restart `strategy` with it — that is the oms *target*.
+Only two services restarted in that window. `strategy` was verified not to load any changed module
+(`schwab_1m_v2`, `v2_flip_entry_ownership`, `reconciliation`), so nothing stale runs there.
+
+| service | pid | started (UTC) | | service | pid | started (UTC) |
+|---|---|---|---|---|---|---|
+| **schwab-1m-v2** | **1089323** | 09-12 20:34:27 | | orb (paper) | 609358 | 09-11 06:30:47 |
+| **oms** | **1105862** | 09-12 21:17:54 | | market-data | 2202865 | 08-30 19:54:39 |
+| **reconciler** | **1105870** | 09-12 21:17:55 | | market-capture | 2202817 | 08-30 19:54:38 |
+| strategy | 555227 | 09-11 00:14:59 | | control | 311547 | 09-10 12:16:19 |
+
+All restarted services `active/running`, `NRestarts=0`, **0 tracebacks** post-restart
+(v2 0/24,775 · oms 0/21,564 records). ⛔ The **reconciler writes no log at all** — 0 bytes since
+08-28 — so its traceback row is `N/A`, which is *unmeasured*, not *verified clean*. #969 makes that
+distinction explicit and makes an **undeclared** silence FAIL.
 
 # FLAGS — read from the RUNNING processes, not the env file (2026-09-12 20:55 UTC)
 
@@ -98,7 +111,7 @@ code before acceptance:
 1. **~06:30 ET:** `ssh mai-tai-vps /home/trader/preopen.sh`
 2. Require the literal final line **`PASS: Monday pre-open gate is green.`** Anything else is
    `BLOCKED`. **Exit 1 is the gate working.**
-3. It verifies in one pass: run window before 07:00 · SHA `5dae7c9a` and clean tree · v2 identity
+3. It verifies in one pass: run window before 07:00 · SHA `d87d8d1b` and clean tree · v2 identity
    pid `1089323`, `NRestarts=0`, exact start timestamp · installed watch hash/mode/schedule ·
    restarted vs untouched service pids · **both accounts flat, managed rows AND broker positions** ·
    alembic head with no schema change · **five** running-process flags · REST warmup population ·
@@ -117,6 +130,15 @@ completing against a **non-empty evaluated population**; a weekend has no scanne
 (`scanner_evaluated=0 reason=empty_evaluated_population_after_exclusions`). It re-HELDs every ~60s
 all weekend and releases Monday exactly as it would have after a Monday restart. **09-11's took
 18.8 minutes.** [[a gate whose release depends on DATA cannot be pre-satisfied by running earlier]]
+
+⛔ **SYNC RULE, replacing the earlier "box must stay at 5dae7c9a".** The box was deliberately
+synced to `d87d8d1b` and `EXPECTED_SHA` was moved with it in the same action. That pairing is the
+rule: **whenever the checkout is synced, `EXPECTED_SHA` must be updated in the same action**, or
+the gate fails on checkout identity rather than on anything real — an alarming red that means
+nothing. ⭐ After **#969** merges the same applies, plus `--expected-quiet-service reconciler`
+must be added to the evidence call **in the same action**: I proved on the box that syncing the
+code without the flag turns the reconciler into `UNMEASURED(0/0)` and **fails** the Tracebacks
+row. Code and flag land together or not at all. The sync must not restart any service.
 
 ⚠ **Two properties of the gate.** It pins `EXPECTED_PID` and the exact start timestamp, so a weekend
 reboot (unattended upgrades have restarted this fleet before) fails it loudly rather than passing on
