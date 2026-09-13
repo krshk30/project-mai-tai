@@ -15,14 +15,14 @@
 
 ---
 
-# ✅ PRODUCTION — box and main BOTH at `2d54d29c`
+# ✅ PRODUCTION — RUNTIME SHA is `2d54d29c` (main may sit ahead by docs-only commits)
 
 **Written by `claude-1`, 2026-09-13 (Sunday). Monday 2026-09-14 is the first live session.**
 
 | | |
 |---|---|
 | box (deployed) | **`2d54d29c`** — read FROM THE BOX 2026-09-13 22:54 UTC, branch `main`, checkout clean (0 files) |
-| GitHub main | **`2d54d29c`** — in sync |
+| GitHub main | **`2d54d29c`** at the time of writing. ⭐ **Merging this handoff PR moves main ahead of the box BY DESIGN — see the DOCS-ONLY DIVERGENCE rule below. It is not a deploy gap and needs no sync and no restart** |
 | gate pin | `preopen.sh` pins `EXPECTED_SHA=2d54d29cd58caa20a70cf3cd61f5ba1aa11c8a7f` matching the box, **and** carries `--expected-quiet-service reconciler`. Updated atomically with the sync |
 | open PRs | **none** — this handoff PR excepted |
 | exposure | both live accounts flat — 0 non-closed managed rows, 0 nonzero `account_positions`, 0 working broker orders |
@@ -147,6 +147,18 @@ completing against a **non-empty evaluated population**; a weekend has no scanne
 (`scanner_evaluated=0 reason=empty_evaluated_population_after_exclusions`). It re-HELDs every ~60s
 all weekend and releases Monday exactly as it would have after a Monday restart. **09-11's took
 18.8 minutes.** [[a gate whose release depends on DATA cannot be pre-satisfied by running earlier]]
+
+⭐⭐ **DOCS-ONLY DIVERGENCE IS EXPECTED — do NOT sync or restart for it.** The RUNTIME SHA is
+`2d54d29c`. Merging a docs-only PR (this handoff included) moves **main** ahead of it immediately,
+and that is the normal, correct state. It is **not** a deploy gap.
+
+- **Monday's gate is unaffected.** `EXPECTED_SHA` is checked against the **box checkout**, not
+  against GitHub main. Main moving ahead cannot turn the gate red.
+- **Test it the right way:** `git diff --name-only <box-sha> origin/main`. Treat the box as behind
+  **only if something outside `docs/` appears**.
+- ⛔ **Do not `git pull` on the box to "fix" a docs-only divergence.** A sync drags in the
+  `EXPECTED_SHA` and `--expected-quiet-service` pairing below, and a needless sync before a live
+  session is risk taken for nothing.
 
 ⛔ **SYNC RULE — the gate's config moves WITH the checkout, in one action.** Applied twice now
 (`5dae7c9a` → `d87d8d1b` → `2d54d29c`), each time without restarting a service. Sync the checkout
