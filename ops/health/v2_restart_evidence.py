@@ -459,6 +459,7 @@ def _integer_fields(line: str, *names: str) -> dict[str, int]:
 def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     before = _load_snapshot(args.snapshot)
     restarted = set(args.restarted)
+    expected_quiet_services = set(args.expected_quiet_service)
     if V2_SERVICE not in restarted:
         raise EvidenceUnknown(
             f"C6 is the v2 restart artifact; --restarted must include {V2_SERVICE}"
@@ -466,6 +467,12 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     unknown_services = restarted - set(DEFAULT_SERVICES)
     if unknown_services:
         raise EvidenceUnknown(f"unknown restarted service(s): {','.join(sorted(unknown_services))}")
+    unexpected_quiet_declarations = expected_quiet_services - restarted
+    if unexpected_quiet_declarations:
+        raise EvidenceUnknown(
+            "expected-quiet service was not declared restarted: "
+            + ",".join(sorted(unexpected_quiet_declarations))
+        )
     if not args.schema_column and not args.schema_constraint and not args.no_schema_change:
         raise EvidenceUnknown(
             "declare --no-schema-change or name every added --schema-column/--schema-constraint"
@@ -748,6 +755,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     timestamped_total = 0
     traceback_detail: list[str] = []
     services_without_records: list[str] = []
+    unexpected_silent_services: list[str] = []
     for service in sorted(restarted):
         start = datetime.fromisoformat(current[service].started_at_utc).astimezone(UTC)
         evidence = parse_log_files(_log_files(service, runner, since=start), since=start)
@@ -755,7 +763,11 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         timestamped_total += evidence.timestamped_records
         if evidence.timestamped_records == 0:
             services_without_records.append(service)
-            traceback_detail.append(f"{service}=N/A(0/0)")
+            if service in expected_quiet_services:
+                traceback_detail.append(f"{service}=N/A_EXPECTED_QUIET(0/0)")
+            else:
+                unexpected_silent_services.append(service)
+                traceback_detail.append(f"{service}=UNMEASURED(0/0)")
         else:
             traceback_detail.append(
                 f"{service}={len(evidence.traceback_times_utc)}/{evidence.timestamped_records}"
@@ -763,8 +775,17 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         traceback_detail.extend(format_moment(stamp) for stamp in evidence.traceback_times_utc)
     if traceback_total:
         failures.append(f"{traceback_total} post-restart traceback(s) found")
+    if unexpected_silent_services:
+        failures.append(
+            "no post-restart timestamped log records for unexpected-silent service(s): "
+            + ",".join(unexpected_silent_services)
+        )
     traceback_status = (
-        "FAIL" if traceback_total else "PARTIAL_N/A" if services_without_records else "PASS"
+        "FAIL"
+        if traceback_total or unexpected_silent_services
+        else "PARTIAL_N/A"
+        if services_without_records
+        else "PASS"
     )
     rows.append(
         (
@@ -808,6 +829,9 @@ def build_parser() -> argparse.ArgumentParser:
     after = sub.add_parser("report", help="collect and grade post-restart evidence")
     after.add_argument("--snapshot", required=True, type=Path)
     after.add_argument("--restarted", action="append", required=True, choices=DEFAULT_SERVICES)
+    after.add_argument(
+        "--expected-quiet-service", action="append", default=[], choices=DEFAULT_SERVICES
+    )
     after.add_argument("--expect-flag", action="append", required=True)
     after.add_argument("--expected-alembic-head", required=True)
     after.add_argument("--schema-column", action="append", default=[])
