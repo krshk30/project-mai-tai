@@ -3871,3 +3871,72 @@ the ORB-LEFT work — my 07-29 memory saying the service was disabled was stale 
 
 **Tomorrow.** Gate 1 can first page at 09:30 ET. RECLAIM1 is dark and awaits an operator decision. The
 confirmation-exit race and the F1 one-sided lifecycle are the open live defects.
+
+---
+
+# 2026-09-12 → 2026-09-13 — the known-defect watch weekend
+
+**Batch `2026-09-13-known-defect-watch`. Integrator `claude-1`; `codex-2` built most of it and
+reviews this handoff. Nine PRs merged, every one independently reviewed and pinned.**
+
+## What was actually built
+
+The operator's ask on 09-11 was blunt: *"I don't wanna see the same old bugs from the past today."*
+The answer is a **known-defect regression watch** — 19 catalogued defects, each declaring both a
+benign `GUARD_WORKING` polarity and a distinct `RECURRENCE` polarity, paging through the proven INC1
+route with no second delivery path. It is installed on the box and its self-test was confirmed
+received on the operator's phone.
+
+⭐ The honest shape matters more than the row count: **8 armed, 4 delegated, 5 UNARMED**. A defect
+whose recurrence we cannot state *says so* rather than being omitted, and `UNARMED`/`DELEGATED` are
+inventory states that can never read as a clean zero.
+
+`#951` replaced `claude-1`'s own merged `regression_watch.py`, which had no production collector and
+would have emitted `CANNOT_TELL` for ever. Deleting my own module was the right call and I said so.
+`#964` added the two rows covering this week's fixes, `#965` pinned the liquidity threshold to the
+strategy constant, and `#967`/`#968`/`#969` hardened the restart-evidence tool through three rounds
+of review.
+
+## Three services restarted, in two windows
+
+`v2` at 16:34:27 ET because `#964` adds `resting_below_floor_bars=` to the resting-cancel lines —
+without it `LIQPULL1` cannot read the streak and pages `COULD_NOT_TELL` on every liquidity cancel.
+
+Then `oms` and `reconciler` at 17:17 ET, after a check nobody had asked for turned up two services
+running stale code: **`#957` had sat on disk unloaded for 18.4 hours**, and **`#961` — the actionable-
+alert fix built for the operator's ten-messages-a-day rule — had never loaded at all.** The
+reconciler had been up since **08-30, thirteen days**. Both accounts flat before and after, zero
+working orders, zero post-restart tracebacks.
+
+⚠ `project-mai-tai-oms.service` does **not** bring `strategy` with it — that is the oms *target*.
+`claude-1` said otherwise beforehand; `strategy` was then verified to load none of the changed
+modules, so the outcome was right and the reasoning was not.
+
+## What Monday can and cannot prove
+
+**Nine merges, almost nothing exercised.** `#955` and `#960` are replay-proven only. `#945` needs a
+Webull-only fill that has never once occurred. `#946` and `#947` need their own distinct conditions —
+a Webull-only fill does **not** validate them. `SLOTCLEAR1` and `LIQPULL1` have never seen live tape;
+the weekend proved they *execute*, not that they *catch*. ⇒ **Grade the first qualifying entry as a
+single event, not the day.**
+
+## Corrections recorded against `claude-1`
+
+1. **The Saturday restart did not pre-drain the Monday boot hold.** The hold releases on restoration
+   completing against a non-empty evaluated population, not on uptime. A gate whose release depends
+   on DATA cannot be pre-satisfied by running earlier.
+2. **F1 was carried forward as an open defect and is not one.** `#930` fixed it on 09-09, the same
+   day the YMAT evidence proved the original. Then the correction itself was wrong: "fired 0 times"
+   was a false zero from grepping the wire event type (never logged) and from plain `grep` against
+   **gzipped** rotated logs. Measured properly: 43 decisions, 43/43 legs per account, 3 armed.
+3. **The first pre-open helper had four fail-open defects**, the worst a boot-hold check that could
+   not come out false in the one direction that mattered. `codex-2`'s fail-closed gate supersedes it.
+
+## Monday pre-open
+
+```bash
+ssh mai-tai-vps /home/trader/preopen.sh    # ~06:30 ET
+```
+Require the literal `PASS: Monday pre-open gate is green.` before 07:00. `PARTIAL_N/A` on tracebacks
+(declared-quiet reconciler) and `N/A_OFF_SESSION` on bar continuity are **expected, not failures**.
+⛔ Do not bypass the hold. 09-11's release took **18.8 minutes**.
