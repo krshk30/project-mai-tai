@@ -15,18 +15,18 @@
 
 ---
 
-# ✅ PRODUCTION — box and main BOTH at `d87d8d1b`
+# ✅ PRODUCTION — box and main BOTH at `2d54d29c`
 
 **Written by `claude-1`, 2026-09-13 (Sunday). Monday 2026-09-14 is the first live session.**
 
 | | |
 |---|---|
-| box (deployed) | **`d87d8d1b`** — read FROM THE BOX 2026-09-13, branch `main`, checkout clean (0 files) |
-| GitHub main | **`d87d8d1b`** — in sync |
-| gate pin | `preopen.sh` has `EXPECTED_SHA=d87d8d1b8cfeacce7d658a7396d8663d02b76029`, matching the box |
-| open PRs | **#969** (expected-quiet services, pinned, awaiting merge) · this handoff PR |
+| box (deployed) | **`2d54d29c`** — read FROM THE BOX 2026-09-13 22:54 UTC, branch `main`, checkout clean (0 files) |
+| GitHub main | **`2d54d29c`** — in sync |
+| gate pin | `preopen.sh` pins `EXPECTED_SHA=2d54d29cd58caa20a70cf3cd61f5ba1aa11c8a7f` matching the box, **and** carries `--expected-quiet-service reconciler`. Updated atomically with the sync |
+| open PRs | **none** — this handoff PR excepted |
 | exposure | both live accounts flat — 0 non-closed managed rows, 0 nonzero `account_positions`, 0 working broker orders |
-| merges 09-12 → 09-13 | **#951** watch · **#964** SLOTCLEAR1/LIQPULL1 rows · **#965** threshold parity · **#967** log scoping · **#968** zero-record labelling. All independently reviewed and pinned by `claude-1` |
+| merges 09-12 → 09-13 | **#951** watch · **#964** SLOTCLEAR1/LIQPULL1 rows · **#965** threshold parity · **#967** log scoping · **#968** zero-record labelling · **#969** expected-quiet services. All independently reviewed and pinned by `claude-1` |
 
 ## Restarts — THREE services, in two windows, both on 09-12
 
@@ -48,12 +48,29 @@ Only two services restarted in that window. `strategy` was verified not to load 
 | **reconciler** | **1105870** | 09-12 21:17:55 | | market-capture | 2202817 | 08-30 19:54:38 |
 | strategy | 555227 | 09-11 00:14:59 | | control | 311547 | 09-10 12:16:19 |
 
-All restarted services `active/running`, `NRestarts=0`, **0 tracebacks** post-restart
-(v2 0/24,775 · oms 0/21,564 records). ⛔ The **reconciler writes no log at all** — 0 bytes since
-08-28 — so its traceback row is `N/A`, which is *unmeasured*, not *verified clean*. #969 makes that
-distinction explicit and makes an **undeclared** silence FAIL.
+## Post-sync evidence (gate run 2026-09-13 22:54 UTC, re-derived by `claude-1`, not carried over)
 
-# FLAGS — read from the RUNNING processes, not the env file (2026-09-12 20:55 UTC)
+| row | result |
+|---|---|
+| Restarted services | **PASS 3/3** |
+| Services not restarted | **PASS 6/6** |
+| Both accounts flat before AND after | **PASS** — 0 managed rows, 0 broker positions, 0 working orders |
+| Migration | **PASS** — `20260910_0020`, no schema change |
+| Running-process flags | **PASS 5/5** |
+| Bar continuity | `N/A_OFF_SESSION` — grades the **Saturday** restart, which was off-session. ⛔ It stays N/A on Monday; only `gaps spanning restart = 0` is required |
+| Tracebacks | **`PARTIAL_N/A`** — v2 and oms both **0 tracebacks** against real denominators; `reconciler=N/A_EXPECTED_QUIET(0/0)` |
+| REST warmup · BOOT-HOLD released | **FAIL** — the only two, both Monday-dependent |
+
+⚠ **Record counts are point-in-time and grow constantly**, so exact denominators are stale the
+moment they are written — I measured different totals from `codex-2` an hour apart for this reason.
+What is durable is the SHAPE: zero tracebacks, both trading services measured against real
+denominators, reconciler expected-quiet.
+
+⛔ The **reconciler writes no log at all** — 0 bytes since 08-28 — so its row is *unmeasured*, not
+*verified clean*. #969 makes that distinction explicit and makes an **undeclared** silence FAIL, so
+if oms or v2 ever goes silent the gate reds instead of quietly passing.
+
+# FLAGS — read from the RUNNING processes, not the env file (2026-09-13 22:54 UTC)
 
 | flag | value | note |
 |---|---|---|
@@ -111,7 +128,7 @@ code before acceptance:
 1. **~06:30 ET:** `ssh mai-tai-vps /home/trader/preopen.sh`
 2. Require the literal final line **`PASS: Monday pre-open gate is green.`** Anything else is
    `BLOCKED`. **Exit 1 is the gate working.**
-3. It verifies in one pass: run window before 07:00 · SHA `d87d8d1b` and clean tree · v2 identity
+3. It verifies in one pass: run window before 07:00 · SHA `2d54d29c` and clean tree · v2 identity
    pid `1089323`, `NRestarts=0`, exact start timestamp · installed watch hash/mode/schedule ·
    restarted vs untouched service pids · **both accounts flat, managed rows AND broker positions** ·
    alembic head with no schema change · **five** running-process flags · REST warmup population ·
@@ -131,14 +148,16 @@ completing against a **non-empty evaluated population**; a weekend has no scanne
 all weekend and releases Monday exactly as it would have after a Monday restart. **09-11's took
 18.8 minutes.** [[a gate whose release depends on DATA cannot be pre-satisfied by running earlier]]
 
-⛔ **SYNC RULE, replacing the earlier "box must stay at 5dae7c9a".** The box was deliberately
-synced to `d87d8d1b` and `EXPECTED_SHA` was moved with it in the same action. That pairing is the
-rule: **whenever the checkout is synced, `EXPECTED_SHA` must be updated in the same action**, or
-the gate fails on checkout identity rather than on anything real — an alarming red that means
-nothing. ⭐ After **#969** merges the same applies, plus `--expected-quiet-service reconciler`
-must be added to the evidence call **in the same action**: I proved on the box that syncing the
-code without the flag turns the reconciler into `UNMEASURED(0/0)` and **fails** the Tracebacks
-row. Code and flag land together or not at all. The sync must not restart any service.
+⛔ **SYNC RULE — the gate's config moves WITH the checkout, in one action.** Applied twice now
+(`5dae7c9a` → `d87d8d1b` → `2d54d29c`), each time without restarting a service. Sync the checkout
+and leave `EXPECTED_SHA` behind and the gate fails on **checkout identity** rather than on anything
+real — an alarming red that means nothing.
+
+⭐ #969 added a second thing that travels with it: `--expected-quiet-service reconciler`. This is
+not optional decoration. I ran the tool on the box **both ways** before it merged: without the flag
+the reconciler reads `UNMEASURED(0/0)` and **FAILS** the Tracebacks row; with it, it reads
+`N/A_EXPECTED_QUIET(0/0)` and the run is left with only the Monday-dependent failures. **Code, flag
+and `EXPECTED_SHA` land together or not at all.**
 
 ⚠ **Two properties of the gate.** It pins `EXPECTED_PID` and the exact start timestamp, so a weekend
 reboot (unattended upgrades have restarted this fleet before) fails it loudly rather than passing on
