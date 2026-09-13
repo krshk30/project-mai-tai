@@ -747,23 +747,31 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     traceback_total = 0
     timestamped_total = 0
     traceback_detail: list[str] = []
+    services_without_records: list[str] = []
     for service in sorted(restarted):
         start = datetime.fromisoformat(current[service].started_at_utc).astimezone(UTC)
         evidence = parse_log_files(_log_files(service, runner, since=start), since=start)
         traceback_total += len(evidence.traceback_times_utc)
         timestamped_total += evidence.timestamped_records
-        traceback_detail.append(
-            f"{service}={len(evidence.traceback_times_utc)}/{evidence.timestamped_records}"
-        )
+        if evidence.timestamped_records == 0:
+            services_without_records.append(service)
+            traceback_detail.append(f"{service}=N/A(0/0)")
+        else:
+            traceback_detail.append(
+                f"{service}={len(evidence.traceback_times_utc)}/{evidence.timestamped_records}"
+            )
         traceback_detail.extend(format_moment(stamp) for stamp in evidence.traceback_times_utc)
     if traceback_total:
         failures.append(f"{traceback_total} post-restart traceback(s) found")
+    traceback_status = (
+        "FAIL" if traceback_total else "PARTIAL_N/A" if services_without_records else "PASS"
+    )
     rows.append(
         (
             "Tracebacks",
             f"headers={traceback_total}/{timestamped_total} post-restart timestamped records; "
             "nearest-preceding timestamp scope; " + "; ".join(traceback_detail),
-            "PASS" if traceback_total == 0 else "FAIL",
+            traceback_status,
         )
     )
 
@@ -773,7 +781,8 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         "",
         f"Generated: {format_moment(generated)}",
         f"V2 process start: {format_moment(v2_start)}",
-        f"Overall: {'PASS' if not failures else 'FAIL'} ({len(failures)} failed checks / {len(rows)} measured checks)",
+        f"Overall: {'PASS' if not failures else 'FAIL'} "
+        f"({len(failures)} failed checks / {len(rows)} reported checks)",
         "",
         "| Check | Measured evidence | Result |",
         "| --- | --- | --- |",

@@ -368,7 +368,33 @@ def test_report_contains_every_required_denominator(monkeypatch, tmp_path: Path,
     assert "release markers=1/3" in output and "restoration_complete=1" in output
     assert "gaps>90s=2/99" in output and "gaps spanning restart=0/2" in output
     assert "headers=0/3" in output and "nearest-preceding timestamp scope" in output
+    assert "0 failed checks / 9 reported checks" in output
     assert "2026-09-10 20:25:00 EDT (2026-09-11 00:25:00 UTC)" in output
+
+
+def test_report_marks_a_restarted_service_without_log_records_partially_unmeasured(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    start = datetime(2026, 9, 11, 0, 25, tzinfo=UTC)
+    current["reconciler"] = vre.ServiceState(
+        service="reconciler",
+        pid=901,
+        active_state="active",
+        sub_state="running",
+        n_restarts=0,
+        started_at_utc=start.isoformat(),
+    )
+    logs["reconciler"] = []
+    args.restarted.append("reconciler")
+
+    assert vre.report(args, runner=lambda command: "") == 0
+
+    output = capsys.readouterr().out
+    traceback_row = next(line for line in output.splitlines() if line.startswith("| Tracebacks |"))
+    assert "reconciler=N/A(0/0)" in traceback_row
+    assert "| PARTIAL_N/A |" in traceback_row
+    assert "| PASS |" not in traceback_row
 
 
 @pytest.mark.parametrize(
