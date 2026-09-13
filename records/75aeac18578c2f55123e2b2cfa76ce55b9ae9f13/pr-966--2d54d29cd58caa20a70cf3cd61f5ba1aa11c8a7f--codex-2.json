@@ -1,0 +1,9 @@
+{
+  "pr_number": 966,
+  "range_base": "2d54d29cd58caa20a70cf3cd61f5ba1aa11c8a7f",
+  "range_head": "75aeac18578c2f55123e2b2cfa76ce55b9ae9f13",
+  "reviewed_at": "2026-09-13T22:59:54Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Docs-only current-state handoff re-reviewed after rebase: production SHA/process/flag/exposure facts independently checked on the box; #930 live evidence and carried rows preserved; #969 merge and atomic sync recorded; self-falsifying main/box equality corrected with explicit docs-only divergence and Monday gate rules."
+}
