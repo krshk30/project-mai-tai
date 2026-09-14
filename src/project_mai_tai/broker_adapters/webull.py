@@ -46,6 +46,14 @@ _DEFAULT_POSITIONS_BACKOFF_BASE_SECS = 5.0
 _DEFAULT_POSITIONS_BACKOFF_MAX_SECS = 60.0
 
 
+# Webull instrument status ranking, best first. Lower wins.
+#   OC open/current · CO close-only (sellable, not openable) · NT not traded
+# An UNKNOWN status ranks BELOW a known close-only listing: CO is definitely usable for an exit,
+# an unrecognised code is not known to be usable for anything.
+_INSTRUMENT_STATUS_RANK = {"OC": 0, "CO": 1, "NT": 3}
+_INSTRUMENT_STATUS_RANK_UNKNOWN = 2
+
+
 class WebullPositionsUnavailable(Exception):
     """A position read is rate-limited (HTTP 429) AND no cached snapshot exists.
 
@@ -1015,16 +1023,60 @@ class WebullBrokerAdapter:
 
         body = self._body(Instrument(client).get_instrument(symbols=key, category="US_STOCK"))
         rows = body if isinstance(body, list) else [body] if isinstance(body, dict) else []
+        # ⛔⭐⭐ A RECYCLED TICKER RETURNS TWO INSTRUMENTS AND THE DEAD ONE CAN COME FIRST.
+        # 2026-09-14 SCNI: row0 = 950980372, exchange PK, status NT, "SCANNER TECHNOLOGIES CORP",
+        # a delisted pink-sheet shell; row1 = 913323022, exchange NAS, status OC, "SCINAI
+        # IMMUNOTHERAPEUTICS LTD", the live NASDAQ name we actually trade. Taking the FIRST match
+        # sent the dead id and Webull answered NO_SUCH_TICKER (http 417) — which then latched the
+        # symbol ineligible for the whole session and evicted a perfectly tradable name from the
+        # watchlist. PN and SHPH are the same shape, and they are the ONLY three symbols that have
+        # ever produced this reject. AAPL returns a single OC row, which is why it never showed.
+        # ⇒ Prefer a TRADABLE row. `status == "OC"` is open/current; "NT" is not-traded/delisted.
+        candidates: list[tuple[int, str]] = []
         for raw in rows:
             if not isinstance(raw, dict):
                 continue
-            if str(raw.get("symbol", "")).upper() != key and raw.get("symbol") is not None:
+            row_symbol = raw.get("symbol")
+            # ⛔ Previously `!= key and row_symbol is not None`, which SHORT-CIRCUITED on a row
+            # carrying no symbol at all and accepted its id for our key. Require a real match.
+            if row_symbol is None or str(row_symbol).upper() != key:
                 continue
             instrument_id = self._first_str(raw, "instrument_id", "instrumentId")
-            if instrument_id:
-                with self._instrument_lock:
-                    self._instrument_cache[key] = instrument_id
-                return instrument_id
+            if not instrument_id:
+                continue
+            status = str(raw.get("status", "") or "").upper()
+            # ⛔⭐ THE ORDERING IS LOAD-BEARING FOR EXITS, NOT JUST ENTRIES. Webull statuses:
+            #   OC = open/current, fully tradable
+            #   CO = CLOSE ONLY — cannot open, but CAN still be sold, so it is the correct
+            #        instrument for an EXIT and must outrank both "unknown" and NT
+            #   NT = not traded, useless for either side
+            # This function has no `side` argument, so it cannot choose contextually; it must
+            # return the listing that is usable for the WIDEST set of operations. Ranking CO with
+            # "unknown" (the first version of this fix) meant a CO/NT pair could resolve to the
+            # DEAD listing and break a close on a position we actually hold — strictly worse than
+            # the missed entry this fix was written for.
+            rank = _INSTRUMENT_STATUS_RANK.get(status, _INSTRUMENT_STATUS_RANK_UNKNOWN)
+            candidates.append((rank, instrument_id))
+        if candidates:
+            candidates.sort(key=lambda item: item[0])
+            best_rank, instrument_id = candidates[0]
+            if best_rank == _INSTRUMENT_STATUS_RANK["NT"]:
+                logger.warning(
+                    "Webull instrument lookup for %s found only NOT-TRADED listings; "
+                    "using %s and the order will probably be rejected",
+                    key,
+                    instrument_id,
+                )
+            elif len(candidates) > 1:
+                logger.info(
+                    "Webull instrument lookup for %s returned %d listings; chose %s by status rank",
+                    key,
+                    len(candidates),
+                    instrument_id,
+                )
+            with self._instrument_lock:
+                self._instrument_cache[key] = instrument_id
+            return instrument_id
         logger.warning("Webull instrument lookup returned no id for %s: %r", key, body)
         return None
 

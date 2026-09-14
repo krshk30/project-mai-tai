@@ -1125,3 +1125,112 @@ async def test_status_filter_alone_rejects_a_cancelled_leg_carrying_a_real_price
         _BASE + "S": _leg("CANCELLED", None, qty="0"),
     })
     assert await _adapter(client).fetch_oco_exit_fill("live:orb", "BIYA", _BASE) is None
+
+
+# --- recycled-ticker instrument selection (2026-09-14 SCNI incident) ---------------------------
+
+def _instrument_stub(monkeypatch, rows):
+    """Point the already-registered fake SDK at a specific instrument response."""
+    import sys
+
+    sys.modules["webull.data.quotes.instrument"].Instrument.body = rows
+
+
+# The real 2026-09-14 API response for SCNI, dead listing FIRST.
+SCNI_ROWS = [
+    {
+        "symbol": "SCNI",
+        "instrument_id": "950980372",
+        "exchange_code": "PK",
+        "status": "NT",
+        "name": "SCANNER TECHNOLOGIES CORP",
+    },
+    {
+        "symbol": "SCNI",
+        "instrument_id": "913323022",
+        "exchange_code": "NAS",
+        "status": "OC",
+        "name": "SCINAI IMMUNOTHERAPEUTICS LTD",
+    },
+]
+
+
+def test_recycled_ticker_picks_the_tradable_listing_not_the_first(fake_sdk) -> None:
+    """SCNI resolved to the delisted pink-sheet shell because it came FIRST in the response, and
+    Webull answered NO_SUCH_TICKER (http 417). The live NASDAQ listing is the second row."""
+    _instrument_stub(None, SCNI_ROWS)
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "SCNI") == "913323022"
+
+
+def test_recycled_ticker_choice_does_not_depend_on_response_order(fake_sdk) -> None:
+    """The tradable row must win from either position — otherwise the fix is luck, not selection."""
+    _instrument_stub(None, list(reversed(SCNI_ROWS)))
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "SCNI") == "913323022"
+
+
+def test_single_tradable_listing_is_unchanged(fake_sdk) -> None:
+    """AAPL returns one OC row; the common path must not move."""
+    _instrument_stub(None, [{"symbol": "AAPL", "instrument_id": "913256135", "status": "OC"}])
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "AAPL") == "913256135"
+
+
+def test_a_row_without_a_symbol_is_never_adopted(fake_sdk) -> None:
+    """The old filter short-circuited on `symbol is None` and adopted a foreign id for our key."""
+    _instrument_stub(None, [{"instrument_id": "999999999", "status": "OC"}])
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "SCNI") is None
+
+
+# --- P1 (codex-2): close-only selection must be pinned -----------------------------------------
+
+CO_NT_ROWS = [
+    {"symbol": "ZZZZ", "instrument_id": "dead-nt", "exchange_code": "PK", "status": "NT"},
+    {"symbol": "ZZZZ", "instrument_id": "live-co", "exchange_code": "NAS", "status": "CO"},
+]
+
+
+@pytest.mark.parametrize("order", ["nt_first", "co_first"])
+def test_close_only_listing_outranks_a_dead_one_either_way(fake_sdk, order) -> None:
+    """CO is close-only: it cannot OPEN but it CAN still SELL, so it is the right instrument for an
+    EXIT and must beat NT from either response position. Ranking CO as merely 'unknown' let a
+    CO/NT pair resolve to the dead listing and break a close on a position we actually hold."""
+    rows = CO_NT_ROWS if order == "nt_first" else list(reversed(CO_NT_ROWS))
+    _instrument_stub(None, rows)
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "ZZZZ") == "live-co"
+
+
+def test_close_only_outranks_an_unrecognised_status(fake_sdk) -> None:
+    """A known close-only listing is usable for an exit; an unrecognised code is not known to be
+    usable for anything, so CO must win."""
+    _instrument_stub(
+        None,
+        [
+            {"symbol": "ZZZZ", "instrument_id": "mystery", "status": "XX"},
+            {"symbol": "ZZZZ", "instrument_id": "live-co", "status": "CO"},
+        ],
+    )
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "ZZZZ") == "live-co"
+
+
+def test_all_not_traded_still_returns_an_id_rather_than_none(fake_sdk) -> None:
+    """The all-NT fallback is deliberate: returning an id that the broker will reject produces a
+    broker reject we can see and latch, whereas returning None produces a silent client-side
+    refusal. Deleting the fallback must not pass unnoticed."""
+    _instrument_stub(
+        None,
+        [{"symbol": "ZZZZ", "instrument_id": "dead-only", "exchange_code": "PK", "status": "NT"}],
+    )
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "ZZZZ") == "dead-only"
