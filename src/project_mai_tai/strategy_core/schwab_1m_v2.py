@@ -1288,13 +1288,13 @@ class SchwabV2Strategy:
         ):
             recovered = self._retire_flip_owner_opportunity(
                 state,
-                reason="terminal_unfilled_first_rest_after_watchlist_removal",
+                reason="proven_empty_first_rest_opportunity",
             )
             if recovered:
                 self._flip_owner_counts["unknown_recovery_succeeded"] += 1
                 logger.info(
                     "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
-                    "entry_allowed=1 reason=terminal_unfilled_first_rest_released",
+                    "entry_allowed=1 reason=proven_empty_first_rest_released",
                     state.symbol,
                     evaluated,
                     self._flip_owner_counts["unknown_recovery_succeeded"],
@@ -1420,6 +1420,12 @@ class SchwabV2Strategy:
             ):
                 return
             phase = state.flip_owner_phase
+        # A flat consumed owner is terminal for this short segment. Re-running the generic row
+        # checks would turn a completed sub-bar round trip back into ``unknown`` when one venue's
+        # managed row disappeared before the poll captured it. The next genuine SELL still retires
+        # the opportunity in `_end_flip_owner_on_sell`.
+        if phase == "consumed" and not open_positions:
+            return
         valid = True
         unexpected_accounts = set(open_positions) - state.flip_owner_fill_accounts
         if unexpected_accounts:
@@ -4271,17 +4277,41 @@ class SchwabV2Strategy:
         if was_webull_resting:
             logger.info("[V2-WEBULL-RESTING-CANCEL] %s reason=%s level=%.4f — cancelling the mirror",
                         state.symbol, reason, was_level)
-            segment_id = self._ensure_fanout_segment_id(state)
+            # A cancel manages an existing order; it must never mint or persist a new economic
+            # opportunity. Carry an identity only when the state already owns one. OMS can still
+            # cancel an unbound mirror by account and symbol.
+            segment_id = int(
+                getattr(state, "fanout_segment_id", 0)
+                or getattr(state, "flip_owner_opportunity_id", 0)
+                or 0
+            )
+            identity_metadata: dict[str, str] = {}
+            if segment_id > 0:
+                slot = fanout_slot_for_source("rth_resting_mirror")
+                identity_metadata = {
+                    "fanout_segment_id": str(segment_id),
+                    "fanout_slot": slot,
+                    "fanout_slot_id": fanout_slot_id(
+                        strategy_code=STRATEGY_CODE,
+                        symbol=state.symbol,
+                        segment_id=segment_id,
+                        slot=slot,
+                    ),
+                }
+            else:
+                logger.info(
+                    "[V2-WEBULL-RESTING-CANCEL-UNBOUND] %s reason=%s "
+                    "slot_binding=0 identity_persisted=0",
+                    state.symbol,
+                    reason,
+                )
             self._pending_webull_direct_intents.append(TradeIntentDraft(
                 symbol=state.symbol, side="buy", intent_type="cancel",
                 quantity=Decimal(str(self._webull_fanout_qty)),
                 reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
                 metadata={"resting_entry_cancel": "true", "reason": webull_reason,
                           "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
-                          "fanout_segment_id": str(segment_id),
-                          **self._fanout_slot_metadata(
-                              state, source="rth_resting_mirror", segment_id=segment_id
-                          ),
+                          **identity_metadata,
                           "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
             ))
 

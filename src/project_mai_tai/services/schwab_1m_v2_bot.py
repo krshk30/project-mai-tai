@@ -2335,12 +2335,14 @@ class SchwabV2BotService:
         account_names: tuple[str, ...],
         unknown_opportunities: dict[str, int],
     ) -> tuple[dict[str, frozenset[int]], int]:
-        """Prove every expected first-rest leg is terminal without any fill.
+        """Prove an unknown first-rest opportunity has no live or filled entry.
 
         A cancel draft is not evidence that its target left the broker. Missing intents, active
         intents/orders, malformed identities, and any fill therefore keep the opportunity out of
-        the returned set. The strategy may use only membership in this set to release an unfilled
-        owner after watchlist churn.
+        the returned set. The one exception is the exact historical cancel-minted identity defect:
+        a rejected Webull cancel with no target and no opening intent at or after the minted
+        opportunity. That proves the identity never represented an entry. The strategy may use
+        only membership in this set to release an unfilled owner after watchlist churn or restart.
         """
 
         primary = str(self.settings.strategy_schwab_1m_v2_account_name or "").strip()
@@ -2379,19 +2381,26 @@ class SchwabV2BotService:
                 Strategy.code == STRATEGY_CODE,
                 BrokerAccount.name.in_(account_names),
                 TradeIntent.symbol.in_(tuple(unknown_opportunities)),
-                TradeIntent.intent_type == "open",
+                TradeIntent.intent_type.in_(("open", "cancel")),
                 TradeIntent.created_at >= _current_scanner_session_start_utc(),
             )
         ).all()
         grouped: dict[
             tuple[str, int], dict[str, list[TradeIntent]]
         ] = {}
+        opening_intents_by_symbol: dict[str, list[TradeIntent]] = {}
+        cancel_minted_empty: dict[tuple[str, int], list[TradeIntent]] = {}
         intents_by_id: dict[object, TradeIntent] = {}
         for intent, account in rows:
             payload = dict(intent.payload or {})
             metadata = payload.get("metadata")
             symbol = str(intent.symbol or "").strip().upper()
-            if not isinstance(metadata, dict) or not symbol:
+            if not symbol:
+                continue
+            intent_type = str(intent.intent_type or "").strip().lower()
+            if intent_type == "open":
+                opening_intents_by_symbol.setdefault(symbol, []).append(intent)
+            if not isinstance(metadata, dict):
                 continue
             segment_value = str(metadata.get("fanout_segment_id", "")).strip()
             slot = str(metadata.get("fanout_slot", "")).strip().lower()
@@ -2412,10 +2421,26 @@ class SchwabV2BotService:
             )
             if slot_id != expected_slot_id:
                 continue
-            grouped.setdefault((symbol, opportunity_id), {}).setdefault(
-                str(account.name), []
-            ).append(intent)
-            intents_by_id[intent.id] = intent
+            if intent_type == "open":
+                grouped.setdefault((symbol, opportunity_id), {}).setdefault(
+                    str(account.name), []
+                ).append(intent)
+                intents_by_id[intent.id] = intent
+            elif (
+                intent_type == "cancel"
+                and str(account.provider or "").strip().lower() == "webull"
+                and str(metadata.get("fanout_leg", "")).strip().lower() == "webull"
+                and str(metadata.get("fanout_source", "")).strip().lower()
+                == "rth_resting_mirror"
+                and str(intent.status or "").strip().lower() == "rejected"
+                and str(payload.get("refusal_origin", "")).strip().lower()
+                == "skipped_before_submit"
+                and str(payload.get("refusal_code", "")).strip().lower()
+                == "cancel_target_not_found"
+            ):
+                cancel_minted_empty.setdefault((symbol, opportunity_id), []).append(
+                    intent
+                )
 
         orders_by_intent: dict[object, list[BrokerOrder]] = {}
         filled_order_ids: set[object] = set()
@@ -2476,6 +2501,24 @@ class SchwabV2BotService:
                 for account in expected_accounts
                 for intent in by_account[account]
             ):
+                terminal.setdefault(symbol, set()).add(opportunity_id)
+        for (symbol, opportunity_id), cancels in cancel_minted_empty.items():
+            opportunity_at = datetime.fromtimestamp(opportunity_id / 1000, tz=UTC)
+
+            def _created_at(intent: TradeIntent) -> datetime:
+                value = intent.created_at
+                return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+            newer_open_exists = any(
+                _created_at(intent) >= opportunity_at
+                for intent in opening_intents_by_symbol.get(symbol, ())
+            )
+            cancel_matches_time = all(
+                _created_at(intent) >= opportunity_at
+                and _settled_before_cutoff(intent.updated_at)
+                for intent in cancels
+            )
+            if not newer_open_exists and cancel_matches_time:
                 terminal.setdefault(symbol, set()).add(opportunity_id)
         return (
             {symbol: frozenset(values) for symbol, values in terminal.items()},

@@ -247,6 +247,51 @@ def _terminal_evidence_bot(factory) -> SchwabV2BotService:
     )
 
 
+def _seed_cancel_minted_empty_owner(
+    session,
+    *,
+    strategy: Strategy,
+    account: BrokerAccount,
+    symbol: str,
+    opportunity_id: int,
+    refusal_code: str = "cancel_target_not_found",
+    status: str = "rejected",
+    created_age_seconds: int = 30,
+    terminal_age_seconds: int = 30,
+) -> None:
+    slot_id = fanout_slot_id(
+        strategy_code="schwab_1m_v2",
+        symbol=symbol,
+        segment_id=opportunity_id,
+        slot="resting",
+    )
+    session.add(
+        TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol=symbol,
+            side="buy",
+            intent_type="cancel",
+            quantity=Decimal("1"),
+            reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
+            status=status,
+            payload={
+                "refusal_origin": "skipped_before_submit",
+                "refusal_code": refusal_code,
+                "metadata": {
+                    "fanout_leg": "webull",
+                    "fanout_source": "rth_resting_mirror",
+                    "fanout_segment_id": str(opportunity_id),
+                    "fanout_slot": "resting",
+                    "fanout_slot_id": slot_id,
+                },
+            },
+            created_at=datetime.now(UTC) - timedelta(seconds=created_age_seconds),
+            updated_at=datetime.now(UTC) - timedelta(seconds=terminal_age_seconds),
+        )
+    )
+
+
 def test_position_book_proves_both_first_rest_legs_terminal_without_a_fill(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -283,6 +328,104 @@ def test_position_book_proves_both_first_rest_legs_terminal_without_a_fill(
         "FTFT": frozenset({opportunity_id})
     }
     assert "unfilled_opportunities_evaluated=1 terminal_unfilled=1" in caplog.text
+
+
+def test_position_book_releases_the_exact_bmgl_cancel_minted_empty_owner() -> None:
+    factory = _factory()
+    opportunity_id = int((datetime.now(UTC) - timedelta(minutes=1)).timestamp() * 1000)
+    with factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
+        primary = BrokerAccount(
+            name="live:schwab_1m_v2", provider="schwab", environment="production"
+        )
+        webull = BrokerAccount(
+            name="live:orb", provider="webull", environment="production"
+        )
+        session.add_all([strategy, primary, webull])
+        session.flush()
+        _seed_cancel_minted_empty_owner(
+            session,
+            strategy=strategy,
+            account=webull,
+            symbol="BMGL",
+            opportunity_id=opportunity_id,
+        )
+        session.commit()
+
+    book = _terminal_evidence_bot(factory)._fetch_flip_position_book(
+        {"BMGL": opportunity_id}
+    )
+
+    assert book.terminal_unfilled_opportunities_by_symbol == {
+        "BMGL": frozenset({opportunity_id})
+    }
+
+
+@pytest.mark.parametrize(
+    "unsafe_shape",
+    [
+        "wrong_reason",
+        "not_terminal",
+        "still_settling",
+        "cancel_predates_opportunity",
+        "newer_open",
+    ],
+)
+def test_cancel_minted_owner_stays_unknown_without_complete_empty_proof(
+    unsafe_shape: str,
+) -> None:
+    factory = _factory()
+    opportunity_id = int((datetime.now(UTC) - timedelta(minutes=1)).timestamp() * 1000)
+    with factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
+        primary = BrokerAccount(
+            name="live:schwab_1m_v2", provider="schwab", environment="production"
+        )
+        webull = BrokerAccount(
+            name="live:orb", provider="webull", environment="production"
+        )
+        session.add_all([strategy, primary, webull])
+        session.flush()
+        _seed_cancel_minted_empty_owner(
+            session,
+            strategy=strategy,
+            account=webull,
+            symbol="BMGL",
+            opportunity_id=opportunity_id,
+            refusal_code=(
+                "different_refusal"
+                if unsafe_shape == "wrong_reason"
+                else "cancel_target_not_found"
+            ),
+            status="submitted" if unsafe_shape == "not_terminal" else "rejected",
+            created_age_seconds=(
+                90 if unsafe_shape == "cancel_predates_opportunity" else 30
+            ),
+            terminal_age_seconds=0 if unsafe_shape == "still_settling" else 30,
+        )
+        if unsafe_shape == "newer_open":
+            session.add(
+                TradeIntent(
+                    strategy_id=strategy.id,
+                    broker_account_id=primary.id,
+                    symbol="BMGL",
+                    side="buy",
+                    intent_type="open",
+                    quantity=Decimal("2"),
+                    reason="new opening intent with malformed identity",
+                    status="submitted",
+                    payload={},
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+        session.commit()
+
+    book = _terminal_evidence_bot(factory)._fetch_flip_position_book(
+        {"BMGL": opportunity_id}
+    )
+
+    assert book.terminal_unfilled_opportunities_by_symbol == {}
 
 
 def test_position_poll_queries_terminal_orders_only_for_exact_unknown_owners(
