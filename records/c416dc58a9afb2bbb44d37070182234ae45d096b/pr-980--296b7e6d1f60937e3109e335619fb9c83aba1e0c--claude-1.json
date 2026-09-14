@@ -1,0 +1,9 @@
+{
+  "pr_number": 980,
+  "range_base": "296b7e6d1f60937e3109e335619fb9c83aba1e0c",
+  "range_head": "c416dc58a9afb2bbb44d37070182234ae45d096b",
+  "reviewed_at": "2026-09-14T18:49:01Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review from scratch at the rebased head (2 commits, both codex-marked). Read the full diff of evaluate_boot: held_seen gates RESTORE arming; a released line with no prior HELD is skipped; a released episode clears held_seen; genuine HELD episodes keep the existing pass/fail paths. Focused: test_known_defect_regression_watch.py 64 passed; ruff clean on both files. My own 2 mutations each red: arm ready_at on a bare RESTORE with no HELD (2 fails incl. the new UNEXERCISED test); keep held_seen after release so RESTORE re-arms (1 fail). REAL-TAPE CONTROL through the head's own evaluate_boot: today's 733 boot lines from the box (2026-09-14 02:00 UTC onward: 370 HELD0, 1 released at 08:12:32.990, 11 RESTORE1) -> GUARD_WORKING (1,1,0) with no completion_still_held; the same tape cut after the release (the Tuesday shape, RESTORE-only window, 10 lines) -> UNEXERCISED (0,0,0). Previous head 8d2f1c9c was withheld for exactly that shape; it is now covered. Controlled full unit pair on this host: base 296b7e6d 46 failed, 3814 passed; head c416dc58 46 failed/3817 passed; identical 46 failure names (host tooling). CI validate pass x2. Deploy: cron picks it up, no restart."
+}
