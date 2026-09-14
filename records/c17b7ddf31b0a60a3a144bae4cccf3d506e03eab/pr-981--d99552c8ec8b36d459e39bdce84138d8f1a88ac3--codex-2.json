@@ -1,0 +1,9 @@
+{
+  "pr_number": 981,
+  "range_base": "d99552c8ec8b36d459e39bdce84138d8f1a88ac3",
+  "range_head": "c17b7ddf31b0a60a3a144bae4cccf3d506e03eab",
+  "reviewed_at": "2026-09-14T22:27:14Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Docs-only close-out reviewed: frozen manifest matched byte-for-byte, journal append was additive, current-state handoff matched independently verified deployment evidence, and validate passed."
+}
