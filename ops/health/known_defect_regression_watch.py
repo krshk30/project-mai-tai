@@ -306,8 +306,9 @@ def parse_log_lines(lines: Iterable[str], *, since: datetime, until: datetime) -
     # them, `evaluate_boot`'s order-dependent state machine saw a release with nothing restored,
     # and BOOT1 paged a RECURRENCE against a boot that was correct. Deterministic, not a race.
     # ⇒ Sort on the timestamp ALONE. Python's sort is stable, so equal timestamps keep their READ
-    # order, which is the order the lines were written: within a file the append order, and across
-    # files the mtime-ascending order they are read in. Causality, not the alphabet.
+    # order — within a file, the append order the lines were written in. Causality, not the
+    # alphabet. Across FILES that holds because `ordered_log_paths` sorts them chronologically;
+    # `find -print0` alone returns arbitrary directory order.
     return sorted(result, key=lambda line: line.at)
 
 
@@ -892,6 +893,17 @@ def _query_database(since: datetime) -> dict[str, int]:
     return parsed
 
 
+def ordered_log_paths(paths: Iterable[Path], service: str) -> list[Path]:
+    """Chronological read order: rotations oldest-first, then the LIVE file last.
+
+    ⛔ ``find -print0`` returns arbitrary DIRECTORY order, and ``parse_log_lines`` sorts stably,
+    so equal timestamps keep their read order — an arbitrary file order would become an arbitrary
+    line order for a same-millisecond pair spanning two files. A plain name sort is not enough
+    either: ``svc.log`` sorts before ``svc.log-20260913``, putting the newest content first.
+    """
+    return sorted(paths, key=lambda path: (path.name == f"{service}.log", path.name))
+
+
 def _read_recent_logs(service: str, since: datetime) -> list[str]:
     command = [
         "sudo",
@@ -911,7 +923,9 @@ def _read_recent_logs(service: str, since: datetime) -> list[str]:
     result = subprocess.run(command, capture_output=True, timeout=15, check=False)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.decode(errors="replace").strip() or "log find failed")
-    paths = [Path(raw.decode()) for raw in result.stdout.split(b"\0") if raw]
+    paths = ordered_log_paths(
+        (Path(raw.decode()) for raw in result.stdout.split(b"\0") if raw), service
+    )
     if not paths:
         raise RuntimeError(f"no recent {service} logs found")
     rows: list[str] = []

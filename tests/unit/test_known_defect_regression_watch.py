@@ -108,6 +108,26 @@ def test_boot_release_after_completion_is_guard_working() -> None:
     assert (result.evaluated, result.guard_working, result.recurrence) == (1, 1, 0)
 
 
+def test_log_paths_are_read_rotations_first_live_file_last() -> None:
+    """`find -print0` returns arbitrary directory order, and the line sort is STABLE, so an
+    arbitrary file order would become an arbitrary order for same-timestamp lines spanning two
+    files. Paths must be chronological: rotations oldest-first, live file LAST. A plain name sort
+    gets this backwards because 'svc.log' < 'svc.log-20260913'."""
+    service = "schwab-1m-v2"
+    names = [
+        f"{service}.log",
+        f"{service}.log-20260913",
+        f"{service}.log-20260912.gz",
+    ]
+    ordered = watch.ordered_log_paths((Path(n) for n in names), service)
+
+    assert [p.name for p in ordered] == [
+        f"{service}.log-20260912.gz",
+        f"{service}.log-20260913",
+        f"{service}.log",
+    ]
+
+
 def test_same_millisecond_restore_then_release_is_guard_working_not_recurrence() -> None:
     """The 2026-09-14 live tape. v2 logged restoration_complete=1 and the hold release in the
     SAME millisecond, restore first. Sorting with a `(at, text)` key tie-broke alphabetically —
