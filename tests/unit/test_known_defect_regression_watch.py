@@ -193,6 +193,48 @@ def test_same_millisecond_restore_then_release_is_guard_working_not_recurrence()
     assert result.guard_working == 1
 
 
+def test_post_latch_restore_updates_do_not_rearm_a_released_boot_episode() -> None:
+    result = watch.evaluate_boot(
+        lines(
+            (5, "[V2-BOOT-HOLD] HELD restoration_complete=0"),
+            (6, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=1 confirmed=1"),
+            (6, "[V2-BOOT-HOLD] released restoration_complete=1"),
+            (
+                10,
+                "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=2 confirmed=2 "
+                "post_latch_additions=1",
+            ),
+            (
+                11,
+                "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=3 confirmed=3 "
+                "post_latch_additions=1",
+            ),
+        ),
+        now=NOW,
+    )
+
+    assert result.verdict == watch.GUARD_WORKING
+    assert (result.evaluated, result.guard_working, result.recurrence) == (1, 1, 0)
+    assert "completion_still_held" not in result.detail
+
+
+def test_a_new_held_marker_rearms_boot_detection_after_an_earlier_release() -> None:
+    result = watch.evaluate_boot(
+        lines(
+            (5, "[V2-BOOT-HOLD] HELD restoration_complete=0"),
+            (6, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=1 confirmed=1"),
+            (6, "[V2-BOOT-HOLD] released restoration_complete=1"),
+            (10, "[V2-BOOT-HOLD] HELD restoration_complete=0"),
+            (11, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=1 confirmed=1"),
+        ),
+        now=NOW,
+    )
+
+    assert result.verdict == watch.RECURRENCE
+    assert (result.evaluated, result.guard_working, result.recurrence) == (2, 1, 1)
+    assert "completion_still_held" in result.detail
+
+
 def test_boot_release_before_completion_is_recurrence() -> None:
     result = watch.evaluate_boot(
         lines((5, "[V2-BOOT-HOLD] released restoration_complete=1")), now=NOW

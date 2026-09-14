@@ -336,15 +336,20 @@ def _reading(
 
 def evaluate_boot(lines: Sequence[TimedLine], *, now: datetime) -> Reading:
     ready_at: datetime | None = None
+    released = False
     evaluated = guard = bad = 0
     details: list[str] = []
     for line in lines:
         if "[V2-BOOT-HOLD] HELD" in line.text and "restoration_complete=0" in line.text:
             ready_at = None
+            released = False
         elif "[V2-BOOT-RESTORE]" in line.text and "restoration_complete=1" in line.text:
-            if ready_at is None:
-                evaluated += 1
-            ready_at = line.at
+            # Periodic post-latch additions report restoration_complete=1 for the already released
+            # process. Only a new HELD marker may open another boot episode.
+            if not released:
+                if ready_at is None:
+                    evaluated += 1
+                ready_at = line.at
         elif "[V2-BOOT-HOLD] released" in line.text:
             if ready_at is None:
                 bad += 1
@@ -352,6 +357,7 @@ def evaluate_boot(lines: Sequence[TimedLine], *, now: datetime) -> Reading:
             else:
                 guard += 1
                 ready_at = None
+            released = True
     if ready_at is not None and (now - ready_at).total_seconds() > BOOT_RELEASE_GRACE_SECONDS:
         bad += 1
         details.append(f"completion_still_held_since={ready_at.isoformat()}")
