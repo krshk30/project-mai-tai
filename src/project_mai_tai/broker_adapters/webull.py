@@ -1015,16 +1015,51 @@ class WebullBrokerAdapter:
 
         body = self._body(Instrument(client).get_instrument(symbols=key, category="US_STOCK"))
         rows = body if isinstance(body, list) else [body] if isinstance(body, dict) else []
+        # ⛔⭐⭐ A RECYCLED TICKER RETURNS TWO INSTRUMENTS AND THE DEAD ONE CAN COME FIRST.
+        # 2026-09-14 SCNI: row0 = 950980372, exchange PK, status NT, "SCANNER TECHNOLOGIES CORP",
+        # a delisted pink-sheet shell; row1 = 913323022, exchange NAS, status OC, "SCINAI
+        # IMMUNOTHERAPEUTICS LTD", the live NASDAQ name we actually trade. Taking the FIRST match
+        # sent the dead id and Webull answered NO_SUCH_TICKER (http 417) — which then latched the
+        # symbol ineligible for the whole session and evicted a perfectly tradable name from the
+        # watchlist. PN and SHPH are the same shape, and they are the ONLY three symbols that have
+        # ever produced this reject. AAPL returns a single OC row, which is why it never showed.
+        # ⇒ Prefer a TRADABLE row. `status == "OC"` is open/current; "NT" is not-traded/delisted.
+        candidates: list[tuple[int, str]] = []
         for raw in rows:
             if not isinstance(raw, dict):
                 continue
-            if str(raw.get("symbol", "")).upper() != key and raw.get("symbol") is not None:
+            row_symbol = raw.get("symbol")
+            # ⛔ Previously `!= key and row_symbol is not None`, which SHORT-CIRCUITED on a row
+            # carrying no symbol at all and accepted its id for our key. Require a real match.
+            if row_symbol is None or str(row_symbol).upper() != key:
                 continue
             instrument_id = self._first_str(raw, "instrument_id", "instrumentId")
-            if instrument_id:
-                with self._instrument_lock:
-                    self._instrument_cache[key] = instrument_id
-                return instrument_id
+            if not instrument_id:
+                continue
+            status = str(raw.get("status", "") or "").upper()
+            # rank 0 = explicitly tradable, 1 = unknown status, 2 = explicitly not traded
+            rank = 0 if status == "OC" else (2 if status == "NT" else 1)
+            candidates.append((rank, instrument_id))
+        if candidates:
+            candidates.sort(key=lambda item: item[0])
+            best_rank, instrument_id = candidates[0]
+            if best_rank == 2:
+                logger.warning(
+                    "Webull instrument lookup for %s found only NOT-TRADED listings; "
+                    "using %s and the order will probably be rejected",
+                    key,
+                    instrument_id,
+                )
+            elif len(candidates) > 1:
+                logger.info(
+                    "Webull instrument lookup for %s returned %d listings; chose %s by status rank",
+                    key,
+                    len(candidates),
+                    instrument_id,
+                )
+            with self._instrument_lock:
+                self._instrument_cache[key] = instrument_id
+            return instrument_id
         logger.warning("Webull instrument lookup returned no id for %s: %r", key, body)
         return None
 

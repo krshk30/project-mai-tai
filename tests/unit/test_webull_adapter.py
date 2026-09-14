@@ -1125,3 +1125,64 @@ async def test_status_filter_alone_rejects_a_cancelled_leg_carrying_a_real_price
         _BASE + "S": _leg("CANCELLED", None, qty="0"),
     })
     assert await _adapter(client).fetch_oco_exit_fill("live:orb", "BIYA", _BASE) is None
+
+
+# --- recycled-ticker instrument selection (2026-09-14 SCNI incident) ---------------------------
+
+def _instrument_stub(monkeypatch, rows):
+    """Point the already-registered fake SDK at a specific instrument response."""
+    import sys
+
+    sys.modules["webull.data.quotes.instrument"].Instrument.body = rows
+
+
+# The real 2026-09-14 API response for SCNI, dead listing FIRST.
+SCNI_ROWS = [
+    {
+        "symbol": "SCNI",
+        "instrument_id": "950980372",
+        "exchange_code": "PK",
+        "status": "NT",
+        "name": "SCANNER TECHNOLOGIES CORP",
+    },
+    {
+        "symbol": "SCNI",
+        "instrument_id": "913323022",
+        "exchange_code": "NAS",
+        "status": "OC",
+        "name": "SCINAI IMMUNOTHERAPEUTICS LTD",
+    },
+]
+
+
+def test_recycled_ticker_picks_the_tradable_listing_not_the_first(fake_sdk) -> None:
+    """SCNI resolved to the delisted pink-sheet shell because it came FIRST in the response, and
+    Webull answered NO_SUCH_TICKER (http 417). The live NASDAQ listing is the second row."""
+    _instrument_stub(None, SCNI_ROWS)
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "SCNI") == "913323022"
+
+
+def test_recycled_ticker_choice_does_not_depend_on_response_order(fake_sdk) -> None:
+    """The tradable row must win from either position — otherwise the fix is luck, not selection."""
+    _instrument_stub(None, list(reversed(SCNI_ROWS)))
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "SCNI") == "913323022"
+
+
+def test_single_tradable_listing_is_unchanged(fake_sdk) -> None:
+    """AAPL returns one OC row; the common path must not move."""
+    _instrument_stub(None, [{"symbol": "AAPL", "instrument_id": "913256135", "status": "OC"}])
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "AAPL") == "913256135"
+
+
+def test_a_row_without_a_symbol_is_never_adopted(fake_sdk) -> None:
+    """The old filter short-circuited on `symbol is None` and adopted a foreign id for our key."""
+    _instrument_stub(None, [{"instrument_id": "999999999", "status": "OC"}])
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "SCNI") is None
