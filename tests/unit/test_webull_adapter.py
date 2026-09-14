@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -81,11 +82,18 @@ class _FakeClient:
 
 
 class _ServerException(Exception):
-    def __init__(self, code: str, msg: str, http: int) -> None:
+    def __init__(
+        self,
+        code: str,
+        msg: str,
+        http: int,
+        request_id: str | None = None,
+    ) -> None:
         super().__init__(code)
         self.error_code = code
         self.error_msg = msg
         self.http_status = http
+        self.request_id = request_id
 
 
 @pytest.fixture
@@ -107,7 +115,10 @@ def fake_sdk(monkeypatch):
     reg("webull.trade.request.cancel_order_request", CancelOrderRequest=_make_req("cancel"))
 
     class _Instrument:
-        body = [{"symbol": "AAPL", "instrument_id": "913256135"}]
+        body = [
+            {"symbol": "AAPL", "instrument_id": "913256135"},
+            {"symbol": "BMGL", "instrument_id": "951002116"},
+        ]
 
         def __init__(self, client) -> None:
             self._client = client
@@ -181,6 +192,33 @@ async def test_submit_limit_order_accepted(fake_sdk) -> None:
     assert placed["qty"] == "5"
     assert placed["limit_price"] == "2.83"
     assert placed["tif"] == "DAY"
+    assert rep.metadata["webull_wire_instrument_id"] == "913256135"
+    assert rep.metadata["webull_wire_order_type"] == "LIMIT"
+    assert rep.metadata["webull_wire_side"] == "BUY"
+    assert rep.metadata["webull_wire_quantity"] == "5"
+    assert rep.metadata["webull_wire_time_in_force"] == "DAY"
+    assert rep.metadata["webull_wire_limit_price"] == "2.83"
+    assert rep.metadata["webull_wire_extended_hours_trading"] == "false"
+    assert rep.metadata["webull_wire_category"] == "US_STOCK"
+    submitted_at = datetime.fromisoformat(rep.metadata["webull_wire_submitted_at_utc"])
+    assert submitted_at.tzinfo == UTC
+    assert "webull_request_id" not in rep.metadata
+
+
+@pytest.mark.asyncio
+async def test_wire_evidence_omits_prices_that_were_not_sent(fake_sdk) -> None:
+    client = _FakeClient({"place": {"order_id": "WB-MARKET"}})
+    adapter = _adapter(client)
+
+    reports = await adapter.submit_order(
+        _order(order_type="market", metadata={"reference_price": "2.83"})
+    )
+
+    placed = client.last["place"].values
+    assert "limit_price" not in placed
+    assert "stop_price" not in placed
+    assert "webull_wire_limit_price" not in reports[0].metadata
+    assert "webull_wire_stop_price" not in reports[0].metadata
 
 
 def test_round_to_tick_grid() -> None:
@@ -400,11 +438,54 @@ async def test_submit_rejected_when_account_unmapped(fake_sdk) -> None:
 @pytest.mark.asyncio
 async def test_submit_rejected_on_server_exception(fake_sdk) -> None:
     client = _FakeClient({"place": {}})
-    client.raises["place"] = _ServerException("INVALID_TOKEN", "permission denied", 401)
-    adapter = _adapter(client)
-    reports = await adapter.submit_order(_order())
-    assert reports[0].event_type == "rejected"
-    assert "INVALID_TOKEN" in reports[0].reason and "401" in reports[0].reason
+    client.raises["place"] = _ServerException(
+        "ORDER_RISK_RULE_PRICE_AGGRESSIVE",
+        "ORDER_RISK_RULE_PRICE_AGGRESSIVE",
+        417,
+        request_id="38c7ed8c-f4ed-4b2e-a886-472260c1bd68",
+    )
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+    reports = await adapter.submit_order(
+        _order(
+            strategy_code="schwab_1m_v2",
+            symbol="BMGL",
+            metadata={
+                "order_type": "STOP_LIMIT",
+                "stop_price": "8.2855",
+                "limit_price": "8.3269",
+                "fanout_source": "rth_resting_mirror",
+            },
+            order_type="STOP_LIMIT",
+        )
+    )
+    report = reports[0]
+    assert report.event_type == "rejected"
+    assert report.origin == "broker"
+    assert "ORDER_RISK_RULE_PRICE_AGGRESSIVE" in report.reason
+    assert "417" in report.reason
+    assert report.metadata["webull_request_id"] == "38c7ed8c-f4ed-4b2e-a886-472260c1bd68"
+    assert report.metadata["webull_error_code"] == "ORDER_RISK_RULE_PRICE_AGGRESSIVE"
+    assert report.metadata["webull_error_message"] == "ORDER_RISK_RULE_PRICE_AGGRESSIVE"
+    assert report.metadata["webull_http_status"] == "417"
+    assert report.metadata["webull_wire_instrument_id"] == "951002116"
+    assert report.metadata["webull_wire_order_type"] == "STOP_LOSS_LIMIT"
+    assert report.metadata["webull_wire_side"] == "BUY"
+    assert report.metadata["webull_wire_quantity"] == "5"
+    assert report.metadata["webull_wire_time_in_force"] == "DAY"
+    assert report.metadata["webull_wire_stop_price"] == "8.29"
+    assert report.metadata["webull_wire_limit_price"] == "8.33"
+    assert report.metadata["webull_wire_extended_hours_trading"] == "false"
+    assert report.metadata["webull_wire_category"] == "US_STOCK"
+    submitted_at = datetime.fromisoformat(report.metadata["webull_wire_submitted_at_utc"])
+    assert submitted_at.tzinfo == UTC
+    assert not any("account_id" in key for key in report.metadata)
+    assert not any("secret" in key for key in report.metadata)
+
+
+def test_local_exception_does_not_invent_broker_evidence() -> None:
+    metadata = WebullBrokerAdapter._exception_metadata(RuntimeError("socket closed"))
+
+    assert metadata == {}
 
 
 @pytest.mark.asyncio

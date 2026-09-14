@@ -307,8 +307,14 @@ def test_webull_exception_paths_are_DERIVED_never_guessed() -> None:
     assert '_reject(request, self._exc_reason(exc), origin="' not in src, (
         "an exception-wrapping site was labelled by a LITERAL — that is the guess"
     )
-    assert src.count("origin=self._origin_from_exc(exc)") == 4, (
-        "every exception-wrapping reject site must DERIVE its origin"
+    assert src.count("self._reject_from_exception(request, exc") == 5, (
+        "every exception-wrapping reject site must use the shared evidence-preserving path"
+    )
+    assert src.count("origin=self._origin_from_exc(exc)") == 1, (
+        "the shared exception path must DERIVE its origin"
+    )
+    assert src.count("evidence.update(self._exception_metadata(exc))") == 1, (
+        "the shared exception path must preserve Webull's correlation evidence"
     )
 
 

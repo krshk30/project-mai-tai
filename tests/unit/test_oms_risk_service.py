@@ -17,6 +17,7 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    BrokerOrderEvent,
     Fill,
     RiskCheck,
     SchwabIneligibleToday,
@@ -4884,6 +4885,53 @@ def _q12_service(session_factory):  # noqa: ANN001, ANN202
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
+
+
+@pytest.mark.asyncio
+async def test_webull_rejection_evidence_reaches_the_durable_order_event() -> None:
+    class _RejectedAdapter:
+        async def submit_order(self, request):  # noqa: ANN001, ANN202
+            return [
+                ExecutionReport(
+                    event_type="rejected",
+                    origin="broker",
+                    client_order_id=request.client_order_id,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason="Webull order rejected: ORDER_RISK_RULE_PRICE_AGGRESSIVE (http 417)",
+                    metadata={
+                        **request.metadata,
+                        "webull_request_id": "38c7ed8c-f4ed-4b2e-a886-472260c1bd68",
+                        "webull_error_code": "ORDER_RISK_RULE_PRICE_AGGRESSIVE",
+                        "webull_http_status": "417",
+                        "webull_wire_instrument_id": "951002116",
+                        "webull_wire_stop_price": "8.29",
+                        "webull_wire_limit_price": "8.33",
+                    },
+                )
+            ]
+
+    session_factory = build_test_session_factory()
+    service = _q12_service(session_factory)
+    service.broker_adapter = _RejectedAdapter()
+
+    await service.process_trade_intent(_entry_intent())
+
+    with session_factory() as session:
+        event = session.scalar(
+            select(BrokerOrderEvent).where(BrokerOrderEvent.event_type == "rejected")
+        )
+        assert event is not None
+        assert event.event_source == "broker"
+        metadata = event.payload["metadata"]
+        assert metadata["webull_request_id"] == "38c7ed8c-f4ed-4b2e-a886-472260c1bd68"
+        assert metadata["webull_error_code"] == "ORDER_RISK_RULE_PRICE_AGGRESSIVE"
+        assert metadata["webull_http_status"] == "417"
+        assert metadata["webull_wire_instrument_id"] == "951002116"
+        assert metadata["webull_wire_stop_price"] == "8.29"
+        assert metadata["webull_wire_limit_price"] == "8.33"
 
 
 @pytest.mark.asyncio
