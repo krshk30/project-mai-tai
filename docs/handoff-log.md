@@ -3967,3 +3967,53 @@ ssh mai-tai-vps /home/trader/preopen.sh    # ~06:30 ET
 Require the literal `PASS: Monday pre-open gate is green.` before 07:00. `PARTIAL_N/A` on tracebacks
 (declared-quiet reconciler) and `N/A_OFF_SESSION` on bar continuity are **expected, not failures**.
 ⛔ Do not bypass the hold. 09-11's release took **18.8 minutes**.
+
+## 2026-09-14 — Monday: BMGL lost two flips to one latch, eight PRs shipped and deployed the same evening
+
+**Integrator `claude-1`; deploy executed by `codex-2`. Box `2d54d29c` → `d99552c8`, all restarts after the bell.**
+
+### The morning
+BMGL was the only setup and Schwab refused it from 10:08 (`schwab_ineligible_cached`), so every BMGL fill all day was the Webull qty-1 leg.
+The first entry (09:40) was rejected by both brokers; four Webull `ORDER_RISK_RULE_PRICE_AGGRESSIVE` rejects between 09:40 and 10:20 cost
+the 09:51 flip. Codex took the diagnostics (#976 keeps Webull's request id, error fields and exact wire prices on every reject) and the
+cancel-before-confirm reprice window. The rule itself is still not understood: distance from the ask separates today's rejects (+9–15%)
+from today's acceptances (+3–4%), but a +9.7% acceptance at 10:13 and a +31% one on 09-09 say it is not the whole test.
+
+### The finding of the day — the resting latch is blind to a Webull-only fill
+10:54:41 the Webull leg filled at 7.86 (first Webull-only-held position ever). The confirmation exit closed it at 10:56 — #945 exercised
+and correct. RECLAIM1 then released the segment (`entry_allowed=1`) and no rest was placed: `resting_active` clears on a fill only through
+`position_qty_held`, which `update_position` fills from the primary-account poll "without inferring the Webull leg". The 10:59 bar ran
+through 7.8451 with nothing resting. The tell was an 11:01 `flip_no_fill` cancel for an order that had filled six minutes earlier.
+That cancel bound a fan-out slot under an idle owner; the 11:59 sell flip marked the owner UNKNOWN; the recovery loop had no retire path
+for a flat unknown owner; admission was refused four times; the 12:11 flip was missed too. FTFT at 12:22 (a clean +5% on both brokers in
+ten seconds) showed the same latch is also sampled per bar. Both were pinned end to end on the tape and in code before anything was built.
+
+### What shipped (all reviewed by the other agent, all pinned by exact head)
+#976 Webull reject evidence (claude-1 pinned; fixture verified against the box SDK 2.0.11) · #977 LATCH1 clear the latch on an authoritative
+Webull resting fill (pinned) · #979 LATCH2 no slot bind on cancel, flat-consumed early return, proof path for restored cancel-minted owners
+(pinned) · #980 BOOT2 — first head withheld with a precise finding (the boot window starts 22:00 ET the prior evening and the 04:00 roll
+writes no HELD, so a no-restart day had only RESTORE lines), second head pinned after the real 733-line tape read GUARD_WORKING and the
+Tuesday shape read UNEXERCISED · #978 ORB Completed Positions times in ET (claude-1's own two-line fix; **merged with `--admin` on the
+operator's explicit, repeated "bypass and merge"** — recorded as a one-off; the standing rule is unchanged).
+
+### The evening
+Operator asked "what would happen after 4 PM" to the 15:59:03 BMGL fill. Answer, read from code and settings: the Webull pair is
+regular-hours only (Webull dropped the target at the bell and left the stop "Working"), the confirmation exit fired at 16:01 and was
+refused after hours by the 09-06 rule, the software ladder covers 16:00–20:00 on both brokers, and the 19:55 flatten has never actually
+closed a Webull share. EOD1601 (16:01 cancel-and-re-exit, #889/#898) exists, is OFF, has never run, and is Schwab-only — the router raises
+for Webull. The operator sold the share by hand, cancelled the legs, and ruled: after-hours design = software ladder + flatten, on both
+brokers, nothing to enable; the confirmation exit stays blocked after hours; EOD1601 is not wanted.
+
+### The deploy
+Operator GO ~16:55. Window A: snapshot, sync-only, pins moved with the sync, reconciler first — critical findings 222 → 1 under #973's
+scope. The 1 was the BMGL phantom row (hand sale, correctly unbooked). Operator overrode the wait for the 19:55 flatten: the row was closed
+by hand (`UPDATE 1`, recorded as a manual record). #973's fill-ledger check then read net +1; codex proposed and claude-1 approved moving
+the fixed fill-balance checkpoint to 2026-09-14T21:20:41Z, an instant positively verified flat (0 positions, 0 working orders, last fill
+19:59:03 UTC). Reconciler restarted, three zero-critical runs, Window B: oms+strategy 21:37:08, v2 21:40:48, control 21:41:28 UTC.
+Boot hold released 21:40:59, warmup 3/3, gaps spanning restart 0, 0 tracebacks, 0/0/0 exposure. Evidence report honestly FAIL 1/9: the
+immutable pre-restart snapshot carries the phantom row; codex refused to rewrite it. Tuesday's gate will show that one red; ruling recorded
+in the handoff.
+
+### Corrections recorded against `claude-1`
+The tracked OMS deploy script restarts strategy (the 09-12 "v2 only / strategy untouched" statement was wrong for the deploy path).
+The memory "Webull attach never succeeded" is stale: 3/3 today. Eight harness and reading errors listed in the handoff.
