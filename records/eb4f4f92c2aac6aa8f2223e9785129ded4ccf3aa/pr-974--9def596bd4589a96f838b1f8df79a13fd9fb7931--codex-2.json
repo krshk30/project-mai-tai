@@ -1,0 +1,9 @@
+{
+  "pr_number": 974,
+  "range_base": "9def596bd4589a96f838b1f8df79a13fd9fb7931",
+  "range_head": "eb4f4f92c2aac6aa8f2223e9785129ded4ccf3aa",
+  "reviewed_at": "2026-09-14T13:58:31Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed Webull recycled-ticker selection against live API and official OC/CO/NT semantics; verified CO outranks NT and unknown, all-NT remains visible, missing-symbol rows are refused, five hostile mutations turn distinct controls red, 73 focused tests and Ruff pass, and the full controlled pair adds exactly eight tests with identical 67 baseline failure/error names."
+}
