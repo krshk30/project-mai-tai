@@ -1,0 +1,9 @@
+{
+  "pr_number": 971,
+  "range_base": "23653d2355f86cb55691152be5a7adc556b50d1f",
+  "range_head": "242f882db0808d386eb0fb4ea5c0a6b5eea52354",
+  "reviewed_at": "2026-09-14T00:20:01Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Docs-only carried-item row verified against the live fleet tooling on macOS Bash 3.2.57: the retrospective board overlap sweep fails closed at mapfile, while the claim-time candidate guard remains functional and directly refuses a conflicting held path. Scope, owner, and next action are accurate; no findings."
+}
