@@ -4463,3 +4463,62 @@ def test_persist_schwab_token_store_defaults_to_7d_when_missing(tmp_path) -> Non
     exp = datetime.fromisoformat(doc["refresh_token_expires_at"])
     obt = datetime.fromisoformat(doc["refresh_token_obtained_at"])
     assert abs((exp - obt).total_seconds() - 7 * 24 * 3600) < 5
+
+
+def _orb_closed_row_like_production(**overrides: object) -> dict[str, object]:
+    # Exact key set of ``OrbApp._closed_row`` (services/orb_app.py) — the paper bot ships
+    # ``entry_time`` / ``exit_time`` as ``datetime.isoformat()`` in UTC, which the operator saw
+    # verbatim in the Completed Positions table on 2026-09-14 ("2026-09-14T13:30:10.596000+00:00").
+    row: dict[str, object] = {
+        "event_key": "BMGL:1789392610596",
+        "ticker": "BMGL",
+        "symbol": "BMGL",
+        "entry_price": 8.11,
+        "exit_price": 8.27,
+        "quantity": 2.0,
+        "pnl": 0.32,
+        "pnl_pct": 1.97,
+        "reason": "break_bar_body_under_45_pct",
+        "exit_summary": "Break Bar Body Under 45 Pct",
+        "entry_time": "2026-09-14T13:30:10.596000+00:00",
+        "exit_time": "2026-09-14T13:30:28.045089+00:00",
+        "peak_profit_pct": 2.0,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_completed_positions_render_iso_utc_closed_today_times_as_display_et() -> None:
+    html, count, _pnl = _build_completed_position_rows(
+        {"strategy_code": "orb", "account_name": "paper:orb", "closed_today": [_orb_closed_row_like_production()]},
+        recent_orders=[],
+        recent_fills=[],
+    )
+
+    assert count == 1
+    assert "2026-09-14 09:30:10 AM ET" in html
+    assert "2026-09-14 09:30:28 AM ET" in html
+    assert "T13:30:10" not in html
+    assert "+00:00" not in html
+
+
+def test_completed_positions_leave_display_et_and_placeholder_times_untouched() -> None:
+    html, count, _pnl = _build_completed_position_rows(
+        {
+            "strategy_code": "orb",
+            "account_name": "paper:orb",
+            "closed_today": [
+                _orb_closed_row_like_production(
+                    entry_time="2026-09-14 09:30:10 AM ET",
+                    exit_time="2026-09-14 09:30:28 AM ET",
+                )
+            ],
+        },
+        recent_orders=[],
+        recent_fills=[],
+    )
+
+    assert count == 1
+    # Already display-ET: rendered verbatim, never shifted a second time.
+    assert html.count("2026-09-14 09:30:10 AM ET") == 1
+    assert html.count("2026-09-14 09:30:28 AM ET") == 1
