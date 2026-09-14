@@ -375,7 +375,7 @@ def test_ftft_watchlist_churn_releases_only_after_every_rest_is_terminal_unfille
     assert identity_writes[-1][1:] == (
         opportunity,
         False,
-        "terminal_unfilled_first_rest_after_watchlist_removal",
+        "proven_empty_first_rest_opportunity",
     )
     assert "[V2-FLIP-OWNER-RELEASED] FTFT" in caplog.text
     assert "previous_phase=unknown" in caplog.text
@@ -398,6 +398,132 @@ def test_terminal_unfilled_evidence_cannot_release_an_owner_with_fill_evidence()
 
     assert state.flip_owner_phase == "unknown"
     assert not any(not active for _symbol, _segment, active, _reason in identity_writes)
+
+
+def test_restored_bmgl_cancel_minted_owner_retires_on_exact_empty_proof() -> None:
+    opportunity = NOW_MS - 60_000
+    restored = FlipEntryOwnershipRecord(
+        symbol="BMGLRESTORE",
+        opportunity_id=opportunity,
+        phase="unknown",
+        flip_bar_ts=0,
+        provisional_started_ms=0,
+        fill_accounts=(),
+        position_ids={},
+        position_entry_ms={},
+    )
+    strategy = SchwabV2Strategy(_settings(strict=True, dual=True))
+    clock = [NOW_MS]
+    identity_writes: list[tuple[str, int, bool, str]] = []
+    strategy._now_ms = lambda: clock[0]
+    strategy.configure_fanout_identity_persistence(
+        lambda symbol, segment, active, reason: identity_writes.append(
+            (symbol, segment, active, reason)
+        ),
+        {"BMGLRESTORE": opportunity},
+    )
+    strategy.configure_flip_entry_ownership(
+        lambda *_args: None,
+        active_segments={"BMGLRESTORE": opportunity},
+        restored={"BMGLRESTORE": restored},
+    )
+    state = strategy.watchlist_state("BMGLRESTORE")
+    assert state.flip_owner_phase == "unknown"
+
+    _book(
+        strategy,
+        clock,
+        "BMGLRESTORE",
+        terminal_unfilled_opportunities=frozenset({opportunity}),
+    )
+
+    assert state.flip_owner_phase == "idle"
+    assert state.flip_owner_opportunity_id == 0
+    assert identity_writes[-1][1:] == (
+        opportunity,
+        False,
+        "proven_empty_first_rest_opportunity",
+    )
+
+
+def test_bmgl_unbound_cancel_does_not_mint_an_owner_and_next_sell_can_admit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    strategy, clock, identity_writes, _owner_writes = _strategy(dual=True)
+    state = strategy.watchlist_state("BMGL")
+    state.bars.append(_bar(clock[0]))
+    _book(strategy, clock, "BMGL")
+    state.resting_active = True
+    state.resting_level = 7.8451
+    state.resting_is_broker_order = True
+    state.webull_resting_active = True
+
+    with caplog.at_level(logging.INFO):
+        strategy._queue_resting_cancel(state, reason="flip_no_fill")
+
+    mirror_cancel = strategy.drain_webull_direct_intents()[0]
+    assert identity_writes == []
+    assert state.fanout_segment_id == 0
+    assert state.flip_owner_opportunity_id == 0
+    assert "fanout_segment_id" not in mirror_cancel.metadata
+    assert "fanout_slot_id" not in mirror_cancel.metadata
+    assert "[V2-FANOUT-SLOT-BOUND]" not in caplog.text
+    assert "[V2-WEBULL-RESTING-CANCEL-UNBOUND] BMGL" in caplog.text
+
+    state.bars.append(_bar(clock[0] + 60_000))
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+    assert state.flip_owner_phase == "idle"
+    strategy._queue_resting_place(state, 7.6447, slot="first")
+    assert len(strategy.drain_pending_intents()) == 2  # prior cancel plus the new rest
+    assert state.flip_owner_phase == "resting"
+
+
+def test_webull_cancel_carries_an_existing_identity_without_rebinding_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    strategy, clock, identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "BOUND")
+    strategy.drain_webull_direct_intents()
+    identity_writes.clear()
+    state.resting_active = True
+    state.resting_level = 3.10
+    state.resting_is_broker_order = True
+    state.webull_resting_active = True
+    caplog.clear()
+
+    with caplog.at_level(logging.INFO):
+        strategy._queue_resting_cancel(state, reason="reprice")
+
+    mirror_cancel = strategy.drain_webull_direct_intents()[0]
+    assert identity_writes == []
+    assert mirror_cancel.metadata["fanout_segment_id"] == str(opportunity)
+    assert (
+        mirror_cancel.metadata["fanout_slot_id"]
+        == "333bf85a-e2d2-5ecd-943c-5d3582804871"
+    )
+    assert "[V2-FANOUT-SLOT-BOUND]" not in caplog.text
+
+
+def test_ftft_flat_consumed_round_trip_does_not_reopen_unknown_or_repersist() -> None:
+    strategy, clock, _identity_writes, owner_writes = _strategy(dual=True)
+    state = strategy.watchlist_state("FTFTFAST")
+    opportunity = NOW_MS - 60_000
+    state.fanout_segment_id = opportunity
+    state.flip_owner_opportunity_id = opportunity
+    state.flip_owner_phase = "unknown"
+    state.flip_owner_first_rest_placed = True
+    state.flip_owner_provisional_started_ms = clock[0] - 16_000
+    state.flip_owner_fill_accounts = {PRIMARY, WEBULL}
+    state.flip_owner_position_ids = {PRIMARY: "ftft-schwab-row"}
+
+    _book(strategy, clock, "FTFTFAST")
+    assert state.flip_owner_phase == "consumed"
+    writes_after_transition = len(owner_writes)
+
+    _book(strategy, clock, "FTFTFAST")
+
+    assert state.flip_owner_phase == "consumed"
+    assert len(owner_writes) == writes_after_transition
 
 
 def test_dbgi_stop_close_keeps_the_same_short_segment_consumed() -> None:
