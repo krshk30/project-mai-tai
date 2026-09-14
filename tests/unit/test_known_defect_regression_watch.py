@@ -108,6 +108,91 @@ def test_boot_release_after_completion_is_guard_working() -> None:
     assert (result.evaluated, result.guard_working, result.recurrence) == (1, 1, 0)
 
 
+def test_collector_reads_rotations_before_the_live_file(monkeypatch) -> None:
+    """Pins the CALL SITE, not just the helper. `find -print0` is stubbed to return the LIVE file
+    first — the arbitrary order it really can produce — and the collector must still read the
+    rotations first. Deleting the ordered_log_paths() call in _read_recent_logs leaves the helper's
+    own unit test green, so without this the production binding is unpinned."""
+    service = "schwab-1m-v2"
+    find_out = b"\0".join(
+        [
+            f"/var/log/project-mai-tai/{service}.log".encode(),
+            f"/var/log/project-mai-tai/{service}.log-20260913".encode(),
+            f"/var/log/project-mai-tai/{service}.log-20260912.gz".encode(),
+        ]
+    )
+    read_order: list[str] = []
+
+    def fake_run(command, **kwargs):
+        if "find" in command:
+            return subprocess.CompletedProcess(command, 0, find_out, b"")
+        path = command[-1]
+        read_order.append(Path(path).name)
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr(watch.subprocess, "run", fake_run)
+    watch._read_recent_logs(service, since=datetime(2026, 9, 14, 8, 0, tzinfo=UTC))
+
+    assert read_order == [
+        f"{service}.log-20260912.gz",
+        f"{service}.log-20260913",
+        f"{service}.log",
+    ], f"collector read files out of chronological order: {read_order}"
+
+
+def test_log_paths_are_read_rotations_first_live_file_last() -> None:
+    """`find -print0` returns arbitrary directory order, and the line sort is STABLE, so an
+    arbitrary file order would become an arbitrary order for same-timestamp lines spanning two
+    files. Paths must be chronological: rotations oldest-first, live file LAST. A plain name sort
+    gets this backwards because 'svc.log' < 'svc.log-20260913'."""
+    service = "schwab-1m-v2"
+    names = [
+        f"{service}.log",
+        f"{service}.log-20260913",
+        f"{service}.log-20260912.gz",
+    ]
+    ordered = watch.ordered_log_paths((Path(n) for n in names), service)
+
+    assert [p.name for p in ordered] == [
+        f"{service}.log-20260912.gz",
+        f"{service}.log-20260913",
+        f"{service}.log",
+    ]
+
+
+def test_same_millisecond_restore_then_release_is_guard_working_not_recurrence() -> None:
+    """The 2026-09-14 live tape. v2 logged restoration_complete=1 and the hold release in the
+    SAME millisecond, restore first. Sorting with a `(at, text)` key tie-broke alphabetically —
+    '[V2-BOOT-HOLD]' < '[V2-BOOT-RESTORE]' because 'H' < 'R' — which fed evaluate_boot the pair
+    backwards and paged a RECURRENCE against a correct boot."""
+    raw = [
+        "2026-09-14 08:12:22,935 WARNING x | [V2-BOOT-HOLD] HELD — restoration_complete=0 "
+        "armed_segments_observed=1 dangerous_observed=1 dangerous_symbols=SCNI",
+        "2026-09-14 08:12:32,990 INFO x | [V2-BOOT-RESTORE] restoration_complete=1 evaluated=1 "
+        "confirmed=1 rest_warmed=0 timeout_released=1 could_not_tell=0",
+        "2026-09-14 08:12:32,990 INFO x | [V2-BOOT-HOLD] released — restoration_complete=1 "
+        "reconstructed_uncapped=0; CW-v2 entries open",
+    ]
+    now = datetime(2026, 9, 14, 9, 50, tzinfo=UTC)
+    lines = watch.parse_log_lines(
+        raw, since=datetime(2026, 9, 14, 8, 0, tzinfo=UTC), until=now
+    )
+
+    # the restore must still precede the release after sorting
+    markers = [
+        "RESTORE" if "[V2-BOOT-RESTORE]" in line.text else "RELEASE"
+        for line in lines
+        if "BOOT-RESTORE" in line.text or "BOOT-HOLD] released" in line.text
+    ]
+    assert markers == ["RESTORE", "RELEASE"], f"same-ms lines reordered: {markers}"
+
+    result = watch.evaluate_boot(lines, now=now)
+    assert result.recurrence == 0, result.detail
+    assert result.recurred is False
+    assert result.verdict == watch.GUARD_WORKING
+    assert result.guard_working == 1
+
+
 def test_boot_release_before_completion_is_recurrence() -> None:
     result = watch.evaluate_boot(
         lines((5, "[V2-BOOT-HOLD] released restoration_complete=1")), now=NOW
