@@ -1,0 +1,9 @@
+{
+  "pr_number": 972,
+  "range_base": "960a127ab291209969380086ca70a88218284a39",
+  "range_head": "2742e24611cbbd26ca64c3a6ff9e0608b745ce3e",
+  "reviewed_at": "2026-09-14T10:34:25Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "No findings. Verified chronological rotation/live-file ordering against production filenames; 61 focused tests and ruff clean; alphabetical tie-break and collector-order bypass mutations independently red; controlled pair 55 failed/3803 passed/12 errors to 55 failed/3806 passed/12 errors with identical 67 failure/error names."
+}
