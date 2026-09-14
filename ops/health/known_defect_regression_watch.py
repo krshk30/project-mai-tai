@@ -299,7 +299,16 @@ def parse_log_lines(lines: Iterable[str], *, since: datetime, until: datetime) -
         )
         if since <= at <= until:
             result.append(TimedLine(at=at, text=raw.rstrip()))
-    return sorted(result, key=lambda line: (line.at, line.text))
+    # ⛔⭐⭐ TIE-BREAK ON TEXT REVERSES CAUSALITY. This was `(line.at, line.text)`, which for two
+    # lines sharing a millisecond falls back to ALPHABETICAL order — and `[V2-BOOT-HOLD]` sorts
+    # before `[V2-BOOT-RESTORE]` because 'H' < 'R'. On 2026-09-14 v2 logged restoration_complete=1
+    # and the hold release in the SAME millisecond (08:12:32.990), in that order; the sort swapped
+    # them, `evaluate_boot`'s order-dependent state machine saw a release with nothing restored,
+    # and BOOT1 paged a RECURRENCE against a boot that was correct. Deterministic, not a race.
+    # ⇒ Sort on the timestamp ALONE. Python's sort is stable, so equal timestamps keep their READ
+    # order, which is the order the lines were written: within a file the append order, and across
+    # files the mtime-ascending order they are read in. Causality, not the alphabet.
+    return sorted(result, key=lambda line: line.at)
 
 
 def _reading(

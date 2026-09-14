@@ -108,6 +108,39 @@ def test_boot_release_after_completion_is_guard_working() -> None:
     assert (result.evaluated, result.guard_working, result.recurrence) == (1, 1, 0)
 
 
+def test_same_millisecond_restore_then_release_is_guard_working_not_recurrence() -> None:
+    """The 2026-09-14 live tape. v2 logged restoration_complete=1 and the hold release in the
+    SAME millisecond, restore first. Sorting with a `(at, text)` key tie-broke alphabetically —
+    '[V2-BOOT-HOLD]' < '[V2-BOOT-RESTORE]' because 'H' < 'R' — which fed evaluate_boot the pair
+    backwards and paged a RECURRENCE against a correct boot."""
+    raw = [
+        "2026-09-14 08:12:22,935 WARNING x | [V2-BOOT-HOLD] HELD — restoration_complete=0 "
+        "armed_segments_observed=1 dangerous_observed=1 dangerous_symbols=SCNI",
+        "2026-09-14 08:12:32,990 INFO x | [V2-BOOT-RESTORE] restoration_complete=1 evaluated=1 "
+        "confirmed=1 rest_warmed=0 timeout_released=1 could_not_tell=0",
+        "2026-09-14 08:12:32,990 INFO x | [V2-BOOT-HOLD] released — restoration_complete=1 "
+        "reconstructed_uncapped=0; CW-v2 entries open",
+    ]
+    now = datetime(2026, 9, 14, 9, 50, tzinfo=UTC)
+    lines = watch.parse_log_lines(
+        raw, since=datetime(2026, 9, 14, 8, 0, tzinfo=UTC), until=now
+    )
+
+    # the restore must still precede the release after sorting
+    markers = [
+        "RESTORE" if "[V2-BOOT-RESTORE]" in line.text else "RELEASE"
+        for line in lines
+        if "BOOT-RESTORE" in line.text or "BOOT-HOLD] released" in line.text
+    ]
+    assert markers == ["RESTORE", "RELEASE"], f"same-ms lines reordered: {markers}"
+
+    result = watch.evaluate_boot(lines, now=now)
+    assert result.recurrence == 0, result.detail
+    assert result.recurred is False
+    assert result.verdict == watch.GUARD_WORKING
+    assert result.guard_working == 1
+
+
 def test_boot_release_before_completion_is_recurrence() -> None:
     result = watch.evaluate_boot(
         lines((5, "[V2-BOOT-HOLD] released restoration_complete=1")), now=NOW
