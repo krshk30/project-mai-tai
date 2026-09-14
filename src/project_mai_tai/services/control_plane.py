@@ -9431,9 +9431,9 @@ def _build_completed_position_rows(
             <td><strong>{escape(str(row.get("ticker", "")) or "-")}</strong></td>
             <td style="white-space:nowrap;">{escape(str(row.get("path", "")) or "-")}</td>
             <td style="text-align:right">{escape(str(row.get("quantity", "")) or "-")}</td>
-            <td style="white-space:nowrap;">{escape(str(row.get("entry_time", "")) or "-")}</td>
+            <td style="white-space:nowrap;">{escape(_datetime_str(str(row.get("entry_time", "")) or "-"))}</td>
             <td style="text-align:right">{escape(str(row.get("entry_price", "")) or "-")}</td>
-            <td style="white-space:nowrap;">{escape(str(row.get("exit_time", "")) or "-")}</td>
+            <td style="white-space:nowrap;">{escape(_datetime_str(str(row.get("exit_time", "")) or "-"))}</td>
             <td style="text-align:right">{escape(str(row.get("exit_price", "")) or "-")}</td>
             <td style="color:{color};white-space:nowrap;">${pnl:+.2f} ({_as_float(row.get("pnl_pct")):+.1f}%)</td>
             <td title="{escape(str(row.get("summary", "")) or "-")}" style="font-size:11px;white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis;">{escape(str(row.get("summary", "")) or "-")}</td>
