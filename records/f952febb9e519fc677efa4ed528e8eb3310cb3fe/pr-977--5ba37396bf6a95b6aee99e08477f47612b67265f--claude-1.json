@@ -1,0 +1,9 @@
+{
+  "pr_number": 977,
+  "range_base": "5ba37396bf6a95b6aee99e08477f47612b67265f",
+  "range_head": "f952febb9e519fc677efa4ed528e8eb3310cb3fe",
+  "reviewed_at": "2026-09-14T16:36:40Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Read the full diff: one new static helper _clear_resting_fill_latch; called from apply_fanout_outcome ONLY inside the outcome==filled authoritative branch and ONLY for slot==resting, plus a no-op refactor of the existing position-held gate to the same helper. No trading-rule, pricing, cancel, or ownership-scope change. Focused: test_v2_flip_owned_first_entry.py 46 passed; all v2-named unit files 952 passed; ruff 0.15.22 clean. My own 3 mutations each red: disable the clear on fill (2 fails), clear on every outcome incl. rejected (2 fails incl. the reject control), partial clear leaving resting_flip_ms (1 fail). Fixture matches production: the test FanoutOutcome uses outcome=filled slot=resting, identical to the live 2026-09-14 16:22:31 UTC log line. Covers both live shapes seen 09-14 (BMGL Webull-only fill 10:54 ET; FTFT sub-bar round trip 12:22 ET). Residual, boarded separately: Schwab-only fill with sub-bar round trip; cancel path binding a fan-out slot; recovery loop lacking a retire path for a flat unknown owner. Controlled full unit pair on this host: base 5ba37396 46 failed/3799 passed; head f952febb 46 failed/3802 passed; identical 46 failure names (host tooling). CI validate pass x2."
+}
