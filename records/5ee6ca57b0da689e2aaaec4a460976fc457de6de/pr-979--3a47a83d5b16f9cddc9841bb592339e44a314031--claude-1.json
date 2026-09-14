@@ -1,0 +1,9 @@
+{
+  "pr_number": 979,
+  "range_base": "3a47a83d5b16f9cddc9841bb592339e44a314031",
+  "range_head": "5ee6ca57b0da689e2aaaec4a460976fc457de6de",
+  "reviewed_at": "2026-09-14T18:24:12Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Read the full diff (bot + strategy). (1) Webull mirror cancel no longer mints/persists a fan-out segment; it carries an existing identity or goes UNBOUND with a new marker. Verified OMS still finds the cancel target: oms/store.py find_open_order_for_cancel keys on strategy+account+symbol+open status (plus optional target coid), never on fanout_slot_id, so an unbound cancel cannot orphan a rest. (2) Flat consumed owner returns early instead of re-running row checks (FTFT sub-bar round-trip ping-pong). (3) Bot-side terminal proof for a cancel-minted identity: rejected Webull cancel with refusal_origin=skipped_before_submit and refusal_code=cancel_target_not_found and NO opening intent for the symbol at/after the opportunity. Fixture matches production: those exact fields exist at oms/service.py:2214-2221 and today's 11:01:03 ET BMGL live:orb cancel intent carries them with fanout_segment_id=1789397940000. Conservative by design: any later opening intent for the symbol blocks release. Focused: test_v2_flip_owned_first_entry.py + test_v2_flip_entry_ownership_store.py 74 passed; ruff clean. My own 3 mutations each red: re-mint segment on cancel (1 fail), remove flat-consumed early return (1 fail), drop the newer-open guard (1 fail, the [newer_open] control). Controlled full unit pair on this host: base 3a47a83 46 failed/3804 passed; head 5ee6ca57 46 failed/3814 passed; identical 46 failure names (host tooling). CI validate pass x2. Out of scope, unchanged: Schwab-only fill with sub-bar round trip."
+}
