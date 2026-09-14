@@ -314,6 +314,7 @@ and prove one protection cancellation and one Webull close attempt.**
 | **liquidity floor** | ⭐ the *cancel* half is addressed by **#960** (pull only after 3 consecutive sub-floor bars, one good bar re-places) and watched by **LIQPULL1** — replay-proven, unexercised live. The floor VALUE (10,000) and the arm-time staleness remain open | unassigned |
 | **0.5% stop-limit band** | strands the entry on fast moves (YMAT flip bar) | unassigned |
 | **F6 / F8 / F9 / F10** | stale `current_profit_pct`; Webull manual-order ingestion | unassigned |
+| 🔧 **`board.sh overlap` broken on macOS** | `overlap.sh:70` uses `mapfile` (bash 4); this Mac runs bash 3.2.57. ⛔ Fails CLOSED (exit 1), and the **claim-time** guard is UNAFFECTED — `--candidate` returns at :67 with a `while read` loop, so two agents still cannot claim the same path. What is lost is only the pairwise sweep of EXISTING held claims, which is the one thing that catches a `FORCE_CLAIM=1` overlap and globs that grow into each other as files are added. **NEXT ACTION: replace `mapfile -t L < <(held)` with a `while read` loop.** Operator asked for it THIS WEEK (09-13). | `claude-1` |
 | **BNC 11:03 · claim overhang · fan-out size · ELIG · AMEND1 · REJ1 silence** | carried from 09-08, unchanged | unassigned |
 
 ⭐ **`drift audit` is CLOSED** — #924 scheduled it; it is no longer unscheduled.
