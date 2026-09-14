@@ -46,6 +46,14 @@ _DEFAULT_POSITIONS_BACKOFF_BASE_SECS = 5.0
 _DEFAULT_POSITIONS_BACKOFF_MAX_SECS = 60.0
 
 
+# Webull instrument status ranking, best first. Lower wins.
+#   OC open/current · CO close-only (sellable, not openable) · NT not traded
+# An UNKNOWN status ranks BELOW a known close-only listing: CO is definitely usable for an exit,
+# an unrecognised code is not known to be usable for anything.
+_INSTRUMENT_STATUS_RANK = {"OC": 0, "CO": 1, "NT": 3}
+_INSTRUMENT_STATUS_RANK_UNKNOWN = 2
+
+
 class WebullPositionsUnavailable(Exception):
     """A position read is rate-limited (HTTP 429) AND no cached snapshot exists.
 
@@ -1037,13 +1045,22 @@ class WebullBrokerAdapter:
             if not instrument_id:
                 continue
             status = str(raw.get("status", "") or "").upper()
-            # rank 0 = explicitly tradable, 1 = unknown status, 2 = explicitly not traded
-            rank = 0 if status == "OC" else (2 if status == "NT" else 1)
+            # ⛔⭐ THE ORDERING IS LOAD-BEARING FOR EXITS, NOT JUST ENTRIES. Webull statuses:
+            #   OC = open/current, fully tradable
+            #   CO = CLOSE ONLY — cannot open, but CAN still be sold, so it is the correct
+            #        instrument for an EXIT and must outrank both "unknown" and NT
+            #   NT = not traded, useless for either side
+            # This function has no `side` argument, so it cannot choose contextually; it must
+            # return the listing that is usable for the WIDEST set of operations. Ranking CO with
+            # "unknown" (the first version of this fix) meant a CO/NT pair could resolve to the
+            # DEAD listing and break a close on a position we actually hold — strictly worse than
+            # the missed entry this fix was written for.
+            rank = _INSTRUMENT_STATUS_RANK.get(status, _INSTRUMENT_STATUS_RANK_UNKNOWN)
             candidates.append((rank, instrument_id))
         if candidates:
             candidates.sort(key=lambda item: item[0])
             best_rank, instrument_id = candidates[0]
-            if best_rank == 2:
+            if best_rank == _INSTRUMENT_STATUS_RANK["NT"]:
                 logger.warning(
                     "Webull instrument lookup for %s found only NOT-TRADED listings; "
                     "using %s and the order will probably be rejected",

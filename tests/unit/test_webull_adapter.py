@@ -1186,3 +1186,51 @@ def test_a_row_without_a_symbol_is_never_adopted(fake_sdk) -> None:
     adapter = _adapter(object())
 
     assert adapter._resolve_instrument_id(object(), "SCNI") is None
+
+
+# --- P1 (codex-2): close-only selection must be pinned -----------------------------------------
+
+CO_NT_ROWS = [
+    {"symbol": "ZZZZ", "instrument_id": "dead-nt", "exchange_code": "PK", "status": "NT"},
+    {"symbol": "ZZZZ", "instrument_id": "live-co", "exchange_code": "NAS", "status": "CO"},
+]
+
+
+@pytest.mark.parametrize("order", ["nt_first", "co_first"])
+def test_close_only_listing_outranks_a_dead_one_either_way(fake_sdk, order) -> None:
+    """CO is close-only: it cannot OPEN but it CAN still SELL, so it is the right instrument for an
+    EXIT and must beat NT from either response position. Ranking CO as merely 'unknown' let a
+    CO/NT pair resolve to the dead listing and break a close on a position we actually hold."""
+    rows = CO_NT_ROWS if order == "nt_first" else list(reversed(CO_NT_ROWS))
+    _instrument_stub(None, rows)
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "ZZZZ") == "live-co"
+
+
+def test_close_only_outranks_an_unrecognised_status(fake_sdk) -> None:
+    """A known close-only listing is usable for an exit; an unrecognised code is not known to be
+    usable for anything, so CO must win."""
+    _instrument_stub(
+        None,
+        [
+            {"symbol": "ZZZZ", "instrument_id": "mystery", "status": "XX"},
+            {"symbol": "ZZZZ", "instrument_id": "live-co", "status": "CO"},
+        ],
+    )
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "ZZZZ") == "live-co"
+
+
+def test_all_not_traded_still_returns_an_id_rather_than_none(fake_sdk) -> None:
+    """The all-NT fallback is deliberate: returning an id that the broker will reject produces a
+    broker reject we can see and latch, whereas returning None produces a silent client-side
+    refusal. Deleting the fallback must not pass unnoticed."""
+    _instrument_stub(
+        None,
+        [{"symbol": "ZZZZ", "instrument_id": "dead-only", "exchange_code": "PK", "status": "NT"}],
+    )
+    adapter = _adapter(object())
+
+    assert adapter._resolve_instrument_id(object(), "ZZZZ") == "dead-only"
