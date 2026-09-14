@@ -172,18 +172,18 @@ class WebullBrokerAdapter:
                 return await asyncio.to_thread(self._submit_exit_pair_blocking, account, request)
             except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
                 self._log_exit_pair_refusal(request, exc)
-                return [self._reject(request, self._exc_reason(exc), origin=self._origin_from_exc(exc))]
+                return [self._reject_from_exception(request, exc)]
         if self._is_bracket_request(request):
             # Native OCO combo: one v3 place_order of MASTER+STOP_PROFIT+STOP_LOSS. Flag-gated;
             # off => this branch is never taken and the single-leg path below is byte-identical.
             try:
                 return await asyncio.to_thread(self._submit_bracket_blocking, account, request)
             except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
-                return [self._reject(request, self._exc_reason(exc), origin=self._origin_from_exc(exc))]
+                return [self._reject_from_exception(request, exc)]
         try:
             return await asyncio.to_thread(self._submit_blocking, account, request)
         except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
-            return [self._reject(request, self._exc_reason(exc), origin=self._origin_from_exc(exc))]
+            return [self._reject_from_exception(request, exc)]
 
     def exit_pair_leg_client_order_ids(self, base_client_order_id: str) -> list[str]:
         """The coids of the two resting exit legs hanging off ``base_client_order_id``.
@@ -550,19 +550,38 @@ class WebullBrokerAdapter:
         po.set_account_id(account.account_id)
         po.set_client_order_id(request.client_order_id)
         po.set_instrument_id(instrument_id)
-        po.set_side("BUY" if request.side == "buy" else "SELL")
+        wire_side = "BUY" if request.side == "buy" else "SELL"
+        wire_qty = (
+            str(int(request.quantity))
+            if request.quantity == request.quantity.to_integral_value()
+            else str(request.quantity)
+        )
+        wire_tif = self._tif(request)
+        po.set_side(wire_side)
         po.set_order_type(order_type)
-        po.set_qty(str(int(request.quantity)) if request.quantity == request.quantity.to_integral_value() else str(request.quantity))
-        po.set_tif(self._tif(request))
+        po.set_qty(wire_qty)
+        po.set_tif(wire_tif)
         if hasattr(po, "set_category"):
             po.set_category("US_STOCK")
+            report_metadata["webull_wire_category"] = "US_STOCK"
         # Price gates include BOTH the broker-neutral tokens (flag-off path) and Webull's
         # mapped enums (flag-on path), so set_stop_price/set_limit_price stay consistent
         # with whatever _order_type() returned.
         if order_type in {"LIMIT", "STOP_LIMIT", "STOP_LOSS_LIMIT", "ENHANCED_LIMIT", "AT_AUCTION_LIMIT"} and wire_limit is not None:
             po.set_limit_price(str(wire_limit))
+            report_metadata["webull_wire_limit_price"] = str(wire_limit)
         if order_type in {"STOP", "STOP_LIMIT", "STOP_LOSS", "STOP_LOSS_LIMIT"} and wire_stop is not None:
             po.set_stop_price(str(wire_stop))
+            report_metadata["webull_wire_stop_price"] = str(wire_stop)
+        report_metadata.update(
+            {
+                "webull_wire_instrument_id": str(instrument_id),
+                "webull_wire_order_type": order_type,
+                "webull_wire_side": wire_side,
+                "webull_wire_quantity": wire_qty,
+                "webull_wire_time_in_force": wire_tif,
+            }
+        )
         if report_metadata.get("webull_buy_stop_limit_tick_adjusted") == "true":
             logger.warning(
                 "[WEBULL-BUY-STOP-LIMIT-TICK-ADJUSTED] %s raw_stop=%s raw_limit=%s "
@@ -586,8 +605,15 @@ class WebullBrokerAdapter:
                     request.symbol, order_type,
                 )
             po.set_extended_hours_trading(ext_flag)
+            report_metadata["webull_wire_extended_hours_trading"] = str(ext_flag).lower()
 
-        body = self._body(client.get_response(po))
+        report_metadata["webull_wire_submitted_at_utc"] = datetime.now(UTC).isoformat(
+            timespec="milliseconds"
+        )
+        try:
+            body = self._body(client.get_response(po))
+        except Exception as exc:  # noqa: BLE001 - preserve the broker's correlation evidence
+            return [self._reject_from_exception(request, exc, metadata=report_metadata)]
         # Confirmed live: the place response returns only {client_order_id}; the broker
         # order_id appears in the order-detail (fetch_order_update). A None here is normal.
         broker_order_id = self._first_str(body, "order_id", "orderId")
@@ -848,7 +874,7 @@ class WebullBrokerAdapter:
                         metadata={**dict(request.metadata), "cancel_outcome": "already_absent"},
                     )
                 ]
-            return [self._reject(request, self._exc_reason(exc), origin=self._origin_from_exc(exc))]
+            return [self._reject_from_exception(request, exc)]
 
     def _cancel_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
@@ -1669,7 +1695,12 @@ class WebullBrokerAdapter:
         return f"{broker_order_id}:{filled_quantity}"
 
     def _reject(
-        self, request: OrderRequest, reason: str, *, origin: str = "unknown"
+        self,
+        request: OrderRequest,
+        reason: str,
+        *,
+        origin: str = "unknown",
+        metadata: dict[str, str] | None = None,
     ) -> ExecutionReport:
         """⛔⭐ Q1 — `origin` DEFAULTS TO "unknown", and several callers deliberately leave it there.
 
@@ -1679,6 +1710,8 @@ class WebullBrokerAdapter:
         cannot see which. Labelling them by assumption would put a confident wrong word in the
         column whose entire purpose is to stop that. They stay "unknown" until someone reads the
         exception path and can say."""
+        report_metadata = dict(request.metadata)
+        report_metadata.update(metadata or {})
         return ExecutionReport(
             event_type="rejected",
             origin=origin,
@@ -1688,7 +1721,7 @@ class WebullBrokerAdapter:
             intent_type=request.intent_type,
             quantity=request.quantity,
             reason=reason,
-            metadata=dict(request.metadata),
+            metadata=report_metadata,
         )
 
     def _missing_config_reason(self, broker_account_name: str) -> str:
@@ -1698,6 +1731,22 @@ class WebullBrokerAdapter:
                 "broker auth is not configured"
             )
         return f"Webull order rejected: no Webull account id mapped for {broker_account_name}"
+
+    def _reject_from_exception(
+        self,
+        request: OrderRequest,
+        exc: Exception,
+        *,
+        metadata: dict[str, str] | None = None,
+    ) -> ExecutionReport:
+        evidence = dict(metadata or {})
+        evidence.update(self._exception_metadata(exc))
+        return self._reject(
+            request,
+            self._exc_reason(exc),
+            origin=self._origin_from_exc(exc),
+            metadata=evidence,
+        )
 
     @staticmethod
     def _exc_reason(exc: Exception) -> str:
@@ -1715,6 +1764,22 @@ class WebullBrokerAdapter:
         # broker never said is the one that stopped the investigation.
         # ⇒ Say plainly whose sentence it is. The prefix now names the SOURCE, not the venue.
         return f"LOCAL refusal (no broker response): {exc!r}"
+
+    @staticmethod
+    def _exception_metadata(exc: Exception) -> dict[str, str]:
+        """Return structured, secret-free fields supplied by a Webull SDK exception."""
+        metadata: dict[str, str] = {}
+        for attribute, key in (
+            ("request_id", "webull_request_id"),
+            ("error_code", "webull_error_code"),
+            ("error_msg", "webull_error_message"),
+            ("http_status", "webull_http_status"),
+        ):
+            value = getattr(exc, attribute, None)
+            rendered = "" if value is None else str(value).strip()
+            if rendered:
+                metadata[key] = rendered
+        return metadata
 
     @staticmethod
     def _status_reason(
