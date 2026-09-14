@@ -821,6 +821,138 @@ def test_webull_only_fill_consumes_the_flip_without_a_schwab_position() -> None:
     assert state.flip_owner_position_ids == {WEBULL: "webull-only-row"}
 
 
+def test_bmgl_webull_only_confirmation_exit_can_rest_again(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Replay BMGL 2026-09-14: a Webull-only false flip must not strand the rest latch."""
+
+    strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
+    state = strategy.watchlist_state("BMGL")
+    state.bars.append(_bar(clock[0]))
+    _book(strategy, clock, "BMGL")
+    strategy._queue_resting_place(state, 7.8451, slot="first")
+    dropped_primary = strategy.drain_pending_intents()
+    first_mirror = strategy.drain_webull_direct_intents()
+    assert len(dropped_primary) == len(first_mirror) == 1
+    assert state.position_qty == state.position_qty_held == 0
+    assert state.resting_active
+    opportunity = int(first_mirror[0].metadata["fanout_segment_id"])
+
+    with caplog.at_level(logging.INFO):
+        assert strategy.apply_fanout_outcome(
+            FanoutOutcome(
+                record_id=uuid4(),
+                created_at=datetime.now(UTC),
+                symbol="BMGL",
+                segment_id=opportunity,
+                slot=first_mirror[0].metadata["fanout_slot"],
+                slot_id=first_mirror[0].metadata["fanout_slot_id"],
+                attempt_id="bmgl-webull-only",
+                outcome="filled",
+                evidence_id="bmgl-webull-fill",
+                event_source="broker",
+                broker_account_name=WEBULL,
+            )
+        ) == "consumed"
+
+    assert not state.resting_active
+    assert state.resting_level == 0.0
+    assert state.resting_flip_ms == 0
+    assert state.resting_below_floor_bars == 0
+    assert "fill_rank=authoritative" in caplog.text
+    assert "webull_slot=resting resting_latch_cleared=1" in caplog.text
+
+    _book(strategy, clock, "BMGL", _leg(WEBULL, "bmgl-webull-row"))
+    clock[0] += 60_000
+    _book(
+        strategy,
+        clock,
+        "BMGL",
+        confirmation_closes=(
+            _confirmation_close("BMGL", opportunity, WEBULL, "bmgl-webull-row"),
+        ),
+    )
+    assert state.flip_owner_phase == "idle"
+
+    state.bars.append(_bar(clock[0]))
+    next_short = _signal(state="short")
+    next_short["trail"] = 7.8451
+    strategy._cw_v2_resting_track(state, next_short)
+
+    second_primary = strategy.drain_pending_intents()
+    second_mirror = strategy.drain_webull_direct_intents()
+    assert len(second_primary) == len(second_mirror) == 1
+    assert second_primary[0].metadata["stop_price"] == "7.8451"
+    assert second_mirror[0].metadata["stop_price"] == "7.8451"
+
+
+def test_webull_resting_fill_cannot_age_into_a_phantom_flip_no_fill_cancel(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "BMGLNOFLIP")
+    strategy.drain_pending_intents()
+    mirror = strategy.drain_webull_direct_intents()[0]
+    strategy._cw_v2_resting_track(state, _signal("BUY", state="long"))
+    assert state.resting_flip_ms == clock[0]
+    state.resting_below_floor_bars = 2
+
+    assert strategy.apply_fanout_outcome(
+        FanoutOutcome(
+            record_id=uuid4(),
+            created_at=datetime.now(UTC),
+            symbol="BMGLNOFLIP",
+            segment_id=opportunity,
+            slot=mirror.metadata["fanout_slot"],
+            slot_id=mirror.metadata["fanout_slot_id"],
+            attempt_id="bmgl-no-phantom-cancel",
+            outcome="filled",
+            evidence_id="bmgl-no-phantom-cancel-fill",
+            event_source="broker",
+            broker_account_name=WEBULL,
+        )
+    ) == "consumed"
+    assert state.resting_flip_ms == 0
+    assert state.resting_below_floor_bars == 0
+
+    with caplog.at_level(logging.INFO):
+        clock[0] += strategy._resting_flip_grace_ms + 1
+        strategy._cw_v2_resting_track(state, _signal("BUY", state="long"))
+
+    assert strategy.drain_pending_intents() == []
+    assert strategy.drain_webull_direct_intents() == []
+    assert "reason=flip_no_fill" not in caplog.text
+
+
+def test_webull_resting_reject_does_not_clear_the_shared_resting_latch() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "BMGLREJECT")
+    strategy.drain_pending_intents()
+    mirror = strategy.drain_webull_direct_intents()[0]
+
+    assert strategy.apply_fanout_outcome(
+        FanoutOutcome(
+            record_id=uuid4(),
+            created_at=datetime.now(UTC),
+            symbol="BMGLREJECT",
+            segment_id=opportunity,
+            slot=mirror.metadata["fanout_slot"],
+            slot_id=mirror.metadata["fanout_slot_id"],
+            attempt_id="bmgl-rejected-rest",
+            outcome="rejected_venue",
+            evidence_id="bmgl-rejected-rest-evidence",
+            reason="ORDER_RISK_RULE_PRICE_AGGRESSIVE",
+            event_source="broker",
+            broker_account_name=WEBULL,
+        )
+    ) == "released"
+
+    assert state.resting_active
+    assert state.resting_level == 2.90
+    assert state.resting_flip_ms == 0
+    assert state.resting_below_floor_bars == 0
+
+
 def test_dual_preflip_episode_does_not_release_when_only_one_sibling_confirmed() -> None:
     strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
     state, opportunity = _place_first(strategy, clock, "PRE2")

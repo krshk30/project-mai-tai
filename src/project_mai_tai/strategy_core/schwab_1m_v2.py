@@ -1906,6 +1906,26 @@ class SchwabV2Strategy:
         state.fanout_zero_hold_started_ms = 0
         return was_claimed
 
+    @staticmethod
+    def _clear_resting_fill_latch(state: SymbolState) -> bool:
+        """Stop managing a rest once durable evidence says that order filled.
+
+        This is the same local state transition as the fills-only primary-position gate. It does
+        not cancel either venue's order, alter composition slots, or broaden position ownership.
+        """
+
+        cleared = bool(
+            state.resting_active
+            or state.resting_level
+            or state.resting_flip_ms
+            or state.resting_below_floor_bars
+        )
+        state.resting_active = False
+        state.resting_level = 0.0
+        state.resting_flip_ms = 0
+        state.resting_below_floor_bars = 0
+        return cleared
+
     def apply_fanout_outcome(self, record: FanoutOutcome) -> str:
         """Apply one durable Webull outcome to its exact current claim.
 
@@ -1963,6 +1983,12 @@ class SchwabV2Strategy:
             state.fanout_claim_outcome = "filled"
             state.fanout_claim_ms = self._now_ms()
             self._consume_fanout_webull_slot(state, record.slot)
+            resting_latch_cleared = False
+            if record.slot == "resting":
+                # The primary position poll is intentionally Schwab-scoped. A durable Webull fill
+                # is the account-neutral proof that the mirrored rest is no longer waiting, so it
+                # must end the same local resting lifecycle without widening that poll.
+                resting_latch_cleared = self._clear_resting_fill_latch(state)
             if self._flip_owned_first_entry_enabled:
                 if record.slot != "resting":
                     self._set_flip_owner_unknown(
@@ -1980,10 +2006,11 @@ class SchwabV2Strategy:
             logger.info(
                 "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=filled held=1 "
                 "evidence=positive fill_rank=authoritative webull_slot_consumed=1 "
-                "webull_slot=%s — Schwab composition unchanged",
+                "webull_slot=%s resting_latch_cleared=%d — Schwab composition unchanged",
                 record.symbol,
                 record.slot_id,
                 record.slot,
+                int(resting_latch_cleared),
             )
             return "consumed"
 
@@ -4306,10 +4333,7 @@ class SchwabV2Strategy:
             # union on purpose: dropping resting intents there would let a market buy fire while a
             # stop-limit rests, i.e. a double position.
             if state.resting_active or state.resting_flip_ms:
-                state.resting_active = False
-                state.resting_level = 0.0
-                state.resting_flip_ms = 0
-                state.resting_below_floor_bars = 0
+                self._clear_resting_fill_latch(state)
             return
         if not self._resting_in_window():   # wall-clock; never rest on stale/replayed bars
             if state.resting_active:
@@ -4436,9 +4460,10 @@ class SchwabV2Strategy:
         latch, no second broker order, and `_resting_entry_already_open` is never reached (its
         protection is retained: both keep the `resting_entry` tag).
 
-        ⛔⭐⭐ ZERO NEW CLEAR-WITHOUT-CANCEL SITES. The three existing writers of
+        ⛔⭐⭐ ZERO RECLAIM CLEAR-WITHOUT-CANCEL SITES. The three assignment sites for
         `resting_active = False` are `_queue_resting_cancel` (cancels first), the session-anchor
-        reset, and the position-held gate. This method adds none: it only ever clears state THROUGH
+        reset, and the shared proven-fill clear used by the position-held gate and durable Webull
+        fill evidence. This method adds none: it only ever clears state THROUGH
         `_queue_resting_cancel`. That is the acceptance criterion for #580 / EGG-POLA, not a caveat.
 
         ⛔ THE LEVEL MOVES THE OTHER WAY. `cw_segment_high` is monotonically non-decreasing, so a
