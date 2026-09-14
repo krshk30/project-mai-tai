@@ -3877,7 +3877,19 @@ confirmation-exit race and the F1 one-sided lifecycle are the open live defects.
 # 2026-09-12 → 2026-09-13 — the known-defect watch weekend
 
 **Batch `2026-09-13-known-defect-watch`. Integrator `claude-1`; `codex-2` built most of it and
-reviews this handoff. Nine PRs merged, every one independently reviewed and pinned.**
+reviews this handoff.**
+
+**The watch/evidence set is NINE PRs**, every one independently reviewed and pinned:
+`#951` `#952` `#962` `#963` `#964` `#965` `#967` `#968` `#969`.
+Two further PRs landed in the same window and are **separate work, stated separately rather than
+folded in to make a count work**: `#950` (clock-roll owner safety re-pin) and `#966` (the handoff
+document itself).
+
+⛔ An earlier draft of this narrative said "nine PRs" and then named only eight, omitting `#952`,
+`#962` and `#963` — the three that CREATED and hardened the restart-evidence chain Monday's entire
+pre-open gate now runs on. `codex-2` caught it. **The manifest's reconciliation could not**: an
+arithmetic identity proves nothing was *dropped*, and cannot notice a wrong sentence that is present
+in full.
 
 ## What was actually built
 
@@ -3931,6 +3943,21 @@ single event, not the day.**
    **gzipped** rotated logs. Measured properly: 43 decisions, 43/43 legs per account, 3 armed.
 3. **The first pre-open helper had four fail-open defects**, the worst a boot-hold check that could
    not come out false in the one direction that mattered. `codex-2`'s fail-closed gate supersedes it.
+
+## Fleet tooling defect found at close-out
+
+`./board.sh overlap` — the real-overlap coordination gate — **cannot run on this Mac**.
+`overlap.sh:70` uses `mapfile`, a bash 4 builtin absent from Apple's **bash 3.2.57**, then dies on
+unbound arrays at `:71` and `:75`.
+
+⭐ It **fails closed** (exit 1), so a caller checking status gets a refusal, not a false clean.
+⛔ I first read `exit=0` and nearly reported it as fail-*open* — that zero was `head`'s status
+through a pipe, not `overlap.sh`'s. `$?` after a pipe measures the last command.
+
+Impact on this batch is nil: with the `#940` claim released there are zero held claims, so overlap is
+logically empty. But the gate has been **silently unusable on this host for the whole batch**, unnoticed
+because nothing ever overlapped. **Follow-up owner `claude-1`:** replace `mapfile` with a `while read`
+loop so it works on bash 3.2.
 
 ## Monday pre-open
 

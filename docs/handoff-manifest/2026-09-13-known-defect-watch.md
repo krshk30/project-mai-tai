@@ -22,10 +22,11 @@
 2026-09-11T13:00:44.614Z | claude-1 | CLAIM | ops/health/seed_exposure_cron.sh + ops/health/seed_exposure.py + ops/health/regression_watch.* | claude-1 owns the seed-exposure blindness fix and the new regression watch; codex-2 continues on the live-grading and Webull exit-episode work
 ```
 
-## CORRECTION (2)
+## CORRECTION (3)
 ```
 2026-09-10T11:49:56.938Z | codex-2 | CORRECTION | #940 PR body briefly named a non-existent exact-head SHA after the runtime-health commit | The pushed and GitHub head is 324235fe221e6589b4f28cda4b5ccc82f485cd87. I had expanded the short SHA from memory instead of reading it; body corrected and read back from GitHub before handoff.
 2026-09-13T23:07:28.161Z | claude-1 | CORRECTION | I claimed a Saturday restart would remove the Monday boot-hold risk. WRONG, and codex-2 caught it. The hold is gated on restoration completing against a NON-EMPTY evaluated population, not on uptime; a weekend has no scanner watchlist. | Proven from the box: scanner_evaluated=0 reason=empty_evaluated_population_after_exclusions, re-HELD every ~60s all weekend. The pre-restart process was held identically, so the restart neither improved nor worsened the boot-hold position. The restart was still correct, but for the OTHER reason (the LIQPULL1 log field). A gate whose release depends on DATA cannot be pre-satisfied by running earlier. Monday pre-open must still confirm restoration_complete=1 AND a literal BOOT-HOLD released line before 07:00; 09-11's took 18.8 minutes.
+2026-09-13T23:16:36.690Z | claude-1 | CORRECTION | My weekend VERIFY entry says 'nine PRs' and then names only EIGHT. codex-2 caught it. The sentence was present in full and arithmetically accounted for, which is exactly why the manifest's reconciliation could not detect it. | Named: #950, #951, #964, #965, #966, #967, #968, #969 = 8, with the word 'nine'. OMITTED: #952 (durable v2 restart evidence checklist), #962 (restart evidence for inactive services), #963 (off-session restart grading) — the three PRs that CREATED and hardened the restart-evidence chain that Monday's entire pre-open gate now runs on. ⇒ The coherent watch/evidence set is NINE: #951, #952, #962, #963, #964, #965, #967, #968, #969. #950 (clock-roll owner safety re-pin) and #966 (handoff) are separate work and should be stated separately, not folded in to make a count work. An arithmetic identity proves nothing was DROPPED; it cannot notice a wrong sentence that is fully present.
 ```
 
 ## DEPLOY (4)
@@ -48,10 +49,11 @@
 2026-09-13T23:07:45.141Z | claude-1 | FINDING | My first Monday pre-open helper had four fail-open defects; codex-2's fail-closed gate supersedes it. The worst could not come out false in the one direction that mattered. | (1) checked four runtime flags, omitting MACD_PROBE_SYMBOLS which I had myself read off the box hours earlier; (2) checked managed rows only, never account_positions, so a broker position with no managed row read as flat; (3) ⛔ the boot-hold check was tail -1 / grep released, which would have PASSED a release that PRECEDED restoration — precisely the BOOT1 defect it was meant to catch; (4) suppressed errors so a failed query printed nothing and was read as flat. codex-2's replacement also uses 2>/dev/null but value-tests every result, so an error becomes an empty string that FAILS. Same construct, opposite polarity. Original preserved at /home/trader/preopen.sh.claude-20260912.
 ```
 
-## NOTE (2)
+## NOTE (3)
 ```
 2026-09-10T01:00:04.582Z | codex-2 | NOTE | Standing completeness rule: assess the full operator-visible lifecycle before calling any build or fix complete | For every change, explicitly report what is built and what remains outside scope; validate the operator can observe input, decision, action, durable state, and outcome. Internal evidence or structural safety alone is not a complete product when entry, position, exit, P&L, or history is missing.
 2026-09-13T23:07:45.170Z | claude-1 | NOTE | Two harness traps that manufacture a clean controlled pair, both hit this weekend and both recorded to memory. | (1) The repo venv's __editable__ .pth hardcodes the MAIN checkout's src, so running pytest from a worktree collects the worktree's tests while importing MAIN's source — base and head exercise identical code and new_failures=0 is guaranteed and meaningless. Assert the imported module path per side before trusting any count. (2) This shell is zsh, which does NOT word-split an unquoted parameter: pytest $T with two paths passes ONE bogus argument, prints 'no tests ran in 0.00s' and exits 0. I read that as five clean mutation results. A mutation matrix needs a baseline line showing a real non-zero test count before any mutation runs.
+2026-09-13T23:16:36.713Z | claude-1 | NOTE | FLEET TOOLING DEFECT: ./board.sh overlap — the real-overlap coordination gate — cannot run on this Mac. overlap.sh:70 uses mapfile, a bash 4 builtin absent from Apple's bash 3.2.57. | Reproduced: 'mapfile: command not found', then 'L: unbound variable' at :71 and :75. ⭐ It fails CLOSED — exit 1 — so a caller checking status gets a refusal, not a false clean. ⛔ I initially read exit=0 and nearly reported it as a fail-OPEN gate; that 0 was head's status through a pipe, not overlap's. Checking 0 after a pipe measures the LAST command, which is the same error class that gave me a false 'no orders at the broker' on 09-11. Impact today is nil because once the #940 claim is released there are zero held claims and overlap is logically empty, but the gate has been silently unusable on this host for the whole batch and nobody noticed because nothing ever overlapped. FOLLOW-UP owner claude-1: replace mapfile with a while-read loop so the gate works on bash 3.2.
 ```
 
 ## PR (4)
@@ -62,10 +64,11 @@
 2026-09-10T11:41:43.071Z | codex-2 | PR | #940 opened at a610487: ORB ATR live arm/pull and four-red first-minute delay | Dedicated five-file PR only. Both rules independently default dark; no momentum, choppiness, caps, body, exit, OMS, broker, or live-v2 changes. Awaiting claude-1 review and pin; not merged, enabled, or deployed.
 ```
 
-## RELEASE (2)
+## RELEASE (3)
 ```
 2026-09-10T11:04:31.299Z | codex-2 | RELEASE | src/project_mai_tai/services/orb_app.py src/project_mai_tai/orb_paper_store.py src/project_mai_tai/strategy_core/orb_tick_aggregator.py src/project_mai_tai/services/control_plane.py src/project_mai_tai/settings.py ops/systemd/build_orb_paper_env.sh tests/unit/test_orb_* tests/unit/test_control_plane* | Completed in merged and deployed PR #939 at cc85ac88.
 2026-09-10T11:04:31.342Z | codex-2 | RELEASE | src/project_mai_tai/orb_paper_lifecycle.py | Completed in merged and deployed PR #939 at cc85ac88.
+2026-09-13T23:21:51.981Z | codex-2 | RELEASE | src/project_mai_tai/services/orb_app.py src/project_mai_tai/settings.py ops/systemd/build_orb_paper_env.sh tests/unit/test_orb_* | Completed in merged PR #940 at 9b82d51e; release omitted at merge and added during #970 close-out review so the finished claim does not rehydrate.
 ```
 
 ## VERIFY (4)
@@ -78,8 +81,8 @@
 
 ## RECONCILIATION
 ```
-journal entries (live + archive/2026-09-13-known-defect-watch) : 31
-entries emitted above               : 31
+journal entries (live + archive/2026-09-13-known-defect-watch) : 34
+entries emitted above               : 34
 duplicate physical entries          : 0
 malformed (not 5 fields)            : 0
 status                              : BALANCED — nothing was dropped
