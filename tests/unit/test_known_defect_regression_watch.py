@@ -108,6 +108,38 @@ def test_boot_release_after_completion_is_guard_working() -> None:
     assert (result.evaluated, result.guard_working, result.recurrence) == (1, 1, 0)
 
 
+def test_collector_reads_rotations_before_the_live_file(monkeypatch) -> None:
+    """Pins the CALL SITE, not just the helper. `find -print0` is stubbed to return the LIVE file
+    first — the arbitrary order it really can produce — and the collector must still read the
+    rotations first. Deleting the ordered_log_paths() call in _read_recent_logs leaves the helper's
+    own unit test green, so without this the production binding is unpinned."""
+    service = "schwab-1m-v2"
+    find_out = b"\0".join(
+        [
+            f"/var/log/project-mai-tai/{service}.log".encode(),
+            f"/var/log/project-mai-tai/{service}.log-20260913".encode(),
+            f"/var/log/project-mai-tai/{service}.log-20260912.gz".encode(),
+        ]
+    )
+    read_order: list[str] = []
+
+    def fake_run(command, **kwargs):
+        if "find" in command:
+            return subprocess.CompletedProcess(command, 0, find_out, b"")
+        path = command[-1]
+        read_order.append(Path(path).name)
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr(watch.subprocess, "run", fake_run)
+    watch._read_recent_logs(service, since=datetime(2026, 9, 14, 8, 0, tzinfo=UTC))
+
+    assert read_order == [
+        f"{service}.log-20260912.gz",
+        f"{service}.log-20260913",
+        f"{service}.log",
+    ], f"collector read files out of chronological order: {read_order}"
+
+
 def test_log_paths_are_read_rotations_first_live_file_last() -> None:
     """`find -print0` returns arbitrary directory order, and the line sort is STABLE, so an
     arbitrary file order would become an arbitrary order for same-timestamp lines spanning two
