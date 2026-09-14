@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from functools import lru_cache
 import json
 
@@ -1198,6 +1199,12 @@ class Settings(BaseSettings):
     reconciliation_position_quantity_tolerance: float = 0.0001
     reconciliation_average_price_tolerance: float = 0.02
     reconciliation_ignored_position_mismatches: str = ""
+    # #961 introduced fill-balance ownership on 2026-09-12. Both live accounts were positively
+    # verified flat with zero working orders immediately before the reconciler loaded it, making
+    # this a real zero-balance checkpoint. Earlier fills are an incomplete historical ledger and
+    # must not be treated as current ownership. This is deliberately a fixed checkpoint, not a
+    # rolling N-day window: a rolling window can silently forget a legitimately held position.
+    reconciliation_fill_balance_since: datetime = datetime(2026, 9, 12, 21, 17, 49, tzinfo=UTC)
 
     @computed_field
     @property

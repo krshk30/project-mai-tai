@@ -38,9 +38,14 @@ page as a new incident.
 
 ## Reconciliation Ownership
 
-Ownership is derived from the current net fill balance for each `(account, symbol)`, and cross-checked
-against both live OMS books. Order-history presence is not a discriminator: it marks both manual and
-bot-traded symbols and depends on retention.
+Ownership is derived from the net fill balance after the last positively verified flat checkpoint
+for each active `live:` account, and cross-checked against both live OMS books. The production
+checkpoint is 2026-09-12 21:17:49 UTC: both live accounts and working-order books were verified flat
+immediately before the reconciler loaded the fill-balance classifier. Earlier fills are historical
+ledger residue, not current ownership. This boundary is fixed rather than a rolling N-day window,
+because a rolling window can silently forget a legitimately held position. Paper and inactive
+accounts do not create live position-reconciliation findings. Order-history presence is not a
+discriminator: it marks both manual and bot-traded symbols and depends on retention.
 
 | Broker position | Net fill balance | Live OMS books | Result |
 |---:|---:|---:|---|
