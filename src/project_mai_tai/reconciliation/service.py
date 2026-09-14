@@ -246,9 +246,17 @@ class ReconciliationService:
         tolerance = Decimal(str(self.settings.reconciliation_position_quantity_tolerance))
         avg_price_tolerance = Decimal(str(self.settings.reconciliation_average_price_tolerance))
         ignored_pairs = self.settings.reconciliation_ignored_position_mismatch_pairs
+        # Position reconciliation is a live-money check. Paper and inactive account ledgers are
+        # intentionally allowed to be incomplete; treating them as current ownership produced 163
+        # CRITICAL rows in the 2026-09-14 incident while no broker position existed.
         account_lookup = {
-            account.id: account for account in session.scalars(select(BrokerAccount)).all()
+            account.id: account
+            for account in session.scalars(select(BrokerAccount)).all()
+            if account.is_active and account.name.startswith("live:")
         }
+        live_account_ids = tuple(account_lookup)
+        if not live_account_ids:
+            return []
         strategy_lookup = {
             strategy.id: strategy for strategy in session.scalars(select(Strategy)).all()
         }
@@ -261,7 +269,10 @@ class ReconciliationService:
             }
         )
         virtual_positions = session.scalars(
-            select(VirtualPosition).where(VirtualPosition.quantity > 0)
+            select(VirtualPosition).where(
+                VirtualPosition.quantity > 0,
+                VirtualPosition.broker_account_id.in_(live_account_ids),
+            )
         ).all()
         for position in virtual_positions:
             key = (position.broker_account_id, position.symbol)
@@ -275,14 +286,20 @@ class ReconciliationService:
         account_positions = {
             (position.broker_account_id, position.symbol): position
             for position in session.scalars(
-                select(AccountPosition).where(AccountPosition.quantity != 0)
+                select(AccountPosition).where(
+                    AccountPosition.quantity != 0,
+                    AccountPosition.broker_account_id.in_(live_account_ids),
+                )
             ).all()
         }
 
+        # The fill ledger is complete only after the positively verified flat checkpoint. A rolling
+        # age bound is not safe here because it can age a legitimately held position out of evidence.
         fill_balance_rows = session.execute(
             select(
                 Fill.broker_account_id,
                 Fill.symbol,
+                Fill.strategy_id,
                 func.sum(
                     case(
                         (func.lower(Fill.side) == "buy", Fill.quantity),
@@ -290,12 +307,26 @@ class ReconciliationService:
                         else_=0,
                     )
                 ),
-            ).group_by(Fill.broker_account_id, Fill.symbol)
+            )
+            .where(
+                Fill.broker_account_id.in_(live_account_ids),
+                Fill.filled_at >= self.settings.reconciliation_fill_balance_since,
+            )
+            .group_by(Fill.broker_account_id, Fill.symbol, Fill.strategy_id)
         ).all()
+        fill_balances: dict[tuple[UUID, str], Decimal] = defaultdict(lambda: Decimal("0"))
+        fill_strategies: dict[tuple[UUID, str], set[str]] = defaultdict(set)
+        for account_id, symbol, strategy_id, quantity in fill_balance_rows:
+            strategy_balance = Decimal(str(quantity or 0))
+            if abs(strategy_balance) <= tolerance:
+                continue
+            key = (account_id, symbol)
+            fill_balances[key] += strategy_balance
+            strategy = strategy_lookup.get(strategy_id)
+            if strategy is not None:
+                fill_strategies[key].add(strategy.code)
         fill_balances = {
-            (account_id, symbol): Decimal(str(quantity or 0))
-            for account_id, symbol, quantity in fill_balance_rows
-            if abs(Decimal(str(quantity or 0))) > tolerance
+            key: quantity for key, quantity in fill_balances.items() if abs(quantity) > tolerance
         }
 
         # ⛔⭐⭐ `virtual_positions` FALSELY READS ZERO ON A POSITION WE REALLY HOLD, and comparing
@@ -443,6 +474,7 @@ class ReconciliationService:
                             "strategy_codes": sorted(
                                 set(aggregate["strategy_codes"] if aggregate else [])
                                 | managed_strategies.get((account_id, symbol), set())
+                                | fill_strategies.get((account_id, symbol), set())
                             ),
                         },
                     )
@@ -571,7 +603,10 @@ class ReconciliationService:
             session.scalar(
                 select(func.count())
                 .select_from(BrokerAccount)
-                .where(BrokerAccount.is_active.is_(True))
+                .where(
+                    BrokerAccount.is_active.is_(True),
+                    BrokerAccount.name.startswith("live:"),
+                )
             )
             or 0
         )

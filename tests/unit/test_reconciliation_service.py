@@ -54,7 +54,7 @@ def seed_reconciliation_state(session_factory: sessionmaker[Session]) -> None:
         strategy_two = Strategy(
             code="runner", name="Runner", execution_mode="paper", metadata_json={}
         )
-        account = BrokerAccount(name="paper:shared", provider="alpaca", environment="development")
+        account = BrokerAccount(name="live:shared", provider="alpaca", environment="production")
         session.add_all([strategy_one, strategy_two, account])
         session.flush()
 
@@ -208,7 +208,7 @@ def test_reconciler_closes_incidents_when_findings_resolve() -> None:
     assert first["summary"]["total_findings"] == 3
 
     with session_factory() as session:
-        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == "paper:shared"))
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == "live:shared"))
         assert account is not None
         account_position = session.scalar(
             select(AccountPosition).where(AccountPosition.broker_account_id == account.id)
@@ -247,7 +247,7 @@ def test_reconciler_can_ignore_position_mismatch_for_specific_account_symbols() 
             redis_stream_prefix="test",
             reconciliation_stuck_order_seconds=60,
             reconciliation_stuck_intent_seconds=60,
-            reconciliation_ignored_position_mismatches="paper:shared:UGRO",
+            reconciliation_ignored_position_mismatches="live:shared:UGRO",
         ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
@@ -278,7 +278,16 @@ def test_reconciler_can_ignore_position_mismatch_for_specific_account_symbols() 
 # broker became visible. `oms_managed_positions` read status=open/current_quantity=1 the whole time.
 # Comparing only against the virtual row produced a CRITICAL page for a correctly-tracked position.
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
-def _reconcile_position_findings(*, virtual_qty, managed_qty, broker_qty, fill_balance=0):
+def _reconcile_position_findings(
+    *,
+    virtual_qty,
+    managed_qty,
+    broker_qty,
+    fill_balance=0,
+    fill_at: datetime | None = None,
+    account_name: str = "live:orb",
+    account_active: bool = True,
+):
     """Seed one symbol on one account with every ownership source, then return findings."""
     from project_mai_tai.db.models import OmsManagedPosition
 
@@ -286,7 +295,12 @@ def _reconcile_position_findings(*, virtual_qty, managed_qty, broker_qty, fill_b
     now = datetime.now(UTC)
     with session_factory() as session:
         strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live", metadata_json={})
-        account = BrokerAccount(name="live:orb", provider="webull", environment="production")
+        account = BrokerAccount(
+            name=account_name,
+            provider="webull",
+            environment="production",
+            is_active=account_active,
+        )
         session.add_all([strategy, account])
         session.flush()
         if virtual_qty:
@@ -357,7 +371,7 @@ def _reconcile_position_findings(*, virtual_qty, managed_qty, broker_qty, fill_b
                     side=side,
                     quantity=quantity,
                     price=Decimal("8.005"),
-                    filled_at=now,
+                    filled_at=fill_at or now,
                     payload={},
                 )
             )
@@ -399,6 +413,7 @@ def test_owned_fill_missing_from_live_books_is_critical() -> None:
     assert len(findings) == 1
     assert findings[0].severity == "critical"
     assert findings[0].payload["direction"] == "broker_position_untracked_by_live_books"
+    assert findings[0].payload["strategy_codes"] == ["schwab_1m_v2"]
 
 
 def test_stale_open_managed_row_against_a_flat_broker_still_pages() -> None:
@@ -449,6 +464,98 @@ def test_nonzero_fill_balance_is_checked_even_when_broker_and_live_books_are_fla
     assert len(findings) == 1
     assert findings[0].severity == "critical"
     assert findings[0].payload["direction"] == "broker_missing_owned_position"
+
+
+def test_post_checkpoint_negative_live_fill_balance_remains_critical() -> None:
+    findings = _reconcile_position_findings(
+        virtual_qty=0, managed_qty=0, broker_qty=0, fill_balance=-1
+    )
+    assert len(findings) == 1
+    assert findings[0].severity == "critical"
+    assert findings[0].payload["direction"] == "negative_net_fill_balance"
+
+
+def test_shipped_fill_balance_checkpoint_is_the_verified_flat_restart() -> None:
+    assert Settings().reconciliation_fill_balance_since == datetime(
+        2026, 9, 12, 21, 17, 49, tzinfo=UTC
+    )
+
+
+def test_fill_before_the_verified_flat_checkpoint_is_not_current_ownership() -> None:
+    findings = _reconcile_position_findings(
+        virtual_qty=0,
+        managed_qty=0,
+        broker_qty=0,
+        fill_balance=1,
+        fill_at=datetime(2026, 9, 9, 19, 59, 55, tzinfo=UTC),
+    )
+    assert findings == []
+
+
+def test_pre_checkpoint_history_cannot_hide_a_current_managed_position() -> None:
+    findings = _reconcile_position_findings(
+        virtual_qty=0,
+        managed_qty=2,
+        broker_qty=0,
+        fill_balance=2,
+        fill_at=datetime(2026, 9, 9, 19, 59, 55, tzinfo=UTC),
+    )
+    assert len(findings) == 1
+    assert findings[0].severity == "critical"
+    assert findings[0].payload["direction"] == "broker_missing_owned_position"
+
+
+def test_paper_and_inactive_accounts_do_not_create_live_position_findings() -> None:
+    paper = _reconcile_position_findings(
+        virtual_qty=0,
+        managed_qty=0,
+        broker_qty=1,
+        fill_balance=1,
+        account_name="paper:orb",
+    )
+    inactive_live = _reconcile_position_findings(
+        virtual_qty=0,
+        managed_qty=0,
+        broker_qty=1,
+        fill_balance=1,
+        account_name="live:retired",
+        account_active=False,
+    )
+    assert paper == []
+    assert inactive_live == []
+
+
+def test_summary_counts_only_active_live_accounts() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        session.add_all(
+            [
+                BrokerAccount(
+                    name="live:active", provider="webull", environment="production", is_active=True
+                ),
+                BrokerAccount(
+                    name="paper:active",
+                    provider="simulated",
+                    environment="production",
+                    is_active=True,
+                ),
+                BrokerAccount(
+                    name="live:inactive",
+                    provider="schwab",
+                    environment="production",
+                    is_active=False,
+                ),
+            ]
+        )
+        session.commit()
+
+    service = ReconciliationService(
+        settings=Settings(), redis_client=FakeRedis(), session_factory=session_factory
+    )
+    with session_factory() as session:
+        summary = service._build_summary(session, [])
+
+    assert summary["accounts_checked"] == 1
 
 
 def test_configured_quantity_is_context_only_and_never_claims_a_manual_position() -> None:
