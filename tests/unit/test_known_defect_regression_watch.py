@@ -235,9 +235,31 @@ def test_a_new_held_marker_rearms_boot_detection_after_an_earlier_release() -> N
     assert "completion_still_held" in result.detail
 
 
+def test_restore_updates_without_a_held_episode_are_unexercised() -> None:
+    result = watch.evaluate_boot(
+        lines(
+            (5, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=1 confirmed=1"),
+            (6, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=2 confirmed=2"),
+            (7, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=3 confirmed=3"),
+            (8, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=4 confirmed=4"),
+            (9, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=5 confirmed=5"),
+            (10, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=6 confirmed=6"),
+        ),
+        now=NOW,
+    )
+
+    assert result.verdict == watch.UNEXERCISED
+    assert (result.evaluated, result.guard_working, result.recurrence) == (0, 0, 0)
+    assert "completion_still_held" not in result.detail
+
+
 def test_boot_release_before_completion_is_recurrence() -> None:
     result = watch.evaluate_boot(
-        lines((5, "[V2-BOOT-HOLD] released restoration_complete=1")), now=NOW
+        lines(
+            (4, "[V2-BOOT-HOLD] HELD restoration_complete=0"),
+            (5, "[V2-BOOT-HOLD] released restoration_complete=1"),
+        ),
+        now=NOW,
     )
     assert result.verdict == watch.RECURRENCE
     assert result.recurrence == 1
@@ -245,7 +267,10 @@ def test_boot_release_before_completion_is_recurrence() -> None:
 
 def test_completed_boot_that_stays_held_is_recurrence() -> None:
     result = watch.evaluate_boot(
-        lines((6, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=4 confirmed=4")),
+        lines(
+            (5, "[V2-BOOT-HOLD] HELD restoration_complete=0"),
+            (6, "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=4 confirmed=4"),
+        ),
         now=NOW,
     )
     assert result.verdict == watch.RECURRENCE
@@ -767,6 +792,8 @@ def test_pre_anchor_boot_is_kept_without_polluting_current_session_counts(monkey
         calls.append(since)
         if service == "schwab-1m-v2":
             return [
+                "2026-09-11 07:49:00,000 WARNING x "
+                "[V2-BOOT-HOLD] HELD restoration_complete=0",
                 "2026-09-11 07:50:00,000 INFO x "
                 "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=4 confirmed=4",
                 "2026-09-11 07:51:00,000 INFO x [V2-BOOT-HOLD] released restoration_complete=1",
