@@ -70,6 +70,72 @@ denominators, reconciler expected-quiet.
 *verified clean*. #969 makes that distinction explicit and makes an **undeclared** silence FAIL, so
 if oms or v2 ever goes silent the gate reds instead of quietly passing.
 
+# 🔴 2026-09-14 MONDAY — SESSION IN PROGRESS, READ THIS FIRST
+
+**Written by `claude-1` 10:44 ET, mid-session, because the operator is restarting the session.**
+
+## Live state at 10:44 ET
+| | |
+|---|---|
+| box / runtime | `2d54d29`, v2 pid `1089323`, no restarts |
+| main | `f582808` — ahead by docs-only + merged fixes NOT yet deployed |
+| exposure | **ALL FLAT**, no working orders |
+| watchlist | `BMGL, FTFT` |
+| open PRs | none |
+
+## ⛔ TODAY'S LOSS — one setup, lost to a broker rejection
+```
+09:40  BMGL entry placed @ 8.2855 — REJECTED by BOTH brokers
+09:51  BMGL FLIPS BUY at 8.56, straight through our level   <- the trade
+10:13  a replacement is finally ACCEPTED
+10:19  reprice CANCELS it (trail moved >0.5%)
+10:20  replacement REJECTED — bare again
+```
+Schwab refused on eligibility (`must be placed with a broker`). Webull refused with
+`ORDER_RISK_RULE_PRICE_AGGRESSIVE` — **5 occurrences all-time: RUBI once, BMGL 4× today.**
+
+⇒ **The rejection did not cost a delay. It cost the trade.**
+
+## Root cause status
+⛔ **Webull's rule is NOT understood and must not be guessed.** Distance from market does NOT
+separate accepted from rejected: BMGL was rejected at +9.67% and accepted at +10.24%, and a +31%
+order was accepted on 09-09. Webull's own *preview* accepted all five combinations that live
+placement refused, so preview cannot screen it. Direct Webull quotes are `403
+MARKET_DATA_NOT_SUBSCRIBED` — a separate OpenAPI quote subscription is a **purchase decision**.
+
+## Assigned to `codex-2` by the operator
+1. **Diagnostics** — preserve Webull's `request_id`, exact wire prices, instrument_id, timestamp and
+   full broker error on the reject record. The SDK supplies the request id; our formatter discards it.
+2. ⭐ **The cancel-before-confirm reprice window** — we surrender a working resting order before
+   knowing the replacement is accepted. This is OURS, not Webull's, and it is what left BMGL bare.
+3. Escalate the four BMGL `request_id`s to Webull support.
+4. Schwab quote recorded only as a clearly labelled proxy.
+
+## ⚠ MERGED BUT NOT DEPLOYED — needs the after-close window
+| PR | What | Needs |
+|---|---|---|
+| `#972` | BOOT1 same-millisecond log ordering | watch cron picks it up, no restart |
+| `#973` | reconciliation scope + fill-balance checkpoint | **reconciler restart** |
+| `#974` | Webull recycled-ticker instrument pick (`f5828088`) | **OMS restart** |
+
+⛔ **DEPLOY ORDER:** sync, then **restart the reconciler FIRST** — `deploy_preflight.py:156` fails on
+`critical_findings > 0` and the 221 stale findings only clear once #973's code is running.
+Then `EXPECTED_SHA` and `--expected-quiet-service reconciler` move with the sync, in ONE action.
+
+## 🔎 MONITORS ARE SESSION-LOCAL AND DIE ON RESTART
+Nothing persistent is watching the tape. To re-arm after a restart, watch the v2 log for:
+`V2-FLIP-OWNER-OPPORTUNITY|V2-RESTING-PLACE|V2-RESTING-EH-ARM|V2-FLIP-OWNER-FILL|`
+`V2-RESTING-SLOT-CONSUMED|reason=liquidity_floor|PRICE_AGGRESSIVE|Traceback|CRITICAL`
+⭐ The installed **known-defect watch cron is NOT session-local** and keeps running regardless.
+
+## ⛔ Two of my own errors today, so they are not repeated
+1. I reported **no live BUY flip** — `head -4` truncated the listing and hid the BMGL line behind six
+   FTFT warmup lines. **Count or list in full; never sample a question of existence.**
+2. I said a resting order was **live** when it had been cancelled six minutes earlier.
+   **A live-state claim decays — re-read before repeating it.**
+
+---
+
 # FLAGS — read from the RUNNING processes, not the env file (2026-09-13 22:54 UTC)
 
 | flag | value | note |
