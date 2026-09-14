@@ -1,0 +1,9 @@
+{
+  "pr_number": 970,
+  "range_base": "ccc618e09eddc432a4bfd2d880a3aa23bf8c67ca",
+  "range_head": "dec84657305bd0c1794ab997c47b017cd6e93ee3",
+  "reviewed_at": "2026-09-14T00:11:43Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed corrected close-out at the exact head: the #940 claim is released with the byte-identical path, the held-claim board is empty, the nine-PR watch/evidence set is complete with #950/#966 separated, the Mac Bash overlap failure is recorded fail-closed, and the committed 34-entry balanced manifest matches the frozen live journals byte-for-byte."
+}
