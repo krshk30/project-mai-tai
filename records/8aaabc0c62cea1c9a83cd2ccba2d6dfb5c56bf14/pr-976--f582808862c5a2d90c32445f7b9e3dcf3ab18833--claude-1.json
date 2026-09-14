@@ -1,0 +1,9 @@
+{
+  "pr_number": 976,
+  "range_base": "f582808862c5a2d90c32445f7b9e3dcf3ab18833",
+  "range_head": "8aaabc0c62cea1c9a83cd2ccba2d6dfb5c56bf14",
+  "reviewed_at": "2026-09-14T15:19:14Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Read the full diff: one helper (_reject_from_exception) routes all 5 exception-backed Webull reject sites; single-leg submit records the wire fields actually sent; no price/cancel/retry/routing change. Verified fixture matches production: box SDK webull_openapi_python_sdk 2.0.11 ServerException exposes exactly error_code/error_msg/http_status/request_id. Focused 193 passed, ruff 0.15.22 clean. My own 3 mutations each red: drop request_id (1 fail), drop wire context on inner reject (1 fail), drop wire context on accepted report (3 fails). Controlled full unit pair on this host: base f582808 46 failed/3796 passed, head 46 failed/3799 passed, identical 46 failure names (host tooling). CI validate pass x2."
+}
