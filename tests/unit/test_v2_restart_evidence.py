@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +20,22 @@ SPEC = importlib.util.spec_from_file_location("v2_restart_evidence", MODULE_PATH
 vre = importlib.util.module_from_spec(SPEC)
 sys.modules["v2_restart_evidence"] = vre
 SPEC.loader.exec_module(vre)
+
+
+_STOP = datetime(2026, 9, 11, 0, 25, tzinfo=UTC)
+
+
+def _bars(symbols, pairs, gaps, brackets, spanning, excluded=0) -> "vre.BarContinuity":
+    return vre.BarContinuity(
+        symbols=symbols,
+        pairs=pairs,
+        gaps=gaps,
+        brackets=brackets,
+        spanning=spanning,
+        excluded=excluded,
+        stopped_at_utc=_STOP,
+        live_floor_utc=_STOP - timedelta(seconds=vre.LIVE_AT_STOP_BOUND_SECONDS),
+    )
 
 
 def test_traceback_is_scoped_by_its_nearest_preceding_timestamp() -> None:
@@ -310,7 +326,7 @@ def _report_fixture(monkeypatch, tmp_path: Path):
         return logs[service]
 
     monkeypatch.setattr(vre, "_log_files", log_files)
-    monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: (3, 99, 2, 3, 0))
+    monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: _bars(3, 99, 2, 3, 0))
     args = SimpleNamespace(
         snapshot=snapshot,
         restarted=[vre.V2_SERVICE],
@@ -479,7 +495,7 @@ def test_report_does_not_require_bar_brackets_outside_a_market_session(
 ) -> None:
     args, current, logs = _report_fixture(monkeypatch, tmp_path)
     _move_v2_report_start(current, logs, start)
-    monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: (0, 0, 0, 0, 0))
+    monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: _bars(0, 0, 0, 0, 0))
 
     assert vre.report(args, runner=lambda command: "") == 0
     output = capsys.readouterr().out
@@ -492,7 +508,7 @@ def test_report_requires_bar_brackets_during_a_weekday_market_session(
 ) -> None:
     args, current, logs = _report_fixture(monkeypatch, tmp_path)
     _move_v2_report_start(current, logs, datetime(2026, 9, 14, 15, 11, tzinfo=UTC))
-    monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: (0, 0, 0, 0, 0))
+    monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: _bars(0, 0, 0, 0, 0))
 
     assert vre.report(args, runner=lambda command: "") == 1
     assert "no adjacent live-bar pair brackets the in-session v2 restart" in capsys.readouterr().out
@@ -728,3 +744,103 @@ def test_timeout_release_cannot_claim_more_symbols_than_it_names(
     ]
 
     assert vre.report(args, runner=lambda command: "") == 1
+
+
+def _bar_continuity_runner(stopped: str, row: str):
+    """Answer systemd with ``stopped`` and psql with ``row``; keep every SQL text for assertions."""
+    sql: list[str] = []
+
+    def runner(command) -> str:
+        if command[:2] == ["systemctl", "show"]:
+            assert command[-3:] == ["-p", "InactiveEnterTimestamp", "--value"]
+            assert command[2] == f"{vre.UNIT_PREFIX}{vre.V2_SERVICE}.service"
+            return f"{stopped}\n"
+        sql.append(command[-1])
+        return f"{row}\n"
+
+    return runner, sql
+
+
+def test_bar_continuity_floors_the_bracketing_pairs_at_the_stop_not_the_start() -> None:
+    # The 2026-07-30 shape: v2 stopped 10:12 ET, restarted 11:33 ET. The hole starts at the STOP,
+    # so the live-at-stop floor must hang off the stop; a start-derived floor would hide it.
+    stop = datetime(2026, 7, 30, 14, 12, 30, tzinfo=UTC)
+    start = datetime(2026, 7, 30, 15, 33, 5, tzinfo=UTC)
+    runner, sql = _bar_continuity_runner("Thu 2026-07-30 14:12:30 UTC", "4|400|9|4|4|0")
+
+    bars = vre._bar_continuity(runner, start)
+
+    assert bars == vre.BarContinuity(4, 400, 9, 4, 4, 0, stop, stop - timedelta(seconds=180))
+    assert len(sql) == 1
+    floor = "prior >= TIMESTAMPTZ '2026-07-30 14:09:30+00'"
+    restart = "prior < TIMESTAMPTZ '2026-07-30 15:33:05+00' AND bar_time > TIMESTAMPTZ '2026-07-30 15:33:05+00'"
+    assert sql[0].count(f"FILTER (WHERE {restart} AND {floor})") == 1
+    assert sql[0].count(f"FILTER (WHERE delta > 90 AND {restart} AND {floor})") == 1
+    assert sql[0].count(f"FILTER (WHERE {restart} AND NOT ({floor}))") == 1
+    assert "15:30:05+00" not in sql[0], "the floor must not be derived from the start"
+
+
+def test_bar_continuity_reports_pairs_not_live_at_the_stop_as_excluded() -> None:
+    # The 2026-09-15 shape: AIXC unsubscribed 16:44 ET, re-promoted 18:24 ET, v2 restarted 17:40 ET
+    # by a plain `systemctl restart` (stop and start in the same second).
+    start = datetime(2026, 9, 14, 21, 40, 48, tzinfo=UTC)
+    runner, sql = _bar_continuity_runner("Mon 2026-09-14 21:40:48 UTC", "9|1793|43|3|0|1")
+
+    bars = vre._bar_continuity(runner, start)
+
+    assert (bars.brackets, bars.spanning, bars.excluded) == (3, 0, 1)
+    assert bars.stopped_at_utc == start
+    assert bars.live_floor_utc == datetime(2026, 9, 14, 21, 37, 48, tzinfo=UTC)
+    assert "prior >= TIMESTAMPTZ '2026-09-14 21:37:48+00'" in sql[0]
+
+
+def test_bar_continuity_refuses_a_stop_after_the_start() -> None:
+    start = datetime(2026, 9, 14, 21, 40, 48, tzinfo=UTC)
+    runner, _ = _bar_continuity_runner("Mon 2026-09-14 21:40:49 UTC", "0|0|0|0|0|0")
+    with pytest.raises(vre.EvidenceUnknown, match="stopped at .* which is after its start"):
+        vre._bar_continuity(runner, start)
+
+
+def test_bar_continuity_without_a_stop_timestamp_is_unmeasured() -> None:
+    start = datetime(2026, 9, 14, 21, 40, 48, tzinfo=UTC)
+    runner, _ = _bar_continuity_runner("", "0|0|0|0|0|0")
+    with pytest.raises(vre.EvidenceUnknown, match="no InactiveEnterTimestamp for schwab-1m-v2"):
+        vre._bar_continuity(runner, start)
+
+
+def test_bar_continuity_requires_all_six_counts() -> None:
+    start = datetime(2026, 9, 14, 21, 40, 48, tzinfo=UTC)
+    runner, _ = _bar_continuity_runner("Mon 2026-09-14 21:40:48 UTC", "9|1793|43|3|0")
+    with pytest.raises(vre.EvidenceUnknown, match="returned 5 fields, expected 6"):
+        vre._bar_continuity(runner, start)
+
+
+def test_report_passes_bar_continuity_when_only_excluded_pairs_bracket_the_restart(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        vre, "_bar_continuity", lambda runner, restart: _bars(9, 1793, 43, 3, 0, excluded=1)
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 0
+    output = capsys.readouterr().out
+    assert "pairs bracketing restart=3/1793 (series live at stop)" in output
+    assert "gaps spanning restart=0/43" in output
+    assert "bracketing pairs NOT live at stop (subscription gaps, excluded)=1" in output
+    assert "live-at-stop floor=180s" in output
+    assert "v2 stopped at 2026-09-10 20:25:00 EDT (2026-09-11 00:25:00 UTC)" in output
+
+
+def test_report_still_fails_a_gap_that_spans_the_restart_on_a_live_series(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        vre, "_bar_continuity", lambda runner, restart: _bars(3, 99, 2, 3, 1, excluded=1)
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 1
+    output = capsys.readouterr().out
+    assert "1 bar gap(s) span the v2 restart" in output
+    assert "| Bar continuity |" in output and "| FAIL |" in output
