@@ -1,0 +1,15 @@
+--- /Users/velkris/.claude/mai-tai-fleet/overlap.sh	2026-08-31 18:17:24
++++ overlap.sh	2026-09-15 07:03:10
+@@ -67,7 +67,11 @@
+ fi
+ 
+ echo "=== REAL OVERLAP between HELD claims ==="
+-mapfile -t L < <(held)
++# ⛔ No `mapfile`: Apple ships bash 3.2, where it is absent and the script died with
++# "mapfile: command not found" then "L: unbound variable" — fail-closed, but the gate was
++# unusable on macOS for a whole batch. A read loop is the same list on every bash.
++L=()
++while IFS= read -r l; do [ -n "$l" ] && L+=("$l"); done < <(held)
+ [ "${#L[@]}" -eq 0 ] && { echo "  (no held claims)"; exit 0; }
+ for l in "${L[@]}"; do
+   printf '  %-12s %s\n' "$(printf '%s' "$l"|awk -F' [|] ' '{print $2}'|tr -d ' ')" \
