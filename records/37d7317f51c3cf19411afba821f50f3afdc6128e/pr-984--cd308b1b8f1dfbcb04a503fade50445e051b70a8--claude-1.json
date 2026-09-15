@@ -1,0 +1,9 @@
+{
+  "pr_number": 984,
+  "range_base": "cd308b1b8f1dfbcb04a503fade50445e051b70a8",
+  "range_head": "37d7317f51c3cf19411afba821f50f3afdc6128e",
+  "reviewed_at": "2026-09-15T13:09:31Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Read all 1054 lines of pre0700_shadow.py + 200/320 test lines + docs at both heads. Verified the instrument on REAL 09-15 data: _canonical_0708 + canonical_agreement reproduce the live 07:08 probe for MYSZ (long/2.2941) and BDRX (long/1.723). Env names match settings; band unset = default 0.5; market_capture_trades is massive-only all-time so the purity abort cannot fire. 14 tests pass, ruff clean, validate green x2, base is an ancestor of head. My own mutations on 37d7317, each exactly one named test red: pile-B flip==BUY->flip; BLIND_END 07:08->07:09; FIDELITY_REQUIRED_BARS 7->1; replay-liveness bound removed (2 red). First-head gaps (3 surviving mutations) were fixed in 37d7317. Read-only, after-close-only, no live path; ten-session table pending after 16:05 ET on the same head."
+}
