@@ -1,7 +1,32 @@
 # Confirmed-stock ATR selection census
 
-Status: **PRE-REGISTERED; population results not yet read.** This is a read-only research
-instrument. It changes no scanner, strategy, order, exit, or deployment path.
+Status: **RESULT CAPTURED after the 2026-09-15 close.** This is a read-only research instrument.
+It changes no scanner, strategy, order, exit, or deployment path.
+
+## Result
+
+The pre-registered candidate **FAILED**. Across 683 outcome-measured BUY flips, the proposed
+blocked group reached +5% on 185/440 (42.05%) and the kept group on 104/243 (42.80%). The rates
+are effectively the same, not the required two-to-one separation, and the result fails both
+drop-one-name and drop-one-day robustness. All nine frozen feature gradients were non-monotonic;
+none was retained.
+
+The final population contains 855 confirmed symbol-days. The earlier 846/640 checkpoint was
+taken before the last nine 2026-09-15 confirmations arrived. After close, 649/855 symbol-days
+have a live Schwab bar somewhere that day, exactly nine above the earlier 640. Of those, 506/855
+have a bar inside the 04:00-15:59 ET analysis window. Keeping both denominators prevents
+after-hours-only bars from being mislabeled as usable feature history.
+
+The real 2026-09-15 tape also contradicts a simple fade filter inside MYSZ itself: its 09:34 BUY
+was 26.89% below a 327-minute-old high and missed +5%, but its 11:22 BUY was still 31.11% below a
+435-minute-old high and reached +5% with 12.31% MFE. SUGP's canonical 09:44 BUY was a miss from
+the flip-bar close, while the actual Webull rest filled one minute earlier and won; that is why
+the live-fill table remains descriptive and cannot select a threshold.
+
+PRE07 remains an instrument limitation rather than a trading conclusion: 7/16 symbol-days were
+instrument-valid, only 1/16 was `FIDELITY_OK`, and 9/16 were `INSTRUMENT_MISMATCH`. The current
+MYSZ and BDRX 07:08 canonical readings agreed with the live probe, but the ten-session shadow
+sample is not strong enough to infer blind-window outcomes.
 
 ## Question
 

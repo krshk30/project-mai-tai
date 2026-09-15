@@ -182,8 +182,10 @@ class CensusReport:
     start: date
     end: date
     confirmed_symbol_days: int
+    daily_bar_present_symbol_days: int
     bar_measurable_symbol_days: int
     no_live_bar_symbol_days: int
+    no_analysis_window_bar_symbol_days: int
     confirm_memberships: int
     path_c_memberships: int
     pre0700_measurable_symbol_days: int
@@ -598,13 +600,23 @@ def run_census(source: SelectionDataSource, start: date, end: date) -> CensusRep
     items = source.load(start, end)
     rows = tuple(row for item in items for row in evaluate_symbol_day(item))
     openings = [event for item in items for event in _opening_confirms(item.scanner_events)]
-    bar_items = [item for item in items if item.schwab_bars]
+    daily_bar_items = [item for item in items if item.schwab_bars]
+    bar_items = [
+        item
+        for item in items
+        if any(
+            _at(item.day, SESSION_ANCHOR) <= _bar_at(bar) < _at(item.day, SESSION_END)
+            for bar in item.schwab_bars
+        )
+    ]
     return CensusReport(
         start=start,
         end=end,
         confirmed_symbol_days=len(items),
+        daily_bar_present_symbol_days=len(daily_bar_items),
         bar_measurable_symbol_days=len(bar_items),
-        no_live_bar_symbol_days=len(items) - len(bar_items),
+        no_live_bar_symbol_days=len(items) - len(daily_bar_items),
+        no_analysis_window_bar_symbol_days=len(items) - len(bar_items),
         confirm_memberships=len(openings),
         path_c_memberships=sum(event.confirm_path == "PATH_C_EXTREME_MOVER" for event in openings),
         pre0700_measurable_symbol_days=sum(item.pre0700_available for item in bar_items),
@@ -701,8 +713,8 @@ class DbSelectionDataSource:
                 ),
                 {
                     "symbols": list(symbols),
-                    "lo": _at(day, SESSION_ANCHOR),
-                    "hi": _at(day, SESSION_END),
+                    "lo": _at(day, time.min),
+                    "hi": _at(day + timedelta(days=1), time.min),
                 },
             ).all()
         result: dict[str, list[Bar]] = defaultdict(list)
@@ -772,8 +784,10 @@ def render_markdown(report: CensusReport) -> str:
         "| Measure | Result | Denominator |",
         "|---|---:|---|",
         f"| Confirmed symbol-days | {report.confirmed_symbol_days} | distinct days/names with a CONFIRM row |",
-        f"| Bar-measurable symbol-days | {report.bar_measurable_symbol_days}/{report.confirmed_symbol_days} | confirmed symbol-days |",
+        f"| Any live Schwab bar that day | {report.daily_bar_present_symbol_days}/{report.confirmed_symbol_days} | confirmed symbol-days |",
+        f"| Analysis-window bar-measurable | {report.bar_measurable_symbol_days}/{report.confirmed_symbol_days} | confirmed symbol-days with a 04:00-15:59 ET bar |",
         f"| No live Schwab bars | {report.no_live_bar_symbol_days}/{report.confirmed_symbol_days} | confirmed symbol-days |",
+        f"| No 04:00-15:59 ET bar | {report.no_analysis_window_bar_symbol_days}/{report.confirmed_symbol_days} | confirmed symbol-days |",
         f"| Confirmation memberships | {report.confirm_memberships} | repeated snapshots collapsed |",
         f"| PATH_C_EXTREME_MOVER | {report.path_c_memberships}/{report.confirm_memberships} | confirmation memberships |",
         f"| Pre-07:00 features measurable | {report.pre0700_measurable_symbol_days}/{report.bar_measurable_symbol_days} | bar-measurable symbol-days |",

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -366,15 +368,73 @@ def test_run_census_reports_confirmed_and_bar_measurable_denominators_separately
             confirm = (ConfirmEvent("CONFIRM", _at(8), 10.0, 50.0, "PATH_C_EXTREME_MOVER"),)
             return [
                 SymbolDayInput(DAY, "HAS", confirm, (_bar(_at(7), 10.0),)),
+                SymbolDayInput(DAY, "AFTER", confirm, (_bar(_at(20), 10.0),)),
                 SymbolDayInput(DAY, "NONE", confirm, ()),
             ]
 
     report = run_census(Source(), DAY, DAY)
 
-    assert report.confirmed_symbol_days == 2
+    assert report.confirmed_symbol_days == 3
+    assert report.daily_bar_present_symbol_days == 2
     assert report.bar_measurable_symbol_days == 1
     assert report.no_live_bar_symbol_days == 1
-    assert report.confirm_memberships == 2
+    assert report.no_analysis_window_bar_symbol_days == 2
+    assert report.confirm_memberships == 3
+
+
+def test_real_sugp_mysz_tape_preserves_the_observed_selection_shapes() -> None:
+    raw = json.loads(
+        (Path(__file__).parent / "fixtures" / "SUGP_MYSZ_20260915_selection.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    items = []
+    for item in raw["items"]:
+        items.append(
+            SymbolDayInput(
+                day=date.fromisoformat(item["day"]),
+                symbol=item["symbol"],
+                scanner_events=tuple(
+                    ConfirmEvent(
+                        event["event_type"],
+                        datetime.fromisoformat(event["at"]),
+                        event["price"],
+                        event["change_pct"],
+                        event["confirm_path"],
+                    )
+                    for event in item["scanner_events"]
+                ),
+                schwab_bars=tuple(Bar(**bar) for bar in item["schwab_bars"]),
+                pre0700_bars=tuple(Bar(**bar) for bar in item["pre0700_bars"]),
+                pre0700_available=item["pre0700_available"],
+                live_entries=tuple(
+                    LiveEntry(
+                        entry["logical_id"],
+                        datetime.fromisoformat(entry["filled_at"]),
+                        tuple(entry["accounts"]),
+                    )
+                    for entry in item["live_entries"]
+                ),
+            )
+        )
+
+    class Source:
+        def load(self, start: date, end: date) -> list[SymbolDayInput]:
+            assert (start, end) == (DAY, DAY)
+            return items
+
+    report = run_census(Source(), DAY, DAY)
+    focus = {(row.symbol, row.flip_at.strftime("%H:%M")): row for row in report.observations}
+
+    assert report.confirmed_symbol_days == 2
+    assert report.bar_measurable_symbol_days == 2
+    assert focus[("SUGP", "09:44")].hit_plus5 is False
+    assert focus[("SUGP", "09:44")].live_entry_ids == ()
+    assert focus[("MYSZ", "09:34")].hit_plus5 is False
+    assert focus[("MYSZ", "09:34")].mfe_pct == pytest.approx(0.998003992)
+    assert focus[("MYSZ", "09:34")].minutes_since_high == 327.0
+    assert focus[("MYSZ", "11:22")].hit_plus5 is True
+    assert focus[("MYSZ", "11:22")].mfe_pct == pytest.approx(12.311015119)
 
 
 def test_canonical_oracle_is_anchored_at_0400_but_only_0700_flips_are_units(monkeypatch) -> None:
