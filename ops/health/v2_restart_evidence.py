@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 from zoneinfo import ZoneInfo
@@ -28,6 +28,10 @@ V2_SERVICE = "schwab-1m-v2"
 V2_STRATEGY_CODE = "schwab_1m_v2"
 REST_WARMUP_FRESH_AGE_SECONDS = 300
 BOOT_WARMUP_FALLBACK_BOUND_SECONDS = 369
+# A bar series counts as live at the v2 stop when its last bar before the stop started within
+# this many seconds of it. Bars persist ~60 s after their start, so a stop mid-bar leaves the
+# previous bar as the newest row: 3 bars keeps a live series in and a 57-minute-old one out.
+LIVE_AT_STOP_BOUND_SECONDS = 180
 LIVE_ACCOUNTS = ("live:schwab_1m_v2", "live:orb")
 DEFAULT_SERVICES = (
     "control",
@@ -348,9 +352,51 @@ def _process_environment(pid: int, runner: Runner) -> dict[str, str]:
     return values
 
 
-def _bar_continuity(runner: Runner, restart: datetime) -> tuple[int, int, int, int, int]:
+@dataclass(frozen=True)
+class BarContinuity:
+    symbols: int
+    pairs: int
+    gaps: int
+    brackets: int
+    spanning: int
+    excluded: int
+    stopped_at_utc: datetime
+    live_floor_utc: datetime
+
+
+def _v2_stopped_at(start: datetime, runner: Runner) -> datetime:
+    """When the previous v2 process left the unit (systemd ``InactiveEnterTimestamp``).
+
+    For a plain ``systemctl restart`` this is the same second as the new start; for a stop-then-
+    start outage it is the moment the bar hole began. It is the only anchor that says whether a
+    symbol's bar series was alive when v2 went down.
+    """
+    stopped = _parse_systemd_time(_systemctl_value(V2_SERVICE, "InactiveEnterTimestamp", runner))
+    if stopped > start:
+        raise EvidenceUnknown(
+            f"systemd reports {V2_SERVICE} stopped at {stopped.isoformat()} which is after its "
+            f"start at {start.isoformat()}"
+        )
+    return stopped
+
+
+def _bar_continuity(runner: Runner, restart: datetime) -> BarContinuity:
+    """Count restart-spanning bar gaps among the series that were LIVE when v2 stopped.
+
+    A pair whose earlier bar is older than ``LIVE_AT_STOP_BOUND_SECONDS`` before the stop belongs
+    to a symbol that had already left the watchlist (or stopped trading) before v2 went down; the
+    restart cannot have created that hole. 2026-09-15: AIXC was unsubscribed at 16:44 ET and
+    re-promoted at 18:24 ET around a 17:40 ET restart, and the un-floored count BLOCKED the
+    pre-open gate on a subscription gap while the three symbols held at the restart all read 60 s.
+    Those pairs are still counted, as ``excluded``, so the denominator stays on the line.
+    """
     restart_utc = restart.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S+00")
+    stopped = _v2_stopped_at(restart, runner)
+    live_floor = stopped - timedelta(seconds=LIVE_AT_STOP_BOUND_SECONDS)
+    live_floor_utc = live_floor.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S+00")
     session_day = restart.astimezone(ET).date().isoformat()
+    bracketing = f"prior < TIMESTAMPTZ '{restart_utc}' AND bar_time > TIMESTAMPTZ '{restart_utc}'"
+    live_at_stop = f"prior >= TIMESTAMPTZ '{live_floor_utc}'"
     raw = _psql(
         "WITH ordered AS ("
         " SELECT symbol, bar_time,"
@@ -367,17 +413,17 @@ def _bar_continuity(runner: Runner, restart: datetime) -> tuple[int, int, int, i
         " (SELECT count(DISTINCT symbol) FROM ordered),"
         " count(*),"
         " count(*) FILTER (WHERE delta > 90),"
-        f" count(*) FILTER (WHERE prior < TIMESTAMPTZ '{restart_utc}'"
-        f" AND bar_time > TIMESTAMPTZ '{restart_utc}'),"
-        f" count(*) FILTER (WHERE delta > 90 AND prior < TIMESTAMPTZ '{restart_utc}'"
-        f" AND bar_time > TIMESTAMPTZ '{restart_utc}') FROM measured;",
+        f" count(*) FILTER (WHERE {bracketing} AND {live_at_stop}),"
+        f" count(*) FILTER (WHERE delta > 90 AND {bracketing} AND {live_at_stop}),"
+        f" count(*) FILTER (WHERE {bracketing} AND NOT ({live_at_stop})) FROM measured;",
         runner,
     )
-    fields = _single_row(raw, 5, "bar-continuity query")
+    fields = _single_row(raw, 6, "bar-continuity query")
     try:
-        return tuple(int(value) for value in fields)  # type: ignore[return-value]
+        counts = [int(value) for value in fields]
     except ValueError as exc:
         raise EvidenceUnknown("bar-continuity query returned a non-numeric count") from exc
+    return BarContinuity(*counts, stopped_at_utc=stopped, live_floor_utc=live_floor)
 
 
 def _restart_inside_bar_session(restart: datetime) -> bool:
@@ -732,21 +778,27 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         )
     rows.append(("BOOT-HOLD released", hold_text, "PASS" if released else "FAIL"))
 
-    symbols, pairs, gaps, brackets, spanning = _bar_continuity(runner, v2_start)
+    bars = _bar_continuity(runner, v2_start)
     restart_inside_bar_session = _restart_inside_bar_session(v2_start)
-    bar_ok = spanning == 0 and (not restart_inside_bar_session or brackets > 0)
-    if spanning:
-        failures.append(f"{spanning} bar gap(s) span the v2 restart")
-    elif restart_inside_bar_session and brackets == 0:
+    bar_ok = bars.spanning == 0 and (not restart_inside_bar_session or bars.brackets > 0)
+    if bars.spanning:
+        failures.append(f"{bars.spanning} bar gap(s) span the v2 restart")
+    elif restart_inside_bar_session and bars.brackets == 0:
         failures.append("no adjacent live-bar pair brackets the in-session v2 restart")
     bar_status = "PASS" if bar_ok else "FAIL"
-    if not restart_inside_bar_session and brackets == 0:
+    if not restart_inside_bar_session and bars.brackets == 0:
         bar_status = "N/A_OFF_SESSION"
     rows.append(
         (
             "Bar continuity",
-            f"session symbols={symbols}; adjacent bar pairs={pairs}; gaps>90s={gaps}/{pairs}; "
-            f"pairs bracketing restart={brackets}/{pairs}; gaps spanning restart={spanning}/{gaps}",
+            f"session symbols={bars.symbols}; adjacent bar pairs={bars.pairs}; "
+            f"gaps>90s={bars.gaps}/{bars.pairs}; "
+            f"v2 stopped at {format_moment(bars.stopped_at_utc)}; "
+            f"live-at-stop floor={LIVE_AT_STOP_BOUND_SECONDS}s "
+            f"({format_moment(bars.live_floor_utc)}); "
+            f"pairs bracketing restart={bars.brackets}/{bars.pairs} (series live at stop); "
+            f"gaps spanning restart={bars.spanning}/{bars.gaps}; "
+            f"bracketing pairs NOT live at stop (subscription gaps, excluded)={bars.excluded}",
             bar_status,
         )
     )
