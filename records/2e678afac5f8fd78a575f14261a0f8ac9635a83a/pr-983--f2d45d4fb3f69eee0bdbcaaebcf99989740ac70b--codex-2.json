@@ -1,0 +1,9 @@
+{
+  "pr_number": 983,
+  "range_base": "f2d45d4fb3f69eee0bdbcaaebcf99989740ac70b",
+  "range_head": "2e678afac5f8fd78a575f14261a0f8ac9635a83a",
+  "reviewed_at": "2026-09-15T11:07:46Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified the three-file docs-only package against the checksum-pinned live toolkit; applied the exact patch under Apple bash 3.2.57; reproduced the unpatched mapfile failure and independently exercised no-claim, tracked glob overlap, disjoint, candidate, identical-literal, and three-claim paths with correct exit polarity. Full overlay selftest is unnecessary because its overlap section exercises the unchanged candidate path, which was tested directly."
+}
