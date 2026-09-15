@@ -1,0 +1,9 @@
+{
+  "pr_number": 982,
+  "range_base": "59f45e1a4316fcc866db7cb79115f8f9d6718e25",
+  "range_head": "17d7648386bdd142f20cac99991d06c080879007",
+  "reviewed_at": "2026-09-15T09:39:31Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the stop-anchored 180-second live-series filter and fail-closed systemd evidence; 47 focused tests and Ruff pass. Replayed the exact head read-only on production: BMGL/FTFT/VEEA remain 3 live-at-stop brackets with 0 spanning gaps, AIXC is the single excluded subscription gap, and the July stop-to-start outage remains pinned to the stop."
+}
