@@ -32,6 +32,9 @@ PYPROJECT = pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
 # Reached another way. Each entry names HOW, so a wrong one is visible on reading.
 LAUNCHED_NOT_IMPORTED: dict[str, str] = {
     "project_mai_tai.backtest.__main__": "python -m project_mai_tai.backtest",
+    "project_mai_tai.backtest.atr_first_loss_followthrough": (
+        "read-only study CLI; python -m invocation documented in its report"
+    ),
     "project_mai_tai.backtest.confirmed_selection_census": (
         "read-only after-close selection study; launched with python -m and referenced from docs/"
     ),
