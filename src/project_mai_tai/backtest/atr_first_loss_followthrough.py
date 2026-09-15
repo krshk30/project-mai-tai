@@ -725,9 +725,17 @@ def render_markdown(report: StudyReport) -> str:
             f"| {kind} | {count}/{decisive_total} | symbol-days with a gradable first decisive outcome |"
         )
     decisive_group = report.first_decisive_stop_group
+    decisive_mfe = [
+        opportunity.guaranteed_mfe_before_stop_pct
+        for _day, _selected_index, opportunity in decisive_stopped
+        if opportunity.guaranteed_mfe_before_stop_pct is not None
+    ]
     lines.extend(
         [
             f"| First decisive STOP_8 with a later BUY | {decisive_group.with_later_opportunity}/{decisive_group.symbol_days} | first-decisive-stop symbol-days |",
+            f"| Median guaranteed upside before the stop | {_fmt(statistics.median(decisive_mfe) if decisive_mfe else None)}% | {len(decisive_mfe)}/{decisive_group.symbol_days} first-decisive-stop rows |",
+            f"| Guaranteed upside >= +3% before the stop | {sum(value >= 3 for value in decisive_mfe)}/{len(decisive_mfe)} | first-decisive-stop rows with measurable MFE |",
+            f"| Guaranteed upside >= +4% before the stop | {sum(value >= 4 for value in decisive_mfe)}/{len(decisive_mfe)} | first-decisive-stop rows with measurable MFE |",
             f"| Later +5 targets after first decisive STOP_8 | {decisive_group.later_targets}/{decisive_group.later_gradable} | gradable later opportunities |",
             f"| Days with any later +5 target | {decisive_group.days_with_any_later_target}/{decisive_group.with_later_opportunity} | first-decisive-stop days with a later BUY |",
             f"| Later equal-weight return sum | {_fmt(decisive_group.later_return_sum_pct_points)} pts | {decisive_group.later_gradable} gradable later opportunities |",
