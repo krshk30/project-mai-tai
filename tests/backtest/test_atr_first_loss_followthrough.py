@@ -10,6 +10,7 @@ from project_mai_tai.backtest.atr_first_loss_followthrough import (
     AtrOpportunity,
     SymbolDayStudy,
     _eligible_window,
+    _post_stop_recovery,
     _rule_assessment,
     evaluate_opportunity,
     evaluate_symbol_day,
@@ -188,7 +189,25 @@ def test_post_stop_recovery_does_not_count_the_stop_bars_high(monkeypatch) -> No
 
     assert result.opportunities[0].exit_kind == "STOP_8"
     assert result.post_first_stop_mfe_pct == pytest.approx(-1)
-    assert result.post_first_stop_reached_original_target is False
+    assert result.post_first_stop_reached_original_target is None
+
+
+def test_post_stop_no_recovery_is_false_only_with_complete_rest_of_day() -> None:
+    first = _opportunity(1, -8, "STOP_8")
+    assert first.exit_at is not None
+    first = replace(first, exit_at=_at(8, 1))
+    complete = [
+        _bar(at.hour, at.minute, 99, high=99, low=94)
+        for at in (
+            _at(8, 2) + timedelta(minutes=index)
+            for index in range(int((_at(15, 59) - _at(8, 2)).total_seconds() // 60) + 1)
+        )
+    ]
+
+    mfe, recovered = _post_stop_recovery(complete, first)
+
+    assert mfe == pytest.approx(-1)
+    assert recovered is False
 
 
 class _Source:

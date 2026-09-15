@@ -43,7 +43,7 @@ For a definite first `STOP_8`:
 - Guaranteed pre-stop MFE uses completed bars before the stop bar.
 - Possible pre-stop MFE includes the stop bar's high.
 - The distinction is required because OHLC cannot prove whether that high occurred before or after the stop low.
-- Post-stop MFE starts with the following bar, so a print before the stop cannot masquerade as recovery.
+- Post-stop MFE starts with the following bar, so a print before the stop cannot masquerade as recovery. Failure to recover is claimed only with continuous bars through 15:59 ET; otherwise it is UNKNOWN. A visible recovery remains positive evidence even if another part of the path is missing.
 - Every later eligible BUY is reported individually. A later BUY necessarily follows a canonical SELL and therefore represents a genuinely new short segment.
 
 ## Frozen rule criterion

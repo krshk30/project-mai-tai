@@ -446,6 +446,28 @@ def _bar_gaps(bars: Sequence[Bar]) -> int:
     )
 
 
+def _post_stop_recovery(
+    bars: Sequence[Bar], first: AtrOpportunity
+) -> tuple[float | None, bool | None]:
+    assert first.exit_at is not None
+    later = [bar for bar in bars if _bar_at(bar) > first.exit_at]
+    if not later:
+        return None, None
+    mfe = max(_pct(float(bar.high), first.entry_price) for bar in later)
+    if mfe >= TARGET_PCT:
+        return mfe, True
+    timestamps = [_bar_at(bar) for bar in later]
+    complete = (
+        timestamps[0] == first.exit_at + timedelta(minutes=1)
+        and timestamps[-1].time() >= time(15, 59)
+        and all(
+            right - left <= timedelta(minutes=1)
+            for left, right in zip(timestamps, timestamps[1:], strict=False)
+        )
+    )
+    return mfe, False if complete else None
+
+
 def evaluate_symbol_day(item: SymbolDayInput) -> SymbolDayStudy:
     bars = tuple(
         bar
@@ -479,13 +501,7 @@ def evaluate_symbol_day(item: SymbolDayInput) -> SymbolDayStudy:
     post_stop_target = None
     if opportunities and opportunities[0].exit_kind == "STOP_8":
         first = opportunities[0]
-        assert first.exit_at is not None
-        later_bars = [bar for bar in bars if _bar_at(bar) > first.exit_at]
-        if later_bars:
-            post_stop_mfe = max(_pct(float(bar.high), first.entry_price) for bar in later_bars)
-            post_stop_target = post_stop_mfe >= TARGET_PCT
-        else:
-            post_stop_target = False
+        post_stop_mfe, post_stop_target = _post_stop_recovery(bars, first)
     return SymbolDayStudy(
         item.day,
         item.symbol,
@@ -616,7 +632,12 @@ def render_markdown(report: StudyReport) -> str:
         for day in stopped
         if day.opportunities[0].possible_mfe_before_stop_pct is not None
     ]
-    recovered = sum(day.post_first_stop_reached_original_target is True for day in stopped)
+    recovery_measured = [
+        day for day in stopped if day.post_first_stop_reached_original_target is not None
+    ]
+    recovered = sum(
+        day.post_first_stop_reached_original_target is True for day in recovery_measured
+    )
     lines = [
         "# First ATR loss and rest-of-day follow-through",
         "",
@@ -664,7 +685,8 @@ def render_markdown(report: StudyReport) -> str:
             f"| Possible pre-stop MFE >= +2% | {sum(value >= 2 for value in possible)}/{len(possible)} | first-stop rows with measurable MFE |",
             f"| Possible pre-stop MFE >= +3% | {sum(value >= 3 for value in possible)}/{len(possible)} | first-stop rows with measurable MFE |",
             f"| Possible pre-stop MFE >= +4% | {sum(value >= 4 for value in possible)}/{len(possible)} | first-stop rows with measurable MFE |",
-            f"| Reached original +5% after the stop | {recovered}/{len(stopped)} | first-stop symbol-days |",
+            f"| Reached original +5% after the stop | {recovered}/{len(recovery_measured)} | first-stop rows with complete negative evidence or a visible recovery |",
+            f"| Post-stop recovery UNKNOWN | {len(stopped) - len(recovery_measured)}/{len(stopped)} | first-stop symbol-days |",
             "",
             "## What happened later that day",
             "",
