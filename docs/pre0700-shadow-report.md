@@ -33,7 +33,8 @@ at least one trade from 04:00 through 07:07, out of 188 expected minutes.
   live ATR could not see.
 - **Touch**: while the prior shadow state is short, the close reaches the prior trail without
   exceeding the production resting-order band. The report records the prior trail actually
-  crossed, not the new post-flip trail.
+  crossed, not the new post-flip trail. This is the specified close-based approximation; the
+  live stop-limit triggers on the high, and a high-based comparison is a deferred refinement.
 - **07:08 state**: Massive shadow state/trail, live `[V2-ATR-PROBE]` state/trail, and the canonical
   oracle rerun over the nine live Schwab bars.
 
@@ -70,6 +71,9 @@ as time-and-sales volume.
   gaps in its modified true range; coverage and nine-bar fidelity must be read with every result.
 - A live probe retained in no current or rotated log produces `INSTRUMENT_MISMATCH`, not a guessed
   canonical state.
+- A 07:08 probe counts as live only when its log timestamp is no earlier than its bar timestamp
+  and no more than five minutes later. Warmup and DB-seed replay probes outside that interval are
+  discarded rather than mistaken for live evidence.
 - D1 does not claim an executable fill or live-strategy P&L. A replay-engine pre-07 seed adapter
   remains deferred unless the ten-session report repeatedly finds Pile-B BUY flips on
   `FIDELITY_OK` rows and the operator asks for D2.

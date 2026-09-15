@@ -47,6 +47,7 @@ FIDELITY_REL_TOL = 0.001
 FIDELITY_REQUIRED_BARS = 7
 OVERLAP_EXPECTED_BARS = 9
 COVERAGE_EXPECTED_MINUTES = 188
+MAX_LIVE_PROBE_LAG_SECONDS = 300
 
 PRE07_START = time(4, 0)
 ENTRY_START = time(7, 0)
@@ -57,6 +58,10 @@ _PROBE_RE = re.compile(
     r"\[V2-ATR-PROBE\]\s+sym=(?P<symbol>[A-Z0-9.\-]+)\s+"
     r"ts_ms=(?P<ts_ms>\d+).*?\btrail=(?P<trail>-?\d+(?:\.\d+)?)\s+"
     r"state=(?P<state>long|short)\b"
+)
+_LOG_CLOCK_RE = re.compile(
+    r"^(?P<clock>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"
+    r"(?:[,.](?P<fraction>\d{1,6}))?"
 )
 _ENV_FILE = Path("/etc/project-mai-tai/project-mai-tai.env")
 _LOG_DIR = Path("/var/log/project-mai-tai")
@@ -78,6 +83,7 @@ class ProbeReading:
     bar_at: datetime
     state: str
     trail: float
+    observed_at: datetime | None = None
     conflicting: bool = False
 
 
@@ -460,34 +466,48 @@ def compare_levelone(
 
 
 def parse_probe_lines(lines: Iterable[str]) -> dict[tuple[date, str], ProbeReading]:
-    """Parse 07:08 live probes, preserving disagreement between duplicate observations."""
+    """Parse timely 07:08 probes, preserving disagreement between live observations."""
 
     readings: dict[tuple[date, str], ProbeReading] = {}
     for line in lines:
         match = _PROBE_RE.search(line)
-        if match is None:
+        clock_match = _LOG_CLOCK_RE.match(line)
+        if match is None or clock_match is None:
             continue
         at = datetime.fromtimestamp(int(match.group("ts_ms")) / 1000, UTC).astimezone(ET)
         if at.hour != 7 or at.minute != 8:
+            continue
+        fraction = (clock_match.group("fraction") or "").ljust(6, "0")
+        observed_at = datetime.strptime(clock_match.group("clock"), "%Y-%m-%d %H:%M:%S").replace(
+            microsecond=int(fraction or "0"),
+            tzinfo=UTC,
+        )
+        lag_seconds = (observed_at - at).total_seconds()
+        if not 0 <= lag_seconds <= MAX_LIVE_PROBE_LAG_SECONDS:
             continue
         reading = ProbeReading(
             symbol=match.group("symbol"),
             bar_at=at,
             state=match.group("state"),
             trail=float(match.group("trail")),
+            observed_at=observed_at,
         )
         key = (at.date(), reading.symbol)
         previous = readings.get(key)
         if previous is None:
             readings[key] = reading
             continue
-        conflicting = (
-            previous.state != reading.state
-            or round(previous.trail, 4) != round(reading.trail, 4)
+        conflicting = previous.state != reading.state or round(previous.trail, 4) != round(
+            reading.trail, 4
         )
         if conflicting:
             readings[key] = ProbeReading(
-                reading.symbol, reading.bar_at, reading.state, reading.trail, conflicting=True
+                symbol=reading.symbol,
+                bar_at=reading.bar_at,
+                state=reading.state,
+                trail=reading.trail,
+                observed_at=reading.observed_at,
+                conflicting=True,
             )
     return readings
 
