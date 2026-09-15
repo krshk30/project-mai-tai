@@ -23,6 +23,7 @@ from sqlalchemy import text
 
 from orb_momentum_turn_report import BarPoint, admissible_seed_bars
 from project_mai_tai.backtest.dot_entry import fast_stoch_k, rsi_wilders
+from project_mai_tai.backtest.metrics import kaufman_efficiency_ratio
 from project_mai_tai.backtest.watch_start import WatchWindow, build_windows
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.market_halts import (
@@ -218,8 +219,8 @@ def choppiness(bars: Sequence[BarPoint], index: int) -> tuple[Decimal | None, in
         return None, None, True
     closes = [bar.close for bar in bars[index - CHOP_LOOKBACK + 1 : index + 1]]
     changes = [current - previous for previous, current in zip(closes, closes[1:], strict=False)]
-    travel = sum((abs(change) for change in changes), Decimal("0"))
-    efficiency = abs(closes[-1] - closes[0]) / travel if travel > 0 else Decimal("0")
+    efficiency = kaufman_efficiency_ratio(closes)
+    assert efficiency is not None
     signs = [1 if change > 0 else -1 for change in changes if change != 0]
     reversals = sum(left != right for left, right in zip(signs, signs[1:], strict=False))
     return efficiency, reversals, efficiency < CHOP_MIN_EFFICIENCY or reversals > CHOP_MAX_REVERSALS
