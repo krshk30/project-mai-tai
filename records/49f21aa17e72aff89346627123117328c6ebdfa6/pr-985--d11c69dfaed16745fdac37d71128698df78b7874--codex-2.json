@@ -1,0 +1,9 @@
+{
+  "pr_number": 985,
+  "range_base": "d11c69dfaed16745fdac37d71128698df78b7874",
+  "range_head": "49f21aa17e72aff89346627123117328c6ebdfa6",
+  "reviewed_at": "2026-09-15T21:35:42Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed read-time clock and PHANTOM1 diagnostics; 69 focused tests and ruff clean; three discriminating mutations red; controlled pair 55/3886 to 55/3891 with identical 67 failure/error identities; validate green."
+}
