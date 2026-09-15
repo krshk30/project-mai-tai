@@ -3,153 +3,124 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-09-14 18:15 ET.** Batch `2026-09-14-webull-latch-two-missed-flips-deployed`.
-Integrator for this rotation; `codex-2` executed the deploy and reviews this PR. The author never reviews.
+**Written by `claude-1`, 2026-09-15 20:05 ET.** Batch `2026-09-15-blind-window-selection-census-watch-fixes`.
+Integrator for this rotation; `codex-2` executed both deploys and reviews this PR. The author never reviews.
 
-> ⛔⭐⭐⭐ **RECLAIM1 IS LIVE.** `MAI_TAI_STRATEGY_SCHWAB_1M_V2_FLIP_OWNED_FIRST_ENTRY_ENABLED=true` read from
-> the running v2 (pid `1628896`) at 21:58 UTC. One trade per ATR segment, first resting entry only, no reclaim.
+> ⛔⭐⭐⭐ **RECLAIM1 IS LIVE.** `MAI_TAI_STRATEGY_SCHWAB_1M_V2_FLIP_OWNED_FIRST_ENTRY_ENABLED=true` read from the running v2
+> (pid `1628896`) at 19:51 ET. One trade per ATR segment, first resting entry only, no reclaim.
 
 ---
 
-# ✅ PRODUCTION — main and box IN SYNC at `d99552c8` (everything merged today is DEPLOYED)
+# ✅ PRODUCTION — main and box IN SYNC at `7bdcbd0` (everything merged today is DEPLOYED, nothing restarted)
 
 | | |
 |---|---|
-| box (deployed) | **`d99552c8ec8b36d459e39bdce84138d8f1a88ac3`** — read FROM THE BOX 2026-09-14 21:58 UTC, branch `main`, clean |
-| GitHub main | **`d99552c8`** — identical at the time of writing. Merging this handoff PR moves main ahead by docs only — the DOCS-ONLY DIVERGENCE rule holds; no sync, no restart |
-| gate pin | `/home/trader/preopen.sh`: `EXPECTED_DATE=2026-09-15` · `EXPECTED_SHA=d99552c8…` · `EXPECTED_PID=1628896` · `EXPECTED_START='Mon 2026-09-14 21:40:48 UTC'` · snapshot `v2-restart-before-20260914.json` · report `v2-restart-evidence-20260915.md` · still carries `--expected-quiet-service reconciler` (reconciler.log is still 0 bytes after #973) |
-| open PRs | **none** — this handoff PR excepted. #975 (my 10:44 mid-session handoff) is CLOSED, superseded by this file |
-| exposure | **21:58 UTC: broker positions 0 · open managed rows 0 · working orders 0 · reconciliation critical findings 0** (three consecutive 30-s runs) |
-| merges 09-14 (**11**) | #966 · #970 · #971 · **#972** BOOT1 sort · **#973** reconciliation scope + fill checkpoint · **#974** Webull recycled ticker · **#976** Webull reject evidence · **#977** LATCH1 · **#978** ORB times in ET · **#979** LATCH2 · **#980** BOOT2 |
-| deploys 09-14 | **Window A 16:57–17:00 ET:** snapshot → sync-only → reconciler (`1615355`). **Reconciler again 17:34 ET** (`1626620`) after the checkpoint move. **Window B 17:37–17:41 ET:** oms+strategy, v2, control. Executed by `codex-2` on operator GO |
+| box (deployed) | **`7bdcbd004a019c60124b8f00e467fa3b3146c798`** — read FROM THE BOX 19:46 ET, branch `main`, clean. Two sync-only deploys today: `f2d45d4` at 05:40 ET (#982), `7bdcbd0` at ~19:35 ET (#983 #984 #985 #986). Both executed by `codex-2` on operator GO |
+| GitHub main | **`7bdcbd0`** — identical. Merging this handoff PR moves main ahead by docs only — DOCS-ONLY DIVERGENCE rule holds; no sync, no restart |
+| gate pin | `/home/trader/preopen.sh`: ⛔ **`EXPECTED_DATE=2026-09-15` — MUST be bumped to `2026-09-16` before 06:30 ET or the run-window check goes red for the wrong reason** · `EXPECTED_SHA=7bdcbd004…` (bumped with the sync) · `EXPECTED_PID=1628896` · `EXPECTED_START='Mon 2026-09-14 21:40:48 UTC'` · snapshot `v2-restart-before-20260914.json` unchanged · report `v2-restart-evidence-20260915.md` · still `--expected-quiet-service reconciler` |
+| open PRs | **#987** codex DRAFT "Analyze ATR first-loss follow-through" (research, not deployed) — this handoff PR excepted |
+| exposure | **19:51 ET: open managed rows 0 · nonzero broker positions 0** (gate snapshot instrument 17:21 ET: 2/2 accounts, 0/0) |
+| merges 09-15 (**5**) | **#982** BARCONT1 live-at-stop floor · **#983** overlap.sh bash-3.2 patch package (docs) · **#984** PRE07 shadow report · **#985** PHANTOM1 read-time clock + row reasons · **#986** selection census (pre-registered, result FAIL) |
+| local toolkit | `~/.claude/mai-tai-fleet/overlap.sh` patched from #983 and RE-PINNED 09:10 ET (sha `c10ba936…`); `board.sh overlap` runs on Apple bash 3.2 |
 
-## Restarts — five services, all on 09-14, all `NRestarts=0`, 0 tracebacks after start
+## Services — no restart today; all five still from 09-14, `NRestarts=0`
 
-| service | pid | started (UTC) | why |
+| service | pid | started (UTC) |
+|---|---|---|
+| reconciler | 1626620 | 09-14 21:34:21 |
+| oms | 1627713 | 09-14 21:37:08 |
+| strategy | 1627724 | 09-14 21:37:08 |
+| **schwab-1m-v2** | **1628896** | 09-14 21:40:48 |
+| control | 1629380 | 09-14 21:41:28 |
+
+⛔ The 09-14 pre-restart snapshot still holds `open managed rows=1` (BMGL hand sale). **Every gate run prints that one FAIL until the
+next restart writes a new snapshot.** Ruling unchanged: green ⇔ the ONLY failed row is "Both live accounts flat before/after" with
+before rows=1, after 0. Do not edit the snapshot.
+
+---
+
+# FLAGS — read from the RUNNING v2 (pid 1628896, 19:51 ET)
+
+| flag | value |
+|---|---|
+| `…FLIP_OWNED_FIRST_ENTRY_ENABLED` | **true** (RECLAIM1) |
+| `…CONFIRMATION_ACCOUNT_NEUTRAL_DISCOVERY_ENABLED` | true |
+| `…CW_V2_RECLAIM_ENABLED` | false |
+| `…TICK_CAPTURE_ENABLED` / `…TIMESALE_CAPTURE_ENABLED` | true / **false** (TIMESALE never tried; the only Schwab-side lever for pre-07:00 bars — operator has NOT asked for it) |
+| `…ATR_FLIP_PROBE_SYMBOLS` / `…MACD_PROBE_SYMBOLS` | `*` / `*` |
+
+---
+
+# ⭐⭐ WEDNESDAY 2026-09-16 PRE-OPEN
+
+1. **Before 06:30 ET:** bump `EXPECTED_DATE` in `/home/trader/preopen.sh` to `2026-09-16`, then `ssh mai-tai-vps /home/trader/preopen.sh`.
+   Green = only the known flat-before FAIL. **Bar continuity is now floored at the stop (#982):** a symbol that left the watchlist before a
+   restart and rejoined after no longer reads as a restart hole (`bracketing pairs NOT live at stop … excluded=N` on the row).
+2. **PHANTOM1 now names its reason** (#985): a COULD_NOT_TELL page carries `reasons=[acct:sym VERDICT: …]`. The 09-15 09:20 page was a clock
+   race (run-start clock vs a fresh Webull mirror write), fixed. A repeat with a reason string is a real finding; without one is a regression.
+3. **The 07:00–07:08 blind window is STRUCTURAL, not a bug** (memory `project_mai_tai_0700_blind_window`): Schwab CHART_EQUITY yields ZERO
+   bars before 07:00 (0/10 sessions since 09-01; earliest live v2 bar ever = 07:00:00 since May), the 04:00-sliced ATR needs ~2×5 bars, so the
+   first live probe is the 07:08 bar on every one of the six live days checked. A cross inside 07:00–07:07 is never a flip. Any lever is a
+   RULE change (operator). PRE07 ten sessions found ONE such flip (MYSZ 09-15 07:05) and it would have lost (MFE +0.4% / MAE −9.6%).
+4. Session-local tape monitors DIED with this session. The known-defect cron (every 5 min, 03:50–20:15 ET weekdays) and GATE1 are the
+   persistent watches. RESERVE1 will still read RECURRENCE=20 until the 04:00 anchor rolls — that is today's VEEA storm, see below.
+
+---
+
+# ⛔⭐⭐ TODAY'S TRADE TRUTH — 22 legs / 15 decisions, all closed flat, actual −42.8 pp (8 wins, 14 losses)
+
+Schwab refused MYSZ and SUGP openings all day ("Opening transactions for this security must be placed with a broker" → `schwab_ineligible_cached`),
+so every MYSZ/SUGP fill is the Webull qty-1 leg. VEEA, IPW, MEDS filled both legs.
+
+| decision (ET) | legs | result | exit path |
 |---|---|---|---|
-| **reconciler** | **1626620** | 21:34:21 | #973 (first restarted 20:59:31 as 1615355; restarted again for the checkpoint env) |
-| **oms** | **1627713** | 21:37:08 | #974 #976 |
-| **strategy** | **1627724** | 21:37:08 | ⛔ **the tracked OMS deploy script stops and restarts strategy.** The 09-12 handoff said the `.service` unit does not — that was wrong about the DEPLOY path. Restarted although no PR touched it; healthy |
-| **schwab-1m-v2** | **1628896** | 21:40:48 | #977 #979 |
-| **control** | **1629380** | 21:41:28 | #978 |
-| market-data 2202865 · market-capture 2202817 · orb (paper) 609358 | — | unchanged | orb shows `NRestarts=1` from before today |
+| MYSZ 08:53 @2.44 | W | −0.3% | ATR flip 09:25 (first entry of the day; bought a bounce in an all-day fade) |
+| MYSZ 09:35 @2.465 | W | −7.9% | broker OCO stop 09:57 |
+| SUGP 09:35 @1.15 / 09:43 @1.15 | W / W | −4.8% / **+5.2%** | confirmation exit 09:37 / broker target 09:44 (day high) |
+| **MYSZ 11:19 @2.30** | W | **+5.0%** | ⛔ **WICK FILL, NOT A FLIP**: scanner re-CONFIRMED MYSZ 11:17:58 after the 10:15 FADE → bot rested first-slot stop 2.3029 at 11:18:02 → 11:19 bar wicked to 2.33 and closed 2.29 → confirmation exit FIRED 11:21 but the Webull close was **REFUSED `pair_cancel_unconfirmed`** (Webull 429s) → 11:22 bar flipped BUY anyway → held → target 11:39 |
+| VEEA 11:47 @5.82/5.83 | S+W | +5.0 / +5.0 | broker targets 11:51 |
+| MYSZ 12:08 / 12:44 / 12:51 | W | −9.1 / −2.2 / −6.8 | stop / confirmation exit / flip |
+| IPW 13:21 @3.15/3.16 | S+W | −7.9 / −7.9 | stops 13:33 |
+| VEEA 13:35 @6.13 | S+W | −8.1 / −8.2 | broker stops 13:49 — ⛔ **20 Webull sell rejects in 8 s**, see OVSD1 below |
+| IPW 14:01 @2.87/2.88 | S+W | −1.9 / −2.1 | out 14:03 (symbol left the watchlist 14:02) |
+| VEEA 14:19 / 15:12 | S+W | +2.7 / +5.0 · +4.6 / +5.0 | targets |
+| MEDS 15:39 @1.90 | S+W | −4.5 / −8.4 | confirmation exit / stop |
 
-## Post-deploy evidence (`v2_restart_evidence.py report`, run by `codex-2`, re-derived by `claude-1` at 21:58 UTC)
+**Operator what-ifs (one day, n=22, bar high/low fills, NOT rules):** +3/−5 → −28.0 pp · +2/−8 → −49.7 pp · same simulator on +5/−8 → −48.6 pp vs
+actual −42.8 (the 6-pp gap = the confirmation exit and the pairs, which the simulator does not model). **The stop is the lever, the target is
+not, and neither changes that 14 of 22 legs went the wrong way on the first bar.** That is selection — see the census.
 
-| row | result |
-|---|---|
-| Restarted services | **PASS 5/5** |
-| Services not restarted | **PASS 4/4** |
-| **Both accounts flat before AND after** | ⛔ **FAIL — the ONE known red.** The immutable pre-restart snapshot (20:57 UTC) holds `open managed rows=1`: the BMGL phantom row from the operator's hand sale, closed by hand at ~17:20 ET *after* the snapshot. After-state is 0/0/0 and the OMS preflight immediately before Window B printed `Live deploy preflight passed`. **Codex refused to rewrite historical evidence; correct.** |
-| Migration | PASS — `20260910_0020`, no schema change |
-| Running-process flags | PASS 5/5 |
-| REST warmup | PASS 3/3 |
-| BOOT-HOLD released | PASS at 21:40:59 UTC (11 s after start; the watchlist was non-empty after close) |
-| Bar continuity | PASS — 3 pairs bracket the restart, **gaps spanning restart = 0** |
-| Tracebacks | 0 in control/oms/v2/strategy; reconciler `N/A_EXPECTED_QUIET(0/0)` |
-
-⛔ **`preopen.sh` re-runs that same report against that same snapshot, so Tuesday's gate WILL print this one FAIL again.**
-**Ruling for Tuesday:** the gate is green if and only if the ONLY failed row is *"Both live accounts flat before/after"* with
-`before … open managed rows=1` and `after … 0`. Any other FAIL is real. Do not edit the snapshot.
+## ⛔ OVSD1 — 5th instance, 1st on Webull, the #608 CEILING exercised for the first time (VEEA 13:49 ET)
+Webull OCO **stop leg filled 13:49:20.956 @5.63** (−8.2%). **130 ms later** the software CW_HARD_STOP decided at the same level;
+`OMS-CANCEL-PAIR-REQUEST requested=2 confirmed=0` → UNCERTAIN, yet the close emitted (stand-down fails OPEN for Webull) → **20 market sells
+rejected `NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT` 13:49:21–13:49:29** → `OMS-V2-EXIT-REJECT-CEILING` at 20 stopped the loop →
+`EXIT-STAND-DOWN` ×30 → 13:50:14 OCO fill recorded, row resolved. Schwab leg same minute: stand-down HELD, 0 rejects. No exposure. This is
+what RESERVE1 `recurrence=20` is. ⛔ codex first read it as "historical, unrelated" — corrected on the PR. **Design fact:** while a Webull pair
+is attached at −8%, the software hard stop at −8% is REDUNDANT and can only race it. Owner: codex pair-release lane (parked OVSD1).
 
 ---
 
-# FLAGS — read from the RUNNING processes (21:58 UTC)
+# ⭐⭐ RESEARCH SETTLED TODAY (all read-only, all pre-registered before results)
 
-| process | flag | value |
+| question | answer | where |
 |---|---|---|
-| v2 | `FLIP_OWNED_FIRST_ENTRY_ENABLED` / `CONFIRMATION_ACCOUNT_NEUTRAL_DISCOVERY_ENABLED` | `true` / `true` |
-| v2 | `CW_V2_RECLAIM_ENABLED` · `ATR_FLIP_PROBE_SYMBOLS` · `MACD_PROBE_SYMBOLS` | `false` · `*` · `*` |
-| oms | `OMS_V2_EXIT_MANAGEMENT_ENABLED` · `OMS_V2_OVERNIGHT_FLATTEN_ENABLED` · `OMS_V2_CW_FLOOR_EXIT_ENABLED` | `true` · `true` · `true` |
-| oms | `OMS_V2_CW_TARGET_PCT` / `HARD_STOP_PCT` · `RTH_EDGE_BRACKET_ENABLED` · `EOD_OCO_TRANSITION_ENABLED` | `5.0` / `8.0` · `false` · `false` |
-| oms | `OMS_V2_EOD_CANCEL_REEXIT_ENABLED` (EOD1601) | **absent → `False`. Operator 09-14: NOT wanted** (see AFTER-HOURS below) |
-| **reconciler** | **`MAI_TAI_RECONCILIATION_FILL_BALANCE_SINCE`** | **`2026-09-14T21:20:41+00:00`** — `/etc/project-mai-tai/project-mai-tai.env` line 219, proven in pid 1626620. ⛔ `settings.py` default still says `2026-09-12 21:17:49`; the env overrides it **deliberately** — carry the divergence, do not "fix" it |
-
-Why the checkpoint moved: the operator sold the last BMGL share by hand at ~16:24 ET (see TRADE TRUTH). #973's fill-ledger check
-then read the 15:59:03 buy as net +1 because the hand sale is, correctly, not booked as ours. Both accounts were positively flat with
-zero working orders at 21:20:41 UTC (last fill 19:59:03 UTC), so that instant is a legitimate fixed checkpoint on the same terms as
-the 09-12 one. **No manual fill was fabricated.**
+| Why no MYSZ entry after the 07:05 chart cross? | **Structural blind window 07:00–07:08**, every day, every symbol (above). Not the broker. | memory `project_mai_tai_0700_blind_window`, PRE07 report in #986 |
+| Does "old high + faded" predict a failed +5%? | **NO.** 683 canonical BUY flips / 855 confirmed symbol-days since 07-09: blocked 185/440 = 42.05% vs kept 104/243 = 42.80% → pre-registered FAIL; **all 9 pre-flip features non-monotonic.** Base rate: **42.3% of bar-close BUY flips reach +5% before the next SELL.** Do NOT add a fade / high-age / range / ER / volume filter on this evidence. | `docs/confirmed-selection-census.md`, `analysis/reports/confirmed-selection-census-2026-07-09-to-2026-09-15.md`, memory `project_mai_tai_selection_census_fade_block_failed` |
+| ⛔ UNIT MISMATCH the census exposed | **Live fills are rests at the trail that fill BEFORE the flip bar closes.** 588/858 logical fills matched no canonical flip even at [flip, flip+2m); SUGP 09:43 won +5.2% while the canonical 09:44 flip was a miss; MEDS filled twice with no canonical BUY flip. The census answers the FLIP question; the live-book question needs a **live-fill census** (entry = fill price) — recorded on #986 for pre-registration, not built. | #986 comments |
+| Confirm path | PATH_C_EXTREME_MOVER on 2005/2020 memberships — the scanner confirms names that have ALREADY moved (MYSZ confirmed at 00:00 already +44.5%; SUGP at 08:17 already +53%). | census population table |
 
 ---
 
-# ⭐⭐ TUESDAY 2026-09-15 PRE-OPEN
+# ⭐⭐ STATUS SPLIT — EXERCISED vs UNEXERCISED
 
-1. **~06:30 ET:** `ssh mai-tai-vps /home/trader/preopen.sh`. Green = only the ONE known FAIL above. `EXPECTED_DATE` is already `2026-09-15`.
-2. **The boot hold re-HELDs every ~60 s overnight** (empty evaluated population after the 04:00 roll) and releases when Tuesday's
-   watchlist arrives, ~04:1x. Expected. Do not touch it. The REST-warmup and BOOT-HOLD rows are Tuesday-dependent until then.
-3. ⭐ **BOOT1 proof of #980:** the first watch run at **03:50 ET** must read BOOT1 `GUARD_WORKING` or `UNEXERCISED`, never `RECURRENCE`,
-   and `state.json`'s BOOT1 episode (`delivered=true` since 09:50 UTC today) must clear. That is the live grade; do not claim it earlier.
-4. ⛔ **Restored owners — #979's restored-owner path is UNDER TEST.** After the restart v2 logged
-   `[V2-FLIP-OWNER-RESTORED] FTFT opportunity_id=1789410362403 phase=bound positions=2 entry_allowed=0 pending_fresh_position_read` and
-   `… BMGL opportunity_id=1789415762432 phase=consumed positions=1 entry_allowed=0 pending_fresh_position_read`. Both accounts are flat.
-   **Before 07:00 ET confirm both reach idle/released** (`grep -E 'V2-FLIP-OWNER-(RELEASED|RECOVERY|RETIRED)' | grep -E 'FTFT|BMGL'`).
-   If either still refuses admission (`[V2-FLIP-OWNER-ADMISSION] … reason=owner_phase_unknown|owner_phase_bound`) at the first short
-   segment, that is a #979 finding — record it, do not hand-edit state.
-5. Session-local tape monitors DIED with this session. The known-defect cron (every 5 min, 03:50–20:15 ET weekdays) and the GATE1 cron are
-   the only persistent watches.
-
----
-
-# ⛔⭐⭐ TODAY'S TRADE TRUTH — BMGL was Webull-only ALL DAY; two flips were MISSED by the same defect
-
-**Schwab dropped every BMGL leg from 10:08 ET** (`[OMS-INTENT-DROPPED] … schwab_ineligible_cached`, 8×). Every BMGL fill is the Webull leg, qty 1.
-
-| entry (ET) | exit (ET) | prices | result | exit path |
-|---|---|---|---|---|
-| 10:54:41 | 10:56:05 | 7.86 → 7.645 | −2.7% | confirmation exit (10:55 bar closed 7.6999 < trail 7.8451) — **the Webull leg WAS closed: #945 EXERCISED** |
-| 13:39:58 | 14:01:11 | 7.22 → 7.58 | **+5.0%** | broker target (pair attached 0.95 s after fill) |
-| 15:01:43 | 15:45:08 | 7.65 → 7.135 | −6.7% | ATR flip exit |
-| 15:59:03 | **hand sale ~16:24** | 7.3399 → (operator's price, not ours) | — | confirmation exit fired 16:01 and was **REFUSED after hours** (09-06 rule); operator sold by hand and cancelled both Webull legs |
-
-FTFT: **12:22:23 → 12:22:33, 5.04 → 5.28 (Schwab ×2) / 5.29 (Webull), +4.8% / +5.0%**, both broker targets, 10 s round trip. Clean.
-
-## The two missed BMGL flips, one mechanism, pinned in code and on the tape (memory `project_mai_tai_resting_latch_blind_to_webull_only_fill`)
-- **10:59 flip.** After the 10:56 exit RECLAIM1 released the segment (`entry_allowed=1`) but no rest was placed: the resting latch's only
-  fill detector was the Schwab-scoped position poll (`position_qty_held`, "without inferring the Webull leg"), which read 0 all day.
-  The 10:59 bar ran 7.75→8.08 through 7.8451 with nothing resting. 11:01:02 phantom `flip_no_fill` cancel — the tell. **Fixed by #977.**
-- **12:11 flip.** The phantom cancel BOUND a fan-out slot under an idle owner → the 11:59 SELL flip marked the owner UNKNOWN → the recovery
-  loop had no retire path for a flat unknown owner (690 lines) → admission refused 4× (12:02–12:10) → 12:11 BUY flip at 7.58 with nothing
-  resting. Self-healed at the 13:08 sell flip, as predicted. **Fixed by #979** (no slot bind on cancel; flat-consumed early return; proof
-  path for restored cancel-minted owners).
-- FTFT 12:22 showed the latch is also **sampled per bar**: a sub-bar round trip read 0 at both ticks → phantom cancel 12:24. #977 covers it
-  because the Webull leg filled. ⛔ **Residual, unbuilt:** Schwab-only fill + sub-bar round trip.
-
-## Webull `ORDER_RISK_RULE_PRICE_AGGRESSIVE` — NOT understood, NOT fixed, now measurable
-4 rejects (09:40, 10:08, 10:10, 10:20), all with our stop 9–15% above the ask; 6 acceptances since 10:49 at +3–4%. ⛔ The 10:13 acceptance
-at +9.7% and a +31% acceptance on 09-09 mean distance is NOT the rule. #976 now stores `webull_request_id`, error fields and exact wire
-prices on every reject; **the four morning request ids are in `oms.log` for the Webull escalation (codex lane).** It WILL recur on hard runners.
-
----
-
-# ⛔⭐⭐ AFTER-HOURS EXITS — SETTLED WITH THE OPERATOR 2026-09-14 evening (read before touching any of it)
-
-| mechanism | state | what it does |
-|---|---|---|
-| Webull protective pair | RTH-only by design (`CORE`, DAY). Webull drops the target leg at the bell, keeps the stop leg "Working" but it cannot fill until 09:30 | decoration after 16:00 |
-| Schwab OCO | `DAY, NORMAL` — expires at the bell | gone after 16:00 |
-| **software ladder** (−8% stop, +5% ride-past floor) | **ON, both brokers, 16:00–20:00**, EH-LIMIT 0.5% under the bid; releases the Webull pair first (`OMS-CANCEL-PAIR-REQUEST`); stand-down fails OPEN for Webull and EXPIRES for Schwab (~30 s after the bell) | the after-hours cover |
-| **19:55 overnight flatten** | **ON.** Cancels our legs, sells EH-LIMIT, retries to 20:00 | ⛔ has **never closed a Webull share** — its one run (DAIC 08-24) found the share already gone. First real run is its test |
-| confirmation exit | **blocked after 16:00** by the 09-06 rule (`outside_rth_pair_release_would_be_irreversible`) | **operator 09-14: leave it** |
-| 16:00 EOD OCO transition | OFF since 08-04 (jam mitigation) | unchanged |
-| **EOD1601** 16:01 cancel-and-re-exit (#889/#898) | built, **OFF, never run**; ⛔ **Schwab-only** — `routing.fetch_exit_legs_for_entry` RAISES for Webull and the sweep logs `UNANSWERABLE_HARVEST` | **operator 09-14: NOT wanted** |
-
-⇒ **Operator's ruling:** the after-hours design IS the software ladder + 19:55 flatten, common to both brokers. Nothing to enable.
-⇒ **Open trading-rule question (operator's, not ours to build):** a rest placed inside the last minutes can fill with no bar left for its
-confirmation (15:56 rest → 15:59:03 fill → confirmation bar 16:00–16:01, after the bell). A pre-close cutoff is a rule change.
-
----
-
-# ⭐⭐ STATUS SPLIT — ANSWERED vs UNEXERCISED
-
-| ✅ ANSWERED / EXERCISED today | ⛔ still UNEXERCISED |
+| ✅ EXERCISED today | ⛔ still UNEXERCISED |
 |---|---|
-| **#945** account-neutral confirmation discovery — first Webull-only fill ever, closed the Webull leg at 10:56 | **19:55 flatten on a real Webull share** |
-| **Webull attach after a bare fill — WORKS**: 3/3 today, attempt 1, 0.6–0.95 s bare (`project_mai_tai_dual_broker_fanout_build`'s "never succeeded" is STALE) | **EOD1601** (and it is Schwab-only) |
-| **#960 / LIQPULL1** — two 3-bar liquidity pulls on BMGL 13:20 & 13:27, `guard_working 2/2` | **GATE1** qualifying shape |
-| **SLOTCLEAR1** 5 fresh sells, 5 clean | **#979 restored-owner path** — under test Tuesday morning (above) |
-| **RESERVE1** guard-working 4/4 releases, 0 reserved-share rejects | **#980** — graded at 03:50 ET Tuesday |
-| **CONF3 fan-out** — the confirmation exit reached BOTH legs (`legs_total=2`) | Schwab-only sub-bar latch shape |
-| the Webull-only-held shape — SEEN, 4× | reprice cancel-before-confirm window (measured FTFT 12:16–12:17: **66 s** bare, replacement on the NEXT bar tick) — codex lane |
+| **#977 LATCH1** — Webull-only fills recognised every time (MYSZ ×6, SUGP ×2): `V2-FLIP-OWNER-FILL account=live:orb`, no phantom `flip_no_fill` cancels | **#979 restored-owner recovery path** — FTFT/BMGL were RELEASED at 04:00 by the ROLL (`reason=session_reset_flat`), not by recovery |
+| **#980 BOOT1** — 03:50 ET run GUARD_WORKING, state.json `delivered=false` | **19:55 flatten on a real Webull share**, **EOD1601**, **GATE1** shape, **Schwab-only sub-bar latch** |
+| **#982 BARCONT1** — gate re-run 05:42 ET: brackets 3 live / 0 spanning / 1 excluded | **TIMESALE pre-07:00 measurement** (flag exists, OFF, never tried; operator has not asked) |
+| **#608 reject CEILING** — first firing on Webull, stopped the storm at 20 | **Live-fill census** (pre-register first) |
+| **#945 account-neutral confirmation discovery** reached the Webull leg (MYSZ 11:21) — and was refused `pair_cancel_unconfirmed` → the refusal is the SAFE side, the lane is OVSD1 | |
+| **#985 PHANTOM1** verified on the box after the sync (0 open rows) | |
 
 ---
 
@@ -157,22 +128,22 @@ confirmation (15:56 rest → 15:59:03 fill → confirmation bar 16:00–16:01, a
 
 | item | question | owner |
 |---|---|---|
-| **Webull PRICE_AGGRESSIVE escalation** | send the 4 morning request ids to Webull; #976 captures future ones | codex-2 |
-| **reprice window** | cancel-before-confirm: replacement placed on the next bar tick, not on cancel confirmation | codex-2 |
-| **Schwab-only sub-bar latch shape** | held gate is sampled per bar; no fan-out fill event to clear on | unassigned |
-| **pre-close entry cutoff** | last-minute rests cannot be confirmation-exited (see AFTER-HOURS) | **operator ruling** |
+| **OVSD1 — Webull stand-down fails OPEN** | 5th instance today (VEEA 13:49); software hard stop races the attached pair; CEILING bounds it at 20. Also the confirmation-exit `pair_cancel_unconfirmed` refusal (MYSZ 11:21) is the same reservation class | codex-2 (pair-release lane, parked) |
+| **Live-fill census** | same instrument as #986, unit = logical live fill, entry = fill price; widen the descriptive match to [flip−1m, flip+2m) | codex-2 (pre-register; claude-1 reviews design first) |
+| **Webull PRICE_AGGRESSIVE escalation** · **reprice window** | carried from 09-14 | codex-2 |
+| **#987 first-loss follow-through** | DRAFT opened 18:48 UTC, not read by claude-1 | codex-2 |
+| **Schwab-only sub-bar latch shape** | held gate is sampled per bar | unassigned |
+| **pre-close entry cutoff** · **07:00–07:08 blind window** · **exit geometry (+3/−5)** | all RULE changes; evidence on file, no build without a ruling | **operator** |
 | confirmation-exit race · STOPMKT probe · PROV1 · 0.5% band · F6/F8/F9/F10 · BNC · claim overhang · fan-out size · ELIG · AMEND1 · REJ1 silence | carried unchanged | unassigned |
-| 🔧 `board.sh overlap` on macOS | `mapfile` (bash 4) vs bash 3.2 — fix carried from #971, owner claude-1 | claude-1 |
+| ~~`board.sh overlap` on macOS~~ | **CLOSED** — #983 merged, patch applied and re-pinned 09:10 ET | — |
 
 ---
 
 # ⚠️ VERIFICATION FAILURES OF MINE TODAY, RECORDED SO THEY ARE NOT REPEATED
 
-1. **Monitor pipeline ended in `cut`**, which block-buffers off a terminal: no event would ever have arrived. Replaced with an unbuffered read loop.
-2. **`no tests ran in 0.00s` read as three mutation results** — zsh word-split trap, again. Explicit file lists only.
-3. **Base full-suite run carried a stray `-x`** and stopped at the first failure; the pair was void until rerun.
-4. **`PIPESTATUS` under zsh** skipped a label step silently. Print the status, never capture it in bash-isms.
-5. **A time filter on `$2` let untimestamped continuation lines through — TWICE** (PRICE_AGGRESSIVE dumps, Webull cancel errors). Find the real timestamp by line number before attributing a time.
-6. **A failed record regeneration let a trailing `git push` run from the main checkout** against `review-pins` — rejected as non-fast-forward, no damage. Pin chains are now `set -e` with explicit `cd`.
-7. **"strategy is not restarted by the OMS deploy"** — wrong for the deploy script path; codex corrected it.
-8. **"the software −8% and the flatten cover after hours"** was stated before the stand-down and the router were read. It held up, but it was stated first and read second.
+1. **`cut -c1-200` chopped `state=` off the probe lines** → my first instrument check read "07:08 live probe is missing". Untruncated → agree. Never truncate a line you are about to parse.
+2. **Mutation harness restored with `git checkout --` before the fix was committed** → reverted my own fix and printed a false "4 failed". Commit first, then mutate; restore from the commit or an explicit saved copy.
+3. **zsh word-split: two test paths in one `$T` string** → `no tests ran in 0.00s` and one spurious ruff error. Explicit arguments only (third time this trap is recorded).
+4. **First fixture for the overlap rule used a path that does not exist in the repo** → false clean of my own fixture. Rule 1 needs a tracked file; recorded in the #983 report.
+5. **The ritual's `git pull --ff-only origin main` ran in the main checkout, which is codex's worktree** (branch `codex/fix-seed-cap-fresh-sell-reset`, marker `codex`). Harmless (branch already inside main) but it moved codex's branch pointer. Use a fresh worktree for every read that needs origin/main.
+6. **I first told the operator "eight decisions" for the eleven +2/−8 losers** — that count was of the losing subset, not the day. The day is 15 decisions / 22 legs.
