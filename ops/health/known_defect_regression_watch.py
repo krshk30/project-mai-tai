@@ -689,6 +689,23 @@ def evaluate_phantom(report) -> Reading:
         f"phantoms={values['phantoms']} unknown={values['unknown']}"
         for account, values in counts.items()
     )
+    # Carry the census's own per-row reason for every non-BACKED row. Until 2026-09-15 the page
+    # said only "unknown=1" and the reason (a future timestamp, a stale mirror, a missing row) had
+    # to be re-derived from code after the row had already been overwritten.
+    reasons = [
+        f"{result.row.account}:{getattr(result.row, 'symbol', '?')} {result.verdict}: "
+        f"{getattr(result, 'reason', '') or '-'}"
+        for result in report.results
+        if result.verdict != "BACKED"
+    ]
+    reason_text = ""
+    if reasons:
+        shown = "; ".join(reasons[:3])
+        more = f" (+{len(reasons) - 3} more)" if len(reasons) > 3 else ""
+        reason_text = f"; reasons=[{shown}{more}]"
+    population_error = getattr(report, "population_error", "") or ""
+    if population_error:
+        reason_text += f"; population_error={population_error}"
     return _reading(
         "PHANTOM1",
         evaluated=len(report.results),
@@ -697,6 +714,7 @@ def evaluate_phantom(report) -> Reading:
         detail=(
             f"open_positive_managed_rows={len(report.results)} backed={report.backed} "
             f"confirmed_phantoms={report.phantoms} unknown={report.unknown}; {split}"
+            f"{reason_text}"
         ),
         unknown=bool(report.unknown or report.population_error),
     )
@@ -949,7 +967,7 @@ def _read_recent_logs(service: str, since: datetime) -> list[str]:
     return rows
 
 
-def _load_phantom_report(now: datetime):
+def _phantom_module():
     repo = Path(__file__).resolve().parents[2]
     path = repo / "ops" / "health" / "phantom_managed_rows.py"
     spec = importlib.util.spec_from_file_location("known_defect_phantom_rows", path)
@@ -958,13 +976,44 @@ def _load_phantom_report(now: datetime):
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    dsn = delivery._dsn()
-    if not dsn:
-        raise RuntimeError("database URL is unreadable")
-    before, after = module.load_stable_population(dsn)
+    return module
+
+
+def _load_phantom_report(
+    now: datetime,
+    *,
+    loader: Callable[[], tuple[list[object], list[object]]] | None = None,
+    clock: Callable[[], datetime] | None = None,
+    module=None,
+):
+    """Grade the open managed rows against broker truth AS OF THE READ, not the run start.
+
+    ⛔ 2026-09-15 09:20 ET: ``collect_readings(now)`` fixes ``now`` when the run starts, then scans
+    six hours of v2 logs, the OMS log and the DB metrics before it gets here. The Webull mirror
+    rewrites ``account_positions.source_updated_at`` every ~30-45 s, so a refresh landing inside
+    that window made the broker truth NEWER than the run's clock; the census refuses a negative age
+    ("broker truth timestamp is Ns in the future") and PHANTOM1 paged COULD_NOT_TELL on a held,
+    fully backed MYSZ leg — BACKED on the five runs before and the run after. Fail-closed by
+    design, but a page that recurs ~1 run in 6 while anything is held is noise. The age is now
+    measured against a clock taken AFTER the population read; it is never allowed to run behind
+    the run start, so a skewed clock cannot manufacture a stale reading either.
+    """
+    module = module or _phantom_module()
+    if loader is None:
+        dsn = delivery._dsn()
+        if not dsn:
+            raise RuntimeError("database URL is unreadable")
+
+        def loader() -> tuple[list[object], list[object]]:
+            return module.load_stable_population(dsn)
+
+    before, after = loader()
+    read_at = (clock or (lambda: datetime.now(UTC)))()
+    if read_at < now:
+        read_at = now
     before = live_phantom_population(before)
     after = live_phantom_population(after)
-    return module.evaluate_stable_population(before, after, now=now)
+    return module.evaluate_stable_population(before, after, now=read_at)
 
 
 def _market_day(now: datetime) -> bool:

@@ -1073,3 +1073,111 @@ def test_selftest_wording_never_claims_a_live_defect() -> None:
     assert rc == 0
     assert "SELFTEST" in sent[0][0]
     assert "No production defect was observed" in sent[0][1]
+
+
+# --- PHANTOM1 clock race (2026-09-15 09:20 ET) ---------------------------------------------------
+
+_CENSUS_SPEC = importlib.util.spec_from_file_location(
+    "test_phantom_census_for_watch", SCRIPT.parent / "phantom_managed_rows.py"
+)
+assert _CENSUS_SPEC and _CENSUS_SPEC.loader
+census = importlib.util.module_from_spec(_CENSUS_SPEC)
+sys.modules[_CENSUS_SPEC.name] = census
+_CENSUS_SPEC.loader.exec_module(census)
+
+RUN_START = datetime(2026, 9, 15, 13, 20, 5, tzinfo=UTC)
+
+
+def _held_row(truth_at: datetime, *, account: str = "live:orb"):
+    from decimal import Decimal
+
+    return census.PersistedManagedRow(
+        row_id="1f8e14a2",
+        strategy_code="schwab_1m_v2",
+        account=account,
+        provider="webull",
+        environment="production",
+        account_active=True,
+        symbol="MYSZ",
+        managed_qty=Decimal("1"),
+        entry_price=Decimal("2.44"),
+        entry_path="ATR Flip",
+        entry_time=RUN_START - timedelta(minutes=27),
+        managed_updated_at=truth_at,
+        truth_present=True,
+        broker_qty=Decimal("1"),
+        truth_source_updated_at=truth_at,
+    )
+
+
+def test_phantom_report_measures_broker_truth_age_at_read_time_not_run_start() -> None:
+    # The mirror rewrote broker truth 3 s AFTER the run started; the census read happened 12 s
+    # after the run started. Against the run-start clock the truth is "3 s in the future" and the
+    # row is COULD_NOT_TELL; against the read-time clock it is 9 s old and BACKED.
+    row = _held_row(RUN_START + timedelta(seconds=3))
+
+    report = watch._load_phantom_report(
+        RUN_START,
+        loader=lambda: ([row], [row]),
+        clock=lambda: RUN_START + timedelta(seconds=12),
+        module=census,
+    )
+
+    assert [result.verdict for result in report.results] == ["BACKED"]
+    reading = watch.evaluate_phantom(report)
+    assert reading.verdict == watch.GUARD_WORKING
+    assert "live:orb evaluated=1 backed=1 phantoms=0 unknown=0" in reading.detail
+
+
+def test_phantom_report_run_start_clock_would_have_refused_the_same_row() -> None:
+    # The control for the test above: the census itself still refuses a future timestamp.
+    row = _held_row(RUN_START + timedelta(seconds=3))
+
+    report = census.evaluate_stable_population([row], [row], now=RUN_START)
+
+    assert [result.verdict for result in report.results] == ["COULD_NOT_TELL"]
+    assert "in the future" in report.results[0].reason
+
+
+def test_phantom_report_clock_never_runs_behind_the_run_start() -> None:
+    # A skewed or monkeypatched clock older than the run start must not turn fresh truth stale.
+    row = _held_row(RUN_START - timedelta(seconds=1))
+
+    report = watch._load_phantom_report(
+        RUN_START,
+        loader=lambda: ([row], [row]),
+        clock=lambda: RUN_START - timedelta(hours=1),
+        module=census,
+    )
+
+    assert [result.verdict for result in report.results] == ["BACKED"]
+
+
+def test_phantom_detail_carries_the_census_reason_for_every_non_backed_row() -> None:
+    row = _held_row(RUN_START - timedelta(seconds=400))
+    report = census.evaluate_stable_population([row], [row], now=RUN_START)
+    assert report.results[0].verdict == "COULD_NOT_TELL"
+
+    reading = watch.evaluate_phantom(report)
+
+    assert reading.verdict == watch.COULD_NOT_TELL
+    assert "reasons=[live:orb:MYSZ COULD_NOT_TELL: persisted broker truth is 400s old (>300s)]" in (
+        reading.detail
+    )
+
+
+def test_phantom_detail_carries_a_population_error() -> None:
+    report = SimpleNamespace(
+        results=(),
+        backed=0,
+        phantoms=0,
+        unknown=0,
+        population_error="managed/account-position population changed during read: before=1 after=2",
+    )
+
+    reading = watch.evaluate_phantom(report)
+
+    assert reading.verdict == watch.COULD_NOT_TELL
+    assert "population_error=managed/account-position population changed during read" in (
+        reading.detail
+    )
