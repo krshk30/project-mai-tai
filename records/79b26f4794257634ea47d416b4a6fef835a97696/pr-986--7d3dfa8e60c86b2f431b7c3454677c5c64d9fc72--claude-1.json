@@ -1,0 +1,9 @@
+{
+  "pr_number": 986,
+  "range_base": "7d3dfa8e60c86b2f431b7c3454677c5c64d9fc72",
+  "range_head": "79b26f4794257634ea47d416b4a6fef835a97696",
+  "reviewed_at": "2026-09-15T21:05:27Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Pre-results design review at 3d07fb3 (leak/outcome/candidate/pre-07 mutations red), amendments verified at f53c1c2 (half-rate criterion pinned, mixed-unit volume UNKNOWN, 2-minute fill match; 4 mutations red). Results head 79b26f4: read the census report and JSON \u2014 855 confirmed symbol-days (846 + 9 late 09-15 confirms), 649 with any bar, 506 with an analysis-window bar, 683/689 measured flips, candidate FAIL 185/440 (42.05%) vs 104/243 (42.80%), all 9 features non-monotonic; post-results code delta is denominator bookkeeping only (oracle and feature inputs still bounded 04:00-16:00, verified). PRE07 ten-session JSON: 7 agree, 4 missing 07:08 probe, 5 thin overlap \u2014 coverage, not instrument. 38 tests pass, ruff clean, validate green, base ancestor of head. Caveat recorded: live fills mostly precede the canonical flip bar (7/13 matched today; SUGP 09:43 and MEDS unmatched), so the live book is a different unit from the flip census."
+}
