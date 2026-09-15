@@ -120,6 +120,8 @@ class StudyReport:
     symbol_days_without_eligible_flip: int
     opportunities: int
     first_outcomes: dict[str, int]
+    first_decisive_outcomes: dict[str, int]
+    first_decisive_stop_group: OutcomeGroup
     groups: tuple[OutcomeGroup, ...]
     rule: RuleAssessment
     symbol_days: tuple[SymbolDayStudy, ...]
@@ -513,16 +515,21 @@ def evaluate_symbol_day(item: SymbolDayInput) -> SymbolDayStudy:
     )
 
 
-def _group(days: Sequence[SymbolDayStudy], first_outcome: str) -> OutcomeGroup:
-    selected = [day for day in days if day.opportunities[0].exit_kind == first_outcome]
-    later = [opportunity for day in selected for opportunity in day.opportunities[1:]]
+def _summarize_selected(selected: Sequence[tuple[SymbolDayStudy, int]], label: str) -> OutcomeGroup:
+    later = [
+        opportunity
+        for day, selected_index in selected
+        for opportunity in day.opportunities[selected_index + 1 :]
+    ]
     gradable = [opportunity for opportunity in later if opportunity.return_pct is not None]
     targets = sum(opportunity.exit_kind == "TARGET_5" for opportunity in later)
     total_return = sum(opportunity.return_pct for opportunity in gradable)
     return OutcomeGroup(
-        first_outcome=first_outcome,
+        first_outcome=label,
         symbol_days=len(selected),
-        with_later_opportunity=sum(len(day.opportunities) > 1 for day in selected),
+        with_later_opportunity=sum(
+            len(day.opportunities) > selected_index + 1 for day, selected_index in selected
+        ),
         later_opportunities=len(later),
         later_gradable=len(gradable),
         later_targets=targets,
@@ -533,10 +540,29 @@ def _group(days: Sequence[SymbolDayStudy], first_outcome: str) -> OutcomeGroup:
         later_target_rate_pct=100.0 * targets / len(gradable) if gradable else None,
         later_return_sum_pct_points=total_return if gradable else None,
         days_with_any_later_target=sum(
-            any(opportunity.exit_kind == "TARGET_5" for opportunity in day.opportunities[1:])
-            for day in selected
+            any(
+                opportunity.exit_kind == "TARGET_5"
+                for opportunity in day.opportunities[selected_index + 1 :]
+            )
+            for day, selected_index in selected
         ),
     )
+
+
+def _group(days: Sequence[SymbolDayStudy], first_outcome: str) -> OutcomeGroup:
+    selected = [(day, 0) for day in days if day.opportunities[0].exit_kind == first_outcome]
+    return _summarize_selected(selected, first_outcome)
+
+
+def _first_decisive(day: SymbolDayStudy) -> tuple[int, AtrOpportunity] | None:
+    """Find the first +5/-8 result without promoting a trade past unknown evidence."""
+
+    for index, opportunity in enumerate(day.opportunities):
+        if opportunity.exit_kind.startswith("UNKNOWN"):
+            return None
+        if opportunity.exit_kind in {"TARGET_5", "STOP_8"}:
+            return index, opportunity
+    return None
 
 
 def _later_return(days: Sequence[SymbolDayStudy]) -> tuple[int, float | None]:
@@ -593,6 +619,13 @@ def run_study(source: SelectionDataSource, start: date, end: date) -> StudyRepor
     days = tuple(evaluate_symbol_day(item) for item in measured)
     with_flip = [day for day in days if day.opportunities]
     first_counts = Counter(day.opportunities[0].exit_kind for day in with_flip)
+    decisive = [
+        (day, selected) for day in with_flip if (selected := _first_decisive(day)) is not None
+    ]
+    decisive_counts = Counter(selected[1].exit_kind for _day, selected in decisive)
+    decisive_stops = [
+        (day, selected[0]) for day, selected in decisive if selected[1].exit_kind == "STOP_8"
+    ]
     group_order = ("STOP_8", "TARGET_5", "ATR_SELL", "SESSION_CLOSE")
     extra = sorted(set(first_counts) - set(group_order))
     return StudyReport(
@@ -605,6 +638,8 @@ def run_study(source: SelectionDataSource, start: date, end: date) -> StudyRepor
         symbol_days_without_eligible_flip=len(measured) - len(with_flip),
         opportunities=sum(len(day.opportunities) for day in with_flip),
         first_outcomes=dict(sorted(first_counts.items())),
+        first_decisive_outcomes=dict(sorted(decisive_counts.items())),
+        first_decisive_stop_group=_summarize_selected(decisive_stops, "FIRST_DECISIVE_STOP_8"),
         groups=tuple(_group(with_flip, kind) for kind in (*group_order, *extra)),
         rule=_rule_assessment(with_flip),
         symbol_days=days,
@@ -622,6 +657,14 @@ def _clock(value: datetime | None) -> str:
 def render_markdown(report: StudyReport) -> str:
     with_flip = [day for day in report.symbol_days if day.opportunities]
     stopped = [day for day in with_flip if day.opportunities[0].exit_kind == "STOP_8"]
+    decisive_rows = [
+        (day, selected) for day in with_flip if (selected := _first_decisive(day)) is not None
+    ]
+    decisive_stopped = [
+        (day, selected_index, opportunity)
+        for day, (selected_index, opportunity) in decisive_rows
+        if opportunity.exit_kind == "STOP_8"
+    ]
     guaranteed = [
         day.opportunities[0].guaranteed_mfe_before_stop_pct
         for day in stopped
@@ -656,7 +699,7 @@ def render_markdown(report: StudyReport) -> str:
         "",
         "An eligible flip is a canonical ATR BUY bar that began and closed while the symbol was in one scanner-confirmed membership window, and whose bar began after the watch start. Intrabar touches with no BUY close are false flips and do not enter the denominator.",
         "",
-        "## First trade",
+        "## Literal first eligible BUY",
         "",
         "| Outcome | Count | Denominator |",
         "|---|---:|---|",
@@ -665,10 +708,31 @@ def render_markdown(report: StudyReport) -> str:
         lines.append(
             f"| {kind} | {count}/{report.symbol_days_with_eligible_flip} | symbol-days with an eligible BUY flip |"
         )
+    decisive_total = sum(report.first_decisive_outcomes.values())
     lines.extend(
         [
             "",
-            "## First -8% loss: upside before and after",
+            "## First decisive +5/-8 outcome (secondary)",
+            "",
+            "This descriptive view skips known ATR-sell outcomes until the first +5/-8 result, matching the operator's wording and bringing MYSZ's 09:34 ET stop into view. It never skips an UNKNOWN. The pre-registered verdict below still uses the literal first eligible BUY and was not rewritten after results were seen.",
+            "",
+            "| Outcome | Count | Denominator |",
+            "|---|---:|---|",
+        ]
+    )
+    for kind, count in report.first_decisive_outcomes.items():
+        lines.append(
+            f"| {kind} | {count}/{decisive_total} | symbol-days with a gradable first decisive outcome |"
+        )
+    decisive_group = report.first_decisive_stop_group
+    lines.extend(
+        [
+            f"| First decisive STOP_8 with a later BUY | {decisive_group.with_later_opportunity}/{decisive_group.symbol_days} | first-decisive-stop symbol-days |",
+            f"| Later +5 targets after first decisive STOP_8 | {decisive_group.later_targets}/{decisive_group.later_gradable} | gradable later opportunities |",
+            f"| Days with any later +5 target | {decisive_group.days_with_any_later_target}/{decisive_group.with_later_opportunity} | first-decisive-stop days with a later BUY |",
+            f"| Later equal-weight return sum | {_fmt(decisive_group.later_return_sum_pct_points)} pts | {decisive_group.later_gradable} gradable later opportunities |",
+            "",
+            "## Literal first -8% loss: upside before and after",
             "",
             "The guaranteed MFE excludes the stop bar because one-minute OHLC cannot tell whether that bar's high came before or after its low. The possible MFE includes it. This prevents a +3% or +4% print after the stop from being reported as pre-stop opportunity.",
             "",
@@ -730,6 +794,33 @@ def render_markdown(report: StudyReport) -> str:
         )
         lines.append(
             f"| {day.day} | {day.symbol} | {first.flip_at:%H:%M} | {_clock(first.exit_at)} | {first.entry_price:.4f} | {_fmt(first.guaranteed_mfe_before_stop_pct)}% | {_fmt(first.possible_mfe_before_stop_pct)}% | {_fmt(day.post_first_stop_mfe_pct)}% | {day.post_first_stop_reached_original_target} | {len(later)} | {outcomes} | {later_return:.2f} pts | {day.bar_gap_count} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## First-decisive-stop detail (secondary)",
+            "",
+            "| Day | Symbol | Decisive trade # | Earlier known outcomes | Stop BUY ET | Stop ET | Guaranteed MFE | Later flips | Later targets | Later outcomes | Later return |",
+            "|---|---|---:|---|---:|---:|---:|---:|---:|---|---:|",
+        ]
+    )
+    for day, selected_index, first in decisive_stopped:
+        earlier = (
+            ", ".join(opportunity.exit_kind for opportunity in day.opportunities[:selected_index])
+            or "none"
+        )
+        later = day.opportunities[selected_index + 1 :]
+        later_return = sum(
+            opportunity.return_pct for opportunity in later if opportunity.return_pct is not None
+        )
+        outcomes = (
+            ", ".join(
+                f"{opportunity.flip_at:%H:%M} {opportunity.exit_kind}" for opportunity in later
+            )
+            or "none"
+        )
+        lines.append(
+            f"| {day.day} | {day.symbol} | {selected_index + 1} | {earlier} | {first.flip_at:%H:%M} | {_clock(first.exit_at)} | {_fmt(first.guaranteed_mfe_before_stop_pct)}% | {len(later)} | {sum(opportunity.exit_kind == 'TARGET_5' for opportunity in later)} | {outcomes} | {later_return:.2f} pts |"
         )
     lines.extend(
         [

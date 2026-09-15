@@ -38,6 +38,8 @@ The full-month model uses the BUY close because exact quote/fill retention does 
 
 For each symbol-day, the first eligible BUY is the first trade. An unanswerable first trade remains first; the study never skips it to promote a later gradable trade.
 
+A secondary descriptive table also reports the first decisive `TARGET_5` or `STOP_8` outcome. It may skip a known ATR-sell outcome, but it never skips an UNKNOWN. This matches the operator's "+5 or -8" wording without changing the pre-registered primary definition or its rule criterion after seeing results.
+
 For a definite first `STOP_8`:
 
 - Guaranteed pre-stop MFE uses completed bars before the stop bar.
@@ -69,6 +71,7 @@ Every count prints its denominator. The report must include:
 - later opportunities and outcomes grouped by the first outcome;
 - the pre-registered rule verdict and drop-one robustness;
 - one detail row for every first-stop symbol-day, including all times in ET and its stored-series gap count.
+- a separately labelled first-decisive-stop table, including earlier known outcomes, so MYSZ-shaped sequences are visible without being pooled into the frozen primary test.
 
 The canonical oracle reproduces the stored Schwab sequence and does not reject a BUY merely because an earlier bar is absent. After entry, however, the first missing minute makes the trade outcome `UNKNOWN_BAR_GAP`. The production run is after 16:00 ET only and uses a read-only database transaction with a bounded statement timeout.
 

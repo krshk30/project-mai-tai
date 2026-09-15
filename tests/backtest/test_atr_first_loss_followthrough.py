@@ -10,6 +10,7 @@ from project_mai_tai.backtest.atr_first_loss_followthrough import (
     AtrOpportunity,
     SymbolDayStudy,
     _eligible_window,
+    _first_decisive,
     _post_stop_recovery,
     _rule_assessment,
     evaluate_opportunity,
@@ -270,6 +271,34 @@ def test_unknown_first_trade_is_not_replaced_by_a_later_gradable_trade(monkeypat
     report = run_study(_Source([item]), DAY, DAY)
 
     assert report.first_outcomes == {"UNKNOWN_INTRABAR_ORDER": 1}
+    assert report.first_decisive_outcomes == {}
+
+
+def test_first_decisive_skips_known_atr_sell_but_never_unknown() -> None:
+    atr_then_stop = SymbolDayStudy(
+        DAY,
+        "MYSZ",
+        100,
+        0,
+        (_opportunity(1, -1, "ATR_SELL"), _opportunity(2, -8, "STOP_8")),
+        None,
+        None,
+    )
+    unknown_then_target = replace(
+        atr_then_stop,
+        symbol="SUGP",
+        opportunities=(
+            _opportunity(1, 0, "UNKNOWN_BAR_GAP"),
+            _opportunity(2, 5, "TARGET_5"),
+        ),
+    )
+
+    selected = _first_decisive(atr_then_stop)
+
+    assert selected is not None
+    assert selected[0] == 1
+    assert selected[1].exit_kind == "STOP_8"
+    assert _first_decisive(unknown_then_target) is None
 
 
 def _opportunity(sequence: int, return_pct: float, kind: str) -> AtrOpportunity:
