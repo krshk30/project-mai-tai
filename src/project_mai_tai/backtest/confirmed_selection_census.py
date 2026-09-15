@@ -312,15 +312,22 @@ def _features(item: SymbolDayInput, flip_bar: Bar) -> dict[str, float | int | st
             range_pct = (high - low) / prior_close * 100.0
     swings = _count_five_pct_swings([float(bar.close) for bar in prior_120])
 
+    volume_window = [bar for bar in prior if _bar_at(bar) >= flip_at - timedelta(minutes=90)]
+    feed_boundary = _at(item.day, ENTRY_START)
+    mixed_volume_units = any(_bar_at(bar) < feed_boundary for bar in volume_window) and any(
+        _bar_at(bar) >= feed_boundary for bar in volume_window
+    )
     recent_volume = sum(
-        bar.volume for bar in prior if _bar_at(bar) >= flip_at - timedelta(minutes=30)
+        bar.volume for bar in volume_window if _bar_at(bar) >= flip_at - timedelta(minutes=30)
     )
     baseline_volume = sum(
-        bar.volume
-        for bar in prior
-        if flip_at - timedelta(minutes=90) <= _bar_at(bar) < flip_at - timedelta(minutes=30)
+        bar.volume for bar in volume_window if _bar_at(bar) < flip_at - timedelta(minutes=30)
     )
-    volume_trend = recent_volume / (baseline_volume / 2.0) if baseline_volume > 0 else None
+    volume_trend = (
+        recent_volume / (baseline_volume / 2.0)
+        if baseline_volume > 0 and not mixed_volume_units
+        else None
+    )
 
     confirm = _confirm_before(item.scanner_events, flip_at)
     change_since_confirm = None
@@ -361,7 +368,7 @@ def _outcome(
 
 
 def _live_entries_for_flip(entries: Sequence[LiveEntry], flip_at: datetime) -> tuple[str, ...]:
-    end = flip_at + timedelta(minutes=1)
+    end = flip_at + timedelta(minutes=2)
     return tuple(entry.logical_id for entry in entries if flip_at <= entry.filled_at < end)
 
 
@@ -788,12 +795,12 @@ def render_markdown(report: CensusReport) -> str:
         "",
         "## Feature coverage",
         "",
-        "| Feature | Measured | UNKNOWN | Gradient | Drop-one name | Drop-one day | Largest day | Retained |",
+        "| Feature | Measured | UNKNOWN | Gradient / buckets | Drop-one name | Drop-one day | Largest day | Retained |",
         "|---|---:|---:|---|---|---|---:|---|",
     ]
     for feature in report.features:
         lines.append(
-            f"| {feature.feature} | {feature.measured}/{feature.total_outcomes} | {feature.unknown}/{feature.total_outcomes} | {feature.direction} | {feature.survives_drop_one_symbol} | {feature.survives_drop_one_day} | {feature.max_day or 'UNKNOWN'}: {feature.max_day_flips}/{feature.measured} | {feature.retained} |"
+            f"| {feature.feature} | {feature.measured}/{feature.total_outcomes} | {feature.unknown}/{feature.total_outcomes} | {feature.direction} / {len(feature.deciles)} | {feature.survives_drop_one_symbol} | {feature.survives_drop_one_day} | {feature.max_day or 'UNKNOWN'}: {feature.max_day_flips}/{feature.measured} | {feature.retained} |"
         )
     lines.extend(
         [
@@ -814,7 +821,7 @@ def render_markdown(report: CensusReport) -> str:
             "",
             "## Live-entry subset",
             "",
-            "This table labels actual logical entry fills but does not select thresholds. Exact-minute matching is intentionally strict; an intrabar rest fill without a canonical close BUY remains unmatched.",
+            "This table labels actual logical entry fills but does not select thresholds. A fill matches the BUY-flip minute or the following minute, covering an intrabar resting trigger and its immediately following fill window.",
             "",
             "| Logical fills | Matched fills | Unmatched fills | Matched flips | +5 hits |",
             "|---:|---:|---:|---:|---:|",
@@ -832,6 +839,12 @@ def render_markdown(report: CensusReport) -> str:
         )
     lines.extend(
         [
+            "",
+            "## Interpretation caveats",
+            "",
+            "- Outcome entry is the BUY-flip bar close. Live resting entries occur at the ATR trail below that close, so +5% from the close is stricter than the live entry geometry.",
+            "- Integer features can collapse into only a few tie-preserving buckets. The feature table prints the actual bucket count next to every gradient.",
+            "- The canonical oracle has no bar-gap guard. Results describe the stored Schwab series as it exists; they do not prove continuity across a missing bar.",
             "",
             "## Existing production facts",
             "",

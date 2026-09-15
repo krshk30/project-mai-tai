@@ -19,6 +19,7 @@ from project_mai_tai.backtest.confirmed_selection_census import (
     _bar_at,
     _confirmed_keys,
     _count_five_pct_swings,
+    _criterion,
     _features,
     _live_entries_for_flip,
     _lower_high_streak,
@@ -146,6 +147,25 @@ def test_pre0700_history_changes_the_session_high_only_when_capture_is_available
     assert available["feature_anchor_et"] == "04:00"
     assert available["below_session_high_pct"] == 50.0
     assert available["minutes_since_high"] == 121.0
+
+
+def test_volume_trend_is_unknown_when_the_window_mixes_massive_and_schwab_units() -> None:
+    pre = tuple(_bar(_at(6, 30) + timedelta(minutes=index), 10.0) for index in range(30))
+    schwab = tuple(_bar(_at(7) + timedelta(minutes=index), 10.0) for index in range(90))
+    item = SymbolDayInput(
+        DAY,
+        "TEST",
+        (),
+        schwab,
+        pre0700_bars=pre,
+        pre0700_available=True,
+    )
+
+    mixed = _features(item, _bar(_at(7, 30), 10.0))
+    schwab_only = _features(item, _bar(_at(8, 30), 10.0))
+
+    assert mixed["volume_trend_30_over_60"] is None
+    assert schwab_only["volume_trend_30_over_60"] == 1.0
 
 
 def test_lower_high_streak_uses_completed_consecutive_thirty_minute_blocks() -> None:
@@ -315,13 +335,28 @@ def test_candidate_does_not_pass_on_a_small_after_the_fact_example() -> None:
     assert result.pass_criterion is False
 
 
-def test_live_entry_matching_is_exactly_the_canonical_flip_minute() -> None:
+def test_candidate_requires_blocked_rate_below_half_the_kept_rate() -> None:
+    blocked = [_observation(index, hit=index < 18, age=91.0, below=5.1) for index in range(60)]
+    kept = [_observation(index + 100, hit=index < 30, age=90.0, below=5.0) for index in range(60)]
+    rows = [*blocked, *kept]
+
+    result = evaluate_candidate(rows)
+
+    assert result.blocked_hit_rate_pct == pytest.approx(30.0)
+    assert result.kept_hit_rate_pct == pytest.approx(50.0)
+    assert result.rate_separation_met is False
+    assert result.pass_criterion is False
+    assert _criterion(rows) is False
+
+
+def test_live_entry_matching_covers_the_flip_minute_and_immediately_following_minute() -> None:
     entries = [
         LiveEntry("inside", _at(9, 30) + timedelta(seconds=59), ("live:orb",)),
         LiveEntry("next", _at(9, 31), ("live:orb",)),
+        LiveEntry("outside", _at(9, 32), ("live:orb",)),
     ]
 
-    assert _live_entries_for_flip(entries, _at(9, 30)) == ("inside",)
+    assert _live_entries_for_flip(entries, _at(9, 30)) == ("inside", "next")
 
 
 def test_run_census_reports_confirmed_and_bar_measurable_denominators_separately() -> None:

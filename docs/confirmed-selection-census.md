@@ -40,7 +40,9 @@ Every feature reads bars strictly before the BUY-flip bar:
 5. High-low range over the preceding 120 clock minutes, plus the count of non-overlapping 5%
    close-to-close legs. Each completed leg resets its anchor.
 6. Volume trend: last-30-minute volume divided by half of prior-60-minute volume. This compares
-   per-minute rates; a zero prior denominator is unknown.
+   per-minute rates; a zero prior denominator is unknown. A 90-minute window containing both
+   pre-07:00 Massive trade sizes and post-07:00 Schwab CHART volume is also unknown because those
+   feeds do not share a proven volume unit.
 7. Change from the membership-opening confirmation price to the last pre-flip close, and the
    scanner's `change_pct` at that confirmation. A flip preceding its first confirmation is unknown.
 
@@ -59,8 +61,9 @@ not the hypothesis and cannot be tuned after the run.
 - Drop-one-by-name and drop-one-by-day tests separately prevent one runner or one abnormal session
   from carrying the pre-registered candidate.
 - The live-entry subset is a separate labelled table and never drives thresholds. A logical live
-  entry matches only when its first fill falls inside the canonical flip minute. Intrabar fills
-  without a close-confirmed BUY remain explicitly unmatched.
+  entry matches when its first fill falls in the canonical flip minute or the immediately following
+  minute, covering an intrabar resting trigger and its next-minute fill. Other fills remain
+  explicitly unmatched.
 
 ## Pre-registered pass criterion
 
@@ -72,6 +75,15 @@ The candidate passes only if all four conditions hold:
 4. Conditions 1-3 remain true after dropping every one symbol and after dropping every one day.
 
 The report prints `PASS` or `FAIL`; narrative cannot override it.
+
+## Interpretation caveats
+
+- Outcome entry is the BUY-flip bar close. The live rest enters at the ATR trail below that close,
+  so +5% from the close is stricter than the live entry geometry.
+- Integer features can tie into only a few buckets. The report prints the actual bucket count next
+  to every monotonicity result; a ten-decile label is never implied when fewer buckets exist.
+- The canonical oracle has no bar-gap guard. The study measures the stored Schwab series and does
+  not convert a missing bar into proof of continuity.
 
 ## Production facts, not changes
 
