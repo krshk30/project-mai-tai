@@ -20,6 +20,25 @@ enumerates the qualified universe (v2 = trackedâˆªtraded; ORB = window-capturedâ
 every name with trades OR an explicit reason (SKIP-no-feed / 0t-no-signal). Run after close for a
 final sheet (intraday capture is still filling in).
 
+## Confirmed-stock selection census (research only)
+
+The selection census is an after-close, SELECT-only instrument. It replays every canonical ATR BUY
+flip for every symbol-day carrying a scanner `CONFIRM`, measures only bars preceding the flip bar,
+and reports +5% reachability before the next SELL. It never publishes an intent or changes scanner
+or strategy state.
+
+```bash
+python -m project_mai_tai.backtest.confirmed_selection_census \
+  --range 2026-07-09 2026-09-15 \
+  --json analysis/reports/confirmed-selection-census-2026-07-09-to-2026-09-15.json \
+  --markdown analysis/reports/confirmed-selection-census-2026-07-09-to-2026-09-15.md
+```
+
+Run `pre0700_shadow` first when both studies are requested. Exact confirmation capture starts on
+2026-07-09. Pre-07:00 Massive capture starts on 2026-09-01, so earlier session-high features use a
+declared 07:00 anchor and unavailable values remain `UNKNOWN`, never zero. The frozen design and
+pass criterion are in `docs/confirmed-selection-census.md`.
+
 ## Why it is trustworthy (validated against ground truth, not assumed)
 - **Decision source = `market_capture_trades`** (the live gateway stream the bot actually saw),
   built into 1-min bars with the LIVE `OrbTickAggregator`. `market_capture_bars` (REST aggs) is
