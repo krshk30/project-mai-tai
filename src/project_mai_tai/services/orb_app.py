@@ -82,6 +82,15 @@ logger = logging.getLogger(SERVICE_NAME)
 _ET = ZoneInfo("America/New_York")
 
 
+def _scanner_session_start_utc(now: datetime | None = None) -> datetime:
+    """Return the current scanner session's 04:00 ET boundary."""
+    current_et = (now or datetime.now(UTC)).astimezone(_ET)
+    session_start_et = current_et.replace(hour=4, minute=0, second=0, microsecond=0)
+    if current_et < session_start_et:
+        session_start_et -= timedelta(days=1)
+    return session_start_et.astimezone(UTC)
+
+
 def _normalize_trade_ts_ns(value: int | float | str | None) -> int | None:
     """Coerce a gateway ``trade_tick.timestamp_ns`` to true nanoseconds.
 
@@ -320,7 +329,9 @@ class OrbService:
         # next session starts clean (running_high re-seeds from 09:25, decision state clears,
         # aggregators rebuild with the new session anchor). Without this, a bot left running
         # across midnight carries the prior day's state into the new session.
-        self._session_date = datetime.now(_ET).date()
+        now = datetime.now(UTC)
+        self._session_date = now.astimezone(_ET).date()
+        self._scanner_session_start = _scanner_session_start_utc(now)
 
     # ----- lifecycle -----
     async def run(self) -> None:
@@ -364,20 +375,29 @@ class OrbService:
             raise
 
     def _maybe_roll_session(self) -> None:
-        """Reset per-symbol state + aggregators when the ET date rolls, so each session
-        starts clean (no prior-day running_high / traded flag / stale-symbol carryover).
-        No-op within the same session; only fires on a date change."""
-        today = datetime.now(_ET).date()
-        if today == self._session_date:
+        """Reset observation state at midnight and at the scanner's 04:00 ET roll."""
+        now = datetime.now(UTC)
+        today = now.astimezone(_ET).date()
+        scanner_session_start = _scanner_session_start_utc(now)
+        if today == self._session_date and scanner_session_start == self._scanner_session_start:
             return
         prior = self._session_date
+        prior_scanner_session = self._scanner_session_start
         self._session_date = today
+        self._scanner_session_start = scanner_session_start
         self._states.clear()
         self._aggregators.clear()
         self._paper_closed_today = []
         self._paper_recent_decisions = []
         self._restore_paper_lifecycle()
-        logger.info("[ORB] day-roll reset %s -> %s: cleared per-symbol state + aggregators", prior, today)
+        logger.info(
+            "[ORB] session-roll reset day=%s->%s scanner=%s->%s: "
+            "cleared per-symbol state + aggregators",
+            prior,
+            today,
+            prior_scanner_session.isoformat(),
+            scanner_session_start.isoformat(),
+        )
 
     # ----- universe: pre-09:25 confirmed names (the binding rule) -----
     def _refresh_universe(self) -> list[str]:
@@ -408,7 +428,20 @@ class OrbService:
             return []
         if snap is None or not isinstance(snap.payload, dict):
             return []
-        # freshness — only today's snapshot (avoid trading a stale prior session)
+        # Freshness is scanner-session scoped, not calendar-day scoped. Between
+        # midnight and 04:00 ET both UTC and ET dates can make a prior-session
+        # snapshot look current; the producer's 04:00 marker is authoritative.
+        scanner_session_raw = str(snap.payload.get("scanner_session_start_utc", ""))
+        try:
+            scanner_session_start = datetime.fromisoformat(scanner_session_raw)
+            if scanner_session_start.tzinfo is None:
+                scanner_session_start = scanner_session_start.replace(tzinfo=UTC)
+        except ValueError:
+            return []
+        if scanner_session_start.astimezone(UTC) != _scanner_session_start_utc():
+            return []
+
+        # Keep the timestamp check as an independent corrupt/stale payload guard.
         persisted = str(snap.payload.get("persisted_at", ""))
         if not persisted.startswith(datetime.now(UTC).date().isoformat()):
             return []
@@ -2180,7 +2213,10 @@ class OrbService:
         last_tick: dict[str, str] = {}
         paper_positions = getattr(self, "_paper_positions", {})
         lifecycle_enabled = bool(getattr(self, "_paper_lifecycle_enabled", False))
+        visible_symbols = self._universe | set(paper_positions)
         for sym, st in sorted(self._states.items()):
+            if sym not in visible_symbols:
+                continue
             bar_counts[sym] = len(st.or_bars)
             if st.last_bar_at:
                 last_tick[sym] = st.last_bar_at
