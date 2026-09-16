@@ -9,6 +9,12 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 EVIDENCE_DIR="${MAI_TAI_EVIDENCE_DIR:-/home/trader/restart-evidence}"
 SNAPSHOT="$EVIDENCE_DIR/v2-atr-seed-$STAMP-before.json"
 REPORT="$EVIDENCE_DIR/v2-atr-seed-$STAMP-report.json"
+G5_REPORT="$REPO_DIR/docs/review-artifacts/v2-atr-massive-seed/replay-30.md"
+
+if [[ ! -f "$G5_REPORT" ]] || ! grep -Fxq '**G5 verdict: PASS**' "$G5_REPORT"; then
+  echo "refusing v2 ATR Massive seed installation: committed G5 report is not PASS"
+  exit 1
+fi
 
 eastern_hour=$((10#$(TZ=America/New_York date +%H)))
 eastern_weekday=$((10#$(TZ=America/New_York date +%u)))
