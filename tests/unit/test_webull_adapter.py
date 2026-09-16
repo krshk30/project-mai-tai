@@ -294,6 +294,111 @@ async def test_buy_stop_limit_healthy_pair_is_unchanged_and_marker_stays_quiet(
     assert "[WEBULL-BUY-STOP-LIMIT-TICK-ADJUSTED]" not in caplog.text
 
 
+def _mirror_market_metadata(price: str, *, observed_at: datetime | None = None) -> dict[str, str]:
+    return {
+        "order_type": "STOP_LIMIT",
+        "stop_price": "4.3087",
+        "limit_price": "4.3303",
+        "fanout_leg": "webull",
+        "fanout_source": "rth_resting_mirror",
+        "resting_entry": "true",
+        "fanout_segment_id": "1789565403195",
+        "fanout_slot_id": "d2551f46-de22-5d59-95fd-329181455f4f",
+        "webull_shape_market_price": price,
+        "webull_shape_market_source": "ask",
+        "webull_shape_market_at_utc": (observed_at or datetime.now(UTC)).isoformat(),
+        "webull_shape_market_max_age_ms": "2000",
+    }
+
+
+@pytest.mark.asyncio
+async def test_crossed_resting_stop_converts_to_limit_at_the_same_band(fake_sdk) -> None:
+    client = _FakeClient({"place": {"order_id": "WB-MEDS"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+
+    reports = await adapter.submit_order(
+        _order(
+            strategy_code="schwab_1m_v2",
+            symbol="BMGL",
+            quantity=Decimal("1"),
+            metadata=_mirror_market_metadata("4.31"),
+            order_type="STOP_LIMIT",
+        )
+    )
+
+    placed = client.last["place"].values
+    assert placed["order_type"] == "LIMIT"
+    assert placed["limit_price"] == "4.33"
+    assert "stop_price" not in placed
+    assert reports[0].metadata["webull_resting_mirror_shape"] == "converted_to_limit"
+    assert reports[0].metadata["webull_resting_mirror_original_stop_price"] == "4.31"
+    assert "webull_wire_stop_price" not in reports[0].metadata
+
+
+@pytest.mark.asyncio
+async def test_resting_mirror_ask_past_band_never_calls_place(fake_sdk) -> None:
+    client = _FakeClient({"place": {"order_id": "MUST-NOT-PLACE"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+
+    reports = await adapter.submit_order(
+        _order(
+            strategy_code="schwab_1m_v2",
+            symbol="BMGL",
+            quantity=Decimal("1"),
+            metadata=_mirror_market_metadata("4.34"),
+            order_type="STOP_LIMIT",
+        )
+    )
+
+    assert reports[0].event_type == "rejected"
+    assert reports[0].origin == "client"
+    assert reports[0].reason.startswith("ASK_PAST_BAND:")
+    assert client.calls == {}
+
+
+@pytest.mark.asyncio
+async def test_resting_mirror_quote_below_stop_keeps_stop_limit(fake_sdk) -> None:
+    client = _FakeClient({"place": {"order_id": "WB-BELOW"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+
+    reports = await adapter.submit_order(
+        _order(
+            strategy_code="schwab_1m_v2",
+            symbol="BMGL",
+            quantity=Decimal("1"),
+            metadata=_mirror_market_metadata("4.30"),
+            order_type="STOP_LIMIT",
+        )
+    )
+
+    placed = client.last["place"].values
+    assert placed["order_type"] == "STOP_LOSS_LIMIT"
+    assert placed["stop_price"] == "4.31"
+    assert placed["limit_price"] == "4.33"
+    assert reports[0].metadata["webull_resting_mirror_shape"] == "stop_limit_unchanged"
+
+
+@pytest.mark.asyncio
+async def test_resting_mirror_stale_quote_fails_closed_before_place(fake_sdk) -> None:
+    client = _FakeClient({"place": {"order_id": "MUST-NOT-PLACE"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+    old = datetime.fromtimestamp(datetime.now(UTC).timestamp() - 3, tz=UTC)
+
+    reports = await adapter.submit_order(
+        _order(
+            strategy_code="schwab_1m_v2",
+            symbol="BMGL",
+            quantity=Decimal("1"),
+            metadata=_mirror_market_metadata("4.30", observed_at=old),
+            order_type="STOP_LIMIT",
+        )
+    )
+
+    assert reports[0].event_type == "rejected"
+    assert reports[0].reason.startswith("NO_FRESH_QUOTE:")
+    assert client.calls == {}
+
+
 @pytest.mark.asyncio
 async def test_buy_stop_limit_raw_invalid_is_refused_before_any_sdk_request(fake_sdk) -> None:
     """A genuinely invalid strategy pair is not laundered into a valid-looking broker order."""
