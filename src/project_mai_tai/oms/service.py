@@ -8,7 +8,7 @@ import socket
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from enum import Enum
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -633,6 +633,9 @@ class OmsRiskService:
         )
         self._boot_protection_alerts: int = 0
         self._latest_quotes_by_symbol: dict[str, dict[str, object]] = {}
+        # Paired resting entries share one serial intent lane. Keep the primary dispatch time until
+        # its Webull sibling reaches the adapter, then emit a per-pair lag observation.
+        self._fanout_primary_dispatch_at: dict[tuple[str, str], datetime] = {}
         # CONF1 decisions are stamped by v2's Schwab 1m process. They remain pending until a quote
         # strictly after the evaluation point and until broker-native protection is reconciled.
         self._confirmation_exit_pending: dict[tuple[str, str], dict[str, object]] = {}
@@ -1815,6 +1818,22 @@ class OmsRiskService:
                 await self._publish_order_event(rth_reactive_abandon_event)
                 return [*pre_submit_events, rth_reactive_abandon_event]
 
+            self._stamp_webull_resting_mirror_market(event)
+            fanout_key = self._resting_fanout_pair_key(event)
+            if (
+                fanout_key is not None
+                and not str(event.payload.metadata.get("fanout_leg", "")).strip()
+            ):
+                self.__dict__.setdefault("_fanout_primary_dispatch_at", {})[fanout_key] = utcnow()
+            elif fanout_key is not None:
+                primary_at = self.__dict__.setdefault("_fanout_primary_dispatch_at", {}).get(
+                    fanout_key
+                )
+                if primary_at is not None:
+                    event.payload.metadata["oms_fanout_primary_dispatch_at_utc"] = (
+                        primary_at.isoformat(timespec="milliseconds")
+                    )
+
             client_order_id = self._build_client_order_id(event)
             request = OrderRequest(
                 client_order_id=client_order_id,
@@ -1830,6 +1849,7 @@ class OmsRiskService:
                 time_in_force=str(event.payload.metadata.get("time_in_force", "day")),
             )
             reports = await self.broker_adapter.submit_order(request)
+            self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
             published_events.extend(await self._record_order_reports(
                 session=session,
@@ -1882,7 +1902,8 @@ class OmsRiskService:
         # F2: mirror any armed-stop changes made by _record_order_reports (arm on a
         # buy-open fill, decrement/clear on a sell fill) to the durable table, off-loop.
         await self._flush_dirty_armed_stops()
-        await self._reconcile_after_intent(event.payload.broker_account_name)
+        if not self._is_resting_fanout_primary(event):
+            await self._reconcile_after_intent(event.payload.broker_account_name)
 
         # Webull mirror moved OFF the submit path (2026-07-24). The resting v2 entry PLACES
         # its Schwab order long before the up-cross, so mirroring at placement would enter
@@ -9843,6 +9864,137 @@ class OmsRiskService:
             return None
         ask_f = float(ask)
         return ask_f if ask_f > 0 else None
+
+    @staticmethod
+    def _resting_fanout_pair_key(event: TradeIntentEvent) -> tuple[str, str] | None:
+        payload = event.payload
+        metadata = payload.metadata
+        if (
+            payload.strategy_code != "schwab_1m_v2"
+            or payload.intent_type != "open"
+            or payload.side != "buy"
+            or str(metadata.get("resting_entry", "")).strip().lower() != "true"
+        ):
+            return None
+        segment_id = str(metadata.get("fanout_segment_id", "")).strip()
+        slot_id = str(metadata.get("fanout_slot_id", "")).strip()
+        if not segment_id or not slot_id:
+            return None
+        return segment_id, slot_id
+
+    def _is_resting_fanout_primary(self, event: TradeIntentEvent) -> bool:
+        return (
+            bool(
+                getattr(
+                    self.settings,
+                    "strategy_schwab_1m_v2_webull_resting_mirror_enabled",
+                    False,
+                )
+            )
+            and bool(
+                getattr(
+                    self.settings,
+                    "strategy_schwab_1m_v2_dual_broker_fanout_enabled",
+                    False,
+                )
+            )
+            and self._resting_fanout_pair_key(event) is not None
+            and str(event.payload.metadata.get("atr_variant", "")) == "CW-v2-resting"
+            and not str(event.payload.metadata.get("fanout_leg", "")).strip()
+        )
+
+    def _stamp_webull_resting_mirror_market(self, event: TradeIntentEvent) -> None:
+        """Stamp the freshest OMS ask/last for the adapter's final wire-shape check."""
+        metadata = event.payload.metadata
+        if (
+            self._resting_fanout_pair_key(event) is None
+            or str(metadata.get("fanout_source", "")) != "rth_resting_mirror"
+            or str(metadata.get("fanout_leg", "")).strip().lower() != "webull"
+        ):
+            return
+
+        max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
+        now = utcnow()
+        candidates = (
+            (
+                "ask",
+                self.__dict__.setdefault("_latest_quotes_by_symbol", {}).get(
+                    event.payload.symbol.upper()
+                ),
+            ),
+            (
+                "last",
+                self.__dict__.setdefault("_latest_trades_by_symbol", {}).get(
+                    event.payload.symbol.upper()
+                ),
+            ),
+        )
+        for source, reading in candidates:
+            if not reading:
+                continue
+            value = reading.get("ask" if source == "ask" else "price")
+            observed_at = reading.get("received_at")
+            if (
+                value in (None, 0)
+                or not isinstance(observed_at, datetime)
+                or observed_at.tzinfo is None
+            ):
+                continue
+            age_ms = (now - observed_at).total_seconds() * 1000.0
+            if age_ms < 0 or age_ms > max(0, max_age_ms):
+                continue
+            try:
+                price = Decimal(str(value))
+            except (InvalidOperation, ValueError):
+                continue
+            if price <= 0:
+                continue
+            metadata["webull_shape_market_price"] = str(price)
+            metadata["webull_shape_market_source"] = source
+            metadata["webull_shape_market_at_utc"] = observed_at.astimezone(UTC).isoformat(
+                timespec="milliseconds"
+            )
+            metadata["webull_shape_market_max_age_ms"] = str(max_age_ms)
+            return
+
+    def _emit_fanout_mirror_lag(
+        self, *, event: TradeIntentEvent, reports: list[ExecutionReport]
+    ) -> None:
+        metadata = event.payload.metadata
+        key = self._resting_fanout_pair_key(event)
+        if (
+            key is None
+            or str(metadata.get("fanout_source", "")) != "rth_resting_mirror"
+            or str(metadata.get("fanout_leg", "")).strip().lower() != "webull"
+        ):
+            return
+        primary_at = self.__dict__.setdefault("_fanout_primary_dispatch_at", {}).pop(key, None)
+        report_metadata = reports[0].metadata if reports else {}
+        wire_raw = str(report_metadata.get("webull_wire_submitted_at_utc", "")).strip()
+        wire_at: datetime | None = None
+        try:
+            if wire_raw:
+                wire_at = datetime.fromisoformat(wire_raw)
+        except ValueError:
+            wire_at = None
+        lag_ms = -1
+        if primary_at is not None and wire_at is not None:
+            lag_ms = round((wire_at.astimezone(UTC) - primary_at).total_seconds() * 1000)
+        outcome = reports[0].event_type if reports else "no_report"
+        shape = str(report_metadata.get("webull_resting_mirror_shape", "unreported"))
+        self.logger.info(
+            "[OMS-FANOUT-MIRROR-LAG] sym=%s segment=%s slot_id=%s "
+            "primary_entered=%s primary_clock=oms_submit_started wire=%s lag_ms=%d "
+            "outcome=%s shape=%s",
+            event.payload.symbol,
+            key[0],
+            key[1],
+            primary_at.isoformat(timespec="milliseconds") if primary_at else "none",
+            wire_at.isoformat(timespec="milliseconds") if wire_at else "none",
+            lag_ms,
+            outcome,
+            shape,
+        )
 
     def _abandon_orb_entry(
         self,

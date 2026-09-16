@@ -544,6 +544,25 @@ class WebullBrokerAdapter:
         if not instrument_id:
             return [self._reject(request, f"Webull instrument id not found for {request.symbol}", origin="client")]
 
+        order_type, wire_limit, wire_stop, report_metadata, shape_refusal = (
+            self._apply_resting_mirror_market_shape(
+                request=request,
+                order_type=order_type,
+                wire_limit=wire_limit,
+                wire_stop=wire_stop,
+                metadata=report_metadata,
+            )
+        )
+        if shape_refusal:
+            return [
+                self._reject(
+                    request,
+                    shape_refusal,
+                    origin="client",
+                    metadata=report_metadata,
+                )
+            ]
+
         from webull.trade.request.place_order_request import PlaceOrderRequest
 
         po = PlaceOrderRequest()
@@ -1256,6 +1275,107 @@ class WebullBrokerAdapter:
         metadata["webull_wire_limit_price"] = str(wire_limit)
         metadata["webull_buy_stop_limit_tick_adjusted"] = str(adjusted).lower()
         return wire_limit, wire_stop, metadata, None
+
+    @staticmethod
+    def _apply_resting_mirror_market_shape(
+        *,
+        request: OrderRequest,
+        order_type: str,
+        wire_limit: Decimal | None,
+        wire_stop: Decimal | None,
+        metadata: dict[str, str],
+        now: datetime | None = None,
+    ) -> tuple[str, Decimal | None, Decimal | None, dict[str, str], str | None]:
+        """Keep a delayed Webull resting mirror valid at the final adapter boundary.
+
+        The adapter has no Webull quote entitlement. OMS therefore stamps its freshest ask (or
+        last-trade fallback) and source timestamp immediately before dispatch; this method checks
+        that snapshot again at the actual wire boundary. Only the bare Webull
+        ``rth_resting_mirror`` BUY stop-limit is in scope.
+        """
+        scoped = (
+            request.strategy_code == "schwab_1m_v2"
+            and request.side == "buy"
+            and request.intent_type == "open"
+            and str(request.metadata.get("fanout_source", "")) == "rth_resting_mirror"
+            and str(request.metadata.get("fanout_leg", "")).strip().lower() == "webull"
+            and str(request.metadata.get("resting_entry", "")).strip().lower() == "true"
+            and bool(str(request.metadata.get("fanout_slot_id", "")).strip())
+            and order_type in {"STOP_LIMIT", "STOP_LOSS_LIMIT"}
+        )
+        if not scoped:
+            return order_type, wire_limit, wire_stop, metadata, None
+
+        metadata["webull_resting_mirror_shape_checked"] = "true"
+        try:
+            market_price = Decimal(str(request.metadata["webull_shape_market_price"]))
+            observed_at = datetime.fromisoformat(
+                str(request.metadata["webull_shape_market_at_utc"])
+            )
+            if observed_at.tzinfo is None:
+                raise ValueError("market timestamp has no timezone")
+            max_age_ms = int(request.metadata.get("webull_shape_market_max_age_ms", "2000"))
+        except (InvalidOperation, KeyError, TypeError, ValueError):
+            metadata["webull_resting_mirror_shape"] = "abandoned_no_fresh_quote"
+            return (
+                order_type,
+                wire_limit,
+                wire_stop,
+                metadata,
+                "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot",
+            )
+
+        current = now or datetime.now(UTC)
+        age_ms = (current - observed_at.astimezone(UTC)).total_seconds() * 1000.0
+        metadata["webull_shape_market_age_ms_at_wire"] = f"{age_ms:.0f}"
+        metadata["webull_shape_market_price_at_wire"] = str(market_price)
+        if market_price <= 0 or age_ms < 0 or age_ms > max(0, max_age_ms):
+            metadata["webull_resting_mirror_shape"] = "abandoned_no_fresh_quote"
+            return (
+                order_type,
+                wire_limit,
+                wire_stop,
+                metadata,
+                f"NO_FRESH_QUOTE: Webull resting mirror market snapshot age_ms={age_ms:.0f}",
+            )
+        if wire_limit is None or wire_stop is None:
+            metadata["webull_resting_mirror_shape"] = "abandoned_invalid_prices"
+            return (
+                order_type,
+                wire_limit,
+                wire_stop,
+                metadata,
+                "INVALID_STOP_LIMIT: Webull resting mirror lacks wire stop/limit prices",
+            )
+
+        if market_price > wire_limit:
+            metadata["webull_resting_mirror_shape"] = "abandoned_ask_past_band"
+            return (
+                order_type,
+                wire_limit,
+                wire_stop,
+                metadata,
+                "ASK_PAST_BAND: Webull resting mirror market "
+                f"{market_price} exceeds limit {wire_limit}",
+            )
+        if market_price >= wire_stop:
+            metadata["webull_resting_mirror_shape"] = "converted_to_limit"
+            metadata["webull_resting_mirror_original_stop_price"] = str(wire_stop)
+            metadata["webull_wire_order_type"] = "LIMIT"
+            metadata.pop("webull_wire_stop_price", None)
+            logger.info(
+                "[WEBULL-RESTING-MIRROR-SHAPE] symbol=%s action=CONVERT_TO_LIMIT "
+                "market=%s stop=%s limit=%s source=%s",
+                request.symbol,
+                market_price,
+                wire_stop,
+                wire_limit,
+                request.metadata.get("webull_shape_market_source", "unknown"),
+            )
+            return "LIMIT", wire_limit, None, metadata, None
+
+        metadata["webull_resting_mirror_shape"] = "stop_limit_unchanged"
+        return order_type, wire_limit, wire_stop, metadata, None
 
     @staticmethod
     def _tick_size(price: Decimal) -> Decimal:

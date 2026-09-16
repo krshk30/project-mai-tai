@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.settings import Settings
 
@@ -223,6 +223,88 @@ async def test_schwab_adapter_returns_stop_guard_acceptance_immediately(monkeypa
 
     assert [report.event_type for report in reports] == ["accepted"]
     assert reports[0].broker_order_id == "987654321"
+
+
+@pytest.mark.asyncio
+async def test_schwab_resting_fanout_primary_does_not_poll_before_its_sibling(
+    monkeypatch,
+) -> None:
+    adapter = SchwabBrokerAdapter(
+        Settings(
+            oms_adapter="schwab",
+            schwab_access_token="token-123",
+            schwab_account_hash="hash-123",
+            strategy_schwab_1m_v2_go_live_enabled=True,
+            strategy_schwab_1m_v2_webull_resting_mirror_enabled=True,
+            strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        ),
+        accounts_by_name={"live:schwab_1m_v2": SchwabAccountConfig(account_hash="hash-123")},
+    )
+
+    async def fake_authorized_request_json(method: str, path: str, *, body=None):
+        del body
+        assert method == "POST"
+        assert path == "/trader/v1/accounts/hash-123/orders"
+        return (
+            201,
+            {"Location": "https://api.schwabapi.com/trader/v1/accounts/hash-123/orders/42"},
+            {},
+        )
+
+    async def fail_wait_for_terminal_order(*args, **kwargs):
+        raise AssertionError("paired resting primary must not block the serial intent lane")
+
+    monkeypatch.setattr(adapter, "_authorized_request_json", fake_authorized_request_json)
+    monkeypatch.setattr(adapter, "_wait_for_terminal_order", fail_wait_for_terminal_order)
+
+    reports = await adapter.submit_order(
+        OrderRequest(
+            client_order_id="schwab_1m_v2-MEDS-open-primary",
+            broker_account_name="live:schwab_1m_v2",
+            strategy_code="schwab_1m_v2",
+            symbol="MEDS",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("2"),
+            reason="schwab_1m_v2 ATR Flip CW-v2-resting",
+            metadata={
+                "atr_variant": "CW-v2-resting",
+                "resting_entry": "true",
+                "fanout_segment_id": "1789565403195",
+                "fanout_slot_id": "d2551f46-de22-5d59-95fd-329181455f4f",
+                "stop_price": "4.3087",
+                "limit_price": "4.3303",
+            },
+            order_type="STOP_LIMIT",
+        )
+    )
+
+    assert [report.event_type for report in reports] == ["accepted"]
+
+
+def test_resting_primary_fast_return_requires_the_live_mirror_flags() -> None:
+    adapter = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
+    adapter.settings = Settings(
+        strategy_schwab_1m_v2_webull_resting_mirror_enabled=False,
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+    )
+    request = OrderRequest(
+        client_order_id="primary",
+        broker_account_name="live:schwab_1m_v2",
+        strategy_code="schwab_1m_v2",
+        symbol="MEDS",
+        side="buy",
+        intent_type="open",
+        quantity=Decimal("2"),
+        reason="resting",
+        metadata={
+            "atr_variant": "CW-v2-resting",
+            "resting_entry": "true",
+            "fanout_slot_id": "slot",
+        },
+    )
+
+    assert adapter._should_return_accepted_immediately(request) is False
 
 
 @pytest.mark.asyncio

@@ -698,13 +698,40 @@ class SchwabBrokerAdapter:
         )
         return reports
 
-    @staticmethod
-    def _should_return_accepted_immediately(request: OrderRequest) -> bool:
+    def _should_return_accepted_immediately(self, request: OrderRequest) -> bool:
+        metadata = request.metadata
+        if (
+            bool(
+                getattr(
+                    self.settings,
+                    "strategy_schwab_1m_v2_webull_resting_mirror_enabled",
+                    False,
+                )
+            )
+            and bool(
+                getattr(
+                    self.settings,
+                    "strategy_schwab_1m_v2_dual_broker_fanout_enabled",
+                    False,
+                )
+            )
+            and request.strategy_code == "schwab_1m_v2"
+            and request.side == "buy"
+            and request.intent_type == "open"
+            and str(metadata.get("atr_variant", "")) == "CW-v2-resting"
+            and str(metadata.get("resting_entry", "")).strip().lower() == "true"
+            and str(metadata.get("fanout_slot_id", "")).strip()
+            and not str(metadata.get("fanout_leg", "")).strip()
+        ):
+            # The paired Webull rest is queued immediately behind this primary on the OMS's
+            # single intent lane. Polling this order to terminal here delayed that sibling by
+            # 10-14 seconds. The periodic broker sync remains the authoritative fill reader.
+            return True
         if request.side != "sell":
             return False
         if request.intent_type not in {"close", "scale"}:
             return False
-        return str(request.metadata.get("stop_guard", "")).strip().lower() == "true"
+        return str(metadata.get("stop_guard", "")).strip().lower() == "true"
 
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         """Live positions for one Schwab account.
