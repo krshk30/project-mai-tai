@@ -65,7 +65,8 @@ one. Any later decision to exclude them is an offline comparison, not a retroact
 ## 3. Frozen detection rules
 
 The service consumes Massive trade prints in received order and preserves each exchange timestamp,
-price, and size. A strategy needs at least one qualifying prior print before it can detect an event.
+price, size, and condition list. A strategy needs at least one qualifying prior print before it can
+detect an event.
 
 ### D1: rolling windows
 
@@ -74,10 +75,28 @@ For each eligible symbol, maintain independent trailing windows:
 - `SQZ30`: 30 seconds.
 - `SQZ60`: 60 seconds.
 
-For a candidate print at time `t`, the reference population is prints with timestamps in
-`[t-W, t)`. The candidate print itself and any print sharing its timestamp are not eligible as the
-reference. Non-positive or non-finite price/size values are rejected from the calculation and
-counted in health telemetry.
+Every window and every "strictly later" comparison uses Massive's SIP timestamp field `t`. The
+participant timestamp `y` is stored as evidence but is never used for ordering, windows, dedupe,
+fills, or exits.
+
+Before a raw `T.*` print can be a reference, detection, fill, or exit, it must be eligible to update
+Massive's consolidated price aggregates. Eligibility is derived from the versioned stock-trade
+condition metadata returned by `/v3/reference/conditions`: every attached condition must permit the
+applicable consolidated OHLC update. A condition that prevents consolidated high/low or open/close
+updates makes the print ineligible for all strategy decisions. This excludes corrections, cancels,
+average-price trades, and every other condition Massive excludes from aggregate OHLC. When multiple
+conditions are attached, any ineligible condition wins. Unknown condition metadata fails closed.
+
+Ineligible prints remain counted as `excluded_prints` per event and per session but never enter a
+price window or paper path. The session count covers every rejected raw print while connected. An
+event count covers rejected prints for its symbol from the start of its reference window through
+the end of its capture horizon. The condition metadata snapshot and its retrieval timestamp are
+persisted with the session evidence so the filter is reproducible.
+
+For an eligible candidate print at SIP time `t`, the reference population is eligible prints with
+SIP timestamps in `[t-W, t)`. The candidate print itself and any print sharing its SIP timestamp are
+not eligible as the reference. Non-positive or non-finite price/size values are rejected from the
+calculation and counted separately in health telemetry.
 
 ### D2: trigger
 
@@ -164,14 +183,22 @@ matches the historical replay.
 
 ### X5: full path
 
-Every filled event continues recording valid prints through `fill_ts + 600 seconds`, even if its
-paper exit occurred earlier. The stored path is the ordered sequence of `(dt_ms, px, size)` values
-relative to the fill and contains every accepted print used by the exit evaluator.
+Every event records its eligible print path beginning with the detection print. For a filled event,
+capture continues through `fill_ts + 600 seconds`, even if its paper exit occurred earlier. The
+stored path is the ordered sequence of `(dt_ms, px, size)` values relative to `detect_ts`; the
+detection print has `dt_ms=0`. It contains the fill print and every accepted print used by the exit
+evaluator. Exit thresholds and the 600-second exit clock remain anchored to `fill_ts`, not
+`detect_ts`.
 
-`mfe_pct`, `mae_pct`, and `halt_gap_s` are computed over that full path, not merely through the
-paper exit. The same path is the only input to later offline comparisons of a `+10%` target,
-`-5%/-8%/-10%` stops, or different time stops. Those comparisons cannot alter the frozen forward
-grade.
+For `NO_FILL`, the path covers `detect_ts` through `detect_ts + 10 seconds`. This detect-anchored
+evidence permits both the historical cross-print entry and the frozen next-print entry to be graded
+offline from one event without changing the forward paper verdict.
+
+`mfe_pct`, `mae_pct`, and `halt_gap_s` are computed over the post-fill slice through
+`fill_ts + 600 seconds`, not the pre-fill segment and not merely through the paper exit. The same
+detect-anchored path is the only input to later offline comparisons of the cross-print entry, the
+next-print entry, a `+10%` target, `-5%/-8%/-10%` stops, or different time stops. Those comparisons
+cannot alter the frozen forward grade.
 
 ## 6. Isolated data service
 
@@ -208,18 +235,23 @@ historical median time to target was five to eight seconds.
 
 Use dedicated append-only squeeze-paper tables. One immutable event row stores the scalar fields;
 the full path may be stored as a JSONB sequence or an event-child table, provided export reproduces
-the exact ordered `path[(dt_ms, px, size)]` without aggregation. Runtime state is rebuilt only from
-these tables after restart.
+the exact ordered `path[(dt_ms relative to detect_ts, px, size)]` without aggregation. Runtime state
+is rebuilt only from these tables after restart.
+
+Every persisted print also stores its raw SIP `t`, participant `y`, and condition codes. These are
+evidence fields; only SIP `t` supplies `dt_ms` or participates in strategy ordering.
 
 Each event records:
 
 ```text
 strategy, symbol, prior_close, prior_close_session, session_day,
-ref_ts_utc, ref_ts_et, ref_px, detect_ts_utc, detect_ts_et, detect_px,
-move_pct, window_prints, window_shares, order_ts_utc, order_ts_et,
+ref_ts_utc, ref_ts_et, ref_participant_ts, ref_px,
+detect_ts_utc, detect_ts_et, detect_participant_ts, detect_px,
+move_pct, window_prints, window_shares, excluded_prints, order_ts_utc, order_ts_et,
 fill_ts_utc, fill_ts_et, fill_px, latency_ms, qty, entry_notional_usd,
 exit_reason, exit_ts_utc, exit_ts_et, exit_px, pnl_pct, pnl_usd,
-mfe_pct, mae_pct, halt_gap_s, is_warrant_like, evidence_status, path
+mfe_pct, mae_pct, halt_gap_s, is_warrant_like, evidence_status,
+condition_metadata_asof, path_relative_to_detect
 ```
 
 `exit_reason` is one of `target`, `stop`, `time`, `no_fill`, or `unanswerable`. UTC is authoritative;
@@ -243,6 +275,12 @@ page and every row keeps its strategy identity.
 Each strategy card/page shows service and feed health, events today, filled, open, closed, gross
 P&L, and the latest 20 event rows. Empty states distinguish `UNEXERCISED`, `NO_EVENTS`, feed
 failure, and prior-close failure; an empty table never implies success.
+
+The cards also show a non-gating historical-rate health band: `SQZ60` averaged about 2 detections
+per morning with an observed range of 0-8, and `SQZ30` averaged about 1.5. More than 10 accepted
+detections for either strategy in one morning sets that strategy's health to `DETECTOR_SUSPECT`.
+This warning does not suppress events, alter the formal grade, or convert a low-count morning into
+an error.
 
 ## 8. Frozen grading rule
 
@@ -275,19 +313,24 @@ All tests use fixtures and make no network calls.
 4. Prior close `$0.99` is excluded and `$1.00` included.
 5. Fill is the first print strictly after detection, never the detection print or a same-timestamp
    print.
-6. Target and stop prints in one exchange second resolve to stop.
-7. The time stop uses the first print strictly after 600 seconds.
-8. The stored path includes every print used by entry and exit evaluation and continues to 600
-   seconds after an early exit.
-9. A second event 200 seconds later is ignored and one 301 seconds later is accepted.
-10. No later print within 10 seconds produces a durable `NO_FILL` row.
-11. A 09:29:59 event continues on a symbol-only subscription after `T.*` is removed and records its
+6. A cancelled, corrected, average-price, or otherwise aggregate-ineligible print at +40% fires
+   neither strategy and cannot fill or exit one; its exclusion is counted.
+7. SIP `t` controls ordering even when participant `y` disagrees.
+8. Target and stop prints in one exchange second resolve to stop.
+9. The time stop uses the first print strictly after 600 seconds from the fill.
+10. The stored path starts at detection with `dt_ms=0`, includes the fill and every print used by
+    exit evaluation, and continues through 600 seconds after the fill despite an early exit.
+11. A second event 200 seconds later is ignored and one 301 seconds later is accepted.
+12. No later print within 10 seconds produces a durable `NO_FILL` row whose path remains anchored
+    to detection.
+13. A 09:29:59 event continues on a symbol-only subscription after `T.*` is removed and records its
     full path without creating a post-09:30 detection.
-12. Feed gaps and missing prior-close evidence produce explicit unanswerable/excluded counts, never
+14. Feed gaps and missing prior-close evidence produce explicit unanswerable/excluded counts, never
     clean paper P&L.
-13. Static and dispatch controls prove the package cannot publish an intent, import a broker
+15. Static and dispatch controls prove the package cannot publish an intent, import a broker
     adapter, or write live position/order tables.
-14. Dashboard controls prove both strategies remain separate and the retired Polygon registration
+16. Dashboard controls prove both strategies remain separate, the expected-rate band and
+    `DETECTOR_SUSPECT` threshold render correctly, and the retired Polygon registration
     is absent while ORB remains.
 
 Each numbered rule receives a mutation that makes its named control fail. The full-suite controlled
@@ -308,6 +351,7 @@ The first session is a paper dry run. At 09:35 ET the operator must be able to s
 - the prior-close snapshot date and eligible-symbol count;
 - Massive connection/subscription health and any gaps;
 - separate `SQZ30` and `SQZ60` event/fill/open/closed counts;
+- each strategy's expected-rate health band and any `DETECTOR_SUSPECT` warning;
 - each event's reference, detection, next-print fill, latency, and current/finished path;
 - no strategy intents, broker orders, live positions, or OMS-managed rows attributable to either
   strategy.
