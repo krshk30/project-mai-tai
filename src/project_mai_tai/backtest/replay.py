@@ -79,6 +79,10 @@ from project_mai_tai.exit_logic.cw_exit import cw_effective_floor, cw_exit_decis
 from project_mai_tai.exit_logic.position import Position
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote as StratQuote
+from project_mai_tai.market_data.massive_atr_seed import (
+    MassiveAtrSeedBar,
+    select_massive_atr_seed_bars,
+)
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core import entry_gate
 from project_mai_tai.backtest.watch_start import WatchWindow, watch_start_for
@@ -175,6 +179,12 @@ class ReplayResult:
     # Counted for exactly the reason `n_watch_start_capped` is: an excluded trade that nobody counts
     # is indistinguishable from a trade that never existed, and the exclusion becomes its own bias.
     n_exit_unmodellable: int = 0
+    atr_seed_outcome: str = "DISABLED"
+    atr_seed_bars: int = 0
+    atr_seed_state: str | None = None
+    atr_seed_trail: float | None = None
+    atr_seed_flips: tuple[tuple[int, str], ...] = ()
+    atr_flips_observed: tuple[tuple[int, str], ...] = ()
 
 
 # ------------------------------------------------------------------- config
@@ -315,6 +325,7 @@ class ReplayStrategy(SchwabV2Strategy):
     ) -> None:
         super().__init__(settings)
         self._replay_now_ms = 0
+        self._replay_atr_flips: list[tuple[int, str]] = []
         # Steady-state: the live bot releases boot-hold after its verify; the replay starts released.
         # ⛔ This is the ONE genuine modelling choice, and it is deliberately expressed HERE rather
         # than by forcing a settings flag — the flag that used to carry it grew a second meaning
@@ -329,6 +340,12 @@ class ReplayStrategy(SchwabV2Strategy):
         # watch-start on every re-join, so which join an arm is measured against depends on WHEN
         # it armed. `None` = not loaded (fall back); `[]` = loaded, never confirmed (fall back).
         self._replay_watch_windows = watch_windows
+
+    def _update_atr_state(self, state, cur, **kwargs):
+        signal = super()._update_atr_state(state, cur, **kwargs)
+        if signal is not None and signal.get("flip"):
+            self._replay_atr_flips.append((int(cur.timestamp_ms), str(signal["flip"])))
+        return signal
 
     def cap_reconstructed_segment(self, symbol: str) -> bool:
         """Replay mirror of `services/schwab_1m_v2_bot.py::_cap_reconstructed_segment` (#618/#619).
@@ -629,6 +646,46 @@ def replay_symbol_day(
     # predates the loaded window came from seeded/warmup history we did not observe live, and live
     # caps exactly those.
     strat._boot_ms = int(start.timestamp() * 1000)
+    if bool(
+        getattr(settings, "strategy_schwab_1m_v2_atr_massive_seed_enabled", False)
+    ):
+        first_schwab_ms = min(int(bar.ts) for bar in bars)
+        first_schwab = datetime.fromtimestamp(first_schwab_ms / 1000.0, UTC)
+        if hasattr(source, "massive_bars"):
+            try:
+                raw_seed = source.massive_bars(symbol, start, first_schwab)
+            except Exception as exc:  # noqa: BLE001 - parity report must fail closed
+                raw_seed = None
+                result.atr_seed_outcome = f"UNSEEDED:{type(exc).__name__}"
+            if raw_seed is None:
+                seed_bars = []
+            else:
+                seed_bars = select_massive_atr_seed_bars(
+                    [
+                        MassiveAtrSeedBar(
+                            timestamp_ms=int(bar.ts.timestamp() * 1000),
+                            open=float(bar.open),
+                            high=float(bar.high),
+                            low=float(bar.low),
+                            close=float(bar.close),
+                            volume=int(bar.volume),
+                        )
+                        for bar in raw_seed
+                    ],
+                    first_schwab_bar_ts_ms=first_schwab_ms,
+                )
+            if raw_seed is not None:
+                seed_result = strat.seed_atr_state(
+                    symbol,
+                    [bar.as_chart_bar(symbol) for bar in seed_bars],
+                )
+                result.atr_seed_outcome = "SEEDED" if seed_bars else "EMPTY"
+                result.atr_seed_bars = int(seed_result["bars_seeded"])
+                result.atr_seed_state = seed_result["state"]
+                result.atr_seed_trail = seed_result["trail"]
+                result.atr_seed_flips = seed_result["flips"]
+        else:
+            result.atr_seed_outcome = "UNAVAILABLE"
     qty = strat._atr_qty
     n_capped = 0
 
@@ -1032,6 +1089,7 @@ def replay_symbol_day(
     if entry_rec is not None and geometry == "rth_static_oco" and not exit_done:
         _open_static_oco(entry_rec)
 
+    result.atr_flips_observed = tuple(strat._replay_atr_flips)
     return result
 
 

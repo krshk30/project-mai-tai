@@ -580,6 +580,10 @@ class SchwabV2Strategy:
         self._atr_gaps_observed: dict[str, int] = {"replay": 0, "live": 0}
         self._atr_symbol_gaps_observed: dict[tuple[str, str], int] = {}
         self._atr_nonadjacent_arm_evaluations: dict[tuple[int, str], int] = {}
+        # A seed advances the session ATR before the first Schwab bar. That first Schwab bar must
+        # still run the normal full session reset for ownership/resting lifecycle fields; its ATR
+        # mathematics is restored immediately afterwards so the splice survives.
+        self._atr_seeded_session_anchors: dict[str, int] = {}
         self._bar_observation_phase: Literal["replay", "live"] = "live"
         # Account-neutral ATR exit observations. Ownership and quantity are OMS facts, not
         # strategy state: one observation is evaluated independently against every configured
@@ -2315,6 +2319,7 @@ class SchwabV2Strategy:
             include_unconsumed_restore=True,
         )
         self._symbol_states.pop(symbol, None)
+        self._atr_seeded_session_anchors.pop(symbol.upper(), None)
         return released
 
     def release_entry_state_at_window_close(
@@ -2934,6 +2939,45 @@ class SchwabV2Strategy:
 
     # ------------------------------------------------------ ATR Flip (Track 1)
 
+    def _reset_atr_indicator_state(self, state: SymbolState, anchor: int) -> None:
+        """Reset only the mathematical ATR state at a 04:00-ET boundary."""
+
+        period = self._atr_period
+        state.atr_session_anchor_ms = anchor
+        state.atr_hl = deque(maxlen=period)
+        state.atr_prev_bar = None
+        state.atr_wilders = None
+        state.atr_tr_seed = []
+        state.atr_state = None
+        state.atr_trail = None
+        state.atr_prev_trail = None
+        state.atr_prev_state = None
+        state.atr_state_age = 0
+        state.atr_short_flip_bar_ts = 0
+
+    @staticmethod
+    def _atr_indicator_snapshot(state: SymbolState) -> dict[str, object]:
+        return {
+            "atr_session_anchor_ms": state.atr_session_anchor_ms,
+            "atr_hl": deque(state.atr_hl, maxlen=state.atr_hl.maxlen),
+            "atr_prev_bar": state.atr_prev_bar,
+            "atr_wilders": state.atr_wilders,
+            "atr_tr_seed": list(state.atr_tr_seed),
+            "atr_state": state.atr_state,
+            "atr_trail": state.atr_trail,
+            "atr_prev_trail": state.atr_prev_trail,
+            "atr_prev_state": state.atr_prev_state,
+            "atr_state_age": state.atr_state_age,
+            "atr_short_flip_bar_ts": state.atr_short_flip_bar_ts,
+        }
+
+    @staticmethod
+    def _restore_atr_indicator_snapshot(
+        state: SymbolState, snapshot: Mapping[str, object]
+    ) -> None:
+        for field_name, value in snapshot.items():
+            setattr(state, field_name, value)
+
     def _apply_session_anchor_reset(
         self,
         state: SymbolState,
@@ -2960,19 +3004,8 @@ class SchwabV2Strategy:
             # independent clock-boundary proof. The time-driven sweep opts in explicitly.
             owner_boundary_is_current = self._fanout_identity_bar_is_live(state)
 
-        period = self._atr_period
-        state.atr_session_anchor_ms = anchor
-        state.atr_hl = deque(maxlen=period)
-        state.atr_prev_bar = None
-        state.atr_wilders = None
-        state.atr_tr_seed = []
-        state.atr_state = None
-        state.atr_trail = None
-        state.atr_prev_trail = None
-        state.atr_prev_state = None
-        state.atr_state_age = 0
+        self._reset_atr_indicator_state(state, anchor)
         state.atr_fired_in_short_seg = False
-        state.atr_short_flip_bar_ts = 0
         if self._atr_rearm_enabled:
             self._set_atr_guard(state, "UNCLAIMED")
             state.atr_hold_pending = None
@@ -3111,6 +3144,7 @@ class SchwabV2Strategy:
         cur: OHLCVBar,
         *,
         observation_phase: Literal["replay", "live"] | None = None,
+        state_only: bool = False,
     ) -> dict | None:
         """Advance the ATR-trailing-stop flip state by one bar; return this
         bar's signal {touch, touch_price, flip, trail, loss, state, state_age}
@@ -3129,12 +3163,25 @@ class SchwabV2Strategy:
 
         # Session reset (mirror VWAP's anchor roll → reproduces fetch_day's slice).
         anchor = session_start_ts_ms(cur.timestamp_ms)
-        if anchor != state.atr_session_anchor_ms:
+        seeded_anchor = self._atr_seeded_session_anchors.get(state.symbol.upper())
+        if not state_only and seeded_anchor == anchor:
+            snapshot = self._atr_indicator_snapshot(state)
             self._apply_session_anchor_reset(
                 state,
                 anchor,
                 owner_boundary_is_current=self._fanout_identity_bar_is_live(state),
             )
+            self._restore_atr_indicator_snapshot(state, snapshot)
+            self._atr_seeded_session_anchors.pop(state.symbol.upper(), None)
+        elif anchor != state.atr_session_anchor_ms:
+            if state_only:
+                self._reset_atr_indicator_state(state, anchor)
+            else:
+                self._apply_session_anchor_reset(
+                    state,
+                    anchor,
+                    owner_boundary_is_current=self._fanout_identity_bar_is_live(state),
+                )
 
         # --- modified true range (needs prior SESSION bar + SMA(high-low, period)) ---
         hl_cur = cur.high - cur.low
@@ -3233,7 +3280,7 @@ class SchwabV2Strategy:
         # armed hold must block the bar-close touch, since the arm no longer claims). The
         # claim happens at emit (_build_hold_draft / _maybe_atr_emit), not here. Flag-OFF:
         # the legacy bool.
-        seg_free = (
+        seg_free = False if state_only else (
             (state.atr_guard == "UNCLAIMED" and state.atr_hold_pending is None)
             if self._atr_rearm_enabled else not state.atr_fired_in_short_seg
         )
@@ -3263,8 +3310,9 @@ class SchwabV2Strategy:
                     state.atr_state, state.atr_trail = "short", close + loss
                     flip, state.atr_state_age = "SELL", 0
                     state.atr_short_flip_bar_ts = int(cur.timestamp_ms or 0)
-                    state.atr_fired_in_short_seg = False  # a fresh short segment opens
-                    if self._atr_rearm_enabled:
+                    if not state_only:
+                        state.atr_fired_in_short_seg = False  # a fresh short segment opens
+                    if self._atr_rearm_enabled and not state_only:
                         self._set_atr_guard(state, "UNCLAIMED")  # new short segment — re-arm
             else:  # short
                 if close < state.atr_trail:
@@ -3279,7 +3327,9 @@ class SchwabV2Strategy:
         state.atr_prev_trail = state.atr_trail
         state.atr_prev_state = state.atr_state
 
-        if self._atr_probe_all or state.symbol in self._atr_probe_symbols:
+        if not state_only and (
+            self._atr_probe_all or state.symbol in self._atr_probe_symbols
+        ):
             logger.info(
                 "[V2-ATR-PROBE] sym=%s ts_ms=%d close=%.6f high=%.6f low=%.6f "
                 "tr=%s loss=%.6f trail=%.6f state=%s age=%d touch=%s flip=%s "
@@ -3306,6 +3356,44 @@ class SchwabV2Strategy:
             "decision_cur_bar_ts": int(cur.timestamp_ms),
             "decision_gap_ms": decision_gap_ms,
             "observation_phase": phase,
+        }
+
+    def seed_atr_state(self, symbol: str, bars: Iterable[ChartBar]) -> dict[str, object]:
+        """Advance only ATR mathematics through pre-Schwab session bars.
+
+        This deliberately bypasses ``on_bar``: no general bar buffer, VWAP, MACD,
+        confirmed-window state, resting order, intent, touch claim, or probe is touched.
+        """
+
+        state = self.watchlist_state(symbol.upper())
+        seeded = 0
+        flips: list[tuple[int, str]] = []
+        for bar in sorted(bars, key=lambda value: int(value.timestamp_ms)):
+            signal = self._update_atr_state(
+                state,
+                OHLCVBar(
+                    timestamp_ms=int(bar.timestamp_ms),
+                    open=float(bar.open),
+                    high=float(bar.high),
+                    low=float(bar.low),
+                    close=float(bar.close),
+                    volume=int(bar.volume),
+                ),
+                observation_phase="replay",
+                state_only=True,
+            )
+            seeded += 1
+            if signal is not None and signal.get("flip"):
+                flips.append((int(bar.timestamp_ms), str(signal["flip"])))
+        if seeded:
+            self._atr_seeded_session_anchors[state.symbol.upper()] = int(
+                state.atr_session_anchor_ms
+            )
+        return {
+            "bars_seeded": seeded,
+            "state": state.atr_state,
+            "trail": state.atr_trail,
+            "flips": tuple(flips),
         }
 
     def _maybe_atr_emit(

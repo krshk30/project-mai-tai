@@ -69,6 +69,13 @@ def _run_v2(src, a, y, m, d):
     print(f"v2/REPLAY {a.symbol} {a.date}  (real strategy entry+exit; Schwab bars"
           f"{'; EH entry ON' if a.eh else ''})")
     print(f"  schwab_bars={res.n_bars} schwab_quotes={res.n_quotes}")
+    if res.atr_seed_outcome != "DISABLED":
+        print(
+            f"  atr_seed={res.atr_seed_outcome} bars={res.atr_seed_bars} "
+            f"state={res.atr_seed_state or 'none'} "
+            f"trail={res.atr_seed_trail if res.atr_seed_trail is not None else 'none'} "
+            f"flips={len(res.atr_seed_flips)}"
+        )
     for sk in res.skips:
         print(f"  SKIP  {sk.reason}: {sk.detail}")
     for mi in res.misses:
@@ -101,7 +108,10 @@ def main() -> None:
     p.add_argument("--gap-cap", type=float, default=1.5)
     a = p.parse_args()
     y, m, d = (int(x) for x in a.date.split("-"))
-    src = DbMarketDataSource(build_session_factory(get_settings()))
+    settings = get_settings()
+    src = DbMarketDataSource(
+        build_session_factory(settings), massive_api_key=settings.massive_api_key
+    )
     if a.sheet:
         from project_mai_tai.backtest.daily_sheet import render_orb_sheet, render_v2_sheet
         if a.strategy == "v2":

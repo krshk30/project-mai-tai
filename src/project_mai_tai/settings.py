@@ -409,6 +409,9 @@ class Settings(BaseSettings):
     # (modified TR, ATRPeriod 5, ATRFactor 3.5, Wilders), ported verbatim. See
     # docs/schwab-1m-v2-atr-flip-entry-design.md.
     strategy_schwab_1m_v2_atr_flip_enabled: bool = False
+    # Seed only ATR mathematics from Massive 04:00-ET 1-minute aggregates before
+    # the first Schwab bar. Default OFF; enabling requires an explicit v2 restart.
+    strategy_schwab_1m_v2_atr_massive_seed_enabled: bool = False
     # ATR-ONLY go-live mode: hard-disable Paths 1/2 (MACD Cross / VWAP Breakout)
     # so ONLY screened-ATR can emit. P1/P2 take precedence over ATR
     # (schwab_1m_v2.py) and are the 7wk-validated losers — under live credentials
