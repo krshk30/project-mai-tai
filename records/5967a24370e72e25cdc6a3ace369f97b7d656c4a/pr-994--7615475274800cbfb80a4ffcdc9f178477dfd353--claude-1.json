@@ -1,0 +1,9 @@
+{
+  "pr_number": 994,
+  "range_base": "7615475274800cbfb80a4ffcdc9f178477dfd353",
+  "range_head": "5967a24370e72e25cdc6a3ace369f97b7d656c4a",
+  "reviewed_at": "2026-09-16T22:55:06Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Independent review as DORMANT code: Massive 04:00-ET aggregate seed for the v2 ATR. Verified strategy_schwab_1m_v2_atr_massive_seed_enabled defaults False (settings.py:414); every bot seed entry point (_prepare/_fetch/_ensure/_consume) returns when the flag is off; the flag-off path of _update_atr_state is behaviour-identical (seeded-anchor map empty, state_only False, _apply_session_anchor_reset refactored into _reset_atr_indicator_state with the same fields incl. atr_short_flip_bar_ts=0); fetch is bounded by asyncio.wait_for at <=3.0 s and fails closed to today's unseeded path; the splice is time-bounded [session_start, first_schwab_bar) with Schwab winning a shared minute; seed_atr_state bypasses on_bar (no arm/intent/probe). Composition with #993 verified by test_seeded_short_flip_stamp_survives_first_schwab_full_reset. Installer refuses unless the committed replay-30.md literally contains **G5 verdict: PASS** \u2014 the committed report says FAIL (parity 81960/83590 = 98.050% < 99.5%; 5 of 30 days below 99.5%: 08-11, 08-12, 08-19, 08-25, 08-28; preserved 480/482; gained 65 flips sum -16.89%, median +1.03%), so this PR cannot enable the seed. Ran 103 focused tests at head (seed, installer, backtest replay, flip-owner, short-flip stamp, atr flip, atr bar gap), all pass. Not an enablement candidate; merge dormant only."
+}
