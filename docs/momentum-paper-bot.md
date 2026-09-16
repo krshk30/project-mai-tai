@@ -1,7 +1,11 @@
 # Momentum Bot paper test: locked rules
 
-**Status:** pre-registered before implementation and before the first paper event. These rules may
-be corrected during review, but they cannot be tuned after paper trading begins.
+**Latest result (2026-09-16):** independently reviewed and accepted for implementation. The
+operator confirmed the **$500 paper amount**. The later naming and condensation changed no trading,
+evidence, safety, or grading rule. Implementation has not started.
+
+These rules are frozen before implementation and before the first paper event. They cannot be
+tuned after paper trading begins; any later hypothesis must be a separately labeled offline study.
 
 **Purpose:** test whether a fast pre-market momentum move remains profitable when entry is modeled
 at the next real print instead of the detection print. This is paper-only measurement, not a live
