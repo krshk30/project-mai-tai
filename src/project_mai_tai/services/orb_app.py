@@ -43,6 +43,7 @@ from project_mai_tai.events import (
     StrategyBotStatePayload,
     stream_name,
 )
+from project_mai_tai.fanout_outcome_consumer import session_anchor
 from project_mai_tai.orb_paper_store import (
     ORB_PAPER_ACCOUNT_NAME,
     ORB_PAPER_ATR_BAR_EVENT_TYPE,
@@ -80,15 +81,6 @@ from project_mai_tai.strategy_core.orb_tick_aggregator import OrbTickAggregator
 SERVICE_NAME = "orb"
 logger = logging.getLogger(SERVICE_NAME)
 _ET = ZoneInfo("America/New_York")
-
-
-def _scanner_session_start_utc(now: datetime | None = None) -> datetime:
-    """Return the current scanner session's 04:00 ET boundary."""
-    current_et = (now or datetime.now(UTC)).astimezone(_ET)
-    session_start_et = current_et.replace(hour=4, minute=0, second=0, microsecond=0)
-    if current_et < session_start_et:
-        session_start_et -= timedelta(days=1)
-    return session_start_et.astimezone(UTC)
 
 
 def _normalize_trade_ts_ns(value: int | float | str | None) -> int | None:
@@ -331,7 +323,7 @@ class OrbService:
         # across midnight carries the prior day's state into the new session.
         now = datetime.now(UTC)
         self._session_date = now.astimezone(_ET).date()
-        self._scanner_session_start = _scanner_session_start_utc(now)
+        self._scanner_session_start = session_anchor(now)
 
     # ----- lifecycle -----
     async def run(self) -> None:
@@ -374,11 +366,11 @@ class OrbService:
             logger.info("[ORB] cancelled; shutting down")
             raise
 
-    def _maybe_roll_session(self) -> None:
+    def _maybe_roll_session(self, now: datetime | None = None) -> None:
         """Reset observation state at midnight and at the scanner's 04:00 ET roll."""
-        now = datetime.now(UTC)
-        today = now.astimezone(_ET).date()
-        scanner_session_start = _scanner_session_start_utc(now)
+        current = now or datetime.now(UTC)
+        today = current.astimezone(_ET).date()
+        scanner_session_start = session_anchor(current)
         if today == self._session_date and scanner_session_start == self._scanner_session_start:
             return
         prior = self._session_date
@@ -409,7 +401,7 @@ class OrbService:
         positions = getattr(self, "_paper_positions", {})
         return sorted(self._universe | set(positions))
 
-    def _pre_open_universe(self) -> list[str]:
+    def _pre_open_universe(self, now: datetime | None = None) -> list[str]:
         """Confirmed scanner names whose confirmation landed at/before 09:25 ET (read
         from the persisted ``scanner_confirmed_last_nonempty`` snapshot). Names that
         confirm DURING 09:25-10:00 are OUT OF SCOPE by design (operator decision
@@ -438,12 +430,13 @@ class OrbService:
                 scanner_session_start = scanner_session_start.replace(tzinfo=UTC)
         except ValueError:
             return []
-        if scanner_session_start.astimezone(UTC) != _scanner_session_start_utc():
+        current = now or datetime.now(UTC)
+        if scanner_session_start.astimezone(UTC) != session_anchor(current):
             return []
 
         # Keep the timestamp check as an independent corrupt/stale payload guard.
         persisted = str(snap.payload.get("persisted_at", ""))
-        if not persisted.startswith(datetime.now(UTC).date().isoformat()):
+        if not persisted.startswith(current.date().isoformat()):
             return []
         cutoff = (datetime(2000, 1, 1, 9, 30) - timedelta(minutes=self._cfg.universe_lead_minutes)).time()
         out: list[str] = []

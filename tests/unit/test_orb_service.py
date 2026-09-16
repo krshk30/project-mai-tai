@@ -5,11 +5,7 @@ import json
 import types
 from datetime import UTC, datetime, timedelta
 
-from project_mai_tai.services.orb_app import (
-    OrbService,
-    _normalize_trade_ts_ns,
-    _scanner_session_start_utc,
-)
+from project_mai_tai.services.orb_app import OrbService, _normalize_trade_ts_ns
 
 
 class _Boom:
@@ -68,8 +64,8 @@ class _SnapshotSession:
 
 
 def test_pre_open_universe_rejects_a_prior_scanner_session_snapshot():
-    now = datetime.now(UTC)
-    current_session = _scanner_session_start_utc(now)
+    now = datetime(2026, 9, 16, 13, 0, tzinfo=UTC)
+    current_session = datetime(2026, 9, 16, 8, 0, tzinfo=UTC)
     payload = {
         "persisted_at": now.isoformat(),
         "scanner_session_start_utc": (current_session - timedelta(days=1)).isoformat(),
@@ -80,10 +76,10 @@ def test_pre_open_universe_rejects_a_prior_scanner_session_snapshot():
     svc = OrbService(settings=_settings(orb_enabled=True), redis_client=_Boom())
     svc.session_factory = lambda: _SnapshotSession(payload)
 
-    assert svc._pre_open_universe() == []
+    assert svc._pre_open_universe(now) == []
 
     payload["scanner_session_start_utc"] = current_session.isoformat()
-    assert svc._pre_open_universe() == ["STALE"]
+    assert svc._pre_open_universe(now) == ["STALE"]
 
 
 def test_normalize_trade_ts_ns_units():
