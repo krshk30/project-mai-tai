@@ -1,0 +1,9 @@
+{
+  "pr_number": 989,
+  "range_base": "a907d297a9985f5cebf5fa71965922858ee39201",
+  "range_head": "4ce60a041c26594ca3d716fbd95560e0bd4bbd9d",
+  "reviewed_at": "2026-09-16T10:12:47Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Read the full orb_app.py diff at 7372bdd and the fix delta to 4ce60a0 (shared fanout_outcome_consumer.session_anchor imported, self-derived test expectation replaced by literals). Verified the scanner_confirmed_last_nonempty payload carries scanner_session_start_utc so the prior-session rejection has a real comparand. Ran ORB tests + test_no_test_reimplements_logic: 17 passed; ruff clean; base ancestor of head. My mutations on 4ce60a0, each red on named tests: anchor-equality dropped (1), dashboard visible-symbol filter dropped (2), 04:00 roll dropped (2), shared anchor time(4,0)->time(5,0) (3). First head withheld for the CI meta-test failure; fixed in 4ce60a0. Paper ORB only; deploy = orb restart after close."
+}
