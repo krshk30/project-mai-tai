@@ -216,6 +216,10 @@ class SymbolState:
     atr_prev_state: str | None = None          # prior bar's state (touch only while short)
     atr_state_age: int = 0                     # bars since last flip
     atr_fired_in_short_seg: bool = False       # one-entry-per-short-segment guard (offline B `break`)
+    # ms-UTC of the SELL-flip bar that OPENED the current short state (0 while long/None). The
+    # bot's reconstructed-segment cap compares it to the symbol's watch-start: a short segment
+    # whose SELL predates our watch is not enterable (FTFT 2026-09-16 rested on a replayed SELL).
+    atr_short_flip_bar_ts: int = 0
     # ATR re-arm lifecycle (flag-gated; INERT when strategy_..._atr_flip_rearm_enabled is
     # off). Layered ALONGSIDE atr_fired_in_short_seg: the bool remains the flag-OFF path,
     # this guard is the flag-ON path. The bool's removal is a gated follow-up once the flag
@@ -2968,6 +2972,7 @@ class SchwabV2Strategy:
         state.atr_prev_state = None
         state.atr_state_age = 0
         state.atr_fired_in_short_seg = False
+        state.atr_short_flip_bar_ts = 0
         if self._atr_rearm_enabled:
             self._set_atr_guard(state, "UNCLAIMED")
             state.atr_hold_pending = None
@@ -3257,6 +3262,7 @@ class SchwabV2Strategy:
                 else:
                     state.atr_state, state.atr_trail = "short", close + loss
                     flip, state.atr_state_age = "SELL", 0
+                    state.atr_short_flip_bar_ts = int(cur.timestamp_ms or 0)
                     state.atr_fired_in_short_seg = False  # a fresh short segment opens
                     if self._atr_rearm_enabled:
                         self._set_atr_guard(state, "UNCLAIMED")  # new short segment — re-arm
@@ -3267,6 +3273,7 @@ class SchwabV2Strategy:
                     flip_level = state.atr_trail    # the short trail just crossed (rule-7 line)
                     state.atr_state, state.atr_trail = "long", close - loss
                     flip, state.atr_state_age = "BUY", 0
+                    state.atr_short_flip_bar_ts = 0
 
         # Roll prev trail/state to THIS bar's values for the next bar's touch test.
         state.atr_prev_trail = state.atr_trail

@@ -30,6 +30,8 @@ class _State:
         self.cw_entries_this_flip = 0
         self.cw_resting_taken = False
         self.cw_reclaim_taken = False
+        self.atr_state = None            # the SHORT-segment cap reads these two (09-16)
+        self.atr_short_flip_bar_ts = 0
 
 
 class _Strategy:
