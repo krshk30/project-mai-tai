@@ -1646,3 +1646,29 @@ def test_ftft_2026_09_16_rejoin_is_capped_and_meds_same_day_is_not() -> None:
     strategy._cw_v2_resting_track(meds, _signal(state="short"))
     intents = strategy.drain_pending_intents()
     assert [i.symbol for i in intents] == ["MEDS"]
+
+
+def test_short_seed_cap_runs_when_only_the_reclaim_slot_is_still_open() -> None:
+    """Codex review of #993: a stale SHORT restored with resting_taken=1 / reclaim_taken=0 skipped the
+    cap and left the reactive/reclaim path open. The cap must run when EITHER slot is open and
+    consume BOTH."""
+    from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = strategy.watchlist_state("HALF")
+    state.bars.append(_bar(clock[0]))
+    state.atr_state = "short"
+    state.atr_trail = 2.90
+    state.atr_short_flip_bar_ts = clock[0] - 60_000
+    state.cw_resting_taken = True
+    state.cw_reclaim_taken = False
+    strategy._cw_armed_segment_safety_enabled = True
+    strategy._boot_ms = clock[0]
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy = strategy
+    bot._watch_start_ms = {"HALF": clock[0]}
+
+    bot._cap_reconstructed_segment("HALF", stage="db-seed")
+
+    assert state.cw_resting_taken is True
+    assert state.cw_reclaim_taken is True

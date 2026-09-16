@@ -3387,7 +3387,9 @@ class SchwabV2BotService:
         if (
             st.atr_state == "short"
             and st.atr_short_flip_bar_ts <= watch_start
-            and not st.cw_resting_taken
+            # Either slot still open => cap, and consume BOTH (codex review of #993: a restore with
+            # resting_taken=1 / reclaim_taken=0 skipped this branch and left the reactive path open).
+            and (not st.cw_resting_taken or not st.cw_reclaim_taken)
         ):
             st.cw_resting_taken = True
             st.cw_reclaim_taken = True
