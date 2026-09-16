@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import types
+from datetime import UTC, datetime, timedelta
 
 from project_mai_tai.services.orb_app import OrbService, _normalize_trade_ts_ns
 
@@ -46,6 +47,39 @@ def test_pre_open_universe_empty_without_db():
     svc = OrbService(settings=_settings(orb_enabled=True), redis_client=_Boom())
     assert svc.session_factory is None
     assert svc._pre_open_universe() == []
+
+
+class _SnapshotSession:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.snapshot = types.SimpleNamespace(payload=payload)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def scalar(self, _statement):
+        return self.snapshot
+
+
+def test_pre_open_universe_rejects_a_prior_scanner_session_snapshot():
+    now = datetime(2026, 9, 16, 13, 0, tzinfo=UTC)
+    current_session = datetime(2026, 9, 16, 8, 0, tzinfo=UTC)
+    payload = {
+        "persisted_at": now.isoformat(),
+        "scanner_session_start_utc": (current_session - timedelta(days=1)).isoformat(),
+        "all_confirmed_candidates": [
+            {"ticker": "STALE", "confirmed_at": "09:20:00 AM"}
+        ],
+    }
+    svc = OrbService(settings=_settings(orb_enabled=True), redis_client=_Boom())
+    svc.session_factory = lambda: _SnapshotSession(payload)
+
+    assert svc._pre_open_universe(now) == []
+
+    payload["scanner_session_start_utc"] = current_session.isoformat()
+    assert svc._pre_open_universe(now) == ["STALE"]
 
 
 def test_normalize_trade_ts_ns_units():

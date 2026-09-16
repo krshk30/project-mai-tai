@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import types
+from datetime import UTC, datetime
 
 from project_mai_tai.events import HeartbeatEvent, IsolatedBotStateEvent
+from project_mai_tai.orb_paper_lifecycle import OrbPaperPosition
 from project_mai_tai.services.orb_app import OrbService, _SymbolState
 from project_mai_tai.strategy_core.orb_intrabar import OpeningRange, OrbBar
 
@@ -38,9 +40,7 @@ def test_heartbeat_reflects_paper_status_without_claiming_a_position():
     assert p.strategy_code == "orb" and p.account_name == "paper:orb"
     statuses = {r["ticker"]: r["status"] for r in p.recent_decisions}
     assert statuses == {
-        "BUILD": "building_or",
         "ARMED": "armed",
-        "SKIP": "skipped",
         "ENTERED": "paper_entry_recorded",
     }
     assert p.watchlist == ["ARMED", "ENTERED"]
@@ -48,6 +48,31 @@ def test_heartbeat_reflects_paper_status_without_claiming_a_position():
     assert p.data_health["execution_mode"] == "paper"
     assert p.data_health["broker_route"] == "none"
     assert p.positions == []
+
+
+def test_heartbeat_hides_removed_symbols_but_keeps_an_open_paper_position():
+    svc = _svc(["ACTIVE"])
+    svc._states = {
+        "ACTIVE": _SymbolState(),
+        "DROPPED": _SymbolState(),
+        "HELD": _SymbolState(),
+    }
+    svc._paper_positions = {
+        "HELD": OrbPaperPosition(
+            entry_event_key="entry:held",
+            symbol="HELD",
+            entry_time=datetime(2026, 9, 16, 13, 30, tzinfo=UTC),
+            entry_price=5.0,
+            quantity=1.0,
+            mode="fixed_opening_high_resting",
+        )
+    }
+
+    payload = svc._build_heartbeat_payload()
+
+    assert [row["ticker"] for row in payload.recent_decisions] == ["ACTIVE", "HELD"]
+    assert payload.watchlist == ["ACTIVE", "HELD"]
+    assert [row["ticker"] for row in payload.positions] == ["HELD"]
 
 
 def test_heartbeat_empty_when_idle():
