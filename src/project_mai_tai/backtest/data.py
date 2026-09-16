@@ -28,6 +28,7 @@ from project_mai_tai.db.models import (
     MarketCaptureQuote,
     MarketCaptureTrade,
 )
+from project_mai_tai.market_data.massive_atr_seed import MassiveAtrSeedClient
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 from project_mai_tai.strategy_core.orb_tick_aggregator import OrbTickAggregator
 
@@ -92,13 +93,22 @@ class MarketDataSource(Protocol):
     def trades(self, symbol: str, start: datetime, end: datetime) -> list[Trade]: ...
     def quotes(self, symbol: str, start: datetime, end: datetime) -> list[Quote]: ...
     def captured_bars(self, symbol: str, start: datetime, end: datetime) -> list[CapturedBar]: ...
+    def massive_bars(self, symbol: str, start: datetime, end: datetime) -> list[CapturedBar]: ...
 
 
 class DbMarketDataSource:
     """Production source — reads captured data from Postgres via the repo models."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        massive_api_key: str | None = None,
+    ) -> None:
         self._sf = session_factory
+        self._massive_atr_seed_client = (
+            MassiveAtrSeedClient(massive_api_key) if massive_api_key else None
+        )
 
     def watch_windows(self, symbol: str, trade_date):
         """Per-symbol scanner watchlist-membership windows for the #618/#619 watch-start cap.
@@ -156,6 +166,32 @@ class DbMarketDataSource:
         return [
             CapturedBar(ts=ts, open=float(o), high=float(h), low=float(lo), close=float(c), volume=float(v or 0))
             for ts, o, h, lo, c, v in rows
+        ]
+
+    def massive_bars(self, symbol: str, start: datetime, end: datetime) -> list[CapturedBar]:
+        """Massive one-minute bars for the flag-gated ATR splice.
+
+        Production replays require REST so a partially captured day cannot masquerade as a complete
+        04:00-to-first-Schwab slice. Hermetic fixtures supply their own explicit Massive bars.
+        """
+
+        if self._massive_atr_seed_client is None:
+            raise RuntimeError("MAI_TAI_MASSIVE_API_KEY is missing")
+        seed = self._massive_atr_seed_client.fetch(
+            symbol,
+            int(start.timestamp() * 1000),
+            int(end.timestamp() * 1000),
+        )
+        return [
+            CapturedBar(
+                datetime.fromtimestamp(bar.timestamp_ms / 1000.0, start.tzinfo),
+                bar.open,
+                bar.high,
+                bar.low,
+                bar.close,
+                float(bar.volume),
+            )
+            for bar in seed
         ]
 
     def schwab_bars(self, symbol: str, start: datetime, end: datetime) -> list[SchwabBar]:
@@ -253,6 +289,9 @@ class FixtureMarketDataSource:
 
     def captured_bars(self, symbol: str, start: datetime, end: datetime) -> list[CapturedBar]:
         return []  # REST-aggregate parity reference is DB-only; not needed for the golden gates
+
+    def massive_bars(self, symbol: str, start: datetime, end: datetime) -> list[CapturedBar]:
+        return []
 
     def schwab_bars(self, symbol: str, start: datetime, end: datetime) -> list[SchwabBar]:
         out = []

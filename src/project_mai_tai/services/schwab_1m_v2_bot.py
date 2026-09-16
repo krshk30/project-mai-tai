@@ -33,7 +33,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -88,6 +88,7 @@ from project_mai_tai.market_data.schwab_v2_loop_health import (
     sleep_or_stop,
 )
 from project_mai_tai.market_halts import LiveHaltTracker
+from project_mai_tai.market_data.massive_atr_seed import MassiveAtrSeedClient
 from project_mai_tai.market_data.schwab_v2_rest_client import (
     ChartBar,
     Quote,
@@ -258,6 +259,8 @@ class SchwabV2BotService:
         settings: Settings | None = None,
         *,
         session_factory: sessionmaker[Session] | None = None,
+        massive_atr_seed_client: MassiveAtrSeedClient | None = None,
+        massive_atr_seed_timeout_seconds: float = 3.0,
     ) -> None:
         self.settings = settings or get_settings()
         self.redis: Redis | None = None
@@ -363,6 +366,24 @@ class SchwabV2BotService:
         # guard). Seeding clears that blackout. Pruned with the watchlist so a
         # re-added symbol re-seeds.
         self._db_seeded: set[str] = set()
+        self._atr_massive_seed_enabled = bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_atr_massive_seed_enabled",
+                False,
+            )
+        )
+        self._atr_massive_seed_client = massive_atr_seed_client or MassiveAtrSeedClient(
+            str(getattr(self.settings, "massive_api_key", "") or "")
+        )
+        self._atr_massive_seed_timeout_seconds = min(
+            3.0, max(0.01, float(massive_atr_seed_timeout_seconds))
+        )
+        self._atr_massive_seed_pending: dict[tuple[str, int], dict[str, object]] = {}
+        self._atr_massive_seed_outcomes: dict[tuple[str, int], dict[str, object]] = {}
+        self._atr_massive_seed_locks: dict[tuple[str, int], asyncio.Lock] = {}
+        self._atr_massive_seed_census_anchor = 0
+        self._atr_massive_seed_census_signature: tuple[object, ...] | None = None
         # ⛔⭐ Counter for [V2-DB-SEED-GAP]. A refusal that only logs per-occurrence cannot be
         # distinguished from a refusal that stopped happening — see the census discipline on
         # `evaluated=0`. Reported on the session roll so a ZERO is a MEASUREMENT, not a silence.
@@ -678,6 +699,7 @@ class SchwabV2BotService:
 
         await self._publish_heartbeat("starting")
         self._data_health["status"] = "healthy" if self.enabled else "degraded"
+        self._log_atr_massive_seed_census(force=True)
 
         # Named tasks (SPOF Workstream A v2): each loop is individually backstopped
         # by run_resilient_loop, and _task_liveness_loop watches this set so a task
@@ -1836,6 +1858,27 @@ class SchwabV2BotService:
         whose anchors are legitimately older; the bar-driven path is in flight for it and will
         roll it correctly. Rolling underneath the replay would reset the trail mid-series.
         """
+        current_anchor = session_start_ts_ms(int(datetime.now(UTC).timestamp() * 1000))
+        if (
+            getattr(self, "_atr_massive_seed_enabled", False)
+            and current_anchor != self._atr_massive_seed_census_anchor
+        ):
+            self._atr_massive_seed_pending = {
+                key: value
+                for key, value in self._atr_massive_seed_pending.items()
+                if key[1] == current_anchor
+            }
+            self._atr_massive_seed_outcomes = {
+                key: value
+                for key, value in self._atr_massive_seed_outcomes.items()
+                if key[1] == current_anchor
+            }
+            self._atr_massive_seed_locks = {
+                key: value
+                for key, value in self._atr_massive_seed_locks.items()
+                if key[1] == current_anchor
+            }
+            self._log_atr_massive_seed_census(current_anchor, force=True)
         if not bool(
             getattr(self.settings, "strategy_schwab_1m_v2_session_time_roll_enabled", False)
         ):
@@ -2548,7 +2591,7 @@ class SchwabV2BotService:
             seed = []
         for entry_id, data in seed:
             self._strategy_state_last_id = entry_id
-            self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+            await self._apply_strategy_state_event_async(data, max_watchlist=max_watchlist)
         await self._sync_gateway_subscription()  # slice-2: register v2 symbols (gated/inert)
 
         # Step 2: tail for new snapshots (backstopped — xread + apply contained).
@@ -2573,7 +2616,9 @@ class SchwabV2BotService:
         for _stream_key, entries in response:
             for entry_id, data in entries:
                 self._strategy_state_last_id = entry_id
-                self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+                await self._apply_strategy_state_event_async(
+                    data, max_watchlist=max_watchlist
+                )
         await self._sync_gateway_subscription()  # slice-2: keep v2 gateway subs current (gated/inert)
 
     async def _sync_gateway_subscription(self) -> None:
@@ -2626,6 +2671,274 @@ class SchwabV2BotService:
         logger.info(
             "[V2-GATEWAY-SUBSCRIBE] consumer=%s symbols=%d", SERVICE_NAME, len(desired)
         )
+
+    def _persisted_current_bar_boundaries(self, symbols: set[str]) -> dict[str, int]:
+        if (
+            not getattr(self, "_atr_massive_seed_enabled", False)
+            or not symbols
+            or self.session_factory is None
+        ):
+            return {}
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        anchor_ms = session_start_ts_ms(now_ms)
+        anchor = datetime.fromtimestamp(anchor_ms / 1000.0, UTC)
+        try:
+            with self.session_factory() as session:
+                rows = session.execute(
+                    select(
+                        StrategyBarHistory.symbol,
+                        func.min(StrategyBarHistory.bar_time),
+                    )
+                    .where(
+                        StrategyBarHistory.strategy_code == STRATEGY_CODE,
+                        StrategyBarHistory.interval_secs == INTERVAL_SECS,
+                        StrategyBarHistory.symbol.in_(sorted(symbols)),
+                        StrategyBarHistory.bar_time >= anchor,
+                    )
+                    .group_by(StrategyBarHistory.symbol)
+                ).all()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "[V2-ATR-SEED] boundary lookup failed; live Schwab bars will retry the splice",
+                exc_info=True,
+            )
+            return {}
+        boundaries: dict[str, int] = {}
+        for symbol, bar_time in rows:
+            if bar_time is None:
+                continue
+            if bar_time.tzinfo is None:
+                bar_time = bar_time.replace(tzinfo=UTC)
+            boundaries[str(symbol).upper()] = int(bar_time.timestamp() * 1000)
+        return boundaries
+
+    async def _prepare_atr_massive_seeds(self, symbols: set[str]) -> None:
+        normalized = {str(symbol).upper() for symbol in symbols}
+        boundaries = await asyncio.to_thread(
+            self._persisted_current_bar_boundaries,
+            normalized,
+        )
+        await asyncio.gather(
+            *(
+                self._fetch_atr_massive_seed(symbol, boundary)
+                for symbol, boundary in boundaries.items()
+            )
+        )
+
+    async def _fetch_atr_massive_seed(self, symbol: str, first_schwab_ms: int) -> None:
+        if not getattr(self, "_atr_massive_seed_enabled", False):
+            return
+        normalized = str(symbol).upper()
+        anchor = session_start_ts_ms(int(first_schwab_ms))
+        key = (normalized, anchor)
+        lock = self._atr_massive_seed_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if key in self._atr_massive_seed_outcomes:
+                return
+            pending = self._atr_massive_seed_pending.get(key)
+            if pending is not None:
+                pending_boundary = int(pending.get("first_schwab_ms", 0))
+                if 0 < pending_boundary <= int(first_schwab_ms):
+                    return
+            started = time.monotonic()
+            try:
+                bars = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._atr_massive_seed_client.fetch,
+                        normalized,
+                        anchor,
+                        int(first_schwab_ms),
+                    ),
+                    timeout=self._atr_massive_seed_timeout_seconds,
+                )
+                status = "READY" if bars else "EMPTY"
+                error = "-" if bars else "no_massive_aggregates"
+            except TimeoutError:
+                bars = []
+                status = "UNSEEDED"
+                error = f"timeout_exceeded_{self._atr_massive_seed_timeout_seconds:.2f}s"
+            except Exception as exc:  # noqa: BLE001
+                bars = []
+                status = "UNSEEDED"
+                # Do not log broker/vendor exception text here: some HTTP clients include the
+                # request URL, and the Massive API key may be present in that URL.
+                error = type(exc).__name__
+            self._atr_massive_seed_pending[key] = {
+                "status": status,
+                "error": error,
+                "bars": bars,
+                "first_schwab_ms": int(first_schwab_ms),
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+            }
+
+    async def _ensure_atr_massive_seed_before_bar(
+        self, symbol: str, first_schwab_ms: int
+    ) -> None:
+        if not getattr(self, "_atr_massive_seed_enabled", False):
+            return
+        normalized = str(symbol).upper()
+        anchor = session_start_ts_ms(int(first_schwab_ms))
+        state = self.strategy.watchlist_state(normalized)
+        outcome = self._atr_massive_seed_outcomes.get((normalized, anchor))
+        if outcome is not None:
+            if state.atr_session_anchor_ms != anchor and outcome.get("bars"):
+                self.strategy.seed_atr_state(normalized, outcome["bars"])
+            return
+        previous_atr_bar = state.atr_prev_bar
+        if (
+            previous_atr_bar is not None
+            and session_start_ts_ms(int(previous_atr_bar.timestamp_ms)) == anchor
+        ):
+            # A Schwab bar already owns this session. Seeding now would prepend Massive after the
+            # live source and make the ATR path order-dependent, so stay on today's behavior.
+            self._atr_massive_seed_pending[(normalized, anchor)] = {
+                "status": "UNSEEDED",
+                "error": "first_schwab_bar_already_processed",
+                "bars": [],
+                "first_schwab_ms": int(first_schwab_ms),
+                "elapsed_ms": 0,
+            }
+            self._consume_atr_massive_seed(normalized, int(first_schwab_ms))
+            return
+        pending = self._atr_massive_seed_pending.get((normalized, anchor))
+        if pending is None or int(pending.get("first_schwab_ms", 0)) > int(
+            first_schwab_ms
+        ):
+            await self._fetch_atr_massive_seed(normalized, int(first_schwab_ms))
+        pending = self._atr_massive_seed_pending.get((normalized, anchor))
+        boundary = (
+            int(pending.get("first_schwab_ms", 0)) if pending is not None else 0
+        )
+        if boundary > 0:
+            self._consume_atr_massive_seed(normalized, boundary)
+
+    def _consume_atr_massive_seed(self, symbol: str, first_schwab_ms: int) -> None:
+        if not getattr(self, "_atr_massive_seed_enabled", False):
+            return
+        normalized = str(symbol).upper()
+        anchor = session_start_ts_ms(int(first_schwab_ms))
+        key = (normalized, anchor)
+        if key in self._atr_massive_seed_outcomes:
+            return
+        pending = self._atr_massive_seed_pending.get(key)
+        if pending is None or int(pending.get("first_schwab_ms", 0)) != int(
+            first_schwab_ms
+        ):
+            return
+        bars = list(pending.get("bars") or [])
+        result: dict[str, object] = {
+            "bars_seeded": 0,
+            "state": None,
+            "trail": None,
+            "flips": (),
+        }
+        status = str(pending.get("status") or "ERROR")
+        if status == "READY":
+            result = self.strategy.seed_atr_state(
+                normalized,
+                [bar.as_chart_bar(normalized) for bar in bars],
+            )
+            status = "SEEDED"
+        outcome = {
+            **pending,
+            **result,
+            "status": status,
+            "bars": [bar.as_chart_bar(normalized) for bar in bars],
+        }
+        self._atr_massive_seed_outcomes[key] = outcome
+        trail = outcome.get("trail")
+        flips = outcome.get("flips") or ()
+        logger.info(
+            "[V2-ATR-SEED] sym=%s session=%s outcome=%s bars=%d from=%d to=%d "
+            "first_live=%d state_after=%s trail_after=%s flips_in_seed=%d "
+            "fetch_ms=%d reason=%s",
+            normalized,
+            datetime.fromtimestamp(anchor / 1000.0, UTC)
+            .astimezone(EASTERN_TZ)
+            .date()
+            .isoformat(),
+            status,
+            int(outcome.get("bars_seeded", 0)),
+            anchor,
+            int(first_schwab_ms),
+            int(first_schwab_ms),
+            outcome.get("state") or "none",
+            "none" if trail is None else f"{float(trail):.6f}",
+            len(flips),
+            int(outcome.get("elapsed_ms", 0)),
+            outcome.get("error") or "-",
+        )
+        self._log_atr_massive_seed_census(anchor)
+
+    def _log_atr_massive_seed_census(
+        self,
+        anchor: int | None = None,
+        *,
+        force: bool = False,
+    ) -> None:
+        if not getattr(self, "_atr_massive_seed_enabled", False):
+            return
+        current_anchor = int(
+            anchor
+            if anchor is not None
+            else session_start_ts_ms(int(datetime.now(UTC).timestamp() * 1000))
+        )
+        anchored_rows = [
+            (symbol, row)
+            for (symbol, row_anchor), row in self._atr_massive_seed_outcomes.items()
+            if row_anchor == current_anchor
+        ]
+        rows = [row for _symbol, row in anchored_rows]
+        denominator_symbols = set(self._watchlist)
+        denominator_symbols.update(symbol for symbol, _row in anchored_rows)
+        counts = {
+            status: sum(1 for row in rows if row.get("status") == status)
+            for status in ("SEEDED", "UNSEEDED", "EMPTY")
+        }
+        bars_seeded = sum(int(row.get("bars_seeded", 0)) for row in rows)
+        signature = (
+            current_anchor,
+            tuple(sorted(denominator_symbols)),
+            counts["SEEDED"],
+            counts["UNSEEDED"],
+            counts["EMPTY"],
+            bars_seeded,
+        )
+        if not force and signature == self._atr_massive_seed_census_signature:
+            return
+        logger.info(
+            "[V2-ATR-SEED-CENSUS] session=%s seeded=%d unseeded=%d empty=%d "
+            "denominator=%d bars=%d",
+            datetime.fromtimestamp(current_anchor / 1000.0, UTC)
+            .astimezone(EASTERN_TZ)
+            .date()
+            .isoformat(),
+            counts["SEEDED"],
+            counts["UNSEEDED"],
+            counts["EMPTY"],
+            len(denominator_symbols),
+            bars_seeded,
+        )
+        self._atr_massive_seed_census_anchor = current_anchor
+        self._atr_massive_seed_census_signature = signature
+
+    async def _apply_strategy_state_event_async(
+        self, data: object, *, max_watchlist: int
+    ) -> None:
+        """Prepare the optional seed without changing the synchronous apply contract."""
+
+        raw = data.get("data") if isinstance(data, dict) else None
+        if isinstance(raw, str):
+            try:
+                event = StrategyStateSnapshotEvent.model_validate_json(raw)
+            except Exception:  # noqa: BLE001
+                event = None
+            if event is not None and self._strategy_state_event_is_current(event):
+                candidates = set(self._extract_confirmed_symbols(event)[:max_watchlist])
+                candidates.update(self._protected_symbols())
+                await self._prepare_atr_massive_seeds(candidates - self._watchlist)
+        self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+        self._log_atr_massive_seed_census()
 
     def _apply_strategy_state_event(
         self, data: object, *, max_watchlist: int
@@ -3769,6 +4082,7 @@ class SchwabV2BotService:
                 if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
                     bt = bt.replace(tzinfo=UTC)
                 ts_ms = int(bt.timestamp() * 1000)
+                self._consume_atr_massive_seed(symbol, ts_ms)
                 self._strategy_on_bar(
                     symbol,
                     ChartBar(
@@ -3844,6 +4158,7 @@ class SchwabV2BotService:
         *,
         observation_phase: Literal["replay", "live"],
     ) -> None:
+        await self._ensure_atr_massive_seed_before_bar(symbol, bar.timestamp_ms)
         now_et = _format_eastern(datetime.now(UTC))
         self._last_tick_at[symbol] = now_et
         self._last_bar_at[symbol] = now_et
