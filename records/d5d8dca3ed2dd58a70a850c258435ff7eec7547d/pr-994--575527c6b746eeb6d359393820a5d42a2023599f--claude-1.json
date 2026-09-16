@@ -1,0 +1,9 @@
+{
+  "pr_number": 994,
+  "range_base": "575527c6b746eeb6d359393820a5d42a2023599f",
+  "range_head": "d5d8dca3ed2dd58a70a850c258435ff7eec7547d",
+  "reviewed_at": "2026-09-16T23:35:08Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review after rebase onto #992 (575527c). Patch 575527c..d5d8dca compared to the previously reviewed 7615475..5967a24 with index lines stripped: zero differing lines (content-identical). Re-ran 81 focused tests at d5d8dca (massive seed, installer, backtest replay, flip-owner incl. #993 composition, short-flip stamp, mirror latency): all pass. Flag strategy_schwab_1m_v2_atr_massive_seed_enabled still defaults False (settings.py:414); committed replay-30.md still carries G5 verdict FAIL (parity 98.050% < 99.5%; gained 65 flips sum -16.89%), so the installer refuses enablement. Same verdict as the prior pin: merge DORMANT only, not an enablement candidate."
+}
