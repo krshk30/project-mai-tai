@@ -4017,3 +4017,56 @@ in the handoff.
 ### Corrections recorded against `claude-1`
 The tracked OMS deploy script restarts strategy (the 09-12 "v2 only / strategy untouched" statement was wrong for the deploy path).
 The memory "Webull attach never succeeded" is stale: 3/3 today. Eight harness and reading errors listed in the handoff.
+
+## 2026-09-15 — Tuesday: a gate false-red at dawn, a structural blind window, a census that said no, and two watch fixes shipped
+
+**Integrator `claude-1`; both deploys executed by `codex-2`. Box `d99552c8` → `f2d45d4` (05:40 ET, sync-only) → `7bdcbd0` (~19:35 ET, sync-only). Nothing restarted.**
+
+### Before the bell
+`preopen.sh` at 05:21 ET printed TWO fails. One was the ruled-known flat-before row. The other was new: `gaps spanning restart=1/43`, where the
+close-out had read 0 against the same snapshot at 21:58 UTC. The pair was AIXC 16:43→18:20 ET: unsubscribed at 16:44:55, re-promoted at
+18:24:24, around a 17:40 restart. The three symbols actually held at the restart all had 60-s pairs. The check counted any pair straddling
+the restart with delta>90 s and never asked whether the series was live when v2 stopped. #982 floors the bracketing pairs at systemd
+`InactiveEnterTimestamp` − 180 s (the STOP, so the 07-30 stop/start hole still fails), prints the excluded pairs, and was proven on the real
+snapshot read-only before the PR. Codex pinned, merged and synced it by 05:40 ET with `EXPECTED_SHA` bumped; the gate re-read green by the
+ruling at 05:42. BOOT1 graded GUARD_WORKING at 03:50 ET; FTFT/BMGL restored owners were RELEASED at 04:00 by the roll, so #979's recovery
+path is still unexercised.
+
+### The question of the morning — why no MYSZ trade after the 07:05 cross
+Not the broker. Schwab's CHART_EQUITY channel delivers its first bar at 07:00 (0 bars before 07:00 on all ten sessions since 09-01; the
+earliest live v2 bar time-of-day ever stored is 07:00:00, since May). The ATR resets at 04:00 and needs ~2×5 bars, so the first live probe
+is the 07:08 bar — on every one of the six live days checked. MYSZ's 07:03–07:06 run (2.46→2.68) fell inside; the state initialised long at
+07:08 with `flip=none`; RECLAIM1 admits only a flip-owned entry. We DO listen from 04:06 (LEVELONE quote ticks flow from 04:00:00); the bars
+are not there to hear. Operator chose measurement over any design change: PRE07 (#984, codex, read-only, after-close) builds a Massive-trade
+ATR shadow for 04:00–07:08 with a Schwab fidelity gate; ten sessions found ONE blind-window BUY flip (MYSZ 07:05) and it would have lost.
+
+### The census — pre-registered, reviewed before results, FAIL
+Operator and both agents independently reached "the scanner hands us spent moves; we need a tradeability rule". Codex proposed, claude-1
+corrected (population 846 not 1,691 — the larger number counted FADE-only days; no P&L outside the replay engine; bucket flips by window;
+denominators and UNKNOWN on every row), and the design was frozen in #986 before any data was read: 9 pre-flip features, deciles, drop-one by
+name and by day, a 60/60 half-rate pass criterion. claude-1's pre-results review found the criterion's number unpinned (a `<half`→`<` edit
+left 21 tests green) and two frozen-design amendments (mixed Massive/Schwab volume units → UNKNOWN; live-fill match window 2 min); codex landed
+all three before 16:10. Result: 855 confirmed symbol-days, 683 measured flips, blocked 42.05% vs kept 42.80%, all nine features
+non-monotonic. **No filter.** Base rate 42.3%. The census also exposed a unit mismatch: 588/858 live fills matched no canonical flip —
+our entries are rests at the trail that fill before the flip bar closes (SUGP 09:43 won while the 09:44 flip "missed"; MEDS filled twice with
+no canonical flip). A live-fill census is recorded for pre-registration.
+
+### The tape
+22 legs, 15 decisions, −42.8 pp, 8 wins / 14 losses. Schwab refused MYSZ and SUGP openings all day. The one entry that was NOT a flip: MYSZ
+11:19 — the scanner re-confirmed the name at 11:17:58 after dropping it at 10:15, the bot rested at the short trail four seconds later, the
+11:19 bar wicked through and closed below; the confirmation exit fired at 11:21 and the Webull close was refused (`pair_cancel_unconfirmed`,
+Webull 429s in the same minute); the 11:22 bar then flipped BUY and the position went on to +5%. VEEA 13:49: the Webull stop leg filled and
+130 ms later the software hard stop raced it — 20 rejects in 8 s, stopped by the #608 ceiling on its first Webull firing (OVSD1, 5th
+instance). Codex first recorded that as "historical, unrelated" and corrected the deploy note when shown the timestamps. Operator what-ifs on
+the 22 legs (+3/−5 → −28 pp, +2/−8 → −49.7 pp) showed the stop is the lever and the target is not, and that neither changes 14 legs going
+wrong on the first bar.
+
+### Watch fixes
+PHANTOM1 paged COULD_NOT_TELL at 09:20 on a held, fully backed MYSZ leg: the watch fixes its clock at run start, scans six hours of logs, then
+grades broker truth with that clock; a Webull mirror refresh in between reads as "from the future". #985 takes the clock after the read,
+clamps it to run start, and carries the census's per-row reason into the page. Codex reviewed, pinned, merged and synced it with #983/#984/#986
+at 7bdcbd0. The bash-3.2 `mapfile` defect in the local `overlap.sh` (carried since 09-09) was patched via a review package (#983) and re-pinned.
+
+### For Wednesday
+`EXPECTED_DATE` is already 2026-09-16 (codex, ~19:50 ET). #987 was closed and its branch deleted at 23:44 UTC. Expect the one known flat-before FAIL until the next restart snapshot. RESERVE1 reads
+RECURRENCE=20 until the 04:00 anchor — that is the VEEA storm, not new exposure.
