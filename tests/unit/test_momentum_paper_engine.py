@@ -75,6 +75,19 @@ def test_25_second_move_fires_both_strategies() -> None:
 
 
 @pytest.mark.parametrize(
+    ("candidate_price", "accepted"),
+    [("1.2999", False), ("1.30", True)],
+)
+def test_detection_threshold_is_decimal_exact(candidate_price: str, accepted: bool) -> None:
+    engine = _engine()
+    engine.ingest(_trade("04:11:00.000", "1.00"))
+
+    records = engine.ingest(_trade("04:11:25.000", candidate_price))
+
+    assert bool(_detected(records)) is accepted
+
+
+@pytest.mark.parametrize(
     ("clock", "accepted"),
     [
         ("04:10:59.000", False),
@@ -153,6 +166,27 @@ def test_fill_uses_first_eligible_print_strictly_after_detection() -> None:
     assert {record.payload["quantity"] for record in fills} == {378}
 
 
+def test_paper_notional_is_exactly_500_dollars() -> None:
+    engine = _engine()
+    _detect_both(engine)
+
+    records = engine.ingest(_trade("04:11:26.000", "1.00"))
+
+    fills = [record for record in records if record.event_type == "FILLED"]
+    assert len(fills) == 2
+    assert {record.payload["quantity"] for record in fills} == {500}
+
+
+def test_ineligible_low_print_cannot_become_a_detection_reference() -> None:
+    engine = _engine()
+    engine.ingest(_trade("04:11:00.000", "1.00"))
+    engine.ingest(_trade("04:11:10.000", "0.60", eligible=False))
+
+    records = engine.ingest(_trade("04:11:25.000", "1.20"))
+
+    assert _detected(records) == set()
+
+
 def test_cancelled_plus_40_percent_print_cannot_trigger_fill_or_exit() -> None:
     trigger_engine = _engine()
     trigger_engine.ingest(_trade("04:11:00.000", "1"))
@@ -193,6 +227,37 @@ def test_same_exchange_second_stop_beats_target() -> None:
     assert {record.payload["exit_reason"] for record in exits} == {"STOP"}
 
 
+def test_target_threshold_is_decimal_exact() -> None:
+    below = _engine()
+    _detect_both(below)
+    below.ingest(_trade("04:11:26.000", "1.00"))
+    below.ingest(_trade("04:11:27.000", "1.0499"))
+    below_records = below.advance_clock(_ms("04:11:28.000"))
+    assert not any(record.event_type == "EXITED" for record in below_records)
+
+    exact = _engine()
+    _detect_both(exact)
+    exact.ingest(_trade("04:11:26.000", "1.00"))
+    exact.ingest(_trade("04:11:27.000", "1.05"))
+    exact_records = exact.advance_clock(_ms("04:11:28.000"))
+    assert {record.payload["exit_reason"] for record in exact_records} == {"TARGET"}
+
+
+def test_stop_threshold_is_decimal_exact() -> None:
+    below = _engine()
+    _detect_both(below)
+    below.ingest(_trade("04:11:26.000", "1.00"))
+    above_stop = below.ingest(_trade("04:11:27.000", "0.8501"))
+    assert not any(record.event_type == "EXITED" for record in above_stop)
+
+    exact = _engine()
+    _detect_both(exact)
+    exact.ingest(_trade("04:11:26.000", "1.00"))
+    at_stop = exact.ingest(_trade("04:11:27.000", "0.85"))
+    exits = [record for record in at_stop if record.event_type == "EXITED"]
+    assert {record.payload["exit_reason"] for record in exits} == {"STOP"}
+
+
 def test_time_exit_requires_first_eligible_print_strictly_after_600_seconds() -> None:
     engine = _engine()
     _detect_both(engine)
@@ -226,6 +291,35 @@ def test_path_starts_at_detection_and_survives_an_early_exit() -> None:
     assert {record.payload["dt_ms"] for record in path_rows} == {35_000}
     assert {row["path_print_count"] for row in engine.active_events} == {4}
     assert {dict(row["path_start"])["dt_ms"] for row in engine.active_events} == {0}
+
+
+def test_excursions_continue_over_full_path_after_an_early_exit() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    engine.ingest(_trade("04:11:26.000", "1.30"))
+    engine.ingest(_trade("04:11:27.100", "1.40"))
+    engine.advance_clock(_ms("04:11:28.000"))
+
+    engine.ingest(_trade("04:12:00.000", "1.80"))
+    engine.ingest(_trade("04:13:00.000", "1.00"))
+    records = engine.advance_clock(_ms("04:21:26.001"))
+
+    finals = [record.payload for record in records if record.event_type == "FINAL"]
+    assert len(finals) == 2
+    expected_mfe = (Decimal("1.80") / Decimal("1.30") - Decimal("1")) * Decimal("100")
+    expected_mae = (Decimal("1.00") / Decimal("1.30") - Decimal("1")) * Decimal("100")
+    assert {Decimal(str(row["mfe_pct"])) for row in finals} == {expected_mfe}
+    assert {Decimal(str(row["mae_pct"])) for row in finals} == {expected_mae}
+
+
+def test_largest_no_print_gap_uses_only_eligible_path_prints() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    engine.ingest(_trade("04:11:26.000", "1.30"))
+    engine.ingest(_trade("04:11:30.000", "1.31", eligible=False))
+    engine.ingest(_trade("04:11:36.000", "1.31"))
+
+    assert {row["largest_no_print_gap_ms"] for row in engine.active_events} == {10_000}
 
 
 def test_repeat_requires_more_than_300_seconds() -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import sys
+from types import SimpleNamespace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -136,6 +138,25 @@ def test_unknown_or_cancel_condition_is_excluded_before_the_engine() -> None:
     assert cancelled.exclusion_reason == "not_consolidated_ohlc=99"
     assert unknown is not None and unknown.eligible is False
     assert unknown.exclusion_reason == "unknown_conditions=404"
+
+
+def test_service_disables_library_reconnects_so_feed_gaps_are_visible(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeWebSocketClient:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "massive",
+        SimpleNamespace(WebSocketClient=FakeWebSocketClient),
+    )
+    service = MomentumPaperService(Settings(massive_api_key="fixture-key"))
+
+    service._build_websocket_client()
+
+    assert captured["max_reconnects"] == 0
 
 
 def test_append_only_store_dedupes_and_names_incomplete_paths() -> None:

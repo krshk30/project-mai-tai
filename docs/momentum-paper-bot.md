@@ -66,6 +66,8 @@ change the frozen forward result.
   ten-minute paths remain subscribed; all connections close by 09:40:01 ET.
 - Paper events and paths are append-only and restart-safe. REST data never backfills a forward
   decision.
+- After a restart, detections stay suppressed until 60 seconds of fresh raw-trade coverage has
+  accumulated. This intentional blackout is never filled from REST or prior-process memory.
 - The existing active `polygon_30s` paper registration is retired, but its historical records are
   retained. ORB paper remains unchanged.
 - Momentum 30 and Momentum 60 each get a paper card showing feed health, events, filled/open/closed,
@@ -102,4 +104,6 @@ reachable; both cards remain separate; Polygon is retired; and ORB remains.
 Each rule needs a mutation that makes its named test fail, followed by a full-suite comparison by
 failure-name set. Before the unit is enabled, prove the Massive `T.*` entitlement and that the new
 connection does not displace an existing production connection. Deployment is after market close
-on explicit operator approval and does not restart any existing trading service.
+on explicit operator approval. Activation requires the restart checklist plus control-plane and
+strategy-service restarts so both Momentum cards load and the old Polygon paper runtime retires.
+ORB, v2, OMS, and the market-data gateway remain untouched.

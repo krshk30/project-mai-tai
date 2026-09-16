@@ -642,6 +642,7 @@ class MomentumPaperService:
             api_key=self.settings.massive_api_key,
             raw=True,
             subscriptions=[],
+            max_reconnects=0,
         )
 
     def _now_ms(self) -> int:

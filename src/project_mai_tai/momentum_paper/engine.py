@@ -67,6 +67,7 @@ class _ActiveEvent:
     mfe_pct: Decimal = Decimal("0")
     mae_pct: Decimal = Decimal("0")
     largest_gap_ms: int = 0
+    last_eligible_path_ts_ms: int | None = None
     feed_gap: bool = False
 
     @property
@@ -270,6 +271,7 @@ class MomentumPaperEngine:
             warrant_like=is_warrant_like(detection.symbol),
             excluded_prints=excluded_prints,
             path=[detection],
+            last_eligible_path_ts_ms=detection.sip_ts_ms,
         )
 
     def _advance_symbol_events(self, trade: TradePrint) -> list[MomentumTapeRecord]:
@@ -341,11 +343,13 @@ class MomentumPaperEngine:
                 )
                 continue
 
-            if trade.sip_ts_ms <= event.fill.sip_ts_ms or event.exit is not None:
+            if trade.sip_ts_ms <= event.fill.sip_ts_ms:
                 continue
             move = (trade.price / event.fill.price - Decimal("1")) * Decimal("100")
             event.mfe_pct = max(event.mfe_pct, move)
             event.mae_pct = min(event.mae_pct, move)
+            if event.exit is not None:
+                continue
             second = trade.sip_ts_ms // 1000
             if trade.price <= event.fill.price * _STOP_MULTIPLIER:
                 event.pending_target = None
@@ -388,11 +392,13 @@ class MomentumPaperEngine:
 
     @staticmethod
     def _append_path(event: _ActiveEvent, trade: TradePrint) -> None:
-        if event.path:
+        if trade.eligible and event.last_eligible_path_ts_ms is not None:
             event.largest_gap_ms = max(
                 event.largest_gap_ms,
-                trade.sip_ts_ms - event.path[-1].sip_ts_ms,
+                trade.sip_ts_ms - event.last_eligible_path_ts_ms,
             )
+        if trade.eligible:
+            event.last_eligible_path_ts_ms = trade.sip_ts_ms
         event.path.append(trade)
 
     def _finish(
