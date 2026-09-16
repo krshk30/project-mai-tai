@@ -3372,6 +3372,36 @@ class SchwabV2BotService:
             session_start_ts_ms(int(now_ms_fn())) if callable(now_ms_fn) else 0
         )
         watch_start = max(self._watch_start_for(symbol), session_anchor)
+        # ⛔⭐ THE OTHER HALF (2026-09-16, FTFT). The branch below caps a reconstructed LONG segment —
+        # one the replay ARMED from a BUY flip. It has no shape for a reconstructed SHORT segment,
+        # and the resting path rests on exactly that: state short + a settled trail. FTFT flipped
+        # SELL on the 10:15 ET bar, left the watchlist at 10:16:38, re-joined at 10:49:44; the
+        # same-session db-seed rebuilt the short state from the 10:15 SELL, the resting path rested
+        # at 10:51:02 on a flip 34 minutes older than our watch, and the Webull mirror filled at
+        # 11:18:57. Operator's rule, restated 09-16: after a confirm or re-confirm ONLY a flip we
+        # watched happen may own an entry — a SELL one minute before the re-join is void. So the
+        # resting slot of a short segment whose SELL bar predates watch-start is consumed here;
+        # `_clear_cw_slot_claims` releases it at the next LIVE SELL, the same release the long-side
+        # cap relies on. `<=` for the same open-timestamp reason as below; a short state with no
+        # stamped SELL bar (0) cannot prove it was watched and is capped (fail-closed).
+        if (
+            st.atr_state == "short"
+            and st.atr_short_flip_bar_ts <= watch_start
+            and not st.cw_resting_taken
+        ):
+            st.cw_resting_taken = True
+            st.cw_reclaim_taken = True
+            logger.info(
+                "[V2-CW-SEED-CAP] %s reconstructed SHORT segment capped — the SELL flip predates "
+                "our watch (resting_taken=1, reclaim_taken=1, sell_flip_bar_ts=%d, watch_start=%d, "
+                "session_anchor=%d, boot=%d, stage=%s)",
+                symbol,
+                st.atr_short_flip_bar_ts,
+                watch_start,
+                session_anchor,
+                strat._boot_ms,
+                stage,
+            )
         if (
             st.cw_armed
             and 0 < st.cw_arm_bar_ts <= watch_start

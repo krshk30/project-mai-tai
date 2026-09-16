@@ -1525,3 +1525,124 @@ def test_rollback_ignores_strict_records_and_needs_no_cleanup() -> None:
     state = strategy.watchlist_state("ROLL")
     assert state.flip_owner_phase == "idle"
     assert calls == []
+
+
+# ---------------------------------------------------------------------------------------------
+# Reconstructed SHORT segment (2026-09-16, FTFT). The seed cap above only covered a reconstructed
+# LONG (armed) segment; a SHORT state rebuilt from a SELL that predates our watch rested anyway.
+# ---------------------------------------------------------------------------------------------
+
+
+def _seed_cap_short(
+    strategy: SchwabV2Strategy,
+    clock: list[int],
+    symbol: str,
+    *,
+    sell_flip_bar_ts: int,
+    watch_start_ms: int,
+) -> SymbolState:
+    from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+
+    state = strategy.watchlist_state(symbol)
+    state.bars.append(_bar(clock[0]))
+    state.cw_armed = False
+    state.cw_arm_bar_ts = 0
+    state.atr_state = "short"
+    state.atr_trail = 2.90
+    state.atr_state_age = 3
+    state.atr_short_flip_bar_ts = sell_flip_bar_ts
+    strategy._cw_armed_segment_safety_enabled = True
+    strategy._boot_ms = min(clock[0], watch_start_ms)
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy = strategy
+    bot._watch_start_ms = {symbol: watch_start_ms}
+    bot._cap_reconstructed_segment(symbol, stage="db-seed")
+    return state
+
+
+def test_short_seed_cap_suppresses_first_rest_when_the_sell_predates_our_watch() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _seed_cap_short(
+        strategy, clock, "FTFT", sell_flip_bar_ts=clock[0] - 34 * 60_000, watch_start_ms=clock[0]
+    )
+    _book(strategy, clock, "FTFT")
+    assert state.cw_resting_taken is True
+    assert state.cw_reclaim_taken is True
+
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+
+    assert strategy.drain_pending_intents() == []
+    assert state.resting_active is False
+
+
+def test_short_seed_cap_is_released_by_a_live_sell_and_the_first_rest_places() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _seed_cap_short(
+        strategy, clock, "FTFT", sell_flip_bar_ts=clock[0] - 60_000, watch_start_ms=clock[0]
+    )
+    _book(strategy, clock, "FTFT")
+
+    # A SELL we WATCHED: the bar opens after watch-start.
+    clock[0] += 5 * 60_000
+    _book(strategy, clock, "FTFT")   # position evidence must be fresh at the new clock
+    state.bars.append(_bar(clock[0]))
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+    assert state.cw_resting_taken is False
+    assert state.cw_reclaim_taken is False
+
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+    intents = strategy.drain_pending_intents()
+    assert len(intents) == 1
+    assert intents[0].metadata["cw_entry_slot"] == "first"
+
+
+def test_short_state_from_a_sell_we_watched_is_not_capped() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _seed_cap_short(
+        strategy, clock, "MEDS", sell_flip_bar_ts=clock[0], watch_start_ms=clock[0] - 60 * 60_000
+    )
+    _book(strategy, clock, "MEDS")
+    assert state.cw_resting_taken is False
+
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+    intents = strategy.drain_pending_intents()
+    assert len(intents) == 1
+    assert intents[0].metadata["cw_entry_slot"] == "first"
+
+
+def test_short_state_with_no_stamped_sell_bar_is_capped_fail_closed() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _seed_cap_short(
+        strategy, clock, "NOSTAMP", sell_flip_bar_ts=0, watch_start_ms=clock[0] - 60 * 60_000
+    )
+    assert state.cw_resting_taken is True
+
+
+def test_ftft_2026_09_16_rejoin_is_capped_and_meds_same_day_is_not() -> None:
+    """Live timestamps from the box (UTC ms). FTFT: SELL flip bar 10:15 ET, re-joined the watchlist
+    10:49:44.969 ET -> the rest that went out at 10:51:02 must not. MEDS: watched since 04:06 ET,
+    SELL flip bar 09:26 ET -> its 09:30:03 rest (filled, +4.9%) must still place."""
+    ftft_rejoin_ms = 1789570184969          # 2026-09-16 14:49:44.969Z
+    ftft_sell_bar_ms = 1789568100000        # 2026-09-16 14:15:00Z (10:15 ET bar)
+    meds_watch_ms = 1789545960000           # 2026-09-16 08:06:00Z (04:06 ET SUBS)
+    meds_sell_bar_ms = 1789565160000        # 2026-09-16 13:26:00Z (09:26 ET bar)
+
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    clock[0] = ftft_rejoin_ms + 78_000      # 10:51:02 ET, the bar that rested live
+    ftft = _seed_cap_short(
+        strategy, clock, "FTFT", sell_flip_bar_ts=ftft_sell_bar_ms, watch_start_ms=ftft_rejoin_ms
+    )
+    _book(strategy, clock, "FTFT")
+    assert ftft.cw_resting_taken is True
+    strategy._cw_v2_resting_track(ftft, _signal(state="short"))
+    assert strategy.drain_pending_intents() == []
+
+    clock[0] = meds_sell_bar_ms + 4 * 60_000 + 3_000   # 09:30:03 ET
+    meds = _seed_cap_short(
+        strategy, clock, "MEDS", sell_flip_bar_ts=meds_sell_bar_ms, watch_start_ms=meds_watch_ms
+    )
+    _book(strategy, clock, "MEDS")
+    assert meds.cw_resting_taken is False
+    strategy._cw_v2_resting_track(meds, _signal(state="short"))
+    intents = strategy.drain_pending_intents()
+    assert [i.symbol for i in intents] == ["MEDS"]

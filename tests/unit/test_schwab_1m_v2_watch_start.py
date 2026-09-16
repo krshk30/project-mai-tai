@@ -27,6 +27,8 @@ class _State:
         # the counter it used to write is labelling-only and no live entry path reads it.
         self.cw_resting_taken = False
         self.cw_reclaim_taken = False
+        self.atr_state = None            # the SHORT-segment cap reads these two (09-16)
+        self.atr_short_flip_bar_ts = 0
 
 
 class _Strat:
