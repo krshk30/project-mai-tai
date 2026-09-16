@@ -1,0 +1,9 @@
+{
+  "pr_number": 993,
+  "range_base": "8ddd87ff2496d4fb2c4acd35220e3f8b780fabc3",
+  "range_head": "2b14c325d8ab1602a174f86da3020442873d5fad",
+  "reviewed_at": "2026-09-16T16:53:37Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the FTFT 2026-09-16 reconstructed-SHORT seed cap, SELL/BUY/session timestamp lifecycle, all four replay call sites, fail-closed <= and unstamped-zero cases, and production release behavior. First head withheld because resting_taken=1/reclaim_taken=0 skipped the cap. At 2b14c32 either open slot triggers the cap and both are consumed; reverting to the old resting-only guard makes test_short_seed_cap_runs_when_only_the_reclaim_slot_is_still_open fail. 73 focused tests pass, Ruff and diff checks are clean, and current-environment full base/head collection produces the same 18 host-tooling errors with zero differing names. Under flip-owned production settings claims release only on a watched SELL or owner/session retirement; 16:00 does not release them. No deploy."
+}
