@@ -1,0 +1,9 @@
+{
+  "pr_number": 991,
+  "range_base": "5438ba8a65696c8d15c1f4fb23c8dd74a24ecb58",
+  "range_head": "288aebfd690aec2e2156cd85f059b4ff47b036e4",
+  "reviewed_at": "2026-09-16T11:52:16Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Read engine.py, momentum_paper_app.py, conditions/models/store/report, the registry/control-plane/strategy-engine/settings/migration/model diffs, the systemd unit, installer and entitlement proof, and all controls at 99f233b; re-read the delta to 288aebfd. Rules match docs/momentum-paper-bot.md: 04:11-09:29:59 ET on SIP t, prior close >= $1 persisted at 03:55, symbol shape + warrant label, aggregate-eligibility fail-closed with excluded counts, lowest eligible print in [t-W,t) excl. same-timestamp, >300 s dedupe, first-eligible-print-after fill with 10 s NO_FILL, $500 floor sizing, +5%/-15%/600 s, stop-first in-second, detect-anchored path, feed-gap and restart -> UNANSWERABLE, T.* 04:00-09:30 with symbol tail to 09:40:01, no REST backfill, isolation (grep empty + import-graph control), installer refuses before 16:00 ET and requires the entitlement + connection-cap proof. First head withheld: target/stop/trigger/notional unpinned, ineligible reference untested, MFE/MAE frozen at exit. At 288aebfd my 10 mutations each red on a named test (target 1.03, stop 0.90, trigger 1.25, notional 450, ineligible reference, MFE-at-exit, 04:10, 200 s, same-timestamp fill, boundary pairs); probe: fill 1.30 exit 1.40 later 1.80/1.00 -> mfe +38.46 mae -23.08, eligible-only gap. 54 tests, ruff clean, validate green, base ancestor of head. Activation requires control + strategy restarts (documented); install only on operator GO after close."
+}
