@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     legacy_api_cache_ttl_seconds: int = 5
 
     massive_api_key: str | None = None
+    # Isolated raw-trade paper study. Default OFF: no Massive connection, DB read,
+    # dashboard registration, or runtime process is created until explicitly enabled.
+    momentum_paper_enabled: bool = False
     market_data_snapshot_interval_seconds: int = 5
     market_data_reference_cache_path: str = "data/cache/reference_data.json"
     # PERIODIC REFERENCE REFRESH (2026-07-27, the DFNS/LGHL incident). `_ensure_reference_data()` was
@@ -1329,7 +1332,7 @@ class Settings(BaseSettings):
 
     def provider_for_strategy(self, strategy_code: str) -> str:
         normalized_code = str(strategy_code).strip().lower()
-        if normalized_code == "orb":
+        if normalized_code in {"orb", "momentum_30s", "momentum_60s"}:
             return "none"
         if normalized_code == "macd_30s":
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
@@ -1371,6 +1374,8 @@ class Settings(BaseSettings):
         if normalized_account == self.strategy_tos_account_name:
             return self.provider_for_strategy("tos")
         if normalized_account == self.orb_broker_account_name:
+            return "none"
+        if normalized_account == "paper:momentum":
             return "none"
         return self.resolved_broker_provider
 
@@ -1430,6 +1435,8 @@ class Settings(BaseSettings):
             return "schwab"
         if normalized_code in {"polygon_30s", "webull_30s"}:
             return "polygon"
+        if normalized_code in {"momentum_30s", "momentum_60s"}:
+            return "massive"
         if normalized_code == "tos" and self.provider_for_strategy("tos") == "schwab":
             return "schwab"
         return "polygon"

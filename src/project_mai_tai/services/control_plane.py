@@ -107,7 +107,7 @@ def _strategy_code_variants(strategy_code: str | None) -> tuple[str, ...]:
 def _durable_paper_decision_symbols(
     runtime_kind: str, runtime_bot: dict[str, Any]
 ) -> set[str]:
-    if runtime_kind != "orb_paper":
+    if runtime_kind not in {"orb_paper", "momentum_paper"}:
         return set()
     return {
         str(item.get("ticker") or item.get("symbol") or "").upper()
@@ -1838,7 +1838,7 @@ class ControlPlaneRepository:
                 if registration
                 else str(runtime_bot.get("runtime_kind", "unknown") or "unknown")
             )
-            if runtime_kind == "orb_paper":
+            if runtime_kind in {"orb_paper", "momentum_paper"}:
                 # A paper trade remains operator evidence after the scanner universe clears.
                 # Filtering it to the current watchlist made completed ORB trades disappear.
                 live_decision_symbols.update(
@@ -1900,7 +1900,9 @@ class ControlPlaneRepository:
                 if not self._is_ui_hidden_symbol(account_name, item.get("ticker") or item.get("symbol"))
             ]
             runtime_provider = (
-                self.settings.provider_for_strategy(code)
+                self.settings.market_data_provider_for_strategy(code)
+                if registration and code in {"momentum_30s", "momentum_60s"}
+                else self.settings.provider_for_strategy(code)
                 if registration
                 else str(runtime_bot.get("provider", "") or "")
             )
@@ -2393,6 +2395,8 @@ class ControlPlaneRepository:
         normalized = str(provider or "").strip().lower()
         if normalized == "schwab":
             return "Schwab"
+        if normalized == "massive":
+            return "Massive"
         return "Polygon"
 
     @staticmethod
@@ -4153,6 +4157,14 @@ def build_app(
     async def bot_orb_page() -> str:
         return await _render_bot_page_with_trade_coach("orb")
 
+    @app.get("/bot/momentum-30", response_class=HTMLResponse)
+    async def bot_momentum_30_page() -> str:
+        return await _render_bot_page_with_trade_coach("momentum_30s")
+
+    @app.get("/bot/momentum-60", response_class=HTMLResponse)
+    async def bot_momentum_60_page() -> str:
+        return await _render_bot_page_with_trade_coach("momentum_60s")
+
     @app.get("/bot/30s-probe", response_class=HTMLResponse)
     async def bot_30s_probe_page() -> str:
         return await _render_bot_page_with_trade_coach("macd_30s_probe")
@@ -4244,7 +4256,13 @@ def _attach_schwab_token_refresher_status(app_obj: Any, data: dict[str, Any]) ->
         data["schwab_token_refresher"] = {"health": "unknown", "last_error": "status unavailable"}
 
 
-CONTROL_PLANE_ACTIVE_BOT_CODES = ("schwab_1m_v2", "polygon_30s", "orb")
+CONTROL_PLANE_ACTIVE_BOT_CODES = (
+    "schwab_1m_v2",
+    "momentum_30s",
+    "momentum_60s",
+    "polygon_30s",
+    "orb",
+)
 CONTROL_PLANE_DOCK_SERVICES = (
     "market-data-gateway",
     "oms-risk",
@@ -4521,6 +4539,8 @@ def _compact_service_status(service: dict[str, Any] | None, *, token_status: dic
 def _compact_bot_page_url(code: str) -> str:
     return {
         "schwab_1m_v2": "/bot/1m-schwab-v2",
+        "momentum_30s": "/bot/momentum-30",
+        "momentum_60s": "/bot/momentum-60",
         "polygon_30s": "/bot/30s-polygon",
         "orb": "/bot/orb",
     }.get(code, "/")
@@ -4531,6 +4551,9 @@ def _compact_bot_route_line(code: str, bot: dict[str, Any]) -> str:
         return "live · schwab streamer · sole session"
     if code == "polygon_30s":
         return "paper exit · mirrored Schwab + Webull fills · Polygon feed"
+    if code in {"momentum_30s", "momentum_60s"}:
+        window = "30-second" if code == "momentum_30s" else "60-second"
+        return f"paper · +30% over trailing {window} low · Massive raw trades"
     if code == "orb":
         account = str(bot.get("account_name") or "-")
         mode = "paper" if account.startswith("paper:") else "live"
@@ -4545,7 +4568,12 @@ def _compact_bot_card(
     latest_strategy_bars: dict[str, dict[str, Any]],
 ) -> str:
     code = str(bot.get("strategy_code") or "")
-    service = service_by_name.get("schwab-1m-v2") if code == "schwab_1m_v2" else None
+    if code == "schwab_1m_v2":
+        service = service_by_name.get("schwab-1m-v2")
+    elif code in {"momentum_30s", "momentum_60s"}:
+        service = service_by_name.get("momentum-paper")
+    else:
+        service = None
     details = dict(service.get("details", {}) if service else {})
     data_health = dict(bot.get("data_health", {}) or {})
     data_flow = str(details.get("data_flow") or data_health.get("status") or "healthy")
@@ -4573,6 +4601,13 @@ def _compact_bot_card(
     if code == "polygon_30s":
         stream_tone = lag_tone if lag_tone != "good" else "good"
         stream_label = "bars stale" if lag_tone != "good" else "feed: polygon"
+    elif code in {"momentum_30s", "momentum_60s"}:
+        stream_tone = _tone_for_status(streamer)
+        stream_label = (
+            "feed: Massive T.*"
+            if streamer == "true"
+            else "feed: waiting" if not streamer else f"feed: {streamer}"
+        )
     else:
         stream_tone = _tone_for_status(streamer)
         stream_label = "streamer: connected" if streamer == "true" else "streamer: not exposed" if not streamer else f"streamer: {streamer}"
@@ -4846,6 +4881,20 @@ BOT_PAGE_META = {
         "badge": "PG",
         "color": "#ff8f00",
         "path": "/bot/30s-polygon",
+    },
+    "momentum_30s": {
+        "title": "Momentum 30",
+        "nav_title": "Momentum 30",
+        "badge": "M30",
+        "color": "#ff8a3d",
+        "path": "/bot/momentum-30",
+    },
+    "momentum_60s": {
+        "title": "Momentum 60",
+        "nav_title": "Momentum 60",
+        "badge": "M60",
+        "color": "#ffc857",
+        "path": "/bot/momentum-60",
     },
     "macd_30s_probe": {
         "title": "Mai Tai 30-Second Probe Bot",
@@ -6006,6 +6055,29 @@ def _render_bot_detail_page(
                     </table>
                 </div>
             </section>"""
+    momentum_panel = ""
+    if strategy_code in {"momentum_30s", "momentum_60s"}:
+        momentum = dict(data_health.get("momentum_paper", {}) or {})
+        detector_status = str(momentum.get("detector_status", "UNEXERCISED"))
+        momentum_panel = f"""
+            <section class="panel full accent-panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>{escape(meta["title"])} Paper Study</h2>
+                        <div class="sub">Broker-disconnected Massive raw-trade observation. This page cannot place or route an order.</div>
+                    </div>
+                    <span class="count accent">{escape(detector_status)}</span>
+                </div>
+                <div class="hero-grid">
+                    <div class="hero-card"><span>Events</span><strong>{int(momentum.get("events", 0) or 0)}</strong><small>More than 10 in one morning is DETECTOR_SUSPECT</small></div>
+                    <div class="hero-card"><span>Filled</span><strong>{int(momentum.get("filled", 0) or 0)}</strong><small>First eligible print strictly after detection</small></div>
+                    <div class="hero-card"><span>Open paths</span><strong>{int(momentum.get("open", 0) or 0)}</strong><small>Evidence continues through fill + 600 seconds</small></div>
+                    <div class="hero-card"><span>Closed</span><strong>{int(momentum.get("closed", 0) or 0)}</strong><small>{int(momentum.get("no_fill", 0) or 0)} no-fill · {int(momentum.get("unanswerable", 0) or 0)} unanswerable</small></div>
+                    <div class="hero-card"><span>Gross paper P&amp;L</span><strong>${_as_float(momentum.get("gross_pnl")):+,.2f}</strong><small>$500 notional per event; no fees or borrow</small></div>
+                    <div class="hero-card"><span>Excluded raw prints</span><strong>{int(momentum.get("excluded_prints", 0) or 0)}</strong><small>Condition metadata failed closed</small></div>
+                </div>
+                <div class="panel-copy"><strong>Frozen rule:</strong> +30% over the trailing {30 if strategy_code == "momentum_30s" else 60}-second eligible-print low; +5% target, -15% stop, then first print after 600 seconds. A quiet day is UNEXERCISED, never a pass.</div>
+            </section>"""
     completed_positions_panel = f"""
             <section class="panel full">
                 <div class="panel-header">
@@ -6640,6 +6712,7 @@ def _render_bot_detail_page(
             {data_health_panel}
             {runner_status_panel}
             {paper_exit_panel}
+            {momentum_panel}
 
             <section class="panel full">
                 <div class="panel-header">

@@ -1,0 +1,24 @@
+[Unit]
+Description=Project Mai Tai Momentum 30 / Momentum 60 broker-disconnected paper observer
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+ExecStart=/home/trader/project-mai-tai/.venv/bin/mai-tai-momentum-paper
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+StandardOutput=append:/var/log/project-mai-tai/momentum-paper.log
+StandardError=append:/var/log/project-mai-tai/momentum-paper.log
+SyslogIdentifier=project-mai-tai-momentum-paper
+
+[Install]
+WantedBy=project-mai-tai.target

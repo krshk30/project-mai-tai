@@ -567,6 +567,39 @@ class OrbPaperEvent(Base):
     )
 
 
+class MomentumPaperEvent(Base):
+    """Append-only Momentum paper evidence; never a broker order or fill."""
+
+    __tablename__ = "momentum_paper_events"
+    __table_args__ = (
+        UniqueConstraint("event_key", name="uq_momentum_paper_events_event_key"),
+        Index(
+            "ix_momentum_paper_events_session_strategy",
+            "session_date",
+            "strategy_code",
+            "observed_at",
+        ),
+        Index(
+            "ix_momentum_paper_events_logical",
+            "logical_id",
+            "observed_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    event_key: Mapped[str] = mapped_column(String(255))
+    logical_id: Mapped[str] = mapped_column(String(255), index=True)
+    strategy_code: Mapped[str] = mapped_column(String(32), index=True)
+    event_type: Mapped[str] = mapped_column(String(32), index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+
+
 class V2ConfirmationExitEvaluation(Base):
     """Durable one-shot v2 ATR decision and Redis outbox."""
 
