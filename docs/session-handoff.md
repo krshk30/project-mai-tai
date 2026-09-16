@@ -17,8 +17,8 @@ Integrator for this rotation; `codex-2` executed both deploys and reviews this P
 |---|---|
 | box (deployed) | **`7bdcbd004a019c60124b8f00e467fa3b3146c798`** — read FROM THE BOX 19:46 ET, branch `main`, clean. Two sync-only deploys today: `f2d45d4` at 05:40 ET (#982), `7bdcbd0` at ~19:35 ET (#983 #984 #985 #986). Both executed by `codex-2` on operator GO |
 | GitHub main | **`7bdcbd0`** — identical. Merging this handoff PR moves main ahead by docs only — DOCS-ONLY DIVERGENCE rule holds; no sync, no restart |
-| gate pin | `/home/trader/preopen.sh`: ⛔ **`EXPECTED_DATE=2026-09-15` — MUST be bumped to `2026-09-16` before 06:30 ET or the run-window check goes red for the wrong reason** · `EXPECTED_SHA=7bdcbd004…` (bumped with the sync) · `EXPECTED_PID=1628896` · `EXPECTED_START='Mon 2026-09-14 21:40:48 UTC'` · snapshot `v2-restart-before-20260914.json` unchanged · report `v2-restart-evidence-20260915.md` · still `--expected-quiet-service reconciler` |
-| open PRs | **#987** codex DRAFT "Analyze ATR first-loss follow-through" (research, not deployed) — this handoff PR excepted |
+| gate pin | `/home/trader/preopen.sh`: `EXPECTED_DATE=2026-09-16` (bumped by `codex-2` ~19:50 ET, read back from the box 20:20 ET) · `EXPECTED_SHA=7bdcbd004…` (bumped with the sync) · `EXPECTED_PID=1628896` · `EXPECTED_START='Mon 2026-09-14 21:40:48 UTC'` · snapshot `v2-restart-before-20260914.json` unchanged · report `v2-restart-evidence-20260915.md` · still `--expected-quiet-service reconciler` |
+| open PRs | **none** — this handoff PR excepted. #987 (codex draft, first-loss follow-through) was CLOSED at 23:44 UTC and its branch deleted; nothing from it is carried |
 | exposure | **19:51 ET: open managed rows 0 · nonzero broker positions 0** (gate snapshot instrument 17:21 ET: 2/2 accounts, 0/0) |
 | merges 09-15 (**5**) | **#982** BARCONT1 live-at-stop floor · **#983** overlap.sh bash-3.2 patch package (docs) · **#984** PRE07 shadow report · **#985** PHANTOM1 read-time clock + row reasons · **#986** selection census (pre-registered, result FAIL) |
 | local toolkit | `~/.claude/mai-tai-fleet/overlap.sh` patched from #983 and RE-PINNED 09:10 ET (sha `c10ba936…`); `board.sh overlap` runs on Apple bash 3.2 |
@@ -53,7 +53,7 @@ before rows=1, after 0. Do not edit the snapshot.
 
 # ⭐⭐ WEDNESDAY 2026-09-16 PRE-OPEN
 
-1. **Before 06:30 ET:** bump `EXPECTED_DATE` in `/home/trader/preopen.sh` to `2026-09-16`, then `ssh mai-tai-vps /home/trader/preopen.sh`.
+1. **~06:30 ET:** `ssh mai-tai-vps /home/trader/preopen.sh`. `EXPECTED_DATE` is already `2026-09-16`.
    Green = only the known flat-before FAIL. **Bar continuity is now floored at the stop (#982):** a symbol that left the watchlist before a
    restart and rejoined after no longer reads as a restart hole (`bracketing pairs NOT live at stop … excluded=N` on the row).
 2. **PHANTOM1 now names its reason** (#985): a COULD_NOT_TELL page carries `reasons=[acct:sym VERDICT: …]`. The 09-15 09:20 page was a clock
@@ -131,7 +131,6 @@ is attached at −8%, the software hard stop at −8% is REDUNDANT and can only 
 | **OVSD1 — Webull stand-down fails OPEN** | 5th instance today (VEEA 13:49); software hard stop races the attached pair; CEILING bounds it at 20. Also the confirmation-exit `pair_cancel_unconfirmed` refusal (MYSZ 11:21) is the same reservation class | codex-2 (pair-release lane, parked) |
 | **Live-fill census** | same instrument as #986, unit = logical live fill, entry = fill price; widen the descriptive match to [flip−1m, flip+2m) | codex-2 (pre-register; claude-1 reviews design first) |
 | **Webull PRICE_AGGRESSIVE escalation** · **reprice window** | carried from 09-14 | codex-2 |
-| **#987 first-loss follow-through** | DRAFT opened 18:48 UTC, not read by claude-1 | codex-2 |
 | **Schwab-only sub-bar latch shape** | held gate is sampled per bar | unassigned |
 | **pre-close entry cutoff** · **07:00–07:08 blind window** · **exit geometry (+3/−5)** | all RULE changes; evidence on file, no build without a ruling | **operator** |
 | confirmation-exit race · STOPMKT probe · PROV1 · 0.5% band · F6/F8/F9/F10 · BNC · claim overhang · fan-out size · ELIG · AMEND1 · REJ1 silence | carried unchanged | unassigned |

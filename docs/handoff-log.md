@@ -4068,5 +4068,5 @@ clamps it to run start, and carries the census's per-row reason into the page. C
 at 7bdcbd0. The bash-3.2 `mapfile` defect in the local `overlap.sh` (carried since 09-09) was patched via a review package (#983) and re-pinned.
 
 ### For Wednesday
-Bump `EXPECTED_DATE` to 2026-09-16 before 06:30 ET. Expect the one known flat-before FAIL until the next restart snapshot. RESERVE1 reads
+`EXPECTED_DATE` is already 2026-09-16 (codex, ~19:50 ET). #987 was closed and its branch deleted at 23:44 UTC. Expect the one known flat-before FAIL until the next restart snapshot. RESERVE1 reads
 RECURRENCE=20 until the 04:00 anchor — that is the VEEA storm, not new exposure.
