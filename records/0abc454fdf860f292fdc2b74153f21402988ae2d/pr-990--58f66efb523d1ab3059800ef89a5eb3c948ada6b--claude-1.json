@@ -1,0 +1,9 @@
+{
+  "pr_number": 990,
+  "range_base": "58f66efb523d1ab3059800ef89a5eb3c948ada6b",
+  "range_head": "0abc454fdf860f292fdc2b74153f21402988ae2d",
+  "reviewed_at": "2026-09-16T10:38:49Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Pre-registration doc for the SQZ30/SQZ60 paper harness, read in full at c4f400d0 and the amended 0abc454f. Faithful to the frozen spec (04:11-09:29 ET, prior close >= $1, +30% over trailing 30/60 s on eligible prints, next-print fill with 10 s expiry, $500 notional confirmed by the operator, +5%/-15%/600 s exits, stop-first in-second, 20-session P1-P3 grade). Required amendments verified present: A1 path anchored at detect_ts; A3 aggregate-eligibility filter from /v3/reference/conditions, fail-closed, excluded_prints counted, control 6 added. Minor: A2 expected-rate band + DETECTOR_SUSPECT; A4 SIP t frozen, participant y stored only, control 7 added. Isolated service, T.* 04:00-09:30 with symbol-only tail to 09:40:01, no gateway/OMS/live path, polygon_30s retired with rows retained. Docs only; base ancestor of head."
+}
