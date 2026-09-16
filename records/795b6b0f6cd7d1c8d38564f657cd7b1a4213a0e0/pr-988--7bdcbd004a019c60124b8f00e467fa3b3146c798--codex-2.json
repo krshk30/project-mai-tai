@@ -1,0 +1,9 @@
+{
+  "pr_number": 988,
+  "range_base": "7bdcbd004a019c60124b8f00e467fa3b3146c798",
+  "range_head": "795b6b0f6cd7d1c8d38564f657cd7b1a4213a0e0",
+  "reviewed_at": "2026-09-16T00:06:56Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed corrected three-file close-out; correction delta exact; production facts re-derived; frozen manifest byte-identical and 45/45 balanced; validate green."
+}
