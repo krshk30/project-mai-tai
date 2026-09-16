@@ -1,0 +1,9 @@
+{
+  "pr_number": 992,
+  "range_base": "7615475274800cbfb80a4ffcdc9f178477dfd353",
+  "range_head": "bba38ce89f9e1c2224d6205294130cdde6555688",
+  "reviewed_at": "2026-09-16T22:54:50Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Independent review of the Webull resting-mirror wire lag fix and crossed-stop shape guard. Read the full diff (oms/service.py: primary skips inline _reconcile_after_intent, stamps fresh OMS ask/last for the mirror, emits [OMS-FANOUT-MIRROR-LAG]; broker_adapters/schwab.py: mirror-enabled CW-v2-resting primary returns after acceptance instead of polling to terminal; broker_adapters/webull.py: rth_resting_mirror BUY stop-limit revalidated at the wire \u2014 convert to LIMIT within the band when market >= stop, ASK_PAST_BAND abandon above the limit, NO_FRESH_QUOTE abandon on a stale/missing snapshot). Verified the periodic broker sync (15 s) remains the fill reader and the Schwab primary keeps its native OTOCO bracket, so protection is broker-side. Ran 120 tests at head (latency, webull, schwab, event-source); my own mutations: dropping the convert-to-limit branch fails test_crossed_resting_stop_converts_to_limit_at_the_same_band; making the primary poll again fails test_schwab_resting_fanout_primary_does_not_poll_before_its_sibling. ruff clean. Census read: 47 timed pairs, median 12.249 s, 44 > 10 s, drop-MEDS 12.129 s. WATCH CONDITION (not a blocker): NO_FRESH_QUOTE abandons a mirror when the OMS quote cache is older than 2000 ms; quotes are gateway-subscription scoped so RTH watchlist names should be fresh, but the first sessions must show zero shape=abandoned_no_fresh_quote on the lag line, else the fallback is revisited."
+}
