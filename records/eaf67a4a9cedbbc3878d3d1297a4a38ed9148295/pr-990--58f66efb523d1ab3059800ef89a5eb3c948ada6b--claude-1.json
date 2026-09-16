@@ -1,0 +1,9 @@
+{
+  "pr_number": 990,
+  "range_base": "58f66efb523d1ab3059800ef89a5eb3c948ada6b",
+  "range_head": "eaf67a4a9cedbbc3878d3d1297a4a38ed9148295",
+  "reviewed_at": "2026-09-16T10:44:22Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review of the renamed/condensed protocol (docs/momentum-paper-bot.md, 104 lines, old squeeze-paper-harness.md removed). Read in full; every frozen rule from the pinned 0abc454f survives: 04:11-09:29:59 ET, prior close >= $1 at 03:55, symbol shape + warrant label, aggregate-eligibility on condition codes fail-closed with excluded counts, SIP t only, reference [t-window,t), >300 s dedupe per bot, next-print fill / 10 s NO_FILL, $500 operator-confirmed, +5%/-15%/600 s, stop-first in-second, UNANSWERABLE, detect-anchored path, isolated mai-tai-momentum-paper service with T.* 04:00-09:30 and symbol-only tail to 09:40:01, no REST backfill, polygon_30s retired rows kept, DETECTOR_SUSPECT band, 20-session grade P1-P4 with drop-one, 16 fixture controls + mutations, T.* entitlement proof, after-close deploy of the new unit only. Names changed only (momentum_30s/momentum_60s). Base ancestor of head; docs only."
+}
