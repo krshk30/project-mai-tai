@@ -2,7 +2,8 @@
 
 **Latest result (2026-09-16):** independently reviewed and accepted for implementation. The
 operator confirmed the **$500 paper amount**. The later naming and condensation changed no trading,
-evidence, safety, or grading rule. Implementation has not started.
+evidence, safety, or grading rule. Implementation is reviewed separately; this protocol does not
+authorize installation or enablement.
 
 These rules are frozen before implementation and before the first paper event. They cannot be
 tuned after paper trading begins; any later hypothesis must be a separately labeled offline study.

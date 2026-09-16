@@ -50,7 +50,10 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.log import configure_logging
-from project_mai_tai.runtime_registry import strategy_registration_map
+from project_mai_tai.runtime_registry import (
+    polygon_30s_runtime_enabled,
+    strategy_registration_map,
+)
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.services.scanner_confirmed_capture import capture_events
 from project_mai_tai.settings import Settings, get_settings
@@ -6065,7 +6068,8 @@ class StrategyEngineService:
             self.settings.dashboard_snapshot_persistence_enabled
             or self.settings.strategy_history_persistence_enabled
         )
-        paper_durability_required = self.settings.strategy_polygon_30s_enabled
+        polygon_paper_enabled = polygon_30s_runtime_enabled(self.settings)
+        paper_durability_required = polygon_paper_enabled
         self.session_factory = (
             session_factory
             if session_factory is not None
@@ -6083,7 +6087,7 @@ class StrategyEngineService:
         self.paper_exit_runtime: PaperExitRuntime | None = None
         self.paper_polygon_runtime: PaperPolygonRuntimeAdapter | None = None
         paper_now_provider = now_provider or utcnow
-        if self.settings.strategy_polygon_30s_enabled:
+        if polygon_paper_enabled:
             if self.session_factory is None:
                 raise RuntimeError("polygon paper-exit requires its durable database store")
             self.paper_exit_store = PaperExitStore(self.session_factory)

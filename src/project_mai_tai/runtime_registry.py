@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from project_mai_tai.momentum_paper.models import MOMENTUM_ACCOUNT_NAME
 from project_mai_tai.orb_paper_store import ORB_PAPER_ACCOUNT_NAME
 from project_mai_tai.settings import Settings
 
@@ -27,6 +28,12 @@ class BrokerAccountRegistration:
     is_active: bool = True
 
 
+def polygon_30s_runtime_enabled(settings: Settings) -> bool:
+    """Keep Polygon as the rollback study, but never run both paper studies."""
+
+    return settings.strategy_polygon_30s_enabled and not settings.momentum_paper_enabled
+
+
 def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegistration, ...]:
     registrations: list[StrategyRegistration] = []
     if settings.strategy_macd_30s_enabled:
@@ -49,7 +56,7 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                 },
             )
         )
-    if settings.strategy_polygon_30s_enabled:
+    if polygon_30s_runtime_enabled(settings):
         registrations.append(
             StrategyRegistration(
                 code="polygon_30s",
@@ -68,6 +75,30 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                 },
             )
         )
+    if settings.momentum_paper_enabled:
+        for code, display_name, interval_secs in (
+            ("momentum_30s", "Momentum 30", 30),
+            ("momentum_60s", "Momentum 60", 60),
+        ):
+            registrations.append(
+                StrategyRegistration(
+                    code=code,
+                    display_name=display_name,
+                    account_name=MOMENTUM_ACCOUNT_NAME,
+                    interval_secs=interval_secs,
+                    runtime_kind="momentum_paper",
+                    execution_mode="paper",
+                    metadata={
+                        "account_name": MOMENTUM_ACCOUNT_NAME,
+                        "account_display_name": "Paper Simulation",
+                        "interval_secs": interval_secs,
+                        "runtime_kind": "momentum_paper",
+                        "provider": "none",
+                        "market_data_provider": "massive",
+                        "isolated_service": True,
+                    },
+                )
+            )
     if settings.strategy_schwab_1m_enabled:
         registrations.append(
             StrategyRegistration(
@@ -259,7 +290,7 @@ def strategy_registration_map(settings: Settings) -> dict[str, StrategyRegistrat
 def configured_broker_account_registrations(settings: Settings) -> tuple[BrokerAccountRegistration, ...]:
     registrations: dict[str, BrokerAccountRegistration] = {}
     for strategy in configured_strategy_registrations(settings):
-        if strategy.code == "orb":
+        if strategy.code in {"orb", "momentum_30s", "momentum_60s"}:
             continue
         registrations.setdefault(
             strategy.account_name,
