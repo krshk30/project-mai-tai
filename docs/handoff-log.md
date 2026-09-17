@@ -4071,7 +4071,7 @@ at 7bdcbd0. The bash-3.2 `mapfile` defect in the local `overlap.sh` (carried sin
 `EXPECTED_DATE` is already 2026-09-16 (codex, ~19:50 ET). #987 was closed and its branch deleted at 23:44 UTC. Expect the one known flat-before FAIL until the next restart snapshot. RESERVE1 reads
 RECURRENCE=20 until the 04:00 anchor — that is the VEEA storm, not new exposure.
 
-## 2026-09-16 — Tuesday: the chart's flip proven bar-for-bar, a stale-flip cap shipped, the mirror's 12-second lag found, and a seed that failed its own gate
+## 2026-09-16 — Wednesday: the chart's flip proven bar-for-bar, a stale-flip cap shipped, the mirror's 12-second lag found, and a seed that failed its own gate
 
 **Integrator `claude-1`; every deploy executed by `codex-2`. Box `58f66ef` (06:20 ET, #989) → `07cba271` (19:43–19:55 ET).**
 
@@ -4124,7 +4124,7 @@ exactly why the gate was frozen first.
 ### Momentum paper bots
 #990 froze the protocol (04:11–09:29:59 ET, prior close ≥ $1, +30% over trailing 30/60 s eligible-print low, $500, +5%/−15%/600 s);
 #991 built the isolated `project-mai-tai-momentum-paper` unit; activated 19:54 ET with migration `20260916_0021`, control and
-strategy restarted 19:55 ET, `polygon_30s` runtime removed. Zero events tonight is correct; first read 09:35 ET.
+strategy restarted 19:55 ET. The `polygon_30s` paper strategy was an embedded strategy-engine card/runtime, never a standalone unit; its card and runtime are retired, its history is retained for audit. Zero events tonight is correct; first read 09:35 ET.
 
 ### Process
 Pinned #992 and #994 (twice — the rebase onto #992 voided the first #994 pin; I forgot the superseded-record deletion and CI caught it;

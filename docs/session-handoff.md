@@ -31,7 +31,7 @@ Integrator for this rotation; `codex-2` executed every deploy and reviews this P
 | **orb** (paper) | **2051823** | 10:20:40 | #989 — 06:20 ET, before the open, `codex-2` on operator GO |
 | **schwab-1m-v2** | **2269797** | 23:43:43 | #993 live; #994 code present, `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_MASSIVE_SEED_ENABLED` read **false** from `/proc/2269797/environ` |
 | **oms** | **2270050** | 23:44:12 | #992 |
-| **momentum-paper** (new unit) | **2273356** | 23:54:55 | #991 activation — `project-mai-tai-momentum-paper.service`; old `polygon_30s` runtime unit removed (0 units match) |
+| **momentum-paper** (new unit) | **2273356** | 23:54:55 | #991 activation — `project-mai-tai-momentum-paper.service`. The `polygon_30s` paper strategy was an embedded strategy-engine card/runtime (never a standalone unit); its card and runtime are retired, historical records retained for audit |
 | **control** | **2273848** | 23:55:17 | #991 card activation |
 | **strategy** | **2274173** | 23:55:38 | #991 activation. ⛔ codex's deploy summary said strategy was untouched — it was untouched by the #992/#993 window and restarted by the later Momentum activation |
 | reconciler 1626620 · market-data 2202865 · market-capture 2202817 | — | unchanged (09-14 / 08-30) | — |
