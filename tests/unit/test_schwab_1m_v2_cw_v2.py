@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+import logging
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.settings import Settings
@@ -556,3 +557,115 @@ def test_LHAI_flat_close_cannot_place_second_first_slot_in_same_segment(caplog):
     assert not strat._pending_intents, "a consumed first slot must not place another order"
     assert "[V2-RESTING-SLOT-CONSUMED]" in caplog.text
     assert "segment_id=1788356940000" in caplog.text
+
+
+def test_consumed_resting_slot_emits_one_line_per_eligible_bar(caplog):
+    strat = _in_window(
+        _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    )
+    state = strat.watchlist_state("MEDS")
+    state.fanout_segment_id = 1_789_646_400_000
+    state.cw_resting_taken = True
+    caplog.set_level(logging.INFO)
+
+    for offset, age in enumerate((4, 5, 6)):
+        bar_ts = 1_789_646_400_000 + offset * 60_000
+        state.bars.append(_bar(4.20, vol=25_000, ts=bar_ts))
+        strat._now_ms = lambda bar_ts=bar_ts: bar_ts + 30_000
+        strat._cw_v2_resting_track(
+            state,
+            _sig(state="short", trail=4.1951, age=age),
+        )
+
+    per_bar = [
+        message
+        for message in caplog.messages
+        if "[V2-RESTING-SUPPRESSED-BAR]" in message
+    ]
+    consumed = [
+        message for message in caplog.messages if "[V2-RESTING-SLOT-CONSUMED]" in message
+    ]
+    assert len(per_bar) == 3
+    assert len(consumed) == 1
+    assert [f"suppressed_bars={index}" in message for index, message in enumerate(per_bar, 1)] == [
+        True,
+        True,
+        True,
+    ]
+    assert "bar_ts=1789646400000" in per_bar[0]
+    assert "trail=4.1951" in per_bar[0]
+    assert "atr_state_age=4" in per_bar[0]
+
+
+def test_fresh_sell_resets_suppressed_bar_count_for_the_next_segment(caplog):
+    strat = _in_window(
+        _strat(
+            strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True,
+            strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+        )
+    )
+    state = strat.watchlist_state("MEDS")
+    state.cw_arm_bar_ts = 100
+    state.cw_resting_taken = True
+    caplog.set_level(logging.INFO)
+
+    for ts in (101, 102):
+        state.bars.append(_bar(4.20, vol=25_000, ts=ts))
+        strat._now_ms = lambda ts=ts: ts
+        strat._cw_v2_resting_track(state, _sig(state="short", trail=4.1951, age=4))
+    assert state.cw_resting_suppressed_bars == 2
+
+    state.bars.append(_bar(4.10, vol=25_000, ts=103))
+    strat._cw_v2_track(state, _sig(flip="SELL", state="short", trail=4.1951, age=1))
+    assert state.cw_resting_suppressed_segment_id == 0
+    assert state.cw_resting_suppressed_bars == 0
+
+    state.cw_arm_bar_ts = 200
+    state.cw_resting_taken = True
+    state.bars.append(_bar(4.20, vol=25_000, ts=201))
+    strat._now_ms = lambda: 201
+    strat._cw_v2_resting_track(state, _sig(state="short", trail=4.1951, age=4))
+
+    assert state.cw_resting_suppressed_bars == 1
+    assert "segment_id=200" in caplog.messages[-1]
+    assert "suppressed_bars=1" in caplog.messages[-1]
+
+
+def test_segment_id_change_without_a_sell_restarts_the_suppressed_bar_count(caplog):
+    strat = _in_window(
+        _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    )
+    state = strat.watchlist_state("MEDS")
+    state.cw_resting_taken = True
+    caplog.set_level(logging.INFO)
+
+    for ts in (101, 102):
+        state.bars.append(_bar(4.20, vol=25_000, ts=ts))
+        strat._now_ms = lambda ts=ts: ts
+        strat._cw_v2_resting_track(state, _sig(state="short", trail=4.1951, age=4))
+    assert state.cw_resting_suppressed_bars == 2
+
+    state.fanout_segment_id = 300
+    state.bars.append(_bar(4.20, vol=25_000, ts=103))
+    strat._now_ms = lambda: 103
+    strat._cw_v2_resting_track(state, _sig(state="short", trail=4.1951, age=5))
+
+    assert "segment_id=300" in caplog.messages[-1]
+    assert "suppressed_bars=1" in caplog.messages[-1]
+    assert sum("[V2-RESTING-SLOT-CONSUMED]" in message for message in caplog.messages) == 2
+
+
+def test_open_resting_slot_places_without_a_suppressed_bar_line(caplog):
+    strat = _in_window(
+        _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    )
+    state = strat.watchlist_state("MEDS")
+    bar_ts = 1_789_646_400_000
+    state.bars.append(_bar(4.20, vol=25_000, ts=bar_ts))
+    strat._now_ms = lambda: bar_ts + 30_000
+    caplog.set_level(logging.INFO)
+
+    strat._cw_v2_resting_track(state, _sig(state="short", trail=4.1951, age=4))
+
+    assert [draft.intent_type for draft in strat._pending_intents] == ["open"]
+    assert "[V2-RESTING-SUPPRESSED-BAR]" not in caplog.text

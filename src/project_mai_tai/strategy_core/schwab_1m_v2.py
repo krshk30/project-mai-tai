@@ -251,6 +251,7 @@ class SymbolState:
     cw_resting_taken: bool = False              # the resting slot for THIS cross is used
     cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
     cw_resting_suppressed_segment_id: int = 0   # SLOT2 marker dedupe; policy remains cw_resting_taken
+    cw_resting_suppressed_bars: int = 0         # eligible bars suppressed by the consumed slot
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
     cw_rule7_logged_bar_ts: int = 0            # dedupe for [V2-CW-RULE7-BLOCK]: one line per forming
     #                                            bar, never per quote (retry-storm shape otherwise)
@@ -1728,6 +1729,7 @@ class SchwabV2Strategy:
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
         state.cw_resting_suppressed_segment_id = 0
+        state.cw_resting_suppressed_bars = 0
 
     def _end_flip_owner_on_sell(self, state: SymbolState) -> None:
         if not self._flip_owned_first_entry_enabled:
@@ -3790,7 +3792,8 @@ class SchwabV2Strategy:
             "flip_level=%.4f entries_this_flip=%d max_per_flip=%d emit_claimed=%s "
             "bars_since_exit=%d reclaim_gap=%d entries_held=%s pos_qty=%s atr_state=%s "
             "atr_state_age=%d atr_trail=%s bars=%d cw_arm_bar_ts=%d "
-            "cw_resting_suppressed_segment_id=%d cw_resting_taken=%s cw_reclaim_taken=%s "
+            "cw_resting_suppressed_segment_id=%d cw_resting_suppressed_bars=%d "
+            "cw_resting_taken=%s cw_reclaim_taken=%s "
             "resting_below_floor_bars=%d fanout_segment_id=%d position_qty_held=%s resting_active=%s "
             "resting_flip_ms=%d resting_level=%.4f resting_slot=%s "
             "flip_owner_evidence_at_ms=%d flip_owner_evidence_readable=%s "
@@ -3802,7 +3805,8 @@ class SchwabV2Strategy:
             self._entries_held, state.position_qty,
             state.atr_state, state.atr_state_age, state.atr_trail, len(state.bars),
             state.cw_arm_bar_ts, state.cw_resting_suppressed_segment_id,
-            state.cw_resting_taken, state.cw_reclaim_taken, state.resting_below_floor_bars,
+            state.cw_resting_suppressed_bars, state.cw_resting_taken,
+            state.cw_reclaim_taken, state.resting_below_floor_bars,
             state.fanout_segment_id,
             state.position_qty_held, state.resting_active, state.resting_flip_ms,
             state.resting_level, state.resting_slot, state.flip_owner_evidence_at_ms,
@@ -4422,7 +4426,12 @@ class SchwabV2Strategy:
           3. SILENCE-ON-FILL -- once the flip fires while resting, a fill may be settling. Hold a grace
              window for `position_qty` to confirm before touching anything, instead of re-emitting into
              the position-sync lag.
-        At most ONE draft per bar (never a cancel AND a place) => never two live buy orders."""
+        At most ONE draft per bar (never a cancel AND a place) => never two live buy orders.
+
+        `[V2-RESTING-SUPPRESSED-BAR]` counts only bars that reach the consumed-slot branch. It sits
+        after the liquidity-floor, minimum-short-bars, live-bar and stop<=ask gates, so a bar that
+        fails any of those remains silent. The line means "would have rested but for the slot",
+        not "every short bar"."""
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
             return
         if self._entries_held:   # boot-hold suppresses all entries
@@ -4522,6 +4531,7 @@ class SchwabV2Strategy:
                     marker_key = segment_id if segment_id > 0 else -1
                     if state.cw_resting_suppressed_segment_id != marker_key:
                         state.cw_resting_suppressed_segment_id = marker_key
+                        state.cw_resting_suppressed_bars = 0
                         logger.warning(
                             "[V2-RESTING-SLOT-CONSUMED] %s segment_id=%d attempted=1 "
                             "suppressed=1 reason=first_slot_already_consumed status=MEASURED — "
@@ -4529,6 +4539,18 @@ class SchwabV2Strategy:
                             state.symbol,
                             segment_id,
                         )
+                    state.cw_resting_suppressed_bars += 1
+                    logger.info(
+                        "[V2-RESTING-SUPPRESSED-BAR] %s segment_id=%d bar_ts=%d trail=%.4f "
+                        "atr_state_age=%d suppressed_bars=%d "
+                        "reason=first_slot_already_consumed",
+                        state.symbol,
+                        segment_id,
+                        bar_ms,
+                        trail,
+                        state_age,
+                        state.cw_resting_suppressed_bars,
+                    )
                     return
                 self._queue_resting_place(state, trail)
                 return
