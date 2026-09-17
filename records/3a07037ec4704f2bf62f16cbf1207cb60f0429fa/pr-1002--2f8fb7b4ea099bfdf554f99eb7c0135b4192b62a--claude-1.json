@@ -1,0 +1,9 @@
+{
+  "pr_number": 1002,
+  "range_base": "2f8fb7b4ea099bfdf554f99eb7c0135b4192b62a",
+  "range_head": "3a07037ec4704f2bf62f16cbf1207cb60f0429fa",
+  "reviewed_at": "2026-09-17T14:37:28Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Read the full 2-file diff. Asked WHICH POPULATION THE CHANGE REACHES first: RESERVE1/BOOT1/PHANTOM1 pages come from known_defect_regression_watch.py, which loads unexercised_watch as its only delivery path (line 62, page_fn=delivery.page) - so fixing unexercised_watch.page() does reach the three sessions of unprovable RESERVE1 pages that prompted this. The sender now appends curl -w http_code, parses the ntfy JSON id, prints one [NTFY-DELIVERY] accepted=/http_status=/message_id=/title= line per attempt (stdout -> the watch's cron log), and returns True only for 2xx; the caller already leaves a fingerprint un-acked on False, so a non-2xx retries next run. Ran 112/112 (test_unexercised_watch + test_known_defect_regression_watch) from the PR worktree. MY MUTATIONS: M1 accept on returncode alone -> RED (the stubbed HTTP 500 case); M2 receipt line not printed -> RED; M3 drop the returncode clause -> survives, and is an EQUIVALENT mutant: on a curl failure the -w marker yields 000 or is absent, neither is 2xx, so the clause cannot change the result. Could NOT verify: a real ntfy round trip (deploy-time selftest), and that the phone receives what ntfy accepts - accepted-by-ntfy is the strongest receipt the box can hold. OUT of scope and still true: ~20 other ops/health senders (fleet_health_cron.sh, reject_watch_cron.sh, ...) still log no message id."
+}
