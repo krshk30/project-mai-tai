@@ -38,6 +38,16 @@ no detector, threshold, fill, exit, sizing, feed, or service behavior.
 Capture refuses to run before 16:00 ET on a trading day. Tapes are pulled on the trading box after
 close, copied off-box, and replayed off-box. API credentials are never written to a tape or report.
 
+## Screen control result (run after the rules above were committed)
+
+The unscreened 2026-09-17 control checked `11,776` gradable symbols with both minute and one-second
+aggregates: `23,555` API calls in `343.312` seconds. The full one-second scan found `7` candidates;
+the new premarket minute screen retained all `7/7` within a 32-symbol superset, so the set difference
+was empty. The rejected RTH grouped-daily screen retained all `7/7` on this specific day as a
+106-symbol set, so its unsafe mechanism had no measured dropped instance in this control. Three
+adjusted/unadjusted `$1` disagreements (`JAGX`, `MGN`, `NCT`) were excluded and named. The exact
+machine-readable result is `screen-control-2026-09-17.json`.
+
 ```bash
 python -m project_mai_tai.backtest.momentum_live_rule_baseline screen-control \
   --date 2026-09-17 --json /secure/momentum-baseline/screen-control-2026-09-17.json

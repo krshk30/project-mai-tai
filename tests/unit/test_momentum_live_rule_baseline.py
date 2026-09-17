@@ -13,11 +13,13 @@ from project_mai_tai.backtest.momentum_live_rule_baseline import (
     DETECTOR_SUSPECT_DETECTIONS,
     aggregate_has_candidate,
     capture_session,
+    capture_sessions,
     detector_band_decision,
     detector_is_suspect,
     premarket_range_has_candidate,
     prior_close_universe,
     raw_trade_row,
+    read_capture,
     replay_capture,
     replay_directory,
     report_payload,
@@ -170,6 +172,7 @@ def test_capture_downloads_raw_trades_for_aggregate_candidates_only() -> None:
     )
     assert payload["candidate_symbols"] == ["KEEP"]
     assert client.trade_symbols == ["KEEP"]
+    assert client.grouped_calls == 2
     assert payload["api_calls"] == {
         "grouped_daily": 2,
         "minute_aggregates": 2,
@@ -211,6 +214,59 @@ def test_real_screen_shape_keeps_premarket_move_when_rth_daily_range_is_tight() 
     assert result["full_scan_symbols"] == ["MOVE"]
     assert result["premarket_screen_symbols"] == ["MOVE"]
     assert result["old_daily_screen_missing"] == ["MOVE"]
+
+
+def test_capture_lists_window_splits_and_persists_them_in_each_session(tmp_path: Path) -> None:
+    class Client:
+        def list_conditions(self, **kwargs):
+            del kwargs
+            return [
+                {
+                    "id": 12,
+                    "name": "Form T/Extended Hours",
+                    "update_rules": {
+                        "consolidated": {
+                            "updates_high_low": False,
+                            "updates_open_close": False,
+                            "updates_volume": True,
+                        }
+                    },
+                }
+            ]
+
+        def list_splits(self, **kwargs):
+            assert kwargs["execution_date_gte"] == datetime(2026, 9, 17).date()
+            assert kwargs["execution_date_lte"] == datetime(2026, 9, 17).date()
+            return [
+                {
+                    "ticker": "SPLT",
+                    "execution_date": "2026-09-17",
+                    "split_from": 1,
+                    "split_to": 10,
+                    "id": "split-1",
+                }
+            ]
+
+        def get_grouped_daily_aggs(self, day, *, adjusted):
+            del day, adjusted
+            return []
+
+    paths = capture_sessions(
+        Client(),
+        [datetime(2026, 9, 17).date()],
+        tmp_path,
+        now=datetime(2026, 9, 17, 20, tzinfo=UTC),
+    )
+    payload = read_capture(paths[0])
+    assert payload["split_events"] == [
+        {
+            "ticker": "SPLT",
+            "execution_date": "2026-09-17",
+            "split_from": "1",
+            "split_to": "10",
+            "id": "split-1",
+        }
+    ]
 
 
 def test_raw_capture_preserves_the_production_wire_fields() -> None:
