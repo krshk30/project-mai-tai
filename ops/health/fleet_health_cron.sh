@@ -1,7 +1,7 @@
 #!/bin/bash
-# Fleet function-health cron target. The evaluator reports every check, but only an
-# explicitly classified LIVE_MONEY RED can page. PAPER, DIAGNOSTIC, SCOREBOARD, and
-# the aggregate summary remain on-box evidence.
+# Fleet health cron target. LIVE_MONEY findings page only during the established market-hours
+# run. FLEET_RUNTIME restart storms page around the clock. PAPER, DIAGNOSTIC, SCOREBOARD, and the
+# aggregate summary remain on-box evidence.
 #
 # Alerting is transition-based: one page when a live-money condition becomes RED,
 # silence while it remains RED, and silent recovery. Delivery must be accepted before
@@ -22,6 +22,7 @@ touch "$ACTIVE"
 
 STAMP=$(TZ=America/New_York date '+%F %H:%M:%S %Z')
 TODAY=$(TZ=America/New_York date +%F)
+ETDOW=$(TZ=America/New_York date +%u)
 ETMIN=$(( 10#$(TZ=America/New_York date '+%H') * 60 + 10#$(TZ=America/New_York date '+%M') ))
 
 send_ntfy() {  # $1=title $2=priority $3=tags $4=body
@@ -38,24 +39,27 @@ if [ "$SELFTEST" -eq 1 ]; then
   exit "$RESULT"
 fi
 
-if [ "${FLEET_HEALTH_TEST_MODE:-0}" != "1" ]; then
-  # 09:35 <= ET < 16:05. Every evaluator also applies its own correctness guard.
-  if [ "$ETMIN" -lt 575 ] || [ "$ETMIN" -ge 965 ]; then
-    echo "$STAMP  guard: outside 09:35-16:05 ET (now ${ETMIN}min ET); skip" >> "$OUT/cron.log"
-    exit 0
-  fi
+MODE="${FLEET_HEALTH_MODE:-auto}"
+if [ "${FLEET_HEALTH_TEST_MODE:-0}" = "1" ]; then
+  MODE="${FLEET_HEALTH_MODE:-full}"
+elif [ "$MODE" = "auto" ]; then
+  MODE="runtime"
   HOLIDAYS_2026="2026-01-01 2026-01-19 2026-02-16 2026-04-03 2026-05-25 2026-06-19 2026-07-03 2026-09-07 2026-11-26 2026-12-25"
   HOLIDAYS_2027="2027-01-01 2027-01-18 2027-02-15 2027-03-26 2027-05-31 2027-06-18 2027-07-05 2027-09-06 2027-11-25 2027-12-24"
-  case " $HOLIDAYS_2026 $HOLIDAYS_2027 " in
-    *" $TODAY "*)
-      echo "$STAMP  HOLIDAY $TODAY; skipped" >> "$OUT/cron.log"
-      exit 0
-      ;;
-  esac
+  case " $HOLIDAYS_2026 $HOLIDAYS_2027 " in *" $TODAY "*) HOLIDAY=1;; *) HOLIDAY=0;; esac
+  if [ "$ETDOW" -le 5 ] && [ "$HOLIDAY" -eq 0 ] \
+    && [ "$ETMIN" -ge 575 ] && [ "$ETMIN" -lt 965 ]; then
+    MODE="full"
+  fi
 fi
+case "$MODE" in full|runtime) ;; *) echo "invalid FLEET_HEALTH_MODE=$MODE" >&2; exit 3;; esac
 
 OUTFILE="$OUT/latest.txt"
-"$PYTHON" "$CHECK" > "$OUTFILE" 2>&1
+if [ "$MODE" = "runtime" ]; then
+  "$PYTHON" "$CHECK" --runtime-only > "$OUTFILE" 2>&1
+else
+  "$PYTHON" "$CHECK" > "$OUTFILE" 2>&1
+fi
 CODE=$?
 SUMMARY=$(grep '^SUMMARY:' "$OUTFILE" | tail -1)
 VERDICT_COUNT=$(grep -c '^VERDICT:' "$OUTFILE" || true)
@@ -71,8 +75,8 @@ case "$CODE" in
     if [ -z "$SUMMARY" ] || [ "$VERDICT_COUNT" -eq 0 ]; then
       printf '%s|%s\n' "monitor-error" "fleet_health_check produced incomplete output (exit=$CODE)" > "$CURRENT"
     else
-      grep '^VERDICT: RED .* class=LIVE_MONEY ' "$OUTFILE" \
-        | awk '{name=$3; print "live-money:" name "|" $0}' > "$CURRENT" || true
+      grep -E '^VERDICT: RED .* class=(LIVE_MONEY|FLEET_RUNTIME) ' "$OUTFILE" \
+        | awk '{class=""; for (i=1;i<=NF;i++) if ($i ~ /^class=/) {class=$i; sub(/^class=/,"",class)}; prefix=(class=="FLEET_RUNTIME" ? "fleet-runtime" : "live-money"); print prefix ":" $3 "|" $0}' > "$CURRENT" || true
     fi
     ;;
   *)
@@ -90,6 +94,12 @@ while IFS='|' read -r FP DETAIL; do
   if [ "$FP" = "monitor-error" ]; then
     TITLE="mai-tai health-check ERROR"
     BODY="$DETAIL. The monitor may be broken; inspect $OUTFILE."
+  elif [ "${FP#fleet-runtime:}" != "$FP" ]; then
+    NAME=${FP#fleet-runtime:}
+    TITLE="RED mai-tai service runtime: $NAME"
+    BODY="$DETAIL
+
+An expected-running project service is stopped or restarting repeatedly. Inspect systemd before relying on that component."
   else
     NAME=${FP#live-money:}
     TITLE="RED mai-tai live-money check: $NAME"

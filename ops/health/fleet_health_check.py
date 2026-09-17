@@ -24,11 +24,15 @@ So "strategy bars are stale" is RED only when the upstream feed is SIMULTANEOUSL
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+import time
 from typing import Callable, NamedTuple
 from zoneinfo import ZoneInfo
 
@@ -38,6 +42,35 @@ _DSN_CACHE: list[str | None] = []
 _EASTERN_TZ = ZoneInfo("America/New_York")
 _D6_STATUS_PATH = Path("/home/trader/fanout_outcome_acceptance/STATUS.txt")
 _SESSION_RE = re.compile(r"\bsession=(\d{4}-\d{2}-\d{2})\b")
+_RESTART_STATE_PATH = Path(
+    os.environ.get(
+        "FLEET_HEALTH_RESTART_STATE",
+        "/home/trader/fleet_health/restart_counts.json",
+    )
+)
+_MAINTENANCE_PATH = Path(
+    os.environ.get(
+        "FLEET_HEALTH_MAINTENANCE",
+        "/home/trader/fleet_health/maintenance.txt",
+    )
+)
+_SYSTEMCTL_BIN = os.environ.get("FLEET_HEALTH_SYSTEMCTL", "systemctl")
+
+# These units are expected to run continuously. Deliberately inactive units such as trade-coach
+# and tv-alerts stay out of the inventory so an intentional stop cannot become a page.
+RUNTIME_SERVICES = (
+    "project-mai-tai-control.service",
+    "project-mai-tai-market-capture.service",
+    "project-mai-tai-market-data.service",
+    "project-mai-tai-momentum-paper.service",
+    "project-mai-tai-oms.service",
+    "project-mai-tai-orb.service",
+    "project-mai-tai-reconciler.service",
+    "project-mai-tai-schwab-1m-v2.service",
+    "project-mai-tai-strategy.service",
+)
+_RESTART_STORM_LIMIT = 3
+_RESTART_SAMPLE_MAX_AGE_S = 360
 # This check deliberately imports no application code. Keep these full closures in step with the
 # equally explicit fleet_health_cron.sh list; both are versioned and carry the same roll-forward
 # obligation rather than inheriting the health of the application they monitor.
@@ -117,6 +150,352 @@ def _scalar_int(sql: str) -> int | None:
         return int(float(val))
     except ValueError:
         return None
+
+
+class ServiceRuntime(NamedTuple):
+    n_restarts: int
+    active_state: str
+    sub_state: str
+
+
+class MaintenanceWindow(NamedTuple):
+    until: datetime
+    reason: str
+
+
+def _service_slug(service: str) -> str:
+    return service.removeprefix("project-mai-tai-").removesuffix(".service")
+
+
+def _read_maintenance_windows(
+    path: Path,
+) -> tuple[dict[str, MaintenanceWindow], tuple[str, ...]]:
+    """Read expiring service maintenance declarations without accepting an open-ended stop."""
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return {}, ()
+    except (OSError, UnicodeError) as exc:
+        return {}, (f"maintenance file unreadable: {type(exc).__name__}",)
+
+    windows: dict[str, MaintenanceWindow] = {}
+    errors: list[str] = []
+    for number, raw in enumerate(lines, start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split(maxsplit=2)
+        if len(fields) != 3 or not fields[2].strip():
+            errors.append(f"line {number}: expected <unit> <until-ISO8601-UTC> <reason>")
+            continue
+        service, raw_until, reason = fields
+        if service not in RUNTIME_SERVICES:
+            errors.append(f"line {number}: unknown unit {service}")
+            continue
+        try:
+            until = datetime.fromisoformat(raw_until.replace("Z", "+00:00"))
+        except ValueError:
+            errors.append(f"line {number}: invalid expiry {raw_until}")
+            continue
+        if until.tzinfo is None or until.utcoffset() != timedelta(0):
+            errors.append(f"line {number}: expiry must be UTC {raw_until}")
+            continue
+        if service in windows:
+            errors.append(f"line {number}: duplicate unit {service}")
+            continue
+        windows[service] = MaintenanceWindow(until.astimezone(UTC), reason.strip())
+    return windows, tuple(errors)
+
+
+def classify_service_runtime_rows(
+    current: dict[str, ServiceRuntime],
+    previous: dict[str, int] | None,
+    *,
+    elapsed_s: float | None,
+    now: datetime,
+    maintenance: dict[str, MaintenanceWindow],
+    maintenance_errors: tuple[str, ...] = (),
+) -> tuple[tuple[str, str, str], ...]:
+    """Return independent service/condition verdicts so one RED cannot mask another."""
+
+    rows: list[tuple[str, str, str]] = []
+    comparison_valid = (
+        previous is not None
+        and elapsed_s is not None
+        and 0 < elapsed_s <= _RESTART_SAMPLE_MAX_AGE_S
+    )
+    for service in RUNTIME_SERVICES:
+        slug = _service_slug(service)
+        window = maintenance.get(service)
+        if window is not None and window.until > now:
+            detail = f"unit={service} until={window.until.isoformat()} reason={window.reason}"
+            rows.extend(
+                (
+                    ("MAINTENANCE", f"service-runtime:{slug}:inactive", detail),
+                    ("MAINTENANCE", f"service-runtime:{slug}:restart-storm", detail),
+                )
+            )
+            continue
+
+        if window is not None:
+            rows.append(
+                (
+                    "RED",
+                    f"service-runtime:{slug}:maintenance-expired",
+                    f"unit={service} expired={window.until.isoformat()} reason={window.reason}",
+                )
+            )
+
+        runtime = current.get(service)
+        if runtime is None:
+            rows.extend(
+                (
+                    (
+                        "RED",
+                        f"service-runtime:{slug}:inactive",
+                        f"unit={service} state=UNMEASURED missing from systemctl output",
+                    ),
+                    (
+                        "GREEN",
+                        f"service-runtime:{slug}:restart-storm",
+                        f"unit={service} restart delta UNMEASURED while state is missing",
+                    ),
+                )
+            )
+            continue
+
+        active = runtime.active_state == "active" and runtime.sub_state == "running"
+        rows.append(
+            (
+                "GREEN" if active else "RED",
+                f"service-runtime:{slug}:inactive",
+                f"unit={service} state={runtime.active_state}/{runtime.sub_state}",
+            )
+        )
+        before = previous.get(service) if previous is not None else None
+        delta = runtime.n_restarts - before if before is not None else None
+        storm = comparison_valid and delta is not None and delta > _RESTART_STORM_LIMIT
+        if comparison_valid and delta is not None:
+            restart_detail = (
+                f"unit={service} NRestarts={runtime.n_restarts} delta={delta} "
+                f"elapsed_s={elapsed_s:.0f} limit={_RESTART_STORM_LIMIT}"
+            )
+        else:
+            restart_detail = (
+                f"unit={service} NRestarts={runtime.n_restarts} baseline_recorded=1 "
+                "delta=UNMEASURED"
+            )
+        rows.append(
+            (
+                "RED" if storm else "GREEN",
+                f"service-runtime:{slug}:restart-storm",
+                restart_detail,
+            )
+        )
+
+    if maintenance_errors:
+        rows.append(
+            (
+                "RED",
+                "service-runtime:maintenance-file:invalid",
+                "; ".join(maintenance_errors),
+            )
+        )
+    return tuple(rows)
+
+
+def classify_service_restarts(
+    current: dict[str, ServiceRuntime],
+    previous: dict[str, int] | None,
+    *,
+    elapsed_s: float | None,
+) -> tuple[str, str]:
+    """Grade expected-running units and restart deltas from one bounded sample interval."""
+
+    missing = [service for service in RUNTIME_SERVICES if service not in current]
+    if missing:
+        return ("RED", f"expected service state missing: {','.join(missing)}")
+
+    inactive = [
+        service
+        for service in RUNTIME_SERVICES
+        if current[service].active_state != "active" or current[service].sub_state != "running"
+    ]
+    storms: list[str] = []
+    comparison_valid = (
+        previous is not None
+        and elapsed_s is not None
+        and 0 < elapsed_s <= _RESTART_SAMPLE_MAX_AGE_S
+    )
+    if comparison_valid:
+        for service in RUNTIME_SERVICES:
+            before = previous.get(service)
+            if before is None:
+                continue
+            delta = current[service].n_restarts - before
+            if delta > _RESTART_STORM_LIMIT:
+                storms.append(f"{service} +{delta}")
+
+    if inactive or storms:
+        parts = []
+        if inactive:
+            parts.append(
+                "not active/running="
+                + ",".join(
+                    f"{service}({current[service].active_state}/{current[service].sub_state})"
+                    for service in inactive
+                )
+            )
+        if storms:
+            parts.append(
+                f"NRestarts delta>{_RESTART_STORM_LIMIT} within {elapsed_s:.0f}s="
+                + ",".join(storms)
+            )
+        return ("RED", "; ".join(parts))
+
+    counts = ",".join(
+        f"{service.removeprefix('project-mai-tai-').removesuffix('.service')}="
+        f"{current[service].n_restarts}"
+        for service in RUNTIME_SERVICES
+    )
+    if not comparison_valid:
+        return ("GREEN", f"all {len(RUNTIME_SERVICES)} services active; baseline recorded {counts}")
+    return (
+        "GREEN",
+        f"all {len(RUNTIME_SERVICES)} services active; restart deltas within limit over "
+        f"{elapsed_s:.0f}s; {counts}",
+    )
+
+
+def _read_restart_state(path: Path) -> tuple[float, dict[str, int]] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        sampled_at = float(payload["sampled_at"])
+        services = payload["services"]
+        if not isinstance(services, dict):
+            return None
+        return sampled_at, {str(name): int(value) for name, value in services.items()}
+    except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _write_restart_state(path: Path, *, sampled_at: float, services: dict[str, int]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        delete=False,
+    ) as handle:
+        json.dump({"sampled_at": sampled_at, "services": services}, handle, sort_keys=True)
+        handle.write("\n")
+        temporary = Path(handle.name)
+    temporary.replace(path)
+
+
+def _read_service_runtimes(
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, ServiceRuntime] | None:
+    try:
+        result = runner(
+            [
+                _SYSTEMCTL_BIN,
+                "show",
+                *RUNTIME_SERVICES,
+                "-p",
+                "Id",
+                "-p",
+                "NRestarts",
+                "-p",
+                "ActiveState",
+                "-p",
+                "SubState",
+                "--no-pager",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+
+    parsed: dict[str, ServiceRuntime] = {}
+    fields: dict[str, str] = {}
+
+    def flush() -> None:
+        if not fields:
+            return
+        try:
+            parsed[fields["Id"]] = ServiceRuntime(
+                n_restarts=int(fields["NRestarts"]),
+                active_state=fields["ActiveState"],
+                sub_state=fields["SubState"],
+            )
+        except (KeyError, ValueError):
+            return
+
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush()
+            fields = {}
+            continue
+        key, separator, value = line.partition("=")
+        if separator:
+            fields[key] = value
+    flush()
+    return parsed
+
+
+def check_service_restart_storms(
+    *,
+    now_epoch: float | None = None,
+    state_path: Path | None = None,
+    maintenance_path: Path | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> tuple[tuple[str, str, str], ...]:
+    current = _read_service_runtimes(runner)
+    if current is None:
+        return (
+            ("RED", "service-runtime:inventory:unreadable", "systemctl service state unreadable"),
+        )
+
+    sampled_at = time.time() if now_epoch is None else now_epoch
+    path = _RESTART_STATE_PATH if state_path is None else state_path
+    maintenance_file = _MAINTENANCE_PATH if maintenance_path is None else maintenance_path
+    maintenance, maintenance_errors = _read_maintenance_windows(maintenance_file)
+    prior = _read_restart_state(path)
+    previous_counts = prior[1] if prior is not None else None
+    elapsed_s = sampled_at - prior[0] if prior is not None else None
+    rows = list(
+        classify_service_runtime_rows(
+            current,
+            previous_counts,
+            elapsed_s=elapsed_s,
+            now=datetime.fromtimestamp(sampled_at, tz=UTC),
+            maintenance=maintenance,
+            maintenance_errors=maintenance_errors,
+        )
+    )
+    try:
+        _write_restart_state(
+            path,
+            sampled_at=sampled_at,
+            services={service: runtime.n_restarts for service, runtime in current.items()},
+        )
+    except OSError as exc:
+        rows.append(
+            (
+                "RED",
+                "service-runtime:restart-state:write-failed",
+                f"restart state write failed: {type(exc).__name__}",
+            )
+        )
+    return tuple(rows)
 
 
 # --- pure decision logic (unit-tested; no I/O) -------------------------------- #
@@ -473,53 +852,77 @@ def check_bar_continuity() -> tuple[str, str, str]:
 
 
 LIVE_MONEY = "LIVE_MONEY"
+FLEET_RUNTIME = "FLEET_RUNTIME"
 PAPER = "PAPER"
 DIAGNOSTIC = "DIAGNOSTIC"
 SCOREBOARD = "SCOREBOARD"
 
 
 class CheckSpec(NamedTuple):
-    check: Callable[[], tuple[str, str, str]]
+    check: Callable[[], tuple[str, str, str] | tuple[tuple[str, str, str], ...]]
     alert_class: str
 
 
 # Every check declares its routing class here. There is deliberately no default: adding a check
-# without deciding whether it can page is a construction error, not an implicit live-money page.
-CHECKS = (
+# without deciding whether it can page is a construction error, not an implicit page.
+RUNTIME_CHECKS = (CheckSpec(check_service_restart_storms, FLEET_RUNTIME),)
+FUNCTION_CHECKS = (
     CheckSpec(check_strategy_bar_freshness, PAPER),
     CheckSpec(check_oms_order_lifecycle, LIVE_MONEY),
     CheckSpec(check_stops_armed, LIVE_MONEY),
     CheckSpec(check_bar_continuity, DIAGNOSTIC),
     CheckSpec(check_d6_status_freshness, SCOREBOARD),
 )
+CHECKS = RUNTIME_CHECKS + FUNCTION_CHECKS
 
-_RANK = {"GREEN": 0, "AMBER": 1, "RED": 2}
-_EXIT = {"GREEN": 0, "AMBER": 1, "RED": 2}
+_RANK = {"GREEN": 0, "MAINTENANCE": 0, "AMBER": 1, "RED": 2}
+_EXIT = {"GREEN": 0, "MAINTENANCE": 0, "AMBER": 1, "RED": 2}
 
 
-def main() -> int:
+def _result_rows(
+    result: tuple[str, str, str] | tuple[tuple[str, str, str], ...],
+) -> tuple[tuple[str, str, str], ...]:
+    if len(result) == 3 and isinstance(result[0], str):
+        return (result,)  # type: ignore[return-value]
+    return result  # type: ignore[return-value]
+
+
+def main(*, runtime_only: bool = False) -> int:
+    checks = RUNTIME_CHECKS if runtime_only else CHECKS
     worst = "GREEN"
     live_money_red = 0
-    for spec in CHECKS:
+    fleet_runtime_red = 0
+    reported_checks = 0
+    for spec in checks:
         try:
-            level, name, detail = spec.check()
+            rows = _result_rows(spec.check())
         except Exception as exc:  # noqa: BLE001 — a check crash must not crash the runner
-            level, name, detail = (
-                "AMBER",
-                getattr(spec.check, "__name__", "check"),
-                f"check errored: {exc}",
+            rows = (
+                (
+                    "AMBER",
+                    getattr(spec.check, "__name__", "check"),
+                    f"check errored: {exc}",
+                ),
             )
-        print(f"VERDICT: {level} {name} class={spec.alert_class} {detail}")
-        if spec.alert_class == LIVE_MONEY and level == "RED":
-            live_money_red += 1
-        if _RANK[level] > _RANK[worst]:
-            worst = level
+        for level, name, detail in rows:
+            reported_checks += 1
+            print(f"VERDICT: {level} {name} class={spec.alert_class} {detail}")
+            if spec.alert_class == LIVE_MONEY and level == "RED":
+                live_money_red += 1
+            if spec.alert_class == FLEET_RUNTIME and level == "RED":
+                fleet_runtime_red += 1
+            if _RANK[level] > _RANK[worst]:
+                worst = level
     print(
-        f"SUMMARY: {worst} fleet-function-health checks={len(CHECKS)} "
-        f"live_money_red={live_money_red}"
+        f"SUMMARY: {worst} fleet-function-health checks={reported_checks} "
+        f"live_money_red={live_money_red} fleet_runtime_red={fleet_runtime_red}"
     )
     return _EXIT[worst]
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    args = sys.argv[1:]
+    if args not in ([], ["--runtime-only"]):
+        print("usage: fleet_health_check.py [--runtime-only]", file=sys.stderr)
+        sys.exit(3)
+    sys.exit(main(runtime_only=bool(args)))

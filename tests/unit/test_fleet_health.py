@@ -8,8 +8,9 @@ live (a frozen loop) — never on a quiet market / feed outage."""
 from __future__ import annotations
 
 import importlib.util
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
+import subprocess
 
 _MOD_PATH = Path(__file__).resolve().parents[2] / "ops" / "health" / "fleet_health_check.py"
 
@@ -22,6 +23,37 @@ def _load():
 
 
 fhc = _load()
+
+
+def _service_states(
+    *,
+    restart_overrides: dict[str, int] | None = None,
+    state_overrides: dict[str, tuple[str, str]] | None = None,
+) -> dict[str, fhc.ServiceRuntime]:
+    restart_overrides = restart_overrides or {}
+    state_overrides = state_overrides or {}
+    return {
+        service: fhc.ServiceRuntime(
+            n_restarts=restart_overrides.get(service, 0),
+            active_state=state_overrides.get(service, ("active", "running"))[0],
+            sub_state=state_overrides.get(service, ("active", "running"))[1],
+        )
+        for service in fhc.RUNTIME_SERVICES
+    }
+
+
+def _systemctl_output(states: dict[str, fhc.ServiceRuntime]) -> str:
+    return "\n\n".join(
+        "\n".join(
+            (
+                f"NRestarts={state.n_restarts}",
+                f"Id={service}",
+                f"ActiveState={state.active_state}",
+                f"SubState={state.sub_state}",
+            )
+        )
+        for service, state in states.items()
+    )
 
 
 def test_fresh_bars_with_live_feed_is_green():
@@ -49,6 +81,163 @@ def test_slowing_bars_with_live_feed_is_amber():
 def test_no_bars_is_amber_not_red():
     # Can't assess (no data) is AMBER (look), never RED (don't cry wolf).
     assert fhc.classify_bar_freshness(None, 5)[0] == "AMBER"
+
+
+# --- service runtime: every expected unit, around the clock ----------------------------- #
+
+
+def test_runtime_inventory_includes_momentum_and_all_continuous_project_services() -> None:
+    assert set(fhc.RUNTIME_SERVICES) == {
+        "project-mai-tai-control.service",
+        "project-mai-tai-market-capture.service",
+        "project-mai-tai-market-data.service",
+        "project-mai-tai-momentum-paper.service",
+        "project-mai-tai-oms.service",
+        "project-mai-tai-orb.service",
+        "project-mai-tai-reconciler.service",
+        "project-mai-tai-schwab-1m-v2.service",
+        "project-mai-tai-strategy.service",
+    }
+
+
+def test_0355_to_0400_restart_storm_is_red() -> None:
+    momentum = "project-mai-tai-momentum-paper.service"
+    current = _service_states(restart_overrides={momentum: 5})
+    previous = {service: 0 for service in fhc.RUNTIME_SERVICES}
+
+    level, detail = fhc.classify_service_restarts(current, previous, elapsed_s=300)
+
+    assert level == "RED"
+    assert f"{momentum} +5" in detail
+    assert "delta>3 within 300s" in detail
+
+
+def test_healthy_services_and_three_or_fewer_restarts_do_not_page() -> None:
+    momentum = "project-mai-tai-momentum-paper.service"
+    current = _service_states(restart_overrides={momentum: 3})
+    previous = {service: 0 for service in fhc.RUNTIME_SERVICES}
+
+    level, detail = fhc.classify_service_restarts(current, previous, elapsed_s=300)
+
+    assert level == "GREEN"
+    assert "all 9 services active" in detail
+
+
+def test_runtime_check_persists_baseline_then_detects_the_next_five_minute_delta(
+    tmp_path: Path,
+) -> None:
+    momentum = "project-mai-tai-momentum-paper.service"
+    states = _service_states()
+
+    def runner(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["systemctl"],
+            returncode=0,
+            stdout=_systemctl_output(states),
+            stderr="",
+        )
+
+    state_path = tmp_path / "restart-counts.json"
+    first = fhc.check_service_restart_storms(
+        now_epoch=1000,
+        state_path=state_path,
+        runner=runner,
+    )
+    states[momentum] = fhc.ServiceRuntime(5, "active", "running")
+    second = fhc.check_service_restart_storms(
+        now_epoch=1300,
+        state_path=state_path,
+        runner=runner,
+    )
+
+    assert not [row for row in first if row[0] == "RED"]
+    momentum_storm = next(
+        row for row in second if row[1] == "service-runtime:momentum-paper:restart-storm"
+    )
+    assert momentum_storm[0] == "RED"
+    assert "delta=5" in momentum_storm[2]
+
+
+def test_inactive_expected_service_is_red_even_without_a_prior_sample() -> None:
+    momentum = "project-mai-tai-momentum-paper.service"
+    current = _service_states(state_overrides={momentum: ("inactive", "dead")})
+
+    level, detail = fhc.classify_service_restarts(current, None, elapsed_s=None)
+
+    assert level == "RED"
+    assert f"{momentum}(inactive/dead)" in detail
+
+
+def test_runtime_rows_are_independent_per_service_and_condition() -> None:
+    momentum = "project-mai-tai-momentum-paper.service"
+    oms = "project-mai-tai-oms.service"
+    current = _service_states(
+        restart_overrides={momentum: 5},
+        state_overrides={oms: ("inactive", "dead")},
+    )
+
+    rows = fhc.classify_service_runtime_rows(
+        current,
+        {service: 0 for service in fhc.RUNTIME_SERVICES},
+        elapsed_s=300,
+        now=datetime(2026, 9, 17, 12, tzinfo=UTC),
+        maintenance={},
+    )
+
+    red_names = {name for level, name, _detail in rows if level == "RED"}
+    assert red_names == {
+        "service-runtime:momentum-paper:restart-storm",
+        "service-runtime:oms:inactive",
+    }
+
+
+def test_active_maintenance_is_expiring_explicit_and_never_green(tmp_path: Path) -> None:
+    maintenance_path = tmp_path / "maintenance.txt"
+    momentum = "project-mai-tai-momentum-paper.service"
+    maintenance_path.write_text(
+        f"{momentum} 2026-09-17T13:00:00Z planned deploy\n",
+        encoding="utf-8",
+    )
+    windows, errors = fhc._read_maintenance_windows(maintenance_path)
+
+    rows = fhc.classify_service_runtime_rows(
+        _service_states(state_overrides={momentum: ("inactive", "dead")}),
+        None,
+        elapsed_s=None,
+        now=datetime(2026, 9, 17, 12, tzinfo=UTC),
+        maintenance=windows,
+        maintenance_errors=errors,
+    )
+
+    momentum_rows = [row for row in rows if ":momentum-paper:" in row[1]]
+    assert {row[0] for row in momentum_rows} == {"MAINTENANCE"}
+    assert all("until=2026-09-17T13:00:00+00:00" in row[2] for row in momentum_rows)
+
+
+def test_expired_maintenance_pages_and_no_expiry_is_rejected(tmp_path: Path) -> None:
+    momentum = "project-mai-tai-momentum-paper.service"
+    expired_path = tmp_path / "expired.txt"
+    expired_path.write_text(
+        f"{momentum} 2026-09-17T11:59:59Z planned deploy\n",
+        encoding="utf-8",
+    )
+    windows, errors = fhc._read_maintenance_windows(expired_path)
+    rows = fhc.classify_service_runtime_rows(
+        _service_states(),
+        None,
+        elapsed_s=None,
+        now=datetime(2026, 9, 17, 12, tzinfo=UTC),
+        maintenance=windows,
+        maintenance_errors=errors,
+    )
+    assert any(
+        row[0:2] == ("RED", "service-runtime:momentum-paper:maintenance-expired") for row in rows
+    )
+
+    invalid_path = tmp_path / "invalid.txt"
+    invalid_path.write_text(f"{momentum} planned-stop-without-expiry\n", encoding="utf-8")
+    _windows, invalid_errors = fhc._read_maintenance_windows(invalid_path)
+    assert invalid_errors == ("line 1: expected <unit> <until-ISO8601-UTC> <reason>",)
 
 
 # --- check #2: oms-order-lifecycle (alive-but-not-executing) ------------------ #
@@ -203,6 +392,7 @@ def test_d6_freshness_check_is_registered_in_the_executed_check_list() -> None:
 
 def test_every_fleet_check_has_an_explicit_alert_class() -> None:
     assert {spec.check.__name__: spec.alert_class for spec in fhc.CHECKS} == {
+        "check_service_restart_storms": fhc.FLEET_RUNTIME,
         "check_strategy_bar_freshness": fhc.PAPER,
         "check_oms_order_lifecycle": fhc.LIVE_MONEY,
         "check_stops_armed": fhc.LIVE_MONEY,
@@ -223,8 +413,28 @@ def test_fleet_aggregate_is_a_summary_not_a_pageable_verdict(monkeypatch, capsys
 
     assert "VERDICT: RED paper-check class=PAPER" in output
     assert "VERDICT: RED live-check class=LIVE_MONEY" in output
-    assert "SUMMARY: RED fleet-function-health checks=2 live_money_red=1" in output
+    assert (
+        "SUMMARY: RED fleet-function-health checks=2 live_money_red=1 fleet_runtime_red=0" in output
+    )
     assert "VERDICT: RED fleet-function-health" not in output
+
+
+def test_runtime_only_executes_no_market_function_checks(monkeypatch, capsys) -> None:
+    runtime = fhc.CheckSpec(
+        lambda: ("GREEN", "service-restart-storms", "stable"),
+        fhc.FLEET_RUNTIME,
+    )
+    market = fhc.CheckSpec(
+        lambda: (_ for _ in ()).throw(AssertionError("market check ran")),
+        fhc.LIVE_MONEY,
+    )
+    monkeypatch.setattr(fhc, "RUNTIME_CHECKS", (runtime,))
+    monkeypatch.setattr(fhc, "CHECKS", (runtime, market))
+
+    assert fhc.main(runtime_only=True) == 0
+    output = capsys.readouterr().out
+    assert "service-restart-storms" in output
+    assert "checks=1" in output
 
 
 def test_d6_expected_session_skips_weekend_and_full_closure() -> None:
