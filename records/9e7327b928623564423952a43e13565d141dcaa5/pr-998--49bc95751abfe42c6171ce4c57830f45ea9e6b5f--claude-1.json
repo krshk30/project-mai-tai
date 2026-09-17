@@ -1,0 +1,9 @@
+{
+  "pr_number": 998,
+  "range_base": "49bc95751abfe42c6171ce4c57830f45ea9e6b5f",
+  "range_head": "9e7327b928623564423952a43e13565d141dcaa5",
+  "reviewed_at": "2026-09-17T10:14:14Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-reviewed from scratch on the rebased head (base 49bc9575 = main after #997; 2 codex-marked commits). Source file is byte-identical to the previously reviewed c90bc8a4 (git diff = 0 lines); the only delta is the one requested test. Checked: observability only, no admission/policy change; single call site of _cw_v2_resting_track (on_bar) so one [V2-RESTING-SUPPRESSED-BAR] line per completed bar; emit sits inside 'if not state.resting_active' and after the floor/min-short-bars/live-bar/stop<=ask gates (docstring says what it cannot see); [V2-RESTING-SLOT-CONSUMED] text and dedupe untouched and the new marker does not match SLOTCLEAR1's regex (known_defect_regression_watch.py:274); both STATE-PROBE parsers are field-name regexes and tolerate the inserted field; replay_v2_seed_cap_incident.py's broad [V2-RESTING- matcher is only reached on a PLACE. Ran 103/103 (test_schwab_1m_v2_cw_v2 + test_known_defect_regression_watch) with PYTHONPATH pinned to the PR worktree (import path confirmed); ruff clean. MY OWN MUTATIONS at this head, all RED then restored: M1 drop the counter reset in the marker_key-change branch (survived at c90bc8a4 - the reason the first pin was withheld - now killed by the new test, suppressed_bars=3 vs 1); M2 drop the fresh-SELL reset; M3 'if True' on the CONSUMED dedupe; M4 drop the += 1. Could NOT verify: live line volume and the first per-segment grade - needs the after-close v2 restart and a suppressed segment in a live session (UNEXERCISED until then)."
+}
