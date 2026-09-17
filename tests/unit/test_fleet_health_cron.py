@@ -14,14 +14,21 @@ def _write_executable(path: Path, body: str) -> None:
 
 
 def _run_wrapper(
-    tmp_path: Path, output: str, *, check_exit: int = 2, curl_exit: int = 0
+    tmp_path: Path,
+    output: str,
+    *,
+    check_exit: int = 2,
+    curl_exit: int = 0,
+    mode: str = "full",
 ) -> subprocess.CompletedProcess[str]:
     check = tmp_path / "check.sh"
+    check_args = tmp_path / "check.args"
     calls = tmp_path / "curl.calls"
     fake_curl = tmp_path / "curl.sh"
     _write_executable(
         check,
-        f"#!/bin/bash\nprintf '%b' {output!r}\nexit {check_exit}\n",
+        f"#!/bin/bash\nprintf '%s' \"$*\" > {str(check_args)!r}\n"
+        f"printf '%b' {output!r}\nexit {check_exit}\n",
     )
     _write_executable(
         fake_curl,
@@ -35,6 +42,7 @@ def _run_wrapper(
         "FLEET_HEALTH_NTFY_URL": "https://example.invalid/topic",
         "FLEET_HEALTH_OUT": str(tmp_path / "state"),
         "FLEET_HEALTH_TEST_MODE": "1",
+        "FLEET_HEALTH_MODE": mode,
     }
     return subprocess.run(
         ["bash", str(WRAPPER)],
@@ -84,6 +92,24 @@ SUMMARY: GREEN fleet-function-health checks=1 live_money_red=0
     assert "stops-armed" in calls
     assert "fleet-function-health checks=" not in calls
     assert "--fail-with-body --connect-timeout 10 --max-time 30" in calls
+
+
+def test_fleet_runtime_restart_storm_pages_while_paper_findings_stay_silent(
+    tmp_path: Path,
+) -> None:
+    output = """VERDICT: RED service-restart-storms class=FLEET_RUNTIME momentum-paper +5
+VERDICT: RED strategy-bar-freshness class=PAPER stale
+SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=1
+"""
+
+    result = _run_wrapper(tmp_path, output, mode="runtime")
+
+    assert result.returncode == 0
+    calls = _call_log(tmp_path)
+    assert calls.count("CALL") == 1
+    assert "RED mai-tai service runtime: service-restart-storms" in calls
+    assert "strategy-bar-freshness" not in calls
+    assert (tmp_path / "check.args").read_text(encoding="utf-8") == "--runtime-only"
 
 
 def test_failed_delivery_is_not_recorded_and_retries_next_run(tmp_path: Path) -> None:

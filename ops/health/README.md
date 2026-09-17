@@ -16,9 +16,11 @@ never hand-edit the deployed copy.
    `preopen_alert.sh`) — daily ~09:12 ET all-fleet GO/AMBER/RED before the open.
 2. **OMS-liveness watchdog** (`oms_liveness_check.py` + `oms_liveness_watch_cron.sh`) — every
    minute 07:00–18:15 ET; RED if the `oms-risk` heartbeat is >180s stale (process ALIVE check).
-3. **Fleet FUNCTION-health** (`fleet_health_check.py` + `fleet_health_cron.sh`) — F3; validates
-   FUNCTION, not process: "is it doing its job" against GROUND TRUTH (DB/fills/independent
-   capture), never a component's self-report. The self-report is the thing that lies.
+3. **Fleet health** (`fleet_health_check.py` + `fleet_health_cron.sh`) — around the clock it checks
+   every expected-running project unit for an inactive state or an `NRestarts` increase greater
+   than 3 within one five-minute sample. During the established weekday market window it also runs
+   F3 FUNCTION-health: "is it doing its job" against GROUND TRUTH (DB/fills/independent capture),
+   never a component's self-report. The self-report is the thing that lies.
 4. **v2 overnight-naked backstop** (`v2_overnight_naked_cron.sh`) — 20:05 ET; RED if any
    OMS-managed v2 position is still open past the 20:00 fillable gate (the 19:55 flatten is
    best-effort; this is the ground-truth net). Fire-rate IS the measurement.
@@ -81,10 +83,15 @@ never hand-edit the deployed copy.
 ## fleet_health_check.py — the F3 framework
 A check registry: each check verdicts GREEN/AMBER/RED against ground truth and declares its alert
 class. `main()` prints one `VERDICT:` line per check plus a non-pageable `SUMMARY:` line. The cron
-pages only transitions into RED for checks classified `LIVE_MONEY`; aggregate counts never page.
-Recovery is log-only. See `docs/alert-triage-2026-09-11.md` for the settled classification and
-deduplication policy.
+pages only transitions into RED for checks classified `LIVE_MONEY` or `FLEET_RUNTIME`; aggregate
+counts never page. `PAPER` remains log-only: the runtime class pages because a crashing service is
+broken infrastructure regardless of whether its account is paper. Recovery is log-only. See
+`docs/alert-triage-2026-09-11.md` for the settled classification and deduplication policy.
 
+- **service-restart-storms** (`FLEET_RUNTIME`, pageable, 24/7) — all continuously enabled project
+  units, including `momentum-paper`, must be active/running. Each run stores an atomic restart-count
+  snapshot; a service gaining more than three `NRestarts` within the next bounded five-minute
+  sample is RED. Deliberately disabled/masked units are not in the inventory.
 - **#1 strategy-bar-freshness** (`PAPER`, log-only) — polygon_30s must keep persisting 30s bars. RED only
   when the bars are stale AND the independent Polygon capture (`market_capture_trades`) is
   SIMULTANEOUSLY live → a frozen loop (the "reports healthy while dead" class). A quiet
@@ -99,15 +106,17 @@ deduplication policy.
 even when their local result is RED. A check's class is explicit output, not inferred from its
 name or from the aggregate exit code.
 
-## Deploy (F3 = adding a cron, no service restart)
-Crontab (trader), dual-UTC for DST (the ET guard inside runs the body only in-window):
+## Deploy (F3 = updating a cron, no service restart)
+The runtime check must execute overnight and on weekends; the wrapper itself limits the DB-backed
+function checks to 09:35-16:05 ET on open weekdays. Root crontab:
 ```
-*/5 13-21 * * 1-5 /home/trader/project-mai-tai/ops/health/fleet_health_cron.sh
+*/5 * * * * /home/trader/project-mai-tai/ops/health/fleet_health_cron.sh
 ```
 `fleet_health_cron.sh --selftest` deliberately sends one benign end-to-end test notification;
-normal scheduled runs page only actionable `LIVE_MONEY` RED transitions. Delivery and transition
-semantics are also covered by the wrapper controls.
-Rollback: remove the crontab line. No live-service impact.
+normal scheduled runs page actionable `LIVE_MONEY` and `FLEET_RUNTIME` RED transitions. Delivery
+and transition semantics are also covered by the wrapper controls. Deploy the checkout and cron
+line in one reviewed action; changing only the source leaves the overnight gap in place.
+Rollback: restore the prior cron line. No live-service impact.
 
 ### D6 outcome-acceptance install order
 
