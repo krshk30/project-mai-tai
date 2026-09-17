@@ -153,6 +153,8 @@ def test_raw_trade_keeps_sip_and_participant_clocks_separate() -> None:
             "p": 2.5,
             "s": 40,
             "i": "wire-id",
+            "x": 11,
+            "trfi": 501,
             "c": [1],
         },
         conditions=_condition_snapshot(),
@@ -162,6 +164,8 @@ def test_raw_trade_keeps_sip_and_participant_clocks_separate() -> None:
     assert trade.sip_ts_ms == 1_789_555_200_123
     assert trade.participant_ts_ms == 1_789_555_100_999
     assert trade.trade_id == "wire-id"
+    assert trade.exchange == 11
+    assert trade.trf_id == 501
     assert trade.eligible is True
     assert trade.payload()["sip_at_utc"].endswith("+00:00")
     assert trade.payload()["sip_at_et"].endswith("-04:00")
@@ -170,7 +174,7 @@ def test_raw_trade_keeps_sip_and_participant_clocks_separate() -> None:
 def test_raw_websocket_payload_is_decoded_without_losing_participant_time() -> None:
     rows = decode_raw_messages(
         b'[{"ev":"T","sym":"ABCD","t":1789555200123,"y":1789555100999,'
-        b'"p":2.5,"s":40,"i":"wire-id","c":[1]}]'
+        b'"p":2.5,"s":40,"i":"wire-id","x":11,"trfi":501,"c":[1]}]'
     )
 
     assert len(rows) == 1
@@ -178,6 +182,8 @@ def test_raw_websocket_payload_is_decoded_without_losing_participant_time() -> N
     assert trade is not None
     assert trade.sip_ts_ms == 1_789_555_200_123
     assert trade.participant_ts_ms == 1_789_555_100_999
+    assert trade.exchange == 11
+    assert trade.trf_id == 501
 
 
 def test_unknown_or_cancel_condition_is_excluded_before_the_engine() -> None:
@@ -372,6 +378,8 @@ async def test_disconnected_heartbeat_reports_degraded_without_crashing() -> Non
     heartbeat = json.loads(redis.rows[0][1]["data"])
     assert heartbeat["payload"]["status"] == "degraded"
     assert len(redis.rows) == 3
+    bot_state = json.loads(redis.rows[1][1]["data"])
+    assert bot_state["payload"]["data_health"]["momentum_paper"]["tape_key_collisions"] == 0
 
 
 @pytest.mark.asyncio
@@ -509,9 +517,10 @@ def test_previous_trading_day_skips_weekend_and_shared_holiday_calendar() -> Non
     assert previous_trading_day(date(2026, 9, 8)) == date(2026, 9, 4)
 
 
-def test_detector_suspect_is_health_only_and_starts_above_ten() -> None:
-    assert detector_health_status(10) == "HEALTHY"
-    assert detector_health_status(11) == "DETECTOR_SUSPECT"
+def test_detector_rate_is_uncalibrated_after_the_twenty_percent_rule_change() -> None:
+    assert detector_health_status(0) == "UNCALIBRATED"
+    assert detector_health_status(11) == "UNCALIBRATED"
+    assert detector_health_status(10_000) == "UNCALIBRATED"
 
 
 def test_momentum_registration_is_two_paper_cards_and_retires_polygon_only_when_enabled() -> None:

@@ -8,7 +8,7 @@ import pytest
 
 from project_mai_tai.momentum_paper.conditions import build_condition_snapshot
 from project_mai_tai.momentum_paper.engine import MomentumPaperEngine
-from project_mai_tai.momentum_paper.models import TradePrint
+from project_mai_tai.momentum_paper.models import MomentumTapeRecord, TradePrint
 from project_mai_tai.momentum_paper.report import grade_strategy
 
 
@@ -29,6 +29,9 @@ def _trade(
     eligible: bool = True,
     participant_clock: str | None = None,
     conditions: tuple[int, ...] = (),
+    trade_id: str | None = None,
+    exchange: int | None = 11,
+    trf_id: int | None = 501,
 ) -> TradePrint:
     return TradePrint(
         symbol=symbol,
@@ -36,7 +39,9 @@ def _trade(
         participant_ts_ms=_ms(participant_clock) if participant_clock else None,
         price=Decimal(price),
         size=100,
-        trade_id=f"{symbol}-{clock}-{price}",
+        trade_id=trade_id if trade_id is not None else f"{symbol}-{clock}-{price}",
+        exchange=exchange,
+        trf_id=trf_id,
         conditions=conditions,
         eligible=eligible,
         exclusion_reason="ineligible_fixture" if not eligible else "",
@@ -96,7 +101,7 @@ def _classified_trade(clock: str, price: str, conditions: tuple[int, ...]) -> Tr
 
 def _detect_both(engine: MomentumPaperEngine, *, symbol: str = "TEST") -> None:
     engine.ingest(_trade("04:11:00.000", "1.00", symbol=symbol))
-    records = engine.ingest(_trade("04:11:25.000", "1.30", symbol=symbol))
+    records = engine.ingest(_trade("04:11:25.000", "1.20", symbol=symbol))
     assert _detected(records) == {"momentum_30s", "momentum_60s"}
 
 
@@ -104,7 +109,7 @@ def test_45_second_move_fires_only_momentum_60() -> None:
     engine = _engine()
     engine.ingest(_trade("04:11:00.000", "1.00"))
 
-    records = engine.ingest(_trade("04:11:45.000", "1.30"))
+    records = engine.ingest(_trade("04:11:45.000", "1.20"))
 
     assert _detected(records) == {"momentum_60s"}
 
@@ -117,19 +122,19 @@ def test_25_second_move_fires_both_strategies() -> None:
 def test_form_t_only_move_detects_but_form_t_odd_lot_move_does_not() -> None:
     form_t = _engine()
     form_t.ingest(_classified_trade("04:11:00.000", "1.00", (12,)))
-    detected = form_t.ingest(_classified_trade("04:11:25.000", "1.30", (12,)))
+    detected = form_t.ingest(_classified_trade("04:11:25.000", "1.20", (12,)))
     assert _detected(detected) == {"momentum_30s", "momentum_60s"}
 
     odd_lot = _engine()
     odd_lot.ingest(_classified_trade("04:11:00.000", "1.00", (12, 37)))
-    rejected = odd_lot.ingest(_classified_trade("04:11:25.000", "1.30", (12, 37)))
+    rejected = odd_lot.ingest(_classified_trade("04:11:25.000", "1.20", (12, 37)))
     assert _detected(rejected) == set()
     assert odd_lot.session_excluded_prints == 2
 
 
 @pytest.mark.parametrize(
     ("candidate_price", "accepted"),
-    [("1.2999", False), ("1.30", True)],
+    [("1.1999", False), ("1.20", True)],
 )
 def test_detection_threshold_is_decimal_exact(candidate_price: str, accepted: bool) -> None:
     engine = _engine()
@@ -166,7 +171,7 @@ def test_detection_window_boundaries_are_frozen(clock: str, accepted: bool) -> N
         TradePrint(
             symbol="TEST",
             sip_ts_ms=candidate_ms,
-            price=Decimal("1.30"),
+            price=Decimal("1.20"),
             size=10,
         )
     )
@@ -179,7 +184,7 @@ def test_prior_close_floor_is_inclusive(prior_close: str, accepted: bool) -> Non
     engine = _engine(prior_close=prior_close)
     engine.ingest(_trade("04:11:00.000", "1"))
 
-    records = engine.ingest(_trade("04:11:25.000", "1.30"))
+    records = engine.ingest(_trade("04:11:25.000", "1.20"))
 
     assert bool(_detected(records)) is accepted
 
@@ -189,7 +194,7 @@ def test_symbol_shape_excludes_dots_and_names_longer_than_five(symbol: str) -> N
     engine = _engine(symbol=symbol)
     engine.ingest(_trade("04:11:00.000", "1", symbol=symbol))
 
-    records = engine.ingest(_trade("04:11:25.000", "1.30", symbol=symbol))
+    records = engine.ingest(_trade("04:11:25.000", "1.20", symbol=symbol))
 
     assert _detected(records) == set()
 
@@ -198,7 +203,7 @@ def test_warrant_like_name_is_retained_but_labeled() -> None:
     engine = _engine(symbol="ABCW")
     engine.ingest(_trade("04:11:00.000", "1", symbol="ABCW"))
 
-    records = engine.ingest(_trade("04:11:25.000", "1.30", symbol="ABCW"))
+    records = engine.ingest(_trade("04:11:25.000", "1.20", symbol="ABCW"))
 
     detected = [record for record in records if record.event_type == "DETECTED"]
     assert len(detected) == 2
@@ -235,7 +240,7 @@ def test_ineligible_low_print_cannot_become_a_detection_reference() -> None:
     engine.ingest(_trade("04:11:00.000", "1.00"))
     engine.ingest(_trade("04:11:10.000", "0.60", eligible=False))
 
-    records = engine.ingest(_trade("04:11:25.000", "1.20"))
+    records = engine.ingest(_trade("04:11:25.000", "1.10"))
 
     assert _detected(records) == set()
 
@@ -262,7 +267,7 @@ def test_sip_timestamp_drives_windows_when_participant_timestamp_disagrees() -> 
     engine = _engine()
     engine.ingest(_trade("04:11:00.000", "1", participant_clock="09:40:00.000"))
 
-    records = engine.ingest(_trade("04:11:25.000", "1.30", participant_clock="04:00:00.000"))
+    records = engine.ingest(_trade("04:11:25.000", "1.20", participant_clock="04:00:00.000"))
 
     assert _detected(records) == {"momentum_30s", "momentum_60s"}
 
@@ -341,9 +346,93 @@ def test_path_starts_at_detection_and_survives_an_early_exit() -> None:
     path_record = engine.ingest(_trade("04:12:00.000", "1.34"))
     path_rows = [record for record in path_record if record.event_type == "PATH_PRINT"]
     assert len(path_rows) == 2
-    assert {record.payload["dt_ms"] for record in path_rows} == {35_000}
+    assert {record.payload["sip_ts_ms"] for record in path_rows} == {_ms("04:12:00.000")}
+    assert len({record.logical_id for record in path_rows}) == 2
     assert {row["path_print_count"] for row in engine.active_events} == {4}
     assert {dict(row["path_start"])["dt_ms"] for row in engine.active_events} == {0}
+    assert {dict(row["path_range"])["tape_logical_id"] for row in engine.active_events} == {
+        record.logical_id for record in path_rows
+    }
+
+
+def test_overlapping_evidence_and_reentry_share_one_tape_row_per_strategy() -> None:
+    engine = _engine()
+    all_records = list(engine.ingest(_trade("04:11:00.000", "1.00")))
+    all_records.extend(engine.ingest(_trade("04:11:25.000", "1.20")))
+    all_records.extend(engine.ingest(_trade("04:11:26.000", "1.20")))
+    all_records.extend(engine.ingest(_trade("04:11:27.100", "1.26")))
+    all_records.extend(engine.advance_clock(_ms("04:11:28.000")))
+    all_records.extend(engine.ingest(_trade("04:11:28.100", "1.00")))
+    all_records.extend(engine.ingest(_trade("04:11:28.200", "1.20")))
+
+    at_reentry = [
+        row
+        for row in all_records
+        if row.event_type == "PATH_PRINT"
+        and row.observed_at.timestamp() * 1000 == _ms("04:11:28.200")
+    ]
+    assert len(at_reentry) == 2
+    assert {row.strategy_code for row in at_reentry} == {"momentum_30s", "momentum_60s"}
+    assert len({row.event_key for row in at_reentry}) == 2
+
+
+def test_path_key_keeps_same_trade_id_from_different_exchanges() -> None:
+    engine = _engine()
+    _detect_both(engine)
+
+    first = engine.ingest(
+        _trade("04:11:26.000", "1.20", trade_id="shared-id", exchange=4, trf_id=1)
+    )
+    second = engine.ingest(
+        _trade("04:11:26.000", "1.20", trade_id="shared-id", exchange=11, trf_id=1)
+    )
+
+    rows = [row for row in (*first, *second) if row.event_type == "PATH_PRINT"]
+    assert len(rows) == 4
+    assert len({row.event_key for row in rows}) == 4
+    assert engine.tape_key_collisions == 0
+
+
+def test_ineligible_print_inside_an_evidence_range_is_kept_on_the_raw_tape() -> None:
+    engine = _engine()
+    _detect_both(engine)
+
+    records = engine.ingest(_trade("04:11:26.000", "9.99", eligible=False, conditions=(37,)))
+
+    rows = [row for row in records if row.event_type == "PATH_PRINT"]
+    assert len(rows) == 2
+    assert {row.payload["eligible"] for row in rows} == {False}
+
+
+def test_path_key_keeps_prints_in_the_same_sip_second() -> None:
+    engine = _engine()
+    _detect_both(engine)
+
+    first = engine.ingest(
+        _trade("04:11:26.100", "1.20", trade_id="shared-id", exchange=4, trf_id=1)
+    )
+    second = engine.ingest(
+        _trade("04:11:26.900", "1.20", trade_id="shared-id", exchange=4, trf_id=1)
+    )
+
+    rows = [row for row in (*first, *second) if row.event_type == "PATH_PRINT"]
+    assert len(rows) == 4
+    assert len({row.event_key for row in rows}) == 4
+    assert engine.tape_key_collisions == 0
+
+
+def test_different_prints_with_a_forced_tape_key_collision_are_not_dropped(monkeypatch) -> None:
+    engine = _engine()
+    _detect_both(engine)
+    monkeypatch.setattr(engine, "_tape_identity", lambda _trade: "forced")
+
+    first = engine.ingest(_trade("04:11:26.100", "1.20", trade_id="one"))
+    second = engine.ingest(_trade("04:11:26.200", "1.21", trade_id="two"))
+
+    rows = [row for row in (*first, *second) if row.event_type == "PATH_PRINT"]
+    assert len(rows) == 4
+    assert len({row.event_key for row in rows}) == 4
+    assert engine.tape_key_collisions == 2
 
 
 def test_excursions_continue_over_full_path_after_an_early_exit() -> None:
@@ -375,19 +464,59 @@ def test_largest_no_print_gap_uses_only_eligible_path_prints() -> None:
     assert {row["largest_no_print_gap_ms"] for row in engine.active_events} == {10_000}
 
 
-def test_repeat_requires_more_than_300_seconds() -> None:
+def test_same_bot_cannot_overlap_an_unresolved_trade() -> None:
     engine = _engine()
-    engine.ingest(_trade("04:11:00.000", "1"))
-    first = engine.ingest(_trade("04:11:25.000", "1.30"))
-    assert _detected(first) == {"momentum_30s", "momentum_60s"}
+    _detect_both(engine)
+    fill = engine.ingest(_trade("04:11:26.000", "1.20"))
+    assert _detected(fill) == set()
 
-    engine.ingest(_trade("04:16:00.000", "1"))
-    blocked = engine.ingest(_trade("04:16:25.000", "1.30"))
+    engine.ingest(_trade("04:17:00.000", "1.10"))
+    blocked = engine.ingest(_trade("04:17:00.500", "1.32"))
     assert _detected(blocked) == set()
 
-    engine.ingest(_trade("04:16:01.000", "1"))
-    allowed = engine.ingest(_trade("04:16:26.000", "1.30"))
+
+def test_fresh_twenty_percent_move_can_reenter_immediately_after_exit() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    engine.ingest(_trade("04:11:26.000", "1.20"))
+    engine.ingest(_trade("04:11:27.100", "1.26"))
+    engine.advance_clock(_ms("04:11:28.000"))
+
+    stale_reference = engine.ingest(_trade("04:11:28.001", "1.21"))
+    assert _detected(stale_reference) == set()
+
+    below = engine.ingest(_trade("04:11:28.200", "1.4519"))
+    allowed = engine.ingest(_trade("04:11:28.300", "1.452"))
+
+    assert _detected(below) == set()
     assert _detected(allowed) == {"momentum_30s", "momentum_60s"}
+
+
+def test_restored_exit_boundary_cannot_reuse_a_pre_exit_low() -> None:
+    engine = _engine()
+    engine.ingest(_trade("04:11:00.000", "1.00"))
+    exit_ms = _ms("04:11:10.000")
+    engine.seed_reentry_boundaries(
+        [
+            MomentumTapeRecord(
+                event_key=f"{strategy_code}:terminal",
+                logical_id=f"{strategy_code}:TEST:old",
+                strategy_code=strategy_code,
+                event_type="FINAL",
+                session_date=DAY,
+                symbol="TEST",
+                observed_at=datetime.fromtimestamp(exit_ms / 1000, tz=UTC),
+                payload={"exit": {"sip_ts_ms": exit_ms}},
+            )
+            for strategy_code in ("momentum_30s", "momentum_60s")
+        ]
+    )
+
+    first_post_exit = engine.ingest(_trade("04:11:11.000", "1.20"))
+    fresh_move = engine.ingest(_trade("04:11:12.000", "1.44"))
+
+    assert _detected(first_post_exit) == set()
+    assert _detected(fresh_move) == {"momentum_30s", "momentum_60s"}
 
 
 def test_missing_next_print_becomes_no_fill() -> None:
@@ -401,11 +530,100 @@ def test_missing_next_print_becomes_no_fill() -> None:
     assert engine.active_events == ()
 
 
+def test_no_fill_rearms_from_detect_plus_ten_seconds_not_processing_clock() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    detect_sip_ms = _ms("04:11:25.000")
+
+    records = engine.advance_clock(detect_sip_ms + 60_000)
+
+    no_fills = [record for record in records if record.event_type == "NO_FILL"]
+    assert {record.payload["terminal_boundary_sip_ts_ms"] for record in no_fills} == {
+        detect_sip_ms + 10_000
+    }
+
+
+def test_live_no_fill_boundary_is_not_a_reference_but_one_millisecond_later_is() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    boundary = _ms("04:11:35.000")
+    engine.advance_clock(boundary + 1)
+
+    engine.ingest(_trade("04:11:35.000", "0.50"))
+    first_later = engine.ingest(_trade("04:11:35.001", "1.00"))
+    engine.ingest(_trade("04:11:35.002", "1.1999"))
+    fresh_move = engine.ingest(_trade("04:11:35.003", "1.20"))
+
+    assert _detected(first_later) == set()
+    assert _detected(fresh_move) == {"momentum_30s", "momentum_60s"}
+
+
+def test_restored_terminal_boundary_excludes_equality_but_admits_later_reference() -> None:
+    boundary_ms = _ms("04:11:35.000")
+    engine = _engine()
+    engine.seed_reentry_boundaries(
+        [
+            MomentumTapeRecord(
+                event_key=f"{strategy_code}:terminal",
+                logical_id=f"{strategy_code}:TEST:old",
+                strategy_code=strategy_code,
+                event_type="NO_FILL",
+                session_date=DAY,
+                symbol="TEST",
+                observed_at=datetime.fromtimestamp((boundary_ms + 50_000) / 1000, tz=UTC),
+                payload={"terminal_boundary_sip_ts_ms": boundary_ms},
+            )
+            for strategy_code in ("momentum_30s", "momentum_60s")
+        ]
+    )
+    engine.ingest(_trade("04:11:35.000", "0.50"))
+    equal_boundary_move = engine.ingest(_trade("04:11:35.100", "1.00"))
+    engine.ingest(_trade("04:11:35.200", "1.1999"))
+    later_reference_move = engine.ingest(_trade("04:11:35.300", "1.20"))
+
+    assert _detected(equal_boundary_move) == set()
+    assert _detected(later_reference_move) == {"momentum_30s", "momentum_60s"}
+
+
+def test_unanswerable_terminal_uses_evidence_deadline_not_observation_clock() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    fill_ms = _ms("04:11:26.000")
+    engine.ingest(_trade("04:11:26.000", "1.20"))
+    engine.mark_feed_gap(_ms("04:12:00.000"), _ms("04:12:01.000"))
+
+    records = engine.ingest(_trade("04:21:26.001", "1.20"))
+
+    unanswerable = [record for record in records if record.event_type == "UNANSWERABLE"]
+    assert len(unanswerable) == 2
+    assert {record.payload["terminal_boundary_sip_ts_ms"] for record in unanswerable} == {
+        fill_ms + 600_000
+    }
+
+
+def test_live_unanswerable_boundary_is_not_a_reference_but_one_millisecond_later_is() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    fill_ms = _ms("04:11:26.000")
+    boundary = fill_ms + 600_000
+    engine.ingest(_trade("04:11:26.000", "1.20"))
+    engine.mark_feed_gap(_ms("04:12:00.000"), _ms("04:12:01.000"))
+    engine.close_session(boundary + 50_000)
+
+    engine.ingest(_trade("04:21:26.000", "0.50"))
+    first_later = engine.ingest(_trade("04:21:26.001", "1.00"))
+    engine.ingest(_trade("04:21:26.002", "1.1999"))
+    fresh_move = engine.ingest(_trade("04:21:26.003", "1.20"))
+
+    assert _detected(first_later) == set()
+    assert _detected(fresh_move) == {"momentum_30s", "momentum_60s"}
+
+
 def test_092959_event_finishes_using_symbol_tail_after_global_subscription_ends() -> None:
     engine = _engine()
     engine.coverage_started_ms = _ms("09:28:00.000")
     engine.ingest(_trade("09:29:40.000", "1"))
-    detected = engine.ingest(_trade("09:29:59.000", "1.30"))
+    detected = engine.ingest(_trade("09:29:59.000", "1.20"))
     assert _detected(detected) == {"momentum_30s", "momentum_60s"}
     engine.ingest(_trade("09:30:00.000", "1.31"))
     engine.ingest(_trade("09:30:01.000", "1.38"))

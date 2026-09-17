@@ -1,9 +1,10 @@
 # Momentum Bot paper test: locked rules
 
-**Latest result (2026-09-16):** independently reviewed and accepted for implementation. The
-operator confirmed the **$500 paper amount**. The later naming and condensation changed no trading,
-evidence, safety, or grading rule. Implementation is reviewed separately; this protocol does not
-authorize installation or enablement.
+**Latest result (2026-09-17):** before the first successful paper session, the operator changed
+the trigger from 30% to **20%** and replaced the five-minute repeat cooldown with fresh-move
+re-entry after an exit. The **$500 paper amount** and every exit, evidence, safety, and grading rule
+remain unchanged. Implementation is reviewed separately; this protocol does not authorize
+installation or enablement.
 
 These rules are frozen before implementation and before the first paper event. They cannot be
 tuned after paper trading begins; any later hypothesis must be a separately labeled offline study.
@@ -14,10 +15,10 @@ strategy.
 
 ## The two bots
 
-| Bot | Trigger | Historical event rate |
+| Bot | Trigger | 2026-09-17 replay through 07:12 ET |
 |---|---|---:|
-| **Momentum 30** (`momentum_30s`) | Price rises at least 30% from the lowest eligible print in the prior 30 seconds | About 1.5 per morning |
-| **Momentum 60** (`momentum_60s`) | Price rises at least 30% from the lowest eligible print in the prior 60 seconds | About 2 per morning; observed range 0-8 |
+| **Momentum 30** (`momentum_30s`) | Price rises at least 20% from the lowest eligible print in the prior 30 seconds | 14 fills: 13 targets, 1 stop; all AEMD; gross +$315.96 |
+| **Momentum 60** (`momentum_60s`) | Price rises at least 20% from the lowest eligible print in the prior 60 seconds | 16 fills: 15 targets, 1 stop; AEMD 15, DAIC 1; gross +$355.72 |
 
 The bots use the same universe, entry, exit, sizing, and grading rules. They are measured and shown
 separately; one never suppresses or improves the other's result.
@@ -32,7 +33,7 @@ separately; one never suppresses or improves the other's result.
 | **Trade eligibility** | A raw Massive `T.*` print can be a reference, detection, fill, or exit only when its condition codes are eligible to update Massive consolidated OHLC. Corrections, cancels, average-price trades, unknown conditions, and other ineligible prints are excluded and counted. |
 | **Clock** | Every window and ordering decision uses Massive's SIP timestamp `t`. Participant timestamp `y` is stored as evidence but never drives a decision. |
 | **Reference** | Lowest eligible print in `[t-window, t)`. The candidate and any same-SIP-timestamp print cannot be the reference. |
-| **Repeat signal** | One event per bot, symbol, and five minutes. A new event requires **more than 300 seconds** since that bot's previous event. |
+| **Repeat signal** | A bot cannot overlap its own unresolved event on the same symbol. After an exit, every print at or before that exit is removed from that bot's reference population. A fresh 20% rise from a new eligible post-exit low can re-enter immediately; there is no clock cooldown. `NO_FILL` and `UNANSWERABLE` similarly re-arm only from prints after their terminal time. |
 | **Paper entry** | Buy at the **first eligible print strictly after detection**. Same-timestamp prints do not fill. No print within 10 seconds produces `NO_FILL`. |
 | **Paper size** | **$500 per event**; `qty = max(1, floor(500 / fill_price))`. P&L is gross and does not model fees, borrow, partial fills, or market depth. |
 | **Target** | First post-fill print at or above **+5%** from fill. |
@@ -48,6 +49,25 @@ condition codes are graded; odd lots (`37`), sold-out-of-sequence prints (`13`),
 cancels, and unknown codes remain excluded. With only `12` neutral, `26,028/100,162` DAIC prints
 were eligible, reproduced the Massive one-second bar high and low on `3,991/3,991` bars, and
 created `0` eligible seconds without a bar. No Momentum paper event existed before this correction.
+
+**Rule change 2026-09-17:** A full-market replay checked `2,919/2,919` non-OTC symbols that traded
+from 04:11-07:12 ET and had a prior close of at least $1, covering `110,756` one-second bars with
+zero retrieval failures. The final 20% rule with immediate fresh-move re-entry produced 30 fills:
+28 targets, 2 stops, and gross +$671.68 across the two separately sized $500 paper bots. AEMD
+supplied 29/30 trades, and both bots exceeded the `DETECTOR_SUSPECT` threshold. This is
+implementation evidence, not proof that 20% is superior. The operator approved the lower threshold
+and immediate fresh-move re-entry while the forward paper population was still empty.
+
+The former `>10 detections` health band was calibrated for the 30% trigger and is now reported as
+`UNCALIBRATED`; it cannot label the 20% detector suspect until a new forward baseline is approved.
+PATH evidence is stored once per `(strategy_code, symbol, raw print)` on a shared session tape.
+Massive's WebSocket fields `i` (trade ID), `x` (exchange), `trfi` (TRF ID), and `t` (SIP
+timestamp) form that raw-print identity; a different payload collision is counted and retained
+rather than silently deduplicated.
+Each event references its absolute inclusive SIP-time evidence range, so an old event collecting
+ten-minute excursion evidence and a new re-entry never duplicate the same raw tape row. `NO_FILL`
+re-arms after `detect SIP t + 10 seconds`; `UNANSWERABLE` re-arms after its evidence deadline, and
+a print exactly on either boundary is excluded from the next reference population.
 
 ## Evidence saved for every event
 
@@ -100,12 +120,14 @@ fill, no-fill, unanswerable, target, stop, and time-exit counts with denominator
 
 ## Required proof before installation
 
-Fixture tests must prove: a 45-second move fires only Momentum 60; a 25-second move fires both;
+Fixture tests must prove: 19.99% does not detect while exactly 20% does; a 45-second move fires only
+Momentum 60; a 25-second move fires both;
 04:10:59 and 09:30:00 are rejected while 04:11:00 and 09:29:59 are accepted; `$0.99` is excluded
 and `$1.00` included; entry uses the first strictly later print; a corrected/cancelled +40% print
 cannot trigger, fill, or exit; SIP `t` wins when participant `y` disagrees; same-second stop beats
 target; the time exit is after 600 seconds; paths start at detection and survive early exits;
-200-second repeats are blocked while 301-second repeats pass; missing next prints become `NO_FILL`;
+an unresolved trade blocks overlap; an old pre-exit low cannot trigger another event; a fresh 20%
+move from a post-exit low can re-enter immediately; missing next prints become `NO_FILL`;
 09:29:59 events finish through symbol-only subscriptions; gaps fail closed; no live route is
 reachable; both cards remain separate; Polygon is retired; and ORB remains.
 

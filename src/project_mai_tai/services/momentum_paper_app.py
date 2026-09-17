@@ -59,7 +59,8 @@ _PATH_FLUSH_ROWS = 500
 
 
 def detector_health_status(detections: int) -> str:
-    return "DETECTOR_SUSPECT" if detections > 10 else "HEALTHY"
+    del detections
+    return "UNCALIBRATED"
 
 
 def previous_trading_day(day: date) -> date:
@@ -118,6 +119,8 @@ def normalize_raw_trade(row: object, *, conditions: ConditionSnapshot) -> TradeP
     codes = _condition_codes(_raw_value(row, "c", "conditions"))
     eligible, reason = conditions.classify(codes)
     participant = _raw_value(row, "pt", "y", "participant_timestamp")
+    exchange = _raw_value(row, "x", "exchange")
+    trf_id = _raw_value(row, "trfi", "trf_id")
     return TradePrint(
         symbol=symbol,
         sip_ts_ms=sip_ts_ms,
@@ -125,6 +128,8 @@ def normalize_raw_trade(row: object, *, conditions: ConditionSnapshot) -> TradeP
         price=price,
         size=size,
         trade_id=str(_raw_value(row, "i", "id", "trade_id") or ""),
+        exchange=int(exchange) if exchange is not None else None,
+        trf_id=int(trf_id) if trf_id is not None else None,
         conditions=codes,
         eligible=eligible,
         exclusion_reason=reason,
@@ -261,7 +266,7 @@ class MomentumPaperService:
             condition_version=self._condition_snapshot.version,
             coverage_started_ms=self._now_ms(),
         )
-        self._engine.seed_last_detections(existing)
+        self._engine.seed_reentry_boundaries(existing)
         incomplete = self.store.incomplete_logical_ids(existing)
         if incomplete:
             interrupted = self._interrupted_records(existing, incomplete)
@@ -539,6 +544,7 @@ class MomentumPaperService:
                     "no_fill": counts["NO_FILL"],
                     "unanswerable": counts["UNANSWERABLE"],
                     "excluded_prints": self._engine.session_excluded_prints,
+                    "tape_key_collisions": self._engine.tape_key_collisions,
                     "gross_pnl": str(daily_pnl),
                     "grade": {
                         "verdict": grade.verdict,
@@ -625,6 +631,9 @@ class MomentumPaperService:
                     "status": "UNANSWERABLE",
                     "reason": "service_restart_interrupted_forward_path",
                     "path_complete": False,
+                    "terminal_boundary_sip_ts_ms": int(
+                        dict(row.payload.get("path_range") or {}).get("end_sip_ts_ms", 0) or 0
+                    ),
                 },
             )
             for logical_id, row in sorted(detected.items())
