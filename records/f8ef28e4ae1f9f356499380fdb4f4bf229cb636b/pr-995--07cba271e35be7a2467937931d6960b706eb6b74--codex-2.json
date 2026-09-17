@@ -1,0 +1,9 @@
+{
+  "pr_number": 995,
+  "range_base": "07cba271e35be7a2467937931d6960b706eb6b74",
+  "range_head": "f8ef28e4ae1f9f356499380fdb4f4bf229cb636b",
+  "reviewed_at": "2026-09-17T00:27:00Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Read all three close-out artifacts; independently re-read production SHA, clean tree, service PIDs/start times, migration 20260916_0021, v2 and Momentum flags, dashboard registrations, and flatness; verified the two requested corrections and that the generated 112/112 manifest was untouched."
+}
