@@ -1,0 +1,9 @@
+{
+  "pr_number": 1002,
+  "range_base": "18a2382d0d4a724dcd91e6b2bdf556f7ffa4df54",
+  "range_head": "e2673303627b2aca5641df8c2ce35fa2d525160d",
+  "reviewed_at": "2026-09-17T14:45:14Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review after rebase onto 18a2382d (#1000 merged). Not a re-stamp: verified base is main tip and an ancestor of the head, the single commit carries the codex marker, and the diff vs the new base is byte-identical to the diff I reviewed at 3a07037e (git patch-id --stable c79f3dc16ea6ca37 on both); #1000's merge touches none of unexercised_watch.py, its test, or known_defect_regression_watch.py. Re-ran 112/112 (test_unexercised_watch + test_known_defect_regression_watch) at THIS head from its own worktree, and re-ran my M1 mutation (accept on returncode alone) -> RED on the stubbed HTTP 500 case, restored. Substance of the review unchanged: the known-defect watch pages only through unexercised_watch.page(), which now logs one [NTFY-DELIVERY] accepted/http_status/message_id/title line per attempt and returns True only on 2xx, so a non-2xx stays un-acked and retries. Not verified: a real ntfy round trip (deploy-time selftest). Out of scope: ~20 other ops/health senders still log no message id."
+}
