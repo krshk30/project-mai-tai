@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import sys
 from types import SimpleNamespace
 from datetime import UTC, date, datetime
@@ -263,6 +264,35 @@ async def test_clean_unexpected_stream_end_opens_a_fail_closed_gap() -> None:
     assert service._connected is False
     assert service._feed_gap_started_ms == int(now.timestamp() * 1000)
     assert websocket.closed is True
+
+
+@pytest.mark.asyncio
+async def test_disconnected_heartbeat_reports_degraded_without_crashing() -> None:
+    class RecordingRedis:
+        def __init__(self) -> None:
+            self.rows: list[tuple[str, dict[str, str]]] = []
+
+        async def xadd(self, stream: str, fields: dict[str, str], **_kwargs) -> None:
+            self.rows.append((stream, fields))
+
+    redis = RecordingRedis()
+    service = MomentumPaperService(
+        Settings(momentum_paper_enabled=True),
+        redis_client=redis,  # type: ignore[arg-type]
+    )
+    service._session_date = date(2026, 9, 17)
+    service._engine = MomentumPaperEngine(
+        prior_closes={"ABCD": Decimal("1")},
+        condition_version="fixture",
+        coverage_started_ms=_et_ms("04:00:00"),
+    )
+    service._connected = False
+
+    await service._publish_state()
+
+    heartbeat = json.loads(redis.rows[0][1]["data"])
+    assert heartbeat["payload"]["status"] == "degraded"
+    assert len(redis.rows) == 3
 
 
 @pytest.mark.asyncio
