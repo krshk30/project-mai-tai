@@ -5,6 +5,9 @@ from datetime import datetime
 from typing import Any, Iterable, Mapping
 
 
+SESSION_MARKER_CONDITION_CODES = frozenset({12})
+
+
 @dataclass(frozen=True)
 class ConditionRule:
     condition_id: int
@@ -29,22 +32,34 @@ class ConditionSnapshot:
         return self.retrieved_at.isoformat()
 
     def classify(self, condition_codes: Iterable[int]) -> tuple[bool, str]:
-        codes = tuple(int(code) for code in condition_codes)
-        if not codes:
-            return True, "no_conditions"
-        unknown = [code for code in codes if code not in self.rules]
-        if unknown:
-            return False, f"unknown_conditions={','.join(str(code) for code in unknown)}"
-        excluded = [code for code in codes if not self.rules[code].updates_consolidated_ohlc]
-        if excluded:
-            return False, f"not_consolidated_ohlc={','.join(str(code) for code in excluded)}"
-        return True, "aggregate_eligible"
+        return classify_condition_codes(self.rules, condition_codes)
 
     def payload(self) -> dict[str, Any]:
         return {
             "retrieved_at": self.retrieved_at.isoformat(),
             "rules": {str(code): asdict(rule) for code, rule in sorted(self.rules.items())},
         }
+
+
+def classify_condition_codes(
+    rules: Mapping[int, ConditionRule],
+    condition_codes: Iterable[int],
+    *,
+    neutral_codes: frozenset[int] = SESSION_MARKER_CONDITION_CODES,
+) -> tuple[bool, str]:
+    codes = tuple(int(code) for code in condition_codes)
+    if not codes:
+        return True, "no_conditions"
+    classified_codes = tuple(code for code in codes if code not in neutral_codes)
+    unknown = [code for code in classified_codes if code not in rules]
+    if unknown:
+        return False, f"unknown_conditions={','.join(str(code) for code in unknown)}"
+    excluded = [code for code in classified_codes if not rules[code].updates_consolidated_ohlc]
+    if excluded:
+        return False, f"not_consolidated_ohlc={','.join(str(code) for code in excluded)}"
+    if len(classified_codes) != len(codes):
+        return True, "aggregate_eligible_extended_hours"
+    return True, "aggregate_eligible"
 
 
 def _value(source: object, name: str, default: object = None) -> object:

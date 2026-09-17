@@ -41,6 +41,14 @@ separately; one never suppresses or improves the other's result.
 | **Same-second conflict** | If target and stop both occur in one exchange-clock second, the **stop wins**. |
 | **No answer** | A feed gap or missing exit print produces `UNANSWERABLE`, never a synthetic price or a clean result. |
 
+**Correction 2026-09-17:** The first implementation treated condition `12` (Form T/Extended
+Hours) as an ineligible price condition, which excluded all `100,162/100,162` DAIC prints measured
+from 04:30-06:00 ET. Condition `12` is now a neutral session marker removed before the remaining
+condition codes are graded; odd lots (`37`), sold-out-of-sequence prints (`13`), corrections,
+cancels, and unknown codes remain excluded. With only `12` neutral, `26,028/100,162` DAIC prints
+were eligible, reproduced the Massive one-second bar high and low on `3,991/3,991` bars, and
+created `0` eligible seconds without a bar. No Momentum paper event existed before this correction.
+
 ## Evidence saved for every event
 
 The path begins at the detection print (`dt_ms=0`). For a fill, it continues through
