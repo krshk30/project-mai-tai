@@ -99,7 +99,7 @@
 2026-09-16T23:38:39.000Z | claude-1 | PINNED | PR #994 @ d5d8dca3ed2d | re-review after rebase onto #992 (575527c); patch content-identical (0 diff lines), 81 tests; DORMANT (G5 FAIL); superseded 5967a24 record deleted; CI pass
 ```
 
-## PR (10)
+## PR (12)
 ```
 2026-09-16T09:53:23.552Z | codex-2 | PR | #989 fixes stale paper ORB dashboard rows at 04:00 scanner roll and universe removal | head 7372bdd; 203 ORB tests pass; no deploy
 2026-09-16T10:08:08.567Z | codex-2 | PR | #989 review fix pushed at 4ce60a0 | shared 04:00 session helper; literal fixed-clock controls; 207 focused tests pass including anti-reimplementation gate
@@ -111,6 +111,8 @@
 2026-09-16T11:29:02.922Z | codex-2 | PR | #991 Momentum 30/60 isolated paper implementation | head 99f233b; 45 new controls; controlled pair zero new failure/error names; dark by default; no deploy
 2026-09-16T15:36:44.065Z | codex-2 | PR | #992 Webull mirror wire-lag fix opened | head 5caa0ff; census and MEDS replay included; controlled pair zero new failure/error names; no deploy
 2026-09-16T16:14:22.867Z | codex-2 | PR | #994 v2 ATR Massive premarket seed opened as draft | head 08daa85; G5 intentionally pending until after 16:00 ET
+2026-09-17T00:13:10.000Z | claude-1 | PR | #995 handoff close-out 2026-09-16 | integrator claude-1; three files (session-handoff overwrite, handoff-log append, manifest 112/112); codex-2 reviews + promotes; freeze holds until promote
+2026-09-17T00:30:20.000Z | claude-1 | PR | handoff manifest repair for batch 2026-09-16 (successor to merged #995 023f141e; number assigned on open) | regenerated manifest so journals and manifest reconcile; no further journal entries until promote
 ```
 
 ## RELEASE (38)
@@ -171,8 +173,8 @@
 
 ## RECONCILIATION
 ```
-journal entries (live + archive/2026-09-16-blind-window-proven-stale-flip-cap-mirror-lag-deployed) : 112
-entries emitted above               : 112
+journal entries (live + archive/2026-09-16-blind-window-proven-stale-flip-cap-mirror-lag-deployed) : 114
+entries emitted above               : 114
 duplicate physical entries          : 0
 malformed (not 5 fields)            : 0
 status                              : BALANCED — nothing was dropped
