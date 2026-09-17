@@ -160,6 +160,50 @@ def test_a_failed_delivery_is_retried_rather_than_suppressed(tmp_path, monkeypat
     assert len(attempts) == 3, "a delivered alarm must never page again"
 
 
+def test_http_500_logs_a_receipt_and_retries_until_ntfy_accepts(
+    tmp_path, monkeypatch, capsys
+):
+    class Result:
+        def __init__(self, returncode: int, stdout: str) -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = ""
+
+    responses = iter(
+        [
+            Result(0, '{"code":500,"error":"internal error"}\n__HTTP_STATUS__:500'),
+            Result(0, '{"id":"ntfy-message-1"}\n__HTTP_STATUS__:200'),
+        ]
+    )
+    attempts = 0
+    delivery_page = uw.page
+
+    def page(title: str, body: str) -> bool:
+        nonlocal attempts
+        attempts += 1
+        return delivery_page(title, body, runner=lambda *_args, **_kwargs: next(responses))
+
+    monkeypatch.setattr(uw, "page", page)
+    monkeypatch.setattr(uw, "CONDITIONS", {"RESERVE1": lambda: (1, 25, "fixture")})
+    state, status = tmp_path / "s.json", tmp_path / "S.txt"
+
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert json.loads(state.read_text(encoding="utf-8"))["RESERVE1"]["delivered"] is False
+
+    uw.main(["--state", str(state), "--status", str(status)])
+    assert json.loads(state.read_text(encoding="utf-8"))["RESERVE1"]["delivered"] is True
+    assert attempts == 2
+    receipts = [
+        line for line in capsys.readouterr().out.splitlines() if line.startswith("[NTFY-DELIVERY]")
+    ]
+    assert receipts == [
+        '[NTFY-DELIVERY] accepted=0 http_status=500 message_id=- '
+        'title="FIRED RESERVE1 -- first occurrence"',
+        '[NTFY-DELIVERY] accepted=1 http_status=200 message_id=ntfy-message-1 '
+        'title="FIRED RESERVE1 -- first occurrence"',
+    ]
+
+
 def _inc1_row(
     *, incident_id: str = "incident-1", symbol: str = "NUR",
     source: str = "oms_v2_cw_flip_uncovered",
