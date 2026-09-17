@@ -4070,3 +4070,63 @@ at 7bdcbd0. The bash-3.2 `mapfile` defect in the local `overlap.sh` (carried sin
 ### For Wednesday
 `EXPECTED_DATE` is already 2026-09-16 (codex, ~19:50 ET). #987 was closed and its branch deleted at 23:44 UTC. Expect the one known flat-before FAIL until the next restart snapshot. RESERVE1 reads
 RECURRENCE=20 until the 04:00 anchor — that is the VEEA storm, not new exposure.
+
+## 2026-09-16 — Wednesday: the chart's flip proven bar-for-bar, a stale-flip cap shipped, the mirror's 12-second lag found, and a seed that failed its own gate
+
+**Integrator `claude-1`; every deploy executed by `codex-2`. Box `58f66ef` (06:20 ET, #989) → `07cba271` (19:43–19:55 ET).**
+
+### Morning — "same bars, same calculation, dig further"
+The operator's TOS chart showed a MEDS ATR flip at ~08:34 ET that v2 never took. Same oracle (`sma5`, 5, 3.5) on our Schwab bars
+from 07:00 and on Massive bars from 07:00 gave the identical path (long from 07:08, no flip); Schwab and Massive agreed on 12/12 bars
+08:33–08:44. Schwab REST with extended hours from 04:00 returned **zero bars before 07:00 for MEDS, TSLA and AAPL**. Every replay that
+carried the day's 04:00–07:00 bars flipped SELL 07:25 (trail 3.5729 vs ours 3.449, close 3.515 — 6.6 cents) and BUY 08:34 — the
+chart. The ATR *value* converges in ~20 bars; the *trail* is a ratchet and the *state* persists until a cross, so one bar at 07:25
+surfaced as a "missed flip" 69 minutes later. PRE07 (#984) could not have reported it: it buckets only 04:00–06:59 flips and
+07:00–07:07 BUYs.
+
+### The day's ledger (one table, all from the box)
+1 taken, 3 missed, then more: MEDS 08:34 chart flip (+5% by 08:52) invisible to us; ZTG 08:47 our own `ASK_PAST_BAND` (ask 2.49 vs
+cap 2.4579) abandoned a fill that hit +5% on the next bar; MEDS 09:30 Schwab filled 2@4.31 → target 4.52 (+4.9%) while the **Webull
+mirror was wired 13 s after the strategy asked** (stop 4.31 already below market → 417); ZTG 09:35 Schwab "opening transactions for
+this security must be placed with a broker" + Webull `ORDER_RISK_RULE_PRICE_AGGRESSIVE`, cost 0. Later MEDS 13:57 BUY went unowned:
+the 11:28 short segment's first slot was spent at 11:44 (confirmation exit −2.7%, slot released) and 11:47 (hard stop −8.1%, slot
+CONSUMED); `[V2-RESTING-SLOT-CONSUMED]` printed once at 12:10 and the next 107 minutes left no trace. **Operator ruling: the stop-out
+non-reset is a guardrail and stays.** DLXY 15:41 Webull leg 1@1.90: the stock was HALTED 15:42:14–16:00:00 (no prints for 1,065 s);
+14 market sells were cancelled by Webull during the halt; the 16:00:05 after-hours limit filled 2.27 (+19.5%, "Floor exit").
+Fills today: Schwab 9 round trips (MEDS ×5, QCLS ×2, BENF, FTFT), Webull 14 (ZTG ×4, MEDS/FTFT/QCLS/DLXY ×2, AEHL, NAMI).
+
+### FTFT — the rule that existed for one half
+FTFT flipped SELL 10:15 ET, left the watchlist 10:16:38, re-joined 10:49:44; the same-session db-seed rebuilt the SHORT state from
+the 10:15 SELL and the resting path rested on it at 10:51/11:01. The operator hand-cancelled the Schwab rest at 11:01:09; the Webull
+mirror, placed 2 s later, filled 1@7.93 at 11:18:57. I first told the operator no fresh-flip rule existed — **wrong**: the 07-30
+`_cap_reconstructed_segment` carries his words in its docstring but only caps a reconstructed LONG (armed) segment. **#993** stamps
+`atr_short_flip_bar_ts` at the SELL and caps a reconstructed SHORT whose SELL bar is ≤ watch-start, both slots consumed, released
+only by a SELL we watch (no 16:00 release under RECLAIM1 — corrected in review). Codex's round-1 finding (guard skipped when
+resting=1/reclaim=0) fixed at `2b14c32`; FTFT-vs-MEDS 09-16 replay with box timestamps is the red/green pair; merged `7615475`.
+
+### The mirror lag was every mirror, not MEDS
+Codex's census: 47 timed pairs, **median 12.249 s** Schwab-accepted → Webull-wire, 44 > 10 s, 12.129 s without MEDS. The OMS's
+single intent lane awaited the Schwab adapter's poll-to-terminal (up to 10 s) and the inline post-intent reconcile before reading the
+queued sibling. **#992**: the mirror-enabled resting primary returns after acceptance (periodic 15 s sync reads the fill; the native
+OTOCO stays broker-side), the inline reconcile is skipped for that primary only, and the Webull adapter re-shapes the mirror at the
+wire from a ≤2 s OMS ask/last snapshot (LIMIT within band if crossed, `ASK_PAST_BAND` above, `NO_FRESH_QUOTE` fail-closed). I ran 120
+tests and two mutations; pinned with one watch condition: zero `abandoned_no_fresh_quote` in the first sessions.
+
+### The seed: seven sessions said yes, thirty said no
+The operator lifted "no Polygon bars" for the pre-first-Schwab-bar seed and ruled "flag on". My 7-session replay (70 symbol-days):
+parity 1592/1592, 64/64 flips preserved, 11 gained at +13.2% — after a first run that wrongly counted flips before the symbol was
+watched (171 "gained"; the tell was zero lost with 3× the flips). Codex built #994 with the frozen G5 gate inside it; after 16:00 the
+30-session replay read **parity 98.050% (< 99.5%; five days 80.8–95.7%), preserved 480/482, gained 65 flips sum −16.89%, median
++1.03%**. G5 FAIL → the installer refuses without a literal PASS line; **merged DORMANT** at `07cba271`, flag read false from the
+running v2. The ruling is overtaken by the pre-registered gate, and the operator's earlier "as long as the evidence supports it" is
+exactly why the gate was frozen first.
+
+### Momentum paper bots
+#990 froze the protocol (04:11–09:29:59 ET, prior close ≥ $1, +30% over trailing 30/60 s eligible-print low, $500, +5%/−15%/600 s);
+#991 built the isolated `project-mai-tai-momentum-paper` unit; activated 19:54 ET with migration `20260916_0021`, control and
+strategy restarted 19:55 ET. The `polygon_30s` paper strategy was an embedded strategy-engine card/runtime, never a standalone unit; its card and runtime are retired, its history is retained for audit. Zero events tonight is correct; first read 09:35 ET.
+
+### Process
+Pinned #992 and #994 (twice — the rebase onto #992 voided the first #994 pin; I forgot the superseded-record deletion and CI caught it;
+deletion-only commit fixed it). I edited two files codex had claimed without claiming first; recorded after the fact. Box `date` is
+UTC — I labelled it ET once.
