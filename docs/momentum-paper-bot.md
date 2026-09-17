@@ -58,6 +58,14 @@ supplied 29/30 trades, and both bots exceeded the `DETECTOR_SUSPECT` threshold. 
 implementation evidence, not proof that 20% is superior. The operator approved the lower threshold
 and immediate fresh-move re-entry while the forward paper population was still empty.
 
+The former `>10 detections` health band was calibrated for the 30% trigger and is now reported as
+`UNCALIBRATED`; it cannot label the 20% detector suspect until a new forward baseline is approved.
+PATH evidence is stored once per `(strategy_code, symbol, raw print)` on a shared session tape.
+Each event references its absolute inclusive SIP-time evidence range, so an old event collecting
+ten-minute excursion evidence and a new re-entry never duplicate the same raw tape row. `NO_FILL`
+re-arms after `detect SIP t + 10 seconds`; `UNANSWERABLE` re-arms after its evidence deadline, and
+a print exactly on either boundary is excluded from the next reference population.
+
 ## Evidence saved for every event
 
 The path begins at the detection print (`dt_ms=0`). For a fill, it continues through

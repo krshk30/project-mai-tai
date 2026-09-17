@@ -4,6 +4,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
 from decimal import Decimal, ROUND_FLOOR
+import hashlib
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
@@ -127,6 +128,8 @@ class MomentumPaperEngine:
                 int(exit_payload.get("sip_ts_ms", 0) or 0) if isinstance(exit_payload, dict) else 0
             )
             if not boundary_ms:
+                boundary_ms = int(row.payload.get("terminal_boundary_sip_ts_ms", 0) or 0)
+            if not boundary_ms:
                 boundary_ms = int(row.observed_at.timestamp() * 1000)
             key = (row.strategy_code, row.symbol.upper())
             self._reference_after_ms[key] = max(
@@ -147,7 +150,8 @@ class MomentumPaperEngine:
             exclusion_reason=trade.exclusion_reason,
         )
         records: list[MomentumTapeRecord] = []
-        records.extend(self._advance_symbol_events(trade))
+        event_records, path_strategies = self._advance_symbol_events(trade)
+        records.extend(event_records)
 
         history = self._eligible_history[trade.symbol]
         excluded = self._excluded_history[trade.symbol]
@@ -196,8 +200,13 @@ class MomentumPaperEngine:
                 )
                 self._active[event.logical_id] = event
                 records.append(self._record(event, "DETECTED", trade, self._summary(event)))
+                path_strategies.add(strategy_code)
 
         history.append(trade)
+        records.extend(
+            self._shared_path_record(strategy_code, trade)
+            for strategy_code in sorted(path_strategies)
+        )
         return tuple(records)
 
     def _has_unresolved_event(self, key: tuple[str, str]) -> bool:
@@ -287,8 +296,11 @@ class MomentumPaperEngine:
             last_eligible_path_ts_ms=detection.sip_ts_ms,
         )
 
-    def _advance_symbol_events(self, trade: TradePrint) -> list[MomentumTapeRecord]:
+    def _advance_symbol_events(
+        self, trade: TradePrint
+    ) -> tuple[list[MomentumTapeRecord], set[str]]:
         records: list[MomentumTapeRecord] = []
+        path_strategies: set[str] = set()
         for event in [item for item in self._active.values() if item.symbol == trade.symbol]:
             records.extend(self._resolve_pending_target(event, trade.sip_ts_ms))
             if event.logical_id not in self._active:
@@ -319,17 +331,7 @@ class MomentumPaperEngine:
                 event.fill is not None and event.exit is None and trade.eligible
             ):
                 self._append_path(event, trade)
-                records.append(
-                    self._record(
-                        event,
-                        "PATH_PRINT",
-                        trade,
-                        {
-                            **trade.payload(),
-                            "dt_ms": trade.sip_ts_ms - event.detection.sip_ts_ms,
-                        },
-                    )
-                )
+                path_strategies.add(event.strategy_code)
             if not trade.eligible:
                 event.excluded_prints += 1
                 continue
@@ -376,7 +378,7 @@ class MomentumPaperEngine:
                 and event.exit is None
             ):
                 records.extend(self._set_exit(event, event.pending_target, "TARGET"))
-        return records
+        return records, path_strategies
 
     def _resolve_pending_target(self, event: _ActiveEvent, now_ms: int) -> list[MomentumTapeRecord]:
         target = event.pending_target
@@ -422,10 +424,11 @@ class MomentumPaperEngine:
     def _finish(
         self, event: _ActiveEvent, status: str, now_ms: int, reason: str
     ) -> list[MomentumTapeRecord]:
+        terminal_boundary_ms = self._terminal_boundary_ms(event, status, now_ms)
         if event.exit is None:
             key = (event.strategy_code, event.symbol)
             self._reference_after_ms[key] = max(
-                now_ms,
+                terminal_boundary_ms,
                 self._reference_after_ms.get(key, 0),
             )
         summary = self._summary(event)
@@ -434,6 +437,7 @@ class MomentumPaperEngine:
                 "status": status,
                 "reason": reason,
                 "path_complete": status == "FINAL" and reason == "path_complete",
+                "terminal_boundary_sip_ts_ms": terminal_boundary_ms,
             }
         )
         record = self._record(
@@ -453,6 +457,39 @@ class MomentumPaperEngine:
             return self._finish(event, "UNANSWERABLE", now_ms, "missing_exit_print")
         return self._finish(event, "FINAL", now_ms, "path_complete")
 
+    @staticmethod
+    def _terminal_boundary_ms(event: _ActiveEvent, status: str, now_ms: int) -> int:
+        if status == "NO_FILL":
+            return event.detection.sip_ts_ms + _FILL_WINDOW_MS
+        if status == "UNANSWERABLE":
+            return event.path_deadline_ms
+        if event.exit is not None:
+            return event.exit.sip_ts_ms
+        return now_ms
+
+    @staticmethod
+    def _tape_logical_id(strategy_code: str, symbol: str, session_date: date) -> str:
+        return f"momentum-tape:{session_date.isoformat()}:{strategy_code}:{symbol}"
+
+    def _shared_path_record(self, strategy_code: str, trade: TradePrint) -> MomentumTapeRecord:
+        session_date = trade.observed_at.astimezone(_ET).date()
+        logical_id = self._tape_logical_id(strategy_code, trade.symbol, session_date)
+        raw_identity = trade.trade_id.strip() or (
+            f"anonymous:{trade.sip_ts_ms}:{trade.participant_ts_ms}:{trade.price}:"
+            f"{trade.size}:{','.join(str(code) for code in trade.conditions)}"
+        )
+        trade_identity = hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()[:24]
+        return MomentumTapeRecord(
+            event_key=f"{logical_id}:{trade_identity}:PATH_PRINT",
+            logical_id=logical_id,
+            strategy_code=strategy_code,
+            event_type="PATH_PRINT",
+            session_date=session_date,
+            symbol=trade.symbol,
+            observed_at=trade.observed_at,
+            payload=trade.payload(),
+        )
+
     def _summary(self, event: _ActiveEvent) -> dict[str, object]:
         fill_price = event.fill.price if event.fill is not None else None
         exit_price = event.exit.price if event.exit is not None else None
@@ -471,6 +508,15 @@ class MomentumPaperEngine:
             "reference": event.reference.payload(),
             "detect": event.detection.payload(),
             "path_start": {**event.detection.payload(), "dt_ms": 0},
+            "path_range": {
+                "tape_logical_id": self._tape_logical_id(
+                    event.strategy_code, event.symbol, event.session_date
+                ),
+                "start_sip_ts_ms": event.detection.sip_ts_ms,
+                "end_sip_ts_ms": event.path_deadline_ms,
+                "start_inclusive": True,
+                "end_inclusive": True,
+            },
             "window_print_count": event.window_print_count,
             "window_share_count": event.window_share_count,
             "excluded_prints": event.excluded_prints,

@@ -59,7 +59,8 @@ _PATH_FLUSH_ROWS = 500
 
 
 def detector_health_status(detections: int) -> str:
-    return "DETECTOR_SUSPECT" if detections > 10 else "HEALTHY"
+    del detections
+    return "UNCALIBRATED"
 
 
 def previous_trading_day(day: date) -> date:
@@ -625,6 +626,9 @@ class MomentumPaperService:
                     "status": "UNANSWERABLE",
                     "reason": "service_restart_interrupted_forward_path",
                     "path_complete": False,
+                    "terminal_boundary_sip_ts_ms": int(
+                        dict(row.payload.get("path_range") or {}).get("end_sip_ts_ms", 0) or 0
+                    ),
                 },
             )
             for logical_id, row in sorted(detected.items())

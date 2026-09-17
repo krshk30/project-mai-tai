@@ -341,9 +341,34 @@ def test_path_starts_at_detection_and_survives_an_early_exit() -> None:
     path_record = engine.ingest(_trade("04:12:00.000", "1.34"))
     path_rows = [record for record in path_record if record.event_type == "PATH_PRINT"]
     assert len(path_rows) == 2
-    assert {record.payload["dt_ms"] for record in path_rows} == {35_000}
+    assert {record.payload["sip_ts_ms"] for record in path_rows} == {_ms("04:12:00.000")}
+    assert len({record.logical_id for record in path_rows}) == 2
     assert {row["path_print_count"] for row in engine.active_events} == {4}
     assert {dict(row["path_start"])["dt_ms"] for row in engine.active_events} == {0}
+    assert {dict(row["path_range"])["tape_logical_id"] for row in engine.active_events} == {
+        record.logical_id for record in path_rows
+    }
+
+
+def test_overlapping_evidence_and_reentry_share_one_tape_row_per_strategy() -> None:
+    engine = _engine()
+    all_records = list(engine.ingest(_trade("04:11:00.000", "1.00")))
+    all_records.extend(engine.ingest(_trade("04:11:25.000", "1.20")))
+    all_records.extend(engine.ingest(_trade("04:11:26.000", "1.20")))
+    all_records.extend(engine.ingest(_trade("04:11:27.100", "1.26")))
+    all_records.extend(engine.advance_clock(_ms("04:11:28.000")))
+    all_records.extend(engine.ingest(_trade("04:11:28.100", "1.00")))
+    all_records.extend(engine.ingest(_trade("04:11:28.200", "1.20")))
+
+    at_reentry = [
+        row
+        for row in all_records
+        if row.event_type == "PATH_PRINT"
+        and row.observed_at.timestamp() * 1000 == _ms("04:11:28.200")
+    ]
+    assert len(at_reentry) == 2
+    assert {row.strategy_code for row in at_reentry} == {"momentum_30s", "momentum_60s"}
+    assert len({row.event_key for row in at_reentry}) == 2
 
 
 def test_excursions_continue_over_full_path_after_an_early_exit() -> None:
@@ -439,6 +464,62 @@ def test_missing_next_print_becomes_no_fill() -> None:
     no_fills = [record for record in records if record.event_type == "NO_FILL"]
     assert len(no_fills) == 2
     assert engine.active_events == ()
+
+
+def test_no_fill_rearms_from_detect_plus_ten_seconds_not_processing_clock() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    detect_sip_ms = _ms("04:11:25.000")
+
+    records = engine.advance_clock(detect_sip_ms + 60_000)
+
+    no_fills = [record for record in records if record.event_type == "NO_FILL"]
+    assert {record.payload["terminal_boundary_sip_ts_ms"] for record in no_fills} == {
+        detect_sip_ms + 10_000
+    }
+
+
+def test_restored_terminal_boundary_excludes_equality_but_admits_later_reference() -> None:
+    boundary_ms = _ms("04:11:35.000")
+    engine = _engine()
+    engine.seed_reentry_boundaries(
+        [
+            MomentumTapeRecord(
+                event_key=f"{strategy_code}:terminal",
+                logical_id=f"{strategy_code}:TEST:old",
+                strategy_code=strategy_code,
+                event_type="NO_FILL",
+                session_date=DAY,
+                symbol="TEST",
+                observed_at=datetime.fromtimestamp((boundary_ms + 50_000) / 1000, tz=UTC),
+                payload={"terminal_boundary_sip_ts_ms": boundary_ms},
+            )
+            for strategy_code in ("momentum_30s", "momentum_60s")
+        ]
+    )
+    engine.ingest(_trade("04:11:35.000", "0.50"))
+    equal_boundary_move = engine.ingest(_trade("04:11:35.100", "1.00"))
+    engine.ingest(_trade("04:11:35.200", "1.1999"))
+    later_reference_move = engine.ingest(_trade("04:11:35.300", "1.20"))
+
+    assert _detected(equal_boundary_move) == set()
+    assert _detected(later_reference_move) == {"momentum_30s", "momentum_60s"}
+
+
+def test_unanswerable_terminal_uses_evidence_deadline_not_observation_clock() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    fill_ms = _ms("04:11:26.000")
+    engine.ingest(_trade("04:11:26.000", "1.20"))
+    engine.mark_feed_gap(_ms("04:12:00.000"), _ms("04:12:01.000"))
+
+    records = engine.ingest(_trade("04:21:26.001", "1.20"))
+
+    unanswerable = [record for record in records if record.event_type == "UNANSWERABLE"]
+    assert len(unanswerable) == 2
+    assert {record.payload["terminal_boundary_sip_ts_ms"] for record in unanswerable} == {
+        fill_ms + 600_000
+    }
 
 
 def test_092959_event_finishes_using_symbol_tail_after_global_subscription_ends() -> None:

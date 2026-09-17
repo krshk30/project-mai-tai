@@ -509,9 +509,10 @@ def test_previous_trading_day_skips_weekend_and_shared_holiday_calendar() -> Non
     assert previous_trading_day(date(2026, 9, 8)) == date(2026, 9, 4)
 
 
-def test_detector_suspect_is_health_only_and_starts_above_ten() -> None:
-    assert detector_health_status(10) == "HEALTHY"
-    assert detector_health_status(11) == "DETECTOR_SUSPECT"
+def test_detector_rate_is_uncalibrated_after_the_twenty_percent_rule_change() -> None:
+    assert detector_health_status(0) == "UNCALIBRATED"
+    assert detector_health_status(11) == "UNCALIBRATED"
+    assert detector_health_status(10_000) == "UNCALIBRATED"
 
 
 def test_momentum_registration_is_two_paper_cards_and_retires_polygon_only_when_enabled() -> None:
