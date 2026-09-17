@@ -73,6 +73,61 @@ def _condition_snapshot():
                     }
                 },
             },
+            {
+                "id": 12,
+                "name": "Form T/Extended Hours",
+                "update_rules": {
+                    "consolidated": {
+                        "updates_high_low": False,
+                        "updates_open_close": False,
+                        "updates_volume": True,
+                    }
+                },
+            },
+            {
+                "id": 13,
+                "name": "Extended Hours (Sold Out Of Sequence)",
+                "update_rules": {
+                    "consolidated": {
+                        "updates_high_low": False,
+                        "updates_open_close": False,
+                        "updates_volume": True,
+                    }
+                },
+            },
+            {
+                "id": 14,
+                "name": "Intermarket Sweep",
+                "update_rules": {
+                    "consolidated": {
+                        "updates_high_low": True,
+                        "updates_open_close": True,
+                        "updates_volume": True,
+                    }
+                },
+            },
+            {
+                "id": 37,
+                "name": "Odd Lot Trade",
+                "update_rules": {
+                    "consolidated": {
+                        "updates_high_low": False,
+                        "updates_open_close": False,
+                        "updates_volume": True,
+                    }
+                },
+            },
+            {
+                "id": 41,
+                "name": "Trade Thru Exempt",
+                "update_rules": {
+                    "consolidated": {
+                        "updates_high_low": True,
+                        "updates_open_close": True,
+                        "updates_volume": True,
+                    }
+                },
+            },
         ],
         retrieved_at=datetime(2026, 9, 16, 7, 55, tzinfo=UTC),
     )
@@ -139,6 +194,30 @@ def test_unknown_or_cancel_condition_is_excluded_before_the_engine() -> None:
     assert cancelled.exclusion_reason == "not_consolidated_ohlc=99"
     assert unknown is not None and unknown.eligible is False
     assert unknown.exclusion_reason == "unknown_conditions=404"
+
+
+@pytest.mark.parametrize(
+    ("codes", "eligible", "reason"),
+    [
+        ((12,), True, "aggregate_eligible_extended_hours"),
+        ((12, 14, 41), True, "aggregate_eligible_extended_hours"),
+        ((12, 37), False, "not_consolidated_ohlc=37"),
+        ((12, 14, 37, 41), False, "not_consolidated_ohlc=37"),
+        ((13,), False, "not_consolidated_ohlc=13"),
+        ((12, 404), False, "unknown_conditions=404"),
+    ],
+)
+def test_real_extended_hours_condition_shapes_fail_closed_except_form_t(
+    codes: tuple[int, ...], eligible: bool, reason: str
+) -> None:
+    trade = normalize_raw_trade(
+        {"ev": "T", "sym": "DAIC", "t": 1_789_555_200_123, "p": 4.0, "c": codes},
+        conditions=_condition_snapshot(),
+    )
+
+    assert trade is not None
+    assert trade.eligible is eligible
+    assert trade.exclusion_reason == reason
 
 
 def test_service_disables_library_reconnects_so_feed_gaps_are_visible(monkeypatch) -> None:

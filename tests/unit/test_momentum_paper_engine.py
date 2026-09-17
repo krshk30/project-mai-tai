@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from project_mai_tai.momentum_paper.conditions import build_condition_snapshot
 from project_mai_tai.momentum_paper.engine import MomentumPaperEngine
 from project_mai_tai.momentum_paper.models import TradePrint
 from project_mai_tai.momentum_paper.report import grade_strategy
@@ -54,6 +55,45 @@ def _detected(records) -> set[str]:
     return {record.strategy_code for record in records if record.event_type == "DETECTED"}
 
 
+def _condition_snapshot():
+    def row(code: int, name: str, high_low: bool, open_close: bool) -> dict[str, object]:
+        return {
+            "id": code,
+            "name": name,
+            "update_rules": {
+                "consolidated": {
+                    "updates_high_low": high_low,
+                    "updates_open_close": open_close,
+                    "updates_volume": True,
+                }
+            },
+        }
+
+    return build_condition_snapshot(
+        [
+            row(12, "Form T/Extended Hours", False, False),
+            row(13, "Extended Hours (Sold Out Of Sequence)", False, False),
+            row(14, "Intermarket Sweep", True, True),
+            row(37, "Odd Lot Trade", False, False),
+            row(41, "Trade Thru Exempt", True, True),
+        ],
+        retrieved_at=datetime(2026, 9, 17, 8, 0, tzinfo=UTC),
+    )
+
+
+def _classified_trade(clock: str, price: str, conditions: tuple[int, ...]) -> TradePrint:
+    eligible, reason = _condition_snapshot().classify(conditions)
+    return TradePrint(
+        symbol="TEST",
+        sip_ts_ms=_ms(clock),
+        price=Decimal(price),
+        size=100,
+        conditions=conditions,
+        eligible=eligible,
+        exclusion_reason=reason,
+    )
+
+
 def _detect_both(engine: MomentumPaperEngine, *, symbol: str = "TEST") -> None:
     engine.ingest(_trade("04:11:00.000", "1.00", symbol=symbol))
     records = engine.ingest(_trade("04:11:25.000", "1.30", symbol=symbol))
@@ -72,6 +112,19 @@ def test_45_second_move_fires_only_momentum_60() -> None:
 def test_25_second_move_fires_both_strategies() -> None:
     engine = _engine()
     _detect_both(engine)
+
+
+def test_form_t_only_move_detects_but_form_t_odd_lot_move_does_not() -> None:
+    form_t = _engine()
+    form_t.ingest(_classified_trade("04:11:00.000", "1.00", (12,)))
+    detected = form_t.ingest(_classified_trade("04:11:25.000", "1.30", (12,)))
+    assert _detected(detected) == {"momentum_30s", "momentum_60s"}
+
+    odd_lot = _engine()
+    odd_lot.ingest(_classified_trade("04:11:00.000", "1.00", (12, 37)))
+    rejected = odd_lot.ingest(_classified_trade("04:11:25.000", "1.30", (12, 37)))
+    assert _detected(rejected) == set()
+    assert odd_lot.session_excluded_prints == 2
 
 
 @pytest.mark.parametrize(

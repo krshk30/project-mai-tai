@@ -127,7 +127,7 @@ def normalize_raw_trade(row: object, *, conditions: ConditionSnapshot) -> TradeP
         trade_id=str(_raw_value(row, "i", "id", "trade_id") or ""),
         conditions=codes,
         eligible=eligible,
-        exclusion_reason="" if eligible else reason,
+        exclusion_reason=reason,
     )
 
 
