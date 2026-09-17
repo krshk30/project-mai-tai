@@ -1,0 +1,9 @@
+{
+  "pr_number": 996,
+  "range_base": "023f141e7129a5b695721975561516aaece9d500",
+  "range_head": "8bb023c61d34fe138e5f7dfc881cdd5ecce598eb",
+  "reviewed_at": "2026-09-17T00:34:02Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified the successor repair changes only the three handoff paths; its frozen 114/114 manifest is byte-identical to the live journals, with no duplicates or malformed entries; the #995 refusal and #996 promotion-carrier state are accurately recorded."
+}
