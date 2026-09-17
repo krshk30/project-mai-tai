@@ -631,6 +631,30 @@ def test_fresh_sell_resets_suppressed_bar_count_for_the_next_segment(caplog):
     assert "suppressed_bars=1" in caplog.messages[-1]
 
 
+def test_segment_id_change_without_a_sell_restarts_the_suppressed_bar_count(caplog):
+    strat = _in_window(
+        _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    )
+    state = strat.watchlist_state("MEDS")
+    state.cw_resting_taken = True
+    caplog.set_level(logging.INFO)
+
+    for ts in (101, 102):
+        state.bars.append(_bar(4.20, vol=25_000, ts=ts))
+        strat._now_ms = lambda ts=ts: ts
+        strat._cw_v2_resting_track(state, _sig(state="short", trail=4.1951, age=4))
+    assert state.cw_resting_suppressed_bars == 2
+
+    state.fanout_segment_id = 300
+    state.bars.append(_bar(4.20, vol=25_000, ts=103))
+    strat._now_ms = lambda: 103
+    strat._cw_v2_resting_track(state, _sig(state="short", trail=4.1951, age=5))
+
+    assert "segment_id=300" in caplog.messages[-1]
+    assert "suppressed_bars=1" in caplog.messages[-1]
+    assert sum("[V2-RESTING-SLOT-CONSUMED]" in message for message in caplog.messages) == 2
+
+
 def test_open_resting_slot_places_without_a_suppressed_bar_line(caplog):
     strat = _in_window(
         _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
