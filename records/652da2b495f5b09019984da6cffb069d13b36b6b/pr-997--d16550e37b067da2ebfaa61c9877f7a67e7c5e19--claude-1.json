@@ -1,0 +1,9 @@
+{
+  "pr_number": 997,
+  "range_base": "d16550e37b067da2ebfaa61c9877f7a67e7c5e19",
+  "range_head": "652da2b495f5b09019984da6cffb069d13b36b6b",
+  "reviewed_at": "2026-09-17T10:07:13Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Read the full 2-file diff (1 src line + 1 new test). Verified the contract: events.py HeartbeatPayload.status is Literal[starting,healthy,degraded,stopping]; 'waiting' can never validate. Verified the production cause from the box myself: momentum-paper.log holds 1129 tracebacks, ONE distinct exception type (pydantic ValidationError input_value='waiting'), NRestarts=1128, first at 07:55:09Z = 03:55 ET right after SESSION_READY. Verified the mechanism in _tick: engine is None before _PREPARE_AT so the heartbeat is never reached; after prepare and before the stream connects _connected=False -> crash on every start, hence the loop. Checked the second 'waiting' literal at :529 lives in the untyped data_health dict (not validated) and is left unchanged on purpose. Ran 53/53 momentum service+engine tests at the head; ruff clean. MY OWN MUTATION: reverted the line to 'waiting' -> test_disconnected_heartbeat_reports_degraded_without_crashing goes RED with the same ValidationError at momentum_paper_app.py:456, 22 others pass; restored. Could NOT verify: live behaviour after restart (stable PID, T.* connected, healthy heartbeat) - that is the deploy check. Not in scope and not fixed: one publish exception still kills the whole service (no guard around _publish_state); mid-session restart coverage begins at restart time."
+}
