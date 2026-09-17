@@ -8,7 +8,7 @@ live (a frozen loop) — never on a quiet market / feed outage."""
 from __future__ import annotations
 
 import importlib.util
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 import subprocess
 
@@ -150,9 +150,12 @@ def test_runtime_check_persists_baseline_then_detects_the_next_five_minute_delta
         runner=runner,
     )
 
-    assert first[0] == "GREEN"
-    assert second[0:2] == ("RED", "service-restart-storms")
-    assert f"{momentum} +5" in second[2]
+    assert not [row for row in first if row[0] == "RED"]
+    momentum_storm = next(
+        row for row in second if row[1] == "service-runtime:momentum-paper:restart-storm"
+    )
+    assert momentum_storm[0] == "RED"
+    assert "delta=5" in momentum_storm[2]
 
 
 def test_inactive_expected_service_is_red_even_without_a_prior_sample() -> None:
@@ -163,6 +166,78 @@ def test_inactive_expected_service_is_red_even_without_a_prior_sample() -> None:
 
     assert level == "RED"
     assert f"{momentum}(inactive/dead)" in detail
+
+
+def test_runtime_rows_are_independent_per_service_and_condition() -> None:
+    momentum = "project-mai-tai-momentum-paper.service"
+    oms = "project-mai-tai-oms.service"
+    current = _service_states(
+        restart_overrides={momentum: 5},
+        state_overrides={oms: ("inactive", "dead")},
+    )
+
+    rows = fhc.classify_service_runtime_rows(
+        current,
+        {service: 0 for service in fhc.RUNTIME_SERVICES},
+        elapsed_s=300,
+        now=datetime(2026, 9, 17, 12, tzinfo=UTC),
+        maintenance={},
+    )
+
+    red_names = {name for level, name, _detail in rows if level == "RED"}
+    assert red_names == {
+        "service-runtime:momentum-paper:restart-storm",
+        "service-runtime:oms:inactive",
+    }
+
+
+def test_active_maintenance_is_expiring_explicit_and_never_green(tmp_path: Path) -> None:
+    maintenance_path = tmp_path / "maintenance.txt"
+    momentum = "project-mai-tai-momentum-paper.service"
+    maintenance_path.write_text(
+        f"{momentum} 2026-09-17T13:00:00Z planned deploy\n",
+        encoding="utf-8",
+    )
+    windows, errors = fhc._read_maintenance_windows(maintenance_path)
+
+    rows = fhc.classify_service_runtime_rows(
+        _service_states(state_overrides={momentum: ("inactive", "dead")}),
+        None,
+        elapsed_s=None,
+        now=datetime(2026, 9, 17, 12, tzinfo=UTC),
+        maintenance=windows,
+        maintenance_errors=errors,
+    )
+
+    momentum_rows = [row for row in rows if ":momentum-paper:" in row[1]]
+    assert {row[0] for row in momentum_rows} == {"MAINTENANCE"}
+    assert all("until=2026-09-17T13:00:00+00:00" in row[2] for row in momentum_rows)
+
+
+def test_expired_maintenance_pages_and_no_expiry_is_rejected(tmp_path: Path) -> None:
+    momentum = "project-mai-tai-momentum-paper.service"
+    expired_path = tmp_path / "expired.txt"
+    expired_path.write_text(
+        f"{momentum} 2026-09-17T11:59:59Z planned deploy\n",
+        encoding="utf-8",
+    )
+    windows, errors = fhc._read_maintenance_windows(expired_path)
+    rows = fhc.classify_service_runtime_rows(
+        _service_states(),
+        None,
+        elapsed_s=None,
+        now=datetime(2026, 9, 17, 12, tzinfo=UTC),
+        maintenance=windows,
+        maintenance_errors=errors,
+    )
+    assert any(
+        row[0:2] == ("RED", "service-runtime:momentum-paper:maintenance-expired") for row in rows
+    )
+
+    invalid_path = tmp_path / "invalid.txt"
+    invalid_path.write_text(f"{momentum} planned-stop-without-expiry\n", encoding="utf-8")
+    _windows, invalid_errors = fhc._read_maintenance_windows(invalid_path)
+    assert invalid_errors == ("line 1: expected <unit> <until-ISO8601-UTC> <reason>",)
 
 
 # --- check #2: oms-order-lifecycle (alive-but-not-executing) ------------------ #

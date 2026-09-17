@@ -88,10 +88,16 @@ counts never page. `PAPER` remains log-only: the runtime class pages because a c
 broken infrastructure regardless of whether its account is paper. Recovery is log-only. See
 `docs/alert-triage-2026-09-11.md` for the settled classification and deduplication policy.
 
-- **service-restart-storms** (`FLEET_RUNTIME`, pageable, 24/7) — all continuously enabled project
-  units, including `momentum-paper`, must be active/running. Each run stores an atomic restart-count
-  snapshot; a service gaining more than three `NRestarts` within the next bounded five-minute
-  sample is RED. Deliberately disabled/masked units are not in the inventory.
+- **service runtime** (`FLEET_RUNTIME`, pageable, 24/7) — all continuously enabled project units,
+  including `momentum-paper`, must be active/running. Each service and condition has its own
+  transition fingerprint, so an acknowledged paper-unit stop cannot mask a later OMS or v2
+  outage. Each run stores an atomic restart-count snapshot; a service gaining more than three
+  `NRestarts` within the next bounded five-minute sample is RED.
+
+  Planned stops require `/home/trader/fleet_health/maintenance.txt` rows in the exact form
+  `<unit> <until-ISO8601-UTC> <reason>`. While the expiry is in the future that unit's runtime rows
+  report `MAINTENANCE`, not GREEN, and do not page. Missing/invalid expiries fail closed; an expired
+  row pages until it is removed or replaced. Maintenance never applies fleet-wide.
 - **#1 strategy-bar-freshness** (`PAPER`, log-only) — polygon_30s must keep persisting 30s bars. RED only
   when the bars are stale AND the independent Polygon capture (`market_capture_trades`) is
   SIMULTANEOUSLY live → a frozen loop (the "reports healthy while dead" class). A quiet
@@ -115,7 +121,10 @@ function checks to 09:35-16:05 ET on open weekdays. Root crontab:
 `fleet_health_cron.sh --selftest` deliberately sends one benign end-to-end test notification;
 normal scheduled runs page actionable `LIVE_MONEY` and `FLEET_RUNTIME` RED transitions. Delivery
 and transition semantics are also covered by the wrapper controls. Deploy the checkout and cron
-line in one reviewed action; changing only the source leaves the overnight gap in place.
+line in one reviewed action; changing only the source leaves the overnight gap in place. The
+deploy owner removes the old trader-session line and any old session-scoped root line before
+installing the all-day root entry, then verifies exactly one fleet-health schedule exists across
+both crontabs so the check cannot run twice.
 Rollback: restore the prior cron line. No live-service impact.
 
 ### D6 outcome-acceptance install order
