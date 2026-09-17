@@ -456,7 +456,7 @@ class MomentumPaperService:
             payload=HeartbeatPayload(
                 service_name=SERVICE_NAME,
                 instance_name=SERVICE_NAME,
-                status="healthy" if self._connected else "waiting",
+                status="healthy" if self._connected else "degraded",
                 details={
                     "execution_mode": "paper",
                     "broker_route": "none",
