@@ -36,6 +36,10 @@ LAUNCHED_NOT_IMPORTED: dict[str, str] = {
         "read-only after-close selection study; launched with python -m and referenced from docs/"
     ),
     "project_mai_tai.backtest.dot_entry": "study CLI; referenced from scripts/ and docs/",
+    "project_mai_tai.backtest.momentum_live_rule_baseline": (
+        "read-only after-close Momentum tape capture and offline replay; launched with python -m "
+        "and referenced from docs/review-artifacts/"
+    ),
     "project_mai_tai.backtest.pre0700_shadow": (
         "read-only after-close PRE07 study; launched with python -m and referenced from docs/"
     ),
