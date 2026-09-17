@@ -1,9 +1,10 @@
 """Capture and replay the frozen Momentum 20% live rule over closed sessions.
 
-Capture is deliberately separate from replay. The trading box uses one-second
-aggregates only to find a safe superset of candidate symbols, then downloads raw
-trades for those symbols. Replay is offline and routes every captured row through
-the production normalizer and :class:`MomentumPaperEngine`.
+Capture is deliberately separate from replay. The trading box screens every
+eligible symbol with premarket minute aggregates, confirms candidates with
+one-second aggregates, then downloads raw trades only for those candidates.
+Replay is offline and routes every captured row through the production normalizer
+and :class:`MomentumPaperEngine`.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 import gzip
 import json
 from pathlib import Path
+from time import monotonic
 from typing import Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
@@ -41,6 +43,8 @@ _DETECTION_END = time(9, 30)
 _CAPTURE_END = time(9, 40, 1)
 _TRIGGER_MULTIPLIER = Decimal("1.20")
 DETECTOR_SUSPECT_DETECTIONS = 10
+BAND_REJECT_SUSPECT_SESSIONS = 3
+BAND_REPLACEMENT_PERCENTILE = 95
 
 
 @dataclass(frozen=True)
@@ -75,12 +79,31 @@ class SessionResult:
     eligible_prints: int
     excluded_prints: int
     malformed_prints: int
+    prior_close_floor_disagreements: tuple[str, ...]
+    split_events: tuple[dict[str, object], ...]
+    api_calls: dict[str, int]
+    capture_wall_seconds: float
     strategy_results: tuple[StrategyResult, ...]
     symbol_detections: dict[str, int]
 
 
 def detector_is_suspect(detections: int) -> bool:
     return detections > DETECTOR_SUSPECT_DETECTIONS
+
+
+def detector_band_decision(detections: Sequence[int]) -> dict[str, object]:
+    if len(detections) != 30:
+        raise ValueError("detector band calibration requires exactly 30 sessions")
+    suspect = sum(detector_is_suspect(value) for value in detections)
+    ordered = sorted(int(value) for value in detections)
+    rank = (BAND_REPLACEMENT_PERCENTILE * len(ordered) + 99) // 100
+    replacement = max(DETECTOR_SUSPECT_DETECTIONS, ordered[rank - 1])
+    return {
+        "verdict": "REJECT_BAND" if suspect > BAND_REJECT_SUSPECT_SESSIONS else "ACCEPT_BAND",
+        "suspect_sessions": suspect,
+        "sessions": len(ordered),
+        "replacement_nearest_rank_p95": replacement,
+    }
 
 
 def _value(source: object, *names: str) -> object:
@@ -190,32 +213,61 @@ def _grouped_prices(rows: Iterable[object]) -> dict[str, tuple[Decimal, Decimal,
     return result
 
 
-def broad_candidates(
+def prior_close_universe(
+    adjusted_rows: Iterable[object], unadjusted_rows: Iterable[object]
+) -> tuple[dict[str, Decimal], tuple[str, ...]]:
+    adjusted = _grouped_prices(adjusted_rows)
+    unadjusted = _grouped_prices(unadjusted_rows)
+    universe: dict[str, Decimal] = {}
+    disagreements: list[str] = []
+    for symbol in sorted(set(adjusted) | set(unadjusted)):
+        adjusted_close = adjusted.get(symbol, (None, None, None))[0]
+        unadjusted_close = unadjusted.get(symbol, (None, None, None))[0]
+        adjusted_eligible = adjusted_close is not None and adjusted_close >= Decimal("1")
+        unadjusted_eligible = unadjusted_close is not None and unadjusted_close >= Decimal("1")
+        if adjusted_eligible != unadjusted_eligible:
+            disagreements.append(
+                f"{symbol}:adjusted={adjusted_close or 'missing'}:"
+                f"unadjusted={unadjusted_close or 'missing'}"
+            )
+            continue
+        if adjusted_eligible and symbol_is_eligible(symbol):
+            assert adjusted_close is not None
+            universe[symbol] = adjusted_close
+    return universe, tuple(disagreements)
+
+
+def legacy_daily_candidates(
     prior_rows: Iterable[object], session_rows: Iterable[object]
 ) -> dict[str, Decimal]:
+    """The rejected RTH-only screen, retained only for the real-session control."""
+
     prior = _grouped_prices(prior_rows)
     current = _grouped_prices(session_rows)
-    candidates: dict[str, Decimal] = {}
-    for symbol, (prior_close, _, _) in prior.items():
-        session = current.get(symbol)
-        if (
-            session is None
-            or prior_close < Decimal("1")
-            or not symbol_is_eligible(symbol)
-            or session[1] < session[2] * _TRIGGER_MULTIPLIER
-        ):
-            continue
-        candidates[symbol] = prior_close
-    return candidates
+    return {
+        symbol: prior_close
+        for symbol, (prior_close, _, _) in prior.items()
+        if prior_close >= Decimal("1")
+        and symbol_is_eligible(symbol)
+        and symbol in current
+        and current[symbol][1] >= current[symbol][2] * _TRIGGER_MULTIPLIER
+    }
 
 
-def _aggregate_rows(client: object, symbol: str, day: date) -> list[AggregateBar]:
+def premarket_range_has_candidate(bars: Iterable[AggregateBar]) -> bool:
+    rows = tuple(bars)
+    if not rows:
+        return False
+    return max(row.high for row in rows) >= min(row.low for row in rows) * _TRIGGER_MULTIPLIER
+
+
+def _aggregate_rows(client: object, symbol: str, day: date, *, timespan: str) -> list[AggregateBar]:
     start, end = _bounds(day, _CAPTURE_START, _DETECTION_END)
     rows: list[AggregateBar] = []
     for raw in client.list_aggs(
         symbol,
         1,
-        "second",
+        timespan,
         int(start.timestamp() * 1000),
         int(end.timestamp() * 1000) - 1,
         adjusted=True,
@@ -228,6 +280,14 @@ def _aggregate_rows(client: object, symbol: str, day: date) -> list[AggregateBar
         if timestamp is not None and high is not None and low is not None:
             rows.append(AggregateBar(timestamp, high, low))
     return rows
+
+
+def _minute_rows(client: object, symbol: str, day: date) -> list[AggregateBar]:
+    return _aggregate_rows(client, symbol, day, timespan="minute")
+
+
+def _second_rows(client: object, symbol: str, day: date) -> list[AggregateBar]:
+    return _aggregate_rows(client, symbol, day, timespan="second")
 
 
 def raw_trade_row(raw: object, symbol: str) -> dict[str, object] | None:
@@ -276,24 +336,44 @@ def _trade_rows(client: object, symbol: str, day: date) -> list[dict[str, object
     return rows
 
 
+def split_event_row(raw: object) -> dict[str, object]:
+    return {
+        "ticker": str(_value(raw, "ticker") or "").upper(),
+        "execution_date": str(_value(raw, "execution_date") or ""),
+        "split_from": str(_value(raw, "split_from") or ""),
+        "split_to": str(_value(raw, "split_to") or ""),
+        "id": str(_value(raw, "id") or ""),
+    }
+
+
 def capture_session(
     client: object,
     day: date,
     *,
     condition_payload: Mapping[str, object],
     captured_at: datetime,
+    split_events: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
+    started = monotonic()
     prior_day = _previous_trading_day(day)
-    prior_rows = list(client.get_grouped_daily_aggs(prior_day, adjusted=True))
-    session_rows = list(client.get_grouped_daily_aggs(day, adjusted=True))
-    broad = broad_candidates(prior_rows, session_rows)
+    adjusted_rows = list(client.get_grouped_daily_aggs(prior_day, adjusted=True))
+    unadjusted_rows = list(client.get_grouped_daily_aggs(prior_day, adjusted=False))
+    universe, floor_disagreements = prior_close_universe(adjusted_rows, unadjusted_rows)
+    premarket: dict[str, Decimal] = {}
+    minute_counts: dict[str, int] = {}
+    for symbol, prior_close in sorted(universe.items()):
+        bars = _minute_rows(client, symbol, day)
+        minute_counts[symbol] = len(bars)
+        if premarket_range_has_candidate(bars):
+            premarket[symbol] = prior_close
+
     exact: dict[str, Decimal] = {}
-    aggregate_counts: dict[str, int] = {}
-    for symbol, prior_close in sorted(broad.items()):
-        bars = _aggregate_rows(client, symbol, day)
+    second_counts: dict[str, int] = {}
+    for symbol, prior_close in sorted(premarket.items()):
+        bars = _second_rows(client, symbol, day)
         if aggregate_has_candidate(bars):
             exact[symbol] = prior_close
-            aggregate_counts[symbol] = len(bars)
+            second_counts[symbol] = len(bars)
 
     trades = {symbol: _trade_rows(client, symbol, day) for symbol in exact}
     return {
@@ -301,10 +381,21 @@ def capture_session(
         "session_date": day.isoformat(),
         "prior_close_date": prior_day.isoformat(),
         "captured_at": captured_at.astimezone(UTC).isoformat(),
-        "candidate_rule": "one_second_aggregate_superset_at_20pct",
-        "broad_candidate_count": len(broad),
+        "candidate_rule": "premarket_minute_superset_then_one_second_at_20pct",
+        "eligible_universe_count": len(universe),
+        "premarket_screen_count": len(premarket),
         "candidate_symbols": sorted(exact),
-        "aggregate_counts": aggregate_counts,
+        "minute_aggregate_counts": minute_counts,
+        "second_aggregate_counts": second_counts,
+        "prior_close_floor_disagreements": list(floor_disagreements),
+        "split_events": [dict(row) for row in split_events],
+        "api_calls": {
+            "grouped_daily": 2,
+            "minute_aggregates": len(universe),
+            "second_aggregates": len(premarket),
+            "raw_trades": len(exact),
+        },
+        "capture_wall_seconds": round(monotonic() - started, 3),
         "prior_closes": {symbol: str(price) for symbol, price in exact.items()},
         "condition_snapshot": dict(condition_payload),
         "trades": trades,
@@ -342,6 +433,16 @@ def capture_sessions(
         )
     )
     snapshot = build_condition_snapshot(condition_rows, retrieved_at=now.astimezone(UTC))
+    split_events = tuple(
+        split_event_row(row)
+        for row in client.list_splits(
+            execution_date_gte=sessions[0],
+            execution_date_lte=sessions[-1],
+            limit=1000,
+            sort="execution_date",
+            order="asc",
+        )
+    )
     written: list[Path] = []
     for day in sessions:
         path = output_dir / f"momentum-live-rule-{day.isoformat()}.json.gz"
@@ -355,14 +456,64 @@ def capture_sessions(
             day,
             condition_payload=snapshot.payload(),
             captured_at=now,
+            split_events=split_events,
         )
         write_capture(path, payload)
         written.append(path)
         print(
-            f"captured session={day} candidates={len(payload['candidate_symbols'])} "
-            f"raw_prints={sum(len(rows) for rows in payload['trades'].values())} path={path}"
+            f"captured session={day} universe={payload['eligible_universe_count']} "
+            f"minute_screen={payload['premarket_screen_count']} "
+            f"candidates={len(payload['candidate_symbols'])} "
+            f"raw_prints={sum(len(rows) for rows in payload['trades'].values())} "
+            f"calls={sum(payload['api_calls'].values())} "
+            f"wall_seconds={payload['capture_wall_seconds']} path={path}"
         )
     return tuple(written)
+
+
+def screen_control_session(client: object, day: date, *, now: datetime) -> dict[str, object]:
+    """Prove the premarket screen contains an unscreened full one-second scan."""
+
+    require_capture_window(now)
+    started = monotonic()
+    prior_day = _previous_trading_day(day)
+    adjusted_rows = list(client.get_grouped_daily_aggs(prior_day, adjusted=True))
+    unadjusted_rows = list(client.get_grouped_daily_aggs(prior_day, adjusted=False))
+    session_rows = list(client.get_grouped_daily_aggs(day, adjusted=True))
+    universe, floor_disagreements = prior_close_universe(adjusted_rows, unadjusted_rows)
+    old_daily = set(legacy_daily_candidates(adjusted_rows, session_rows)) & set(universe)
+
+    premarket_screen: set[str] = set()
+    full_scan: set[str] = set()
+    for symbol in sorted(universe):
+        if premarket_range_has_candidate(_minute_rows(client, symbol, day)):
+            premarket_screen.add(symbol)
+        if aggregate_has_candidate(_second_rows(client, symbol, day)):
+            full_scan.add(symbol)
+
+    missing = sorted(full_scan - premarket_screen)
+    old_missing = sorted(full_scan - old_daily)
+    result = {
+        "session_date": day.isoformat(),
+        "run_at": now.astimezone(UTC).isoformat(),
+        "eligible_universe": len(universe),
+        "prior_close_floor_disagreements": list(floor_disagreements),
+        "premarket_screened_candidates": len(premarket_screen),
+        "full_scan_candidates": len(full_scan),
+        "premarket_screen_missing": missing,
+        "old_daily_screen_candidates": len(old_daily),
+        "old_daily_screen_missing": old_missing,
+        "premarket_screen_symbols": sorted(premarket_screen),
+        "full_scan_symbols": sorted(full_scan),
+        "api_calls": {
+            "grouped_daily": 3,
+            "minute_aggregates": len(universe),
+            "second_aggregates": len(universe),
+        },
+        "wall_seconds": round(monotonic() - started, 3),
+        "acceptance": "PASS" if not missing else "FAIL",
+    }
+    return result
 
 
 def _raw_identity(trade: TradePrint) -> tuple[object, ...]:
@@ -496,6 +647,9 @@ def replay_capture(payload: Mapping[str, object]) -> SessionResult:
             )
         )
     normalized = [trade for rows in all_trades.values() for trade in rows]
+    raw_floor_disagreements = payload.get("prior_close_floor_disagreements", [])
+    raw_split_events = payload.get("split_events", [])
+    raw_api_calls = payload.get("api_calls", {})
     return SessionResult(
         session_date=day.isoformat(),
         candidate_symbols=len(prior_closes),
@@ -504,6 +658,10 @@ def replay_capture(payload: Mapping[str, object]) -> SessionResult:
         eligible_prints=sum(trade.eligible for trade in normalized),
         excluded_prints=sum(not trade.eligible for trade in normalized),
         malformed_prints=malformed,
+        prior_close_floor_disagreements=tuple(str(value) for value in raw_floor_disagreements),
+        split_events=tuple(dict(value) for value in raw_split_events if isinstance(value, Mapping)),
+        api_calls={str(key): int(value) for key, value in dict(raw_api_calls).items()},
+        capture_wall_seconds=float(payload.get("capture_wall_seconds", 0.0) or 0.0),
         strategy_results=tuple(strategy_results),
         symbol_detections=dict(sorted(symbol_detections.items())),
     )
@@ -545,9 +703,15 @@ def report_payload(results: Sequence[SessionResult]) -> dict[str, object]:
         strategy: Counter() for strategy in MOMENTUM_STRATEGIES
     }
     suspect_sessions: dict[str, list[str]] = {strategy: [] for strategy in MOMENTUM_STRATEGIES}
+    detection_distribution: dict[str, list[int]] = {
+        strategy: [] for strategy in MOMENTUM_STRATEGIES
+    }
     symbols = Counter()
+    split_events: dict[str, dict[str, object]] = {}
     for session in results:
         symbols.update(session.symbol_detections)
+        for event in session.split_events:
+            split_events[json.dumps(event, sort_keys=True)] = event
         for row in session.strategy_results:
             totals = strategy_totals[row.strategy_code]
             for field in (
@@ -565,16 +729,26 @@ def report_payload(results: Sequence[SessionResult]) -> dict[str, object]:
                 totals[field] += int(getattr(row, field))
             if row.suspect:
                 suspect_sessions[row.strategy_code].append(session.session_date)
+            detection_distribution[row.strategy_code].append(row.detections)
+    band_decisions = {
+        strategy: detector_band_decision(values)
+        for strategy, values in detection_distribution.items()
+    }
     return {
         "criterion": {
             "detector_suspect_when": "detections > 10 for either bot in one session",
             "threshold": DETECTOR_SUSPECT_DETECTIONS,
+            "reject_band_when_suspect_sessions_gt": BAND_REJECT_SUSPECT_SESSIONS,
+            "replacement": "nearest-rank P95, minimum 10",
             "frozen_before_capture": True,
+            "seen_session_excluded": "2026-09-17",
         },
         "sessions": len(results),
         "session_results": [asdict(result) for result in results],
         "strategy_totals": {key: dict(value) for key, value in strategy_totals.items()},
         "suspect_sessions": suspect_sessions,
+        "band_decisions": band_decisions,
+        "split_events": list(split_events.values()),
         "symbol_concentration": dict(symbols.most_common()),
     }
 
@@ -585,9 +759,12 @@ def render_markdown(report: Mapping[str, object]) -> str:
         "",
         "Pre-registered criterion: `DETECTOR_SUSPECT` when either bot records more than "
         f"{DETECTOR_SUSPECT_DETECTIONS} detections in one session.",
+        f"The >10 band is rejected if more than {BAND_REJECT_SUSPECT_SESSIONS}/30 sessions "
+        f"are suspect; replacement is nearest-rank P{BAND_REPLACEMENT_PERCENTILE}. "
+        "The already-seen 2026-09-17 session is excluded.",
         "",
-        "| Session | Candidates | Normalized/captured | Eligible/normalized | Excluded/normalized | Malformed |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| Session | Candidates | Normalized/captured | Eligible/normalized | Excluded/normalized | Floor disagreements | API calls | Wall s |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for session in report["session_results"]:
         rows.append(
@@ -595,7 +772,8 @@ def render_markdown(report: Mapping[str, object]) -> str:
             f"{session['normalized_prints']}/{session['captured_prints']} | "
             f"{session['eligible_prints']}/{session['normalized_prints']} | "
             f"{session['excluded_prints']}/{session['normalized_prints']} | "
-            f"{session['malformed_prints']} |"
+            f"{len(session['prior_close_floor_disagreements'])} | "
+            f"{sum(session['api_calls'].values())} | {session['capture_wall_seconds']} |"
         )
     rows.extend(
         [
@@ -624,6 +802,17 @@ def render_markdown(report: Mapping[str, object]) -> str:
             f"unanswerable {totals.get('unanswerable', 0)}, suspect sessions "
             f"{suspect}/{report['sessions']}."
         )
+        decision = report["band_decisions"][strategy]
+        rows.append(
+            f"  Band verdict: `{decision['verdict']}`; suspect sessions "
+            f"{decision['suspect_sessions']}/{decision['sessions']}; nearest-rank P95 "
+            f"replacement {decision['replacement_nearest_rank_p95']}."
+        )
+    rows.extend(["", "## Split and prior-close flags", ""])
+    rows.append(f"- Split events in the 30-session window: {len(report['split_events'])}.")
+    for session in report["session_results"]:
+        for detail in session["prior_close_floor_disagreements"]:
+            rows.append(f"- `{session['session_date']}`: `{detail}` excluded from replay.")
     rows.extend(["", "## Symbol concentration", ""])
     total = sum(int(value) for value in report["symbol_concentration"].values())
     for symbol, count in list(report["symbol_concentration"].items())[:20]:
@@ -656,6 +845,28 @@ def _replay_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _screen_control_command(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    if not settings.massive_api_key:
+        raise RuntimeError("MAI_TAI_MASSIVE_API_KEY is required")
+    from massive import RESTClient
+
+    result = screen_control_session(
+        RESTClient(api_key=settings.massive_api_key), args.date, now=datetime.now(UTC)
+    )
+    args.json.parent.mkdir(parents=True, exist_ok=True)
+    args.json.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(
+        f"session={args.date} acceptance={result['acceptance']} "
+        f"premarket_screen={result['premarket_screened_candidates']} "
+        f"full_scan={result['full_scan_candidates']} "
+        f"missing={len(result['premarket_screen_missing'])} "
+        f"old_daily_missing={len(result['old_daily_screen_missing'])} "
+        f"calls={sum(result['api_calls'].values())} wall_seconds={result['wall_seconds']}"
+    )
+    return 0 if result["acceptance"] == "PASS" else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -672,6 +883,13 @@ def main() -> int:
     replay.add_argument("--json", type=Path, required=True)
     replay.add_argument("--markdown", type=Path, required=True)
     replay.set_defaults(run=_replay_command)
+
+    control = subparsers.add_parser(
+        "screen-control", help="compare the premarket screen with an unscreened full scan"
+    )
+    control.add_argument("--date", type=date.fromisoformat, required=True)
+    control.add_argument("--json", type=Path, required=True)
+    control.set_defaults(run=_screen_control_command)
     args = parser.parse_args()
     return int(args.run(args))
 

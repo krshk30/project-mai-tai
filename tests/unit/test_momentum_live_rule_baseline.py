@@ -9,16 +9,20 @@ import pytest
 
 from project_mai_tai.backtest.momentum_live_rule_baseline import (
     AggregateBar,
+    BAND_REJECT_SUSPECT_SESSIONS,
     DETECTOR_SUSPECT_DETECTIONS,
     aggregate_has_candidate,
-    broad_candidates,
     capture_session,
+    detector_band_decision,
     detector_is_suspect,
+    premarket_range_has_candidate,
+    prior_close_universe,
     raw_trade_row,
     replay_capture,
     replay_directory,
     report_payload,
     require_capture_window,
+    screen_control_session,
 )
 
 
@@ -86,16 +90,43 @@ def test_aggregate_candidate_keeps_an_intrasecond_raw_move_in_the_superset() -> 
     assert aggregate_has_candidate(bars) is True
 
 
-def test_broad_filter_is_a_safe_superset_with_prior_close_floor() -> None:
-    prior = [
+def test_aggregate_window_includes_exact_boundary_and_excludes_one_second_older() -> None:
+    exact = [
+        AggregateBar(_ms("04:11:00"), Decimal("1"), Decimal("1")),
+        AggregateBar(_ms("04:12:00"), Decimal("1.20"), Decimal("1.20")),
+    ]
+    too_old = [
+        AggregateBar(_ms("04:11:00"), Decimal("1"), Decimal("1")),
+        AggregateBar(_ms("04:12:01"), Decimal("1.20"), Decimal("1.20")),
+    ]
+    assert aggregate_has_candidate(exact) is True
+    assert aggregate_has_candidate(too_old) is False
+
+
+def test_prior_close_floor_disagreement_is_flagged_and_excluded() -> None:
+    adjusted = [
         {"T": "KEEP", "c": "1.00", "h": "1.1", "l": "1"},
-        {"T": "CHEAP", "c": "0.99", "h": "1", "l": "0.9"},
+        {"T": "SPLT", "c": "1.20", "h": "1.3", "l": "1"},
     ]
-    current = [
-        {"T": "KEEP", "c": "1.1", "h": "1.20", "l": "1.00"},
-        {"T": "CHEAP", "c": "1.2", "h": "1.30", "l": "1.00"},
+    unadjusted = [
+        {"T": "KEEP", "c": "1.00", "h": "1.1", "l": "1"},
+        {"T": "SPLT", "c": "0.60", "h": "0.7", "l": "0.5"},
     ]
-    assert broad_candidates(prior, current) == {"KEEP": Decimal("1.00")}
+    universe, disagreements = prior_close_universe(adjusted, unadjusted)
+    assert universe == {"KEEP": Decimal("1.00")}
+    assert disagreements == ("SPLT:adjusted=1.20:unadjusted=0.60",)
+
+
+def test_premarket_range_screen_is_a_necessary_but_order_agnostic_superset() -> None:
+    assert (
+        premarket_range_has_candidate(
+            [
+                AggregateBar(_ms("04:20:00"), Decimal("1.05"), Decimal("1.00")),
+                AggregateBar(_ms("07:00:00"), Decimal("1.20"), Decimal("1.18")),
+            ]
+        )
+        is True
+    )
 
 
 def test_capture_downloads_raw_trades_for_aggregate_candidates_only() -> None:
@@ -107,19 +138,19 @@ def test_capture_downloads_raw_trades_for_aggregate_candidates_only() -> None:
         def get_grouped_daily_aggs(self, day, *, adjusted):
             del day, adjusted
             self.grouped_calls += 1
-            if self.grouped_calls == 1:
-                return [
-                    {"T": "KEEP", "c": "1", "h": "1.1", "l": "1"},
-                    {"T": "DROP", "c": "1", "h": "1.1", "l": "1"},
-                ]
             return [
-                {"T": "KEEP", "c": "1.1", "h": "1.3", "l": "1"},
-                {"T": "DROP", "c": "1.1", "h": "1.3", "l": "1"},
+                {"T": "KEEP", "c": "1", "h": "1.1", "l": "1"},
+                {"T": "DROP", "c": "1", "h": "1.1", "l": "1"},
             ]
 
-        def list_aggs(self, symbol, *args, **kwargs):
+        def list_aggs(self, symbol, _multiplier, timespan, *args, **kwargs):
             del args, kwargs
             high = "1.20" if symbol == "KEEP" else "1.19"
+            if timespan == "minute":
+                return [
+                    {"t": _ms("04:11:00"), "h": "1", "l": "1"},
+                    {"t": _ms("07:00:00"), "h": high, "l": high},
+                ]
             return [
                 {"t": _ms("04:11:00"), "h": "1", "l": "1"},
                 {"t": _ms("04:11:25"), "h": high, "l": high},
@@ -139,6 +170,47 @@ def test_capture_downloads_raw_trades_for_aggregate_candidates_only() -> None:
     )
     assert payload["candidate_symbols"] == ["KEEP"]
     assert client.trade_symbols == ["KEEP"]
+    assert payload["api_calls"] == {
+        "grouped_daily": 2,
+        "minute_aggregates": 2,
+        "second_aggregates": 1,
+        "raw_trades": 1,
+    }
+
+
+def test_real_screen_shape_keeps_premarket_move_when_rth_daily_range_is_tight() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.grouped_calls = 0
+
+        def get_grouped_daily_aggs(self, day, *, adjusted):
+            del day, adjusted
+            self.grouped_calls += 1
+            if self.grouped_calls <= 2:
+                return [{"T": "MOVE", "c": "1", "h": "1.1", "l": "1"}]
+            return [{"T": "MOVE", "c": "1.02", "h": "1.05", "l": "1.00"}]
+
+        def list_aggs(self, symbol, _multiplier, timespan, *args, **kwargs):
+            del symbol, args, kwargs
+            if timespan == "minute":
+                return [
+                    {"t": _ms("04:11:00"), "h": "1", "l": "1"},
+                    {"t": _ms("07:00:00"), "h": "1.20", "l": "1.20"},
+                ]
+            return [
+                {"t": _ms("04:11:00"), "h": "1", "l": "1"},
+                {"t": _ms("04:11:30"), "h": "1.20", "l": "1.20"},
+            ]
+
+    result = screen_control_session(
+        Client(),
+        datetime(2026, 9, 17).date(),
+        now=datetime(2026, 9, 17, 20, tzinfo=UTC),
+    )
+    assert result["acceptance"] == "PASS"
+    assert result["full_scan_symbols"] == ["MOVE"]
+    assert result["premarket_screen_symbols"] == ["MOVE"]
+    assert result["old_daily_screen_missing"] == ["MOVE"]
 
 
 def test_raw_capture_preserves_the_production_wire_fields() -> None:
@@ -210,14 +282,30 @@ def test_excluded_print_is_replayed_but_cannot_make_the_reference() -> None:
 
 def test_suspect_rate_is_frozen_at_more_than_ten_per_bot_session() -> None:
     assert DETECTOR_SUSPECT_DETECTIONS == 10
+    assert BAND_REJECT_SUSPECT_SESSIONS == 3
     assert detector_is_suspect(10) is False
     assert detector_is_suspect(11) is True
     quiet = replay_capture(_payload([]))
-    report = report_payload([quiet])
+    report = report_payload([quiet] * 30)
     assert report["criterion"] == {
         "detector_suspect_when": "detections > 10 for either bot in one session",
         "threshold": 10,
+        "reject_band_when_suspect_sessions_gt": 3,
+        "replacement": "nearest-rank P95, minimum 10",
         "frozen_before_capture": True,
+        "seen_session_excluded": "2026-09-17",
+    }
+
+
+def test_band_is_rejected_only_after_more_than_three_suspect_sessions() -> None:
+    accepted = detector_band_decision([11, 11, 11, *([0] * 27)])
+    rejected = detector_band_decision([11, 11, 11, 11, *([0] * 26)])
+    assert accepted["verdict"] == "ACCEPT_BAND"
+    assert rejected == {
+        "verdict": "REJECT_BAND",
+        "suspect_sessions": 4,
+        "sessions": 30,
+        "replacement_nearest_rank_p95": 11,
     }
 
 
