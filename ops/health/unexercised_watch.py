@@ -320,16 +320,31 @@ def classify(fired: int, denominator: int) -> str:
     return NEVER_LOOKED
 
 
-def page(title: str, body: str) -> bool:
+def page(title: str, body: str, *, runner=subprocess.run) -> bool:
     """⛔ ASCII titles only -- ntfy rejects non-ASCII headers."""
-    out = subprocess.run(
+    safe_title = title.encode("ascii", "ignore").decode("ascii")
+    out = runner(
         ["curl", "-sS", "--fail-with-body", "--max-time", "20",
-         "-H", f"Title: {title.encode('ascii', 'ignore').decode('ascii')}",
+         "-H", f"Title: {safe_title}",
          "-H", "Priority: high", "-H", "Tags: rotating_light",
-         "-d", body, NTFY_URL],
+         "-d", body, "-w", "\n__HTTP_STATUS__:%{http_code}", NTFY_URL],
         capture_output=True, text=True,
     )
-    return out.returncode == 0
+    response_body, separator, status_text = out.stdout.rpartition("\n__HTTP_STATUS__:")
+    http_status = status_text.strip() if separator else "unknown"
+    message_id = "-"
+    try:
+        payload = json.loads(response_body)
+        if isinstance(payload, dict) and payload.get("id"):
+            message_id = str(payload["id"])
+    except (json.JSONDecodeError, TypeError):
+        pass
+    accepted = out.returncode == 0 and http_status.isdigit() and 200 <= int(http_status) < 300
+    print(
+        f"[NTFY-DELIVERY] accepted={int(accepted)} http_status={http_status} "
+        f"message_id={message_id} title={json.dumps(safe_title)}"
+    )
+    return accepted
 
 
 def _inc1_open_incidents() -> list[dict[str, str]]:
