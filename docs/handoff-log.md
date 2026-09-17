@@ -4130,3 +4130,4 @@ strategy restarted 19:55 ET. The `polygon_30s` paper strategy was an embedded st
 Pinned #992 and #994 (twice — the rebase onto #992 voided the first #994 pin; I forgot the superseded-record deletion and CI caught it;
 deletion-only commit fixed it). I edited two files codex had claimed without claiming first; recorded after the fact. Box `date` is
 UTC — I labelled it ET once.
+Promotion of #995 was refused: my journal entry for the PR landed after the manifest was generated (112 vs 113). Repaired by a successor PR carrying a regenerated manifest — journal first, generate second.

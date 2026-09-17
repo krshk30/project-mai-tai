@@ -19,7 +19,7 @@ Integrator for this rotation; `codex-2` executed every deploy and reviews this P
 | box (deployed) | **`07cba271e35be7a2467937931d6960b706eb6b74`** — read FROM THE BOX 2026-09-16 20:05 ET, branch `main`, clean |
 | GitHub main | **`07cba271`** — identical at the time of writing. This handoff PR is docs-only: no sync, no restart |
 | gate pin | `/home/trader/preopen.sh`: `EXPECTED_DATE=2026-09-17` · `EXPECTED_SHA=07cba271…` · `EXPECTED_PID=2269797` · `EXPECTED_START='Wed 2026-09-16 23:43:43 UTC'` (read from the box 20:05 ET) |
-| open PRs | **none** — this handoff PR excepted |
+| open PRs | **none** — handoff #995 merged `023f141e`; this manifest-repair PR is the authoritative carrier for promotion |
 | exposure | after-restart evidence 19:47 ET: **open managed rows 0 · nonzero account-position rows 0 · both live accounts flat before and after** |
 | merges 09-16 (**7**) | **#988** handoff 09-15 · **#989** paper ORB stale dashboard · **#990** Momentum paper pre-registration · **#991** Momentum 30/60 paper bots · **#992** Webull mirror wire lag + crossed-stop shape guard · **#993** SHORT-segment seed cap (FTFT) · **#994** Massive ATR seed — **DORMANT, flag false** |
 | migration | `alembic_version = 20260916_0021` (Momentum paper tables), read 20:15 ET. The 19:47 ET restart evidence was taken BEFORE the activation and shows `20260910_0020`; that is expected ordering, not a discrepancy |
