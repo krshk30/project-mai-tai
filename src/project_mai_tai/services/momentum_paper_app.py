@@ -261,7 +261,7 @@ class MomentumPaperService:
             condition_version=self._condition_snapshot.version,
             coverage_started_ms=self._now_ms(),
         )
-        self._engine.seed_last_detections(existing)
+        self._engine.seed_reentry_boundaries(existing)
         incomplete = self.store.incomplete_logical_ids(existing)
         if incomplete:
             interrupted = self._interrupted_records(existing, incomplete)
