@@ -61,6 +61,9 @@ and immediate fresh-move re-entry while the forward paper population was still e
 The former `>10 detections` health band was calibrated for the 30% trigger and is now reported as
 `UNCALIBRATED`; it cannot label the 20% detector suspect until a new forward baseline is approved.
 PATH evidence is stored once per `(strategy_code, symbol, raw print)` on a shared session tape.
+Massive's WebSocket fields `i` (trade ID), `x` (exchange), `trfi` (TRF ID), and `t` (SIP
+timestamp) form that raw-print identity; a different payload collision is counted and retained
+rather than silently deduplicated.
 Each event references its absolute inclusive SIP-time evidence range, so an old event collecting
 ten-minute excursion evidence and a new re-entry never duplicate the same raw tape row. `NO_FILL`
 re-arms after `detect SIP t + 10 seconds`; `UNANSWERABLE` re-arms after its evidence deadline, and

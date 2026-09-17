@@ -29,6 +29,9 @@ def _trade(
     eligible: bool = True,
     participant_clock: str | None = None,
     conditions: tuple[int, ...] = (),
+    trade_id: str | None = None,
+    exchange: int | None = 11,
+    trf_id: int | None = 501,
 ) -> TradePrint:
     return TradePrint(
         symbol=symbol,
@@ -36,7 +39,9 @@ def _trade(
         participant_ts_ms=_ms(participant_clock) if participant_clock else None,
         price=Decimal(price),
         size=100,
-        trade_id=f"{symbol}-{clock}-{price}",
+        trade_id=trade_id if trade_id is not None else f"{symbol}-{clock}-{price}",
+        exchange=exchange,
+        trf_id=trf_id,
         conditions=conditions,
         eligible=eligible,
         exclusion_reason="ineligible_fixture" if not eligible else "",
@@ -371,6 +376,65 @@ def test_overlapping_evidence_and_reentry_share_one_tape_row_per_strategy() -> N
     assert len({row.event_key for row in at_reentry}) == 2
 
 
+def test_path_key_keeps_same_trade_id_from_different_exchanges() -> None:
+    engine = _engine()
+    _detect_both(engine)
+
+    first = engine.ingest(
+        _trade("04:11:26.000", "1.20", trade_id="shared-id", exchange=4, trf_id=1)
+    )
+    second = engine.ingest(
+        _trade("04:11:26.000", "1.20", trade_id="shared-id", exchange=11, trf_id=1)
+    )
+
+    rows = [row for row in (*first, *second) if row.event_type == "PATH_PRINT"]
+    assert len(rows) == 4
+    assert len({row.event_key for row in rows}) == 4
+    assert engine.tape_key_collisions == 0
+
+
+def test_ineligible_print_inside_an_evidence_range_is_kept_on_the_raw_tape() -> None:
+    engine = _engine()
+    _detect_both(engine)
+
+    records = engine.ingest(_trade("04:11:26.000", "9.99", eligible=False, conditions=(37,)))
+
+    rows = [row for row in records if row.event_type == "PATH_PRINT"]
+    assert len(rows) == 2
+    assert {row.payload["eligible"] for row in rows} == {False}
+
+
+def test_path_key_keeps_prints_in_the_same_sip_second() -> None:
+    engine = _engine()
+    _detect_both(engine)
+
+    first = engine.ingest(
+        _trade("04:11:26.100", "1.20", trade_id="shared-id", exchange=4, trf_id=1)
+    )
+    second = engine.ingest(
+        _trade("04:11:26.900", "1.20", trade_id="shared-id", exchange=4, trf_id=1)
+    )
+
+    rows = [row for row in (*first, *second) if row.event_type == "PATH_PRINT"]
+    assert len(rows) == 4
+    assert len({row.event_key for row in rows}) == 4
+    assert engine.tape_key_collisions == 0
+
+
+def test_different_prints_with_a_forced_tape_key_collision_are_not_dropped(monkeypatch) -> None:
+    engine = _engine()
+    _detect_both(engine)
+    monkeypatch.setattr(engine, "_tape_identity", lambda _trade: "forced")
+
+    first = engine.ingest(_trade("04:11:26.100", "1.20", trade_id="one"))
+    second = engine.ingest(_trade("04:11:26.200", "1.21", trade_id="two"))
+
+    rows = [row for row in (*first, *second) if row.event_type == "PATH_PRINT"]
+    assert len(rows) == 4
+    assert len({row.event_key for row in rows}) == 4
+    assert engine.tape_key_collisions == 2
+
+
 def test_excursions_continue_over_full_path_after_an_early_exit() -> None:
     engine = _engine()
     _detect_both(engine)
@@ -479,6 +543,21 @@ def test_no_fill_rearms_from_detect_plus_ten_seconds_not_processing_clock() -> N
     }
 
 
+def test_live_no_fill_boundary_is_not_a_reference_but_one_millisecond_later_is() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    boundary = _ms("04:11:35.000")
+    engine.advance_clock(boundary + 1)
+
+    engine.ingest(_trade("04:11:35.000", "0.50"))
+    first_later = engine.ingest(_trade("04:11:35.001", "1.00"))
+    engine.ingest(_trade("04:11:35.002", "1.1999"))
+    fresh_move = engine.ingest(_trade("04:11:35.003", "1.20"))
+
+    assert _detected(first_later) == set()
+    assert _detected(fresh_move) == {"momentum_30s", "momentum_60s"}
+
+
 def test_restored_terminal_boundary_excludes_equality_but_admits_later_reference() -> None:
     boundary_ms = _ms("04:11:35.000")
     engine = _engine()
@@ -520,6 +599,24 @@ def test_unanswerable_terminal_uses_evidence_deadline_not_observation_clock() ->
     assert {record.payload["terminal_boundary_sip_ts_ms"] for record in unanswerable} == {
         fill_ms + 600_000
     }
+
+
+def test_live_unanswerable_boundary_is_not_a_reference_but_one_millisecond_later_is() -> None:
+    engine = _engine()
+    _detect_both(engine)
+    fill_ms = _ms("04:11:26.000")
+    boundary = fill_ms + 600_000
+    engine.ingest(_trade("04:11:26.000", "1.20"))
+    engine.mark_feed_gap(_ms("04:12:00.000"), _ms("04:12:01.000"))
+    engine.close_session(boundary + 50_000)
+
+    engine.ingest(_trade("04:21:26.000", "0.50"))
+    first_later = engine.ingest(_trade("04:21:26.001", "1.00"))
+    engine.ingest(_trade("04:21:26.002", "1.1999"))
+    fresh_move = engine.ingest(_trade("04:21:26.003", "1.20"))
+
+    assert _detected(first_later) == set()
+    assert _detected(fresh_move) == {"momentum_30s", "momentum_60s"}
 
 
 def test_092959_event_finishes_using_symbol_tail_after_global_subscription_ends() -> None:

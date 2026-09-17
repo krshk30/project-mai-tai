@@ -22,6 +22,8 @@ class TradePrint:
     price: Decimal
     size: int
     trade_id: str = ""
+    exchange: int | None = None
+    trf_id: int | None = None
     participant_ts_ms: int | None = None
     conditions: tuple[int, ...] = ()
     eligible: bool = True
@@ -51,6 +53,8 @@ class TradePrint:
             "price": str(self.price),
             "size": self.size,
             "trade_id": self.trade_id,
+            "exchange": self.exchange,
+            "trf_id": self.trf_id,
             "conditions": list(self.conditions),
             "eligible": self.eligible,
             "exclusion_reason": self.exclusion_reason,
@@ -69,6 +73,10 @@ class TradePrint:
             price=Decimal(str(payload["price"])),
             size=int(payload.get("size", 0)),
             trade_id=str(payload.get("trade_id", "")),
+            exchange=(
+                int(payload["exchange"]) if payload.get("exchange") is not None else None
+            ),
+            trf_id=int(payload["trf_id"]) if payload.get("trf_id") is not None else None,
             conditions=tuple(int(value) for value in payload.get("conditions", [])),
             eligible=bool(payload.get("eligible", False)),
             exclusion_reason=str(payload.get("exclusion_reason", "")),

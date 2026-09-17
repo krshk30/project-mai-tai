@@ -119,6 +119,8 @@ def normalize_raw_trade(row: object, *, conditions: ConditionSnapshot) -> TradeP
     codes = _condition_codes(_raw_value(row, "c", "conditions"))
     eligible, reason = conditions.classify(codes)
     participant = _raw_value(row, "pt", "y", "participant_timestamp")
+    exchange = _raw_value(row, "x", "exchange")
+    trf_id = _raw_value(row, "trfi", "trf_id")
     return TradePrint(
         symbol=symbol,
         sip_ts_ms=sip_ts_ms,
@@ -126,6 +128,8 @@ def normalize_raw_trade(row: object, *, conditions: ConditionSnapshot) -> TradeP
         price=price,
         size=size,
         trade_id=str(_raw_value(row, "i", "id", "trade_id") or ""),
+        exchange=int(exchange) if exchange is not None else None,
+        trf_id=int(trf_id) if trf_id is not None else None,
         conditions=codes,
         eligible=eligible,
         exclusion_reason=reason,
@@ -540,6 +544,7 @@ class MomentumPaperService:
                     "no_fill": counts["NO_FILL"],
                     "unanswerable": counts["UNANSWERABLE"],
                     "excluded_prints": self._engine.session_excluded_prints,
+                    "tape_key_collisions": self._engine.tape_key_collisions,
                     "gross_pnl": str(daily_pnl),
                     "grade": {
                         "verdict": grade.verdict,

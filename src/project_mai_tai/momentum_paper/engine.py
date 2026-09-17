@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
 from decimal import Decimal, ROUND_FLOOR
 import hashlib
+import json
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
@@ -106,6 +107,9 @@ class MomentumPaperEngine:
         self._active: dict[str, _ActiveEvent] = {}
         self._completed: list[dict[str, object]] = []
         self._session_excluded = 0
+        self._tape_key_collisions = 0
+        self._tape_fingerprints: dict[str, tuple[int, str]] = {}
+        self._tape_fingerprint_order: deque[tuple[int, str, str]] = deque()
 
     @property
     def active_events(self) -> tuple[dict[str, object], ...]:
@@ -118,6 +122,10 @@ class MomentumPaperEngine:
     @property
     def session_excluded_prints(self) -> int:
         return self._session_excluded
+
+    @property
+    def tape_key_collisions(self) -> int:
+        return self._tape_key_collisions
 
     def seed_reentry_boundaries(self, rows: Iterable[MomentumTapeRecord]) -> None:
         for row in rows:
@@ -145,6 +153,8 @@ class MomentumPaperEngine:
             price=trade.price,
             size=trade.size,
             trade_id=trade.trade_id,
+            exchange=trade.exchange,
+            trf_id=trade.trf_id,
             conditions=trade.conditions,
             eligible=trade.eligible,
             exclusion_reason=trade.exclusion_reason,
@@ -164,6 +174,10 @@ class MomentumPaperEngine:
         if not trade.eligible:
             self._session_excluded += 1
             excluded.append(trade)
+            for strategy_code in sorted(path_strategies):
+                path_record = self._shared_path_record(strategy_code, trade)
+                if path_record is not None:
+                    records.append(path_record)
             return tuple(records)
 
         if self._can_detect(trade):
@@ -203,10 +217,10 @@ class MomentumPaperEngine:
                 path_strategies.add(strategy_code)
 
         history.append(trade)
-        records.extend(
-            self._shared_path_record(strategy_code, trade)
-            for strategy_code in sorted(path_strategies)
-        )
+        for strategy_code in sorted(path_strategies):
+            path_record = self._shared_path_record(strategy_code, trade)
+            if path_record is not None:
+                records.append(path_record)
         return tuple(records)
 
     def _has_unresolved_event(self, key: tuple[str, str]) -> bool:
@@ -471,23 +485,56 @@ class MomentumPaperEngine:
     def _tape_logical_id(strategy_code: str, symbol: str, session_date: date) -> str:
         return f"momentum-tape:{session_date.isoformat()}:{strategy_code}:{symbol}"
 
-    def _shared_path_record(self, strategy_code: str, trade: TradePrint) -> MomentumTapeRecord:
+    @staticmethod
+    def _tape_identity(trade: TradePrint) -> str:
+        if trade.trade_id.strip():
+            raw_identity = json.dumps(
+                [trade.trade_id.strip(), trade.exchange, trade.trf_id, trade.sip_ts_ms],
+                separators=(",", ":"),
+            )
+        else:
+            raw_identity = (
+                f"anonymous:{trade.sip_ts_ms}:{trade.participant_ts_ms}:{trade.exchange}:"
+                f"{trade.trf_id}:{trade.price}:{trade.size}:"
+                f"{','.join(str(code) for code in trade.conditions)}"
+            )
+        return hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()
+
+    def _shared_path_record(
+        self, strategy_code: str, trade: TradePrint
+    ) -> MomentumTapeRecord | None:
         session_date = trade.observed_at.astimezone(_ET).date()
         logical_id = self._tape_logical_id(strategy_code, trade.symbol, session_date)
-        raw_identity = trade.trade_id.strip() or (
-            f"anonymous:{trade.sip_ts_ms}:{trade.participant_ts_ms}:{trade.price}:"
-            f"{trade.size}:{','.join(str(code) for code in trade.conditions)}"
-        )
-        trade_identity = hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()[:24]
+        trade_identity = self._tape_identity(trade)
+        base_event_key = f"{logical_id}:{trade_identity}:PATH_PRINT"
+        payload = trade.payload()
+        fingerprint = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+        cutoff = trade.sip_ts_ms - _PATH_WINDOW_MS
+        while self._tape_fingerprint_order and self._tape_fingerprint_order[0][0] < cutoff:
+            timestamp, key, old_fingerprint = self._tape_fingerprint_order.popleft()
+            if self._tape_fingerprints.get(key) == (timestamp, old_fingerprint):
+                self._tape_fingerprints.pop(key)
+        seen = self._tape_fingerprints.get(base_event_key)
+        if seen is not None and seen[1] == fingerprint:
+            return None
+        event_key = base_event_key
+        if seen is not None:
+            self._tape_key_collisions += 1
+            event_key = f"{base_event_key}:COLLISION:{fingerprint}"
+        self._tape_fingerprints[event_key] = (trade.sip_ts_ms, fingerprint)
+        self._tape_fingerprint_order.append((trade.sip_ts_ms, event_key, fingerprint))
         return MomentumTapeRecord(
-            event_key=f"{logical_id}:{trade_identity}:PATH_PRINT",
+            event_key=event_key,
             logical_id=logical_id,
             strategy_code=strategy_code,
             event_type="PATH_PRINT",
             session_date=session_date,
             symbol=trade.symbol,
             observed_at=trade.observed_at,
-            payload=trade.payload(),
+            payload=payload,
         )
 
     def _summary(self, event: _ActiveEvent) -> dict[str, object]:
