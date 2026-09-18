@@ -114,3 +114,28 @@ read.
 
 Step 3 stays blocked until this table is complete, the verdict is PASS, and independent review has
 accepted the evidence.
+
+## Step 2 executable (not wired)
+
+The measurement implementation is intentionally standalone:
+
+- `project_mai_tai.momentum_gateway_handoff` is the proposed parse-and-forward path: an
+  `asyncio.Queue` with non-awaiting `put_nowait`, drop-oldest behavior, and explicit input,
+  forwarded, dropped, and parse-failure counters. No gateway or service imports it.
+- `project_mai_tai.backtest.momentum_gateway_throughput population` reads complete Massive
+  `us_stocks_sip/trades_v1/YYYY/MM/YYYY-MM-DD.csv.gz` files. Massive describes these as daily,
+  whole-market SIP files containing tick-level trades from exchanges and dark pools:
+  <https://massive.com/docs/flat-files/stocks/trades>. This is the least-load source because it is
+  one bulk file per session rather than per-symbol REST pagination. It is next-day data and cannot
+  reproduce websocket packet batching, host-arrival jitter, upstream omissions, or later provider
+  corrections; those limits are printed in every population result. SIP timestamps, not file row
+  order, define the measured seconds and replay pace.
+- `project_mai_tai.backtest.momentum_gateway_throughput replay-suite` runs only at or after 20:00
+  ET, requires process niceness of at least 10, and performs the two-minute quote precheck, a fresh
+  ten-minute read-only baseline before each 1x/3x/dead-consumer replay, the frozen abort checks,
+  and one-second process sampling. It writes raw stream receipt timestamps and CPU/RSS samples.
+  If the quote precheck has zero `QuoteTickEvent` rows, the quote-latency row and overall verdict
+  are written `UNMEASURED`; the tool does not substitute another metric.
+
+The Redis observer starts `XREAD` offsets at `$` and only calls `XREAD`/`XREVRANGE`. It never
+publishes, trims, acknowledges, joins a consumer group, or changes either observed stream.

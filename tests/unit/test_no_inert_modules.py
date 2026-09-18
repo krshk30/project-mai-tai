@@ -40,6 +40,9 @@ LAUNCHED_NOT_IMPORTED: dict[str, str] = {
         "read-only after-close Momentum tape capture and offline replay; launched with python -m "
         "and referenced from docs/review-artifacts/"
     ),
+    "project_mai_tai.backtest.momentum_gateway_throughput": (
+        "measured by the Step 2 protocol; not wired; launched after hours with python -m"
+    ),
     "project_mai_tai.backtest.pre0700_shadow": (
         "read-only after-close PRE07 study; launched with python -m and referenced from docs/"
     ),
@@ -50,6 +53,7 @@ LAUNCHED_NOT_IMPORTED: dict[str, str] = {
         "Deploy Service invokes it with python -m after each systemd restart"
     ),
     "project_mai_tai.maintenance.reset_active_state": "maintenance CLI; has __main__",
+    "project_mai_tai.momentum_gateway_handoff": ("measured by the Step 2 protocol; not wired"),
 }
 
 # ⛔⭐⭐ IMPORTED BY NOTHING **AND** LAUNCHED BY NOTHING. Findings, not exemptions.
