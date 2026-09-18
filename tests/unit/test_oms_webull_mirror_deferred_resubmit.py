@@ -30,11 +30,25 @@ class _Capture:
     def warning(self, message, *args) -> None:
         self.lines.append(message % args)
 
+    def exception(self, message, *args) -> None:
+        self.lines.append(message % args)
+
+
+class _CaptureRedis:
+    def __init__(self) -> None:
+        self.rows: list[tuple[str, dict[str, str], dict[str, object]]] = []
+
+    async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
+        self.rows.append((stream, fields, kwargs))
+        return "1-0"
+
 
 def _settings(*, enabled: bool = True) -> SimpleNamespace:
     return SimpleNamespace(
         oms_v2_webull_mirror_deferred_resubmit_enabled=enabled,
         oms_v2_eh_resting_entry_quote_max_age_ms=2000,
+        redis_stream_prefix="mai-tai",
+        redis_strategy_intent_stream_maxlen=1000,
         provider_for_account=lambda account: "webull" if account == ACCOUNT else "schwab",
     )
 
@@ -43,9 +57,17 @@ def _service(*, enabled: bool = True) -> OmsRiskService:
     service = OmsRiskService.__new__(OmsRiskService)
     service.settings = _settings(enabled=enabled)
     service.logger = _Capture()
+    service.redis = _CaptureRedis()
     service._latest_quotes_by_symbol = {}
     service._latest_trades_by_symbol = {}
     return service
+
+
+def _queued_events(service: OmsRiskService) -> list[TradeIntentEvent]:
+    return [
+        TradeIntentEvent.model_validate_json(fields["data"])
+        for _, fields, _ in service.redis.rows
+    ]
 
 
 def _mirror_event(
@@ -150,7 +172,7 @@ def test_pa1_defaults_off_and_reason_text_without_structured_code_is_not_a_trigg
 
 
 @pytest.mark.asyncio
-async def test_price_aggressive_mirror_reenters_the_normal_pipeline_inside_eight_percent(
+async def test_price_aggressive_mirror_queues_the_serial_pipeline_inside_eight_percent(
     monkeypatch,
 ) -> None:
     service = _service()
@@ -159,24 +181,19 @@ async def test_price_aggressive_mirror_reenters_the_normal_pipeline_inside_eight
         "ask": Decimal("9.2000"),
         "received_at": datetime.now(UTC) - timedelta(milliseconds=100),
     }
-    submitted: list[TradeIntentEvent] = []
-
-    async def _process(event: TradeIntentEvent):
-        submitted.append(event)
-        return []
-
-    service.process_trade_intent = _process  # type: ignore[method-assign]
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
 
     await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
 
-    assert len(submitted) == 1
-    assert submitted[0].event_id != original.event_id
-    assert submitted[0].payload.metadata["stop_price"] == "10.0000"
-    assert submitted[0].payload.metadata["limit_price"] == "10.0500"
-    assert submitted[0].payload.metadata["webull_deferred_resubmit"] == "true"
-    assert submitted[0].payload.metadata["webull_deferred_resubmit_attempt"] == "1"
-    assert any("decision=resubmitted" in line for line in service.logger.lines)
+    queued = _queued_events(service)
+    assert len(queued) == 1
+    assert queued[0].event_id != original.event_id
+    assert queued[0].payload.metadata["stop_price"] == "10.0000"
+    assert queued[0].payload.metadata["limit_price"] == "10.0500"
+    assert queued[0].payload.metadata["webull_deferred_resubmit"] == "true"
+    assert queued[0].payload.metadata["webull_deferred_resubmit_attempt"] == "1"
+    assert service._webull_mirror_deferred_by_slot[SLOT].queued is True
+    assert any("decision=queued" in line for line in service.logger.lines)
 
 
 @pytest.mark.asyncio
@@ -189,18 +206,11 @@ async def test_market_more_than_eight_percent_below_the_stop_does_not_resubmit(
         "price": Decimal("9.1999"),
         "received_at": datetime.now(UTC),
     }
-    submitted: list[TradeIntentEvent] = []
-
-    async def _process(event: TradeIntentEvent):
-        submitted.append(event)
-        return []
-
-    service.process_trade_intent = _process  # type: ignore[method-assign]
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
 
     await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
 
-    assert submitted == []
+    assert _queued_events(service) == []
     assert SLOT in service._webull_mirror_deferred_by_slot
 
 
@@ -212,18 +222,11 @@ async def test_market_older_than_two_seconds_does_not_resubmit(monkeypatch) -> N
         "ask": Decimal("9.5"),
         "received_at": datetime.now(UTC) - timedelta(seconds=3),
     }
-    submitted: list[TradeIntentEvent] = []
-
-    async def _process(event: TradeIntentEvent):
-        submitted.append(event)
-        return []
-
-    service.process_trade_intent = _process  # type: ignore[method-assign]
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
 
     await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
 
-    assert submitted == []
+    assert _queued_events(service) == []
     assert SLOT in service._webull_mirror_deferred_by_slot
 
 
@@ -235,6 +238,65 @@ async def test_resubmits_are_capped_at_three_per_slot(monkeypatch) -> None:
         "ask": Decimal("9.5"),
         "received_at": datetime.now(UTC),
     }
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+
+    for _ in range(3):
+        service._latest_quotes_by_symbol[SYMBOL]["received_at"] = datetime.now(UTC)
+        await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
+        queued = _queued_events(service)[-1]
+        service._observe_webull_mirror_deferred_reports(
+            event=queued,
+            reports=[_price_reject()],
+        )
+
+    assert [
+        event.payload.metadata["webull_deferred_resubmit_attempt"]
+        for event in _queued_events(service)
+    ] == [
+        "1",
+        "2",
+        "3",
+    ]
+    assert SLOT not in service._webull_mirror_deferred_by_slot
+    assert any("reason=attempt_cap_reached" in line for line in service.logger.lines)
+
+
+@pytest.mark.asyncio
+async def test_repeated_ticks_enqueue_only_once_until_the_serial_lane_finishes(
+    monkeypatch,
+) -> None:
+    service = _service()
+    _defer(service)
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "ask": Decimal("9.5"),
+        "received_at": datetime.now(UTC),
+    }
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+
+    for _ in range(3):
+        service._latest_quotes_by_symbol[SYMBOL]["received_at"] = datetime.now(UTC)
+        await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
+
+    assert len(_queued_events(service)) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_ahead_of_a_queued_resubmit_prevents_the_broker_submit(
+    monkeypatch,
+) -> None:
+    service = _service()
+    _defer(service)
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "ask": Decimal("9.5"),
+        "received_at": datetime.now(UTC),
+    }
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
+    queued = _queued_events(service)[0]
+
+    # Both events share the serial lane. If the cancel wins, it retires the claim before the
+    # queued retry can enter the broker pipeline.
+    service._observe_webull_mirror_deferred_intent(_mirror_event(intent_type="cancel"))
     submitted: list[TradeIntentEvent] = []
 
     async def _process(event: TradeIntentEvent):
@@ -242,19 +304,11 @@ async def test_resubmits_are_capped_at_three_per_slot(monkeypatch) -> None:
         return []
 
     service.process_trade_intent = _process  # type: ignore[method-assign]
-    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    await service._handle_stream_message({"data": queued.model_dump_json()})
 
-    for _ in range(4):
-        service._latest_quotes_by_symbol[SYMBOL]["received_at"] = datetime.now(UTC)
-        await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
-
-    assert [event.payload.metadata["webull_deferred_resubmit_attempt"] for event in submitted] == [
-        "1",
-        "2",
-        "3",
-    ]
+    assert submitted == []
     assert SLOT not in service._webull_mirror_deferred_by_slot
-    assert any("reason=attempt_cap_reached" in line for line in service.logger.lines)
+    assert any("reason=slot_claim_no_longer_current" in line for line in service.logger.lines)
 
 
 def test_cancel_for_the_slot_forgets_even_when_the_broker_target_is_missing() -> None:
@@ -372,3 +426,17 @@ def test_pa1_is_wired_to_intents_reports_and_both_market_tick_paths() -> None:
     assert "await self._evaluate_webull_mirror_deferred_resubmits(symbol)" in inspect.getsource(
         OmsRiskService._handle_trade_tick_event
     )
+    evaluator = inspect.getsource(OmsRiskService._evaluate_webull_mirror_deferred_resubmits)
+    assert "self.redis.xadd(" in evaluator
+    assert "process_trade_intent" not in evaluator
+    assert "self._claim_webull_mirror_deferred_resubmit(event)" in inspect.getsource(
+        OmsRiskService._handle_stream_message
+    )
+
+
+def test_reconciliation_builds_the_pa1_observer_after_ledger_writes() -> None:
+    source = inspect.getsource(OmsRiskService.sync_broker_orders)
+    observed = source.index("observed_event = TradeIntentEvent(")
+
+    assert source.index("self.store.update_order_from_report(") < observed
+    assert source.index("self.store.mark_intent_from_report(intent, report)") < observed
