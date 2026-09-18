@@ -34,6 +34,20 @@ parse-and-forward function intended for Step 3. Run the replay at 1x and 3x the 
 rate. The consumer may be synthetic, but it must exercise the proposed bounded hand-off rather
 than a shortcut around it.
 
+The live-box replay has these fail-closed preconditions and limits:
+
+- Start only when both live accounts have zero open managed rows and zero non-zero account
+  positions, or after 20:00 ET.
+- Run as a separate `nice -n 10` process. Never import it into, attach it to, or restart the
+  running gateway.
+- Before each run, record the gateway heartbeat status, the current count of
+  `1008 (policy violation)` lines in `market-data.log`, and the one-minute load average.
+- Abort immediately if the gateway heartbeat is not `healthy`, the policy-violation count rises,
+  or the one-minute load average exceeds 3.5 on the four-CPU box.
+
+An aborted run is **UNMEASURED**, not FAIL. It may be retried only from a new ten-minute baseline;
+partial measurements from the aborted run are diagnostic and do not enter the verdict.
+
 For each run report:
 
 - input frames, forwarded frames, dropped frames, and parse failures;
@@ -45,13 +59,42 @@ The measurement must state how CPU, lag, snapshot cadence, and active-symbol quo
 sampled. A silent or dead Momentum consumer must also be exercised: the gateway must continue its
 own work while the bounded paper queue drops frames and increments a counter.
 
+### Existing-work sampling
+
+Each 1x and 3x replay requires its own uninterrupted ten-minute baseline immediately before the
+run. A read-only sampler starts Redis `XREAD` cursors at `$` on `snapshot-batches` and
+`market-data`; it must not publish, trim, acknowledge, or otherwise mutate either stream.
+
+- Snapshot cadence is the interval between consecutive `SnapshotBatchEvent.produced_at` values.
+  Report its p99 for the baseline and replay. A missed five-second cycle is counted for every full
+  additional five-second slot with no completion between consecutive batches; the replay permits
+  zero missed cycles.
+- Active-symbol quote latency is measured only for `QuoteTickEvent` rows whose symbol is in the
+  latest `market-data-subscriptions` state at baseline start; its count must reconcile to the
+  gateway heartbeat's `active_symbols` value. It is the sampler's UTC receipt time
+  minus `EventEnvelope.produced_at`, reported as p99. This is explicitly publisher-to-observer
+  latency; the current quote payload has no SIP timestamp, so it does not claim exchange-to-host
+  latency. The same sampler, host clock, symbol set, and calculation are used for baseline and
+  replay.
+- CPU is sampled once per second for the separate replay process and expressed as a percentage of
+  one CPU. The running gateway PID is sampled separately so a replay cannot hide work shifted into
+  the live process.
+
+For each metric, the replay p99 must be no greater than:
+
+`baseline p99 + max(10% of baseline p99, 50 ms)`.
+
+The raw timestamps and one-second CPU samples are retained with the report so the p99 values are
+reproducible rather than copied from a summary line.
+
 ## Frozen verdict
 
 PASS requires all of the following at **3x the measured peak**:
 
 1. p99 hand-off lag is below 250 ms.
 2. The forward path uses less than 50% of one CPU.
-3. Existing gateway snapshots and active-symbol quotes show no added lag.
+3. Snapshot-cadence p99 and active-symbol quote-latency p99 each stay within
+   `baseline + max(10% of baseline, 50 ms)`, with zero missed five-second snapshot cycles.
 4. The gateway read loop never blocks on the Momentum consumer; a stalled consumer raises the
    dropped-frame count instead.
 
