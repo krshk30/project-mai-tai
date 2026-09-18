@@ -1,0 +1,9 @@
+{
+  "pr_number": 1005,
+  "range_base": "3b14f179b9685e4d0384bb27b37b9477027b1bfe",
+  "range_head": "0981e433785f5e1d9c44d2d90ec66e0f5a1ff849",
+  "reviewed_at": "2026-09-18T11:40:20Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review after rebase onto 3b14f179 (#1007). Not a re-stamp: base is an ancestor of the head; range-diff 708f75af..daffcc8a vs main..0981e433 shows both commits '=' and per-commit stable patch-ids are identical (14e7c6fd\u2026, 4818038e\u2026). Re-ran on the rebased tree with PYTHONPATH on the PR tree: 161 tests pass (LC1, regression watch, plus fleet-health and momentum suites from the new base). Re-ran my mutations, all RED: released-protection guard removed, partial OCO fill accepted, flag ignored, provider scope widened, LATECLOSE1 recurrence wired to 0. Earlier evidence still applies to identical code: LATECLOSE1 SQL run read-only on the box for 2026-09-10.. gave 4 late-close episodes / 47 reject orders / max 20 / BMGL 1 kept as reservation, identical to my independent census; 225 NEW_NO_POSITION episodes since 2026-08-01 with 0 followed by a filled software sell within 120s. Flag defaults False. Open follow-up owned by the author: the <=3 threshold lives only in SQL (3->30 stays green)."
+}
