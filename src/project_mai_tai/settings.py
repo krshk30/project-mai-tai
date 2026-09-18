@@ -1065,6 +1065,13 @@ class Settings(BaseSettings):
     # (the FRTT 2026-08-11 shape, 136 minutes), on the broker whose book we cannot reliably read.
     # The cancel is routed on the DIRECT queue so `_maybe_emit`'s entry gates can never drop it.
     strategy_schwab_1m_v2_webull_resting_mirror_enabled: bool = False
+    # PA1 (2026-09-18): a Webull resting mirror rejected as PRICE_AGGRESSIVE is absent from the
+    # venue even though v2 deliberately keeps its resting slot consumed. When ON, OMS remembers
+    # only that rejected slot in process memory and retries the same bare stop-limit through the
+    # normal intent path once a fresh market reading is within 8% of the stop. Default OFF keeps
+    # placement, cancellation, and the v2 state machine byte-identical until the operator enables
+    # this fix on its own day.
+    oms_v2_webull_mirror_deferred_resubmit_enabled: bool = False
     strategy_schwab_1m_v2_webull_fanout_on_fill_enabled: bool = True
     strategy_schwab_1m_v2_webull_fanout_claim_grace_secs: float = 30.0
     oms_v2_rth_fanout_limit_enabled: bool = False
