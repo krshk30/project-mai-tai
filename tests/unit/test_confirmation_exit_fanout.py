@@ -24,6 +24,7 @@ from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from tests.webull_confirmation_exit_fixtures import (
+    bq_170729_not_tradable_reject,
     cancelled_leg,
     filled_leg,
     gipr_170707_detail_rate_limited,
@@ -31,8 +32,10 @@ from tests.webull_confirmation_exit_fixtures import (
     gipr_180510_order_cannot_cancel,
     gipr_180511_detail_rate_limited,
     imcc_174604_cancelled_and_rate_limited,
+    lgps_133416_malformed_client_order_id_reject,
     unknown_answer,
     working_leg_after_cancel_request,
+    ztg_195912_no_position_reject,
 )
 
 SCHWAB = "live:schwab_1m_v2"
@@ -66,9 +69,25 @@ class _FanoutAdapter:
         self.cancel_pair_calls: list[tuple[str, str, str]] = []
         self.position_state: dict[str, Decimal] = {SCHWAB: Decimal("1"), WEBULL: Decimal("1")}
         self.release_results: list[ExitPairReleaseResult] = []
+        self.submit_results: list[list[ExecutionReport] | BaseException] = []
 
     async def submit_order(self, request):
         self.submitted.append(request)
+        if self.submit_results:
+            result = self.submit_results.pop(0)
+            if isinstance(result, BaseException):
+                raise result
+            return [
+                replace(
+                    report,
+                    client_order_id=request.client_order_id,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                )
+                for report in result
+            ]
         rejected = request.broker_account_name in self.reject_accounts
         return [
             ExecutionReport(
@@ -449,6 +468,177 @@ async def test_webull_confirmation_bad_answer_matrix_has_only_safe_terminals(
         assert len(incidents) == 1
         assert incidents[0].payload["protection_restored"] is True
     assert decision.outcomes[WEBULL] != "refused"
+
+
+def _close_reject_fixture(response_class: str) -> ExecutionReport | BaseException:
+    if response_class == "A_ALREADY_GONE":
+        return ztg_195912_no_position_reject()
+    if response_class == "B_UNCLEAR":
+        return TimeoutError(
+            "GIPR 2026-09-18 17:07:07Z: TOO_MANY_REQUESTS Too many requests (http 429)"
+        )
+    if response_class == "C_NOT_TRADABLE":
+        return bq_170729_not_tradable_reject()
+    return unknown_answer("future-protect-", "T", symbol="FUTR")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response_class",
+    ("A_ALREADY_GONE", "B_UNCLEAR", "C_NOT_TRADABLE", "E_UNKNOWN"),
+)
+async def test_confirmation_close_classes_reprotect_and_page_instead_of_giving_up(
+    monkeypatch, response_class: str
+) -> None:
+    """Real A-C responses and the E default all end protected, never refused."""
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    response = _close_reject_fixture(response_class)
+    adapter.submit_results.append(response if isinstance(response, BaseException) else [response])
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    attached: list[str] = []
+
+    async def _attach(**kwargs) -> bool:
+        attached.append(kwargs["symbol"])
+        return True
+
+    monkeypatch.setattr(service, "_attach_webull_protection", _attach)
+    await _arm_decision(service)
+    decision = service._confirmation_fanout_decision(
+        service._confirmation_exit_pending[(WEBULL, SYMBOL)]
+    )
+    assert decision is not None
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    await service._confirmation_exit_recovery_tasks.pop()
+
+    assert len(adapter.submitted) == 1, f"{response_class} is not a corrected-retry class"
+    assert attached == [SYMBOL]
+    assert decision.outcomes[WEBULL] == "reprotected"
+    assert decision.outcomes[WEBULL] != "refused"
+    with sf() as session:
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].payload["protection_restored"] is True
+
+
+@pytest.mark.asyncio
+async def test_no_position_reject_closes_only_after_broker_read_confirms_flat(
+    monkeypatch,
+) -> None:
+    """ZTG's class-A words are not flat proof; the independent position read is."""
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    adapter.submit_results.append([ztg_195912_no_position_reject()])
+    adapter.position_state[WEBULL] = Decimal("0")
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    await _arm_decision(service)
+    decision = service._confirmation_fanout_decision(
+        service._confirmation_exit_pending[(WEBULL, SYMBOL)]
+    )
+    assert decision is not None
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    await service._confirmation_exit_recovery_tasks.pop()
+
+    assert decision.outcomes[WEBULL] == "flat"
+    assert decision.outcomes[WEBULL] != "refused"
+    with sf() as session:
+        row = service.store.get_open_managed_position(
+            session, broker_account_name=WEBULL, symbol=SYMBOL
+        )
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+    assert row is None
+    assert incidents == []
+
+
+@pytest.mark.asyncio
+async def test_malformed_confirmation_close_gets_exactly_one_corrected_retry(
+    monkeypatch,
+) -> None:
+    """LGPS's real class-D response is corrected once; the retry fill is terminal."""
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    adapter.submit_results.append([lgps_133416_malformed_client_order_id_reject()])
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    await _arm_decision(service)
+    decision = service._confirmation_fanout_decision(
+        service._confirmation_exit_pending[(WEBULL, SYMBOL)]
+    )
+    assert decision is not None
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert len(adapter.submitted) == 2
+    first, corrected = adapter.submitted
+    assert corrected.client_order_id != first.client_order_id
+    assert len(corrected.client_order_id) <= 40
+    assert corrected.order_type == "market"
+    assert corrected.time_in_force == "day"
+    assert corrected.metadata["confirmation_corrected_retry"] == "true"
+    assert corrected.metadata["confirmation_corrected_from_client_order_id"] == (
+        first.client_order_id
+    )
+    assert decision.outcomes[WEBULL] == "closed"
+    assert service._confirmation_exit_recovery_tasks == set()
+    with sf() as session:
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+        orders = session.scalars(
+            select(BrokerOrder)
+            .join(TradeIntent, TradeIntent.id == BrokerOrder.intent_id)
+            .where(
+                TradeIntent.reason == "oms_v2_managed_exit:CONFIRMATION_EXIT",
+                BrokerOrder.broker_account_id
+                == session.scalar(select(BrokerAccount.id).where(BrokerAccount.name == WEBULL)),
+            )
+            .order_by(BrokerOrder.submitted_at)
+        ).all()
+    assert incidents == []
+    assert [order.status for order in orders] == ["rejected", "filled"]
+    assert orders[1].payload["confirmation_corrected_retry"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_malformed_confirmation_close_never_retries_more_than_once(
+    monkeypatch,
+) -> None:
+    """A second class-D reject terminates in re-protection, not an order loop."""
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    malformed = lgps_133416_malformed_client_order_id_reject()
+    adapter.submit_results.extend(([malformed], [malformed]))
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    attached: list[str] = []
+
+    async def _attach(**kwargs) -> bool:
+        attached.append(kwargs["symbol"])
+        return True
+
+    monkeypatch.setattr(service, "_attach_webull_protection", _attach)
+    await _arm_decision(service)
+    decision = service._confirmation_fanout_decision(
+        service._confirmation_exit_pending[(WEBULL, SYMBOL)]
+    )
+    assert decision is not None
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    await service._confirmation_exit_recovery_tasks.pop()
+
+    assert len(adapter.submitted) == 2
+    assert attached == [SYMBOL]
+    assert decision.outcomes[WEBULL] == "reprotected"
+    assert decision.outcomes[WEBULL] != "refused"
+    with sf() as session:
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+    assert len(incidents) == 1
 
 
 @pytest.mark.asyncio

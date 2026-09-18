@@ -91,11 +91,21 @@ _EXIT_FETCH_FAILED = _ExitFetchFailed()
 
 
 class _ManagedSellEvents(list):
-    """Order events with an optional pre-submit exit-pair result."""
+    """Order events with the terminal attempt separated from earlier failed attempts."""
 
-    def __init__(self, events=(), *, reservation: ExitPairReleaseResult | None = None) -> None:
-        super().__init__(events)
+    def __init__(
+        self,
+        events=(),
+        *,
+        reservation: ExitPairReleaseResult | None = None,
+        terminal_events=None,
+    ) -> None:
+        materialized = list(events)
+        super().__init__(materialized)
         self.reservation = reservation
+        self.terminal_events = list(
+            materialized if terminal_events is None else terminal_events
+        )
 
 
 @dataclass
@@ -7376,9 +7386,10 @@ class OmsRiskService:
                     } and not protective:
                         session.commit()
                         return "refused"
+                    terminal_events = getattr(managed_sell, "terminal_events", events)
                     rejected = any(
                         str(getattr(ev.payload, "status", "")).lower() == "rejected"
-                        for ev in events
+                        for ev in terminal_events
                     )
                     # ⛔⭐⭐ ABSOLUTE CEILING (2026-09-03 CHPT). Independent of the consecutive
                     # counter, which a truthful HELD read legitimately resets. Nothing clears this
@@ -7419,7 +7430,7 @@ class OmsRiskService:
                     a2_reason = next(
                         (
                             str(getattr(ev.payload, "reason", "") or "")
-                            for ev in events
+                            for ev in terminal_events
                             if str(getattr(ev.payload, "status", "")).lower() == "rejected"
                         ),
                         "",
@@ -7469,7 +7480,7 @@ class OmsRiskService:
                         progressed = not rejected and any(
                             str(getattr(ev.payload, "status", "")).strip().lower()
                             not in self._V2_EXIT_NON_PROGRESS_STATUSES
-                            for ev in events
+                            for ev in terminal_events
                         )
                         if progressed:
                             self._v2_exit_close_failures.pop(key, None)  # the close placed -> reset counter
@@ -7478,7 +7489,7 @@ class OmsRiskService:
                             self._a2_clear(acct, symbol)  # A2: the block ended
                             statuses = {
                                 str(getattr(event.payload, "status", "")).strip().lower()
-                                for event in events
+                                for event in terminal_events
                             }
                             emit_outcome = (
                                 "closed" if "filled" in statuses else "close_submitted"
@@ -7524,6 +7535,76 @@ class OmsRiskService:
         for ev in events:
             await self._publish_order_event(ev)
         return emit_outcome
+
+    @staticmethod
+    def _is_malformed_webull_confirmation_close_report(report: ExecutionReport) -> bool:
+        """Class D: a request-shape reject that one normalized retry can correct."""
+        if report.event_type != "rejected":
+            return False
+        code = str(report.metadata.get("webull_error_code", "")).strip().upper()
+        detail = " ".join(
+            (
+                str(report.reason or ""),
+                str(report.metadata.get("webull_error_message", "")),
+            )
+        ).upper()
+        return code == "ILLEGAL_PARAMETER" or any(
+            fragment in detail
+            for fragment in (
+                "CLIENT_ORDER_ID VALUE LENGTH",
+                "CORRECT ORDER TYPE",
+                "STOP PRICE",
+                "LIMIT PRICE",
+            )
+        )
+
+    @classmethod
+    def _webull_confirmation_close_can_retry_corrected(
+        cls, reports: list[ExecutionReport]
+    ) -> bool:
+        """Only a wholly malformed rejection batch is safe for one corrected retry."""
+        return bool(reports) and all(
+            cls._is_malformed_webull_confirmation_close_report(report)
+            for report in reports
+        )
+
+    def _corrected_webull_confirmation_close_request(
+        self, request: OrderRequest
+    ) -> OrderRequest | None:
+        """Normalize one malformed confirmation close without creating a retry loop."""
+        metadata = dict(request.metadata)
+        metadata["confirmation_corrected_retry"] = "true"
+        metadata["confirmation_corrected_from_client_order_id"] = request.client_order_id
+        if _is_regular_market_session():
+            order_type = "market"
+            for key in (
+                "limit_price",
+                "stop_price",
+                "stop_trigger_price",
+                "session",
+                "extended_hours",
+                "price_source",
+            ):
+                metadata.pop(key, None)
+            metadata["order_type"] = "market"
+        else:
+            order_type = str(request.order_type or "").strip().lower()
+            if order_type != "limit" or not str(metadata.get("limit_price", "")).strip():
+                return None
+            metadata["order_type"] = "limit"
+        return OrderRequest(
+            client_order_id=self._replacement_client_order_id(request.client_order_id),
+            broker_account_name=request.broker_account_name,
+            strategy_code=request.strategy_code,
+            symbol=request.symbol,
+            side=request.side,
+            intent_type=request.intent_type,
+            quantity=request.quantity,
+            reason=request.reason,
+            metadata=metadata,
+            order_type=order_type,
+            time_in_force="day",
+        )
 
     async def _emit_v2_managed_sell(
         self,
@@ -7659,6 +7740,34 @@ class OmsRiskService:
             broker_account_id=broker_account.id, intent_event=event,
             request=request, reports=reports,
         )
+        terminal_events = events
+        if (
+            confirmation_context
+            and self._is_v2_webull_account(row.broker_account_name)
+            and self._webull_confirmation_close_can_retry_corrected(reports)
+        ):
+            corrected_request = self._corrected_webull_confirmation_close_request(request)
+            if corrected_request is not None:
+                corrected_reports = await self.broker_adapter.submit_order(corrected_request)
+                terminal_events = await self._record_order_reports(
+                    session=session,
+                    intent=intent,
+                    strategy_id=strategy.id,
+                    broker_account_id=broker_account.id,
+                    intent_event=event,
+                    request=corrected_request,
+                    reports=corrected_reports,
+                )
+                events.extend(terminal_events)
+                self.logger.warning(
+                    "[OMS-V2-CONFIRMATION-EXIT-CORRECTED-RETRY] sym=%s acct=%s "
+                    "first_client_order_id=%s retry_client_order_id=%s terminal_reports=%d",
+                    row.symbol,
+                    row.broker_account_name,
+                    request.client_order_id,
+                    corrected_request.client_order_id,
+                    len(corrected_reports),
+                )
         # This line is emitted AFTER submit_order + _record_order_reports, so its own
         # timestamp trails the broker round-trip (measured 2026-07-15: median +1.4s, up
         # to +4.5s past the fill). decided_at carries the pre-submit decision instant so
@@ -7672,7 +7781,11 @@ class OmsRiskService:
         # evaluated. Counted here, beside the line that already marks the emit, so the two can
         # never disagree about what happened.
         self._p0a_census_note_submitted()
-        return _ManagedSellEvents(events, reservation=reservation)
+        return _ManagedSellEvents(
+            events,
+            reservation=reservation,
+            terminal_events=terminal_events,
+        )
 
     async def _has_active_native_stop_guard_order(
         self,

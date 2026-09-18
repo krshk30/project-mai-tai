@@ -190,3 +190,73 @@ def unknown_answer(base: str, suffix: str, *, symbol: str) -> ExecutionReport:
             "cancel_outcome": "could_not_tell",
         },
     )
+
+
+def ztg_195912_no_position_reject() -> ExecutionReport:
+    """Class A, live:orb ZTG 2026-09-16 19:59:12.612490Z."""
+    return ExecutionReport(
+        event_type="rejected",
+        origin="broker",
+        client_order_id="schwab_1m_v2-ZTG-close-bb6c80a52178",
+        symbol="ZTG",
+        side="sell",
+        intent_type="close",
+        quantity=Decimal("1"),
+        reason=(
+            "Webull order rejected: "
+            "NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K "
+            "NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K (http 417)"
+        ),
+        metadata={
+            "webull_request_id": "79a944e5-2ebf-48b7-a026-57f6e5638f30",
+            "webull_error_code": ("NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K"),
+            "webull_error_message": ("NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K"),
+            "webull_http_status": "417",
+        },
+        reported_at=datetime(2026, 9, 16, 19, 59, 12, 612490, tzinfo=UTC),
+    )
+
+
+def bq_170729_not_tradable_reject() -> ExecutionReport:
+    """Class C, live:orb BQ 2026-08-12 17:07:29.407767Z."""
+    return ExecutionReport(
+        event_type="rejected",
+        origin="broker",
+        client_order_id="schwab_1m_v2-BQ-close-00458612a3a2",
+        symbol="BQ",
+        side="sell",
+        intent_type="close",
+        quantity=Decimal("1"),
+        reason=(
+            "Webull order rejected: TICKER_ID_CAN_NOT_TRADE TICKER_ID_CAN_NOT_TRADE (http 417)"
+        ),
+        metadata={
+            "webull_error_code": "TICKER_ID_CAN_NOT_TRADE",
+            "webull_error_message": "TICKER_ID_CAN_NOT_TRADE",
+            "webull_http_status": "417",
+        },
+        reported_at=datetime(2026, 8, 12, 17, 7, 29, 407767, tzinfo=UTC),
+    )
+
+
+def lgps_133416_malformed_client_order_id_reject() -> ExecutionReport:
+    """Class D, live:orb LGPS 2026-07-13 13:34:16.599906Z."""
+    return ExecutionReport(
+        event_type="rejected",
+        origin="broker",
+        client_order_id="orb-LGPS-close-e49f4a08e6f2-r675c2064-r33441ac0",
+        symbol="LGPS",
+        side="sell",
+        intent_type="close",
+        quantity=Decimal("1"),
+        reason=(
+            "Webull order rejected: ILLEGAL_PARAMETER "
+            "client_order_id value length between 1 and 40 (http 417)"
+        ),
+        metadata={
+            "webull_error_code": "ILLEGAL_PARAMETER",
+            "webull_error_message": "client_order_id value length between 1 and 40",
+            "webull_http_status": "417",
+        },
+        reported_at=datetime(2026, 7, 13, 13, 34, 16, 599906, tzinfo=UTC),
+    )
