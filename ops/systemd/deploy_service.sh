@@ -7,6 +7,7 @@ SERVICE_TARGET="${3:-}"
 ALLOW_LIVE_RESTART="${MAI_TAI_ALLOW_LIVE_RESTART:-0}"
 RUN_MIGRATIONS="${MAI_TAI_RUN_MIGRATIONS:-0}"
 HOLD_STRATEGY="${MAI_TAI_HOLD_STRATEGY:-0}"
+EXPECTED_SHA="${MAI_TAI_EXPECTED_SHA:-}"
 APP_HEALTH_URL="${APP_HEALTH_URL:-http://127.0.0.1:8100/health}"
 APP_OVERVIEW_URL="${APP_OVERVIEW_URL:-http://127.0.0.1:8100/api/overview}"
 DEFAULT_POST_RESTART_HEALTH_SLA_SECONDS=60
@@ -330,8 +331,19 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 git fetch origin
+if [[ -n "$EXPECTED_SHA" ]]; then
+  if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "refusing deploy because MAI_TAI_EXPECTED_SHA is not a full commit SHA" >&2
+    exit 3
+  fi
+  REMOTE_SHA="$(git rev-parse "origin/$BRANCH")"
+  if [[ "$REMOTE_SHA" != "$EXPECTED_SHA" ]]; then
+    echo "refusing deploy because origin/$BRANCH moved: expected $EXPECTED_SHA, found $REMOTE_SHA" >&2
+    exit 3
+  fi
+fi
 git checkout "$BRANCH"
-git merge --ff-only "origin/$BRANCH"
+git merge --ff-only "${EXPECTED_SHA:-origin/$BRANCH}"
 DEPLOYED_SHA="$(git rev-parse HEAD)"
 
 if [[ "$HIGH_RISK" == "1" && "$ALLOW_LIVE_RESTART" == "1" && "$IN_MARKET_WINDOW" == "1" ]]; then
