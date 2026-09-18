@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,6 +17,7 @@ from project_mai_tai.backtest.momentum_live_rule_baseline import (
     capture_sessions,
     detector_band_decision,
     detector_is_suspect,
+    path_control_payload,
     premarket_range_has_candidate,
     prior_close_universe,
     raw_trade_row,
@@ -323,6 +325,55 @@ def test_replay_uses_production_rules_and_allows_fresh_post_exit_reentry() -> No
     assert by_strategy["momentum_30s"].targets == 1
     assert by_strategy["momentum_30s"].stops == 1
     assert by_strategy["momentum_30s"].path_rows == by_strategy["momentum_30s"].union_prints
+
+
+def test_path_union_starts_at_the_detecting_print_within_one_millisecond() -> None:
+    rows = [
+        _row("04:11:00.000", "1.00", trade_id="reference"),
+        _row("04:11:25.000", "1.19", trade_id="same-ms-before"),
+        _row("04:11:25.000", "1.20", trade_id="detection"),
+        _row("04:11:25.001", "1.21", trade_id="fill"),
+        _row("04:11:26.000", "1.28", trade_id="target"),
+    ]
+    result = replay_capture(_payload(rows))
+    for strategy in result.strategy_results:
+        assert strategy.timestamp_only_union_prints == strategy.path_rows + 1
+        assert strategy.same_millisecond_before_detection_prints == 1
+        assert strategy.union_prints == strategy.path_rows
+
+
+def test_path_control_requires_exact_equality_and_classifies_the_old_extra() -> None:
+    result = replay_capture(
+        _payload(
+            [
+                _row("04:11:00.000", "1.00", trade_id="reference"),
+                _row("04:11:25.000", "1.19", trade_id="same-ms-before"),
+                _row("04:11:25.000", "1.20", trade_id="detection"),
+                _row("04:11:25.001", "1.21", trade_id="fill"),
+            ]
+        )
+    )
+    control = path_control_payload(
+        [
+            replace(result, session_date=(date(2026, 8, 1) + timedelta(days=index)).isoformat())
+            for index in range(30)
+        ]
+    )
+    assert control["acceptance"] == "PASS"
+    assert control["prior_expectation"] == {
+        "expected_zero_sessions": 29,
+        "expected_nonzero_session": "2026-08-05",
+        "expected_nonzero_prints": 12,
+        "matched": False,
+        "observed_zero_sessions": 0,
+        "observed_nonzero_sessions": 30,
+        "observed_nonzero_prints": 60,
+    }
+    assert all(
+        row["old_control_discrepancy"] == row["same_millisecond_before_detection_prints"] == 1
+        for row in control["rows"]
+    )
+    assert all(row["order_aware_exact"] is True for row in control["rows"])
 
 
 def test_excluded_print_is_replayed_but_cannot_make_the_reference() -> None:
