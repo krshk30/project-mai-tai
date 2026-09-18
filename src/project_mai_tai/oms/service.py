@@ -136,6 +136,13 @@ A2_NOT_SELLABLE_REASON_SUBSTRINGS = (
     "oversold",                    # Schwab free-text
     "overbought",                  # Schwab free-text
 )
+# LC1 is the opposite ownership truth from A2: Webull says the SELL would OPEN a short because the
+# position is already absent. Keep the class separate so a no-position reject can never arm A2's
+# "we still hold it but cannot exit" backoff.
+WEBULL_NO_POSITION_CLOSE_REASON_SUBSTRINGS = (
+    "new_no_position_margin_account_can_not_sell_short_for_lt_2k",
+    "new no position margin account can not sell short for lt 2k",
+)
 # Webull "not tradable today" markers for the dual-broker fan-out per-broker eligibility.
 # DELIBERATELY CONSERVATIVE (operator 2026-07-24: "never seen a Webull rejection — find out
 # later or never"): only a CLEAR symbol-not-tradable reject marks a name ineligible for the day.
@@ -502,6 +509,7 @@ class OmsRiskService:
     # across 80 retained episodes, so no alarm threshold below the unchanged ceiling of 20 is
     # measured or defensible. Do not infer Webull coverage from SIL1 existing.
     _V2_EXIT_REJECT_ALARM_THRESHOLD_SCHWAB = 8
+    _WEBULL_LATE_CLOSE_RETRY_SECONDS = 2.0
     # A CW flip is emitted from a completed one-minute bar and should execute on the next quote.
     # Match the strategy's existing live-bar freshness horizon: after three minutes from the bar
     # start, the decision is stale and must not migrate to a later position on the same symbol.
@@ -578,6 +586,9 @@ class OmsRiskService:
     _A2_ESCALATE_AFTER_SECONDS = 90.0
     # Class-level default: test helpers build instances via __new__, bypassing __init__.
     _v2_exit_stood_down: set[tuple[str, str]] = set()
+    _webull_late_close_oco_probed: set[tuple[str, str]] = set()
+    _webull_late_close_retry_after: dict[tuple[str, str], datetime] = {}
+    _webull_late_close_logged_until: dict[tuple[str, str], datetime] = {}
     # (acct, SYMBOL) -> base coid of the resting Webull exit pair we attached. The legs themselves
     # are broker-created and unqueryable, so this is the only handle that can ever release them.
     _webull_protect_base: dict[tuple[str, str], str] = {}
@@ -712,6 +723,11 @@ class OmsRiskService:
         self._v2_exit_reject_alarm_count: dict[tuple[str, str], int] = {}
         self._v2_exit_reject_alarm_announced: set[tuple[str, str]] = set()
         self._v2_exit_reject_total: dict[tuple[str, str], int] = {}
+        # LC1 is deliberately process-memory only. A restart forgets every probe and pace window,
+        # which falls back to the pre-LC1 first-close behaviour rather than carrying an old episode.
+        self._webull_late_close_oco_probed: set[tuple[str, str]] = set()
+        self._webull_late_close_retry_after: dict[tuple[str, str], datetime] = {}
+        self._webull_late_close_logged_until: dict[tuple[str, str], datetime] = {}
         # A2: first time this (acct,symbol) was refused as not-sellable, the last probe, and
         # whether we have already paged. Cleared the moment a close PLACES or the row closes.
         self._a2_not_sellable_since: dict[tuple[str, str], datetime] = {}
@@ -6085,6 +6101,134 @@ class OmsRiskService:
             for f in A2_NOT_SELLABLE_REASON_SUBSTRINGS
         )
 
+    @staticmethod
+    def _is_webull_no_position_close_reject(reason: str | None) -> bool:
+        """True only for Webull's authoritative "this SELL would open a short" class."""
+        normalized = str(reason or "").strip().lower()
+        if not normalized:
+            return False
+        spaced = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+        compact = re.sub(r"[^a-z0-9]", "", normalized)
+        return any(
+            fragment in normalized
+            or fragment.replace("_", " ") in spaced
+            or re.sub(r"[^a-z0-9]", "", fragment) in compact
+            for fragment in WEBULL_NO_POSITION_CLOSE_REASON_SUBSTRINGS
+        )
+
+    def _webull_late_close_enabled_for(self, broker_account_name: str) -> bool:
+        settings = getattr(self, "settings", None)
+        if not bool(getattr(settings, "oms_v2_webull_late_close_guard_enabled", False)):
+            return False
+        provider_for_account = getattr(settings, "provider_for_account", None)
+        if provider_for_account is None:
+            return False
+        try:
+            return provider_for_account(broker_account_name) == "webull"
+        except Exception:  # noqa: BLE001 - a scope check must fail dormant, never alter an exit
+            return False
+
+    def _webull_late_close_should_defer(self, acct: str, symbol: str) -> bool:
+        """Pace an unresolved LC1 episode without ever delaying an uncovered position."""
+        if not self._webull_late_close_enabled_for(acct):
+            return False
+        key = (acct, symbol)
+        if key in getattr(self, "_exit_reservation_released", set()):
+            return False
+        retry_after = getattr(self, "_webull_late_close_retry_after", {}).get(key)
+        now = utcnow()
+        if retry_after is None or now >= retry_after:
+            return False
+        logged = self.__dict__.setdefault("_webull_late_close_logged_until", {})
+        if logged.get(key) != retry_after:
+            logged[key] = retry_after
+            self.logger.info(
+                "[OMS-WEBULL-LATE-CLOSE] sym=%s acct=%s decision=suppressed "
+                "retry_after=%s reason=unresolved_no_position_reject — managed row remains OPEN "
+                "and OWNED; polarity: suppressed means no duplicate close was sent in this window",
+                symbol,
+                acct,
+                retry_after.isoformat(timespec="milliseconds"),
+            )
+        return True
+
+    async def _probe_webull_late_close_fill(
+        self, session: Session, row, *, reject_reason: str
+    ) -> dict[str, object] | None:
+        """Probe the position's native OCO once after LC1's first authoritative reject.
+
+        A reject is never treated as flat. Only the broker's filled child detail, covering the
+        managed quantity, may enter the existing resolved-by-fill closure.
+        """
+        acct = str(row.broker_account_name)
+        symbol = str(row.symbol)
+        if not self._webull_late_close_enabled_for(acct):
+            return None
+        if not self._is_webull_no_position_close_reject(reject_reason):
+            return None
+        key = (acct, symbol)
+        probed = self.__dict__.setdefault("_webull_late_close_oco_probed", set())
+        if key in probed:
+            if key not in getattr(self, "_exit_reservation_released", set()):
+                self.__dict__.setdefault("_webull_late_close_retry_after", {})[key] = utcnow() + timedelta(
+                    seconds=self._WEBULL_LATE_CLOSE_RETRY_SECONDS
+                )
+                self.__dict__.setdefault("_webull_late_close_logged_until", {}).pop(key, None)
+            return None
+        probed.add(key)  # one broker lookup per episode, including 429/unreadable outcomes
+
+        entry_order = self._find_oco_entry_order(session, acct, symbol)
+        base_coid = self._oco_exit_base_for_entry(
+            entry_order, broker_account_name=acct, symbol=symbol
+        )
+        detail = await self._fetch_oco_exit_detail(
+            acct,
+            symbol,
+            base_coid,
+            entry_broker_order_id=str(getattr(entry_order, "broker_order_id", "") or ""),
+            entry_quantity=getattr(entry_order, "quantity", None),
+        )
+        required = Decimal(str(getattr(row, "current_quantity", 0) or 0))
+        filled = Decimal("0")
+        if detail is not _EXIT_FETCH_FAILED and detail:
+            try:
+                filled = Decimal(str(detail.get("quantity", 0) or 0))
+            except (InvalidOperation, TypeError, ValueError):
+                filled = Decimal("0")
+        if required > 0 and filled >= required:
+            self.logger.info(
+                "[OMS-WEBULL-LATE-CLOSE] sym=%s acct=%s decision=resolved_by_fill "
+                "filled_qty=%s managed_qty=%s — using the existing OCO resolved-by-fill closure; "
+                "polarity: broker execution, not reject text, proves the position closed",
+                symbol,
+                acct,
+                filled,
+                required,
+            )
+            return detail
+
+        outcome = (
+            "fetch_unreadable"
+            if detail is _EXIT_FETCH_FAILED
+            else "no_filled_exit_leg"
+            if not detail
+            else "fill_does_not_cover_managed_quantity"
+        )
+        if key not in getattr(self, "_exit_reservation_released", set()):
+            retry_after = utcnow() + timedelta(seconds=self._WEBULL_LATE_CLOSE_RETRY_SECONDS)
+            self.__dict__.setdefault("_webull_late_close_retry_after", {})[key] = retry_after
+            self.__dict__.setdefault("_webull_late_close_logged_until", {}).pop(key, None)
+        self.logger.info(
+            "[OMS-WEBULL-LATE-CLOSE] sym=%s acct=%s decision=deferred outcome=%s "
+            "release_confirmed=%d — managed row remains OPEN and OWNED; polarity: no broker fill "
+            "was inferred from the reject",
+            symbol,
+            acct,
+            outcome,
+            int(key in getattr(self, "_exit_reservation_released", set())),
+        )
+        return None
+
     def _a2_enabled_for(self, broker_account_name: str) -> bool:
         """Flag-gated AND scoped to `live:orb`.
 
@@ -6361,6 +6505,9 @@ class OmsRiskService:
         self._reset_v2_exit_reject_alarm(key, session=session)
         getattr(self, "_v2_exit_reject_total", {}).pop(key, None)
         self._v2_exit_stood_down.discard(key)
+        getattr(self, "_webull_late_close_oco_probed", set()).discard(key)
+        getattr(self, "_webull_late_close_retry_after", {}).pop(key, None)
+        getattr(self, "_webull_late_close_logged_until", {}).pop(key, None)
 
     async def _v2_close_reconcile_flat(self, session, acct: str, symbol: str, row) -> bool:
         """Phantom guard for the v2 CW full-close: count consecutive REJECTED closes; at the
@@ -6868,6 +7015,8 @@ class OmsRiskService:
                         symbol, acct, kind, self._A2_BACKOFF_SECONDS,
                     )
                     return "refused"
+                elif self._webull_late_close_should_defer(acct, symbol):
+                    return "refused"
                 elif (acct, symbol) in self._v2_exit_stood_down:
                     # ⛔ Retry loop stood down (see _V2_EXIT_ABANDON_AFTER_FAILURES). Emitting again
                     # would just re-reject: 145 times on NCRA 2026-07-29. The row and any protection
@@ -6954,8 +7103,22 @@ class OmsRiskService:
                     )
                     if a2_hit:
                         self._a2_note_reject(acct, symbol)
-                    reconciled = rejected and await self._v2_close_reconcile_flat(
-                        session, acct, symbol, row
+                    late_close_detail = None
+                    if (
+                        rejected
+                        and resolved_oco is None
+                        and self._webull_late_close_enabled_for(acct)
+                        and self._is_webull_no_position_close_reject(a2_reason)
+                    ):
+                        late_close_detail = await self._probe_webull_late_close_fill(
+                            session, row, reject_reason=a2_reason
+                        )
+                        if late_close_detail is not None:
+                            resolved_oco = (late_close_detail, str(row.id))
+                    reconciled = (
+                        rejected
+                        and late_close_detail is None
+                        and await self._v2_close_reconcile_flat(session, acct, symbol, row)
                     )
                     if a2_hit and not reconciled:
                         await self._a2_maybe_escalate(acct, symbol)

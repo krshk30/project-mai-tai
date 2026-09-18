@@ -210,11 +210,11 @@ CATALOG: tuple[RegressionSpec, ...] = (
     ),
     RegressionSpec(
         "RESERVE1",
-        "software close sells shares still reserved by Webull protection",
+        "software close is rejected while Webull may still reserve shares",
         "ARMED",
-        "live managed-exit orders and broker-origin reverse/short-sale rejects",
-        "OMS-EXIT-RELEASE or OMS-EXIT-PAIR-RESOLVED confirms the pair outcome first",
-        "a managed Webull sell is broker-rejected as reverse/short while reservations remain",
+        "live managed-exit rejects plus same-account/symbol sell fills before each burst",
+        "a sell fill within 10 seconds before the first reject classifies the burst as late-close",
+        "a reverse/short-sale reject burst has no preceding sell-fill evidence and remains RESERVATION",
     ),
     RegressionSpec(
         "W4291",
@@ -629,27 +629,27 @@ def evaluate_database(
     releases_schwab = metrics["confirmed_exit_releases_schwab"]
     releases_webull = metrics["confirmed_exit_releases_webull"]
     reserve_rejects_webull = metrics["reserved_share_reject_orders_webull"]
+    late_close_rejects_webull = metrics["late_close_after_broker_fill_orders_webull"]
     owned_schwab = metrics["owned_open_rows_schwab"]
     owned_webull = metrics["owned_open_rows_webull"]
     fresh_schwab = metrics["owned_fresh_rows_schwab"]
     fresh_webull = metrics["owned_fresh_rows_webull"]
     virtual_zero_schwab = metrics["virtual_zero_held_rows_schwab"]
     virtual_zero_webull = metrics["virtual_zero_held_rows_webull"]
-    managed = managed_schwab + managed_webull
-    releases = releases_schwab + releases_webull
     owned = owned_schwab + owned_webull
     fresh = fresh_schwab + fresh_webull
     virtual_zero = virtual_zero_schwab + virtual_zero_webull
     return [
         _reading(
             "RESERVE1",
-            evaluated=managed,
-            guard_working=releases,
+            evaluated=reserve_rejects_webull + late_close_rejects_webull,
+            guard_working=late_close_rejects_webull,
             recurrence=reserve_rejects_webull,
             detail=(
                 f"schwab_managed_exits={managed_schwab} releases={releases_schwab}; "
                 f"webull_managed_exits={managed_webull} releases={releases_webull} "
-                f"reserved_share_reject_orders={reserve_rejects_webull}"
+                f"late_close_after_broker_fill={late_close_rejects_webull} "
+                f"reservation_reject_orders={reserve_rejects_webull}"
             ),
             unknown=not oms_logs_readable,
         ),
@@ -816,6 +816,43 @@ managed_rejects AS (
     JOIN managed_orders mo ON mo.id = e.order_id
     WHERE e.event_type = 'rejected' AND e.event_source = 'broker'
 ),
+webull_reservation_class_rejects AS (
+    SELECT *, lag(event_at) OVER (PARTITION BY account, symbol ORDER BY event_at, id) AS prior_at
+    FROM managed_rejects
+    WHERE account = 'live:orb' AND (
+      reason LIKE '%NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K%'
+      OR reason LIKE '%ORDER_NOT_SUPPORT_REVERSE_OPTION%'
+    )
+),
+numbered_rejects AS (
+    SELECT *, sum(CASE WHEN prior_at IS NULL OR event_at - prior_at > interval '30 seconds'
+                       THEN 1 ELSE 0 END)
+      OVER (PARTITION BY account, symbol ORDER BY event_at, id) AS episode_no
+    FROM webull_reservation_class_rejects
+),
+reject_episodes AS (
+    SELECT account, symbol, episode_no, min(event_at) AS first_reject_at,
+           count(DISTINCT order_id)::int AS reject_orders
+    FROM numbered_rejects
+    GROUP BY account, symbol, episode_no
+),
+sell_fills AS (
+    SELECT ba.name AS account, f.symbol, f.filled_at
+    FROM fills f
+    JOIN broker_orders bo ON bo.id = f.order_id
+    JOIN broker_accounts ba ON ba.id = bo.broker_account_id
+    WHERE lower(f.side) = 'sell'
+),
+classified_reject_episodes AS (
+    SELECT e.*,
+           EXISTS (
+             SELECT 1 FROM sell_fills f
+             WHERE f.account = e.account AND f.symbol = e.symbol
+               AND f.filled_at >= e.first_reject_at - interval '10 seconds'
+               AND f.filled_at <= e.first_reject_at
+           ) AS late_close_after_fill
+    FROM reject_episodes e
+),
 owned AS (
     SELECT m.id, ba.name AS account, ap.quantity AS broker_qty, ap.source_updated_at,
            coalesce(vp.quantity, 0) AS virtual_qty
@@ -835,11 +872,11 @@ counts AS (
         AS managed_exit_orders_schwab,
       (SELECT count(*) FROM managed_orders WHERE account='live:orb')::int
         AS managed_exit_orders_webull,
-      (SELECT count(DISTINCT order_id) FROM managed_rejects
-       WHERE account = 'live:orb' AND (
-         reason LIKE '%NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K%'
-         OR reason LIKE '%ORDER_NOT_SUPPORT_REVERSE_OPTION%'
-       ))::int AS reserved_share_reject_orders_webull,
+      coalesce((SELECT sum(reject_orders) FROM classified_reject_episodes
+                WHERE NOT late_close_after_fill), 0)::int AS reserved_share_reject_orders_webull,
+      coalesce((SELECT sum(reject_orders) FROM classified_reject_episodes
+                WHERE late_close_after_fill), 0)::int
+        AS late_close_after_broker_fill_orders_webull,
       (SELECT count(*) FROM owned WHERE account='live:schwab_1m_v2')::int
         AS owned_open_rows_schwab,
       (SELECT count(*) FROM owned WHERE account='live:orb')::int AS owned_open_rows_webull,
@@ -862,6 +899,7 @@ SELECT json_build_object(
     'managed_exit_orders_schwab', managed_exit_orders_schwab,
     'managed_exit_orders_webull', managed_exit_orders_webull,
     'reserved_share_reject_orders_webull', reserved_share_reject_orders_webull,
+    'late_close_after_broker_fill_orders_webull', late_close_after_broker_fill_orders_webull,
     'owned_open_rows_schwab', owned_open_rows_schwab,
     'owned_open_rows_webull', owned_open_rows_webull,
     'owned_fresh_rows_schwab', owned_fresh_rows_schwab,
@@ -904,6 +942,7 @@ def _query_database(since: datetime) -> dict[str, int]:
         "managed_exit_orders_schwab",
         "managed_exit_orders_webull",
         "reserved_share_reject_orders_webull",
+        "late_close_after_broker_fill_orders_webull",
         "owned_open_rows_schwab",
         "owned_open_rows_webull",
         "owned_fresh_rows_schwab",

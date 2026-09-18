@@ -946,6 +946,10 @@ class Settings(BaseSettings):
     # confirmed fills; status->closed only at qty 0; a submitted-but-unfilled exit leaves the
     # row open+monitored+broker-consistent). FALSE = legacy close-on-submit (rollback lever).
     oms_v2_exit_close_on_fill_enabled: bool = True
+    # LC1: after Webull says a software close would open a short because the position is already
+    # absent, probe the position's native OCO fill once and pace any unresolved retries. OFF keeps
+    # the pre-LC1 per-quote close cadence byte-identical until the operator enables it.
+    oms_v2_webull_late_close_guard_enabled: bool = False
     # F2 (restart-while-holding): persist the in-memory `_armed_hard_stops` registry to the
     # durable `oms_armed_stops` table (mirror on arm/ratchet/decrement/close), rehydrate it on
     # boot, and reconcile OMS-owned positions BEFORE serving ticks. Fixes the pre-F2 gap where

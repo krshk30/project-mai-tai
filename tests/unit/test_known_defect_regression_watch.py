@@ -51,6 +51,7 @@ def database_metrics(**overrides: int) -> dict[str, int]:
         "confirmed_exit_releases_schwab": 0,
         "confirmed_exit_releases_webull": 0,
         "reserved_share_reject_orders_webull": 0,
+        "late_close_after_broker_fill_orders_webull": 0,
         "owned_open_rows_schwab": 0,
         "owned_open_rows_webull": 0,
         "owned_fresh_rows_schwab": 0,
@@ -547,6 +548,7 @@ def test_database_classifiers_keep_the_accounts_and_denominators_visible() -> No
                 confirmed_exit_releases_schwab=1,
                 confirmed_exit_releases_webull=2,
                 reserved_share_reject_orders_webull=1,
+                late_close_after_broker_fill_orders_webull=20,
                 owned_open_rows_schwab=1,
                 owned_open_rows_webull=1,
                 owned_fresh_rows_schwab=1,
@@ -556,8 +558,11 @@ def test_database_classifiers_keep_the_accounts_and_denominators_visible() -> No
         )
     }
     assert rows["RESERVE1"].verdict == watch.RECURRENCE
+    assert rows["RESERVE1"].evaluated == 21
+    assert rows["RESERVE1"].guard_working == 20
     assert "schwab_managed_exits=5 releases=1" in rows["RESERVE1"].detail
     assert "webull_managed_exits=7 releases=2" in rows["RESERVE1"].detail
+    assert "late_close_after_broker_fill=20 reservation_reject_orders=1" in rows["RESERVE1"].detail
     assert rows["VPZERO1"].verdict == watch.RECURRENCE
     assert "schwab_owned=1 fresh=1 virtual_zero=0" in rows["VPZERO1"].detail
     assert "webull_owned=1 fresh=1 virtual_zero=1" in rows["VPZERO1"].detail
@@ -582,6 +587,30 @@ def test_positive_recurrence_evidence_outranks_a_missing_supporting_log() -> Non
         )
     }
     assert rows["RESERVE1"].verdict == watch.RECURRENCE
+
+
+def test_veea_late_close_shape_is_guard_working_not_reservation() -> None:
+    row = next(
+        row
+        for row in watch.evaluate_database(
+            database_metrics(late_close_after_broker_fill_orders_webull=20)
+        )
+        if row.key == "RESERVE1"
+    )
+    assert row.verdict == watch.GUARD_WORKING
+    assert (row.evaluated, row.guard_working, row.recurrence) == (20, 20, 0)
+
+
+def test_chpt_reservation_shape_without_a_preceding_fill_stays_recurrence() -> None:
+    row = next(
+        row
+        for row in watch.evaluate_database(
+            database_metrics(reserved_share_reject_orders_webull=8)
+        )
+        if row.key == "RESERVE1"
+    )
+    assert row.verdict == watch.RECURRENCE
+    assert (row.evaluated, row.guard_working, row.recurrence) == (8, 0, 8)
 
 
 def test_phantom_guard_working_and_recurrence_are_opposite() -> None:
@@ -746,6 +775,9 @@ def test_database_census_is_read_only_broker_origin_and_live_account_scoped(monk
         assert command[:4] == ["sudo", "-n", "-u", "postgres"]
         assert "BEGIN READ ONLY;" in sql
         assert "e.event_source = 'broker'" in sql
+        assert "event_at - prior_at > interval '30 seconds'" in sql
+        assert "f.filled_at >= e.first_reject_at - interval '10 seconds'" in sql
+        assert "late_close_after_broker_fill_orders_webull" in sql
         assert "ba.name IN ('live:orb', 'live:schwab_1m_v2')" in sql
         assert "paper:orb" not in sql
         return SimpleNamespace(returncode=0, stderr="", stdout=f"{watch.json.dumps(payload)}\n")
