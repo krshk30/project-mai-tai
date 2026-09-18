@@ -1293,12 +1293,45 @@ async def test_concurrent_quote_task_cannot_cancel_the_same_episode_twice(
 
 
 @pytest.mark.asyncio
+async def test_bound_row_read_failure_releases_claim_for_the_next_quote(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    await _arm_decision(service)
+    row_id = _open_row_ids(sf)[WEBULL]
+    bound_reads = 0
+
+    async def _flaky_bound(_acct: str, _symbol: str) -> str:
+        nonlocal bound_reads
+        bound_reads += 1
+        if bound_reads == 1:
+            raise RuntimeError("controlled managed-row read failure")
+        return row_id
+
+    monkeypatch.setattr(service, "_confirmation_bound_managed_row_id", _flaky_bound)
+
+    with pytest.raises(RuntimeError, match="controlled managed-row read failure"):
+        await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert (WEBULL, SYMBOL) not in service._confirmation_exit_inflight
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert bound_reads == 2
+    assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
+    assert _sell_accounts(sf) == [WEBULL]
+
+
+@pytest.mark.asyncio
 async def test_imcc_one_of_two_cancel_reads_retries_instead_of_abandoning(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     row_id = _open_row_ids(sf)[WEBULL]
     one_cancelled = cancelled_leg("known-protect-base", "T", symbol=SYMBOL)
@@ -1323,8 +1356,16 @@ async def test_imcc_one_of_two_cancel_reads_retries_instead_of_abandoning(
     monkeypatch.setattr(service_module.asyncio, "sleep", _sleep)
 
     assert await _prepare_webull_leg(service, expected_row_id=row_id) == "released"
-    assert sleeps == [1.0]
+    assert sleeps == [0.5]
     assert len(adapter.cancel_pair_calls) == 2
+    timed_lines = [
+        line
+        for line in service.logger.lines
+        if "[OMS-V2-CONFIRMATION-EXIT-WEBULL-" in line
+        and ("-RETRY]" in line or "-RELEASED]" in line)
+    ]
+    assert len(timed_lines) == 2
+    assert all("inline_seconds=" in line for line in timed_lines)
 
 
 @pytest.mark.asyncio
@@ -1370,6 +1411,7 @@ async def test_release_budget_exhaustion_reprotects_and_opens_one_pager_incident
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     row_id = _open_row_ids(sf)[WEBULL]
     uncertain = ExecutionReport(
@@ -1387,8 +1429,10 @@ async def test_release_budget_exhaustion_reprotects_and_opens_one_pager_incident
     )
     attached: list[str] = []
 
-    async def _no_sleep(_seconds: float) -> None:
-        return None
+    sleeps: list[float] = []
+
+    async def _no_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
 
     async def _attach(**kwargs) -> bool:
         attached.append(kwargs["symbol"])
@@ -1399,6 +1443,14 @@ async def test_release_budget_exhaustion_reprotects_and_opens_one_pager_incident
 
     assert await _prepare_webull_leg(service, expected_row_id=row_id) == "reprotected"
     assert attached == [SYMBOL]
+    assert sleeps == [0.5, 1.0]
+    reprotected_lines = [
+        line
+        for line in service.logger.lines
+        if "[OMS-V2-CONFIRMATION-EXIT-REPROTECTED]" in line
+    ]
+    assert len(reprotected_lines) == 1
+    assert "inline_seconds=" in reprotected_lines[0]
     with sf() as session:
         incidents = session.scalars(select(service_module.SystemIncident)).all()
     assert len(incidents) == 1
