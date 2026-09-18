@@ -1,0 +1,9 @@
+{
+  "pr_number": 1012,
+  "range_base": "c6e259a0e96ec1e39fdf07df143fbae218993069",
+  "range_head": "d4f0e093a32187ff4787498e16a220b73392f8b4",
+  "reviewed_at": "2026-09-18T19:59:52Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review after rebase onto c6e259a0 (#1014). Not a re-stamp: base is an ancestor of the head; range-diff 6871957a..2300bde8 vs main..d4f0e093 shows both commits '='. Because #1014 rewrote parts of oms/service.py, I re-ran on the COMBINED tree with PYTHONPATH on the PR tree: PA1b suite plus the merged confirmation-exit suite, 75 pass. Mutations re-run RED, each edit confirmed applied: attempts not monotonic, no re-arm wait, pre-check removed. Prior evidence applies to identical patches: my oscillation probe ends at cycles 1,2,3 then attempt_cap_reached. Flag default False. Owed by the author: a behavioural v2 test for the claim-expiry duplicate guards (current one asserts source shape). Not to be merged before tonight's gated deploy of c6e259a0 - main is frozen."
+}
