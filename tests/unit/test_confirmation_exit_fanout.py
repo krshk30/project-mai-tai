@@ -1076,13 +1076,26 @@ async def test_concurrent_quote_task_cannot_cancel_the_same_episode_twice(
     first = service_module.asyncio.create_task(
         service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
     )
-    await entered.wait()
-    second = service_module.asyncio.create_task(
-        service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
-    )
-    await service_module.asyncio.sleep(0)
-    release.set()
-    await service_module.asyncio.gather(first, second)
+    second = None
+    try:
+        await service_module.asyncio.wait_for(entered.wait(), timeout=1.0)
+        second = service_module.asyncio.create_task(
+            service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+        )
+        await service_module.asyncio.sleep(0)
+        release.set()
+        await service_module.asyncio.wait_for(
+            service_module.asyncio.gather(first, second), timeout=1.0
+        )
+    finally:
+        release.set()
+        for task in (first, second):
+            if task is not None and not task.done():
+                task.cancel()
+        await service_module.asyncio.gather(
+            *(task for task in (first, second) if task is not None),
+            return_exceptions=True,
+        )
 
     assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
     assert bound_reads == 1, "the second quote entered before the decision was claimed"
