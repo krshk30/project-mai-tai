@@ -4407,6 +4407,9 @@ class OmsRiskService:
                 )
                 return "released"
 
+            # Unknown future broker answers intentionally share this path. Only positive terminal
+            # evidence above may authorize the sell; everything else consumes the bounded retry
+            # budget, then restores protection and pages instead of disappearing as "refused".
             unreadable = sum(
                 str(getattr(report, "metadata", {}).get("cancel_outcome", ""))
                 == "could_not_tell"

@@ -23,6 +23,17 @@ from project_mai_tai.oms import service as service_module
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
+from tests.webull_confirmation_exit_fixtures import (
+    cancelled_leg,
+    filled_leg,
+    gipr_170707_detail_rate_limited,
+    gipr_170707_order_cannot_cancel,
+    gipr_180510_order_cannot_cancel,
+    gipr_180511_detail_rate_limited,
+    imcc_174604_cancelled_and_rate_limited,
+    unknown_answer,
+    working_leg_after_cancel_request,
+)
 
 SCHWAB = "live:schwab_1m_v2"
 WEBULL = "live:orb"
@@ -276,25 +287,6 @@ def _confirmation_close_metadata(sf: sessionmaker) -> dict[str, dict[str, object
         return {account: dict(payload or {}) for account, payload in rows}
 
 
-def _gipr_cancel_reject(suffix: str, code: str) -> ExecutionReport:
-    """The structured shape emitted by Webull for GIPR's second cancel on 2026-09-18."""
-    return ExecutionReport(
-        event_type="rejected",
-        origin="broker",
-        client_order_id=f"known-protect-base{suffix}",
-        symbol=SYMBOL,
-        side="sell",
-        intent_type="cancel",
-        reason=f"Webull ServerException: {code}",
-        metadata={
-            "webull_request_id": f"gipr-{suffix}",
-            "webull_error_code": code,
-            "webull_error_message": "The order can not be cancelled",
-            "webull_http_status": "417",
-        },
-    )
-
-
 async def _arm_decision(service: OmsRiskService) -> None:
     evaluated_at = service_module.utcnow() - timedelta(seconds=1)
     await service._handle_stream_message(
@@ -336,6 +328,127 @@ async def _prepare_webull_leg(
             accounts=(WEBULL,),
         ),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row", "terminal"),
+    (
+        pytest.param("both_cancelled", "SOLD", id="both-cancelled"),
+        pytest.param("one_cancelled_one_429", "REPROTECTED+PAGED", id="imcc-one-cancelled-one-429"),
+        pytest.param(
+            "one_cancelled_one_order_cannot_cancel",
+            "REPROTECTED+PAGED",
+            id="one-cancelled-one-order-cannot-cancel",
+        ),
+        pytest.param(
+            "both_order_cannot_cancel_after_release",
+            "SOLD",
+            id="gipr-both-order-cannot-cancel-after-confirmed-release",
+        ),
+        pytest.param("both_429", "REPROTECTED+PAGED", id="gipr-both-429"),
+        pytest.param("transport_exception", "REPROTECTED+PAGED", id="transport-exception"),
+        pytest.param(
+            "working_after_cancelled_report",
+            "REPROTECTED+PAGED",
+            id="leg-read-working-after-cancelled-report",
+        ),
+        pytest.param("leg_filled", "SOLD", id="leg-read-filled"),
+        pytest.param(
+            "unknown_future_answer",
+            "REPROTECTED+PAGED",
+            id="unknown-answer-default",
+        ),
+    ),
+)
+async def test_webull_confirmation_bad_answer_matrix_has_only_safe_terminals(
+    monkeypatch, row: str, terminal: str
+) -> None:
+    """Every known bad answer sells, or restores protection and opens one page."""
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    base = "known-protect-base"
+    service._webull_protect_base[(WEBULL, SYMBOL)] = base
+    await _arm_decision(service)
+    pending = service._confirmation_exit_pending[(WEBULL, SYMBOL)]
+    decision = service._confirmation_fanout_decision(pending)
+    assert decision is not None
+    row_id = _open_row_ids(sf)[WEBULL]
+
+    cancelled = (
+        cancelled_leg(base, "T", symbol=SYMBOL),
+        cancelled_leg(base, "S", symbol=SYMBOL),
+    )
+    order_cannot_cancel = tuple(
+        gipr_180510_order_cannot_cancel(base, suffix, symbol=SYMBOL) for suffix in ("T", "S")
+    )
+    rate_limited = tuple(
+        gipr_180511_detail_rate_limited(base, suffix, symbol=SYMBOL) for suffix in ("T", "S")
+    )
+    if row == "both_cancelled":
+        results = [ExitPairReleaseResult(outcome="released", reports=cancelled)]
+    elif row == "one_cancelled_one_429":
+        reports = imcc_174604_cancelled_and_rate_limited(base, symbol=SYMBOL)
+        results = [ExitPairReleaseResult(outcome="unanswerable", reports=reports)] * 4
+    elif row == "one_cancelled_one_order_cannot_cancel":
+        reports = (cancelled[0], order_cannot_cancel[1])
+        results = [ExitPairReleaseResult(outcome="reserved", reports=reports)] * 4
+    elif row == "both_order_cannot_cancel_after_release":
+        service._exit_reservation_released.add((WEBULL, SYMBOL))
+        service._confirmation_webull_released_episode[(WEBULL, SYMBOL)] = (row_id, base)
+        adapter.release_results.append(
+            ExitPairReleaseResult(outcome="reserved", reports=order_cannot_cancel)
+        )
+        results = []
+    elif row == "both_429":
+        results = [ExitPairReleaseResult(outcome="unanswerable", reports=rate_limited)] * 4
+    elif row == "transport_exception":
+        results = []
+
+        async def _transport_failure(**_kwargs):
+            raise TimeoutError("tape-equivalent transport failure")
+
+        monkeypatch.setattr(adapter, "release_exit_pair_for_close", _transport_failure)
+    elif row == "working_after_cancelled_report":
+        reports = (
+            cancelled[0],
+            working_leg_after_cancel_request(base, "S", symbol=SYMBOL),
+        )
+        results = [ExitPairReleaseResult(outcome="reserved", reports=reports)] * 4
+    elif row == "leg_filled":
+        reports = (filled_leg(base, "T", symbol=SYMBOL), cancelled[1])
+        results = [ExitPairReleaseResult(outcome="resolved_by_fill", reports=reports)]
+    else:
+        reports = (
+            unknown_answer(base, "T", symbol=SYMBOL),
+            unknown_answer(base, "S", symbol=SYMBOL),
+        )
+        results = [ExitPairReleaseResult(outcome="unanswerable", reports=reports)] * 4
+    adapter.release_results.extend(results)
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    async def _attach(**_kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(service, "_attach_webull_protection", _attach)
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    with sf() as session:
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+    if terminal == "SOLD":
+        assert decision.outcomes[WEBULL] in {"closed", "resolved_by_fill"}
+        assert incidents == []
+    else:
+        assert decision.outcomes[WEBULL] == "reprotected"
+        assert len(incidents) == 1
+        assert incidents[0].payload["protection_restored"] is True
+    assert decision.outcomes[WEBULL] != "refused"
 
 
 @pytest.mark.asyncio
@@ -787,8 +900,8 @@ async def test_gipr_already_absent_reports_count_only_after_exact_release(
         ExitPairReleaseResult(
             outcome="reserved",
             reports=(
-                _gipr_cancel_reject("T", "ORDER_CAN_NOT_BE_CANCEL"),
-                _gipr_cancel_reject("S", "ORDER_CAN_NOT_BE_CANCEL"),
+                gipr_170707_order_cannot_cancel("known-protect-base", "T", symbol=SYMBOL),
+                gipr_170707_order_cannot_cancel("known-protect-base", "S", symbol=SYMBOL),
             ),
         )
     )
@@ -808,10 +921,7 @@ async def test_rate_limit_is_not_absence_even_when_an_exact_release_won_the_race
     row_id = _open_row_ids(sf)[WEBULL]
 
     reports = tuple(
-        replace(
-            _gipr_cancel_reject(suffix, "TOO_MANY_REQUESTS"),
-            metadata={"cancel_outcome": "could_not_tell", "webull_error_code": "429"},
-        )
+        gipr_170707_detail_rate_limited("known-protect-base", suffix, symbol=SYMBOL)
         for suffix in ("T", "S")
     )
     adapter.release_results.extend(
@@ -842,7 +952,14 @@ async def test_cancel_reject_is_not_absence_without_prior_exact_release(
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     row_id = _open_row_ids(sf)[WEBULL]
 
-    reports = (_gipr_cancel_reject("T", code), _gipr_cancel_reject("S", code))
+    reports = tuple(
+        (
+            gipr_170707_order_cannot_cancel("known-protect-base", suffix, symbol=SYMBOL)
+            if code == "ORDER_CAN_NOT_BE_CANCEL"
+            else gipr_170707_detail_rate_limited("known-protect-base", suffix, symbol=SYMBOL)
+        )
+        for suffix in ("T", "S")
+    )
     adapter.release_results.extend(
         ExitPairReleaseResult(outcome="reserved", reports=reports) for _ in range(4)
     )
@@ -898,26 +1015,27 @@ async def test_unknown_after_released_rejected_sell_is_explicitly_uncovered(
 
 
 @pytest.mark.asyncio
-async def test_uncertain_webull_pair_cancel_refuses_only_that_leg(monkeypatch) -> None:
+async def test_only_one_confirmed_child_reprotects_and_pages_instead_of_giving_up(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
-
-    async def _uncertain_cancel(**kwargs):
-        return [
-            ExecutionReport(
-                event_type="cancelled",
-                origin="broker",
-                client_order_id="known-protect-baseT",
-                symbol=SYMBOL,
-                side="sell",
-                intent_type="cancel",
-                reason="only one child confirmed",
-            )
-        ]
-
-    monkeypatch.setattr(adapter, "cancel_exit_pair", _uncertain_cancel)
     service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    reports = imcc_174604_cancelled_and_rate_limited("known-protect-base", symbol=SYMBOL)
+    adapter.release_results.extend(
+        ExitPairReleaseResult(outcome="unanswerable", reports=reports) for _ in range(4)
+    )
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    async def _attach(**_kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(service, "_attach_webull_protection", _attach)
     await _arm_decision(service)
 
     await service._evaluate_v2_managed_exit(SCHWAB, SYMBOL)
@@ -926,6 +1044,11 @@ async def test_uncertain_webull_pair_cancel_refuses_only_that_leg(monkeypatch) -
     assert _sell_accounts(sf) == [SCHWAB]
     assert (WEBULL, SYMBOL) not in service._exit_reservation_released
     assert (WEBULL, SYMBOL) not in service._confirmation_exit_pending
+    assert "legs_reprotected=1" in "\n".join(service.logger.lines)
+    with sf() as session:
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].payload["protection_restored"] is True
 
 
 @pytest.mark.asyncio
@@ -975,23 +1098,9 @@ async def test_imcc_one_of_two_cancel_reads_retries_instead_of_abandoning(
     service, sf = _service(fanout=True, adapter=adapter)
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     row_id = _open_row_ids(sf)[WEBULL]
-    one_cancelled = ExecutionReport(
-        event_type="cancelled",
-        origin="broker",
-        client_order_id="known-protect-baseT",
-        symbol=SYMBOL,
-        side="sell",
-        intent_type="cancel",
-        metadata={"cancel_outcome": "confirmed"},
-    )
-    one_working = ExecutionReport(
-        event_type="accepted",
-        origin="broker",
-        client_order_id="known-protect-baseS",
-        symbol=SYMBOL,
-        side="sell",
-        intent_type="cancel",
-        metadata={"cancel_outcome": "not_confirmed"},
+    one_cancelled = cancelled_leg("known-protect-base", "T", symbol=SYMBOL)
+    one_working = working_leg_after_cancel_request(
+        "known-protect-base", "S", symbol=SYMBOL
     )
     adapter.release_results.extend(
         (
@@ -1025,22 +1134,14 @@ async def test_order_cannot_cancel_is_not_absent_when_pair_read_says_working(
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     row_id = _open_row_ids(sf)[WEBULL]
     working = replace(
-        _gipr_cancel_reject("S", "ORDER_CAN_NOT_BE_CANCEL"),
+        gipr_170707_order_cannot_cancel("known-protect-base", "S", symbol=SYMBOL),
         event_type="accepted",
         metadata={
             "webull_error_code": "ORDER_CAN_NOT_BE_CANCEL",
             "cancel_outcome": "not_confirmed",
         },
     )
-    terminal = ExecutionReport(
-        event_type="cancelled",
-        origin="broker",
-        client_order_id="known-protect-baseT",
-        symbol=SYMBOL,
-        side="sell",
-        intent_type="cancel",
-        metadata={"cancel_outcome": "confirmed"},
-    )
+    terminal = cancelled_leg("known-protect-base", "T", symbol=SYMBOL)
     adapter.release_results.extend(
         ExitPairReleaseResult(outcome="reserved", reports=(terminal, working))
         for _ in range(4)
