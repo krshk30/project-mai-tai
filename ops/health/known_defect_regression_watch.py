@@ -217,6 +217,14 @@ CATALOG: tuple[RegressionSpec, ...] = (
         "a managed Webull sell is broker-rejected as reverse/short while reservations remain",
     ),
     RegressionSpec(
+        "LATECLOSE1",
+        "software close keeps retrying after a broker fill already flattened Webull",
+        "ARMED",
+        "reverse/short-sale reject episodes with a same-account/symbol sell fill in the prior 10 seconds",
+        "the late-close episode stops within three rejected close orders",
+        "the late-close episode exceeds three rejected close orders",
+    ),
+    RegressionSpec(
         "W4291",
         "Webull position-mirror 429 flood returns",
         "ARMED",
@@ -629,6 +637,11 @@ def evaluate_database(
     releases_schwab = metrics["confirmed_exit_releases_schwab"]
     releases_webull = metrics["confirmed_exit_releases_webull"]
     reserve_rejects_webull = metrics["reserved_share_reject_orders_webull"]
+    late_close_episodes_webull = metrics["late_close_episodes_webull"]
+    late_close_guard_webull = metrics["late_close_guard_working_episodes_webull"]
+    late_close_recurrence_webull = metrics["late_close_recurrence_episodes_webull"]
+    late_close_max_rejects_webull = metrics["late_close_max_rejects_per_episode_webull"]
+    late_close_rejects_webull = metrics["late_close_reject_orders_webull"]
     owned_schwab = metrics["owned_open_rows_schwab"]
     owned_webull = metrics["owned_open_rows_webull"]
     fresh_schwab = metrics["owned_fresh_rows_schwab"]
@@ -652,6 +665,17 @@ def evaluate_database(
                 f"reserved_share_reject_orders={reserve_rejects_webull}"
             ),
             unknown=not oms_logs_readable,
+        ),
+        _reading(
+            "LATECLOSE1",
+            evaluated=late_close_episodes_webull,
+            guard_working=late_close_guard_webull,
+            recurrence=late_close_recurrence_webull,
+            detail=(
+                f"episodes={late_close_episodes_webull} "
+                f"max_rejects_per_episode={late_close_max_rejects_webull} "
+                f"total_reject_orders={late_close_rejects_webull}"
+            ),
         ),
         _reading(
             "VPZERO1",
@@ -816,6 +840,43 @@ managed_rejects AS (
     JOIN managed_orders mo ON mo.id = e.order_id
     WHERE e.event_type = 'rejected' AND e.event_source = 'broker'
 ),
+webull_reservation_class_rejects AS (
+    SELECT *, lag(event_at) OVER (PARTITION BY account, symbol ORDER BY event_at, id) AS prior_at
+    FROM managed_rejects
+    WHERE account = 'live:orb' AND (
+      reason LIKE '%NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K%'
+      OR reason LIKE '%ORDER_NOT_SUPPORT_REVERSE_OPTION%'
+    )
+),
+numbered_rejects AS (
+    SELECT *, sum(CASE WHEN prior_at IS NULL OR event_at - prior_at > interval '30 seconds'
+                       THEN 1 ELSE 0 END)
+      OVER (PARTITION BY account, symbol ORDER BY event_at, id) AS episode_no
+    FROM webull_reservation_class_rejects
+),
+reject_episodes AS (
+    SELECT account, symbol, episode_no, min(event_at) AS first_reject_at,
+           count(DISTINCT order_id)::int AS reject_orders
+    FROM numbered_rejects
+    GROUP BY account, symbol, episode_no
+),
+sell_fills AS (
+    SELECT ba.name AS account, f.symbol, f.filled_at
+    FROM fills f
+    JOIN broker_orders bo ON bo.id = f.order_id
+    JOIN broker_accounts ba ON ba.id = bo.broker_account_id
+    WHERE lower(f.side) = 'sell'
+),
+classified_reject_episodes AS (
+    SELECT e.*,
+           EXISTS (
+             SELECT 1 FROM sell_fills f
+             WHERE f.account = e.account AND f.symbol = e.symbol
+               AND f.filled_at >= e.first_reject_at - interval '10 seconds'
+               AND f.filled_at <= e.first_reject_at
+           ) AS late_close_after_fill
+    FROM reject_episodes e
+),
 owned AS (
     SELECT m.id, ba.name AS account, ap.quantity AS broker_qty, ap.source_updated_at,
            coalesce(vp.quantity, 0) AS virtual_qty
@@ -835,11 +896,21 @@ counts AS (
         AS managed_exit_orders_schwab,
       (SELECT count(*) FROM managed_orders WHERE account='live:orb')::int
         AS managed_exit_orders_webull,
-      (SELECT count(DISTINCT order_id) FROM managed_rejects
-       WHERE account = 'live:orb' AND (
-         reason LIKE '%NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K%'
-         OR reason LIKE '%ORDER_NOT_SUPPORT_REVERSE_OPTION%'
-       ))::int AS reserved_share_reject_orders_webull,
+      coalesce((SELECT sum(reject_orders) FROM classified_reject_episodes
+                WHERE NOT late_close_after_fill), 0)::int AS reserved_share_reject_orders_webull,
+      (SELECT count(*) FROM classified_reject_episodes
+       WHERE late_close_after_fill)::int AS late_close_episodes_webull,
+      (SELECT count(*) FROM classified_reject_episodes
+       WHERE late_close_after_fill AND reject_orders <= 3)::int
+        AS late_close_guard_working_episodes_webull,
+      (SELECT count(*) FROM classified_reject_episodes
+       WHERE late_close_after_fill AND reject_orders > 3)::int
+        AS late_close_recurrence_episodes_webull,
+      coalesce((SELECT max(reject_orders) FROM classified_reject_episodes
+                WHERE late_close_after_fill), 0)::int
+        AS late_close_max_rejects_per_episode_webull,
+      coalesce((SELECT sum(reject_orders) FROM classified_reject_episodes
+                WHERE late_close_after_fill), 0)::int AS late_close_reject_orders_webull,
       (SELECT count(*) FROM owned WHERE account='live:schwab_1m_v2')::int
         AS owned_open_rows_schwab,
       (SELECT count(*) FROM owned WHERE account='live:orb')::int AS owned_open_rows_webull,
@@ -862,6 +933,11 @@ SELECT json_build_object(
     'managed_exit_orders_schwab', managed_exit_orders_schwab,
     'managed_exit_orders_webull', managed_exit_orders_webull,
     'reserved_share_reject_orders_webull', reserved_share_reject_orders_webull,
+    'late_close_episodes_webull', late_close_episodes_webull,
+    'late_close_guard_working_episodes_webull', late_close_guard_working_episodes_webull,
+    'late_close_recurrence_episodes_webull', late_close_recurrence_episodes_webull,
+    'late_close_max_rejects_per_episode_webull', late_close_max_rejects_per_episode_webull,
+    'late_close_reject_orders_webull', late_close_reject_orders_webull,
     'owned_open_rows_schwab', owned_open_rows_schwab,
     'owned_open_rows_webull', owned_open_rows_webull,
     'owned_fresh_rows_schwab', owned_fresh_rows_schwab,
@@ -904,6 +980,11 @@ def _query_database(since: datetime) -> dict[str, int]:
         "managed_exit_orders_schwab",
         "managed_exit_orders_webull",
         "reserved_share_reject_orders_webull",
+        "late_close_episodes_webull",
+        "late_close_guard_working_episodes_webull",
+        "late_close_recurrence_episodes_webull",
+        "late_close_max_rejects_per_episode_webull",
+        "late_close_reject_orders_webull",
         "owned_open_rows_schwab",
         "owned_open_rows_webull",
         "owned_fresh_rows_schwab",
@@ -1073,7 +1154,9 @@ def collect_readings(now: datetime) -> list[Reading]:
         metrics = _query_database(since)
     except Exception as exc:  # noqa: BLE001 - a failed query is unknown, never zero
         detail = f"database census unreadable: {type(exc).__name__}: {exc}"
-        readings.extend(unknown_reading(key, detail) for key in ("RESERVE1", "VPZERO1"))
+        readings.extend(
+            unknown_reading(key, detail) for key in ("RESERVE1", "LATECLOSE1", "VPZERO1")
+        )
     else:
         for account, suffix in (("live:schwab_1m_v2", "schwab"), ("live:orb", "webull")):
             metrics[f"confirmed_exit_releases_{suffix}"] = confirmed_exit_releases(oms, account)

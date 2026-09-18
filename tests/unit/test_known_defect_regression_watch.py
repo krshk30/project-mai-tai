@@ -51,6 +51,11 @@ def database_metrics(**overrides: int) -> dict[str, int]:
         "confirmed_exit_releases_schwab": 0,
         "confirmed_exit_releases_webull": 0,
         "reserved_share_reject_orders_webull": 0,
+        "late_close_episodes_webull": 0,
+        "late_close_guard_working_episodes_webull": 0,
+        "late_close_recurrence_episodes_webull": 0,
+        "late_close_max_rejects_per_episode_webull": 0,
+        "late_close_reject_orders_webull": 0,
         "owned_open_rows_schwab": 0,
         "owned_open_rows_webull": 0,
         "owned_fresh_rows_schwab": 0,
@@ -63,8 +68,8 @@ def database_metrics(**overrides: int) -> dict[str, int]:
 
 
 def test_catalog_has_every_requested_defect_and_every_row_declares_both_polarities() -> None:
-    assert len(watch.CATALOG) == 19
-    assert len({row.key for row in watch.CATALOG}) == 19
+    assert len(watch.CATALOG) == 20
+    assert len({row.key for row in watch.CATALOG}) == 20
     assert {row.mode for row in watch.CATALOG} == {"ARMED", "DELEGATED", "UNARMED"}
     assert {row.key for row in watch.CATALOG if row.mode == "ARMED"} == {
         "BOOT1",
@@ -74,6 +79,7 @@ def test_catalog_has_every_requested_defect_and_every_row_declares_both_polariti
         "LIQPULL1",
         "PHANTOM1",
         "RESERVE1",
+        "LATECLOSE1",
         "W4291",
         "VPZERO1",
         "SEED1",
@@ -174,9 +180,7 @@ def test_same_millisecond_restore_then_release_is_guard_working_not_recurrence()
         "reconstructed_uncapped=0; CW-v2 entries open",
     ]
     now = datetime(2026, 9, 14, 9, 50, tzinfo=UTC)
-    lines = watch.parse_log_lines(
-        raw, since=datetime(2026, 9, 14, 8, 0, tzinfo=UTC), until=now
-    )
+    lines = watch.parse_log_lines(raw, since=datetime(2026, 9, 14, 8, 0, tzinfo=UTC), until=now)
 
     # the restore must still precede the release after sorting
     markers = [
@@ -547,6 +551,11 @@ def test_database_classifiers_keep_the_accounts_and_denominators_visible() -> No
                 confirmed_exit_releases_schwab=1,
                 confirmed_exit_releases_webull=2,
                 reserved_share_reject_orders_webull=1,
+                late_close_episodes_webull=2,
+                late_close_guard_working_episodes_webull=1,
+                late_close_recurrence_episodes_webull=1,
+                late_close_max_rejects_per_episode_webull=20,
+                late_close_reject_orders_webull=21,
                 owned_open_rows_schwab=1,
                 owned_open_rows_webull=1,
                 owned_fresh_rows_schwab=1,
@@ -556,8 +565,14 @@ def test_database_classifiers_keep_the_accounts_and_denominators_visible() -> No
         )
     }
     assert rows["RESERVE1"].verdict == watch.RECURRENCE
+    assert rows["RESERVE1"].evaluated == 12
+    assert rows["RESERVE1"].guard_working == 3
     assert "schwab_managed_exits=5 releases=1" in rows["RESERVE1"].detail
     assert "webull_managed_exits=7 releases=2" in rows["RESERVE1"].detail
+    assert "reserved_share_reject_orders=1" in rows["RESERVE1"].detail
+    assert rows["LATECLOSE1"].verdict == watch.RECURRENCE
+    assert (rows["LATECLOSE1"].evaluated, rows["LATECLOSE1"].guard_working) == (2, 1)
+    assert "max_rejects_per_episode=20 total_reject_orders=21" in rows["LATECLOSE1"].detail
     assert rows["VPZERO1"].verdict == watch.RECURRENCE
     assert "schwab_owned=1 fresh=1 virtual_zero=0" in rows["VPZERO1"].detail
     assert "webull_owned=1 fresh=1 virtual_zero=1" in rows["VPZERO1"].detail
@@ -582,6 +597,86 @@ def test_positive_recurrence_evidence_outranks_a_missing_supporting_log() -> Non
         )
     }
     assert rows["RESERVE1"].verdict == watch.RECURRENCE
+
+
+def test_twenty_reject_late_close_episode_recurs_without_changing_reserve() -> None:
+    rows = {
+        row.key: row
+        for row in watch.evaluate_database(
+            database_metrics(
+                late_close_episodes_webull=1,
+                late_close_recurrence_episodes_webull=1,
+                late_close_max_rejects_per_episode_webull=20,
+                late_close_reject_orders_webull=20,
+            )
+        )
+    }
+    assert rows["LATECLOSE1"].verdict == watch.RECURRENCE
+    assert (rows["LATECLOSE1"].evaluated, rows["LATECLOSE1"].recurrence) == (1, 1)
+    assert rows["RESERVE1"].verdict == watch.UNEXERCISED
+
+
+def test_one_reject_late_close_episode_is_guard_working() -> None:
+    row = next(
+        row
+        for row in watch.evaluate_database(
+            database_metrics(
+                late_close_episodes_webull=1,
+                late_close_guard_working_episodes_webull=1,
+                late_close_max_rejects_per_episode_webull=1,
+                late_close_reject_orders_webull=1,
+            )
+        )
+        if row.key == "LATECLOSE1"
+    )
+    assert row.verdict == watch.GUARD_WORKING
+    assert (row.evaluated, row.guard_working, row.recurrence) == (1, 1, 0)
+
+
+def test_zero_late_close_episodes_are_unexercised() -> None:
+    row = next(
+        row for row in watch.evaluate_database(database_metrics()) if row.key == "LATECLOSE1"
+    )
+    assert row.verdict == watch.UNEXERCISED
+    assert (row.evaluated, row.guard_working, row.recurrence) == (0, 0, 0)
+
+
+def test_known_late_close_population_and_bmgl_unknown_shape_have_stated_verdicts() -> None:
+    # Late-close reject counts on 09-10..09-16 were 18, 20, 4, and 5. BMGL's single
+    # reject had no broker fill row, so it remains RESERVE1 rather than being guessed late-close.
+    rows = {
+        row.key: row
+        for row in watch.evaluate_database(
+            database_metrics(
+                managed_exit_orders_webull=5,
+                reserved_share_reject_orders_webull=1,
+                late_close_episodes_webull=4,
+                late_close_recurrence_episodes_webull=4,
+                late_close_max_rejects_per_episode_webull=20,
+                late_close_reject_orders_webull=47,
+            )
+        )
+    }
+    assert rows["RESERVE1"].verdict == watch.RECURRENCE
+    assert rows["LATECLOSE1"].verdict == watch.RECURRENCE
+    assert (
+        "episodes=4 max_rejects_per_episode=20 total_reject_orders=47" in rows["LATECLOSE1"].detail
+    )
+
+
+def test_chpt_reservation_shape_without_a_preceding_fill_stays_recurrence() -> None:
+    row = next(
+        row
+        for row in watch.evaluate_database(
+            database_metrics(
+                managed_exit_orders_webull=8,
+                reserved_share_reject_orders_webull=8,
+            )
+        )
+        if row.key == "RESERVE1"
+    )
+    assert row.verdict == watch.RECURRENCE
+    assert (row.evaluated, row.guard_working, row.recurrence) == (8, 0, 8)
 
 
 def test_phantom_guard_working_and_recurrence_are_opposite() -> None:
@@ -624,7 +719,7 @@ def test_static_rows_are_never_reported_as_clean() -> None:
 
 def test_failed_evidence_keeps_every_catalog_row_visible() -> None:
     rows = watch.failed_evidence_readings("database unavailable")
-    assert len(rows) == len(watch.CATALOG) == 19
+    assert len(rows) == len(watch.CATALOG) == 20
     assert {row.key for row in rows} == {row.key for row in watch.CATALOG}
     assert all(
         row.verdict == watch.COULD_NOT_TELL
@@ -722,7 +817,7 @@ def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None
 
     rows = {row.key: row for row in watch.collect_readings(NOW)}
 
-    assert len(rows) == 19
+    assert len(rows) == 20
     assert rows["BOOT1"].verdict == watch.COULD_NOT_TELL
     assert rows["ROLL1"].verdict == watch.COULD_NOT_TELL
     assert rows["OWNERROLL1"].verdict == watch.COULD_NOT_TELL
@@ -731,6 +826,7 @@ def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None
     assert rows["SEED1"].verdict == watch.COULD_NOT_TELL
     assert rows["W4291"].verdict == watch.OBSERVED_CLEAN
     assert rows["RESERVE1"].verdict == watch.UNEXERCISED
+    assert rows["LATECLOSE1"].verdict == watch.UNEXERCISED
     assert rows["PHANTOM1"].verdict == watch.UNEXERCISED
 
 
@@ -746,6 +842,12 @@ def test_database_census_is_read_only_broker_origin_and_live_account_scoped(monk
         assert command[:4] == ["sudo", "-n", "-u", "postgres"]
         assert "BEGIN READ ONLY;" in sql
         assert "e.event_source = 'broker'" in sql
+        assert "event_at - prior_at > interval '30 seconds'" in sql
+        assert "f.filled_at >= e.first_reject_at - interval '10 seconds'" in sql
+        assert "late_close_episodes_webull" in sql
+        assert "reject_orders <= 3" in sql
+        assert "reject_orders > 3" in sql
+        assert "late_close_reject_orders_webull" in sql
         assert "ba.name IN ('live:orb', 'live:schwab_1m_v2')" in sql
         assert "paper:orb" not in sql
         return SimpleNamespace(returncode=0, stderr="", stdout=f"{watch.json.dumps(payload)}\n")
@@ -792,8 +894,7 @@ def test_pre_anchor_boot_is_kept_without_polluting_current_session_counts(monkey
         calls.append(since)
         if service == "schwab-1m-v2":
             return [
-                "2026-09-11 07:49:00,000 WARNING x "
-                "[V2-BOOT-HOLD] HELD restoration_complete=0",
+                "2026-09-11 07:49:00,000 WARNING x [V2-BOOT-HOLD] HELD restoration_complete=0",
                 "2026-09-11 07:50:00,000 INFO x "
                 "[V2-BOOT-RESTORE] restoration_complete=1 evaluated=4 confirmed=4",
                 "2026-09-11 07:51:00,000 INFO x [V2-BOOT-HOLD] released restoration_complete=1",
