@@ -56,6 +56,8 @@ def database_metrics(**overrides: int) -> dict[str, int]:
         "late_close_recurrence_episodes_webull": 0,
         "late_close_max_rejects_per_episode_webull": 0,
         "late_close_reject_orders_webull": 0,
+        "confirmation_exit_sold_orders_schwab": 0,
+        "confirmation_exit_sold_orders_webull": 0,
         "owned_open_rows_schwab": 0,
         "owned_open_rows_webull": 0,
         "owned_fresh_rows_schwab": 0,
@@ -68,8 +70,8 @@ def database_metrics(**overrides: int) -> dict[str, int]:
 
 
 def test_catalog_has_every_requested_defect_and_every_row_declares_both_polarities() -> None:
-    assert len(watch.CATALOG) == 20
-    assert len({row.key for row in watch.CATALOG}) == 20
+    assert len(watch.CATALOG) == 21
+    assert len({row.key for row in watch.CATALOG}) == 21
     assert {row.mode for row in watch.CATALOG} == {"ARMED", "DELEGATED", "UNARMED"}
     assert {row.key for row in watch.CATALOG if row.mode == "ARMED"} == {
         "BOOT1",
@@ -80,6 +82,7 @@ def test_catalog_has_every_requested_defect_and_every_row_declares_both_polariti
         "PHANTOM1",
         "RESERVE1",
         "LATECLOSE1",
+        "EXITDONE1",
         "W4291",
         "VPZERO1",
         "SEED1",
@@ -531,6 +534,59 @@ def test_one_webull_429_is_the_backoff_guard_working() -> None:
     assert result.recurrence == 0
 
 
+def test_exitdone_is_red_on_the_three_fired_zero_done_webull_tape() -> None:
+    result = watch.evaluate_confirmation_exit_done(
+        lines(
+            (
+                5,
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=GIPR acct=live:orb "
+                "fill_id=gipr-first status=PENDING_EXECUTABLE_BID",
+            ),
+            (
+                6,
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=GIPR acct=live:orb "
+                "fill_id=gipr-second status=PENDING_EXECUTABLE_BID",
+            ),
+            (
+                7,
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=IMCC acct=live:orb "
+                "fill_id=imcc-first status=PENDING_EXECUTABLE_BID",
+            ),
+        ),
+        database_metrics(),
+    )
+
+    assert result.verdict == watch.RECURRENCE
+    assert (result.evaluated, result.guard_working, result.recurrence) == (3, 0, 3)
+    assert "live:orb: fired=3 sold=0 reprotected=0 gap=3" in result.detail
+
+
+def test_exitdone_counts_real_sell_fills_and_explicit_reprotection() -> None:
+    result = watch.evaluate_confirmation_exit_done(
+        lines(
+            (
+                5,
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=SOLD acct=live:orb "
+                "fill_id=sold status=PENDING_EXECUTABLE_BID",
+            ),
+            (
+                6,
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=SAFE acct=live:orb "
+                "fill_id=protected status=PENDING_EXECUTABLE_BID",
+            ),
+            (
+                7,
+                "[OMS-V2-CONFIRMATION-EXIT-REPROTECTED] sym=SAFE acct=live:orb "
+                "fill_id=protected protected=1 reason=close_refused missing_legs=target,stop",
+            ),
+        ),
+        database_metrics(confirmation_exit_sold_orders_webull=1),
+    )
+
+    assert result.verdict == watch.GUARD_WORKING
+    assert (result.evaluated, result.guard_working, result.recurrence) == (2, 2, 0)
+
+
 def test_confirmed_exit_release_markers_stay_bound_to_their_account() -> None:
     observed = lines(
         (5, "[OMS-EXIT-RELEASE] AAA live:schwab_1m_v2 base=x release_confirmed=1"),
@@ -719,7 +775,7 @@ def test_static_rows_are_never_reported_as_clean() -> None:
 
 def test_failed_evidence_keeps_every_catalog_row_visible() -> None:
     rows = watch.failed_evidence_readings("database unavailable")
-    assert len(rows) == len(watch.CATALOG) == 20
+    assert len(rows) == len(watch.CATALOG) == 21
     assert {row.key for row in rows} == {row.key for row in watch.CATALOG}
     assert all(
         row.verdict == watch.COULD_NOT_TELL
@@ -817,7 +873,7 @@ def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None
 
     rows = {row.key: row for row in watch.collect_readings(NOW)}
 
-    assert len(rows) == 20
+    assert len(rows) == 21
     assert rows["BOOT1"].verdict == watch.COULD_NOT_TELL
     assert rows["ROLL1"].verdict == watch.COULD_NOT_TELL
     assert rows["OWNERROLL1"].verdict == watch.COULD_NOT_TELL
@@ -825,6 +881,7 @@ def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None
     assert rows["LIQPULL1"].verdict == watch.COULD_NOT_TELL
     assert rows["SEED1"].verdict == watch.COULD_NOT_TELL
     assert rows["W4291"].verdict == watch.OBSERVED_CLEAN
+    assert rows["EXITDONE1"].verdict == watch.UNEXERCISED
     assert rows["RESERVE1"].verdict == watch.UNEXERCISED
     assert rows["LATECLOSE1"].verdict == watch.UNEXERCISED
     assert rows["PHANTOM1"].verdict == watch.UNEXERCISED

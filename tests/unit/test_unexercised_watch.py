@@ -222,7 +222,7 @@ def _inc1_row(
     )
 
 
-def test_inc1_reads_both_incident_types_from_the_same_pager_route(monkeypatch):
+def test_inc1_reads_all_incident_types_from_the_same_pager_route(monkeypatch):
     statements: list[str] = []
 
     def capture(sql):
@@ -236,6 +236,7 @@ def test_inc1_reads_both_incident_types_from_the_same_pager_route(monkeypatch):
     assert "status != 'closed'" in statements[0]
     assert "'oms_v2_cw_flip_uncovered'" in statements[0]
     assert "'oms_v2_exit_release_unresolved'" in statements[0]
+    assert "'oms_v2_confirmation_exit_reprotected'" in statements[0]
 
 
 def test_inc1_forced_incident_reaches_the_watchers_page_channel(tmp_path, monkeypatch):
@@ -314,6 +315,34 @@ def test_terminal_reserved_pair_page_does_not_claim_the_position_is_unprotected(
     assert "confirmed to remain protective" in pages[0]
     assert "may be unprotected" not in pages[0]
     assert "exit_action=held" in pages[0]
+
+
+def test_confirmation_reprotection_pages_once_with_account_symbol_and_missing_legs(
+    tmp_path, monkeypatch
+):
+    row = json.loads(_inc1_row(source="oms_v2_confirmation_exit_reprotected"))
+    row.update(
+        {
+            "title": "Confirmation exit REPROTECTED: GIPR on live:orb; close incomplete",
+            "account": "live:orb",
+            "symbol": "GIPR",
+            "protection_restored": "true",
+            "missing_legs": "target,stop",
+            "reason": "close_refused",
+        }
+    )
+    pages: list[tuple[str, str]] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [json.dumps(row)])
+    monkeypatch.setattr(uw, "page", lambda title, body: pages.append((title, body)) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+
+    assert len(pages) == 1
+    assert pages[0][0].startswith("Confirmation exit REPROTECTED")
+    assert "account=live:orb symbol=GIPR" in pages[0][1]
+    assert "protection_restored=1 missing_legs=target,stop" in pages[0][1]
 
 
 def test_inc1_failed_delivery_retries_until_accepted_then_stays_silent(tmp_path, monkeypatch):
