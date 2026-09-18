@@ -56,6 +56,9 @@ _CLOSE_AT = time(9, 40, 1)
 _HEARTBEAT_SECONDS = 15
 _PATH_FLUSH_SECONDS = 0.25
 _PATH_FLUSH_ROWS = 500
+_POLICY_VIOLATION_LIMIT = 5
+_POLICY_VIOLATION_COOLOFF = timedelta(minutes=15)
+_POLICY_RECOVERY_STABLE_FOR = timedelta(seconds=60)
 
 
 def detector_health_status(detections: int) -> str:
@@ -161,6 +164,10 @@ class MomentumPaperService:
         self._websocket: object | None = None
         self._websocket_task: asyncio.Task[None] | None = None
         self._connected = False
+        self._connected_since: datetime | None = None
+        self._stable_connection_reported = False
+        self._policy_violation_streak = 0
+        self._policy_cooloff_until: datetime | None = None
         self._tail_mode = False
         self._last_heartbeat: datetime | None = None
         self._completed_from_store: list[dict[str, object]] = []
@@ -196,6 +203,7 @@ class MomentumPaperService:
 
     async def _tick(self) -> None:
         now = self._clock()
+        self._clear_policy_violation_after_stable_connection(now)
         et = now.astimezone(_ET)
         if et.weekday() >= 5 or et.date() in US_MARKET_HOLIDAYS:
             await self._stop_stream()
@@ -338,6 +346,17 @@ class MomentumPaperService:
     async def _start_stream(self) -> None:
         if self._websocket is not None or self._websocket_task is not None:
             await self._stop_stream()
+        now = self._clock()
+        if self._policy_cooloff_until is not None:
+            if now < self._policy_cooloff_until:
+                return
+            logger.warning(
+                "[MOMENTUM-PAPER-FEED-POLICY] decision=probe reason=feed_policy_violation "
+                "consecutive_1008=%d cooloff_ended_at=%s",
+                self._policy_violation_streak,
+                self._policy_cooloff_until.isoformat(),
+            )
+            self._policy_cooloff_until = None
         websocket = self._websocket_client_factory()
         self._websocket = websocket
         websocket.subscribe("T.*")
@@ -350,11 +369,18 @@ class MomentumPaperService:
             await websocket.connect(self._handle_messages)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.exception("[MOMENTUM-PAPER-FEED] disconnected; current paths fail closed")
+        except Exception as exc:
+            if self._is_policy_violation(exc):
+                self._record_policy_violation()
+            else:
+                self._clear_policy_violation(reason="non_policy_disconnect")
+                logger.exception("[MOMENTUM-PAPER-FEED] disconnected; current paths fail closed")
+        else:
+            self._clear_policy_violation(reason="clean_stream_end")
         finally:
             unexpected_disconnect = self._websocket is websocket
             self._connected = False
+            self._connected_since = None
             if unexpected_disconnect and self._feed_gap_started_ms is None:
                 self._feed_gap_started_ms = self._now_ms()
                 logger.warning("[MOMENTUM-PAPER-FEED] stream ended; current paths fail closed")
@@ -369,6 +395,9 @@ class MomentumPaperService:
                 self._websocket_task = None
 
     async def _handle_messages(self, messages: Iterable[object] | str | bytes) -> None:
+        if not self._connected:
+            self._connected_since = self._clock()
+            self._stable_connection_reported = False
         self._connected = True
         if self._feed_gap_started_ms is not None and self._engine is not None:
             await self._persist(
@@ -456,16 +485,36 @@ class MomentumPaperService:
             + self._completed_from_store
             + list(self._engine.completed_events)
         )
+        feed_policy_violation = (
+            self._policy_violation_streak > 0 or self._policy_cooloff_until is not None
+        )
         heartbeat = HeartbeatEvent(
             source_service=SERVICE_NAME,
             payload=HeartbeatPayload(
                 service_name=SERVICE_NAME,
                 instance_name=SERVICE_NAME,
-                status="healthy" if self._connected else "degraded",
+                status=(
+                    "healthy"
+                    if self._connected and not feed_policy_violation
+                    else "degraded"
+                ),
                 details={
                     "execution_mode": "paper",
                     "broker_route": "none",
                     "streamer_connected": str(self._connected).lower(),
+                    "feed_reason": (
+                        "feed_policy_violation"
+                        if feed_policy_violation
+                        else ("" if self._connected else "feed_disconnected")
+                    ),
+                    "consecutive_policy_violations": str(
+                        self._policy_violation_streak
+                    ),
+                    "policy_cooloff_until": (
+                        self._policy_cooloff_until.isoformat()
+                        if self._policy_cooloff_until is not None
+                        else ""
+                    ),
                     "subscription_mode": "symbol_tail" if self._tail_mode else "T.*",
                     "active_paths": str(len(self._engine.active_events)),
                     "excluded_prints": str(self._engine.session_excluded_prints),
@@ -489,6 +538,67 @@ class MomentumPaperService:
                 maxlen=self.settings.redis_strategy_state_isolated_stream_maxlen,
                 approximate=True,
             )
+
+    @staticmethod
+    def _is_policy_violation(exc: Exception) -> bool:
+        received = getattr(exc, "rcvd", None)
+        codes = (
+            getattr(received, "code", None),
+            getattr(exc, "code", None),
+            getattr(exc, "close_code", None),
+        )
+        if any(code == 1008 for code in codes):
+            return True
+        rendered = str(exc).lower()
+        return "1008" in rendered and "policy violation" in rendered
+
+    def _record_policy_violation(self) -> None:
+        self._policy_violation_streak += 1
+        if self._policy_violation_streak < _POLICY_VIOLATION_LIMIT:
+            logger.warning(
+                "[MOMENTUM-PAPER-FEED-POLICY] decision=retry "
+                "reason=feed_policy_violation consecutive_1008=%d/%d",
+                self._policy_violation_streak,
+                _POLICY_VIOLATION_LIMIT,
+            )
+            return
+        self._policy_cooloff_until = self._clock() + _POLICY_VIOLATION_COOLOFF
+        logger.error(
+            "[MOMENTUM-PAPER-FEED-POLICY] decision=cooloff "
+            "reason=feed_policy_violation consecutive_1008=%d "
+            "cooloff_until=%s - polarity: Momentum remains up with session state intact; "
+            "one probe is allowed after the cool-off",
+            self._policy_violation_streak,
+            self._policy_cooloff_until.isoformat(),
+        )
+
+    def _clear_policy_violation_after_stable_connection(self, now: datetime) -> None:
+        if (
+            not self._connected
+            or self._connected_since is None
+            or self._stable_connection_reported
+            or now - self._connected_since < _POLICY_RECOVERY_STABLE_FOR
+        ):
+            return
+        self._stable_connection_reported = True
+        self._clear_policy_violation(reason="stable_connection")
+
+    def _clear_policy_violation(self, *, reason: str) -> None:
+        prior = self._policy_violation_streak
+        if (
+            prior == 0
+            and self._policy_cooloff_until is None
+            and reason != "stable_connection"
+        ):
+            return
+        self._policy_violation_streak = 0
+        self._policy_cooloff_until = None
+        logger.info(
+            "[MOMENTUM-PAPER-FEED-POLICY] decision=recovered "
+            "reason=%s prior_consecutive_1008=%d",
+            reason,
+            prior,
+        )
 
     def _build_bot_state(
         self, strategy_code: str, completed: list[dict[str, object]]

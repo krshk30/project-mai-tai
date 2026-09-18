@@ -55,6 +55,31 @@ _MAINTENANCE_PATH = Path(
     )
 )
 _SYSTEMCTL_BIN = os.environ.get("FLEET_HEALTH_SYSTEMCTL", "systemctl")
+_SOCKET_EVIDENCE_STATE_PATH = Path(
+    os.environ.get(
+        "FLEET_HEALTH_SOCKET_EVIDENCE_STATE",
+        "/home/trader/fleet_health/socket_evidence_offsets.json",
+    )
+)
+_MARKET_DATA_LOG_PATH = Path(
+    os.environ.get(
+        "FLEET_HEALTH_MARKET_DATA_LOG",
+        "/var/log/project-mai-tai/market-data.log",
+    )
+)
+_MOMENTUM_LOG_PATH = Path(
+    os.environ.get(
+        "FLEET_HEALTH_MOMENTUM_LOG",
+        "/var/log/project-mai-tai/momentum-paper.log",
+    )
+)
+_MARKET_DATA_POLICY_NEEDLE = b"1008"
+_MOMENTUM_POLICY_COOLOFF_NEEDLE = (
+    b"[MOMENTUM-PAPER-FEED-POLICY] decision=cooloff reason=feed_policy_violation"
+)
+_MOMENTUM_POLICY_RECOVERED_NEEDLE = (
+    b"[MOMENTUM-PAPER-FEED-POLICY] decision=recovered"
+)
 
 # These units are expected to run continuously. Deliberately inactive units such as trade-coach
 # and tv-alerts stay out of the inventory so an intentional stop cannot become a page.
@@ -161,6 +186,194 @@ class ServiceRuntime(NamedTuple):
 class MaintenanceWindow(NamedTuple):
     until: datetime
     reason: str
+
+
+class LogCursor(NamedTuple):
+    device: int
+    inode: int
+    offset: int
+
+
+def _read_socket_evidence_state(
+    path: Path,
+) -> tuple[dict[str, LogCursor], bool, str | None]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, False, None
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError) as exc:
+        return {}, False, type(exc).__name__
+    if not isinstance(raw, dict):
+        return {}, False, "invalid_root"
+    raw_logs = raw.get("logs", raw)
+    if not isinstance(raw_logs, dict):
+        return {}, False, "invalid_logs"
+    parsed: dict[str, LogCursor] = {}
+    for key, value in raw_logs.items():
+        if not isinstance(key, str) or not isinstance(value, dict):
+            continue
+        try:
+            cursor = LogCursor(
+                device=int(value["device"]),
+                inode=int(value["inode"]),
+                offset=int(value["offset"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if cursor.offset >= 0:
+            parsed[key] = cursor
+    return parsed, bool(raw.get("momentum_policy_active", False)), None
+
+
+def _write_socket_evidence_state(
+    path: Path,
+    state: dict[str, LogCursor],
+    *,
+    momentum_policy_active: bool,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(
+                {
+                    "logs": {
+                        key: {
+                            "device": cursor.device,
+                            "inode": cursor.inode,
+                            "offset": cursor.offset,
+                        }
+                        for key, cursor in sorted(state.items())
+                    },
+                    "momentum_policy_active": momentum_policy_active,
+                },
+                stream,
+                sort_keys=True,
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _read_appended_socket_evidence(
+    path: Path,
+    prior: LogCursor | None,
+) -> tuple[bytes, LogCursor]:
+    stat = path.stat()
+    start = 0
+    if (
+        prior is not None
+        and prior.device == stat.st_dev
+        and prior.inode == stat.st_ino
+        and 0 <= prior.offset <= stat.st_size
+    ):
+        start = prior.offset
+    with path.open("rb") as stream:
+        stream.seek(start)
+        payload = stream.read()
+    return payload, LogCursor(device=stat.st_dev, inode=stat.st_ino, offset=stat.st_size)
+
+
+def check_massive_socket_policy_violations(
+    *,
+    state_path: Path | None = None,
+    market_data_log: Path | None = None,
+    momentum_log: Path | None = None,
+) -> tuple[tuple[str, str, str], ...]:
+    """Grade new socket evidence, never a component heartbeat that can stay healthy."""
+
+    path = _SOCKET_EVIDENCE_STATE_PATH if state_path is None else state_path
+    logs = (
+        (
+            "market-data",
+            _MARKET_DATA_LOG_PATH if market_data_log is None else market_data_log,
+            "massive-1008",
+        ),
+        (
+            "momentum-paper",
+            _MOMENTUM_LOG_PATH if momentum_log is None else momentum_log,
+            "feed-policy-violation",
+        ),
+    )
+    prior, momentum_policy_active, state_error = _read_socket_evidence_state(path)
+    if state_error is not None:
+        return (
+            (
+                "RED",
+                "service-runtime:socket-evidence:state-unreadable",
+                f"socket evidence cursor state unreadable error={state_error} path={path}",
+            ),
+        )
+    updated = dict(prior)
+    rows: list[tuple[str, str, str]] = []
+    for slug, log_path, condition in logs:
+        name = f"service-runtime:{slug}:{condition}"
+        try:
+            payload, cursor = _read_appended_socket_evidence(
+                log_path,
+                prior.get(str(log_path)),
+            )
+        except (OSError, ValueError) as exc:
+            rows.append(
+                (
+                    "RED",
+                    name,
+                    f"socket evidence unreadable path={log_path} error={type(exc).__name__}",
+                )
+            )
+            continue
+        updated[str(log_path)] = cursor
+        if slug == "market-data":
+            count = payload.count(_MARKET_DATA_POLICY_NEEDLE)
+            active = count > 0
+        else:
+            cooloffs = payload.count(_MOMENTUM_POLICY_COOLOFF_NEEDLE)
+            recoveries = payload.count(_MOMENTUM_POLICY_RECOVERED_NEEDLE)
+            if cooloffs or recoveries:
+                last_cooloff = payload.rfind(_MOMENTUM_POLICY_COOLOFF_NEEDLE)
+                last_recovery = payload.rfind(_MOMENTUM_POLICY_RECOVERED_NEEDLE)
+                momentum_policy_active = last_cooloff > last_recovery
+            count = cooloffs
+            active = momentum_policy_active
+        if active:
+            rows.append(
+                (
+                    "RED",
+                    name,
+                    f"socket evidence path={log_path} new_matches={count} "
+                    f"bytes_scanned={len(payload)} end_offset={cursor.offset} active=1",
+                )
+            )
+        else:
+            rows.append(
+                (
+                    "GREEN",
+                    name,
+                    f"socket evidence path={log_path} new_matches={count} "
+                    f"bytes_scanned={len(payload)} end_offset={cursor.offset} active=0",
+                )
+            )
+    try:
+        _write_socket_evidence_state(
+            path,
+            updated,
+            momentum_policy_active=momentum_policy_active,
+        )
+    except OSError as exc:
+        rows.append(
+            (
+                "RED",
+                "service-runtime:socket-evidence:state-write-failed",
+                f"socket evidence cursor write failed: {type(exc).__name__}",
+            )
+        )
+    return tuple(rows)
 
 
 def _service_slug(service: str) -> str:
@@ -865,7 +1078,10 @@ class CheckSpec(NamedTuple):
 
 # Every check declares its routing class here. There is deliberately no default: adding a check
 # without deciding whether it can page is a construction error, not an implicit page.
-RUNTIME_CHECKS = (CheckSpec(check_service_restart_storms, FLEET_RUNTIME),)
+RUNTIME_CHECKS = (
+    CheckSpec(check_service_restart_storms, FLEET_RUNTIME),
+    CheckSpec(check_massive_socket_policy_violations, FLEET_RUNTIME),
+)
 FUNCTION_CHECKS = (
     CheckSpec(check_strategy_bar_freshness, PAPER),
     CheckSpec(check_oms_order_lifecycle, LIVE_MONEY),

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import sys
 from types import SimpleNamespace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -349,6 +350,145 @@ async def test_clean_unexpected_stream_end_opens_a_fail_closed_gap() -> None:
     assert service._connected is False
     assert service._feed_gap_started_ms == int(now.timestamp() * 1000)
     assert websocket.closed is True
+
+
+@pytest.mark.asyncio
+async def test_five_consecutive_policy_closes_cool_off_for_fifteen_minutes_then_probe(
+    caplog,
+) -> None:
+    class PolicyCloseWebsocket:
+        async def connect(self, _handler) -> None:
+            raise RuntimeError("received 1008 (policy violation)")
+
+        async def close(self) -> None:
+            return None
+
+    class ProbeWebsocket:
+        def __init__(self) -> None:
+            self.release = asyncio.Event()
+            self.subscriptions: list[str] = []
+
+        def subscribe(self, *subscriptions: str) -> None:
+            self.subscriptions.extend(subscriptions)
+
+        async def connect(self, _handler) -> None:
+            await self.release.wait()
+
+        async def close(self) -> None:
+            self.release.set()
+
+    now = [datetime(2026, 9, 18, 10, 40, tzinfo=UTC)]
+    probes: list[ProbeWebsocket] = []
+
+    def factory() -> ProbeWebsocket:
+        probe = ProbeWebsocket()
+        probes.append(probe)
+        return probe
+
+    service = MomentumPaperService(
+        Settings(momentum_paper_enabled=True),
+        websocket_client_factory=factory,
+        clock=lambda: now[0],
+    )
+    caplog.set_level("INFO")
+    for _ in range(5):
+        websocket = PolicyCloseWebsocket()
+        service._websocket = websocket
+        await service._connect(websocket)
+
+    assert service._policy_violation_streak == 5
+    assert service._policy_cooloff_until == now[0] + timedelta(minutes=15)
+    assert sum("decision=cooloff" in message for message in caplog.messages) == 1
+
+    await service._start_stream()
+    assert probes == []
+
+    now[0] += timedelta(minutes=15)
+    await service._start_stream()
+    assert len(probes) == 1
+    assert probes[0].subscriptions == ["T.*"]
+    await service._stop_stream()
+
+
+@pytest.mark.asyncio
+async def test_policy_cooloff_heartbeat_is_degraded_with_the_explicit_reason() -> None:
+    class RecordingRedis:
+        def __init__(self) -> None:
+            self.rows: list[tuple[str, dict[str, str]]] = []
+
+        async def xadd(self, stream: str, fields: dict[str, str], **_kwargs) -> None:
+            self.rows.append((stream, fields))
+
+    redis = RecordingRedis()
+    now = datetime(2026, 9, 18, 10, 40, tzinfo=UTC)
+    service = MomentumPaperService(
+        Settings(momentum_paper_enabled=True),
+        redis_client=redis,  # type: ignore[arg-type]
+        clock=lambda: now,
+    )
+    service._session_date = date(2026, 9, 18)
+    service._engine = MomentumPaperEngine(
+        prior_closes={"ABCD": Decimal("1")},
+        condition_version="fixture",
+        coverage_started_ms=_et_ms("04:00:00"),
+    )
+    service._connected = False
+    for _ in range(5):
+        service._record_policy_violation()
+
+    await service._publish_state()
+
+    heartbeat = json.loads(redis.rows[0][1]["data"])["payload"]
+    assert heartbeat["status"] == "degraded"
+    assert heartbeat["details"]["feed_reason"] == "feed_policy_violation"
+    assert heartbeat["details"]["consecutive_policy_violations"] == "5"
+    assert heartbeat["details"]["policy_cooloff_until"] == (
+        now + timedelta(minutes=15)
+    ).isoformat()
+
+
+def test_policy_state_clears_only_after_a_stable_minute() -> None:
+    connected_at = datetime(2026, 9, 18, 10, 40, tzinfo=UTC)
+    service = MomentumPaperService(Settings(momentum_paper_enabled=True))
+    service._connected = True
+    service._connected_since = connected_at
+    service._policy_violation_streak = 5
+
+    service._clear_policy_violation_after_stable_connection(
+        connected_at + timedelta(seconds=59)
+    )
+    assert service._policy_violation_streak == 5
+
+    service._clear_policy_violation_after_stable_connection(
+        connected_at + timedelta(seconds=60)
+    )
+    assert service._policy_violation_streak == 0
+    assert service._policy_cooloff_until is None
+
+
+def test_new_process_announces_stable_connection_to_clear_an_old_health_latch(
+    caplog,
+) -> None:
+    connected_at = datetime(2026, 9, 18, 10, 40, tzinfo=UTC)
+    service = MomentumPaperService(Settings(momentum_paper_enabled=True))
+    service._connected = True
+    service._connected_since = connected_at
+    caplog.set_level("INFO")
+
+    service._clear_policy_violation_after_stable_connection(
+        connected_at + timedelta(seconds=60)
+    )
+    service._clear_policy_violation_after_stable_connection(
+        connected_at + timedelta(seconds=120)
+    )
+
+    recovered = [
+        message
+        for message in caplog.messages
+        if "decision=recovered reason=stable_connection" in message
+    ]
+    assert len(recovered) == 1
+    assert "prior_consecutive_1008=0" in recovered[0]
 
 
 @pytest.mark.asyncio
