@@ -1,0 +1,9 @@
+{
+  "pr_number": 1005,
+  "range_base": "708f75af91dd2b3ecb38ff5b44a72bcab2bea1b4",
+  "range_head": "daffcc8a7871c4722159e8592d1eb8ca1ef7999b",
+  "reviewed_at": "2026-09-18T11:19:12Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "LC1 Webull late-close guard. Read the full runtime diff (oms/service.py, settings.py): flag default False, provider-scoped, probe feeds the EXISTING _close_resolved_oco_managed_row with expected_row_id, reconcile-flat path unchanged when the probe returns None, never paces while _exit_reservation_released holds the key. Ran 82 focused tests green with PYTHONPATH on the PR tree. My own mutations all went red at d8454c64 (runtime unchanged since): released-guard removed, partial fill accepted, fetch-failure treated as fill, flag ignored, scope widened. Box evidence: 225 NEW_NO_POSITION episodes / 1008 rejects on live:orb since 2026-08-01, 0 followed by a filled software sell within 120s. Withheld first head for RESERVE1 reading late-close bursts as GUARD_WORKING; at daffcc8a RESERVE1 denominator is restored and LATECLOSE1 is separate. Ran the PR's DATABASE_SQL read-only on the box for 2026-09-10..: 4 late-close episodes, 47 reject orders, max 20, 4 recurrence, BMGL 1 stays reservation - identical to my independent census. Mutation: LATECLOSE1 recurrence wired to 0 -> 3 tests fail. OPEN FOLLOW-UP (not blocking): the <=3 threshold lives only in SQL and no test pins it (3->30 stays green)."
+}
