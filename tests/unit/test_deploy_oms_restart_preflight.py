@@ -90,8 +90,14 @@ def test_strict_flatness_mode_includes_protected_manual_positions(tmp_path: Path
     )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    protected_read = tmp_path / "protected-symbols-read"
     sudo = bin_dir / "sudo"
-    sudo.write_text("#!/usr/bin/env bash\nexec \"$@\"\n", encoding="utf-8")
+    sudo.write_text(
+        "#!/usr/bin/env bash\n"
+        f"case \"$*\" in *MAI_TAI_PROTECTED_SYMBOLS*) touch {protected_read} ;; esac\n"
+        "exec \"$@\"\n",
+        encoding="utf-8",
+    )
     sudo.chmod(0o755)
     psql = bin_dir / "psql"
     psql.write_text(
@@ -124,6 +130,8 @@ esac
         text=True,
         env=env,
     )
+    assert protected_read.exists(), "the default deploy path must still read its exclusions"
+    protected_read.unlink()
     strict = subprocess.run(
         ["bash", str(PREFLIGHT), "--require-all-account-positions-flat"],
         check=False,
@@ -138,3 +146,4 @@ esac
     assert "strict all-account-position flatness enabled" in strict.stdout
     assert "live:schwab_1m_v2 NOT FLAT" in strict.stdout
     assert "MANUAL=1" in strict.stdout
+    assert not protected_read.exists(), "strict study mode must not read or apply exclusions"

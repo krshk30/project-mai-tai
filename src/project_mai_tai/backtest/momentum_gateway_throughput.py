@@ -132,6 +132,7 @@ class ReplayResult:
     handoff_p99_ms: float | None
     handoff_max_ms: float | None
     producer_offer_elapsed_ms: float
+    producer_offer_schedule_delay_p99_ms: float
     producer_cpu_peak_pct_one_cpu: float
     producer_peak_rss_bytes: int
     consumer_cpu_peak_pct_one_cpu: float
@@ -159,8 +160,22 @@ class FlatFileObject:
     size_bytes: int
 
 
+@dataclass(frozen=True)
+class PacedReplayResult:
+    writer: SocketWriterCounters
+    offer_elapsed_ms: float
+    offer_schedule_delay_p99_ms: float
+
+
 class ReplayAborted(RuntimeError):
     pass
+
+
+def require_replay_niceness(
+    priority_reader: Callable[[], int] = lambda: os.getpriority(os.PRIO_PROCESS, 0),
+) -> None:
+    if os.name == "posix" and priority_reader() < 10:
+        raise ReplayAborted("replay process nice value must be at least 10")
 
 
 def require_replay_access(
@@ -168,9 +183,11 @@ def require_replay_access(
     now: datetime | None = None,
     preflight_path: Path = _STRICT_FLATNESS_PREFLIGHT,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    priority_reader: Callable[[], int] = lambda: os.getpriority(os.PRIO_PROCESS, 0),
 ) -> ReplayAccessEvidence:
     """Prove the frozen flat-window-or-after-hours replay precondition."""
 
+    require_replay_niceness(priority_reader)
     observed = now or datetime.now(_ET)
     local = observed.astimezone(_ET)
     if local.time() >= _AFTER_HOURS_START:
@@ -808,7 +825,7 @@ async def _paced_replay(
     speed: float,
     handoff: BoundedPaperHandoff,
     producer_socket: socket.socket,
-) -> tuple[SocketWriterCounters, float]:
+) -> PacedReplayResult:
     if speed <= 0:
         raise ValueError("speed must be positive")
     origin_source = rows[0][0]
@@ -818,6 +835,7 @@ async def _paced_replay(
         drain_handoff_to_socket(handoff, producer_socket, producer_done)
     )
     offer_started = clock.monotonic_ns()
+    schedule_delays_ms: list[float] = []
     try:
         for source_ns, frame in rows:
             target = origin_wall + int((source_ns - origin_source) / speed)
@@ -827,11 +845,18 @@ async def _paced_replay(
                 json.dumps(frame, sort_keys=True, separators=(",", ":")),
                 received_ns=clock.time_ns(),
             )
+            schedule_delays_ms.append(
+                max(0.0, (clock.monotonic_ns() - target) / 1_000_000)
+            )
     finally:
         producer_done.set()
     writer_counters = await writer
     offer_elapsed_ms = (clock.monotonic_ns() - offer_started) / 1_000_000
-    return writer_counters, offer_elapsed_ms
+    return PacedReplayResult(
+        writer=writer_counters,
+        offer_elapsed_ms=offer_elapsed_ms,
+        offer_schedule_delay_p99_ms=nearest_rank(schedule_delays_ms, 99),
+    )
 
 
 async def _gather_fail_fast(*awaitables: Awaitable[object]) -> tuple[object, ...]:
@@ -914,8 +939,7 @@ async def run_replay_once(
     active_offer_elapsed_ms: float | None = None,
     access_checker: Callable[[], ReplayAccessEvidence] = require_replay_access,
 ) -> ReplayResult:
-    if os.name == "posix" and os.getpriority(os.PRIO_PROCESS, 0) < 10:
-        raise ReplayAborted("replay process nice value must be at least 10")
+    require_replay_niceness()
     rows = _read_replay_tape(tape_path)
     policy_start = policy_counter.read()
     label = f"{speed:g}x-{consumer}"
@@ -969,7 +993,8 @@ async def run_replay_once(
         if producer_socket is not None:
             producer_socket.close()
         consumer_process.close()
-    writer_counters, offer_elapsed_ms = replay_result
+    writer_counters = replay_result.writer
+    offer_elapsed_ms = replay_result.offer_elapsed_ms
     lags = consumer_result.handoff_lags_ms
     counters = handoff.counters
     handoff_p99_ms = nearest_rank(lags, 99) if lags else None
@@ -986,6 +1011,9 @@ async def run_replay_once(
         missed_snapshot_cycles=during.missed_snapshot_cycles,
         socket_would_block_drops=writer_counters.would_block_drops,
         producer_offer_elapsed_ms=offer_elapsed_ms,
+        producer_offer_schedule_delay_p99_ms=(
+            replay_result.offer_schedule_delay_p99_ms
+        ),
         active_offer_elapsed_ms=active_offer_elapsed_ms,
     )
     return ReplayResult(
@@ -1133,8 +1161,7 @@ def _fetch_population_command(args: argparse.Namespace) -> int:
     try:
         if datetime.now(_ET).time() < _AFTER_HOURS_START:
             raise RuntimeError("population downloads are restricted to 20:00 ET or later")
-        if os.name == "posix" and os.getpriority(os.PRIO_PROCESS, 0) < 10:
-            raise RuntimeError("population download process nice value must be at least 10")
+        require_replay_niceness()
         sessions = tuple(date.fromisoformat(value) for value in args.session)
         if len(sessions) < 3:
             raise RuntimeError("population is UNMEASURED: at least three sessions are required")

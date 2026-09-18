@@ -67,6 +67,11 @@ clock. A connected-but-non-reading consumer must fill the socket, increment a de
 would-block drop counter, and leave producer offer-loop duration within the same +10% or +50 ms
 allowance as the active-consumer 3x run. Queue drops and socket drops are reported separately.
 
+Known Step 2 limit: the replay tape emits one trade per frame. A live Massive websocket frame may
+batch many trades, and a Unix datagram larger than the socket buffer raises `EMSGSIZE`; Step 2 does
+not exercise that batched-frame shape. Before Step 3 is wired, oversized batches must be split or
+counted and dropped without terminating the writer task.
+
 ### Existing-work sampling
 
 Each 1x and 3x replay requires its own uninterrupted ten-minute baseline immediately before the

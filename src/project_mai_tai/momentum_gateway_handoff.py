@@ -148,7 +148,13 @@ def _consumer_process_main(
         consumer.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8_192)
         consumer.bind(socket_path)
         consumer.settimeout(0.05)
-        control.send({"kind": "ready", "pid": os.getpid()})
+        control.send(
+            {
+                "kind": "ready",
+                "pid": os.getpid(),
+                "receive_buffer_bytes": consumer.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF),
+            }
+        )
         consumed = 0
         lags_ms: list[float] = []
         output = Path(raw_samples_path)
@@ -230,12 +236,19 @@ class CrossProcessPaperConsumer:
             name=f"momentum-step2-{mode}-consumer",
         )
         self._consumer_pid: int | None = None
+        self._receive_buffer_bytes: int | None = None
 
     @property
     def pid(self) -> int:
         if self._consumer_pid is None:
             raise RuntimeError("consumer has not started")
         return self._consumer_pid
+
+    @property
+    def receive_buffer_bytes(self) -> int:
+        if self._receive_buffer_bytes is None:
+            raise RuntimeError("consumer has not started")
+        return self._receive_buffer_bytes
 
     def start(self, *, timeout_seconds: float = 10.0) -> int:
         self.raw_samples_path.parent.mkdir(parents=True, exist_ok=True)
@@ -249,6 +262,7 @@ class CrossProcessPaperConsumer:
         if ready.get("kind") != "ready":
             raise RuntimeError(f"separate Momentum consumer failed to start: {ready}")
         self._consumer_pid = int(ready["pid"])
+        self._receive_buffer_bytes = int(ready["receive_buffer_bytes"])
         if self._consumer_pid == os.getpid():
             raise RuntimeError("Momentum consumer must not run in the producer process")
         return self._consumer_pid

@@ -5,7 +5,10 @@ import csv
 from datetime import UTC, date, datetime
 import gzip
 import json
+import multiprocessing
+from multiprocessing.connection import Connection
 from pathlib import Path
+import socket
 import subprocess
 from zoneinfo import ZoneInfo
 
@@ -15,6 +18,7 @@ from project_mai_tai.backtest.momentum_gateway_throughput import (
     _gather_fail_fast,
     _flat_file_key,
     _missed_snapshot_cycles,
+    _paced_replay,
     evaluate_replay,
     PolicyLogCounter,
     measured_or_unmeasured,
@@ -24,9 +28,15 @@ from project_mai_tai.backtest.momentum_gateway_throughput import (
     replay_abort_reason,
     ReplayAborted,
     require_replay_access,
+    require_replay_niceness,
     run_guarded_replays,
     summarize_massive_flat_file,
     verdict_exit_code,
+)
+from project_mai_tai.momentum_gateway_handoff import (
+    BoundedPaperHandoff,
+    connect_consumer_socket,
+    CrossProcessPaperConsumer,
 )
 
 
@@ -45,6 +55,49 @@ _COLUMNS = [
     "trf_id",
     "trf_timestamp",
 ]
+
+
+def _run_real_dead_consumer_probe(socket_path: str, result_pipe: Connection) -> None:
+    async def run() -> dict[str, float | int]:
+        producer_socket = connect_consumer_socket(socket_path)
+        try:
+            send_buffer_bytes = producer_socket.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)
+            frame_count = 600
+            frame_bytes = 4_096
+            rows = [
+                (
+                    ordinal * 1_000_000,
+                    {
+                        "ev": "T",
+                        "sym": "AEMD",
+                        "sequence": ordinal,
+                        "blob": "x" * frame_bytes,
+                    },
+                )
+                for ordinal in range(frame_count)
+            ]
+            result = await _paced_replay(
+                rows,
+                speed=1.0,
+                handoff=BoundedPaperHandoff(capacity=frame_count),
+                producer_socket=producer_socket,
+            )
+            return {
+                "frame_count": frame_count,
+                "frame_bytes": frame_bytes,
+                "send_buffer_bytes": send_buffer_bytes,
+                "sent_frames": result.writer.sent_frames,
+                "would_block_drops": result.writer.would_block_drops,
+                "offer_elapsed_ms": result.offer_elapsed_ms,
+                "offer_schedule_delay_p99_ms": result.offer_schedule_delay_p99_ms,
+            }
+        finally:
+            producer_socket.close()
+
+    try:
+        result_pipe.send(asyncio.run(run()))
+    finally:
+        result_pipe.close()
 
 
 def _ns(hour: int, minute: int, second: int) -> int:
@@ -296,6 +349,55 @@ async def test_abort_monitor_failure_cancels_the_replay_immediately() -> None:
     assert replay_cancelled.is_set()
 
 
+def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> None:
+    consumer = CrossProcessPaperConsumer(
+        mode="dead",
+        raw_samples_path=tmp_path / "dead-consumer.jsonl",
+    )
+    context = multiprocessing.get_context("spawn")
+    result_reader, result_writer = context.Pipe(duplex=False)
+    producer = None
+    consumer_result = None
+    hung = False
+    try:
+        consumer_pid = consumer.start()
+        producer = context.Process(
+            target=_run_real_dead_consumer_probe,
+            args=(consumer.socket_path, result_writer),
+            name="momentum-nonblocking-producer-probe",
+        )
+        producer.start()
+        result_writer.close()
+        producer.join(timeout=3.0)
+        hung = producer.is_alive()
+        if hung:
+            producer.terminate()
+            producer.join(timeout=1.0)
+        assert not hung, "a dead consumer blocked the producer process"
+        assert producer.exitcode == 0
+        assert result_reader.poll(0.5), "producer exited without returning probe measurements"
+        result = result_reader.recv()
+        consumer_result = consumer.stop()
+    finally:
+        if producer is not None and producer.is_alive():
+            producer.terminate()
+            producer.join(timeout=1.0)
+        result_reader.close()
+        result_writer.close()
+        consumer.close()
+
+    paced_duration_ms = (int(result["frame_count"]) - 1) * 1.0
+    payload_bytes = int(result["frame_count"]) * int(result["frame_bytes"])
+    kernel_buffer_bytes = int(result["send_buffer_bytes"]) + consumer.receive_buffer_bytes
+    assert consumer_result is not None
+    assert consumer_result.consumer_pid == consumer_pid
+    assert consumer_result.consumed_frames == 0
+    assert payload_bytes > kernel_buffer_bytes * 20
+    assert int(result["would_block_drops"]) > 0
+    assert float(result["offer_elapsed_ms"]) < paced_duration_ms + 500.0
+    assert float(result["offer_schedule_delay_p99_ms"]) < 25.0
+
+
 def _flat_preflight_result(returncode: int = 0) -> subprocess.CompletedProcess[str]:
     output = "\n".join(
         (
@@ -319,10 +421,32 @@ def test_replay_access_uses_strict_flatness_between_1605_and_2000() -> None:
         now=datetime(2026, 9, 18, 17, 0, tzinfo=ZoneInfo("America/New_York")),
         preflight_path=Path("/tmp/preflight"),
         runner=runner,
+        priority_reader=lambda: 10,
     )
 
     assert result.branch == "FLAT_16_05_TO_20_ET"
     assert calls == [["/tmp/preflight", "--require-all-account-positions-flat"]]
+
+
+@pytest.mark.parametrize(
+    "missing_marker",
+    (
+        "zero open managed rows",
+        "live:schwab_1m_v2 flat [",
+        "live:orb flat [",
+        "strict all-account-position flatness enabled",
+    ),
+)
+def test_replay_access_requires_every_strict_preflight_marker(missing_marker: str) -> None:
+    completed = _flat_preflight_result()
+    completed.stdout = completed.stdout.replace(missing_marker, "marker-removed")
+
+    with pytest.raises(ReplayAborted, match="omitted required evidence"):
+        require_replay_access(
+            now=datetime(2026, 9, 18, 17, 0, tzinfo=ZoneInfo("America/New_York")),
+            runner=lambda *_args, **_kwargs: completed,
+            priority_reader=lambda: 10,
+        )
 
 
 def test_replay_access_after_2000_does_not_claim_flatness() -> None:
@@ -332,6 +456,7 @@ def test_replay_access_after_2000_does_not_claim_flatness() -> None:
     result = require_replay_access(
         now=datetime(2026, 9, 18, 20, 0, tzinfo=ZoneInfo("America/New_York")),
         runner=runner,
+        priority_reader=lambda: 10,
     )
 
     assert result.branch == "AFTER_20_ET"
@@ -341,13 +466,15 @@ def test_replay_access_after_2000_does_not_claim_flatness() -> None:
 def test_replay_access_refuses_before_1605_and_on_nonflat_result() -> None:
     with pytest.raises(ReplayAborted, match="16:05"):
         require_replay_access(
-            now=datetime(2026, 9, 18, 16, 4, 59, tzinfo=ZoneInfo("America/New_York"))
+            now=datetime(2026, 9, 18, 16, 4, 59, tzinfo=ZoneInfo("America/New_York")),
+            priority_reader=lambda: 10,
         )
 
     with pytest.raises(ReplayAborted, match="preflight refused"):
         require_replay_access(
             now=datetime(2026, 9, 18, 17, 0, tzinfo=ZoneInfo("America/New_York")),
             runner=lambda *_args, **_kwargs: _flat_preflight_result(returncode=1),
+            priority_reader=lambda: 10,
         )
 
 
@@ -362,7 +489,8 @@ async def test_flatness_is_rechecked_between_replays_and_stops_the_next_run() ->
         if checks == 2:
             raise ReplayAborted("position appeared")
         return require_replay_access(
-            now=datetime(2026, 9, 18, 20, 0, tzinfo=ZoneInfo("America/New_York"))
+            now=datetime(2026, 9, 18, 20, 0, tzinfo=ZoneInfo("America/New_York")),
+            priority_reader=lambda: 10,
         )
 
     async def replay(spec: str) -> str:
@@ -382,3 +510,10 @@ def test_unmeasured_has_a_distinct_nonzero_exit_code() -> None:
     assert verdict_exit_code("PASS") == 0
     assert verdict_exit_code("FAIL") == 1
     assert verdict_exit_code("UNMEASURED") == 2
+
+
+def test_replay_niceness_gate_is_pinned_at_ten() -> None:
+    with pytest.raises(ReplayAborted, match="nice value must be at least 10"):
+        require_replay_niceness(lambda: 9)
+
+    require_replay_niceness(lambda: 10)
