@@ -4131,3 +4131,77 @@ Pinned #992 and #994 (twice — the rebase onto #992 voided the first #994 pin; 
 deletion-only commit fixed it). I edited two files codex had claimed without claiming first; recorded after the fact. Box `date` is
 UTC — I labelled it ET once.
 Promotion of #995 was refused: my journal entry for the PR landed after the manifest was generated (112 vs 113). Repaired by a successor PR carrying a regenerated manifest — journal first, generate second.
+
+## 2026-09-17 — Thursday: Momentum's first session died twice (a crash loop, then a rule that could never see a print), seven PRs merged, six deployed after the close, and the day's misses written down
+
+**Integrator: `claude-1`. Every merge and deploy: `codex-2`. Both live accounts flat before and after every restart.**
+
+### 05:51 ET — the pre-open gate was BLOCKED, and the box was fine
+`preopen.sh` failed its restart-evidence block 4/9: three of the four FAILs were the gate's own stale inputs (the 09-14 snapshot, a
+`--restarted` list that still named the reconciler, `--no-schema-change` against the Momentum migration) and the fourth was the known
+NAMI 19:44 ET no-print minute. Re-run with the real 09-16 snapshot: the ORB-pid and "not flat" failures vanished. Lesson written into the
+pins: **all seven move on every restart**, not four. codex repaired the gate by 06:01 ET (NAMI waived, scoped to the pid); tonight's
+corrective restart needed no waiver at all.
+
+### 03:55–06:20 ET — Momentum crash-looped 1,244 times, and nothing paged
+`_publish_state()` built `HeartbeatPayload(status="waiting")`; the contract allows `starting|healthy|degraded|stopping`. Every start
+prepared the session (12,560 symbols), subscribed `T.*`, crashed within 50 ms, and systemd restarted it ~7 s later — a full-market
+Massive subscription opened and dropped every 7 s on the key the live gateway shares. Found by codex reading logs at 05:54, not by a
+page: no health script mentioned the unit. Operator: stop it (06:20:14 ET, NRestarts frozen at 1,244), deploy after hours. #997 = the
+one-line fix + a control that goes red on the exact production error; #1001 = nine units under a 24/7 inactive/restart-storm check,
+paging per service and per condition (my first refusal: one fingerprint for nine services meant a stopped paper unit would have hidden a
+live crash all day), with an expiring `maintenance.txt` so planned stops do not page.
+
+### 06:30 ET — and under the crash, the bots could never have detected anything
+codex found the classifier rejected condition 12 (Form T / Extended Hours) because Massive's consolidated update flags say it updates
+neither high/low nor open/close. The stored snapshot agrees, and every pre-market print carries 12. My measurement: DAIC 04:30–06:00,
+**0 of 100,162 prints eligible**. The pre-registration study ran on Massive 1-second bars, which do exist pre-market — so Massive's own
+bars count Form T prints. Rule tested on the same tape: **12 neutral, everything else unchanged reproduced the high and low of
+3,991/3,991 bars with 0 phantom seconds** (26,028 eligible); letting odd lots through as well broke 2,766 bars and invented 1,185
+seconds. codex's MYSZ 08-17 and my KXIN 09-17 + MEDS 09-16 runs: 12,462/12,462 bars across four symbols and three days. #999 merged on
+the operator's approval as a defect repair (zero paper events existed), with a dated correction under the frozen rules table, not a
+rewritten row. Fixtures had used invented codes 99/404 — never a real `[12]` or `[12,37]`.
+
+### #1000 — the trigger moved to 20% with immediate fresh-move re-entry, and it took three reviews
+Refused twice. (1) Removing the five-minute cooldown let ten-minute evidence windows overlap, and PATH rows were written once per print
+**per active event**: my simulation on today's AEMD tape = 1.82 M JSON rows in 26 minutes from one symbol into the Postgres that carries
+live orders. (2) The shared-tape fix keyed rows on `trade_id` alone; Massive ids are unique only per (id, exchange, trf_id), and the
+store's dedupe **silently dropped 61%** of prints (AEMD 182,144/298,636; DAIC 62,521/100,162). codex's reported "116,490 rows against
+the 597,376 ceiling" was the distinct-id count — the number offered as proof was the fingerprint of the loss, and my ceiling-only
+acceptance let it through. Third head: identity (id, exchange, trf, t), collisions counted and retained, ineligible prints inside a
+range kept; my own both-sided reconciliation replayed off-box: AEMD 214,960 == 214,960 and 213,930 == 213,930, 0 collisions (the old
+shape would have written 781k + 865k). Detector health now reads `UNCALIBRATED`; #1003 (offline, merged 68dc1384) captures 30 sessions
+ending 09-16 with the consequence frozen first (>3/30 suspect rejects the >10 band → P95). #1003's first head screened candidates with
+the grouped-daily high/low — which I measured to be **regular-session only on 6/6 symbols** (AEMD daily 9.5/6.01 vs pre-market
+14/1.26) for a detector that only runs pre-market. Replaced by a pre-market minute-range screen; codex's real 09-17 control kept 7/7
+full-scan candidates and, honestly, reported the old screen would also have kept 7/7 that day. I re-ran 38 symbols of it on the box.
+
+### KXIN 10:04 — the operator's question, and the answer he did not want
+Schwab refused every KXIN open (5/5 "must be placed with a broker"), so only the 1-share Webull mirror was live. The rest filled two bars
+early at 1.68; the next bar closed still short, the confirmation exit sold at 1.655; the owner reset fired at 09:53:24 exactly as ruled —
+and the real BUY flip closed 38 s later at 1.6799 vs the line at 1.6797. A reset only re-enables a REST; a rest exists only while ATR is
+SHORT; the next bar evaluation was the flip itself; after the flip the only producer is reclaim, which is OFF. 1.68 → 1.95. One line for
+him: *we could only get in by a resting order placed while ATR was still short, and the first bar close after the exit was the flip
+itself.* Evening census, v2 logs since 09-05: 8 confirmation exits, 6 measurable, **one** flip within 2 bars (KXIN); the other four flips
+came 4–8 bars later and a flip-bar entry there lost 3 of 4. Finding closed under the one-occurrence rule.
+
+### The board audit, and what it turned up
+Fifteen cards graded from today's evidence: one closed (stale owner cleared at the 04:00 roll — 4/4 released at 04:00:02 ET, KXIN
+admitted 3/3 after), two more closed on codex's answers verified in the logs (BOOT1 #972; MEDS 09-16 two opportunities in one SHORT
+segment). But the watch log said RESERVE1 had read RECURRENCE three sessions running (1, 20, 9) while the board said "0 fired" — and I
+asserted it was never handed over, which was wrong: my own 09-15 entry recorded it, my `cut -c1-200` hid the sentence. Traced tonight:
+**all four bursts hit an already-flat Webull position** — the broker's own stop/target had filled 1–6 s earlier (VEEA 13:49:20 fill,
+sells 13:49:21–29, our `oco_exit` row 54 s late). Zero harm; the watch row's title is a wrong reason for 30/30 rejects; the real risk is
+that only the <$2k margin rule stops those late sells from opening a short. #1002 gives every page a receipt (HTTP status + message
+id) — the old sender discarded curl's output, so whether any of those pages reached the phone cannot be proven.
+
+### After the close
+Sync to `f9233366`; v2 restarted twice (the first landed on a bar timestamp the strict checker could not bracket; codex re-snapshotted and
+repeated — 9/9 without a waiver); Momentum started 16:10; all other pids unchanged; root cron installed, trader cron removed; 18/18 GREEN;
+ntfy self-test receipt `Oj26jnaYWncH`. #992's first read: 16 mirror attempts, 9 accepted (0.4–1.6 s), 5 rejected, **2 abandoned for no
+fresh quote** — that revisit is now live.
+
+### Process
+Pinned #997, #998, #999, #1000, #1001, #1002, #1003 (twelve reviews for seven PRs; five heads refused). Two of my errors: the
+truncated-grep "never recorded" claim, and a ceiling-only acceptance bound. A stale worktree marker refused my first pin commit (nothing
+committed). The evening plan was proposed twice before the operator answered; the work went ahead meanwhile.
