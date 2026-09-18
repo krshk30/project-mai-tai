@@ -86,6 +86,7 @@ def _run_real_dead_consumer_probe(socket_path: str, result_pipe: Connection) -> 
                 "frame_count": frame_count,
                 "frame_bytes": frame_bytes,
                 "send_buffer_bytes": send_buffer_bytes,
+                "socket_nonblocking": int(not producer_socket.getblocking()),
                 "sent_frames": result.writer.sent_frames,
                 "would_block_drops": result.writer.would_block_drops,
                 "offer_elapsed_ms": result.offer_elapsed_ms,
@@ -393,6 +394,7 @@ def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> N
     assert consumer_result.consumer_pid == consumer_pid
     assert consumer_result.consumed_frames == 0
     assert payload_bytes > kernel_buffer_bytes * 20
+    assert int(result["socket_nonblocking"]) == 1
     assert int(result["would_block_drops"]) > 0
     assert float(result["offer_elapsed_ms"]) < paced_duration_ms + 500.0
     assert float(result["offer_schedule_delay_p99_ms"]) < 25.0
