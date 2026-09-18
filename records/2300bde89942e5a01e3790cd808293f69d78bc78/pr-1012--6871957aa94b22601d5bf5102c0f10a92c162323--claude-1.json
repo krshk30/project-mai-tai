@@ -1,0 +1,9 @@
+{
+  "pr_number": 1012,
+  "range_base": "6871957aa94b22601d5bf5102c0f10a92c162323",
+  "range_head": "2300bde89942e5a01e3790cd808293f69d78bc78",
+  "reviewed_at": "2026-09-18T19:49:28Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "PA1b: pre-submit distance check for the Webull resting mirror, same flag as PA1 (default False). Withheld 3fe631c6 for B1: the pre-check also ran on PA1's own resubmit and reset attempts to 0, so the cap of 3 could be reset forever (my probe: 12 of 12 cycles, never reaching the broker). Re-reviewed the rebased head on main 6871957a: attempts are now monotonic (max with the arriving attempt), a serial-lane deferral of a resubmit waits 5 s before re-arming, and the cap forgets the slot. My probe re-run on this head with a controlled monotonic clock: cycles 1, 2, 3 then attempt_cap_reached, 10 ticks held by the re-arm window, slot forgotten. 30 tests pass with PYTHONPATH on the PR tree. Mutations (each confirmed applied): attempts not monotonic -> RED; no re-arm wait -> RED; pre-check removed -> RED; 'resubmit arrives as attempt 0' stays GREEN because the monotonic max in _remember still holds the property (redundant guard, not an unpinned property). Read and accepted the traced argument for v2's 30 s claim expiry: webull_resting_active stays True, the cross emitter returns on it before claiming and update_position's on-fill mirror requires not webull_resting_active; note the test for it asserts SOURCE SHAPE (inspect.getsource), not behaviour - acceptable here because this PR changes no v2 code, but a behavioural v2 test is owed before anyone edits those guards. Earlier-verified and unchanged: one shared 8% constant documented as our measured zone, no fresh quote => existing behaviour, refusal recorded skipped_before_submit with its own code. Not deployed; flag off."
+}
