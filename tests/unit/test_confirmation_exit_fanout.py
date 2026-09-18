@@ -940,8 +940,11 @@ async def test_concurrent_quote_task_cannot_cancel_the_same_episode_twice(
     entered = service_module.asyncio.Event()
     release = service_module.asyncio.Event()
     row_id = _open_row_ids(sf)[WEBULL]
+    bound_reads = 0
 
     async def _slow_bound(_acct: str, _symbol: str) -> str:
+        nonlocal bound_reads
+        bound_reads += 1
         entered.set()
         await release.wait()
         return row_id
@@ -951,11 +954,15 @@ async def test_concurrent_quote_task_cannot_cancel_the_same_episode_twice(
         service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
     )
     await entered.wait()
-    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    second = service_module.asyncio.create_task(
+        service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    )
+    await service_module.asyncio.sleep(0)
     release.set()
-    await first
+    await service_module.asyncio.gather(first, second)
 
     assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
+    assert bound_reads == 1, "the second quote entered before the decision was claimed"
     assert _sell_accounts(sf) == [WEBULL]
 
 
