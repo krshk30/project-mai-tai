@@ -1,0 +1,9 @@
+{
+  "pr_number": 1007,
+  "range_base": "708f75af91dd2b3ecb38ff5b44a72bcab2bea1b4",
+  "range_head": "cc3eb327962bfc36d0047fba9cd4fbb46b64b9b4",
+  "reviewed_at": "2026-09-18T11:22:51Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Momentum-paper 1008 cool-off + socket-evidence watch. Read the full diff (momentum_paper_app.py, fleet_health_check.py, fleet_health_cron.sh). Client is built with max_reconnects=0 so one violation = one socket attempt; the 1008 on the box is raised from connect() so the exception path is the live path; rcvd.code and the string fallback both match the real error text. 89 focused tests pass with PYTHONPATH on the PR tree (first run was void: zsh passed three files as one name, no tests ran; rerun via bash). Mutations RED: limit 5->50, cool-off ignored in _start_stream, stable-for 60s->0s, gateway 1008 never RED. Mutations that stayed GREEN (test gaps, not code defects): heartbeat healthy while connected during a streak; streak reset at the probe. I exercised the second myself: after the cool-off exactly ONE socket is opened, the failed probe re-arms the cool-off at streak 6, ten further ticks open none. Needle check on the box: market-data.log has 280 lines containing 1008 today, 280 of them the policy line; 0 occurrences in the three prior daily files. Not deployed; Steps 2-4 not started. Follow-up owed by the author: pin the one-probe property and the connected-during-streak heartbeat in tests; the 1008 byte-count double counts each policy line (cosmetic)."
+}
