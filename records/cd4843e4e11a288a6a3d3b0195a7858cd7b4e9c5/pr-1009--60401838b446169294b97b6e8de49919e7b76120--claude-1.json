@@ -1,0 +1,9 @@
+{
+  "pr_number": 1009,
+  "range_base": "60401838b446169294b97b6e8de49919e7b76120",
+  "range_head": "cd4843e4e11a288a6a3d3b0195a7858cd7b4e9c5",
+  "reviewed_at": "2026-09-18T13:47:58Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review after rebase onto 60401838 (#1008, docs-only). Not a re-stamp: base is an ancestor of the head, range-diff d7470a6f..ec0ce639 vs main..cd4843e4 is '='. Re-ran on the rebased tree with PYTHONPATH on the PR tree: 19 tests pass; the finalizer-no-op mutation fails 1 of 19 again. Test-only, no runtime change."
+}
