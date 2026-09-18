@@ -1,0 +1,9 @@
+{
+  "pr_number": 1011,
+  "range_base": "d88df04922cba3c30ce77185e31005190e6e09bc",
+  "range_head": "25cb0d997b018d14bbf7a5db85b70d9852fd5cac",
+  "reviewed_at": "2026-09-18T19:39:36Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Momentum Step 2 measurement tooling, third review. Standalone: nothing under services/, market_data/ or ops imports the hand-off or the harness (grep on the head). Read the full hand-off module and the harness gates. F1: 16:05-20:00 ET flat branch runs the existing preflight_oms_restart.sh with the new opt-in --require-all-account-positions-flat (default fence path unchanged), requires rc 0 AND four evidence markers, and re-checks before every replay; after 20:00 branch recorded. F2: consumer in a separate process over AF_UNIX SOCK_DGRAM, non-blocking producer, EAGAIN/EWOULDBLOCK/ENOBUFS counted as would_block_drops, lag = consumer receipt minus producer received_ns on one host clock. F3: PASS 0 / FAIL 1 / UNMEASURED 2. 46 tests pass with PYTHONPATH on the PR tree. Mutations RED, each edit confirmed applied: setblocking(True); a BEHAVIOURAL stall (socket mode left non-blocking, writer sleeps on every would-block) fails the real dead-consumer test - so the property is held by behaviour, not by a mode assertion; evidence markers not required (4 fail); strict flag still applying the protected-symbol exclusion; niceness never refuses; UNMEASURED exits 0. One of my mutations first applied 0 lines because the check had been refactored - redone against require_replay_niceness. Flat-file access proven by the author (HTTP 200, 2.97 GB) using the key already on the box. Recorded limit for Step 3: a DGRAM larger than the socket buffer raises EMSGSIZE, outside the tolerated errno set; the replay sends one trade per frame and does not exercise batched live frames. This pin authorises the TOOL only: no measurement has run, the table is UNMEASURED, Step 3 stays blocked."
+}
