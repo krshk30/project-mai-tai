@@ -614,6 +614,12 @@ class OmsRiskService:
     # (acct, SYMBOL) already confirmed released this episode. A confirmed release is reused; an
     # unreadable or still-reserved pair is probed on the bounded cadence above, never per quote.
     _exit_reservation_released: set[tuple[str, str]] = set()
+    # Exact confirmation episode that proved the pair absent. The symbol-scoped release latch is
+    # shared with the generic exit path; this identity prevents it from authorizing a replacement
+    # position that happens to reuse the same account and symbol.
+    _confirmation_webull_released_episode: dict[
+        tuple[str, str], tuple[str, str]
+    ] = {}
 
     # How many consecutive sync cycles we will hold a managed row open waiting for a transient
     # exit-fill fetch (Webull 429) to succeed. At the ~15s sync this is ~45s of retries. Bounded
@@ -676,6 +682,9 @@ class OmsRiskService:
         self._confirmation_exit_seen_fill_ids: set[str] = set()
         self._confirmation_exit_recovery_tasks: set[asyncio.Task[None]] = set()
         self._confirmation_unprotected_since: dict[tuple[str, str], datetime] = {}
+        self._confirmation_webull_released_episode: dict[
+            tuple[str, str], tuple[str, str]
+        ] = {}
         # (broker_account_name, symbol) -> when the broker last CONFIRMED both OCO legs open.
         # Read per quote tick (must stay in-memory: a DB round-trip on that path is the
         # #391-family freeze driver), written only by the periodic broker sync.
@@ -3309,7 +3318,9 @@ class OmsRiskService:
             "broker_order_id": report.broker_order_id or report.client_order_id,
         }
 
-    def _reprotect_after_failed_release(self, acct: str, symbol: str, row) -> None:
+    def _reprotect_after_failed_release(
+        self, acct: str, symbol: str, row
+    ) -> "asyncio.Task[bool] | None":
         """Put a protective pair back on a position whose exit legs we cancelled for a close that
         then would not go through. Never raises — this runs inside the protective sync.
 
@@ -3317,26 +3328,36 @@ class OmsRiskService:
         uses, so the restored pair sits exactly where the original one did.
         """
         try:
-            entry_price = float(getattr(row, "entry_price", 0) or 0)
-            quantity = int(getattr(row, "current_quantity", 0) or 0)
+            def _value(name: str, default=""):
+                if isinstance(row, dict):
+                    return row.get(name, default)
+                return getattr(row, name, default)
+
+            entry_price = float(_value("entry_price", 0) or 0)
+            quantity = int(_value("current_quantity", _value("quantity", 0)) or 0)
             if entry_price <= 0 or quantity <= 0:
                 self.logger.warning(
                     "[OMS-EXIT-REPROTECT-SKIPPED] %s %s entry=%s qty=%s — cannot price a protective "
                     "pair from this row. THE POSITION MAY BE UNCOVERED; check it by hand.",
                     symbol, acct, entry_price, quantity,
                 )
-                return
-            self._spawn_webull_protection(
+                return None
+            kwargs = dict(
                 broker_account_name=acct, symbol=symbol, quantity=quantity,
                 entry_price=entry_price,
-                strategy_code=str(getattr(row, "strategy_code", "") or ""),
+                strategy_code=str(_value("strategy_code", "") or ""),
             )
+            entry_client_order_id = str(_value("entry_client_order_id", "") or "")
+            if entry_client_order_id:
+                kwargs["entry_client_order_id"] = entry_client_order_id
+            return self._spawn_webull_protection(**kwargs)
         except Exception:  # noqa: BLE001 - must never break the protective sync
             self.logger.warning(
                 "[OMS-EXIT-REPROTECT-FAILED] %s %s — could not re-attach protection after a failed "
                 "release. THE POSITION MAY BE UNCOVERED; check it by hand.",
                 symbol, acct, exc_info=True,
             )
+            return None
 
     def _clear_exit_reservation_release(self, broker_account_name: str, symbol: str) -> None:
         """Forget the release latch so the NEXT position on this symbol releases its own legs.
@@ -3346,6 +3367,9 @@ class OmsRiskService:
         because the code would look like it is still handling the case."""
         key = (broker_account_name, symbol.upper())
         self._exit_reservation_released.discard(key)
+        self.__dict__.setdefault("_confirmation_webull_released_episode", {}).pop(
+            key, None
+        )
         OmsRiskService._clear_exit_reservation_retry_state(self, key)
         self._webull_protect_base.pop(key, None)
         intervals = self.__dict__.setdefault("_confirmation_unprotected_since", {})
@@ -4146,6 +4170,8 @@ class OmsRiskService:
         accounts = ",".join(
             f"{acct}:{decision.outcomes.get(acct, 'pending')}" for acct in decision.accounts
         )
+        released_accounts = ",".join(sorted(decision.released)) or "-"
+        reprotected_accounts = ",".join(sorted(decision.reprotected)) or "-"
         unprotected_max = max(decision.unprotected_seconds.values(), default=0.0)
         currently_unprotected = len(
             self.__dict__.setdefault("_confirmation_unprotected_since", {})
@@ -4155,7 +4181,8 @@ class OmsRiskService:
             "legs_total=%d legs_closed=%d legs_close_submitted=%d legs_refused=%d "
             "legs_no_open_row=%d "
             "legs_state_long=%d legs_released=%d legs_reprotected=%d legs_uncovered=%d "
-            "released_unprotected_seconds_max=%.3f released_unprotected_current=%d accounts=%s",
+            "released_unprotected_seconds_max=%.3f released_unprotected_current=%d "
+            "released_accounts=%s reprotected_accounts=%s accounts=%s",
             decision.symbol,
             decision.source_fill_id,
             len(decision.accounts),
@@ -4169,6 +4196,8 @@ class OmsRiskService:
             len(decision.uncovered),
             unprotected_max,
             currently_unprotected,
+            released_accounts,
+            reprotected_accounts,
             accounts,
         )
 
@@ -4297,6 +4326,23 @@ class OmsRiskService:
                 acct,
             )
             return "no_pair"
+        key = (acct, symbol)
+        episode = (expected_row_id, base)
+        released_episodes = self.__dict__.setdefault(
+            "_confirmation_webull_released_episode", {}
+        )
+        if (
+            key in self._exit_reservation_released
+            and released_episodes.get(key) == episode
+        ):
+            self.logger.info(
+                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED] sym=%s acct=%s base=%s "
+                "requested=0 confirmed=2 decision=already_released",
+                symbol,
+                acct,
+                base,
+            )
+            return "released"
         if not _is_regular_market_session():
             self.logger.error(
                 "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s "
@@ -4322,28 +4368,50 @@ class OmsRiskService:
                 base,
             )
             return "refused"
-        confirmed = sum(
+        cancelled = sum(
             str(getattr(report, "event_type", "")).lower() == "cancelled"
             for report in reports
         )
+        # A second cancel can already be in flight when the first one proves both deterministic
+        # legs absent. Webull answers that race with ORDER_CAN_NOT_BE_CANCEL. It is equivalent to
+        # absence only for the exact row/base whose release was positively confirmed; without
+        # that prior proof the same code remains uncertainty and must not authorize a sell.
+        prior_release = (
+            key in self._exit_reservation_released
+            and released_episodes.get(key) == episode
+        )
+        already_absent = sum(
+            str(getattr(report, "event_type", "")).lower() == "rejected"
+            and str(getattr(report, "metadata", {}).get("webull_error_code", ""))
+            .strip()
+            .upper()
+            == "ORDER_CAN_NOT_BE_CANCEL"
+            for report in reports
+        )
+        confirmed = cancelled + (already_absent if prior_release else 0)
         if len(reports) != 2 or confirmed != 2:
             self.logger.error(
                 "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s base=%s "
-                "reason=pair_cancel_unconfirmed reports=%d confirmed=%d",
+                "reason=pair_cancel_unconfirmed reports=%d confirmed=%d already_absent=%d "
+                "prior_release=%d",
                 symbol,
                 acct,
                 base,
                 len(reports),
                 confirmed,
+                already_absent,
+                int(prior_release),
             )
             return "refused"
-        self._exit_reservation_released.add((acct, symbol))
+        self._exit_reservation_released.add(key)
+        released_episodes[key] = episode
         self.logger.info(
             "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED] sym=%s acct=%s base=%s "
-            "requested=2 confirmed=2",
+            "requested=2 confirmed=2 already_absent=%d",
             symbol,
             acct,
             base,
+            already_absent,
         )
         return "released"
 
@@ -4401,6 +4469,7 @@ class OmsRiskService:
         symbol: str,
         *,
         expected_row_id: str,
+        confirmation: dict[str, object] | None = None,
     ) -> None:
         """After a refused sell, prove flat or restore the pair; never claim hidden protection."""
         try:
@@ -4419,19 +4488,41 @@ class OmsRiskService:
                 acct, symbol, expected_row_id=expected_row_id
             )
             if spec is not None and _is_regular_market_session():
-                protected = await self._attach_webull_protection(
-                    broker_account_name=acct,
-                    symbol=symbol,
-                    quantity=int(spec["quantity"]),
-                    entry_price=float(spec["entry_price"]),
-                    strategy_code=str(spec["strategy_code"]),
-                    entry_client_order_id=str(spec["entry_client_order_id"]),
-                )
+                reprotect_task = self._reprotect_after_failed_release(acct, symbol, spec)
+                protected = bool(reprotect_task and await reprotect_task)
                 if protected:
-                    self._exit_reservation_released.discard((acct, symbol))
+                    key = (acct, symbol)
+                    # Record the restored broker cover even when the same decision will receive
+                    # its one bounded retry. The terminal fanout line must never describe a leg as
+                    # released without also showing either close progress or this reprotection.
+                    decision.reprotected.add(acct)
+                    self._exit_reservation_released.discard(key)
+                    self.__dict__.setdefault(
+                        "_confirmation_webull_released_episode", {}
+                    ).pop(key, None)
                     self._end_confirmation_unprotected_interval(
                         decision, acct, symbol, resolution="reprotected"
                     )
+                    retry_count = int((confirmation or {}).get("confirmation_retry_count", 0))
+                    if confirmation is not None and retry_count < 1:
+                        retry = dict(confirmation)
+                        retry["confirmation_retry_count"] = retry_count + 1
+                        latest = self._latest_quotes_by_symbol.get(symbol, {}).get(
+                            "received_at"
+                        )
+                        retry_after = latest if isinstance(latest, datetime) else utcnow()
+                        retry["evaluated_at_ms"] = str(
+                            int(retry_after.timestamp() * 1000)
+                        )
+                        self._confirmation_exit_pending[key] = retry
+                        self.logger.warning(
+                            "[OMS-V2-CONFIRMATION-EXIT-RETRY-SCHEDULED] sym=%s acct=%s "
+                            "managed_row=%s retry=1/1 protection=restored",
+                            symbol,
+                            acct,
+                            expected_row_id,
+                        )
+                        return
                     self._finish_confirmation_fanout_leg(
                         decision,
                         acct,
@@ -4497,10 +4588,15 @@ class OmsRiskService:
         symbol: str,
         *,
         expected_row_id: str,
+        confirmation: dict[str, object] | None = None,
     ) -> None:
         task = asyncio.create_task(
             self._recover_released_confirmation_webull_leg(
-                decision, acct, symbol, expected_row_id=expected_row_id
+                decision,
+                acct,
+                symbol,
+                expected_row_id=expected_row_id,
+                confirmation=confirmation,
             )
         )
         tasks = self.__dict__.setdefault("_confirmation_exit_recovery_tasks", set())
@@ -4516,6 +4612,7 @@ class OmsRiskService:
         expected_row_id: str,
         outcome: str,
         protection: str,
+        confirmation: dict[str, object] | None = None,
     ) -> None:
         """Never terminalize a released Webull leg without restoring cover or proving flat."""
         if (
@@ -4528,6 +4625,7 @@ class OmsRiskService:
                 acct,
                 symbol,
                 expected_row_id=expected_row_id,
+                confirmation=confirmation,
             )
             return
         if self._is_v2_webull_account(acct) and protection == "released":
@@ -5005,6 +5103,13 @@ class OmsRiskService:
                         fanout_decision, acct, outcome="refused"
                     )
                 return
+            # Claim the pending decision immediately after protection reconciliation. The old
+            # claim lived after another database await, leaving a window where the next quote task
+            # could capture the same pending payload, release the pair again, and submit a second
+            # close. Dictionary identity makes the pop episode-specific and atomic on this loop.
+            if confirmation_pending.get(key) is not confirmation:
+                return
+            confirmation_pending.pop(key, None)
         else:
             native_oco_stand_down = self._native_oco_stand_down_active(acct, symbol)
         cw_flip_decision = self._fresh_cw_flip_decision(key)
@@ -5048,6 +5153,7 @@ class OmsRiskService:
                         expected_row_id=bound_row_id,
                         outcome="no_open_row",
                         protection=protection,
+                        confirmation=confirmation,
                     )
                 return
 
@@ -5085,6 +5191,7 @@ class OmsRiskService:
                         expected_row_id=bound_row_id,
                         outcome="flat",
                         protection=protection,
+                        confirmation=confirmation,
                     )
                 return
             if c3_action not in ("not_applicable", "fresh_held_retry"):
@@ -5097,6 +5204,7 @@ class OmsRiskService:
                         expected_row_id=bound_row_id,
                         outcome="refused",
                         protection=protection,
+                        confirmation=confirmation,
                     )
                 return
 
@@ -5125,6 +5233,7 @@ class OmsRiskService:
                         expected_row_id=bound_row_id,
                         outcome="refused",
                         protection=protection,
+                        confirmation=confirmation,
                     )
                 return
 
@@ -5149,14 +5258,11 @@ class OmsRiskService:
                             expected_row_id=bound_row_id,
                             outcome="refused",
                             protection=protection,
+                            confirmation=confirmation,
                         )
                     return
-                # ⛔⭐⭐ ONE-SHOT, AND THE POP MUST HAPPEN *BEFORE* THE EMIT.
-                # The tracker upstream calls itself a one-shot registry; the OMS side was not one.
-                # Nothing here popped the pending entry after emitting, so once it became
-                # executable it re-emitted on EVERY quote tick — 20 sells in 33 seconds on IMRN.
-                # Popping first also means an emit that raises cannot leave it armed to repeat.
-                confirmation_pending.pop(key, None)
+                # The one-shot claim was taken immediately after protection reconciliation,
+                # before the snapshot await. No later quote task can own this same decision.
                 position = self._hydrate_v2_position(snapshot)
                 position.update_price(bid)
                 emit_outcome = await self._emit_v2_exit_on_loop(
@@ -5192,6 +5298,7 @@ class OmsRiskService:
                             else "refused"
                         ),
                         protection=protection,
+                        confirmation=confirmation,
                     )
                 return
 
@@ -5376,6 +5483,7 @@ class OmsRiskService:
                         expected_row_id=bound_row_id,
                         outcome="refused",
                         protection=protection,
+                        confirmation=confirmation,
                     )
             return
 

@@ -68,8 +68,8 @@ def database_metrics(**overrides: int) -> dict[str, int]:
 
 
 def test_catalog_has_every_requested_defect_and_every_row_declares_both_polarities() -> None:
-    assert len(watch.CATALOG) == 20
-    assert len({row.key for row in watch.CATALOG}) == 20
+    assert len(watch.CATALOG) == 21
+    assert len({row.key for row in watch.CATALOG}) == 21
     assert {row.mode for row in watch.CATALOG} == {"ARMED", "DELEGATED", "UNARMED"}
     assert {row.key for row in watch.CATALOG if row.mode == "ARMED"} == {
         "BOOT1",
@@ -80,6 +80,7 @@ def test_catalog_has_every_requested_defect_and_every_row_declares_both_polariti
         "PHANTOM1",
         "RESERVE1",
         "LATECLOSE1",
+        "CONFEXIT1",
         "W4291",
         "VPZERO1",
         "SEED1",
@@ -531,6 +532,51 @@ def test_one_webull_429_is_the_backoff_guard_working() -> None:
     assert result.recurrence == 0
 
 
+def test_confirmation_exit_coverage_requires_every_released_leg_to_end_covered() -> None:
+    result = watch.evaluate_confirmation_exit_coverage(
+        lines(
+            (
+                5,
+                "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=GIPR legs_total=2 "
+                "legs_closed=1 legs_close_submitted=0 legs_refused=1 "
+                "legs_released=2 legs_reprotected=0 legs_uncovered=1",
+            ),
+            (
+                6,
+                "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=SAFE legs_total=2 "
+                "legs_closed=1 legs_close_submitted=0 legs_refused=1 "
+                "legs_released=2 legs_reprotected=1 legs_uncovered=0",
+            ),
+            (
+                7,
+                "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=GIPR legs_total=2 "
+                "legs_closed=1 legs_close_submitted=0 legs_refused=1 "
+                "legs_released=1 legs_reprotected=0 legs_uncovered=1 "
+                "released_accounts=live:orb reprotected_accounts=- "
+                "accounts=live:schwab_1m_v2:closed,live:orb:refused",
+            ),
+        )
+    )
+
+    assert result.verdict == watch.RECURRENCE
+    assert (result.evaluated, result.guard_working, result.recurrence) == (3, 1, 2)
+    assert "worst_leg_gap=1" in result.detail
+
+
+def test_confirmation_exit_coverage_is_unexercised_without_a_released_leg() -> None:
+    result = watch.evaluate_confirmation_exit_coverage(
+        lines(
+            (
+                5,
+                "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=BARE legs_total=2 "
+                "legs_closed=2 legs_released=0 legs_reprotected=0",
+            )
+        )
+    )
+
+    assert result.verdict == watch.UNEXERCISED
+
+
 def test_confirmed_exit_release_markers_stay_bound_to_their_account() -> None:
     observed = lines(
         (5, "[OMS-EXIT-RELEASE] AAA live:schwab_1m_v2 base=x release_confirmed=1"),
@@ -719,7 +765,7 @@ def test_static_rows_are_never_reported_as_clean() -> None:
 
 def test_failed_evidence_keeps_every_catalog_row_visible() -> None:
     rows = watch.failed_evidence_readings("database unavailable")
-    assert len(rows) == len(watch.CATALOG) == 20
+    assert len(rows) == len(watch.CATALOG) == 21
     assert {row.key for row in rows} == {row.key for row in watch.CATALOG}
     assert all(
         row.verdict == watch.COULD_NOT_TELL
@@ -817,7 +863,7 @@ def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None
 
     rows = {row.key: row for row in watch.collect_readings(NOW)}
 
-    assert len(rows) == 20
+    assert len(rows) == 21
     assert rows["BOOT1"].verdict == watch.COULD_NOT_TELL
     assert rows["ROLL1"].verdict == watch.COULD_NOT_TELL
     assert rows["OWNERROLL1"].verdict == watch.COULD_NOT_TELL
@@ -825,6 +871,7 @@ def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None
     assert rows["LIQPULL1"].verdict == watch.COULD_NOT_TELL
     assert rows["SEED1"].verdict == watch.COULD_NOT_TELL
     assert rows["W4291"].verdict == watch.OBSERVED_CLEAN
+    assert rows["CONFEXIT1"].verdict == watch.UNEXERCISED
     assert rows["RESERVE1"].verdict == watch.UNEXERCISED
     assert rows["LATECLOSE1"].verdict == watch.UNEXERCISED
     assert rows["PHANTOM1"].verdict == watch.UNEXERCISED

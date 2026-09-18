@@ -250,6 +250,25 @@ def _confirmation_close_metadata(sf: sessionmaker) -> dict[str, dict[str, object
         return {account: dict(payload or {}) for account, payload in rows}
 
 
+def _gipr_cancel_reject(suffix: str, code: str) -> ExecutionReport:
+    """The structured shape emitted by Webull for GIPR's second cancel on 2026-09-18."""
+    return ExecutionReport(
+        event_type="rejected",
+        origin="broker",
+        client_order_id=f"known-protect-base{suffix}",
+        symbol=SYMBOL,
+        side="sell",
+        intent_type="cancel",
+        reason=f"Webull ServerException: {code}",
+        metadata={
+            "webull_request_id": f"gipr-{suffix}",
+            "webull_error_code": code,
+            "webull_error_message": "The order can not be cancelled",
+            "webull_http_status": "417",
+        },
+    )
+
+
 async def _arm_decision(service: OmsRiskService) -> None:
     await service._handle_stream_message(
         {
@@ -639,10 +658,22 @@ async def test_released_webull_leg_that_rejects_is_reprotected(monkeypatch) -> N
     assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
     assert reprotected == [(WEBULL, SYMBOL)]
     assert (WEBULL, SYMBOL) not in service._exit_reservation_released
-    assert "legs_released=2 legs_reprotected=1 legs_uncovered=0" in "\n".join(
-        service.logger.lines
-    )
+    assert (WEBULL, SYMBOL) in service._confirmation_exit_pending
+    assert "[OMS-V2-CONFIRMATION-EXIT-RETRY-SCHEDULED]" in "\n".join(service.logger.lines)
     assert "released_unprotected_current=0" in "\n".join(service.logger.lines)
+
+    adapter.reject_accounts.clear()
+    service._latest_quotes_by_symbol[SYMBOL]["received_at"] += timedelta(seconds=1)
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert adapter.cancel_pair_calls == [
+        (WEBULL, SYMBOL, "known-protect-base"),
+        (WEBULL, SYMBOL, "known-protect-base"),
+    ]
+    assert (WEBULL, SYMBOL) not in service._confirmation_exit_pending
+    summary = "\n".join(service.logger.lines)
+    assert "legs_closed=2" in summary
+    assert "legs_released=2 legs_reprotected=1 legs_uncovered=0" in summary
 
 
 @pytest.mark.asyncio
@@ -678,9 +709,121 @@ async def test_released_webull_leg_is_reprotected_when_a_pre_send_guard_stops_it
     assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
     assert reprotected == [(WEBULL, SYMBOL)]
     assert _sell_accounts(sf) == [SCHWAB]
+    assert (WEBULL, SYMBOL) in service._confirmation_exit_pending
+
+    service._latest_quotes_by_symbol[SYMBOL]["received_at"] += timedelta(seconds=1)
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    await service._confirmation_exit_recovery_tasks.pop()
+
+    assert adapter.cancel_pair_calls == [
+        (WEBULL, SYMBOL, "known-protect-base"),
+        (WEBULL, SYMBOL, "known-protect-base"),
+    ]
+    assert reprotected == [(WEBULL, SYMBOL), (WEBULL, SYMBOL)]
+    assert (WEBULL, SYMBOL) not in service._confirmation_exit_pending
     assert "legs_released=2 legs_reprotected=1 legs_uncovered=0" in "\n".join(
         service.logger.lines
     )
+
+
+@pytest.mark.asyncio
+async def test_confirmed_webull_release_is_idempotent_for_the_exact_episode(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    row_id = _open_row_ids(sf)[WEBULL]
+
+    assert await service._prepare_confirmation_webull_leg(
+        WEBULL, SYMBOL, expected_row_id=row_id
+    ) == "released"
+    assert await service._prepare_confirmation_webull_leg(
+        WEBULL, SYMBOL, expected_row_id=row_id
+    ) == "released"
+
+    assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
+
+
+@pytest.mark.asyncio
+async def test_gipr_already_absent_reports_count_only_after_exact_release(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    row_id = _open_row_ids(sf)[WEBULL]
+
+    async def _racing_second_cancel(**kwargs):
+        key = (WEBULL, SYMBOL)
+        service._exit_reservation_released.add(key)
+        service._confirmation_webull_released_episode[key] = (
+            row_id,
+            "known-protect-base",
+        )
+        return [
+            _gipr_cancel_reject("T", "ORDER_CAN_NOT_BE_CANCEL"),
+            _gipr_cancel_reject("S", "ORDER_CAN_NOT_BE_CANCEL"),
+        ]
+
+    monkeypatch.setattr(adapter, "cancel_exit_pair", _racing_second_cancel)
+
+    assert await service._prepare_confirmation_webull_leg(
+        WEBULL, SYMBOL, expected_row_id=row_id
+    ) == "released"
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_is_not_absence_even_when_an_exact_release_won_the_race(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    row_id = _open_row_ids(sf)[WEBULL]
+
+    async def _rate_limited_second_cancel(**kwargs):
+        key = (WEBULL, SYMBOL)
+        service._exit_reservation_released.add(key)
+        service._confirmation_webull_released_episode[key] = (
+            row_id,
+            "known-protect-base",
+        )
+        return [
+            _gipr_cancel_reject("T", "TOO_MANY_REQUESTS"),
+            _gipr_cancel_reject("S", "TOO_MANY_REQUESTS"),
+        ]
+
+    monkeypatch.setattr(adapter, "cancel_exit_pair", _rate_limited_second_cancel)
+
+    assert await service._prepare_confirmation_webull_leg(
+        WEBULL, SYMBOL, expected_row_id=row_id
+    ) == "refused"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["ORDER_CAN_NOT_BE_CANCEL", "TOO_MANY_REQUESTS"])
+async def test_cancel_reject_is_not_absence_without_prior_exact_release(
+    monkeypatch, code: str
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    row_id = _open_row_ids(sf)[WEBULL]
+
+    async def _rejected_cancel(**kwargs):
+        return [_gipr_cancel_reject("T", code), _gipr_cancel_reject("S", code)]
+
+    monkeypatch.setattr(adapter, "cancel_exit_pair", _rejected_cancel)
+
+    assert await service._prepare_confirmation_webull_leg(
+        WEBULL, SYMBOL, expected_row_id=row_id
+    ) == "refused"
+    assert (WEBULL, SYMBOL) not in service._exit_reservation_released
 
 
 @pytest.mark.asyncio

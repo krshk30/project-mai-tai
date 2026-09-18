@@ -225,6 +225,14 @@ CATALOG: tuple[RegressionSpec, ...] = (
         "the late-close episode exceeds three rejected close orders",
     ),
     RegressionSpec(
+        "CONFEXIT1",
+        "a confirmation exit releases Webull protection without closing or restoring it",
+        "ARMED",
+        "OMS-V2-CONFIRMATION-EXIT-FANOUT leg denominators",
+        "every released leg is closed or reprotected",
+        "legs_released exceeds legs_closed plus legs_reprotected",
+    ),
+    RegressionSpec(
         "W4291",
         "Webull position-mirror 429 flood returns",
         "ARMED",
@@ -276,6 +284,13 @@ _SESSION_ROLL_SYMBOLS = re.compile(
 )
 _SEED_CENSUS = re.compile(r"\[V2-DB-SEED-GAP-CENSUS\] truncations=(\d+) of (\d+)")
 _BROKER_CENSUS_WEBULL = re.compile(r"live:orb: ok=(\d+) failed=(\d+) consecutive_now=(\d+)")
+_CONFIRMATION_FANOUT = re.compile(
+    r"\[OMS-V2-CONFIRMATION-EXIT-FANOUT\].*\blegs_closed=(\d+).*"
+    r"\blegs_released=(\d+).*\blegs_reprotected=(\d+)"
+)
+_CONFIRMATION_FANOUT_ACCOUNTS = re.compile(
+    r"\breleased_accounts=([^ ]+)\s+reprotected_accounts=([^ ]+)\s+accounts=([^ ]+)"
+)
 _ATR_SELL = re.compile(r"\[V2-ATR-PROBE\]\s+sym=([^ ]+)\s+ts_ms=(\d+).*\bflip=SELL\b")
 _FLIP_OWNER_FILL = re.compile(r"\[V2-FLIP-OWNER-FILL\]\s+([^ ]+)\b")
 _SLOT_CONSUMED = re.compile(
@@ -618,6 +633,52 @@ def evaluate_webull_429(lines: Sequence[TimedLine]) -> Reading:
         recurrence=int(peak >= WEBULL_429_BURST_COUNT),
         detail=f"position_reads={reads} backoff_markers={len(hits)} peak_60s={peak}",
         unknown=bool(hits and reads == 0),
+    )
+
+
+def evaluate_confirmation_exit_coverage(lines: Sequence[TimedLine]) -> Reading:
+    evaluated = 0
+    guard_working = 0
+    recurrence = 0
+    worst_gap = 0
+    for line in lines:
+        match = _CONFIRMATION_FANOUT.search(line.text)
+        if match is None:
+            continue
+        closed, released, reprotected = (int(value) for value in match.groups())
+        if released <= 0:
+            continue
+        evaluated += 1
+        aggregate_gap = max(0, released - closed - reprotected)
+        account_gap = 0
+        if account_match := _CONFIRMATION_FANOUT_ACCOUNTS.search(line.text):
+            released_accounts = set(account_match.group(1).split(",")) - {"-"}
+            reprotected_accounts = set(account_match.group(2).split(",")) - {"-"}
+            outcomes = dict(
+                item.rsplit(":", 1)
+                for item in account_match.group(3).split(",")
+                if ":" in item
+            )
+            account_gap = sum(
+                account not in reprotected_accounts
+                and outcomes.get(account) not in {"closed", "flat", "resolved_by_fill"}
+                for account in released_accounts
+            )
+        gap = max(aggregate_gap, account_gap)
+        worst_gap = max(worst_gap, gap)
+        if gap:
+            recurrence += 1
+        else:
+            guard_working += 1
+    return _reading(
+        "CONFEXIT1",
+        evaluated=evaluated,
+        guard_working=guard_working,
+        recurrence=recurrence,
+        detail=(
+            f"released_fanouts={evaluated} covered={guard_working} "
+            f"uncovered={recurrence} worst_leg_gap={worst_gap}"
+        ),
     )
 
 
@@ -1144,11 +1205,12 @@ def collect_readings(now: datetime) -> list[Reading]:
     except Exception as exc:  # noqa: BLE001 - the DB evidence remains independently useful
         oms_readable = False
         oms = []
-        readings.append(
-            unknown_reading("W4291", f"OMS logs unreadable: {type(exc).__name__}: {exc}")
+        readings.extend(
+            unknown_reading(key, f"OMS logs unreadable: {type(exc).__name__}: {exc}")
+            for key in ("W4291", "CONFEXIT1")
         )
     else:
-        readings.append(evaluate_webull_429(oms))
+        readings.extend((evaluate_webull_429(oms), evaluate_confirmation_exit_coverage(oms)))
 
     try:
         metrics = _query_database(since)
