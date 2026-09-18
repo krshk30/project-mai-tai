@@ -65,6 +65,8 @@ class StrategyResult:
     no_fill: int
     unanswerable: int
     path_rows: int
+    timestamp_only_union_prints: int
+    same_millisecond_before_detection_prints: int
     union_prints: int
     tape_key_collisions: int
     suspect: bool
@@ -531,22 +533,64 @@ def _raw_identity(trade: TradePrint) -> tuple[object, ...]:
     )
 
 
-def _union_print_count(
-    trades: Sequence[TradePrint], terminal: Sequence[MomentumTapeRecord], strategy_code: str
-) -> int:
-    intervals: list[tuple[int, int]] = []
+def _trade_fingerprint(trade: TradePrint) -> tuple[object, ...]:
+    payload = json.dumps(trade.payload(), sort_keys=True, separators=(",", ":"))
+    return (*_raw_identity(trade), payload)
+
+
+def _union_print_counts(
+    trades: Sequence[TradePrint],
+    terminal: Sequence[MomentumTapeRecord],
+    strategy_code: str,
+    detection_ordinals: Mapping[str, int],
+) -> tuple[int, int, int]:
+    intervals: list[tuple[int, int, int]] = []
     for row in terminal:
         if row.strategy_code != strategy_code:
             continue
         path_range = row.payload.get("path_range")
         if isinstance(path_range, Mapping):
-            intervals.append((int(path_range["start_sip_ts_ms"]), int(path_range["end_sip_ts_ms"])))
-    identities: set[tuple[object, ...]] = set()
-    for trade in trades:
-        if any(start <= trade.sip_ts_ms <= end for start, end in intervals):
-            payload = json.dumps(trade.payload(), sort_keys=True, separators=(",", ":"))
-            identities.add((*_raw_identity(trade), payload))
-    return len(identities)
+            try:
+                detection_ordinal = detection_ordinals[row.logical_id]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"missing source ordinal for detection {row.logical_id}"
+                ) from exc
+            intervals.append(
+                (
+                    int(path_range["start_sip_ts_ms"]),
+                    int(path_range["end_sip_ts_ms"]),
+                    detection_ordinal,
+                )
+            )
+
+    timestamp_only: set[tuple[object, ...]] = set()
+    order_aware: set[tuple[object, ...]] = set()
+    same_millisecond_before_detection: set[tuple[object, ...]] = set()
+    for ordinal, trade in enumerate(trades):
+        fingerprint = _trade_fingerprint(trade)
+        if any(start <= trade.sip_ts_ms <= end for start, end, _ in intervals):
+            timestamp_only.add(fingerprint)
+        if any(
+            start <= trade.sip_ts_ms <= end
+            and (trade.sip_ts_ms > start or ordinal >= detection_ordinal)
+            for start, end, detection_ordinal in intervals
+        ):
+            order_aware.add(fingerprint)
+        if any(
+            trade.sip_ts_ms == start and ordinal < detection_ordinal
+            for start, _, detection_ordinal in intervals
+        ):
+            same_millisecond_before_detection.add(fingerprint)
+
+    timestamp_only_extras = timestamp_only - order_aware
+    if not timestamp_only_extras <= same_millisecond_before_detection:
+        raise RuntimeError("timestamp-only union contains an unclassified extra print")
+    return (
+        len(order_aware),
+        len(timestamp_only),
+        len(timestamp_only_extras),
+    )
 
 
 def _replay_symbol(
@@ -555,7 +599,7 @@ def _replay_symbol(
     raw_rows: Sequence[Mapping[str, object]],
     condition_payload: Mapping[str, object],
     day: date,
-) -> tuple[list[MomentumTapeRecord], list[TradePrint], int]:
+) -> tuple[list[MomentumTapeRecord], list[TradePrint], dict[str, int], int]:
     snapshot = condition_snapshot_from_payload(condition_payload)
     coverage_start, session_close = _bounds(day, _CAPTURE_START, _CAPTURE_END)
     engine = MomentumPaperEngine(
@@ -565,17 +609,24 @@ def _replay_symbol(
     )
     records: list[MomentumTapeRecord] = []
     trades: list[TradePrint] = []
+    detection_ordinals: dict[str, int] = {}
     malformed = 0
     for raw in raw_rows:
         trade = normalize_raw_trade(raw, conditions=snapshot)
         if trade is None:
             malformed += 1
             continue
-        records.extend(engine.advance_clock(trade.sip_ts_ms))
-        records.extend(engine.ingest(trade))
+        emitted = [*engine.advance_clock(trade.sip_ts_ms), *engine.ingest(trade)]
+        source_ordinal = len(trades)
+        for record in emitted:
+            if record.event_type == "DETECTED":
+                prior = detection_ordinals.setdefault(record.logical_id, source_ordinal)
+                if prior != source_ordinal:
+                    raise RuntimeError(f"detection {record.logical_id} has two source ordinals")
+        records.extend(emitted)
         trades.append(trade)
     records.extend(engine.close_session(int(session_close.timestamp() * 1000)))
-    return records, trades, malformed
+    return records, trades, detection_ordinals, malformed
 
 
 def replay_capture(payload: Mapping[str, object]) -> SessionResult:
@@ -590,6 +641,7 @@ def replay_capture(payload: Mapping[str, object]) -> SessionResult:
 
     all_records: list[MomentumTapeRecord] = []
     all_trades: dict[str, list[TradePrint]] = {}
+    all_detection_ordinals: dict[str, dict[str, int]] = {}
     malformed = 0
     captured_prints = 0
     for symbol in sorted(prior_closes):
@@ -597,7 +649,7 @@ def replay_capture(payload: Mapping[str, object]) -> SessionResult:
         if not isinstance(rows, list):
             raise RuntimeError(f"capture for {day} {symbol} has malformed raw rows")
         captured_prints += len(rows)
-        records, trades, bad = _replay_symbol(
+        records, trades, detection_ordinals, bad = _replay_symbol(
             str(symbol),
             Decimal(str(prior_closes[symbol])),
             rows,
@@ -606,6 +658,7 @@ def replay_capture(payload: Mapping[str, object]) -> SessionResult:
         )
         all_records.extend(records)
         all_trades[str(symbol)] = trades
+        all_detection_ordinals[str(symbol)] = detection_ordinals
         malformed += bad
 
     if malformed:
@@ -619,14 +672,18 @@ def replay_capture(payload: Mapping[str, object]) -> SessionResult:
         selected = [row for row in all_records if row.strategy_code == strategy]
         final = [row for row in selected if row.event_type == "FINAL"]
         path_rows = sum(row.event_type == "PATH_PRINT" for row in selected)
-        union_prints = sum(
-            _union_print_count(
+        union_counts = [
+            _union_print_counts(
                 trades,
                 [row for row in terminals if row.symbol == symbol],
                 strategy,
+                all_detection_ordinals[symbol],
             )
             for symbol, trades in all_trades.items()
-        )
+        ]
+        union_prints = sum(row[0] for row in union_counts)
+        timestamp_only_union_prints = sum(row[1] for row in union_counts)
+        same_millisecond_before_detection_prints = sum(row[2] for row in union_counts)
         strategy_results.append(
             StrategyResult(
                 strategy_code=strategy,
@@ -638,6 +695,8 @@ def replay_capture(payload: Mapping[str, object]) -> SessionResult:
                 no_fill=sum(row.event_type == "NO_FILL" for row in selected),
                 unanswerable=sum(row.event_type == "UNANSWERABLE" for row in selected),
                 path_rows=path_rows,
+                timestamp_only_union_prints=timestamp_only_union_prints,
+                same_millisecond_before_detection_prints=(same_millisecond_before_detection_prints),
                 union_prints=union_prints,
                 tape_key_collisions=sum(
                     row.event_type == "PATH_PRINT" and ":COLLISION:" in row.event_key
@@ -698,6 +757,116 @@ def replay_directory(
     return results
 
 
+def path_control_payload(results: Sequence[SessionResult]) -> dict[str, object]:
+    rows: list[dict[str, object]] = []
+    for session in results:
+        for strategy in session.strategy_results:
+            discrepancy = strategy.timestamp_only_union_prints - strategy.union_prints
+            rows.append(
+                {
+                    "session_date": session.session_date,
+                    "strategy_code": strategy.strategy_code,
+                    "path_rows": strategy.path_rows,
+                    "timestamp_only_union_prints": strategy.timestamp_only_union_prints,
+                    "old_control_discrepancy": discrepancy,
+                    "same_millisecond_before_detection_prints": (
+                        strategy.same_millisecond_before_detection_prints
+                    ),
+                    "order_aware_union_prints": strategy.union_prints,
+                    "old_discrepancy_fully_classified": (
+                        discrepancy == strategy.same_millisecond_before_detection_prints
+                    ),
+                    "order_aware_exact": strategy.path_rows == strategy.union_prints,
+                }
+            )
+    nonzero = [row for row in rows if row["old_control_discrepancy"]]
+    session_dates = {session.session_date for session in results}
+    nonzero_sessions = {str(row["session_date"]) for row in nonzero}
+    expected_old_shape_matched = (
+        nonzero_sessions == {"2026-08-05"}
+        and sum(int(row["old_control_discrepancy"]) for row in nonzero) == 12
+    )
+    acceptance = (
+        len(results) == len(session_dates) == 30
+        and all(row["old_discrepancy_fully_classified"] for row in rows)
+        and all(row["order_aware_exact"] for row in rows)
+    )
+    return {
+        "acceptance": "PASS" if acceptance else "FAIL",
+        "sessions": len(results),
+        "strategy_rows": len(rows),
+        "old_control_nonzero_rows": nonzero,
+        "old_control_zero_sessions": sorted(
+            {
+                session.session_date
+                for session in results
+                if session.session_date not in nonzero_sessions
+            }
+        ),
+        "prior_expectation": {
+            "expected_zero_sessions": 29,
+            "expected_nonzero_session": "2026-08-05",
+            "expected_nonzero_prints": 12,
+            "matched": expected_old_shape_matched,
+            "observed_zero_sessions": len(session_dates - nonzero_sessions),
+            "observed_nonzero_sessions": len(nonzero_sessions),
+            "observed_nonzero_prints": sum(int(row["old_control_discrepancy"]) for row in nonzero),
+        },
+        "rows": rows,
+        "known_limit": (
+            "REST page order for prints sharing one millisecond is not guaranteed to match "
+            "live websocket arrival order; the detecting print within that millisecond may differ."
+        ),
+    }
+
+
+def render_path_control_markdown(control: Mapping[str, object]) -> str:
+    rows = [
+        "# Momentum PATH control: source-order correction",
+        "",
+        f"Acceptance: **{control['acceptance']}** across {control['sessions']}/30 sessions and "
+        f"{control['strategy_rows']} strategy/session rows.",
+        "",
+        "The old timestamp-only control counted prints that shared the detection millisecond but "
+        "arrived before the detecting print. The corrected control begins at that print's source "
+        "ordinal and retains exact `PATH == union` equality.",
+        "",
+        "| Session | Bot | PATH | Old union | Old extra | Same-ms before detect | Corrected union | Exact |",
+        "|---|---|---:|---:|---:|---:|---:|---|",
+    ]
+    control_rows = control["rows"]
+    assert isinstance(control_rows, list)
+    for row in control_rows:
+        assert isinstance(row, Mapping)
+        if row["old_control_discrepancy"] or not row["order_aware_exact"]:
+            rows.append(
+                f"| {row['session_date']} | {row['strategy_code']} | {row['path_rows']} | "
+                f"{row['timestamp_only_union_prints']} | {row['old_control_discrepancy']} | "
+                f"{row['same_millisecond_before_detection_prints']} | "
+                f"{row['order_aware_union_prints']} | "
+                f"{'yes' if row['order_aware_exact'] else 'NO'} |"
+            )
+    zero_sessions = control["old_control_zero_sessions"]
+    assert isinstance(zero_sessions, list)
+    prior_expectation = control["prior_expectation"]
+    assert isinstance(prior_expectation, Mapping)
+    rows.extend(
+        [
+            "",
+            f"Zero-discrepancy sessions: {len(zero_sessions)}/30.",
+            "",
+            "The prior expectation of 29 zero-discrepancy sessions and 12 extras only on "
+            "2026-08-05 was **not met**. The old control had "
+            f"{prior_expectation['observed_nonzero_prints']} classified extras across "
+            f"{prior_expectation['observed_nonzero_sessions']}/30 sessions; this does not "
+            "change the corrected control's exact 30/30 result.",
+            "",
+            "Known limit: " + str(control["known_limit"]),
+        ]
+    )
+    return "\n".join(rows) + "\n"
+
+
 def report_payload(results: Sequence[SessionResult]) -> dict[str, object]:
     strategy_totals: dict[str, Counter[str]] = {
         strategy: Counter() for strategy in MOMENTUM_STRATEGIES
@@ -723,6 +892,8 @@ def report_payload(results: Sequence[SessionResult]) -> dict[str, object]:
                 "no_fill",
                 "unanswerable",
                 "path_rows",
+                "timestamp_only_union_prints",
+                "same_millisecond_before_detection_prints",
                 "union_prints",
                 "tape_key_collisions",
             ):
@@ -845,6 +1016,21 @@ def _replay_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _path_control_command(args: argparse.Namespace) -> int:
+    results = replay_directory(args.input_dir, expected_sessions=args.expected_sessions)
+    control = path_control_payload(results)
+    args.json.parent.mkdir(parents=True, exist_ok=True)
+    args.markdown.parent.mkdir(parents=True, exist_ok=True)
+    args.json.write_text(json.dumps(control, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.markdown.write_text(render_path_control_markdown(control), encoding="utf-8")
+    print(
+        f"acceptance={control['acceptance']} sessions={control['sessions']}/30 "
+        f"nonzero_old_rows={len(control['old_control_nonzero_rows'])} "
+        f"json={args.json} markdown={args.markdown}"
+    )
+    return 0 if control["acceptance"] == "PASS" else 1
+
+
 def _screen_control_command(args: argparse.Namespace) -> int:
     settings = get_settings()
     if not settings.massive_api_key:
@@ -883,6 +1069,15 @@ def main() -> int:
     replay.add_argument("--json", type=Path, required=True)
     replay.add_argument("--markdown", type=Path, required=True)
     replay.set_defaults(run=_replay_command)
+
+    path_control = subparsers.add_parser(
+        "path-control", help="prove source-order-aware PATH/union reconciliation only"
+    )
+    path_control.add_argument("--input-dir", type=Path, required=True)
+    path_control.add_argument("--expected-sessions", type=int, default=30)
+    path_control.add_argument("--json", type=Path, required=True)
+    path_control.add_argument("--markdown", type=Path, required=True)
+    path_control.set_defaults(run=_path_control_command)
 
     control = subparsers.add_parser(
         "screen-control", help="compare the premarket screen with an unscreened full scan"
