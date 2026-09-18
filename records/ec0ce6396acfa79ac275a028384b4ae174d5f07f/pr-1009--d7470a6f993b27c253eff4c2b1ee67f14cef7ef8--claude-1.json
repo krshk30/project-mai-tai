@@ -1,0 +1,9 @@
+{
+  "pr_number": 1009,
+  "range_base": "d7470a6f993b27c253eff4c2b1ee67f14cef7ef8",
+  "range_head": "ec0ce6396acfa79ac275a028384b4ae174d5f07f",
+  "reviewed_at": "2026-09-18T13:35:11Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Test-only follow-up to #1006 that I asked for: pins _finish_webull_mirror_deferred_resubmit. Read the diff (one new async test, no runtime change). 19 tests pass with PYTHONPATH on the PR tree. The exact mutation that stayed green at fdfee0ee (finalizer body replaced by pass) now fails 1 of 19, so a claimed retry ending in a non-PRICE_AGGRESSIVE outcome (the test uses a structured 429) is proven to forget the slot."
+}
