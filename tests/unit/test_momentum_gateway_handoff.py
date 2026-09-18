@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from pathlib import Path
+import time
 
 import pytest
 
 from project_mai_tai.momentum_gateway_handoff import (
     BoundedPaperHandoff,
+    connect_consumer_socket,
+    CrossProcessPaperConsumer,
+    drain_handoff_to_socket,
     parse_massive_trade_frame,
 )
 
@@ -67,3 +73,67 @@ async def test_active_consumer_receives_frame() -> None:
 
     assert frame.received_ns == 10
     assert frame.trades == ({"ev": "T", "sym": "AEMD"},)
+
+
+@pytest.mark.asyncio
+async def test_handoff_crosses_into_a_separate_consumer_process(tmp_path: Path) -> None:
+    consumer = CrossProcessPaperConsumer(
+        mode="active",
+        raw_samples_path=tmp_path / "active.jsonl",
+    )
+    producer_socket = None
+    result = None
+    try:
+        consumer_pid = await asyncio.to_thread(consumer.start)
+        producer_socket = connect_consumer_socket(consumer.socket_path)
+        handoff = BoundedPaperHandoff(capacity=4)
+        handoff.offer({"ev": "T", "sym": "AEMD"}, received_ns=time.time_ns())
+        producer_done = asyncio.Event()
+        producer_done.set()
+
+        writer = await drain_handoff_to_socket(handoff, producer_socket, producer_done)
+        result = await asyncio.to_thread(consumer.stop)
+
+        assert consumer_pid != os.getpid()
+        assert result.producer_pid == os.getpid()
+        assert result.consumer_pid == consumer_pid
+        assert result.consumed_frames == 1
+        assert len(result.handoff_lags_ms) == 1
+        assert writer.sent_frames == 1
+        assert writer.would_block_drops == 0
+    finally:
+        if producer_socket is not None:
+            producer_socket.close()
+        consumer.close()
+
+
+@pytest.mark.asyncio
+async def test_dead_cross_process_consumer_raises_socket_drop_counter(tmp_path: Path) -> None:
+    consumer = CrossProcessPaperConsumer(
+        mode="dead",
+        raw_samples_path=tmp_path / "dead.jsonl",
+    )
+    producer_socket = None
+    try:
+        await asyncio.to_thread(consumer.start)
+        producer_socket = connect_consumer_socket(consumer.socket_path)
+        handoff = BoundedPaperHandoff(capacity=2_000)
+        blob = "x" * 4_000
+        for sequence in range(2_000):
+            handoff.offer(
+                {"ev": "T", "sequence": sequence, "blob": blob},
+                received_ns=time.time_ns(),
+            )
+        producer_done = asyncio.Event()
+        producer_done.set()
+
+        writer = await drain_handoff_to_socket(handoff, producer_socket, producer_done)
+        result = await asyncio.to_thread(consumer.stop)
+
+        assert result.consumed_frames == 0
+        assert writer.sent_frames > 0
+        assert writer.would_block_drops > 0
+    finally:
+        if producer_socket is not None:
+            producer_socket.close()
+        consumer.close()

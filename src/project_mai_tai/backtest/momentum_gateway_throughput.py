@@ -15,12 +15,18 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, time
 import gzip
 import hashlib
+import hmac
+import http.client
 import json
 import math
 import os
 from pathlib import Path
+import shutil
+import socket
+import subprocess
 import time as clock
-from typing import Awaitable, Callable, Mapping, Sequence
+from typing import Awaitable, Callable, Mapping, Sequence, TypeVar
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
@@ -32,7 +38,13 @@ from project_mai_tai.events import (
     SnapshotBatchEvent,
     stream_name,
 )
-from project_mai_tai.momentum_gateway_handoff import BoundedPaperHandoff
+from project_mai_tai.momentum_gateway_handoff import (
+    BoundedPaperHandoff,
+    connect_consumer_socket,
+    CrossProcessPaperConsumer,
+    drain_handoff_to_socket,
+    SocketWriterCounters,
+)
 
 
 _ET = ZoneInfo("America/New_York")
@@ -54,6 +66,20 @@ _EXPECTED_COLUMNS = {
     "trf_timestamp",
 }
 _POLICY_NEEDLE = b"1008 (policy violation)"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_STRICT_FLATNESS_PREFLIGHT = _REPO_ROOT / "ops/preflight/preflight_oms_restart.sh"
+_REPLAY_START = time(16, 5)
+_AFTER_HOURS_START = time(20)
+_MASSIVE_FLAT_FILE_HOST = "files.massive.com"
+_MASSIVE_FLAT_FILE_BUCKET = "flatfiles"
+_MASSIVE_FLAT_FILE_ACCESS_KEY_ID = "ba57433b-db93-4501-a02d-6a22bf4b1856"
+_MASSIVE_FLAT_FILE_REGION = "us-east-1"
+_FLAT_FILE_SECRET_ENV = "MAI_TAI_MASSIVE_API_KEY"
+_DEFAULT_FREE_SPACE_RESERVE_BYTES = 5 * 1024**3
+
+
+_ReplaySpec = TypeVar("_ReplaySpec")
+_ReplayOutput = TypeVar("_ReplayOutput")
 
 
 @dataclass(frozen=True)
@@ -95,25 +121,244 @@ class ReplayResult:
     consumer: str
     input_frames: int
     forwarded_frames: int
-    dropped_frames: int
+    queue_dropped_frames: int
+    socket_would_block_drops: int
     parse_failures: int
+    producer_pid: int
+    consumer_pid: int
     consumed_frames: int
     handoff_p50_ms: float | None
     handoff_p95_ms: float | None
     handoff_p99_ms: float | None
     handoff_max_ms: float | None
-    replay_cpu_peak_pct_one_cpu: float
-    replay_peak_rss_bytes: int
+    producer_offer_elapsed_ms: float
+    producer_cpu_peak_pct_one_cpu: float
+    producer_peak_rss_bytes: int
+    consumer_cpu_peak_pct_one_cpu: float
+    consumer_peak_rss_bytes: int
     gateway_cpu_peak_pct_one_cpu: float
+    replay_access: ReplayAccessEvidence
     baseline: ExistingWorkResult
     during: ExistingWorkResult
     verdict: str
     reasons: tuple[str, ...]
     cpu_samples: str
+    consumer_samples: str
+
+
+@dataclass(frozen=True)
+class ReplayAccessEvidence:
+    checked_at_utc: str
+    branch: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class FlatFileObject:
+    key: str
+    size_bytes: int
 
 
 class ReplayAborted(RuntimeError):
     pass
+
+
+def require_replay_access(
+    *,
+    now: datetime | None = None,
+    preflight_path: Path = _STRICT_FLATNESS_PREFLIGHT,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> ReplayAccessEvidence:
+    """Prove the frozen flat-window-or-after-hours replay precondition."""
+
+    observed = now or datetime.now(_ET)
+    local = observed.astimezone(_ET)
+    if local.time() >= _AFTER_HOURS_START:
+        return ReplayAccessEvidence(
+            checked_at_utc=observed.astimezone(UTC).isoformat(),
+            branch="AFTER_20_ET",
+            detail="after 20:00 ET; flatness preflight not required by the frozen protocol",
+        )
+    if local.time() < _REPLAY_START:
+        raise ReplayAborted("live-box replay is restricted to 16:05 ET or later")
+    completed = runner(
+        [str(preflight_path), "--require-all-account-positions-flat"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+    if completed.returncode != 0:
+        raise ReplayAborted(
+            "strict live-account flatness preflight refused "
+            f"(rc={completed.returncode}): {output}"
+        )
+    required = (
+        "zero open managed rows",
+        "live:schwab_1m_v2 flat [",
+        "live:orb flat [",
+        "strict all-account-position flatness enabled",
+    )
+    missing = [marker for marker in required if marker not in output]
+    if missing:
+        raise ReplayAborted(
+            "strict live-account flatness preflight omitted required evidence: "
+            + ", ".join(missing)
+        )
+    return ReplayAccessEvidence(
+        checked_at_utc=observed.astimezone(UTC).isoformat(),
+        branch="FLAT_16_05_TO_20_ET",
+        detail="zero open managed rows; both live accounts fresh and literally flat",
+    )
+
+
+async def run_guarded_replays(
+    specs: Sequence[_ReplaySpec],
+    *,
+    access_checker: Callable[[], ReplayAccessEvidence],
+    replay_runner: Callable[[_ReplaySpec], Awaitable[_ReplayOutput]],
+) -> tuple[tuple[ReplayAccessEvidence, ...], tuple[_ReplayOutput, ...]]:
+    """Re-check access immediately before every replay, including between runs."""
+
+    checks: list[ReplayAccessEvidence] = []
+    rows: list[_ReplayOutput] = []
+    for spec in specs:
+        checks.append(access_checker())
+        rows.append(await replay_runner(spec))
+    return tuple(checks), tuple(rows)
+
+
+def verdict_exit_code(verdict: str) -> int:
+    if verdict == "PASS":
+        return 0
+    if verdict == "FAIL":
+        return 1
+    if verdict == "UNMEASURED":
+        return 2
+    raise ValueError(f"unknown replay verdict: {verdict}")
+
+
+def _sigv4_key(secret: str, day: str) -> bytes:
+    dated = hmac.new(f"AWS4{secret}".encode(), day.encode(), hashlib.sha256).digest()
+    region = hmac.new(dated, _MASSIVE_FLAT_FILE_REGION.encode(), hashlib.sha256).digest()
+    service = hmac.new(region, b"s3", hashlib.sha256).digest()
+    return hmac.new(service, b"aws4_request", hashlib.sha256).digest()
+
+
+class MassiveFlatFileClient:
+    """Minimal read-only S3 client for the offline Momentum measurement."""
+
+    def __init__(self, *, secret: str) -> None:
+        if not secret:
+            raise RuntimeError(f"{_FLAT_FILE_SECRET_ENV} is empty")
+        self._secret = secret
+
+    @classmethod
+    def from_environment(cls) -> MassiveFlatFileClient:
+        try:
+            secret = os.environ[_FLAT_FILE_SECRET_ENV]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"{_FLAT_FILE_SECRET_ENV} must be present in the measurement process environment"
+            ) from exc
+        return cls(secret=secret)
+
+    def _signed_headers(self, method: str, key: str, *, now: datetime) -> tuple[str, dict[str, str]]:
+        observed = now.astimezone(UTC)
+        amz_date = observed.strftime("%Y%m%dT%H%M%SZ")
+        day = observed.strftime("%Y%m%d")
+        path = "/" + quote(f"{_MASSIVE_FLAT_FILE_BUCKET}/{key}", safe="/")
+        payload_hash = hashlib.sha256(b"").hexdigest()
+        canonical_headers = (
+            f"host:{_MASSIVE_FLAT_FILE_HOST}\n"
+            f"x-amz-content-sha256:{payload_hash}\n"
+            f"x-amz-date:{amz_date}\n"
+        )
+        signed_headers = "host;x-amz-content-sha256;x-amz-date"
+        canonical_request = "\n".join(
+            (method, path, "", canonical_headers, signed_headers, payload_hash)
+        )
+        scope = f"{day}/{_MASSIVE_FLAT_FILE_REGION}/s3/aws4_request"
+        string_to_sign = "\n".join(
+            (
+                "AWS4-HMAC-SHA256",
+                amz_date,
+                scope,
+                hashlib.sha256(canonical_request.encode()).hexdigest(),
+            )
+        )
+        signature = hmac.new(
+            _sigv4_key(self._secret, day),
+            string_to_sign.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        authorization = (
+            "AWS4-HMAC-SHA256 "
+            f"Credential={_MASSIVE_FLAT_FILE_ACCESS_KEY_ID}/{scope},"
+            f"SignedHeaders={signed_headers},Signature={signature}"
+        )
+        return path, {
+            "Host": _MASSIVE_FLAT_FILE_HOST,
+            "x-amz-content-sha256": payload_hash,
+            "x-amz-date": amz_date,
+            "Authorization": authorization,
+        }
+
+    def _request(self, method: str, key: str) -> http.client.HTTPResponse:
+        path, headers = self._signed_headers(method, key, now=datetime.now(UTC))
+        connection = http.client.HTTPSConnection(_MASSIVE_FLAT_FILE_HOST, timeout=120)
+        connection.request(method, path, headers=headers)
+        response = connection.getresponse()
+        # Keep the connection alive through streaming GETs; callers close the response.
+        setattr(response, "_mai_tai_connection", connection)
+        return response
+
+    @staticmethod
+    def _close_response(response: http.client.HTTPResponse) -> None:
+        response.close()
+        connection = getattr(response, "_mai_tai_connection", None)
+        if connection is not None:
+            connection.close()
+
+    def head(self, key: str) -> FlatFileObject:
+        response = self._request("HEAD", key)
+        try:
+            if response.status != 200:
+                body = response.read(4_096).decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"flat-file HEAD {key} returned HTTP {response.status}: {body}"
+                )
+            raw_size = response.getheader("Content-Length")
+            if raw_size is None or not raw_size.isdigit():
+                raise RuntimeError(f"flat-file HEAD {key} omitted a numeric Content-Length")
+            return FlatFileObject(key=key, size_bytes=int(raw_size))
+        finally:
+            self._close_response(response)
+
+    def download(self, object_: FlatFileObject, destination: Path) -> None:
+        response = self._request("GET", object_.key)
+        temporary = destination.with_name(f".{destination.name}.tmp")
+        try:
+            if response.status != 200:
+                body = response.read(4_096).decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"flat-file GET {object_.key} returned HTTP {response.status}: {body}"
+                )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            written = 0
+            with temporary.open("wb") as handle:
+                while chunk := response.read(1024 * 1024):
+                    handle.write(chunk)
+                    written += len(chunk)
+            if written != object_.size_bytes:
+                raise RuntimeError(
+                    f"flat-file GET {object_.key} wrote {written} bytes, expected "
+                    f"{object_.size_bytes}"
+                )
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+            self._close_response(response)
 
 
 class PolicyLogCounter:
@@ -274,7 +519,9 @@ def summarize_massive_flat_file(path: Path, replay_dir: Path) -> PopulationResul
         source_sha256=_sha256(path),
         source_complete=True,
         blind_spots=(
-            "next-day source; cannot measure same-day availability",
+            "next-day source; files publish around 11:00 ET and cannot measure same-day availability",
+            "SIP timestamps are UTC epoch values and are converted explicitly to ET for the window",
+            "prices are unadjusted; no later split adjustment is applied",
             "SIP timestamps do not preserve websocket packet batching or host-arrival jitter",
             "cannot observe prints omitted or later corrected by the upstream provider",
         ),
@@ -290,12 +537,11 @@ def summarize_massive_flat_file(path: Path, replay_dir: Path) -> PopulationResul
     )
 
 
-def population_report(
-    flat_files: Sequence[Path], replay_dir: Path, *, required_session: date
+def _population_report_from_results(
+    results: Sequence[PopulationResult], *, required_session: date
 ) -> dict[str, object]:
-    if len(flat_files) < 3:
+    if len(results) < 3:
         raise RuntimeError("population is UNMEASURED: at least three flat files are required")
-    results = tuple(summarize_massive_flat_file(path, replay_dir) for path in flat_files)
     observed = [date.fromisoformat(row.session_date) for row in results]
     if len(set(observed)) != len(observed):
         raise RuntimeError("population is UNMEASURED: duplicate session files")
@@ -314,6 +560,13 @@ def population_report(
         "busiest_60s_prints": busiest.busiest_60s_prints,
         "source_documentation": "https://massive.com/docs/flat-files/stocks/trades",
     }
+
+
+def population_report(
+    flat_files: Sequence[Path], replay_dir: Path, *, required_session: date
+) -> dict[str, object]:
+    results = tuple(summarize_massive_flat_file(path, replay_dir) for path in flat_files)
+    return _population_report_from_results(results, required_session=required_session)
 
 
 def _decode_stream_data(fields: Mapping[object, object]) -> dict[str, object] | None:
@@ -554,40 +807,31 @@ async def _paced_replay(
     *,
     speed: float,
     handoff: BoundedPaperHandoff,
-    consumer: str,
-) -> tuple[int, list[float]]:
+    producer_socket: socket.socket,
+) -> tuple[SocketWriterCounters, float]:
     if speed <= 0:
         raise ValueError("speed must be positive")
     origin_source = rows[0][0]
     origin_wall = clock.monotonic_ns()
-    consumed = 0
-    lags_ms: list[float] = []
     producer_done = asyncio.Event()
-
-    async def drain() -> None:
-        nonlocal consumed
-        while not producer_done.is_set() or handoff.size:
-            try:
-                frame = await asyncio.wait_for(handoff.get(), timeout=0.05)
-            except TimeoutError:
-                continue
-            consumed += 1
-            lags_ms.append((clock.time_ns() - frame.received_ns) / 1_000_000)
-            handoff.task_done()
-
-    task = asyncio.create_task(drain()) if consumer == "active" else None
-    for source_ns, frame in rows:
-        target = origin_wall + int((source_ns - origin_source) / speed)
-        while (remaining := target - clock.monotonic_ns()) > 0:
-            await asyncio.sleep(min(remaining / 1_000_000_000, 0.01))
-        handoff.offer(
-            json.dumps(frame, sort_keys=True, separators=(",", ":")),
-            received_ns=clock.time_ns(),
-        )
-    producer_done.set()
-    if task is not None:
-        await task
-    return consumed, lags_ms
+    writer = asyncio.create_task(
+        drain_handoff_to_socket(handoff, producer_socket, producer_done)
+    )
+    offer_started = clock.monotonic_ns()
+    try:
+        for source_ns, frame in rows:
+            target = origin_wall + int((source_ns - origin_source) / speed)
+            while (remaining := target - clock.monotonic_ns()) > 0:
+                await asyncio.sleep(min(remaining / 1_000_000_000, 0.01))
+            handoff.offer(
+                json.dumps(frame, sort_keys=True, separators=(",", ":")),
+                received_ns=clock.time_ns(),
+            )
+    finally:
+        producer_done.set()
+    writer_counters = await writer
+    offer_elapsed_ms = (clock.monotonic_ns() - offer_started) / 1_000_000
+    return writer_counters, offer_elapsed_ms
 
 
 async def _gather_fail_fast(*awaitables: Awaitable[object]) -> tuple[object, ...]:
@@ -620,18 +864,21 @@ def evaluate_replay(
     speed: float,
     consumer: str,
     handoff_p99_ms: float | None,
-    replay_cpu_peak_pct_one_cpu: float,
+    producer_cpu_peak_pct_one_cpu: float,
     baseline_snapshot_p99_ms: float | None,
     replay_snapshot_p99_ms: float | None,
     baseline_quote_p99_ms: float | None,
     replay_quote_p99_ms: float | None,
     missed_snapshot_cycles: int,
-    dropped_frames: int,
+    socket_would_block_drops: int,
+    producer_offer_elapsed_ms: float,
+    active_offer_elapsed_ms: float | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     reasons: list[str] = []
+    offer_unmeasured = False
     if speed == 3 and handoff_p99_ms is not None and handoff_p99_ms >= 250:
         reasons.append("3x p99 hand-off lag is not below 250 ms")
-    if speed == 3 and replay_cpu_peak_pct_one_cpu >= 50:
+    if speed == 3 and producer_cpu_peak_pct_one_cpu >= 50:
         reasons.append("3x replay uses at least 50% of one CPU")
     snapshot_ok = _within_baseline(baseline_snapshot_p99_ms, replay_snapshot_p99_ms)
     quote_ok = _within_baseline(baseline_quote_p99_ms, replay_quote_p99_ms)
@@ -641,9 +888,15 @@ def evaluate_replay(
         reasons.append("snapshot cadence exceeded its baseline allowance")
     if quote_ok is False:
         reasons.append("quote latency exceeded its baseline allowance")
-    if consumer == "dead" and not dropped_frames:
-        reasons.append("dead consumer did not exercise the drop-oldest path")
-    unmeasured = snapshot_ok is None or quote_ok is None
+    if consumer == "dead":
+        if not socket_would_block_drops:
+            reasons.append("dead consumer did not exercise socket would-block drops")
+        offer_ok = _within_baseline(active_offer_elapsed_ms, producer_offer_elapsed_ms)
+        if offer_ok is False:
+            reasons.append("dead consumer slowed the producer offer loop")
+        if offer_ok is None:
+            offer_unmeasured = True
+    unmeasured = snapshot_ok is None or quote_ok is None or offer_unmeasured
     verdict = "FAIL" if reasons else "UNMEASURED" if unmeasured else "PASS"
     return verdict, tuple(reasons)
 
@@ -658,6 +911,8 @@ async def run_replay_once(
     speed: float,
     consumer: str,
     baseline_seconds: float,
+    active_offer_elapsed_ms: float | None = None,
+    access_checker: Callable[[], ReplayAccessEvidence] = require_replay_access,
 ) -> ReplayResult:
     if os.name == "posix" and os.getpriority(os.PRIO_PROCESS, 0) < 10:
         raise ReplayAborted("replay process nice value must be at least 10")
@@ -671,39 +926,67 @@ async def run_replay_once(
         policy_counter=policy_counter,
         initial_policy_count=policy_start,
     )
+    replay_access = access_checker()
     span_seconds = max(0.1, (rows[-1][0] - rows[0][0]) / 1_000_000_000 / speed + 0.1)
     handoff = BoundedPaperHandoff(capacity=10_000)
     cpu_path = output_dir / f"{label}-cpu.jsonl"
-    replay_result, during, cpu = await _gather_fail_fast(
-        _paced_replay(rows, speed=speed, handoff=handoff, consumer=consumer),
-        sample_existing_work(
-            redis,
-            duration_seconds=span_seconds,
-            output_path=output_dir / f"{label}-replay-streams.jsonl",
-            policy_counter=policy_counter,
-            initial_policy_count=policy_start,
-        ),
-        sample_processes(
-            {"replay": os.getpid(), "gateway": gateway_pid},
-            duration_seconds=span_seconds,
-            output_path=cpu_path,
-        ),
+    consumer_samples = output_dir / f"{label}-consumer.jsonl"
+    consumer_process = CrossProcessPaperConsumer(
+        mode=consumer,
+        raw_samples_path=consumer_samples,
     )
-    consumed, lags = replay_result
+    producer_socket: socket.socket | None = None
+    consumer_result = None
+    try:
+        consumer_pid = await asyncio.to_thread(consumer_process.start)
+        producer_socket = connect_consumer_socket(consumer_process.socket_path)
+        replay_result, during, cpu = await _gather_fail_fast(
+            _paced_replay(
+                rows,
+                speed=speed,
+                handoff=handoff,
+                producer_socket=producer_socket,
+            ),
+            sample_existing_work(
+                redis,
+                duration_seconds=span_seconds,
+                output_path=output_dir / f"{label}-replay-streams.jsonl",
+                policy_counter=policy_counter,
+                initial_policy_count=policy_start,
+            ),
+            sample_processes(
+                {
+                    "producer": os.getpid(),
+                    "consumer": consumer_pid,
+                    "gateway": gateway_pid,
+                },
+                duration_seconds=span_seconds,
+                output_path=cpu_path,
+            ),
+        )
+        consumer_result = await asyncio.to_thread(consumer_process.stop)
+    finally:
+        if producer_socket is not None:
+            producer_socket.close()
+        consumer_process.close()
+    writer_counters, offer_elapsed_ms = replay_result
+    lags = consumer_result.handoff_lags_ms
     counters = handoff.counters
     handoff_p99_ms = nearest_rank(lags, 99) if lags else None
-    replay_cpu_peak = float(cpu["replay"]["peak_cpu_pct_one_cpu"])
+    producer_cpu_peak = float(cpu["producer"]["peak_cpu_pct_one_cpu"])
     verdict, reasons = evaluate_replay(
         speed=speed,
         consumer=consumer,
         handoff_p99_ms=handoff_p99_ms,
-        replay_cpu_peak_pct_one_cpu=replay_cpu_peak,
+        producer_cpu_peak_pct_one_cpu=producer_cpu_peak,
         baseline_snapshot_p99_ms=baseline.snapshot_p99_ms,
         replay_snapshot_p99_ms=during.snapshot_p99_ms,
         baseline_quote_p99_ms=baseline.quote_latency_p99_ms,
         replay_quote_p99_ms=during.quote_latency_p99_ms,
         missed_snapshot_cycles=during.missed_snapshot_cycles,
-        dropped_frames=counters.dropped_frames,
+        socket_would_block_drops=writer_counters.would_block_drops,
+        producer_offer_elapsed_ms=offer_elapsed_ms,
+        active_offer_elapsed_ms=active_offer_elapsed_ms,
     )
     return ReplayResult(
         label=label,
@@ -711,21 +994,29 @@ async def run_replay_once(
         consumer=consumer,
         input_frames=counters.input_frames,
         forwarded_frames=counters.forwarded_frames,
-        dropped_frames=counters.dropped_frames,
+        queue_dropped_frames=counters.dropped_frames,
+        socket_would_block_drops=writer_counters.would_block_drops,
         parse_failures=counters.parse_failures,
-        consumed_frames=consumed,
+        producer_pid=consumer_result.producer_pid,
+        consumer_pid=consumer_result.consumer_pid,
+        consumed_frames=consumer_result.consumed_frames,
         handoff_p50_ms=nearest_rank(lags, 50) if lags else None,
         handoff_p95_ms=nearest_rank(lags, 95) if lags else None,
         handoff_p99_ms=handoff_p99_ms,
         handoff_max_ms=max(lags) if lags else None,
-        replay_cpu_peak_pct_one_cpu=replay_cpu_peak,
-        replay_peak_rss_bytes=int(cpu["replay"]["peak_rss_bytes"]),
+        producer_offer_elapsed_ms=offer_elapsed_ms,
+        producer_cpu_peak_pct_one_cpu=producer_cpu_peak,
+        producer_peak_rss_bytes=int(cpu["producer"]["peak_rss_bytes"]),
+        consumer_cpu_peak_pct_one_cpu=float(cpu["consumer"]["peak_cpu_pct_one_cpu"]),
+        consumer_peak_rss_bytes=int(cpu["consumer"]["peak_rss_bytes"]),
         gateway_cpu_peak_pct_one_cpu=float(cpu["gateway"]["peak_cpu_pct_one_cpu"]),
+        replay_access=replay_access,
         baseline=baseline,
         during=during,
         verdict=verdict,
         reasons=reasons,
         cpu_samples=str(cpu_path),
+        consumer_samples=consumer_result.raw_samples,
     )
 
 
@@ -782,8 +1073,9 @@ def render_population_markdown(report: Mapping[str, object]) -> str:
             "",
             "Source: Massive `us_stocks_sip/trades_v1` daily SIP flat files.",
             "",
-            "Blind spots: next-day availability; no websocket packet batching or host-arrival "
-            "jitter; no visibility into upstream omissions or later corrections.",
+            "Blind spots: next-day availability; UTC epoch timestamps are converted explicitly "
+            "to ET; prices are unadjusted; no websocket packet batching or host-arrival jitter; "
+            "no visibility into upstream omissions or later corrections.",
             "",
         ]
     )
@@ -798,8 +1090,8 @@ def render_replay_markdown(report: Mapping[str, object]) -> str:
         "",
         f"Quote precheck: **{report['quote_latency_row']}**",
         "",
-        "| Replay | Input | Forwarded | Dropped | Parse failures | p99 hand-off ms | "
-        "Replay CPU | Snapshot row | Quote row | Verdict |",
+        "| Replay | Input | Forwarded | Queue drops | Socket drops | p99 hand-off ms | "
+        "Producer CPU | Snapshot row | Quote row | Verdict |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
     ]
     for raw in report["replays"]:
@@ -807,9 +1099,9 @@ def render_replay_markdown(report: Mapping[str, object]) -> str:
         during = dict(replay["during"])
         rows.append(
             f"| {replay['label']} | {replay['input_frames']} | "
-            f"{replay['forwarded_frames']} | {replay['dropped_frames']} | "
-            f"{replay['parse_failures']} | {replay['handoff_p99_ms']} | "
-            f"{replay['replay_cpu_peak_pct_one_cpu']:.2f}% | "
+            f"{replay['forwarded_frames']} | {replay['queue_dropped_frames']} | "
+            f"{replay['socket_would_block_drops']} | {replay['handoff_p99_ms']} | "
+            f"{replay['producer_cpu_peak_pct_one_cpu']:.2f}% | "
             f"{during['snapshot_count']} samples/{during['missed_snapshot_cycles']} missed | "
             f"{during['quote_latency_status']} ({during['quote_count']}) | "
             f"{replay['verdict']} |"
@@ -830,38 +1122,113 @@ def _population_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _flat_file_key(day: date) -> str:
+    return (
+        f"us_stocks_sip/trades_v1/{day.year:04d}/{day.month:02d}/"
+        f"{day.isoformat()}.csv.gz"
+    )
+
+
+def _fetch_population_command(args: argparse.Namespace) -> int:
+    try:
+        if datetime.now(_ET).time() < _AFTER_HOURS_START:
+            raise RuntimeError("population downloads are restricted to 20:00 ET or later")
+        if os.name == "posix" and os.getpriority(os.PRIO_PROCESS, 0) < 10:
+            raise RuntimeError("population download process nice value must be at least 10")
+        sessions = tuple(date.fromisoformat(value) for value in args.session)
+        if len(sessions) < 3:
+            raise RuntimeError("population is UNMEASURED: at least three sessions are required")
+        if len(set(sessions)) != len(sessions):
+            raise RuntimeError("population is UNMEASURED: duplicate sessions requested")
+        required_session = date.fromisoformat(args.required_session)
+        if required_session not in sessions:
+            raise RuntimeError(
+                f"population is UNMEASURED: required session {required_session} is missing"
+            )
+        client = MassiveFlatFileClient.from_environment()
+        objects = tuple(client.head(_flat_file_key(day)) for day in sessions)
+        args.download_dir.mkdir(parents=True, exist_ok=True)
+        required_bytes = sum(row.size_bytes for row in objects) + args.free_space_reserve_bytes
+        free_bytes = shutil.disk_usage(args.download_dir).free
+        if free_bytes < required_bytes:
+            raise RuntimeError(
+                "population is UNMEASURED: insufficient free disk "
+                f"({free_bytes} available, {required_bytes} required including reserve)"
+            )
+
+        results: list[PopulationResult] = []
+        for day, object_ in zip(sessions, objects, strict=True):
+            raw_path = args.download_dir / f"{day.isoformat()}.csv.gz"
+            client.download(object_, raw_path)
+            result = summarize_massive_flat_file(raw_path, args.replay_dir)
+            results.append(result)
+            _write_json(
+                args.replay_dir / f"momentum-gateway-population-{day.isoformat()}.json",
+                asdict(result),
+            )
+            raw_path.unlink()
+        report = _population_report_from_results(
+            results,
+            required_session=required_session,
+        )
+    except RuntimeError as exc:
+        report = {"verdict": "UNMEASURED", "abort_reason": str(exc)}
+        _write_json(args.json, report)
+        _write_text(args.markdown, f"# Momentum gateway population\n\n{exc}\n")
+        print(json.dumps(report, sort_keys=True))
+        return verdict_exit_code("UNMEASURED")
+    _write_json(args.json, report)
+    _write_text(args.markdown, render_population_markdown(report))
+    print(json.dumps(report, sort_keys=True))
+    return 0
+
+
 async def _suite_command_async(args: argparse.Namespace) -> int:
-    local = datetime.now(_ET)
-    if local.time() < time(20):
-        raise ReplayAborted("live-box replay is restricted to 20:00 ET or later")
     output_dir: Path = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     redis = Redis.from_url(args.redis_url, decode_responses=True)
     policy_counter = PolicyLogCounter(args.policy_log)
     try:
+        initial_access = require_replay_access()
         precheck = await quote_precheck(
             redis,
             duration_seconds=args.quote_precheck_seconds,
             output_path=output_dir / "quote-precheck-streams.jsonl",
             policy_counter=policy_counter,
         )
-        rows = []
-        for speed, consumer in ((1.0, "active"), (3.0, "active"), (3.0, "dead")):
-            rows.append(
-                await run_replay_once(
-                    redis=redis,
-                    tape_path=args.tape,
-                    output_dir=output_dir,
-                    policy_counter=policy_counter,
-                    gateway_pid=args.gateway_pid,
-                    speed=speed,
-                    consumer=consumer,
-                    baseline_seconds=args.baseline_seconds,
-                )
+        active_3x_offer_elapsed_ms: float | None = None
+
+        async def replay(spec: tuple[float, str]) -> ReplayResult:
+            nonlocal active_3x_offer_elapsed_ms
+            speed, consumer = spec
+            row = await run_replay_once(
+                redis=redis,
+                tape_path=args.tape,
+                output_dir=output_dir,
+                policy_counter=policy_counter,
+                gateway_pid=args.gateway_pid,
+                speed=speed,
+                consumer=consumer,
+                baseline_seconds=args.baseline_seconds,
+                active_offer_elapsed_ms=(
+                    active_3x_offer_elapsed_ms if consumer == "dead" else None
+                ),
             )
+            if speed == 3 and consumer == "active":
+                active_3x_offer_elapsed_ms = row.producer_offer_elapsed_ms
+            return row
+
+        replay_access_checks, replay_rows = await run_guarded_replays(
+            ((1.0, "active"), (3.0, "active"), (3.0, "dead")),
+            access_checker=require_replay_access,
+            replay_runner=replay,
+        )
+        access_checks = (initial_access, *replay_access_checks)
+        rows = list(replay_rows)
     finally:
         await redis.aclose()
     report = {
+        "access_checks": [asdict(row) for row in access_checks],
         "quote_precheck": asdict(precheck),
         "quote_latency_row": measured_or_unmeasured(
             precheck.quote_count, absent_reason="NO_QUOTE_TICKS"
@@ -878,7 +1245,7 @@ async def _suite_command_async(args: argparse.Namespace) -> int:
     _write_json(output_dir / "replay-report.json", report)
     _write_text(output_dir / "replay-report.md", render_replay_markdown(report))
     print(json.dumps(report, sort_keys=True))
-    return 1 if report["verdict"] == "FAIL" else 0
+    return verdict_exit_code(str(report["verdict"]))
 
 
 def _suite_command(args: argparse.Namespace) -> int:
@@ -888,7 +1255,7 @@ def _suite_command(args: argparse.Namespace) -> int:
         report = {"verdict": "UNMEASURED", "abort_reason": str(exc)}
         _write_json(args.output_dir / "replay-aborted.json", report)
         print(json.dumps(report, sort_keys=True))
-        return 3
+        return verdict_exit_code("UNMEASURED")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -901,6 +1268,20 @@ def build_parser() -> argparse.ArgumentParser:
     population.add_argument("--json", type=Path, required=True)
     population.add_argument("--markdown", type=Path, required=True)
     population.set_defaults(run=_population_command)
+
+    fetch_population = subparsers.add_parser("fetch-population")
+    fetch_population.add_argument("--session", action="append", required=True)
+    fetch_population.add_argument("--required-session", default="2026-09-17")
+    fetch_population.add_argument("--download-dir", type=Path, required=True)
+    fetch_population.add_argument("--replay-dir", type=Path, required=True)
+    fetch_population.add_argument("--json", type=Path, required=True)
+    fetch_population.add_argument("--markdown", type=Path, required=True)
+    fetch_population.add_argument(
+        "--free-space-reserve-bytes",
+        type=int,
+        default=_DEFAULT_FREE_SPACE_RESERVE_BYTES,
+    )
+    fetch_population.set_defaults(run=_fetch_population_command)
 
     suite = subparsers.add_parser("replay-suite")
     suite.add_argument("--tape", type=Path, required=True)

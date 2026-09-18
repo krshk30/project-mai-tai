@@ -44,7 +44,7 @@ REAL_ACCOUNTS="live:schwab_1m_v2 live:orb"
 # absorb a slow sync and tight enough that a dead OMS is caught within one deploy decision.
 POS_MAX_AGE_S=${POS_MAX_AGE_S:-300}
 
-OVERRIDE_SYMS=""; OVERRIDE_CONFIRM=""
+OVERRIDE_SYMS=""; OVERRIDE_CONFIRM=""; STRICT_ALL_POSITIONS=0
 while [ $# -gt 0 ]; do
   case "$1" in
     # ⛔⭐ NOT A BYPASS, AND MUST NOT BECOME ONE. Mirrors the v2 sibling's design so the habit
@@ -56,6 +56,7 @@ while [ $# -gt 0 ]; do
     --operator-override)   OVERRIDE_SYMS="${2:-}"; shift 2 ;;
     --i-accept-naked-position) OVERRIDE_CONFIRM="yes"; shift ;;
     --max-age-seconds)     POS_MAX_AGE_S="${2:-300}"; shift 2 ;;
+    --require-all-account-positions-flat) STRICT_ALL_POSITIONS=1; shift ;;
     *) shift ;;
   esac
 done
@@ -109,15 +110,23 @@ else
 fi
 
 # ---------- gate 2: protected (operator-manual) symbols, from the ENV ----------
-PROT_RAW=$(sudo grep -E '^MAI_TAI_PROTECTED_SYMBOLS=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)
-if [ -z "${PROT_RAW:-}" ]; then
-  echo "  [warn]  MAI_TAI_PROTECTED_SYMBOLS unreadable/unset — using an EMPTY exclusion set."
-  echo "          That OVER-blocks (operator manuals will also block). Safe direction, on purpose."
+if [ "$STRICT_ALL_POSITIONS" -eq 1 ]; then
+  # The throughput study requires literal broker flatness. A manual position is still exposure
+  # while replaying load on the production host, so the study deliberately disables exclusions.
+  PROT_RAW=""
   PROT_SQL="''"
+  echo "  [info]  strict all-account-position flatness enabled; no symbols are excluded"
 else
-  PROT_SQL=$(echo "$PROT_RAW" | tr ',' '\n' | sed "s/^[ \t]*//;s/[ \t]*$//" | grep -v '^$' \
-             | sed "s/.*/'&'/" | paste -sd, -)
-  echo "  [ok]    operator manuals excluded (from env): $PROT_RAW"
+  PROT_RAW=$(sudo grep -E '^MAI_TAI_PROTECTED_SYMBOLS=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)
+  if [ -z "${PROT_RAW:-}" ]; then
+    echo "  [warn]  MAI_TAI_PROTECTED_SYMBOLS unreadable/unset — using an EMPTY exclusion set."
+    echo "          That OVER-blocks (operator manuals will also block). Safe direction, on purpose."
+    PROT_SQL="''"
+  else
+    PROT_SQL=$(echo "$PROT_RAW" | tr ',' '\n' | sed "s/^[ \t]*//;s/[ \t]*$//" | grep -v '^$' \
+               | sed "s/.*/'&'/" | paste -sd, -)
+    echo "  [ok]    operator manuals excluded (from env): $PROT_RAW"
+  fi
 fi
 
 # ---------- gate 3: the OMS's own managed rows ----------

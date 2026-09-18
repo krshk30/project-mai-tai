@@ -6,19 +6,27 @@ from datetime import UTC, date, datetime
 import gzip
 import json
 from pathlib import Path
+import subprocess
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from project_mai_tai.backtest.momentum_gateway_throughput import (
     _gather_fail_fast,
+    _flat_file_key,
     _missed_snapshot_cycles,
     evaluate_replay,
     PolicyLogCounter,
     measured_or_unmeasured,
+    MassiveFlatFileClient,
     nearest_rank,
     population_report,
     replay_abort_reason,
+    ReplayAborted,
+    require_replay_access,
+    run_guarded_replays,
     summarize_massive_flat_file,
+    verdict_exit_code,
 )
 
 
@@ -83,9 +91,27 @@ def test_population_counts_zeros_in_p99_and_writes_ordered_peak_tape(tmp_path: P
     assert result.seconds_observed == 2
     assert result.max_prints_1s == 2
     assert result.p99_prints_1s == 0
+    assert any("UTC epoch" in item for item in result.blind_spots)
+    assert any("unadjusted" in item for item in result.blind_spots)
     with gzip.open(result.replay_tape, "rt", encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle]
     assert [row["source_ns"] for row in rows] == sorted(row["source_ns"] for row in rows)
+
+
+def test_flat_file_signing_uses_path_style_and_never_emits_the_secret() -> None:
+    secret = "super-secret-not-for-output"
+    client = MassiveFlatFileClient(secret=secret)
+    key = _flat_file_key(date(2026, 9, 17))
+
+    path, headers = client._signed_headers(
+        "HEAD",
+        key,
+        now=datetime(2026, 9, 18, 19, 0, tzinfo=UTC),
+    )
+
+    assert path == "/flatfiles/us_stocks_sip/trades_v1/2026/09/2026-09-17.csv.gz"
+    assert "ba57433b-db93-4501-a02d-6a22bf4b1856" in headers["Authorization"]
+    assert secret not in json.dumps(headers)
 
 
 def test_population_requires_three_sessions_and_the_named_control_day(tmp_path: Path) -> None:
@@ -174,13 +200,15 @@ def _verdict(**overrides: object) -> tuple[str, tuple[str, ...]]:
         "speed": 3.0,
         "consumer": "active",
         "handoff_p99_ms": 249.999,
-        "replay_cpu_peak_pct_one_cpu": 49.999,
+        "producer_cpu_peak_pct_one_cpu": 49.999,
         "baseline_snapshot_p99_ms": 100.0,
         "replay_snapshot_p99_ms": 150.0,
         "baseline_quote_p99_ms": 1_000.0,
         "replay_quote_p99_ms": 1_100.0,
         "missed_snapshot_cycles": 0,
-        "dropped_frames": 0,
+        "socket_would_block_drops": 0,
+        "producer_offer_elapsed_ms": 100.0,
+        "active_offer_elapsed_ms": None,
     }
     values.update(overrides)
     return evaluate_replay(**values)
@@ -189,7 +217,7 @@ def _verdict(**overrides: object) -> tuple[str, tuple[str, ...]]:
 def test_frozen_replay_threshold_boundaries_are_pinned() -> None:
     assert _verdict()[0] == "PASS"
     assert _verdict(handoff_p99_ms=250.0)[0] == "FAIL"
-    assert _verdict(replay_cpu_peak_pct_one_cpu=50.0)[0] == "FAIL"
+    assert _verdict(producer_cpu_peak_pct_one_cpu=50.0)[0] == "FAIL"
     assert _verdict(replay_snapshot_p99_ms=150.001)[0] == "FAIL"
     assert _verdict(replay_quote_p99_ms=1_100.001)[0] == "FAIL"
     assert _verdict(missed_snapshot_cycles=1)[0] == "FAIL"
@@ -199,9 +227,32 @@ def test_missing_existing_work_denominator_is_unmeasured() -> None:
     assert _verdict(baseline_quote_p99_ms=None, replay_quote_p99_ms=None)[0] == "UNMEASURED"
 
 
-def test_dead_consumer_must_exercise_drop_oldest() -> None:
-    assert _verdict(consumer="dead", dropped_frames=0)[0] == "FAIL"
-    assert _verdict(consumer="dead", dropped_frames=1)[0] == "PASS"
+def test_dead_consumer_must_exercise_socket_drop_without_slowing_producer() -> None:
+    assert (
+        _verdict(
+            consumer="dead",
+            socket_would_block_drops=0,
+            active_offer_elapsed_ms=100.0,
+        )[0]
+        == "FAIL"
+    )
+    assert (
+        _verdict(
+            consumer="dead",
+            socket_would_block_drops=1,
+            active_offer_elapsed_ms=100.0,
+        )[0]
+        == "PASS"
+    )
+    assert (
+        _verdict(
+            consumer="dead",
+            socket_would_block_drops=1,
+            producer_offer_elapsed_ms=151.0,
+            active_offer_elapsed_ms=100.0,
+        )[0]
+        == "FAIL"
+    )
 
 
 def test_zero_quote_precheck_is_written_unmeasured() -> None:
@@ -243,3 +294,91 @@ async def test_abort_monitor_failure_cancels_the_replay_immediately() -> None:
         await _gather_fail_fast(replay(), abort_monitor())
 
     assert replay_cancelled.is_set()
+
+
+def _flat_preflight_result(returncode: int = 0) -> subprocess.CompletedProcess[str]:
+    output = "\n".join(
+        (
+            "[info] strict all-account-position flatness enabled",
+            "[ok] zero open managed rows",
+            "[ok] live:schwab_1m_v2 flat [1s old]",
+            "[ok] live:orb flat [2s old]",
+        )
+    )
+    return subprocess.CompletedProcess([], returncode, stdout=output, stderr="")
+
+
+def test_replay_access_uses_strict_flatness_between_1605_and_2000() -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return _flat_preflight_result()
+
+    result = require_replay_access(
+        now=datetime(2026, 9, 18, 17, 0, tzinfo=ZoneInfo("America/New_York")),
+        preflight_path=Path("/tmp/preflight"),
+        runner=runner,
+    )
+
+    assert result.branch == "FLAT_16_05_TO_20_ET"
+    assert calls == [["/tmp/preflight", "--require-all-account-positions-flat"]]
+
+
+def test_replay_access_after_2000_does_not_claim_flatness() -> None:
+    def runner(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("after-hours branch must not run the flatness preflight")
+
+    result = require_replay_access(
+        now=datetime(2026, 9, 18, 20, 0, tzinfo=ZoneInfo("America/New_York")),
+        runner=runner,
+    )
+
+    assert result.branch == "AFTER_20_ET"
+    assert "flatness preflight not required" in result.detail
+
+
+def test_replay_access_refuses_before_1605_and_on_nonflat_result() -> None:
+    with pytest.raises(ReplayAborted, match="16:05"):
+        require_replay_access(
+            now=datetime(2026, 9, 18, 16, 4, 59, tzinfo=ZoneInfo("America/New_York"))
+        )
+
+    with pytest.raises(ReplayAborted, match="preflight refused"):
+        require_replay_access(
+            now=datetime(2026, 9, 18, 17, 0, tzinfo=ZoneInfo("America/New_York")),
+            runner=lambda *_args, **_kwargs: _flat_preflight_result(returncode=1),
+        )
+
+
+@pytest.mark.asyncio
+async def test_flatness_is_rechecked_between_replays_and_stops_the_next_run() -> None:
+    checks = 0
+    runs: list[str] = []
+
+    def check() -> object:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise ReplayAborted("position appeared")
+        return require_replay_access(
+            now=datetime(2026, 9, 18, 20, 0, tzinfo=ZoneInfo("America/New_York"))
+        )
+
+    async def replay(spec: str) -> str:
+        runs.append(spec)
+        return spec
+
+    with pytest.raises(ReplayAborted, match="position appeared"):
+        await run_guarded_replays(
+            ("1x", "3x", "dead"), access_checker=check, replay_runner=replay
+        )
+
+    assert checks == 2
+    assert runs == ["1x"]
+
+
+def test_unmeasured_has_a_distinct_nonzero_exit_code() -> None:
+    assert verdict_exit_code("PASS") == 0
+    assert verdict_exit_code("FAIL") == 1
+    assert verdict_exit_code("UNMEASURED") == 2

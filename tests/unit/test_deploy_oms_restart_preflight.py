@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "ops/systemd/deploy_service.sh"
+PREFLIGHT = ROOT / "ops/preflight/preflight_oms_restart.sh"
 
 
 def _preflight_function() -> str:
@@ -78,3 +79,62 @@ def test_market_data_deploy_does_not_gain_the_oms_fence() -> None:
         "    ;;", maxsplit=1
     )[0]
     assert "run_oms_restart_preflight" not in market_data_branch
+
+
+def test_strict_flatness_mode_includes_protected_manual_positions(tmp_path: Path) -> None:
+    env_file = tmp_path / "project-mai-tai.env"
+    env_file.write_text(
+        "MAI_TAI_DATABASE_URL=postgresql://user:password@localhost/project_mai_tai\n"
+        "MAI_TAI_PROTECTED_SYMBOLS=MANUAL\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    sudo = bin_dir / "sudo"
+    sudo.write_text("#!/usr/bin/env bash\nexec \"$@\"\n", encoding="utf-8")
+    sudo.chmod(0o755)
+    psql = bin_dir / "psql"
+    psql.write_text(
+        """#!/usr/bin/env bash
+query="$*"
+case "$query" in
+  *"SELECT 1"*) echo 1 ;;
+  *"count(*) FROM oms_managed_positions"*) echo 0 ;;
+  *"now()-max(ap.updated_at)"*) echo 1 ;;
+  *"ap.quantity <> 0"*)
+    case "$query" in
+      *"NOT IN ('')"*) echo MANUAL=1 ;;
+      *) echo '' ;;
+    esac
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    psql.chmod(0o755)
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "MAI_TAI_ENV_FILE": str(env_file),
+    }
+
+    normal = subprocess.run(
+        ["bash", str(PREFLIGHT)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    strict = subprocess.run(
+        ["bash", str(PREFLIGHT), "--require-all-account-positions-flat"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert normal.returncode == 0
+    assert "operator manuals excluded" in normal.stdout
+    assert strict.returncode == 1
+    assert "strict all-account-position flatness enabled" in strict.stdout
+    assert "live:schwab_1m_v2 NOT FLAT" in strict.stdout
+    assert "MANUAL=1" in strict.stdout

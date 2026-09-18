@@ -36,8 +36,11 @@ than a shortcut around it.
 
 The live-box replay has these fail-closed preconditions and limits:
 
-- Start only when both live accounts have zero open managed rows and zero non-zero account
-  positions, or after 20:00 ET.
+- From 16:05 through 19:59:59 ET, start only after the existing OMS restart preflight proves zero
+  open managed rows and fresh, zero non-zero `account_positions` on both live accounts in strict
+  mode (manual/protected symbols are not excluded). Re-run that proof immediately before each of
+  the three replays. A position appearing between runs aborts the suite as UNMEASURED. At or after
+  20:00 ET, record the after-hours branch instead; it does not claim that account state was read.
 - Run as a separate `nice -n 10` process. Never import it into, attach it to, or restart the
   running gateway.
 - Before each run, record the gateway heartbeat status, the current count of
@@ -56,8 +59,13 @@ For each run report:
 - the gateway's existing snapshot cadence and active-symbol quote latency before and during replay.
 
 The measurement must state how CPU, lag, snapshot cadence, and active-symbol quote latency were
-sampled. A silent or dead Momentum consumer must also be exercised: the gateway must continue its
-own work while the bounded paper queue drops frames and increments a counter.
+sampled. A silent or dead Momentum consumer must also be exercised. The producer and consumer are
+separate processes connected by a local Unix datagram socket: parse and non-awaiting queue offer
+run in the producer, a writer task drains to the non-blocking socket, and the consumer reads in its
+own process. Hand-off lag is consumer receipt time minus producer `received_ns` on the same host
+clock. A connected-but-non-reading consumer must fill the socket, increment a dedicated
+would-block drop counter, and leave producer offer-loop duration within the same +10% or +50 ms
+allowance as the active-consumer 3x run. Queue drops and socket drops are reported separately.
 
 ### Existing-work sampling
 
@@ -76,9 +84,9 @@ run. A read-only sampler starts Redis `XREAD` cursors at `$` on `snapshot-batche
   latency; the current quote payload has no SIP timestamp, so it does not claim exchange-to-host
   latency. The same sampler, host clock, symbol set, and calculation are used for baseline and
   replay.
-- CPU is sampled once per second for the separate replay process and expressed as a percentage of
-  one CPU. The running gateway PID is sampled separately so a replay cannot hide work shifted into
-  the live process.
+- CPU is sampled once per second for the producer process and expressed as a percentage of one
+  CPU. The separate consumer process and running gateway PID are sampled separately so a replay
+  cannot hide work shifted into either one.
 
 For each metric, the replay p99 must be no greater than:
 
@@ -95,8 +103,9 @@ PASS requires all of the following at **3x the measured peak**:
 2. The forward path uses less than 50% of one CPU.
 3. Snapshot-cadence p99 and active-symbol quote-latency p99 each stay within
    `baseline + max(10% of baseline, 50 ms)`, with zero missed five-second snapshot cycles.
-4. The gateway read loop never blocks on the Momentum consumer; a stalled consumer raises the
-   dropped-frame count instead.
+4. The gateway stand-in never blocks on the Momentum consumer; a stalled separate consumer raises
+   the Unix-socket would-block drop count while producer offer-loop timing remains within its
+   active-consumer allowance.
 
 Any failed condition is **FAIL**. Report the measurements and stop; the operator decides whether
 the architecture proceeds. The thresholds and consequences above must not change after results are
@@ -121,21 +130,30 @@ The measurement implementation is intentionally standalone:
 
 - `project_mai_tai.momentum_gateway_handoff` is the proposed parse-and-forward path: an
   `asyncio.Queue` with non-awaiting `put_nowait`, drop-oldest behavior, and explicit input,
-  forwarded, dropped, and parse-failure counters. No gateway or service imports it.
+  forwarded, dropped, and parse-failure counters. Its writer uses a non-blocking local Unix
+  datagram socket and its measurement consumer is a separate spawned process. No gateway or
+  service imports it.
 - `project_mai_tai.backtest.momentum_gateway_throughput population` reads complete Massive
   `us_stocks_sip/trades_v1/YYYY/MM/YYYY-MM-DD.csv.gz` files. Massive describes these as daily,
   whole-market SIP files containing tick-level trades from exchanges and dark pools:
   <https://massive.com/docs/flat-files/stocks/trades>. This is the least-load source because it is
-  one bulk file per session rather than per-symbol REST pagination. It is next-day data and cannot
-  reproduce websocket packet batching, host-arrival jitter, upstream omissions, or later provider
-  corrections; those limits are printed in every population result. SIP timestamps, not file row
-  order, define the measured seconds and replay pace.
-- `project_mai_tai.backtest.momentum_gateway_throughput replay-suite` runs only at or after 20:00
-  ET, requires process niceness of at least 10, and performs the two-minute quote precheck, a fresh
+  one bulk file per session rather than per-symbol REST pagination. Files publish the next day;
+  prices are unadjusted; SIP timestamps are UTC epoch values converted explicitly to ET; and the
+  files cannot reproduce websocket packet batching, host-arrival jitter, upstream omissions, or
+  later provider corrections. Those limits are printed in every population result. SIP
+  timestamps, not file row order, define the measured seconds and replay pace. The optional
+  `fetch-population` path uses the path-style `flatfiles` S3 endpoint with SigV4, reads the existing
+  `MAI_TAI_MASSIVE_API_KEY` only from the measurement process environment, checks free disk before
+  downloading, and removes each raw day only after its count record and peak-minute tape exist.
+- `project_mai_tai.backtest.momentum_gateway_throughput replay-suite` runs from 16:05 ET when the
+  strict flatness proof passes, or after 20:00 ET under the explicit after-hours branch. It
+  requires process niceness of at least 10 and performs the two-minute quote precheck, a fresh
   ten-minute read-only baseline before each 1x/3x/dead-consumer replay, the frozen abort checks,
   and one-second process sampling. It writes raw stream receipt timestamps and CPU/RSS samples.
   If the quote precheck has zero `QuoteTickEvent` rows, the quote-latency row and overall verdict
-  are written `UNMEASURED`; the tool does not substitute another metric.
+  are written `UNMEASURED`; the tool does not substitute another metric. Exit codes are `0` PASS,
+  `1` FAIL, and `2` UNMEASURED, so the detached runner cannot page an unmeasured suite as a
+  successful completion.
 
 The Redis observer starts `XREAD` offsets at `$` and only calls `XREAD`/`XREVRANGE`. It never
 publishes, trims, acknowledges, joins a consumer group, or changes either observed stream.
