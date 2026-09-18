@@ -311,6 +311,43 @@ async def test_cancel_ahead_of_a_queued_resubmit_prevents_the_broker_submit(
     assert any("reason=slot_claim_no_longer_current" in line for line in service.logger.lines)
 
 
+@pytest.mark.asyncio
+async def test_non_price_aggressive_resubmit_outcome_forgets_the_claimed_slot(
+    monkeypatch,
+) -> None:
+    service = _service()
+    _defer(service)
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "ask": Decimal("9.5"),
+        "received_at": datetime.now(UTC),
+    }
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
+    queued = _queued_events(service)[0]
+
+    async def _process(event: TradeIntentEvent):
+        service._observe_webull_mirror_deferred_reports(
+            event=event,
+            reports=[
+                _report(
+                    "rejected",
+                    error_code="TOO_MANY_REQUESTS",
+                    reason="Webull order rejected: too many requests (http 429)",
+                )
+            ],
+        )
+        return []
+
+    service.process_trade_intent = _process  # type: ignore[method-assign]
+    await service._handle_stream_message({"data": queued.model_dump_json()})
+
+    assert SLOT not in service._webull_mirror_deferred_by_slot
+    assert any(
+        "reason=resubmit_finished_without_price_aggressive_reject" in line
+        for line in service.logger.lines
+    )
+
+
 def test_cancel_for_the_slot_forgets_even_when_the_broker_target_is_missing() -> None:
     service = _service()
     _defer(service)
