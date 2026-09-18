@@ -599,6 +599,9 @@ class OmsRiskService:
         }
     )
     _EXIT_RELEASE_INCIDENT_SOURCE = "oms_v2_exit_release_unresolved"
+    _CONFIRMATION_EXIT_INCIDENT_SOURCE = "oms_v2_confirmation_exit_reprotected"
+    _CONFIRMATION_EXIT_EXPIRY_SECONDS = 180.0
+    _CONFIRMATION_EXIT_RELEASE_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
     # ⛔ OPERATOR RISK DECISION, 2026-08-06, NOT a derived value. Sits inside the bimodal gap where
     # every bound from ~90s to ~250s escalates on the SAME 7 of 11 -- so nothing is traded away
     # anywhere in that range. Do not "optimise" it against a percentile.
@@ -4281,12 +4284,19 @@ class OmsRiskService:
         return elapsed
 
     async def _prepare_confirmation_webull_leg(
-        self, acct: str, symbol: str, *, expected_row_id: str
+        self,
+        acct: str,
+        symbol: str,
+        *,
+        expected_row_id: str,
+        expires_at: datetime,
+        decision: _ConfirmationFanoutDecision,
     ) -> str:
-        """Return ``released``, ``no_pair``, or ``refused`` before a Webull CONF3 sell.
+        """Release a Webull pair authoritatively before a confirmation sell.
 
-        This is deliberately stricter than the generic software-ladder release: CONF3 is a
-        one-shot decision, so an uncertain cancel cannot be recovered by another quote tick.
+        Every attempt asks the adapter to cancel and then read both deterministic child ids. A
+        request error is never treated as absence by itself. The only sell-authorising outcomes
+        are two terminal/absent legs or one positively identified broker fill.
         """
         def _read_base(session: Session) -> tuple[bool, str]:
             row = self.store.get_open_managed_position(
@@ -4351,69 +4361,87 @@ class OmsRiskService:
                 acct,
             )
             return "refused"
-        try:
-            reports = await self.broker_adapter.cancel_exit_pair(
-                broker_account_name=acct,
-                symbol=symbol,
-                base_client_order_id=base,
+        attempts = 1 + len(self._CONFIRMATION_EXIT_RELEASE_BACKOFF_SECONDS)
+        attempted = 0
+        release = ExitPairReleaseResult(outcome="unanswerable")
+        for attempt in range(1, attempts + 1):
+            if attempt > 1:
+                delay = self._CONFIRMATION_EXIT_RELEASE_BACKOFF_SECONDS[attempt - 2]
+                if utcnow() + timedelta(seconds=delay) >= expires_at:
+                    break
+                await asyncio.sleep(delay)
+            attempted = attempt
+            try:
+                release = await self.broker_adapter.release_exit_pair_for_close(
+                    broker_account_name=acct,
+                    symbol=symbol,
+                    base_client_order_id=base,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - an unreadable pair never authorizes a sell
+                self.logger.exception(
+                    "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RETRY] sym=%s acct=%s base=%s "
+                    "attempt=%d/%d outcome=unanswerable reason=pair_cancel_or_read_failed",
+                    symbol,
+                    acct,
+                    base,
+                    attempt,
+                    attempts,
+                )
+                release = ExitPairReleaseResult(outcome="unanswerable")
+
+            if release.outcome == "resolved_by_fill":
+                return "resolved_by_fill"
+            if release.outcome == "released":
+                self._exit_reservation_released.add(key)
+                released_episodes[key] = episode
+                self.logger.info(
+                    "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED] sym=%s acct=%s base=%s "
+                    "attempt=%d/%d requested=2 confirmed=2",
+                    symbol,
+                    acct,
+                    base,
+                    attempt,
+                    attempts,
+                )
+                return "released"
+
+            unreadable = sum(
+                str(getattr(report, "metadata", {}).get("cancel_outcome", ""))
+                == "could_not_tell"
+                for report in release.reports
             )
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - never sell into an uncertain reservation
-            self.logger.exception(
-                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s base=%s "
-                "reason=pair_cancel_failed",
+            working = sum(
+                str(getattr(report, "event_type", "")).lower()
+                in {"accepted", "partially_filled"}
+                and str(getattr(report, "metadata", {}).get("cancel_outcome", ""))
+                != "could_not_tell"
+                for report in release.reports
+            )
+            self.logger.warning(
+                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RETRY] sym=%s acct=%s base=%s "
+                "attempt=%d/%d outcome=%s reports=%d working=%d unreadable=%d",
                 symbol,
                 acct,
                 base,
+                attempt,
+                attempts,
+                release.outcome,
+                len(release.reports),
+                working,
+                unreadable,
             )
-            return "refused"
-        cancelled = sum(
-            str(getattr(report, "event_type", "")).lower() == "cancelled"
-            for report in reports
-        )
-        # A second cancel can already be in flight when the first one proves both deterministic
-        # legs absent. Webull answers that race with ORDER_CAN_NOT_BE_CANCEL. It is equivalent to
-        # absence only for the exact row/base whose release was positively confirmed; without
-        # that prior proof the same code remains uncertainty and must not authorize a sell.
-        prior_release = (
-            key in self._exit_reservation_released
-            and released_episodes.get(key) == episode
-        )
-        already_absent = sum(
-            str(getattr(report, "event_type", "")).lower() == "rejected"
-            and str(getattr(report, "metadata", {}).get("webull_error_code", ""))
-            .strip()
-            .upper()
-            == "ORDER_CAN_NOT_BE_CANCEL"
-            for report in reports
-        )
-        confirmed = cancelled + (already_absent if prior_release else 0)
-        if len(reports) != 2 or confirmed != 2:
-            self.logger.error(
-                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s base=%s "
-                "reason=pair_cancel_unconfirmed reports=%d confirmed=%d already_absent=%d "
-                "prior_release=%d",
-                symbol,
-                acct,
-                base,
-                len(reports),
-                confirmed,
-                already_absent,
-                int(prior_release),
-            )
-            return "refused"
-        self._exit_reservation_released.add(key)
-        released_episodes[key] = episode
-        self.logger.info(
-            "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED] sym=%s acct=%s base=%s "
-            "requested=2 confirmed=2 already_absent=%d",
-            symbol,
+
+        missing_legs = self._confirmation_missing_pair_legs(base, release.reports)
+        return await self._reprotect_confirmation_webull_leg(
+            decision,
             acct,
-            base,
-            already_absent,
+            symbol,
+            expected_row_id=expected_row_id,
+            reason=f"release_{release.outcome}_after_{attempted}_attempts",
+            missing_legs=missing_legs,
         )
-        return "released"
 
     async def _confirmation_reprotect_spec(
         self, acct: str, symbol: str, *, expected_row_id: str
@@ -4436,6 +4464,191 @@ class OmsRiskService:
             return await self._run_db(_read, commit=False)
         except Exception:  # noqa: BLE001 - recovery reports uncovered rather than guessing
             return None
+
+    @staticmethod
+    def _confirmation_missing_pair_legs(
+        base: str, reports: tuple[ExecutionReport, ...]
+    ) -> str:
+        """Name terminal/missing children without treating an unreadable child as absent."""
+        names = ("target", "stop")
+        missing: list[str] = []
+        unknown: list[str] = []
+        for index, name in enumerate(names):
+            if index >= len(reports):
+                unknown.append(name)
+                continue
+            report = reports[index]
+            outcome = str(report.metadata.get("cancel_outcome", ""))
+            if report.event_type in {"cancelled", "filled"}:
+                missing.append(name)
+            elif outcome == "could_not_tell":
+                unknown.append(name)
+        parts = []
+        if missing:
+            parts.append(",".join(missing))
+        if unknown:
+            parts.append("unknown:" + ",".join(unknown))
+        return ";".join(parts) or f"none_working:{base}"
+
+    @staticmethod
+    def _confirmation_exit_reprotect_incident(
+        session: Session,
+        *,
+        acct: str,
+        symbol: str,
+        managed_row_id: str,
+        source_fill_id: str,
+    ) -> SystemIncident | None:
+        incidents = session.scalars(
+            select(SystemIncident).where(
+                SystemIncident.service_name == SERVICE_NAME,
+                SystemIncident.status != "closed",
+            )
+        ).all()
+        return next(
+            (
+                incident
+                for incident in incidents
+                if isinstance(incident.payload, dict)
+                and incident.payload.get("source")
+                == OmsRiskService._CONFIRMATION_EXIT_INCIDENT_SOURCE
+                and incident.payload.get("broker_account_name") == acct
+                and incident.payload.get("symbol") == symbol
+                and incident.payload.get("managed_row_id") == managed_row_id
+                and incident.payload.get("source_fill_id") == source_fill_id
+            ),
+            None,
+        )
+
+    async def _page_confirmation_exit_reprotected(
+        self,
+        decision: _ConfirmationFanoutDecision,
+        acct: str,
+        symbol: str,
+        *,
+        expected_row_id: str,
+        reason: str,
+        missing_legs: str,
+        protected: bool,
+    ) -> None:
+        """Persist one incident; the #1002 pager delivers it once and retries failed delivery."""
+
+        def _write(session: Session) -> bool:
+            incident = self._confirmation_exit_reprotect_incident(
+                session,
+                acct=acct,
+                symbol=symbol,
+                managed_row_id=expected_row_id,
+                source_fill_id=decision.source_fill_id,
+            )
+            payload = {
+                "source": self._CONFIRMATION_EXIT_INCIDENT_SOURCE,
+                "broker_account_name": acct,
+                "symbol": symbol,
+                "managed_row_id": expected_row_id,
+                "source_fill_id": decision.source_fill_id,
+                "close_outcome": "reprotected" if protected else "protection_failed",
+                "protection_restored": protected,
+                "missing_legs": missing_legs,
+                "reason": reason,
+            }
+            title = (
+                f"Confirmation exit REPROTECTED: {symbol} on {acct}; close incomplete"
+                if protected
+                else f"Confirmation exit protection FAILED: {symbol} on {acct}; check now"
+            )[:255]
+            if incident is None:
+                session.add(
+                    SystemIncident(
+                        service_name=SERVICE_NAME,
+                        severity="critical",
+                        title=title,
+                        status="open",
+                        payload=payload,
+                        opened_at=utcnow(),
+                    )
+                )
+                return True
+            incident.severity = "critical"
+            incident.title = title
+            incident.status = "open"
+            incident.closed_at = None
+            incident.payload = payload
+            return False
+
+        try:
+            created = bool(await self._run_db(_write, commit=True))
+        except Exception:  # noqa: BLE001 - paging failure must be visible but not hide the outcome
+            self.logger.exception(
+                "[OMS-V2-CONFIRMATION-EXIT-PAGE-FAILED] sym=%s acct=%s fill_id=%s",
+                symbol,
+                acct,
+                decision.source_fill_id,
+            )
+            return
+        if created:
+            self.logger.error(
+                "[OMS-V2-CONFIRMATION-EXIT-PAGE] sym=%s acct=%s fill_id=%s "
+                "protected=%d missing_legs=%s status=OPEN",
+                symbol,
+                acct,
+                decision.source_fill_id,
+                int(protected),
+                missing_legs,
+            )
+
+    async def _reprotect_confirmation_webull_leg(
+        self,
+        decision: _ConfirmationFanoutDecision,
+        acct: str,
+        symbol: str,
+        *,
+        expected_row_id: str,
+        reason: str,
+        missing_legs: str,
+    ) -> str:
+        spec = await self._confirmation_reprotect_spec(
+            acct, symbol, expected_row_id=expected_row_id
+        )
+        task = (
+            self._reprotect_after_failed_release(acct, symbol, spec)
+            if spec is not None and _is_regular_market_session()
+            else None
+        )
+        protected = bool(task and await task)
+        key = (acct, symbol)
+        if protected:
+            decision.reprotected.add(acct)
+            self._exit_reservation_released.discard(key)
+            self.__dict__.setdefault("_confirmation_webull_released_episode", {}).pop(
+                key, None
+            )
+            self._end_confirmation_unprotected_interval(
+                decision, acct, symbol, resolution="reprotected"
+            )
+        else:
+            decision.uncovered.add(acct)
+            self._observe_confirmation_unprotected_interval(decision, acct, symbol)
+        self.logger.error(
+            "[OMS-V2-CONFIRMATION-EXIT-REPROTECTED] sym=%s acct=%s fill_id=%s "
+            "protected=%d reason=%s missing_legs=%s",
+            symbol,
+            acct,
+            decision.source_fill_id,
+            int(protected),
+            reason,
+            missing_legs,
+        )
+        await self._page_confirmation_exit_reprotected(
+            decision,
+            acct,
+            symbol,
+            expected_row_id=expected_row_id,
+            reason=reason,
+            missing_legs=missing_legs,
+            protected=protected,
+        )
+        return "reprotected" if protected else "uncovered"
 
     async def _close_confirmation_flat_leg(
         self, acct: str, symbol: str, *, expected_row_id: str
@@ -4471,7 +4684,7 @@ class OmsRiskService:
         expected_row_id: str,
         confirmation: dict[str, object] | None = None,
     ) -> None:
-        """After a refused sell, prove flat or restore the pair; never claim hidden protection."""
+        """After a refused sell, prove flat or restore broker protection and page once."""
         try:
             state = await self._broker_symbol_position_state(acct, symbol)
             if state is _PositionRead.FLAT_CONFIRMED and await self._close_confirmation_flat_leg(
@@ -4484,76 +4697,21 @@ class OmsRiskService:
                     decision, acct, outcome="flat", released=True
                 )
                 return
-            spec = await self._confirmation_reprotect_spec(
-                acct, symbol, expected_row_id=expected_row_id
-            )
-            if spec is not None and _is_regular_market_session():
-                reprotect_task = self._reprotect_after_failed_release(acct, symbol, spec)
-                protected = bool(reprotect_task and await reprotect_task)
-                if protected:
-                    key = (acct, symbol)
-                    # Record the restored broker cover even when the same decision will receive
-                    # its one bounded retry. The terminal fanout line must never describe a leg as
-                    # released without also showing either close progress or this reprotection.
-                    decision.reprotected.add(acct)
-                    self._exit_reservation_released.discard(key)
-                    self.__dict__.setdefault(
-                        "_confirmation_webull_released_episode", {}
-                    ).pop(key, None)
-                    self._end_confirmation_unprotected_interval(
-                        decision, acct, symbol, resolution="reprotected"
-                    )
-                    retry_count = int((confirmation or {}).get("confirmation_retry_count", 0))
-                    if confirmation is not None and retry_count < 1:
-                        retry = dict(confirmation)
-                        retry["confirmation_retry_count"] = retry_count + 1
-                        latest = self._latest_quotes_by_symbol.get(symbol, {}).get(
-                            "received_at"
-                        )
-                        retry_after = latest if isinstance(latest, datetime) else utcnow()
-                        retry["evaluated_at_ms"] = str(
-                            int(retry_after.timestamp() * 1000)
-                        )
-                        self._confirmation_exit_pending[key] = retry
-                        self.logger.warning(
-                            "[OMS-V2-CONFIRMATION-EXIT-RETRY-SCHEDULED] sym=%s acct=%s "
-                            "managed_row=%s retry=1/1 protection=restored",
-                            symbol,
-                            acct,
-                            expected_row_id,
-                        )
-                        return
-                    self._finish_confirmation_fanout_leg(
-                        decision,
-                        acct,
-                        outcome="refused",
-                        released=True,
-                        reprotected=True,
-                    )
-                    return
-            elapsed = self._observe_confirmation_unprotected_interval(
-                decision, acct, symbol
-            )
-            currently_unprotected = len(
-                self.__dict__.setdefault("_confirmation_unprotected_since", {})
-            )
-            self.logger.error(
-                "[OMS-V2-CONFIRMATION-EXIT-UNCOVERED] sym=%s acct=%s state=%s "
-                "released=1 reprotected=0 uncovered=1 released_unprotected_seconds=%.3f "
-                "released_unprotected_current=%d — confirmation sell failed after the pair "
-                "was cancelled; operator protection is required",
-                symbol,
+            result = await self._reprotect_confirmation_webull_leg(
+                decision,
                 acct,
-                state.value,
-                elapsed,
-                currently_unprotected,
+                symbol,
+                expected_row_id=expected_row_id,
+                reason=f"close_{(confirmation or {}).get('confirmation_close_outcome', 'refused')}",
+                missing_legs="target,stop",
             )
             self._finish_confirmation_fanout_leg(
                 decision,
                 acct,
-                outcome="uncovered",
+                outcome=result,
                 released=True,
-                uncovered=True,
+                reprotected=result == "reprotected",
+                uncovered=result == "uncovered",
             )
         except asyncio.CancelledError:
             raise
@@ -4573,12 +4731,17 @@ class OmsRiskService:
                 elapsed,
                 currently_unprotected,
             )
-            self._finish_confirmation_fanout_leg(
+            await self._page_confirmation_exit_reprotected(
                 decision,
                 acct,
-                outcome="uncovered",
-                released=True,
-                uncovered=True,
+                symbol,
+                expected_row_id=expected_row_id,
+                reason="recovery_failed",
+                missing_legs="unknown:target,stop",
+                protected=False,
+            )
+            self._finish_confirmation_fanout_leg(
+                decision, acct, outcome="uncovered", released=True, uncovered=True
             )
 
     def _spawn_confirmation_webull_recovery(
@@ -4620,12 +4783,14 @@ class OmsRiskService:
             and protection == "released"
             and outcome not in {"closed", "close_submitted", "flat", "resolved_by_fill"}
         ):
+            recovery_confirmation = dict(confirmation or {})
+            recovery_confirmation["confirmation_close_outcome"] = outcome
             self._spawn_confirmation_webull_recovery(
                 decision,
                 acct,
                 symbol,
                 expected_row_id=expected_row_id,
-                confirmation=confirmation,
+                confirmation=recovery_confirmation,
             )
             return
         if self._is_v2_webull_account(acct) and protection == "released":
@@ -5027,6 +5192,14 @@ class OmsRiskService:
                 return
             if float(quote.get("bid") or 0.0) <= 0:
                 return
+            # Claim before the first await. Previously two quote tasks could both pass the
+            # in-flight check, yield on the managed-row read below, then cancel the same pair.
+            if confirmation_pending.get(key) is not confirmation:
+                return
+            confirmation_inflight.add(key)
+            expires_at = evaluated_at + timedelta(
+                seconds=self._CONFIRMATION_EXIT_EXPIRY_SECONDS
+            )
             # ⛔⭐⭐ IDENTITY BEFORE PROTECTION (codex-2, #897 R1). Checking the binding only at the
             # emit was too late: a stale decision still reached
             # `_reconcile_confirmation_exit_protection`, which RELEASES the native OCO — so a
@@ -5050,6 +5223,7 @@ class OmsRiskService:
                     self._finish_confirmation_fanout_leg(
                         fanout_decision, acct, outcome="refused"
                     )
+                confirmation_inflight.discard(key)
                 return
             if self._v2_exit_reject_total.get(key, 0) >= self._V2_EXIT_MAX_REJECTS_PER_EPISODE:
                 self.logger.error(
@@ -5064,12 +5238,16 @@ class OmsRiskService:
                     self._finish_confirmation_fanout_leg(
                         fanout_decision, acct, outcome="refused"
                     )
+                confirmation_inflight.discard(key)
                 return
-            confirmation_inflight.add(key)
             try:
                 if self._is_v2_webull_account(acct):
                     protection = await self._prepare_confirmation_webull_leg(
-                        acct, symbol, expected_row_id=bound_row_id
+                        acct,
+                        symbol,
+                        expected_row_id=bound_row_id,
+                        expires_at=expires_at,
+                        decision=fanout_decision,
                     )
                 else:
                     protection = await self._reconcile_confirmation_exit_protection(acct, symbol)
@@ -5094,6 +5272,17 @@ class OmsRiskService:
                 if fanout_decision is not None:
                     self._finish_confirmation_fanout_leg(
                         fanout_decision, acct, outcome="resolved_by_fill"
+                    )
+                return
+            if protection in {"reprotected", "uncovered"}:
+                confirmation_pending.pop(key, None)
+                if fanout_decision is not None:
+                    self._finish_confirmation_fanout_leg(
+                        fanout_decision,
+                        acct,
+                        outcome=protection,
+                        reprotected=protection == "reprotected",
+                        uncovered=protection == "uncovered",
                     )
                 return
             if protection not in {"released", "no_pair"}:

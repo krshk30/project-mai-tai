@@ -357,11 +357,14 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "'close_outcome', payload->>'close_outcome', "
         "'source', payload->>'source', 'release_outcome', payload->>'release_outcome', "
         "'risk_state', payload->>'risk_state', 'exit_action', payload->>'exit_action', "
+        "'protection_restored', payload->>'protection_restored', "
+        "'missing_legs', payload->>'missing_legs', 'reason', payload->>'reason', "
         "'attempts', payload->>'attempts', "
         "'max_attempts', payload->>'max_attempts', 'terminal', payload->>'terminal')::text "
         "from system_incidents where status != 'closed' "
         "and payload->>'source' in "
-        "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved') "
+        "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved',"
+        "'oms_v2_confirmation_exit_reprotected') "
         "order by opened_at, id"
     )
     incidents: list[dict[str, str]] = []
@@ -448,6 +451,22 @@ def _run_inc1_pager_unlocked(
                     f"{incident.get('max_attempts') or 'UNKNOWN'} "
                     f"terminal={incident.get('terminal') or 'false'}\n"
                     "Use the existing position/protection runbook; do not assume flat."
+                )
+            elif incident.get("source") == "oms_v2_confirmation_exit_reprotected":
+                restored = incident.get("protection_restored") == "true"
+                body = (
+                    "EXITDONE1: a Webull confirmation exit did not sell the held leg.\n"
+                    f"account={incident.get('account') or 'UNKNOWN'} "
+                    f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
+                    f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'}\n"
+                    f"protection_restored={int(restored)} "
+                    f"missing_legs={incident.get('missing_legs') or 'UNKNOWN'} "
+                    f"reason={incident.get('reason') or 'UNKNOWN'}\n"
+                    + (
+                        "Broker protection was restored; the position remains open."
+                        if restored
+                        else "Broker protection could not be proved restored; check the position now."
+                    )
                 )
             else:
                 body = (

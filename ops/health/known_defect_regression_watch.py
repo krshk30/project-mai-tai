@@ -225,12 +225,12 @@ CATALOG: tuple[RegressionSpec, ...] = (
         "the late-close episode exceeds three rejected close orders",
     ),
     RegressionSpec(
-        "CONFEXIT1",
-        "a confirmation exit releases Webull protection without closing or restoring it",
+        "EXITDONE1",
+        "a confirmation exit is fired but ends neither sold nor reprotected",
         "ARMED",
-        "OMS-V2-CONFIRMATION-EXIT-FANOUT leg denominators",
-        "every released leg is closed or reprotected",
-        "legs_released exceeds legs_closed plus legs_reprotected",
+        "per-account FIRED logs, filled confirmation-exit orders, and REPROTECTED lines",
+        "every fired account leg ends in a sell fill or explicit broker reprotection",
+        "FIRED exceeds SOLD plus REPROTECTED for any account in the session",
     ),
     RegressionSpec(
         "W4291",
@@ -284,12 +284,12 @@ _SESSION_ROLL_SYMBOLS = re.compile(
 )
 _SEED_CENSUS = re.compile(r"\[V2-DB-SEED-GAP-CENSUS\] truncations=(\d+) of (\d+)")
 _BROKER_CENSUS_WEBULL = re.compile(r"live:orb: ok=(\d+) failed=(\d+) consecutive_now=(\d+)")
-_CONFIRMATION_FANOUT = re.compile(
-    r"\[OMS-V2-CONFIRMATION-EXIT-FANOUT\].*\blegs_closed=(\d+).*"
-    r"\blegs_released=(\d+).*\blegs_reprotected=(\d+)"
+_CONFIRMATION_FIRED = re.compile(
+    r"\[OMS-V2-CONFIRMATION-EXIT-FIRED\].*\bacct=([^ ]+)\s+fill_id=([^ ]+)"
 )
-_CONFIRMATION_FANOUT_ACCOUNTS = re.compile(
-    r"\breleased_accounts=([^ ]+)\s+reprotected_accounts=([^ ]+)\s+accounts=([^ ]+)"
+_CONFIRMATION_REPROTECTED = re.compile(
+    r"\[OMS-V2-CONFIRMATION-EXIT-REPROTECTED\].*\bacct=([^ ]+)\s+fill_id=([^ ]+).*"
+    r"\bprotected=1\b"
 )
 _ATR_SELL = re.compile(r"\[V2-ATR-PROBE\]\s+sym=([^ ]+)\s+ts_ms=(\d+).*\bflip=SELL\b")
 _FLIP_OWNER_FILL = re.compile(r"\[V2-FLIP-OWNER-FILL\]\s+([^ ]+)\b")
@@ -636,49 +636,45 @@ def evaluate_webull_429(lines: Sequence[TimedLine]) -> Reading:
     )
 
 
-def evaluate_confirmation_exit_coverage(lines: Sequence[TimedLine]) -> Reading:
-    evaluated = 0
-    guard_working = 0
-    recurrence = 0
-    worst_gap = 0
+def evaluate_confirmation_exit_done(
+    lines: Sequence[TimedLine], metrics: Mapping[str, int], *, logs_readable: bool = True
+) -> Reading:
+    accounts = {
+        "live:schwab_1m_v2": "schwab",
+        "live:orb": "webull",
+    }
+    fired = {account: set() for account in accounts}
+    reprotected = {account: set() for account in accounts}
     for line in lines:
-        match = _CONFIRMATION_FANOUT.search(line.text)
-        if match is None:
-            continue
-        closed, released, reprotected = (int(value) for value in match.groups())
-        if released <= 0:
-            continue
-        evaluated += 1
-        aggregate_gap = max(0, released - closed - reprotected)
-        account_gap = 0
-        if account_match := _CONFIRMATION_FANOUT_ACCOUNTS.search(line.text):
-            released_accounts = set(account_match.group(1).split(",")) - {"-"}
-            reprotected_accounts = set(account_match.group(2).split(",")) - {"-"}
-            outcomes = dict(
-                item.rsplit(":", 1)
-                for item in account_match.group(3).split(",")
-                if ":" in item
-            )
-            account_gap = sum(
-                account not in reprotected_accounts
-                and outcomes.get(account) not in {"closed", "flat", "resolved_by_fill"}
-                for account in released_accounts
-            )
-        gap = max(aggregate_gap, account_gap)
-        worst_gap = max(worst_gap, gap)
-        if gap:
-            recurrence += 1
-        else:
-            guard_working += 1
+        if match := _CONFIRMATION_FIRED.search(line.text):
+            if match.group(1) in fired:
+                fired[match.group(1)].add(match.group(2))
+        if match := _CONFIRMATION_REPROTECTED.search(line.text):
+            if match.group(1) in reprotected:
+                reprotected[match.group(1)].add(match.group(2))
+    sold = {
+        account: metrics[f"confirmation_exit_sold_orders_{suffix}"]
+        for account, suffix in accounts.items()
+    }
+    gaps = {
+        account: max(0, len(fired[account]) - sold[account] - len(reprotected[account]))
+        for account in accounts
+    }
+    evaluated = sum(len(values) for values in fired.values())
+    recurrence = sum(gaps.values())
+    guard_working = max(0, evaluated - recurrence)
+    detail = "; ".join(
+        f"{account}: fired={len(fired[account])} sold={sold[account]} "
+        f"reprotected={len(reprotected[account])} gap={gaps[account]}"
+        for account in accounts
+    )
     return _reading(
-        "CONFEXIT1",
+        "EXITDONE1",
         evaluated=evaluated,
         guard_working=guard_working,
         recurrence=recurrence,
-        detail=(
-            f"released_fanouts={evaluated} covered={guard_working} "
-            f"uncovered={recurrence} worst_leg_gap={worst_gap}"
-        ),
+        detail=detail,
+        unknown=not logs_readable,
     )
 
 
@@ -938,6 +934,18 @@ classified_reject_episodes AS (
            ) AS late_close_after_fill
     FROM reject_episodes e
 ),
+confirmation_exit_sold_orders AS (
+    SELECT DISTINCT bo.id, ba.name AS account
+    FROM broker_orders bo
+    JOIN trade_intents ti ON ti.id = bo.intent_id
+    JOIN broker_accounts ba ON ba.id = bo.broker_account_id
+    JOIN fills f ON f.order_id = bo.id
+    CROSS JOIN bounds b
+    WHERE ti.reason = 'oms_v2_managed_exit:CONFIRMATION_EXIT'
+      AND lower(f.side) = 'sell'
+      AND f.filled_at >= b.since_at
+      AND ba.name IN ('live:orb', 'live:schwab_1m_v2')
+),
 owned AS (
     SELECT m.id, ba.name AS account, ap.quantity AS broker_qty, ap.source_updated_at,
            coalesce(vp.quantity, 0) AS virtual_qty
@@ -972,6 +980,10 @@ counts AS (
         AS late_close_max_rejects_per_episode_webull,
       coalesce((SELECT sum(reject_orders) FROM classified_reject_episodes
                 WHERE late_close_after_fill), 0)::int AS late_close_reject_orders_webull,
+      (SELECT count(*) FROM confirmation_exit_sold_orders
+       WHERE account='live:schwab_1m_v2')::int AS confirmation_exit_sold_orders_schwab,
+      (SELECT count(*) FROM confirmation_exit_sold_orders
+       WHERE account='live:orb')::int AS confirmation_exit_sold_orders_webull,
       (SELECT count(*) FROM owned WHERE account='live:schwab_1m_v2')::int
         AS owned_open_rows_schwab,
       (SELECT count(*) FROM owned WHERE account='live:orb')::int AS owned_open_rows_webull,
@@ -999,6 +1011,8 @@ SELECT json_build_object(
     'late_close_recurrence_episodes_webull', late_close_recurrence_episodes_webull,
     'late_close_max_rejects_per_episode_webull', late_close_max_rejects_per_episode_webull,
     'late_close_reject_orders_webull', late_close_reject_orders_webull,
+    'confirmation_exit_sold_orders_schwab', confirmation_exit_sold_orders_schwab,
+    'confirmation_exit_sold_orders_webull', confirmation_exit_sold_orders_webull,
     'owned_open_rows_schwab', owned_open_rows_schwab,
     'owned_open_rows_webull', owned_open_rows_webull,
     'owned_fresh_rows_schwab', owned_fresh_rows_schwab,
@@ -1046,6 +1060,8 @@ def _query_database(since: datetime) -> dict[str, int]:
         "late_close_recurrence_episodes_webull",
         "late_close_max_rejects_per_episode_webull",
         "late_close_reject_orders_webull",
+        "confirmation_exit_sold_orders_schwab",
+        "confirmation_exit_sold_orders_webull",
         "owned_open_rows_schwab",
         "owned_open_rows_webull",
         "owned_fresh_rows_schwab",
@@ -1207,22 +1223,26 @@ def collect_readings(now: datetime) -> list[Reading]:
         oms = []
         readings.extend(
             unknown_reading(key, f"OMS logs unreadable: {type(exc).__name__}: {exc}")
-            for key in ("W4291", "CONFEXIT1")
+            for key in ("W4291",)
         )
     else:
-        readings.extend((evaluate_webull_429(oms), evaluate_confirmation_exit_coverage(oms)))
+        readings.append(evaluate_webull_429(oms))
 
     try:
         metrics = _query_database(since)
     except Exception as exc:  # noqa: BLE001 - a failed query is unknown, never zero
         detail = f"database census unreadable: {type(exc).__name__}: {exc}"
         readings.extend(
-            unknown_reading(key, detail) for key in ("RESERVE1", "LATECLOSE1", "VPZERO1")
+            unknown_reading(key, detail)
+            for key in ("RESERVE1", "LATECLOSE1", "VPZERO1", "EXITDONE1")
         )
     else:
         for account, suffix in (("live:schwab_1m_v2", "schwab"), ("live:orb", "webull")):
             metrics[f"confirmed_exit_releases_{suffix}"] = confirmed_exit_releases(oms, account)
         readings.extend(evaluate_database(metrics, oms_logs_readable=oms_readable))
+        readings.append(
+            evaluate_confirmation_exit_done(oms, metrics, logs_readable=oms_readable)
+        )
 
     try:
         readings.append(evaluate_phantom(_load_phantom_report(now)))

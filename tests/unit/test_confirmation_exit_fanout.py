@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.broker_adapters.protocols import (
     BrokerPositionSnapshot,
     ExecutionReport,
+    ExitPairReleaseResult,
 )
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, OmsManagedPosition, TradeIntent
@@ -53,6 +54,7 @@ class _FanoutAdapter:
         self.native_release_calls: list[tuple[str, str]] = []
         self.cancel_pair_calls: list[tuple[str, str, str]] = []
         self.position_state: dict[str, Decimal] = {SCHWAB: Decimal("1"), WEBULL: Decimal("1")}
+        self.release_results: list[ExitPairReleaseResult] = []
 
     async def submit_order(self, request):
         self.submitted.append(request)
@@ -97,6 +99,30 @@ class _FanoutAdapter:
             )
             for suffix in ("T", "S")
         ]
+
+    async def release_exit_pair_for_close(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str
+    ) -> ExitPairReleaseResult:
+        if self.release_results:
+            self.cancel_pair_calls.append((broker_account_name, symbol, base_client_order_id))
+            return self.release_results.pop(0)
+        reports = tuple(
+            await self.cancel_exit_pair(
+                broker_account_name=broker_account_name,
+                symbol=symbol,
+                base_client_order_id=base_client_order_id,
+            )
+        )
+        filled = tuple(report for report in reports if report.event_type == "filled")
+        if len(filled) == 1:
+            return ExitPairReleaseResult(outcome="resolved_by_fill", reports=reports)
+        if len(reports) != 2:
+            return ExitPairReleaseResult(outcome="unanswerable", reports=reports)
+        if all(report.event_type == "cancelled" for report in reports):
+            return ExitPairReleaseResult(outcome="released", reports=reports)
+        if any(report.metadata.get("cancel_outcome") == "could_not_tell" for report in reports):
+            return ExitPairReleaseResult(outcome="unanswerable", reports=reports)
+        return ExitPairReleaseResult(outcome="reserved", reports=reports)
 
     async def list_account_positions(self, broker_account_name: str):
         return [
@@ -270,6 +296,7 @@ def _gipr_cancel_reject(suffix: str, code: str) -> ExecutionReport:
 
 
 async def _arm_decision(service: OmsRiskService) -> None:
+    evaluated_at = service_module.utcnow() - timedelta(seconds=1)
     await service._handle_stream_message(
         {
             "data": json.dumps(
@@ -280,7 +307,7 @@ async def _arm_decision(service: OmsRiskService) -> None:
                     "source_fill_id": "schwab-decision-fill",
                     "fanout_slot_id": "imrn-first-slot",
                     "broker_order_id": "schwab-entry-1",
-                    "evaluated_at_ms": "1",
+                    "evaluated_at_ms": str(int(evaluated_at.timestamp() * 1000)),
                     "atr_state": "short",
                     "should_exit": True,
                     "entry_slot": "first",
@@ -293,6 +320,22 @@ async def _arm_decision(service: OmsRiskService) -> None:
         "ask": 9.91,
         "received_at": datetime.now(UTC),
     }
+
+
+async def _prepare_webull_leg(
+    service: OmsRiskService, *, expected_row_id: str
+) -> str:
+    return await service._prepare_confirmation_webull_leg(
+        WEBULL,
+        SYMBOL,
+        expected_row_id=expected_row_id,
+        expires_at=datetime.now(UTC) + timedelta(seconds=30),
+        decision=service_module._ConfirmationFanoutDecision(
+            symbol=SYMBOL,
+            source_fill_id="test-confirmation",
+            accounts=(WEBULL,),
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -371,7 +414,7 @@ async def test_inconsistent_non_fire_still_names_every_intended_leg() -> None:
 
 def test_released_unprotected_interval_tracks_duration_and_current_count(monkeypatch) -> None:
     adapter = _FanoutAdapter()
-    service, _sf = _service(fanout=True, adapter=adapter)
+    service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
     decision = service_module._ConfirmationFanoutDecision(
         symbol=SYMBOL,
@@ -405,7 +448,7 @@ async def test_released_webull_pair_fresh_flat_preserves_interval_in_summary(
     clock = {"now": datetime(2026, 9, 6, 14, 0, tzinfo=UTC)}
     monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
     adapter = _FanoutAdapter()
-    service, _sf = _service(fanout=True, adapter=adapter)
+    service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     await _arm_decision(service)
@@ -658,22 +701,16 @@ async def test_released_webull_leg_that_rejects_is_reprotected(monkeypatch) -> N
     assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
     assert reprotected == [(WEBULL, SYMBOL)]
     assert (WEBULL, SYMBOL) not in service._exit_reservation_released
-    assert (WEBULL, SYMBOL) in service._confirmation_exit_pending
-    assert "[OMS-V2-CONFIRMATION-EXIT-RETRY-SCHEDULED]" in "\n".join(service.logger.lines)
-    assert "released_unprotected_current=0" in "\n".join(service.logger.lines)
-
-    adapter.reject_accounts.clear()
-    service._latest_quotes_by_symbol[SYMBOL]["received_at"] += timedelta(seconds=1)
-    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
-
-    assert adapter.cancel_pair_calls == [
-        (WEBULL, SYMBOL, "known-protect-base"),
-        (WEBULL, SYMBOL, "known-protect-base"),
-    ]
     assert (WEBULL, SYMBOL) not in service._confirmation_exit_pending
+    assert "[OMS-V2-CONFIRMATION-EXIT-PAGE]" in "\n".join(service.logger.lines)
+    assert "released_unprotected_current=0" in "\n".join(service.logger.lines)
     summary = "\n".join(service.logger.lines)
-    assert "legs_closed=2" in summary
+    assert "legs_closed=1" in summary
     assert "legs_released=2 legs_reprotected=1 legs_uncovered=0" in summary
+    with sf() as session:
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].payload["source"] == "oms_v2_confirmation_exit_reprotected"
 
 
 @pytest.mark.asyncio
@@ -709,17 +746,6 @@ async def test_released_webull_leg_is_reprotected_when_a_pre_send_guard_stops_it
     assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
     assert reprotected == [(WEBULL, SYMBOL)]
     assert _sell_accounts(sf) == [SCHWAB]
-    assert (WEBULL, SYMBOL) in service._confirmation_exit_pending
-
-    service._latest_quotes_by_symbol[SYMBOL]["received_at"] += timedelta(seconds=1)
-    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
-    await service._confirmation_exit_recovery_tasks.pop()
-
-    assert adapter.cancel_pair_calls == [
-        (WEBULL, SYMBOL, "known-protect-base"),
-        (WEBULL, SYMBOL, "known-protect-base"),
-    ]
-    assert reprotected == [(WEBULL, SYMBOL), (WEBULL, SYMBOL)]
     assert (WEBULL, SYMBOL) not in service._confirmation_exit_pending
     assert "legs_released=2 legs_reprotected=1 legs_uncovered=0" in "\n".join(
         service.logger.lines
@@ -736,12 +762,8 @@ async def test_confirmed_webull_release_is_idempotent_for_the_exact_episode(
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     row_id = _open_row_ids(sf)[WEBULL]
 
-    assert await service._prepare_confirmation_webull_leg(
-        WEBULL, SYMBOL, expected_row_id=row_id
-    ) == "released"
-    assert await service._prepare_confirmation_webull_leg(
-        WEBULL, SYMBOL, expected_row_id=row_id
-    ) == "released"
+    assert await _prepare_webull_leg(service, expected_row_id=row_id) == "released"
+    assert await _prepare_webull_leg(service, expected_row_id=row_id) == "released"
 
     assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
 
@@ -755,24 +777,24 @@ async def test_gipr_already_absent_reports_count_only_after_exact_release(
     service, sf = _service(fanout=True, adapter=adapter)
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     row_id = _open_row_ids(sf)[WEBULL]
-
-    async def _racing_second_cancel(**kwargs):
-        key = (WEBULL, SYMBOL)
-        service._exit_reservation_released.add(key)
-        service._confirmation_webull_released_episode[key] = (
-            row_id,
-            "known-protect-base",
+    key = (WEBULL, SYMBOL)
+    service._exit_reservation_released.add(key)
+    service._confirmation_webull_released_episode[key] = (
+        row_id,
+        "known-protect-base",
+    )
+    adapter.release_results.append(
+        ExitPairReleaseResult(
+            outcome="reserved",
+            reports=(
+                _gipr_cancel_reject("T", "ORDER_CAN_NOT_BE_CANCEL"),
+                _gipr_cancel_reject("S", "ORDER_CAN_NOT_BE_CANCEL"),
+            ),
         )
-        return [
-            _gipr_cancel_reject("T", "ORDER_CAN_NOT_BE_CANCEL"),
-            _gipr_cancel_reject("S", "ORDER_CAN_NOT_BE_CANCEL"),
-        ]
+    )
 
-    monkeypatch.setattr(adapter, "cancel_exit_pair", _racing_second_cancel)
-
-    assert await service._prepare_confirmation_webull_leg(
-        WEBULL, SYMBOL, expected_row_id=row_id
-    ) == "released"
+    assert await _prepare_webull_leg(service, expected_row_id=row_id) == "released"
+    assert adapter.cancel_pair_calls == [], "an exact released episode was cancelled twice"
 
 
 @pytest.mark.asyncio
@@ -785,23 +807,28 @@ async def test_rate_limit_is_not_absence_even_when_an_exact_release_won_the_race
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     row_id = _open_row_ids(sf)[WEBULL]
 
-    async def _rate_limited_second_cancel(**kwargs):
-        key = (WEBULL, SYMBOL)
-        service._exit_reservation_released.add(key)
-        service._confirmation_webull_released_episode[key] = (
-            row_id,
-            "known-protect-base",
+    reports = tuple(
+        replace(
+            _gipr_cancel_reject(suffix, "TOO_MANY_REQUESTS"),
+            metadata={"cancel_outcome": "could_not_tell", "webull_error_code": "429"},
         )
-        return [
-            _gipr_cancel_reject("T", "TOO_MANY_REQUESTS"),
-            _gipr_cancel_reject("S", "TOO_MANY_REQUESTS"),
-        ]
+        for suffix in ("T", "S")
+    )
+    adapter.release_results.extend(
+        ExitPairReleaseResult(outcome="unanswerable", reports=reports) for _ in range(4)
+    )
 
-    monkeypatch.setattr(adapter, "cancel_exit_pair", _rate_limited_second_cancel)
+    async def _no_sleep(_seconds: float) -> None:
+        return None
 
-    assert await service._prepare_confirmation_webull_leg(
-        WEBULL, SYMBOL, expected_row_id=row_id
-    ) == "refused"
+    async def _attach(**kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(service, "_attach_webull_protection", _attach)
+
+    assert await _prepare_webull_leg(service, expected_row_id=row_id) == "uncovered"
+    assert (WEBULL, SYMBOL) not in service._exit_reservation_released
 
 
 @pytest.mark.asyncio
@@ -815,14 +842,21 @@ async def test_cancel_reject_is_not_absence_without_prior_exact_release(
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     row_id = _open_row_ids(sf)[WEBULL]
 
-    async def _rejected_cancel(**kwargs):
-        return [_gipr_cancel_reject("T", code), _gipr_cancel_reject("S", code)]
+    reports = (_gipr_cancel_reject("T", code), _gipr_cancel_reject("S", code))
+    adapter.release_results.extend(
+        ExitPairReleaseResult(outcome="reserved", reports=reports) for _ in range(4)
+    )
 
-    monkeypatch.setattr(adapter, "cancel_exit_pair", _rejected_cancel)
+    async def _no_sleep(_seconds: float) -> None:
+        return None
 
-    assert await service._prepare_confirmation_webull_leg(
-        WEBULL, SYMBOL, expected_row_id=row_id
-    ) == "refused"
+    async def _attach(**kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(service, "_attach_webull_protection", _attach)
+
+    assert await _prepare_webull_leg(service, expected_row_id=row_id) == "uncovered"
     assert (WEBULL, SYMBOL) not in service._exit_reservation_released
 
 
@@ -832,7 +866,7 @@ async def test_unknown_after_released_rejected_sell_is_explicitly_uncovered(
 ) -> None:
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter(reject_accounts={WEBULL})
-    service, _sf = _service(fanout=True, adapter=adapter)
+    service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
 
@@ -851,10 +885,16 @@ async def test_unknown_after_released_rejected_sell_is_explicitly_uncovered(
     await service._confirmation_exit_recovery_tasks.pop()
 
     text = "\n".join(service.logger.lines)
-    assert "[OMS-V2-CONFIRMATION-EXIT-UNCOVERED]" in text
-    assert "released_unprotected_seconds=" in text
+    assert "[OMS-V2-CONFIRMATION-EXIT-REPROTECTED]" in text
+    assert "protected=0" in text
+    assert "[OMS-V2-CONFIRMATION-EXIT-PAGE]" in text
+    assert "released_unprotected_seconds_max=" in text
     assert "released_unprotected_current=1" in text
     assert "legs_released=2 legs_reprotected=0 legs_uncovered=1" in text
+    with sf() as session:
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].payload["protection_restored"] is False
 
 
 @pytest.mark.asyncio
@@ -886,6 +926,173 @@ async def test_uncertain_webull_pair_cancel_refuses_only_that_leg(monkeypatch) -
     assert _sell_accounts(sf) == [SCHWAB]
     assert (WEBULL, SYMBOL) not in service._exit_reservation_released
     assert (WEBULL, SYMBOL) not in service._confirmation_exit_pending
+
+
+@pytest.mark.asyncio
+async def test_concurrent_quote_task_cannot_cancel_the_same_episode_twice(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    await _arm_decision(service)
+    entered = service_module.asyncio.Event()
+    release = service_module.asyncio.Event()
+    row_id = _open_row_ids(sf)[WEBULL]
+
+    async def _slow_bound(_acct: str, _symbol: str) -> str:
+        entered.set()
+        await release.wait()
+        return row_id
+
+    monkeypatch.setattr(service, "_confirmation_bound_managed_row_id", _slow_bound)
+    first = service_module.asyncio.create_task(
+        service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    )
+    await entered.wait()
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    release.set()
+    await first
+
+    assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
+    assert _sell_accounts(sf) == [WEBULL]
+
+
+@pytest.mark.asyncio
+async def test_imcc_one_of_two_cancel_reads_retries_instead_of_abandoning(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    row_id = _open_row_ids(sf)[WEBULL]
+    one_cancelled = ExecutionReport(
+        event_type="cancelled",
+        origin="broker",
+        client_order_id="known-protect-baseT",
+        symbol=SYMBOL,
+        side="sell",
+        intent_type="cancel",
+        metadata={"cancel_outcome": "confirmed"},
+    )
+    one_working = ExecutionReport(
+        event_type="accepted",
+        origin="broker",
+        client_order_id="known-protect-baseS",
+        symbol=SYMBOL,
+        side="sell",
+        intent_type="cancel",
+        metadata={"cancel_outcome": "not_confirmed"},
+    )
+    adapter.release_results.extend(
+        (
+            ExitPairReleaseResult(
+                outcome="reserved", reports=(one_cancelled, one_working)
+            ),
+            ExitPairReleaseResult(
+                outcome="released", reports=(one_cancelled, replace(one_working, event_type="cancelled"))
+            ),
+        )
+    )
+    sleeps: list[float] = []
+
+    async def _sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(service_module.asyncio, "sleep", _sleep)
+
+    assert await _prepare_webull_leg(service, expected_row_id=row_id) == "released"
+    assert sleeps == [1.0]
+    assert len(adapter.cancel_pair_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_order_cannot_cancel_is_not_absent_when_pair_read_says_working(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    row_id = _open_row_ids(sf)[WEBULL]
+    working = replace(
+        _gipr_cancel_reject("S", "ORDER_CAN_NOT_BE_CANCEL"),
+        event_type="accepted",
+        metadata={
+            "webull_error_code": "ORDER_CAN_NOT_BE_CANCEL",
+            "cancel_outcome": "not_confirmed",
+        },
+    )
+    terminal = ExecutionReport(
+        event_type="cancelled",
+        origin="broker",
+        client_order_id="known-protect-baseT",
+        symbol=SYMBOL,
+        side="sell",
+        intent_type="cancel",
+        metadata={"cancel_outcome": "confirmed"},
+    )
+    adapter.release_results.extend(
+        ExitPairReleaseResult(outcome="reserved", reports=(terminal, working))
+        for _ in range(4)
+    )
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    async def _attach(**_kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(service, "_attach_webull_protection", _attach)
+
+    assert await _prepare_webull_leg(service, expected_row_id=row_id) == "uncovered"
+    assert (WEBULL, SYMBOL) not in service._exit_reservation_released
+
+
+@pytest.mark.asyncio
+async def test_release_budget_exhaustion_reprotects_and_opens_one_pager_incident(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    row_id = _open_row_ids(sf)[WEBULL]
+    uncertain = ExecutionReport(
+        event_type="accepted",
+        origin="unknown",
+        client_order_id="known-protect-baseT",
+        symbol=SYMBOL,
+        side="sell",
+        intent_type="cancel",
+        metadata={"cancel_outcome": "could_not_tell"},
+    )
+    adapter.release_results.extend(
+        ExitPairReleaseResult(outcome="unanswerable", reports=(uncertain, uncertain))
+        for _ in range(4)
+    )
+    attached: list[str] = []
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    async def _attach(**kwargs) -> bool:
+        attached.append(kwargs["symbol"])
+        return True
+
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(service, "_attach_webull_protection", _attach)
+
+    assert await _prepare_webull_leg(service, expected_row_id=row_id) == "reprotected"
+    assert attached == [SYMBOL]
+    with sf() as session:
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].payload["protection_restored"] is True
+    assert incidents[0].payload["missing_legs"] == "unknown:target,stop"
 
 
 @pytest.mark.asyncio

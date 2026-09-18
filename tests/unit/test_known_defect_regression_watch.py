@@ -56,6 +56,8 @@ def database_metrics(**overrides: int) -> dict[str, int]:
         "late_close_recurrence_episodes_webull": 0,
         "late_close_max_rejects_per_episode_webull": 0,
         "late_close_reject_orders_webull": 0,
+        "confirmation_exit_sold_orders_schwab": 0,
+        "confirmation_exit_sold_orders_webull": 0,
         "owned_open_rows_schwab": 0,
         "owned_open_rows_webull": 0,
         "owned_fresh_rows_schwab": 0,
@@ -80,7 +82,7 @@ def test_catalog_has_every_requested_defect_and_every_row_declares_both_polariti
         "PHANTOM1",
         "RESERVE1",
         "LATECLOSE1",
-        "CONFEXIT1",
+        "EXITDONE1",
         "W4291",
         "VPZERO1",
         "SEED1",
@@ -532,49 +534,57 @@ def test_one_webull_429_is_the_backoff_guard_working() -> None:
     assert result.recurrence == 0
 
 
-def test_confirmation_exit_coverage_requires_every_released_leg_to_end_covered() -> None:
-    result = watch.evaluate_confirmation_exit_coverage(
+def test_exitdone_is_red_on_the_three_fired_zero_done_webull_tape() -> None:
+    result = watch.evaluate_confirmation_exit_done(
         lines(
             (
                 5,
-                "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=GIPR legs_total=2 "
-                "legs_closed=1 legs_close_submitted=0 legs_refused=1 "
-                "legs_released=2 legs_reprotected=0 legs_uncovered=1",
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=GIPR acct=live:orb "
+                "fill_id=gipr-first status=PENDING_EXECUTABLE_BID",
             ),
             (
                 6,
-                "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=SAFE legs_total=2 "
-                "legs_closed=1 legs_close_submitted=0 legs_refused=1 "
-                "legs_released=2 legs_reprotected=1 legs_uncovered=0",
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=GIPR acct=live:orb "
+                "fill_id=gipr-second status=PENDING_EXECUTABLE_BID",
             ),
             (
                 7,
-                "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=GIPR legs_total=2 "
-                "legs_closed=1 legs_close_submitted=0 legs_refused=1 "
-                "legs_released=1 legs_reprotected=0 legs_uncovered=1 "
-                "released_accounts=live:orb reprotected_accounts=- "
-                "accounts=live:schwab_1m_v2:closed,live:orb:refused",
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=IMCC acct=live:orb "
+                "fill_id=imcc-first status=PENDING_EXECUTABLE_BID",
             ),
-        )
+        ),
+        database_metrics(),
     )
 
     assert result.verdict == watch.RECURRENCE
-    assert (result.evaluated, result.guard_working, result.recurrence) == (3, 1, 2)
-    assert "worst_leg_gap=1" in result.detail
+    assert (result.evaluated, result.guard_working, result.recurrence) == (3, 0, 3)
+    assert "live:orb: fired=3 sold=0 reprotected=0 gap=3" in result.detail
 
 
-def test_confirmation_exit_coverage_is_unexercised_without_a_released_leg() -> None:
-    result = watch.evaluate_confirmation_exit_coverage(
+def test_exitdone_counts_real_sell_fills_and_explicit_reprotection() -> None:
+    result = watch.evaluate_confirmation_exit_done(
         lines(
             (
                 5,
-                "[OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=BARE legs_total=2 "
-                "legs_closed=2 legs_released=0 legs_reprotected=0",
-            )
-        )
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=SOLD acct=live:orb "
+                "fill_id=sold status=PENDING_EXECUTABLE_BID",
+            ),
+            (
+                6,
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=SAFE acct=live:orb "
+                "fill_id=protected status=PENDING_EXECUTABLE_BID",
+            ),
+            (
+                7,
+                "[OMS-V2-CONFIRMATION-EXIT-REPROTECTED] sym=SAFE acct=live:orb "
+                "fill_id=protected protected=1 reason=close_refused missing_legs=target,stop",
+            ),
+        ),
+        database_metrics(confirmation_exit_sold_orders_webull=1),
     )
 
-    assert result.verdict == watch.UNEXERCISED
+    assert result.verdict == watch.GUARD_WORKING
+    assert (result.evaluated, result.guard_working, result.recurrence) == (2, 2, 0)
 
 
 def test_confirmed_exit_release_markers_stay_bound_to_their_account() -> None:
@@ -871,7 +881,7 @@ def test_one_failed_source_does_not_poison_independent_rows(monkeypatch) -> None
     assert rows["LIQPULL1"].verdict == watch.COULD_NOT_TELL
     assert rows["SEED1"].verdict == watch.COULD_NOT_TELL
     assert rows["W4291"].verdict == watch.OBSERVED_CLEAN
-    assert rows["CONFEXIT1"].verdict == watch.UNEXERCISED
+    assert rows["EXITDONE1"].verdict == watch.UNEXERCISED
     assert rows["RESERVE1"].verdict == watch.UNEXERCISED
     assert rows["LATECLOSE1"].verdict == watch.UNEXERCISED
     assert rows["PHANTOM1"].verdict == watch.UNEXERCISED
