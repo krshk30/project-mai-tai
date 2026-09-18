@@ -1,0 +1,9 @@
+{
+  "pr_number": 1010,
+  "range_base": "624aae91f45a3e848e84eb67b99a4f368388296d",
+  "range_head": "4a7d6401feb86f8d8148d0687c03528316db229c",
+  "reviewed_at": "2026-09-18T14:15:59Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Fail-closed authorisation gate for the unattended oms+strategy deploy. Withheld 3812898 for three gaps; re-read the whole script and the deploy_service.sh hunk at 4a7d6401. R1 single-use: refuses when the checkout already equals the target SHA, and renames the record to .used-<epoch> BEFORE calling deploy_service.sh (refuses if the rename fails). R3: the header states plainly that this is a deliberate-act gate, not operator authentication, and gives the procedure (record only after the operator's own GO for that SHA, creation logged to the fleet board, the reviewer never writes the record for their own PR). R2: 20 tests pass locally; I removed every refusal one at a time and verified each edit applied (2-3 changed lines): expiry, date, file mode, 12h cap, authority, deployment, owner, future timestamp, 16:05 window, SHA match, already-deployed, unknown field, six-line shape, preflight rc, fence rc all go RED (1 fail each); consuming the record after the deploy, or not at all, fails 2. One mutation stayed GREEN: the gate-level 'origin/main moved' check - covered downstream by the same check in deploy_service.sh, which has its own red test, and removing the gate-level copy fails safe (approval consumed, deploy still refused). Non-blocking note: a preflight or fence refusal does not consume the record, so whatever schedules this script must invoke it once, never on a timer. No deploy is authorised by this pin; the operator's GO is still open."
+}
