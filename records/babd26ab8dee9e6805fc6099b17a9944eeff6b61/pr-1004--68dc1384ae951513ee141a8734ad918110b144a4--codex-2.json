@@ -1,0 +1,9 @@
+{
+  "pr_number": 1004,
+  "range_base": "68dc1384ae951513ee141a8734ad918110b144a4",
+  "range_head": "babd26ab8dee9e6805fc6099b17a9944eeff6b61",
+  "reviewed_at": "2026-09-18T00:58:50Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Docs-only close-out verified against box, database, restart report, frozen journals, and exact manifest; no findings"
+}
