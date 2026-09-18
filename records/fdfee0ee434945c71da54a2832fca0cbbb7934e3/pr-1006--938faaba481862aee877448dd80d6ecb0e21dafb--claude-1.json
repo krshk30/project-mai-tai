@@ -1,0 +1,9 @@
+{
+  "pr_number": 1006,
+  "range_base": "938faaba481862aee877448dd80d6ecb0e21dafb",
+  "range_head": "fdfee0ee434945c71da54a2832fca0cbbb7934e3",
+  "reviewed_at": "2026-09-18T13:04:36Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "PA1 deferred Webull mirror resubmit, re-reviewed from scratch on base 938faaba after I withheld cd05896a for B2 (broker await on the tick task + cancel-in-flight orphan) and S1 (observer built before ledger writes). Read both commits in full. B2: the tick path now only marks queued and XADDs to strategy-intents; _handle_stream_message claims the retry (slot still present, queued, same segment, same attempt) before process_trade_intent and fails closed in finally. S1: observed_event is built after update_order_from_report/mark_intent_from_report and a source-order test pins it. 18 tests pass with PYTHONPATH on the PR tree. My mutations RED: claim always admits (1 fail), tick task awaits the pipeline again (5 fail), queued flag never set (2 fail). GREEN = test gap, benign failure mode: _finish no-op leaves a slot stuck queued (never retried, never duplicated). My own probes on this head: v2 cancel between enqueue and the serial lane => 0 submits and 1 enqueue across two quotes; no cancel => exactly 1 submit, state forgotten, a replayed stream message does not submit again. Previously verified and unchanged: coid from the new event_id (no unique collision), find_open_order_for_cancel falls back to the latest open order, filled orders carry top-level slot identity (09-17: orb 10/10 resting, schwab 7/7), structured error code only. range-diff of commit 1 vs cd05896a is '='. Flag defaults False; not deployed."
+}
