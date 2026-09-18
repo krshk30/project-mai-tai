@@ -26,9 +26,24 @@ ETDOW=$(TZ=America/New_York date +%u)
 ETMIN=$(( 10#$(TZ=America/New_York date '+%H') * 60 + 10#$(TZ=America/New_York date '+%M') ))
 
 send_ntfy() {  # $1=title $2=priority $3=tags $4=body
-  "$CURL" -sS --fail-with-body --connect-timeout 10 --max-time 30 \
+  RESPONSE=$("$CURL" -sS --fail-with-body --connect-timeout 10 --max-time 30 \
     -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
-    >/dev/null 2>>"$OUT/alert.log"
+    -w '\n__HTTP_STATUS__:%{http_code}' 2>>"$OUT/alert.log")
+  RESULT=$?
+  HTTP_STATUS=$(printf '%s\n' "$RESPONSE" \
+    | sed -n 's/^__HTTP_STATUS__:\([0-9][0-9][0-9]\)$/\1/p' | tail -1)
+  MESSAGE_ID=$(printf '%s\n' "$RESPONSE" \
+    | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+  [ -n "$HTTP_STATUS" ] || HTTP_STATUS=unknown
+  [ -n "$MESSAGE_ID" ] || MESSAGE_ID=-
+  ACCEPTED=0
+  if [ "$RESULT" -eq 0 ] && [ "$HTTP_STATUS" != unknown ] \
+    && [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+    ACCEPTED=1
+  fi
+  printf '%s  [NTFY-DELIVERY] accepted=%s http_status=%s message_id=%s title="%s"\n' \
+    "$STAMP" "$ACCEPTED" "$HTTP_STATUS" "$MESSAGE_ID" "$1" >> "$OUT/alert.log"
+  [ "$ACCEPTED" -eq 1 ]
 }
 
 if [ "$SELFTEST" -eq 1 ]; then

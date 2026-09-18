@@ -19,12 +19,14 @@ def _run_wrapper(
     *,
     check_exit: int = 2,
     curl_exit: int = 0,
+    curl_status: int | None = None,
     mode: str = "full",
 ) -> subprocess.CompletedProcess[str]:
     check = tmp_path / "check.sh"
     check_args = tmp_path / "check.args"
     calls = tmp_path / "curl.calls"
     fake_curl = tmp_path / "curl.sh"
+    status = (200 if curl_exit == 0 else 500) if curl_status is None else curl_status
     _write_executable(
         check,
         f"#!/bin/bash\nprintf '%s' \"$*\" > {str(check_args)!r}\n"
@@ -32,7 +34,9 @@ def _run_wrapper(
     )
     _write_executable(
         fake_curl,
-        f"#!/bin/bash\nprintf 'CALL\\n%s\\n' \"$*\" >> {str(calls)!r}\nexit {curl_exit}\n",
+        f"#!/bin/bash\nprintf 'CALL\\n%s\\n' \"$*\" >> {str(calls)!r}\n"
+        f"printf '{{\"id\":\"fixture-receipt\"}}\\n__HTTP_STATUS__:{status}\\n'\n"
+        f"exit {curl_exit}\n",
     )
     env = {
         **os.environ,
@@ -92,6 +96,10 @@ SUMMARY: GREEN fleet-function-health checks=1 live_money_red=0
     assert "stops-armed" in calls
     assert "fleet-function-health checks=" not in calls
     assert "--fail-with-body --connect-timeout 10 --max-time 30" in calls
+    assert "-w" in calls and "__HTTP_STATUS__:%{http_code}" in calls
+    assert "[NTFY-DELIVERY] accepted=1 http_status=200" in (
+        tmp_path / "state" / "alert.log"
+    ).read_text(encoding="utf-8")
 
 
 def test_fleet_runtime_restart_storm_pages_while_paper_findings_stay_silent(
@@ -132,6 +140,32 @@ SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=2
     assert "service-runtime:oms:inactive" not in deliveries[0]
     assert "service-runtime:oms:inactive" in deliveries[1]
     assert "service-runtime:momentum-paper:inactive" not in deliveries[1]
+
+
+def test_momentum_cooloff_and_gateway_1008_are_independent_once_only_pages(
+    tmp_path: Path,
+) -> None:
+    momentum_only = """VERDICT: RED service-runtime:momentum-paper:feed-policy-violation class=FLEET_RUNTIME new_matches=1
+VERDICT: GREEN service-runtime:market-data:massive-1008 class=FLEET_RUNTIME new_matches=0
+SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=1
+"""
+    both = """VERDICT: RED service-runtime:momentum-paper:feed-policy-violation class=FLEET_RUNTIME new_matches=0
+VERDICT: RED service-runtime:market-data:massive-1008 class=FLEET_RUNTIME new_matches=1
+SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=2
+"""
+
+    _run_wrapper(tmp_path, momentum_only, mode="runtime")
+    _run_wrapper(tmp_path, momentum_only, mode="runtime")
+    _run_wrapper(tmp_path, both, mode="runtime")
+
+    deliveries = [row for row in _call_log(tmp_path).split("CALL\n") if row]
+    assert len(deliveries) == 2
+    assert "momentum-paper:feed-policy-violation" in deliveries[0]
+    assert "market-data:massive-1008" not in deliveries[0]
+    assert "market-data:massive-1008" in deliveries[1]
+    assert "momentum-paper:feed-policy-violation" not in deliveries[1]
+    receipts = (tmp_path / "state" / "alert.log").read_text(encoding="utf-8")
+    assert receipts.count("[NTFY-DELIVERY] accepted=1") == 2
 
 
 def test_oms_recovery_clears_only_oms_fingerprint_while_momentum_stays_red(
@@ -182,6 +216,20 @@ SUMMARY: RED fleet-function-health checks=1 live_money_red=1
     _run_wrapper(tmp_path, red)
     assert _call_log(tmp_path).count("CALL") == 2
     assert active.read_text(encoding="utf-8").strip() == "live-money:oms-order-lifecycle"
+
+
+def test_http_failure_is_not_recorded_even_when_curl_exits_zero(tmp_path: Path) -> None:
+    red = """VERDICT: RED service-runtime:market-data:massive-1008 class=FLEET_RUNTIME new_matches=1
+SUMMARY: RED fleet-function-health checks=1 live_money_red=0 fleet_runtime_red=1
+"""
+
+    _run_wrapper(tmp_path, red, curl_status=500, mode="runtime")
+
+    active = tmp_path / "state" / "paged.active"
+    assert active.read_text(encoding="utf-8") == ""
+    alert = (tmp_path / "state" / "alert.log").read_text(encoding="utf-8")
+    assert "[NTFY-DELIVERY] accepted=0 http_status=500" in alert
+    assert "retry next run" in alert
 
 
 def test_monitor_error_is_transition_deduped(tmp_path: Path) -> None:

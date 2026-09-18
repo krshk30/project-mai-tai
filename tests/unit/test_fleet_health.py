@@ -158,6 +158,147 @@ def test_runtime_check_persists_baseline_then_detects_the_next_five_minute_delta
     assert "delta=5" in momentum_storm[2]
 
 
+def test_market_data_1008_is_red_from_socket_evidence_even_if_a_heartbeat_says_healthy(
+    tmp_path: Path,
+) -> None:
+    market = tmp_path / "market-data.log"
+    momentum = tmp_path / "momentum-paper.log"
+    state = tmp_path / "socket-offsets.json"
+    market.write_text(
+        "heartbeat status=healthy\nMassive websocket error: received 1008 (policy violation)\n",
+        encoding="utf-8",
+    )
+    momentum.write_text("heartbeat status=healthy\n", encoding="utf-8")
+
+    rows = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+
+    market_row = next(row for row in rows if row[1].endswith("market-data:massive-1008"))
+    assert market_row[0] == "RED"
+    assert "new_matches=1" in market_row[2]
+
+
+def test_socket_evidence_is_incremental_and_a_new_1008_rearms_after_a_clean_sample(
+    tmp_path: Path,
+) -> None:
+    market = tmp_path / "market-data.log"
+    momentum = tmp_path / "momentum-paper.log"
+    state = tmp_path / "socket-offsets.json"
+    market.write_text("received 1008 (policy violation)\n", encoding="utf-8")
+    momentum.write_text("", encoding="utf-8")
+
+    first = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+    second = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+    with market.open("a", encoding="utf-8") as stream:
+        stream.write("received 1008 (policy violation)\n")
+    third = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+
+    def market_level(rows):
+        return next(row[0] for row in rows if row[1].endswith("market-data:massive-1008"))
+
+    assert [market_level(rows) for rows in (first, second, third)] == [
+        "RED",
+        "GREEN",
+        "RED",
+    ]
+
+
+def test_momentum_pages_only_on_the_fifth_close_cooloff_marker(tmp_path: Path) -> None:
+    market = tmp_path / "market-data.log"
+    momentum = tmp_path / "momentum-paper.log"
+    state = tmp_path / "socket-offsets.json"
+    market.write_text("", encoding="utf-8")
+    momentum.write_text(
+        "\n".join(
+            f"received 1008 (policy violation) consecutive={number}"
+            for number in range(1, 5)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    first = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+    with momentum.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "[MOMENTUM-PAPER-FEED-POLICY] decision=cooloff "
+            "reason=feed_policy_violation consecutive_1008=5\n"
+        )
+    second = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+    third = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+    with momentum.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "[MOMENTUM-PAPER-FEED-POLICY] decision=recovered "
+            "reason=stable_connection prior_consecutive_1008=5\n"
+        )
+    recovered = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+
+    def momentum_level(rows):
+        return next(
+            row[0]
+            for row in rows
+            if row[1].endswith("momentum-paper:feed-policy-violation")
+        )
+
+    assert momentum_level(first) == "GREEN"
+    assert momentum_level(second) == "RED"
+    assert momentum_level(third) == "RED"
+    assert momentum_level(recovered) == "GREEN"
+
+
+def test_corrupt_socket_evidence_cursor_fails_closed_without_replaying_old_logs(
+    tmp_path: Path,
+) -> None:
+    market = tmp_path / "market-data.log"
+    momentum = tmp_path / "momentum-paper.log"
+    state = tmp_path / "socket-offsets.json"
+    market.write_text("old 1008\n", encoding="utf-8")
+    momentum.write_text("", encoding="utf-8")
+    state.write_text("{broken", encoding="utf-8")
+
+    rows = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+
+    assert rows[0][0:2] == (
+        "RED",
+        "service-runtime:socket-evidence:state-unreadable",
+    )
+    assert state.read_text(encoding="utf-8") == "{broken"
+
+
 def test_inactive_expected_service_is_red_even_without_a_prior_sample() -> None:
     momentum = "project-mai-tai-momentum-paper.service"
     current = _service_states(state_overrides={momentum: ("inactive", "dead")})
@@ -393,6 +534,7 @@ def test_d6_freshness_check_is_registered_in_the_executed_check_list() -> None:
 def test_every_fleet_check_has_an_explicit_alert_class() -> None:
     assert {spec.check.__name__: spec.alert_class for spec in fhc.CHECKS} == {
         "check_service_restart_storms": fhc.FLEET_RUNTIME,
+        "check_massive_socket_policy_violations": fhc.FLEET_RUNTIME,
         "check_strategy_bar_freshness": fhc.PAPER,
         "check_oms_order_lifecycle": fhc.LIVE_MONEY,
         "check_stops_armed": fhc.LIVE_MONEY,
