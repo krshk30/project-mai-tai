@@ -1,0 +1,9 @@
+{
+  "pr_number": 1008,
+  "range_base": "d7470a6f993b27c253eff4c2b1ee67f14cef7ef8",
+  "range_head": "c807a9cda923586859c6676f76a4098362864f9e",
+  "reviewed_at": "2026-09-18T13:35:11Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Docs-only pre-registration of Momentum Step 2 (gateway throughput). Read the whole PROTOCOL.md and the diff against 87dfc6f, which I withheld for two gaps. Both are now frozen before any result exists: criterion 3 is numeric (replay p99 <= baseline p99 + max(10%, 50 ms) for snapshot cadence and active-symbol quote latency, zero missed 5 s snapshot cycles, own 10-minute baseline per run, read-only XREAD sampler, raw samples retained); replay safety on the live box (both accounts flat or after 20:00 ET, separate nice -n 10 process never attached to the running gateway, abort on non-healthy heartbeat / any new 1008 policy line / load > 3.5, aborted = UNMEASURED). Pass line matches what I fixed in the operator-approved block (3x peak, p99 hand-off < 250 ms, < 50% of one CPU, >= 3 sessions incl. 2026-09-17, stalled consumer must raise drops not block). Verified the named streams and events exist on main (snapshot-batches, market-data, market-data-subscriptions; SnapshotBatchEvent, QuoteTickEvent, EventEnvelope.produced_at). The doc is honest that quote latency is publisher-to-observer. Changes no runtime; table is all UNMEASURED; Step 3 stays blocked."
+}
