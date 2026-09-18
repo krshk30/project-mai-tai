@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This is a deliberate-act gate, not operator authentication. Any process running as the box
+# user can write AUTHORITY=operator, so the record cannot prove who authored it. The procedure is:
+# create the record only after the operator gives GO for this exact SHA in the operator's own
+# words; log who created it, when, the SHA, and the quoted GO to the fleet board; and never let the
+# reviewer create the approval record for a deploy of their own PR.
+#
+# Timestamp parsing intentionally uses GNU `date -d`, which is available on the Linux production
+# box. An unmodified macOS `date` cannot parse it, so the gate fails closed there.
+
 REFUSED=3
 APP_OVERVIEW_URL="${APP_OVERVIEW_URL:-http://127.0.0.1:8100/api/overview}"
 
@@ -24,7 +33,13 @@ APPROVAL_FILE="${3:-}"
 
 [[ -n "$APPROVAL_FILE" && -f "$APPROVAL_FILE" ]] \
   || refuse_authorization "no operator approval record was supplied"
-[[ -O "$APPROVAL_FILE" ]] \
+
+if APPROVAL_UID="$(stat -c '%u' "$APPROVAL_FILE" 2>/dev/null)"; then
+  :
+else
+  APPROVAL_UID="$(stat -f '%u' "$APPROVAL_FILE" 2>/dev/null || true)"
+fi
+[[ "$APPROVAL_UID" == "$(id -u)" ]] \
   || refuse_authorization "operator approval record is not owned by the invoking user"
 
 if APPROVAL_MODE="$(stat -c '%a' "$APPROVAL_FILE" 2>/dev/null)"; then
@@ -91,6 +106,10 @@ for required in "$PYTHON_BIN" "$PREFLIGHT" "$OMS_FENCE" "$DEPLOY"; do
     || refuse_authorization "required reviewed deploy component is missing: $required"
 done
 
+CURRENT_SHA="$(git -C "$REPO_DIR" rev-parse HEAD)"
+[[ "$CURRENT_SHA" != "$EXPECTED_SHA" ]] \
+  || refuse_authorization "already deployed — a second restart is not authorised"
+
 echo "[DEPLOY-AUTHORISED] deployment=$DEPLOYMENT expected_sha=$EXPECTED_SHA expires_at=$EXPIRES_AT_UTC"
 
 set +e
@@ -115,6 +134,14 @@ git -C "$REPO_DIR" fetch origin main
 REMOTE_SHA="$(git -C "$REPO_DIR" rev-parse origin/main)"
 [[ "$REMOTE_SHA" == "$EXPECTED_SHA" ]] \
   || refuse_authorization "origin/main moved after approval: expected $EXPECTED_SHA, found $REMOTE_SHA"
+
+CONSUMED_APPROVAL="${APPROVAL_FILE}.used-${NOW_EPOCH}"
+[[ ! -e "$CONSUMED_APPROVAL" ]] \
+  || refuse_authorization "approval record was already consumed at this UTC epoch"
+if ! mv -- "$APPROVAL_FILE" "$CONSUMED_APPROVAL"; then
+  refuse_authorization "approval record could not be consumed before deployment"
+fi
+echo "[DEPLOY-APPROVAL-CONSUMED] path=$CONSUMED_APPROVAL"
 
 MAI_TAI_EXPECTED_SHA="$EXPECTED_SHA" "$DEPLOY" "$REPO_DIR" main oms
 
