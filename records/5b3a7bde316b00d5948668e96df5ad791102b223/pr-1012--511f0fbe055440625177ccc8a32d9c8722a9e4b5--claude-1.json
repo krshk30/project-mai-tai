@@ -1,0 +1,9 @@
+{
+  "pr_number": 1012,
+  "range_base": "511f0fbe055440625177ccc8a32d9c8722a9e4b5",
+  "range_head": "5b3a7bde316b00d5948668e96df5ad791102b223",
+  "reviewed_at": "2026-09-19T23:34:51Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review after rebase onto 511f0fbe (#1015). Not a re-stamp: base is an ancestor; range-diff c6e259a0..d4f0e093 vs main..5b3a7bde shows both commits '='. Re-ran on the combined tree with PYTHONPATH on the PR tree: PA1b suite + merged confirmation-exit suite + new deploy-preflight suite, 96 pass. Mutation re-run RED (edit confirmed applied): attempts not monotonic. Prior evidence applies to identical patches: oscillation probe ends at 3 cycles with the 5 s re-arm; no-re-arm and pre-check-removed mutations red. Flag default False. Owed by the author: a behavioural v2 test for the claim-expiry duplicate guards."
+}
