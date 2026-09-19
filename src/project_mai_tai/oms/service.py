@@ -119,6 +119,7 @@ class _DeferredWebullRestingMirror:
     stop_price: Decimal
     attempts: int = 0
     queued: bool = False
+    retry_not_before_monotonic: float = 0.0
 
 
 def oco_exit_client_order_id(entry_client_order_id: str, child_id: str) -> str:
@@ -579,8 +580,12 @@ class OmsRiskService:
     # different target order id gets its own first request.  HELD/flat reads never reset it.
     _CANCEL_DEAD_TARGET_BROKER_REPORT_BOUND = 1
     _WEBULL_MIRROR_PRICE_AGGRESSIVE_CODE = "ORDER_RISK_RULE_PRICE_AGGRESSIVE"
+    # Our measured safe zone, not a published Webull rule. On 2026-09-17, 57 accepts had zero
+    # PRICE_AGGRESSIVE rejects below +10%; 15 rejects began at +10.33%, while accepts were also
+    # observed as high as +14.91%. Keep one threshold for both the pre-submit check and PA1 retry.
     _WEBULL_MIRROR_RESUBMIT_WITHIN_PCT = Decimal("8")
     _WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS = 3
+    _WEBULL_MIRROR_PRECHECK_REARM_SECONDS = 5.0
     # Class-level default for tests that intentionally construct with __new__. Production always
     # replaces it per instance below, so an OMS restart cannot resurrect deferred broker work.
     _webull_mirror_deferred_by_slot: dict[str, _DeferredWebullRestingMirror] = {}
@@ -1887,6 +1892,32 @@ class OmsRiskService:
                 return [*pre_submit_events, rth_reactive_abandon_event]
 
             self._stamp_webull_resting_mirror_market(event)
+            if self._defer_webull_resting_mirror_before_submit(event):
+                refusal_code = "webull_mirror_precheck_deferred"
+                self.store.mark_intent_refused(
+                    intent,
+                    origin="skipped_before_submit",
+                    code=refusal_code,
+                )
+                self.store.record_fanout_pre_submit_outcome(
+                    session,
+                    intent=intent,
+                    # The broker has no order, but OMS still owns deferred work for this slot.
+                    # Reuse the provisional outcome so v2 does not mistake the skip for a release.
+                    outcome="queued",
+                    reason=refusal_code,
+                    broker_account_name=broker_account.name,
+                )
+                order_event = self._build_rejected_event(
+                    event,
+                    intent.id,
+                    reason=refusal_code,
+                )
+                session.commit()
+                for prior_event in pre_submit_events:
+                    await self._publish_order_event(prior_event)
+                await self._publish_order_event(order_event)
+                return [*pre_submit_events, order_event]
             fanout_key = self._resting_fanout_pair_key(event)
             if (
                 fanout_key is not None
@@ -10688,6 +10719,117 @@ class OmsRiskService:
             for report in reports
         )
 
+    def _remember_webull_mirror_deferred(
+        self,
+        *,
+        event: TradeIntentEvent,
+        segment_id: str,
+        slot_id: str,
+        stop_price: Decimal,
+        attempts: int,
+        retry_not_before_monotonic: float = 0.0,
+    ) -> None:
+        deferred = self.__dict__.setdefault("_webull_mirror_deferred_by_slot", {})
+        existing = deferred.get(slot_id)
+        if existing is None:
+            deferred[slot_id] = _DeferredWebullRestingMirror(
+                event=event.model_copy(deep=True),
+                symbol=event.payload.symbol.upper(),
+                segment_id=segment_id,
+                slot_id=slot_id,
+                stop_price=stop_price,
+                attempts=attempts,
+                retry_not_before_monotonic=retry_not_before_monotonic,
+            )
+            return
+        existing.event = event.model_copy(deep=True)
+        existing.segment_id = segment_id
+        existing.stop_price = stop_price
+        # A serial-lane pre-check may see a newer quote than the market tick that queued this
+        # retry. Never let that second observation mint a fresh retry budget for the same slot.
+        existing.attempts = max(existing.attempts, attempts)
+        existing.queued = False
+        existing.retry_not_before_monotonic = max(
+            existing.retry_not_before_monotonic,
+            retry_not_before_monotonic,
+        )
+
+    def _defer_webull_resting_mirror_before_submit(self, event: TradeIntentEvent) -> bool:
+        """Skip a mirror already outside PA1's measured safe zone before touching Webull."""
+
+        if not self._webull_mirror_deferred_enabled() or not self._is_webull_resting_mirror_event(
+            event
+        ):
+            return False
+        pair_key = self._resting_fanout_pair_key(event)
+        if pair_key is None:
+            return False
+        metadata = event.payload.metadata
+        market_raw = metadata.get("webull_shape_market_price")
+        observed_raw = str(metadata.get("webull_shape_market_at_utc", "")).strip()
+        if market_raw in (None, "") or not observed_raw:
+            return False
+        try:
+            market_price = Decimal(str(market_raw))
+            stop_price = Decimal(str(metadata.get("stop_price", "")))
+            observed_at = datetime.fromisoformat(observed_raw).astimezone(UTC)
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+        max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
+        age_ms = (utcnow() - observed_at).total_seconds() * 1000.0
+        if market_price <= 0 or stop_price <= 0 or age_ms < 0 or age_ms > max(0, max_age_ms):
+            return False
+        lower_bound = stop_price * (
+            Decimal("1") - self._WEBULL_MIRROR_RESUBMIT_WITHIN_PCT / Decimal("100")
+        )
+        if market_price >= lower_bound:
+            return False
+
+        segment_id, slot_id = pair_key
+        is_resubmit = self._is_webull_mirror_deferred_resubmit(event)
+        try:
+            arriving_attempt = (
+                int(str(metadata.get("webull_deferred_resubmit_attempt", "0") or "0"))
+                if is_resubmit
+                else 0
+            )
+        except (TypeError, ValueError):
+            arriving_attempt = 0
+        existing = self.__dict__.setdefault("_webull_mirror_deferred_by_slot", {}).get(slot_id)
+        attempts = max(existing.attempts if existing is not None else 0, arriving_attempt)
+        retry_not_before = (
+            time.monotonic() + self._WEBULL_MIRROR_PRECHECK_REARM_SECONDS
+            if is_resubmit
+            else 0.0
+        )
+        self._remember_webull_mirror_deferred(
+            event=event,
+            segment_id=segment_id,
+            slot_id=slot_id,
+            stop_price=stop_price,
+            attempts=attempts,
+            retry_not_before_monotonic=retry_not_before,
+        )
+        if attempts >= self._WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS:
+            self._forget_webull_mirror_deferred(slot_id, reason="attempt_cap_reached")
+        distance_pct = (stop_price - market_price) / stop_price * Decimal("100")
+        self.logger.info(
+            "[OMS-WEBULL-MIRROR-DEFERRED] sym=%s segment=%s slot_id=%s "
+            "decision=deferred reason=precheck_distance market=%s stop=%s pct=%s "
+            "attempts=%d/%d rearm_seconds=%s - polarity: deferred before submit means Webull "
+            "received no order",
+            event.payload.symbol,
+            segment_id,
+            slot_id,
+            market_price,
+            stop_price,
+            distance_pct.quantize(Decimal("0.0001")),
+            attempts,
+            self._WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS,
+            self._WEBULL_MIRROR_PRECHECK_REARM_SECONDS if is_resubmit else 0.0,
+        )
+        return True
+
     def _observe_webull_mirror_deferred_reports(
         self,
         *,
@@ -10725,21 +10867,13 @@ class OmsRiskService:
             if attempts >= self._WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS:
                 self._forget_webull_mirror_deferred(slot_id, reason="attempt_cap_reached")
                 return
-            if existing is None:
-                deferred[slot_id] = _DeferredWebullRestingMirror(
-                    event=event.model_copy(deep=True),
-                    symbol=event.payload.symbol.upper(),
-                    segment_id=segment_id,
-                    slot_id=slot_id,
-                    stop_price=stop_price,
-                    attempts=attempts,
-                )
-            else:
-                existing.event = event.model_copy(deep=True)
-                existing.segment_id = segment_id
-                existing.stop_price = stop_price
-                existing.attempts = attempts
-                existing.queued = False
+            self._remember_webull_mirror_deferred(
+                event=event,
+                segment_id=segment_id,
+                slot_id=slot_id,
+                stop_price=stop_price,
+                attempts=attempts,
+            )
             self.logger.info(
                 "[OMS-WEBULL-MIRROR-DEFERRED] sym=%s segment=%s slot_id=%s "
                 "decision=deferred attempts=%d/%d error_code=%s — polarity: deferred means "
@@ -10813,6 +10947,8 @@ class OmsRiskService:
             if state.slot_id not in deferred:
                 continue
             if state.queued:
+                continue
+            if time.monotonic() < state.retry_not_before_monotonic:
                 continue
             if state.attempts >= self._WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS:
                 self._forget_webull_mirror_deferred(
