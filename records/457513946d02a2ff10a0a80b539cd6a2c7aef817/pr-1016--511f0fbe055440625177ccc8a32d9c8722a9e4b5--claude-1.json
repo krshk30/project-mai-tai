@@ -1,0 +1,9 @@
+{
+  "pr_number": 1016,
+  "range_base": "511f0fbe055440625177ccc8a32d9c8722a9e4b5",
+  "range_head": "457513946d02a2ff10a0a80b539cd6a2c7aef817",
+  "reviewed_at": "2026-09-19T23:34:50Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Restart-evidence checker: a bar gap spanning a restart is a HOLE only if an independent tape has prints inside it. Read the full diff (ops/health/v2_restart_evidence.py + tests; no service code). Verdicts: prints inside => HOLE/FAIL; none => NO_TRADES_IN_GAP/PASS with per-minute counts printed; source unreachable, non-JSON, status not OK, malformed row, minutes outside the window => COULD_NOT_TELL/FAIL; a live-at-stop symbol with no bar after the restart => PENDING_NEXT_BAR (this is why Thursday read 9/9 too early). Lookup refused 09:30-16:00 ET on weekdays; key read from the running v2 env and never printed. I ran the PR's own _fetch_massive_minute_aggregates on the box against the REAL case: MNOV 2026-09-17 16:15-16:18 ET => [] ; CONTROL window 16:13-16:20 ET => prints at 16:13, 16:14, 16:19, 16:20 - so the empty reading is a real absence, not a blind instrument. 57 tests pass with PYTHONPATH on the PR tree. Mutations RED, each edit confirmed applied: prints-in-gap reads NO_TRADES; source failure reads NO_TRADES; market-hours refusal removed. GREEN (small pins owed, benign): 'status != 200' is redundant with urllib raising HTTPError; a zero-transaction aggregate row accepted. preopen.sh, the snapshot and the --restarted list are untouched by this PR."
+}
