@@ -1,0 +1,9 @@
+{
+  "pr_number": 1012,
+  "range_base": "b73a2c2efff2fdc8b8215e7cc4661f961bb4eca8",
+  "range_head": "d0298b91644e3fdd5795cbc321a4b23269a81d37",
+  "reviewed_at": "2026-09-19T23:45:39Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review after rebase onto b73a2c2e (#1016). Not a re-stamp: base is an ancestor; range-diff 511f0fbe..5b3a7bde vs main..d0298b91 shows both commits '='. Re-ran on the combined tree with PYTHONPATH on the PR tree: PA1b + merged confirmation-exit + deploy-preflight + restart-evidence suites, 153 pass. Mutations re-run RED, each edit confirmed applied: no re-arm wait; pre-check removed. Prior evidence applies to identical patches (oscillation probe ends at 3 cycles; attempts-not-monotonic red). Confirmed on this head: env_prefix MAI_TAI_ + field oms_v2_webull_mirror_deferred_resubmit_enabled (default False) => MAI_TAI_OMS_V2_WEBULL_MIRROR_DEFERRED_RESUBMIT_ENABLED. The operator approved turning this flag ON for Monday 2026-09-21 (verbatim on the fleet board); the flag is set in the env file before the restart, not in code. Owed by the author: a behavioural v2 test for the claim-expiry duplicate guards."
+}
