@@ -6,6 +6,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import HTTPError
 
 import pytest
 
@@ -25,7 +26,17 @@ SPEC.loader.exec_module(vre)
 _STOP = datetime(2026, 9, 11, 0, 25, tzinfo=UTC)
 
 
-def _bars(symbols, pairs, gaps, brackets, spanning, excluded=0) -> "vre.BarContinuity":
+def _bars(
+    symbols,
+    pairs,
+    gaps,
+    brackets,
+    spanning,
+    excluded=0,
+    *,
+    pending=(),
+    results=(),
+) -> "vre.BarContinuity":
     return vre.BarContinuity(
         symbols=symbols,
         pairs=pairs,
@@ -35,6 +46,8 @@ def _bars(symbols, pairs, gaps, brackets, spanning, excluded=0) -> "vre.BarConti
         excluded=excluded,
         stopped_at_utc=_STOP,
         live_floor_utc=_STOP - timedelta(seconds=vre.LIVE_AT_STOP_BOUND_SECONDS),
+        pending_symbols=tuple(pending),
+        gap_results=tuple(results),
     )
 
 
@@ -320,6 +333,7 @@ def _report_fixture(monkeypatch, tmp_path: Path):
         "2026-09-11 00:25:03,000 INFO healthy",
     ]
     logs = {vre.V2_SERVICE: [("schwab-1m-v2.log", clean_log)]}
+
     def log_files(service, runner, *, since):
         expected = datetime.fromisoformat(current[service].started_at_utc).astimezone(UTC)
         assert since == expected
@@ -746,8 +760,8 @@ def test_timeout_release_cannot_claim_more_symbols_than_it_names(
     assert vre.report(args, runner=lambda command: "") == 1
 
 
-def _bar_continuity_runner(stopped: str, row: str):
-    """Answer systemd with ``stopped`` and psql with ``row``; keep every SQL text for assertions."""
+def _bar_continuity_runner(stopped: str, row: str, details: str = ""):
+    """Answer systemd and both psql queries; keep every SQL text for assertions."""
     sql: list[str] = []
 
     def runner(command) -> str:
@@ -756,7 +770,7 @@ def _bar_continuity_runner(stopped: str, row: str):
             assert command[2] == f"{vre.UNIT_PREFIX}{vre.V2_SERVICE}.service"
             return f"{stopped}\n"
         sql.append(command[-1])
-        return f"{row}\n"
+        return f"{row if len(sql) == 1 else details}\n"
 
     return runner, sql
 
@@ -766,12 +780,19 @@ def test_bar_continuity_floors_the_bracketing_pairs_at_the_stop_not_the_start() 
     # so the live-at-stop floor must hang off the stop; a start-derived floor would hide it.
     stop = datetime(2026, 7, 30, 14, 12, 30, tzinfo=UTC)
     start = datetime(2026, 7, 30, 15, 33, 5, tzinfo=UTC)
-    runner, sql = _bar_continuity_runner("Thu 2026-07-30 14:12:30 UTC", "4|400|9|4|4|0")
+    details = "\n".join(
+        f"GAP|SYM{index}|2026-07-30T14:12:00+00:00|2026-07-30T15:34:00+00:00" for index in range(4)
+    )
+    runner, sql = _bar_continuity_runner("Thu 2026-07-30 14:12:30 UTC", "4|400|9|4|4|0|0", details)
 
-    bars = vre._bar_continuity(runner, start)
+    bars = vre._bar_continuity(runner, start, aggregate_fetcher=lambda *_: ())
 
-    assert bars == vre.BarContinuity(4, 400, 9, 4, 4, 0, stop, stop - timedelta(seconds=180))
-    assert len(sql) == 1
+    assert bars.symbols == 4
+    assert (bars.pairs, bars.gaps, bars.brackets, bars.spanning, bars.excluded) == (400, 9, 4, 4, 0)
+    assert bars.stopped_at_utc == stop
+    assert bars.live_floor_utc == stop - timedelta(seconds=180)
+    assert [result.verdict for result in bars.gap_results] == ["NO_TRADES_IN_GAP"] * 4
+    assert len(sql) == 2
     floor = "prior >= TIMESTAMPTZ '2026-07-30 14:09:30+00'"
     restart = "prior < TIMESTAMPTZ '2026-07-30 15:33:05+00' AND bar_time > TIMESTAMPTZ '2026-07-30 15:33:05+00'"
     assert sql[0].count(f"FILTER (WHERE {restart} AND {floor})") == 1
@@ -784,7 +805,7 @@ def test_bar_continuity_reports_pairs_not_live_at_the_stop_as_excluded() -> None
     # The 2026-09-15 shape: AIXC unsubscribed 16:44 ET, re-promoted 18:24 ET, v2 restarted 17:40 ET
     # by a plain `systemctl restart` (stop and start in the same second).
     start = datetime(2026, 9, 14, 21, 40, 48, tzinfo=UTC)
-    runner, sql = _bar_continuity_runner("Mon 2026-09-14 21:40:48 UTC", "9|1793|43|3|0|1")
+    runner, sql = _bar_continuity_runner("Mon 2026-09-14 21:40:48 UTC", "9|1793|43|3|0|1|0")
 
     bars = vre._bar_continuity(runner, start)
 
@@ -796,22 +817,22 @@ def test_bar_continuity_reports_pairs_not_live_at_the_stop_as_excluded() -> None
 
 def test_bar_continuity_refuses_a_stop_after_the_start() -> None:
     start = datetime(2026, 9, 14, 21, 40, 48, tzinfo=UTC)
-    runner, _ = _bar_continuity_runner("Mon 2026-09-14 21:40:49 UTC", "0|0|0|0|0|0")
+    runner, _ = _bar_continuity_runner("Mon 2026-09-14 21:40:49 UTC", "0|0|0|0|0|0|0")
     with pytest.raises(vre.EvidenceUnknown, match="stopped at .* which is after its start"):
         vre._bar_continuity(runner, start)
 
 
 def test_bar_continuity_without_a_stop_timestamp_is_unmeasured() -> None:
     start = datetime(2026, 9, 14, 21, 40, 48, tzinfo=UTC)
-    runner, _ = _bar_continuity_runner("", "0|0|0|0|0|0")
+    runner, _ = _bar_continuity_runner("", "0|0|0|0|0|0|0")
     with pytest.raises(vre.EvidenceUnknown, match="no InactiveEnterTimestamp for schwab-1m-v2"):
         vre._bar_continuity(runner, start)
 
 
-def test_bar_continuity_requires_all_six_counts() -> None:
+def test_bar_continuity_requires_all_seven_counts() -> None:
     start = datetime(2026, 9, 14, 21, 40, 48, tzinfo=UTC)
-    runner, _ = _bar_continuity_runner("Mon 2026-09-14 21:40:48 UTC", "9|1793|43|3|0")
-    with pytest.raises(vre.EvidenceUnknown, match="returned 5 fields, expected 6"):
+    runner, _ = _bar_continuity_runner("Mon 2026-09-14 21:40:48 UTC", "9|1793|43|3|0|1")
+    with pytest.raises(vre.EvidenceUnknown, match="returned 6 fields, expected 7"):
         vre._bar_continuity(runner, start)
 
 
@@ -836,11 +857,267 @@ def test_report_still_fails_a_gap_that_spans_the_restart_on_a_live_series(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    gap = vre.RestartGapResult(
+        "TEST",
+        datetime(2026, 9, 11, 0, 24, tzinfo=UTC),
+        datetime(2026, 9, 11, 0, 27, tzinfo=UTC),
+        "HOLE",
+        ((datetime(2026, 9, 11, 0, 25, tzinfo=UTC), 2),),
+    )
     monkeypatch.setattr(
-        vre, "_bar_continuity", lambda runner, restart: _bars(3, 99, 2, 3, 1, excluded=1)
+        vre,
+        "_bar_continuity",
+        lambda runner, restart: _bars(3, 99, 2, 3, 1, excluded=1, results=(gap,)),
     )
 
     assert vre.report(args, runner=lambda command: "") == 1
     output = capsys.readouterr().out
-    assert "1 bar gap(s) span the v2 restart" in output
+    assert "1 restart-spanning bar gap(s) contain independent eligible prints" in output
+    assert "HOLE symbol=TEST" in output
     assert "| Bar continuity |" in output and "| FAIL |" in output
+
+
+def test_mnov_restart_gap_passes_when_massive_has_the_identical_no_trade_minutes() -> None:
+    # Real 2026-09-17 fixtures. Both sources omit 16:15-16:18 ET.
+    v2_minutes_et = (
+        "16:06",
+        "16:11",
+        "16:13",
+        "16:14",
+        "16:19",
+        "16:20",
+        "16:22",
+        "16:23",
+        "16:24",
+        "16:25",
+        "16:26",
+        "16:27",
+        "16:28",
+        "16:29",
+    )
+    massive_minutes_et = (
+        "16:06",
+        "16:11",
+        "16:13",
+        "16:14",
+        "16:19",
+        "16:20",
+        "16:22",
+        "16:23",
+        "16:24",
+        "16:25",
+        "16:26",
+        "16:27",
+        "16:28",
+        "16:29",
+    )
+    assert massive_minutes_et == v2_minutes_et
+
+    start = datetime(2026, 9, 17, 20, 14, 30, tzinfo=UTC)
+    runner, _ = _bar_continuity_runner(
+        "Thu 2026-09-17 20:14:30 UTC",
+        "21|3586|162|5|1|1|0",
+        "GAP|MNOV|2026-09-17T20:14:00+00:00|2026-09-17T20:19:00+00:00",
+    )
+    calls: list[tuple[str, datetime, datetime]] = []
+
+    def fetch(symbol: str, first: datetime, last: datetime):
+        calls.append((symbol, first, last))
+        return ()
+
+    bars = vre._bar_continuity(runner, start, aggregate_fetcher=fetch)
+
+    assert calls == [
+        (
+            "MNOV",
+            datetime(2026, 9, 17, 20, 15, tzinfo=UTC),
+            datetime(2026, 9, 17, 20, 18, tzinfo=UTC),
+        )
+    ]
+    assert bars.pending_symbols == ()
+    assert bars.gap_results[0].verdict == "NO_TRADES_IN_GAP"
+    assert bars.gap_results[0].per_minute_counts == tuple(
+        (datetime(2026, 9, 17, 20, minute, tzinfo=UTC), 0) for minute in range(15, 19)
+    )
+
+
+def test_report_passes_a_restart_gap_proven_to_have_no_eligible_trades(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    result = vre.RestartGapResult(
+        "MNOV",
+        datetime(2026, 9, 11, 0, 24, tzinfo=UTC),
+        datetime(2026, 9, 11, 0, 29, tzinfo=UTC),
+        "NO_TRADES_IN_GAP",
+        tuple((datetime(2026, 9, 11, 0, minute, tzinfo=UTC), 0) for minute in range(25, 29)),
+    )
+    monkeypatch.setattr(
+        vre,
+        "_bar_continuity",
+        lambda runner, restart: _bars(1, 20, 1, 1, 1, results=(result,)),
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 0
+    output = capsys.readouterr().out
+    assert "NO_TRADES_IN_GAP symbol=MNOV" in output
+    assert "eligible_transactions=0" in output
+    assert "condition codes unavailable" in output
+    assert "later corrections may revise history" in output
+    assert "| Bar continuity |" in output and "| PASS |" in output
+
+
+def test_restart_gap_with_independent_eligible_prints_is_a_hole() -> None:
+    start = datetime(2026, 9, 17, 20, 14, 30, tzinfo=UTC)
+    runner, _ = _bar_continuity_runner(
+        "Thu 2026-09-17 20:14:30 UTC",
+        "1|20|1|1|1|0|0",
+        "GAP|LIVE|2026-09-17T20:14:00+00:00|2026-09-17T20:19:00+00:00",
+    )
+
+    bars = vre._bar_continuity(
+        runner,
+        start,
+        aggregate_fetcher=lambda *_: (
+            vre.MinuteAggregate(datetime(2026, 9, 17, 20, 16, tzinfo=UTC), 3),
+        ),
+    )
+
+    assert bars.gap_results[0].verdict == "HOLE"
+    assert dict(bars.gap_results[0].per_minute_counts) == {
+        datetime(2026, 9, 17, 20, 15, tzinfo=UTC): 0,
+        datetime(2026, 9, 17, 20, 16, tzinfo=UTC): 3,
+        datetime(2026, 9, 17, 20, 17, tzinfo=UTC): 0,
+        datetime(2026, 9, 17, 20, 18, tzinfo=UTC): 0,
+    }
+
+
+def test_restart_gap_source_429_is_could_not_tell_and_fails_the_report(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    result = vre.RestartGapResult(
+        "RATE",
+        datetime(2026, 9, 11, 0, 24, tzinfo=UTC),
+        datetime(2026, 9, 11, 0, 27, tzinfo=UTC),
+        "COULD_NOT_TELL",
+        reason="Massive HTTP 429",
+    )
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        vre,
+        "_bar_continuity",
+        lambda runner, restart: _bars(1, 20, 1, 1, 1, results=(result,)),
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 1
+    output = capsys.readouterr().out
+    assert "COULD_NOT_TELL symbol=RATE" in output
+    assert "Massive HTTP 429" in output
+    assert "| COULD_NOT_TELL |" in output
+
+
+def test_aggregate_source_failure_is_captured_for_the_exact_gap() -> None:
+    start = datetime(2026, 9, 17, 20, 14, 30, tzinfo=UTC)
+    runner, _ = _bar_continuity_runner(
+        "Thu 2026-09-17 20:14:30 UTC",
+        "1|20|1|1|1|0|0",
+        "GAP|RATE|2026-09-17T20:14:00+00:00|2026-09-17T20:19:00+00:00",
+    )
+
+    def rate_limited(*_args):
+        raise vre.AggregateSourceUnknown("Massive HTTP 429")
+
+    bars = vre._bar_continuity(runner, start, aggregate_fetcher=rate_limited)
+
+    assert bars.gap_results[0].verdict == "COULD_NOT_TELL"
+    assert bars.gap_results[0].reason == "Massive HTTP 429"
+
+
+def test_bar_continuity_is_pending_until_a_later_bar_exists(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    _move_v2_report_start(current, logs, datetime(2026, 9, 14, 15, 11, tzinfo=UTC))
+    monkeypatch.setattr(
+        vre,
+        "_bar_continuity",
+        lambda runner, restart: _bars(1, 10, 0, 0, 0, pending=("WAIT",)),
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 1
+    output = capsys.readouterr().out
+    assert "PENDING_NEXT_BAR for live-at-stop symbol(s): WAIT" in output
+    assert "pending next bar=1 symbols=WAIT" in output
+    assert "| PENDING_NEXT_BAR |" in output
+
+
+def test_bar_continuity_query_marks_a_live_symbol_without_a_later_bar_pending() -> None:
+    start = datetime(2026, 9, 14, 15, 11, tzinfo=UTC)
+    runner, sql = _bar_continuity_runner(
+        "Mon 2026-09-14 15:11:00 UTC",
+        "1|12|0|0|0|0|1",
+        "PENDING|WAIT|2026-09-14T15:10:00+00:00|",
+    )
+
+    bars = vre._bar_continuity(
+        runner,
+        start,
+        aggregate_fetcher=lambda *_: pytest.fail("pending rows must not fetch Massive"),
+    )
+
+    assert bars.pending_symbols == ("WAIT",)
+    assert bars.gap_results == ()
+    assert len(sql) == 2
+
+
+def test_massive_http_429_is_not_an_empty_clean_tape(monkeypatch) -> None:
+    def fail(*_args, **_kwargs):
+        raise HTTPError("https://api.massive.com", 429, "rate limited", None, None)
+
+    monkeypatch.setattr(vre, "urlopen", fail)
+    with pytest.raises(vre.AggregateSourceUnknown, match="HTTP 429"):
+        vre._fetch_massive_minute_aggregates(
+            "MNOV",
+            datetime(2026, 9, 17, 20, 15, tzinfo=UTC),
+            datetime(2026, 9, 17, 20, 18, tzinfo=UTC),
+            api_key="secret",
+        )
+
+
+def test_massive_empty_response_is_not_an_empty_clean_tape(monkeypatch) -> None:
+    class EmptyResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b""
+
+    monkeypatch.setattr(vre, "urlopen", lambda *_args, **_kwargs: EmptyResponse())
+    with pytest.raises(vre.AggregateSourceUnknown, match="empty response body"):
+        vre._fetch_massive_minute_aggregates(
+            "MNOV",
+            datetime(2026, 9, 17, 20, 15, tzinfo=UTC),
+            datetime(2026, 9, 17, 20, 18, tzinfo=UTC),
+            api_key="secret",
+        )
+
+
+def test_massive_gap_lookup_refuses_regular_session_before_reading_credentials() -> None:
+    commands: list[list[str]] = []
+    fetch = vre._massive_gap_fetcher(
+        lambda command: commands.append(command) or "",
+        clock=lambda: datetime(2026, 9, 21, 15, 0, tzinfo=UTC),  # 11:00 ET Monday
+    )
+
+    with pytest.raises(vre.AggregateSourceUnknown, match="refused during 09:30-16:00 ET"):
+        fetch(
+            "MNOV",
+            datetime(2026, 9, 17, 20, 15, tzinfo=UTC),
+            datetime(2026, 9, 17, 20, 18, tzinfo=UTC),
+        )
+    assert commands == []

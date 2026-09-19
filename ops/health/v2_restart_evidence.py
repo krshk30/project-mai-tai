@@ -15,9 +15,12 @@ import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.strategy_core.time_utils import is_fillable_et_session
@@ -32,6 +35,12 @@ BOOT_WARMUP_FALLBACK_BOUND_SECONDS = 369
 # this many seconds of it. Bars persist ~60 s after their start, so a stop mid-bar leaves the
 # previous bar as the newest row: 3 bars keeps a live series in and a 57-minute-old one out.
 LIVE_AT_STOP_BOUND_SECONDS = 180
+MASSIVE_AGGREGATES_URL = "https://api.massive.com/v2/aggs/ticker"
+MASSIVE_SOURCE_NOTE = (
+    "Massive 1-minute aggregates adjusted=false; aggregate-eligible prints only; "
+    "condition codes unavailable; later corrections may revise history; "
+    "lookup refused during 09:30-16:00 ET"
+)
 LIVE_ACCOUNTS = ("live:schwab_1m_v2", "live:orb")
 DEFAULT_SERVICES = (
     "control",
@@ -362,6 +371,129 @@ class BarContinuity:
     excluded: int
     stopped_at_utc: datetime
     live_floor_utc: datetime
+    pending_symbols: tuple[str, ...] = ()
+    gap_results: tuple["RestartGapResult", ...] = ()
+
+
+@dataclass(frozen=True)
+class MinuteAggregate:
+    timestamp_utc: datetime
+    transactions: int
+
+
+@dataclass(frozen=True)
+class RestartGapResult:
+    symbol: str
+    prior_utc: datetime
+    following_utc: datetime
+    verdict: str
+    per_minute_counts: tuple[tuple[datetime, int], ...] = ()
+    reason: str = ""
+
+
+class AggregateSourceUnknown(RuntimeError):
+    """The independent Massive aggregate source did not answer conclusively."""
+
+
+AggregateFetcher = Callable[[str, datetime, datetime], Sequence[MinuteAggregate]]
+
+
+def _parse_utc(value: str, *, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise EvidenceUnknown(f"unparseable {label} timestamp: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise EvidenceUnknown(f"timezone-free {label} timestamp: {value!r}")
+    return parsed.astimezone(UTC)
+
+
+def _fetch_massive_minute_aggregates(
+    symbol: str,
+    start_utc: datetime,
+    end_utc: datetime,
+    *,
+    api_key: str,
+) -> tuple[MinuteAggregate, ...]:
+    """Fetch one exact historical gap from Massive without exposing the API key."""
+
+    if not api_key:
+        raise AggregateSourceUnknown("MAI_TAI_MASSIVE_API_KEY is absent from the running v2")
+    start_ms = int(start_utc.astimezone(UTC).timestamp() * 1000)
+    end_ms = int(end_utc.astimezone(UTC).timestamp() * 1000)
+    url = (
+        f"{MASSIVE_AGGREGATES_URL}/{quote(symbol, safe='')}/range/1/minute/"
+        f"{start_ms}/{end_ms}?adjusted=false&sort=asc&limit=50000"
+    )
+    request = Request(
+        url,
+        headers={"Authorization": f"Bearer {api_key}", "User-Agent": "mai-tai-restart-evidence"},
+    )
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310 - fixed HTTPS endpoint
+            status = int(getattr(response, "status", 0))
+            body = response.read()
+    except HTTPError as exc:
+        raise AggregateSourceUnknown(f"Massive HTTP {exc.code}") from exc
+    except (URLError, OSError, TimeoutError) as exc:
+        raise AggregateSourceUnknown(f"Massive request failed: {type(exc).__name__}") from exc
+    if status != 200:
+        raise AggregateSourceUnknown(f"Massive HTTP {status}")
+    if not body:
+        raise AggregateSourceUnknown("Massive returned an empty response body")
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError) as exc:
+        raise AggregateSourceUnknown("Massive returned malformed JSON") from exc
+    if not isinstance(payload, dict) or payload.get("status") not in {"OK", "DELAYED"}:
+        raise AggregateSourceUnknown("Massive response status was not OK")
+    results = payload.get("results")
+    if results is None:
+        if payload.get("resultsCount") == 0 or payload.get("queryCount") == 0:
+            results = []
+        else:
+            raise AggregateSourceUnknown("Massive response omitted aggregate results")
+    if not isinstance(results, list):
+        raise AggregateSourceUnknown("Massive aggregate results were not a list")
+
+    aggregates: list[MinuteAggregate] = []
+    seen: set[datetime] = set()
+    for item in results:
+        if not isinstance(item, dict):
+            raise AggregateSourceUnknown("Massive returned a malformed aggregate row")
+        try:
+            timestamp = datetime.fromtimestamp(int(item["t"]) / 1000.0, UTC)
+            transactions = int(item["n"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise AggregateSourceUnknown(
+                "Massive aggregate row lacked a timestamp or transaction count"
+            ) from exc
+        if timestamp in seen or transactions <= 0:
+            raise AggregateSourceUnknown("Massive returned duplicate or empty aggregate minutes")
+        seen.add(timestamp)
+        if start_utc <= timestamp <= end_utc:
+            aggregates.append(MinuteAggregate(timestamp, transactions))
+    return tuple(sorted(aggregates, key=lambda row: row.timestamp_utc))
+
+
+def _massive_gap_fetcher(
+    runner: Runner,
+    *,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> AggregateFetcher:
+    api_key: str | None = None
+
+    def fetch(symbol: str, start_utc: datetime, end_utc: datetime) -> Sequence[MinuteAggregate]:
+        nonlocal api_key
+        now_et = clock().astimezone(ET)
+        if now_et.weekday() < 5 and time(9, 30) <= now_et.time() < time(16):
+            raise AggregateSourceUnknown("Massive gap lookup refused during 09:30-16:00 ET")
+        if api_key is None:
+            pid = int(_systemctl_value(V2_SERVICE, "MainPID", runner))
+            api_key = _process_environment(pid, runner).get("MAI_TAI_MASSIVE_API_KEY", "")
+        return _fetch_massive_minute_aggregates(symbol, start_utc, end_utc, api_key=api_key)
+
+    return fetch
 
 
 def _v2_stopped_at(start: datetime, runner: Runner) -> datetime:
@@ -380,7 +512,12 @@ def _v2_stopped_at(start: datetime, runner: Runner) -> datetime:
     return stopped
 
 
-def _bar_continuity(runner: Runner, restart: datetime) -> BarContinuity:
+def _bar_continuity(
+    runner: Runner,
+    restart: datetime,
+    *,
+    aggregate_fetcher: AggregateFetcher | None = None,
+) -> BarContinuity:
     """Count restart-spanning bar gaps among the series that were LIVE when v2 stopped.
 
     A pair whose earlier bar is older than ``LIVE_AT_STOP_BOUND_SECONDS`` before the stop belongs
@@ -397,7 +534,7 @@ def _bar_continuity(runner: Runner, restart: datetime) -> BarContinuity:
     session_day = restart.astimezone(ET).date().isoformat()
     bracketing = f"prior < TIMESTAMPTZ '{restart_utc}' AND bar_time > TIMESTAMPTZ '{restart_utc}'"
     live_at_stop = f"prior >= TIMESTAMPTZ '{live_floor_utc}'"
-    raw = _psql(
+    ctes = (
         "WITH ordered AS ("
         " SELECT symbol, bar_time,"
         " lag(bar_time) OVER (PARTITION BY symbol ORDER BY bar_time) AS prior"
@@ -409,21 +546,133 @@ def _bar_continuity(runner: Runner, restart: datetime) -> BarContinuity:
         "), measured AS ("
         " SELECT symbol, prior, bar_time, extract(epoch FROM bar_time-prior) AS delta"
         " FROM ordered WHERE prior IS NOT NULL"
-        ") SELECT"
+        "), live_before AS ("
+        " SELECT DISTINCT ON (symbol) symbol, bar_time AS prior"
+        f" FROM ordered WHERE bar_time < TIMESTAMPTZ '{restart_utc}'"
+        " ORDER BY symbol, bar_time DESC"
+        "), pending AS ("
+        " SELECT live_before.symbol, live_before.prior FROM live_before"
+        f" WHERE live_before.prior >= TIMESTAMPTZ '{live_floor_utc}'"
+        " AND NOT EXISTS (SELECT 1 FROM ordered later"
+        " WHERE later.symbol=live_before.symbol"
+        f" AND later.bar_time > TIMESTAMPTZ '{restart_utc}')"
+        ")"
+    )
+    raw = _psql(
+        ctes + " SELECT"
         " (SELECT count(DISTINCT symbol) FROM ordered),"
         " count(*),"
         " count(*) FILTER (WHERE delta > 90),"
         f" count(*) FILTER (WHERE {bracketing} AND {live_at_stop}),"
         f" count(*) FILTER (WHERE delta > 90 AND {bracketing} AND {live_at_stop}),"
-        f" count(*) FILTER (WHERE {bracketing} AND NOT ({live_at_stop})) FROM measured;",
+        f" count(*) FILTER (WHERE {bracketing} AND NOT ({live_at_stop})),"
+        " (SELECT count(*) FROM pending) FROM measured;",
         runner,
     )
-    fields = _single_row(raw, 6, "bar-continuity query")
+    fields = _single_row(raw, 7, "bar-continuity query")
     try:
         counts = [int(value) for value in fields]
     except ValueError as exc:
         raise EvidenceUnknown("bar-continuity query returned a non-numeric count") from exc
-    return BarContinuity(*counts, stopped_at_utc=stopped, live_floor_utc=live_floor)
+    symbols, pairs, gaps, brackets, spanning, excluded, pending_count = counts
+
+    detail_rows: list[tuple[str, str, datetime, datetime | None]] = []
+    if spanning or pending_count:
+        detail_raw = _psql(
+            ctes + " SELECT kind, symbol, prior, following FROM ("
+            " SELECT 'GAP' AS kind, symbol, prior, bar_time AS following"
+            " FROM measured"
+            f" WHERE delta > 90 AND {bracketing} AND {live_at_stop}"
+            " UNION ALL"
+            " SELECT 'PENDING' AS kind, symbol, prior, NULL::timestamptz AS following"
+            " FROM pending"
+            ") evidence ORDER BY kind, symbol;",
+            runner,
+        )
+        for line in detail_raw.splitlines():
+            values = line.split("|")
+            if len(values) != 4 or values[0] not in {"GAP", "PENDING"}:
+                raise EvidenceUnknown(f"malformed bar-continuity detail row: {line!r}")
+            following = _parse_utc(values[3], label="following bar") if values[3] else None
+            detail_rows.append(
+                (values[0], values[1], _parse_utc(values[2], label="prior bar"), following)
+            )
+    gap_rows = [row for row in detail_rows if row[0] == "GAP"]
+    pending_rows = [row for row in detail_rows if row[0] == "PENDING"]
+    if len(gap_rows) != spanning or len(pending_rows) != pending_count:
+        raise EvidenceUnknown(
+            "bar-continuity detail population did not match its counts: "
+            f"gaps={len(gap_rows)}/{spanning} pending={len(pending_rows)}/{pending_count}"
+        )
+
+    fetcher = aggregate_fetcher
+    if gap_rows and fetcher is None:
+        fetcher = _massive_gap_fetcher(runner)
+    gap_results: list[RestartGapResult] = []
+    for _, symbol, prior, following in gap_rows:
+        if fetcher is None:
+            raise EvidenceUnknown("restart gap has no independent aggregate source")
+        if following is None:
+            raise EvidenceUnknown(f"restart gap for {symbol} has no following bar")
+        missing_start = prior + timedelta(minutes=1)
+        missing_end = following - timedelta(minutes=1)
+        if missing_start > missing_end:
+            raise EvidenceUnknown(f"restart gap for {symbol} has no missing minute")
+        try:
+            aggregates = tuple(fetcher(symbol, missing_start, missing_end))
+            by_minute = {row.timestamp_utc.astimezone(UTC): row.transactions for row in aggregates}
+            expected_minutes: list[datetime] = []
+            minute = missing_start
+            while minute <= missing_end:
+                expected_minutes.append(minute)
+                minute += timedelta(minutes=1)
+            unexpected = set(by_minute) - set(expected_minutes)
+            if unexpected:
+                raise AggregateSourceUnknown("Massive returned minutes outside the requested gap")
+            counts_by_minute = tuple(
+                (minute, by_minute.get(minute, 0)) for minute in expected_minutes
+            )
+            verdict = "HOLE" if sum(count for _, count in counts_by_minute) else "NO_TRADES_IN_GAP"
+            gap_results.append(
+                RestartGapResult(symbol, prior, following, verdict, counts_by_minute)
+            )
+        except AggregateSourceUnknown as exc:
+            gap_results.append(
+                RestartGapResult(symbol, prior, following, "COULD_NOT_TELL", reason=str(exc))
+            )
+
+    return BarContinuity(
+        symbols,
+        pairs,
+        gaps,
+        brackets,
+        spanning,
+        excluded,
+        stopped,
+        live_floor,
+        tuple(row[1] for row in pending_rows),
+        tuple(gap_results),
+    )
+
+
+def _format_restart_gap(result: RestartGapResult) -> str:
+    missing_start = result.prior_utc + timedelta(minutes=1)
+    missing_end = result.following_utc - timedelta(minutes=1)
+    prefix = (
+        f"{result.verdict} symbol={result.symbol} "
+        f"window={format_moment(missing_start)}..{format_moment(missing_end)}"
+    )
+    if result.reason:
+        return f"{prefix} reason={result.reason} source=({MASSIVE_SOURCE_NOTE})"
+    counts = ",".join(
+        f"{minute.astimezone(ET).strftime('%H:%M')}={count}"
+        for minute, count in result.per_minute_counts
+    )
+    total = sum(count for _, count in result.per_minute_counts)
+    return (
+        f"{prefix} eligible_transactions={total} per_minute={counts or '-'} "
+        f"source=({MASSIVE_SOURCE_NOTE})"
+    )
 
 
 def _restart_inside_bar_session(restart: datetime) -> bool:
@@ -780,14 +1029,51 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
 
     bars = _bar_continuity(runner, v2_start)
     restart_inside_bar_session = _restart_inside_bar_session(v2_start)
-    bar_ok = bars.spanning == 0 and (not restart_inside_bar_session or bars.brackets > 0)
-    if bars.spanning:
-        failures.append(f"{bars.spanning} bar gap(s) span the v2 restart")
+    gap_holes = [result for result in bars.gap_results if result.verdict == "HOLE"]
+    gap_unknowns = [result for result in bars.gap_results if result.verdict == "COULD_NOT_TELL"]
+    classified_gaps = len(bars.gap_results)
+    gap_population_complete = classified_gaps == bars.spanning
+    pending = restart_inside_bar_session and bool(bars.pending_symbols)
+    bar_ok = (
+        not gap_holes
+        and not gap_unknowns
+        and gap_population_complete
+        and not pending
+        and (not restart_inside_bar_session or bars.brackets > 0)
+    )
+    if not gap_population_complete:
+        failures.append(
+            "restart-spanning bar-gap population is not independently classified: "
+            f"{classified_gaps}/{bars.spanning}"
+        )
+    if gap_holes:
+        failures.append(
+            f"{len(gap_holes)} restart-spanning bar gap(s) contain independent eligible prints"
+        )
+    if gap_unknowns:
+        failures.append(
+            f"{len(gap_unknowns)} restart-spanning bar gap(s) could not be independently graded"
+        )
+    if pending:
+        failures.append(
+            "PENDING_NEXT_BAR for live-at-stop symbol(s): " + ",".join(bars.pending_symbols)
+        )
     elif restart_inside_bar_session and bars.brackets == 0:
         failures.append("no adjacent live-bar pair brackets the in-session v2 restart")
-    bar_status = "PASS" if bar_ok else "FAIL"
+    bar_status = (
+        "COULD_NOT_TELL"
+        if gap_unknowns
+        else "PENDING_NEXT_BAR"
+        if pending
+        else "PASS"
+        if bar_ok
+        else "FAIL"
+    )
     if not restart_inside_bar_session and bars.brackets == 0:
         bar_status = "N/A_OFF_SESSION"
+    gap_detail = "; ".join(_format_restart_gap(result) for result in bars.gap_results)
+    if not gap_detail:
+        gap_detail = "independent restart-gap classifications=0/0"
     rows.append(
         (
             "Bar continuity",
@@ -798,7 +1084,9 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
             f"({format_moment(bars.live_floor_utc)}); "
             f"pairs bracketing restart={bars.brackets}/{bars.pairs} (series live at stop); "
             f"gaps spanning restart={bars.spanning}/{bars.gaps}; "
-            f"bracketing pairs NOT live at stop (subscription gaps, excluded)={bars.excluded}",
+            f"bracketing pairs NOT live at stop (subscription gaps, excluded)={bars.excluded}; "
+            f"pending next bar={len(bars.pending_symbols)} "
+            f"symbols={','.join(bars.pending_symbols) or '-'}; {gap_detail}",
             bar_status,
         )
     )
