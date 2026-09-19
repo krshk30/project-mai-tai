@@ -65,7 +65,9 @@ def parse_datetime(value: str | None) -> datetime | None:
 _PREFLIGHT_HTTP_TIMEOUT_SECONDS = 20.0
 
 
-def load_json(url: str, *, timeout_seconds: float = _PREFLIGHT_HTTP_TIMEOUT_SECONDS) -> dict[str, Any]:
+def load_json(
+    url: str, *, timeout_seconds: float = _PREFLIGHT_HTTP_TIMEOUT_SECONDS
+) -> dict[str, Any]:
     try:
         with urlopen(url, timeout=timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -95,27 +97,29 @@ def evaluate_live_deploy_preflight(
     now: datetime | None = None,
     heartbeat_max_age_seconds: int = 120,
     recent_fill_grace_seconds: int = 180,
+    warnings: list[str] | None = None,
 ) -> list[str]:
     if service_target not in TARGET_SERVICE_NAMES:
         raise ValueError(f"unknown service target: {service_target}")
 
     now = now or utcnow()
     failures: list[str] = []
+    warning_sink = warnings if warnings is not None else []
     counts = overview.get("counts", {})
     target_service_name = TARGET_SERVICE_NAMES[service_target]
 
-    control_plane_status = str(overview.get("status", "")).lower()
-    if control_plane_status != "healthy":
+    overview_errors = overview.get("errors")
+    if not isinstance(overview_errors, list):
+        failures.append("control-plane overview errors are unreadable before deploy.")
+    elif overview_errors:
         failures.append(
-            "control-plane overview endpoint is not healthy before deploy "
-            f"(status={control_plane_status or 'unknown'})."
+            f"control-plane overview reports {len(overview_errors)} error(s): "
+            + "; ".join(str(error) for error in overview_errors[:3])
         )
 
     pending_intents = int(counts.get("pending_intents", 0) or 0)
     if pending_intents > 0:
-        failures.append(
-            f"{pending_intents} strategy intents are still pending/submitted/accepted."
-        )
+        failures.append(f"{pending_intents} strategy intents are still pending/submitted/accepted.")
 
     open_virtual_positions = int(counts.get("open_virtual_positions", 0) or 0)
     if open_virtual_positions > 0:
@@ -152,6 +156,12 @@ def evaluate_live_deploy_preflight(
     reconciliation = overview.get("reconciliation", {})
     latest_run = reconciliation.get("latest_run") or {}
     summary = latest_run.get("summary") or {}
+    total_findings = int(summary.get("total_findings", 0) or 0)
+    if total_findings > 0:
+        failures.append(
+            f"reconciliation reports {total_findings} total findings in the latest run."
+        )
+
     critical_findings = int(summary.get("critical_findings", 0) or 0)
     if critical_findings > 0:
         failures.append(
@@ -164,40 +174,55 @@ def evaluate_live_deploy_preflight(
         if item.get("service_name")
     }
     heartbeat_cutoff = now - timedelta(seconds=heartbeat_max_age_seconds)
-    for service_name in sorted(EXPECTED_SERVICE_NAMES):
+    required_service_names = EXPECTED_SERVICE_NAMES | {target_service_name}
+    for service_name in sorted(set(service_rows) | required_service_names):
         service = service_rows.get(service_name)
         if service is None:
             failures.append(f"heartbeat for {service_name} is missing.")
             continue
 
-        status = str(service.get("status", "")).lower()
-        if status != "healthy":
-            if service_name == target_service_name:
-                failures.append(
-                    f"target service {service_name} is not healthy before deploy (status={status or 'unknown'})."
-                )
-            else:
-                failures.append(
-                    f"service {service_name} is not healthy before deploy (status={status or 'unknown'})."
-                )
-
-        observed_at = parse_datetime(str(service.get("observed_at", "")))
+        status = str(service.get("effective_status", service.get("status", ""))).lower()
+        observed_at = parse_datetime(
+            str(service.get("observed_at_raw") or service.get("observed_at", ""))
+        )
+        heartbeat_is_fresh = True
         if observed_at is None:
             failures.append(f"heartbeat for {service_name} has no observed_at timestamp.")
-            continue
-        if observed_at < heartbeat_cutoff:
+            heartbeat_is_fresh = False
+        elif observed_at < heartbeat_cutoff:
             age_seconds = int((now - observed_at).total_seconds())
-            failures.append(
-                f"heartbeat for {service_name} is stale ({age_seconds}s old)."
-            )
+            failures.append(f"heartbeat for {service_name} is stale ({age_seconds}s old).")
+            heartbeat_is_fresh = False
+
+        if status == "healthy":
+            continue
+
+        details = service.get("details")
+        paper_observer = (
+            isinstance(details, dict)
+            and details.get("execution_mode") == "paper"
+            and details.get("broker_route") == "none"
+        )
+        if service_name not in required_service_names and paper_observer:
+            if heartbeat_is_fresh:
+                reason = str(details.get("feed_reason") or "unspecified")
+                warning_sink.append(
+                    "NON-BLOCKING paper observer: "
+                    f"{service_name} status={status or 'unknown'} reason={reason}"
+                )
+            continue
+
+        service_label = "target service" if service_name == target_service_name else "service"
+        failures.append(
+            f"{service_label} {service_name} is not healthy before deploy "
+            f"(status={status or 'unknown'})."
+        )
 
     return failures
 
 
 def build_argument_parser() -> ArgumentParser:
-    parser = ArgumentParser(
-        description="Check whether a risky live service deploy is safe to run."
-    )
+    parser = ArgumentParser(description="Check whether a risky live service deploy is safe to run.")
     parser.add_argument("--service", required=True, choices=sorted(TARGET_SERVICE_NAMES))
     parser.add_argument(
         "--overview-url",
@@ -224,12 +249,17 @@ def main() -> int:
     args = parser.parse_args()
 
     overview = load_json(args.overview_url)
+    warnings: list[str] = []
     failures = evaluate_live_deploy_preflight(
         overview,
         service_target=args.service,
         heartbeat_max_age_seconds=args.heartbeat_max_age_seconds,
         recent_fill_grace_seconds=args.recent_fill_grace_seconds,
+        warnings=warnings,
     )
+
+    for warning in warnings:
+        print(warning)
 
     if failures:
         print(f"Live deploy preflight failed for {args.service}.")
