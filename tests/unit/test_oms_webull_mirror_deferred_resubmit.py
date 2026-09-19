@@ -3,15 +3,24 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import inspect
+import json
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
+from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
+from project_mai_tai.db.base import Base
+from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.fanout_outcome_consumer import OUTCOME_SNAPSHOT_TYPE
 from project_mai_tai.oms import service as service_module
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
+from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 
 
 SEGMENT = "1789655403195"
@@ -43,6 +52,41 @@ class _CaptureRedis:
         return "1-0"
 
 
+class _FakeRedis:
+    def __init__(self) -> None:
+        self.entries: list[tuple[str, dict[str, object]]] = []
+
+    async def xadd(self, stream: str, fields: dict[str, str], **kwargs: object) -> str:
+        del kwargs
+        self.entries.append((stream, json.loads(fields["data"])))
+        return "1-0"
+
+    async def get(self, key: str) -> None:
+        del key
+        return None
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> bool:
+        del key, value, ex
+        return True
+
+    async def xread(self, offsets: object, block: int = 0, count: int = 0) -> list[object]:
+        del offsets, block, count
+        return []
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _RecordingAdapter(SimulatedBrokerAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[object] = []
+
+    async def submit_order(self, request):  # type: ignore[no-untyped-def]
+        self.requests.append(request)
+        return await super().submit_order(request)
+
+
 def _settings(*, enabled: bool = True) -> SimpleNamespace:
     return SimpleNamespace(
         oms_v2_webull_mirror_deferred_resubmit_enabled=enabled,
@@ -61,6 +105,40 @@ def _service(*, enabled: bool = True) -> OmsRiskService:
     service._latest_quotes_by_symbol = {}
     service._latest_trades_by_symbol = {}
     return service
+
+
+def _session_factory() -> sessionmaker[Session]:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def _integrated_service(
+    factory: sessionmaker[Session],
+    *,
+    enabled: bool,
+) -> tuple[OmsRiskService, _RecordingAdapter]:
+    adapter = _RecordingAdapter()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_v2_webull_mirror_deferred_resubmit_enabled=enabled,
+            strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+            strategy_schwab_1m_v2_webull_account_name=ACCOUNT,
+            strategy_schwab_1m_v2_webull_resting_mirror_enabled=True,
+        ),
+        redis_client=_FakeRedis(),
+        session_factory=factory,
+        broker_adapter=adapter,
+    )
+    service._fanout_webull_collision_reason = lambda **kwargs: None  # type: ignore[method-assign]
+    return service, adapter
 
 
 def _queued_events(service: OmsRiskService) -> list[TradeIntentEvent]:
@@ -85,6 +163,7 @@ def _mirror_event(
         "fanout_source": "rth_resting_mirror",
         "resting_entry": "true",
         "fanout_segment_id": segment_id,
+        "fanout_slot": "resting",
         "order_type": "STOP_LIMIT",
         "stop_price": "10.0000",
         "limit_price": "10.0500",
@@ -151,6 +230,20 @@ def _defer(service: OmsRiskService, event: TradeIntentEvent | None = None) -> Tr
     return mirror
 
 
+def _stamp_market(
+    service: OmsRiskService,
+    event: TradeIntentEvent,
+    *,
+    price: Decimal,
+    age: timedelta = timedelta(milliseconds=100),
+) -> None:
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "ask": price,
+        "received_at": datetime.now(UTC) - age,
+    }
+    service._stamp_webull_resting_mirror_market(event)
+
+
 def test_pa1_defaults_off_and_reason_text_without_structured_code_is_not_a_trigger() -> None:
     assert Settings().oms_v2_webull_mirror_deferred_resubmit_enabled is False
 
@@ -169,6 +262,270 @@ def test_pa1_defaults_off_and_reason_text_without_structured_code_is_not_a_trigg
         ],
     )
     assert enabled.__dict__.get("_webull_mirror_deferred_by_slot", {}) == {}
+
+
+@pytest.mark.asyncio
+async def test_precheck_defers_a_twelve_percent_distant_mirror_before_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    factory = _session_factory()
+    service, adapter = _integrated_service(factory, enabled=True)
+    event = _mirror_event()
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "ask": Decimal("8.8000"),
+        "received_at": datetime.now(UTC) - timedelta(milliseconds=100),
+    }
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    monkeypatch.setattr(OmsRiskService, "_market_is_fillable", lambda self, now=None: True)
+
+    results = await service.process_trade_intent(event)
+
+    assert adapter.requests == []
+    assert results[-1].payload.reason == "webull_mirror_precheck_deferred"
+    state = service._webull_mirror_deferred_by_slot[SLOT]
+    assert state.attempts == 0
+    assert state.queued is False
+    with factory() as session:
+        intent = session.scalar(select(TradeIntent))
+        assert intent is not None
+        assert intent.payload["refusal_origin"] == "skipped_before_submit"
+        assert intent.payload["refusal_code"] == "webull_mirror_precheck_deferred"
+        assert session.scalars(select(BrokerOrder)).all() == []
+        outcomes = session.scalars(
+            select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == OUTCOME_SNAPSHOT_TYPE
+            )
+        ).all()
+        deferred = [
+            row
+            for row in outcomes
+            if row.payload.get("reason") == "webull_mirror_precheck_deferred"
+        ]
+        assert len(deferred) == 1
+        assert deferred[0].payload["event_source"] == "client"
+        assert deferred[0].payload["outcome"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_precheck_is_byte_identical_when_the_pa1_flag_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    factory = _session_factory()
+    service, adapter = _integrated_service(factory, enabled=False)
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "ask": Decimal("8.8000"),
+        "received_at": datetime.now(UTC) - timedelta(milliseconds=100),
+    }
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    monkeypatch.setattr(OmsRiskService, "_market_is_fillable", lambda self, now=None: True)
+
+    await service.process_trade_intent(_mirror_event())
+
+    assert len(adapter.requests) == 1
+    assert service.__dict__.get("_webull_mirror_deferred_by_slot", {}) == {}
+
+
+@pytest.mark.parametrize(
+    "stamped_at",
+    [
+        None,
+        (datetime.now(UTC) - timedelta(seconds=3)).isoformat(),
+    ],
+    ids=["missing", "stale"],
+)
+def test_precheck_does_not_defer_without_a_fresh_market(stamped_at: str | None) -> None:
+    service = _service()
+    event = _mirror_event()
+    if stamped_at is not None:
+        event.payload.metadata["webull_shape_market_price"] = "8.8000"
+        event.payload.metadata["webull_shape_market_at_utc"] = stamped_at
+
+    assert service._defer_webull_resting_mirror_before_submit(event) is False
+    assert service.__dict__.get("_webull_mirror_deferred_by_slot", {}) == {}
+
+
+def test_precheck_deferred_slot_is_forgotten_by_the_v2_cancel() -> None:
+    service = _service()
+    event = _mirror_event()
+    _stamp_market(service, event, price=Decimal("8.8000"))
+    assert service._defer_webull_resting_mirror_before_submit(event) is True
+
+    service._observe_webull_mirror_deferred_intent(_mirror_event(intent_type="cancel"))
+
+    assert SLOT not in service._webull_mirror_deferred_by_slot
+    assert any("reason=v2_cancel_intent" in line for line in service.logger.lines)
+
+
+def test_precheck_uses_the_same_exact_eight_percent_boundary_as_resubmit() -> None:
+    at_boundary = _service()
+    boundary_event = _mirror_event()
+    _stamp_market(at_boundary, boundary_event, price=Decimal("9.2000"))
+    assert at_boundary._defer_webull_resting_mirror_before_submit(boundary_event) is False
+
+    outside_boundary = _service()
+    outside_event = _mirror_event()
+    _stamp_market(outside_boundary, outside_event, price=Decimal("9.1999"))
+    assert outside_boundary._defer_webull_resting_mirror_before_submit(outside_event) is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_ahead_of_precheck_deferred_retry_leaves_no_working_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _service()
+    event = _mirror_event()
+    _stamp_market(service, event, price=Decimal("8.8000"))
+    assert service._defer_webull_resting_mirror_before_submit(event) is True
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "ask": Decimal("9.5000"),
+        "received_at": datetime.now(UTC),
+    }
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
+    queued = _queued_events(service)[0]
+
+    service._observe_webull_mirror_deferred_intent(_mirror_event(intent_type="cancel"))
+    submitted: list[TradeIntentEvent] = []
+
+    async def _process(event: TradeIntentEvent):
+        submitted.append(event)
+        return []
+
+    service.process_trade_intent = _process  # type: ignore[method-assign]
+    await service._handle_stream_message({"data": queued.model_dump_json()})
+
+    assert submitted == []
+    assert SLOT not in service._webull_mirror_deferred_by_slot
+    assert any("reason=slot_claim_no_longer_current" in line for line in service.logger.lines)
+
+
+@pytest.mark.asyncio
+async def test_precheck_resubmit_attempts_never_reset_and_stop_after_three(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _service()
+    clock = [100.0]
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+
+    original = _mirror_event()
+    _stamp_market(service, original, price=Decimal("8.8000"))
+    assert service._defer_webull_resting_mirror_before_submit(original) is True
+    assert service._webull_mirror_deferred_by_slot[SLOT].attempts == 0
+
+    queued_count = 0
+    observed_attempts: list[int] = []
+    for _ in range(12):
+        if SLOT not in service._webull_mirror_deferred_by_slot:
+            continue
+        clock[0] += 5.0
+        service._latest_quotes_by_symbol[SYMBOL] = {
+            "ask": Decimal("9.2500"),
+            "received_at": datetime.now(UTC),
+        }
+        await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
+        queued = _queued_events(service)
+        if len(queued) == queued_count:
+            continue
+        queued_count = len(queued)
+        retry = queued[-1]
+        attempt = int(retry.payload.metadata["webull_deferred_resubmit_attempt"])
+        assert service._claim_webull_mirror_deferred_resubmit(retry) is True
+
+        _stamp_market(service, retry, price=Decimal("9.1000"))
+        assert service._defer_webull_resting_mirror_before_submit(retry) is True
+        service._finish_webull_mirror_deferred_resubmit(retry)
+        observed_attempts.append(attempt)
+        if SLOT in service._webull_mirror_deferred_by_slot:
+            assert service._webull_mirror_deferred_by_slot[SLOT].attempts == attempt
+
+    assert observed_attempts == [1, 2, 3]
+    assert SLOT not in service._webull_mirror_deferred_by_slot
+    assert any("reason=attempt_cap_reached" in line for line in service.logger.lines)
+
+
+@pytest.mark.asyncio
+async def test_precheck_resubmit_waits_five_seconds_before_rearming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _service()
+    clock = [100.0]
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    _defer(service)
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "ask": Decimal("9.2500"),
+        "received_at": datetime.now(UTC),
+    }
+    await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
+    retry = _queued_events(service)[0]
+    assert retry.payload.metadata["webull_deferred_resubmit_attempt"] == "1"
+
+    _stamp_market(service, retry, price=Decimal("9.1000"))
+    assert service._defer_webull_resting_mirror_before_submit(retry) is True
+    service._finish_webull_mirror_deferred_resubmit(retry)
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "ask": Decimal("9.2500"),
+        "received_at": datetime.now(UTC),
+    }
+
+    clock[0] += 4.999
+    await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
+    assert len(_queued_events(service)) == 1
+
+    clock[0] += 0.001
+    await service._evaluate_webull_mirror_deferred_resubmits(SYMBOL)
+    assert [
+        event.payload.metadata["webull_deferred_resubmit_attempt"]
+        for event in _queued_events(service)
+    ] == ["1", "2"]
+
+
+def test_precheck_cannot_decrease_an_existing_slot_attempt() -> None:
+    service = _service()
+    event = _mirror_event()
+    event.payload.metadata.update(
+        {
+            "webull_deferred_resubmit": "true",
+            "webull_deferred_resubmit_attempt": "1",
+        }
+    )
+    service._remember_webull_mirror_deferred(
+        event=event,
+        segment_id=SEGMENT,
+        slot_id=SLOT,
+        stop_price=Decimal("10"),
+        attempts=2,
+    )
+    service._remember_webull_mirror_deferred(
+        event=event,
+        segment_id=SEGMENT,
+        slot_id=SLOT,
+        stop_price=Decimal("10"),
+        attempts=1,
+    )
+    assert service._webull_mirror_deferred_by_slot[SLOT].attempts == 2
+
+    _stamp_market(service, event, price=Decimal("9.1000"))
+
+    assert service._defer_webull_resting_mirror_before_submit(event) is True
+    assert service._webull_mirror_deferred_by_slot[SLOT].attempts == 2
+
+
+def test_v2_claim_expiry_cannot_emit_a_second_leg_while_the_mirror_is_active() -> None:
+    release = inspect.getsource(SchwabV2Strategy._release_fanout_webull_claim)
+    cross = inspect.getsource(SchwabV2Strategy._fanout_rth_resting_cross)
+    on_fill = inspect.getsource(SchwabV2Strategy.update_position)
+
+    assert "webull_resting_active" not in release
+    after_claim_gate = cross.split(
+        "if state.position_qty != 0 or state.fanout_webull_claimed:",
+        maxsplit=1,
+    )[1]
+    assert after_claim_gate.index("if state.webull_resting_active:") < after_claim_gate.index(
+        "self._claim_fanout_webull("
+    )
+    assert "and not state.webull_resting_active" in on_fill
 
 
 @pytest.mark.asyncio
