@@ -1,9 +1,0 @@
-{
-  "pr_number": 1013,
-  "range_base": "d88df04922cba3c30ce77185e31005190e6e09bc",
-  "range_head": "660e7dd1c8968a664871fe6becbaf273c25dd9e1",
-  "reviewed_at": "2026-09-18T18:27:29Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "Offline study only (backtest/momentum_live_rule_baseline.py + test + artifacts); no runtime importer. Corrects the PATH-vs-union integrity CONTROL to be source-order aware: a print sharing the detection millisecond but preceding the detecting print is not part of the path (docs/momentum-paper-bot.md: the path begins AT the detection print). Strict equality is kept (line ~752 still raises on path_rows != union_prints); no tolerance introduced. Ordinals are per symbol on both sides (detection ordinal = len(trades) at ingest; control enumerates the same per-symbol list), overlapping events handled because a print is kept if ANY interval admits it, and an unclassified extra raises. I recomputed control.json myself: 60/60 rows PATH == corrected union; old minus corrected == same-ms-before-detect on 60/60; 1,296 extras in 55 rows across 28 of 30 sessions - so my stated expectation (12 extras on one day) was wrong and the author reported that plainly; the earlier single-day failure was the first session failing fast. 24 tests pass with PYTHONPATH on the PR tree; mutation: order-awareness removed -> 2 fail. Gap, non-blocking: removing the unclassified-extra guard leaves tests green. Known limit recorded in the report: REST page order inside one millisecond may differ from live websocket arrival order. This pin does not mean the baseline REPORT has been read or accepted."
-}
