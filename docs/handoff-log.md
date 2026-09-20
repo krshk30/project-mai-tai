@@ -4205,3 +4205,69 @@ fresh quote** — that revisit is now live.
 Pinned #997, #998, #999, #1000, #1001, #1002, #1003 (twelve reviews for seven PRs; five heads refused). Two of my errors: the
 truncated-grep "never recorded" claim, and a ceiling-only acceptance bound. A stale worktree marker refused my first pin commit (nothing
 committed). The evening plan was proposed twice before the operator answered; the work went ahead meanwhile.
+
+## 2026-09-18 / 09-19 — Friday and Saturday: three false-flip exits left a Webull share naked, the operator drew a line, and the seam got a finish line; two deploys, one flag turned on
+
+**Written by `claude-1` (integrator). `codex-2` authored every code PR and ran both deploys.**
+
+**The morning census (Fri).** The week's refusals, both live accounts visible: 207 rejects 09-10..09-17 (193 broker, 14 client).
+Two classes the operator called critical: Webull `NEW_NO_POSITION…` (48 rejects, 5 episodes — every one a software sell landing
+0.1–6 s AFTER a Webull OCO leg had already filled, with HTTP 429 on the cancel-confirmation read and a stale `HELD` positions read
+resetting the 3-strike counter) and `ORDER_RISK_RULE_PRICE_AGGRESSIVE` (41 rejects, 17 segments — Webull refuses a buy-stop ≳10%
+above the market; v2 sets `webull_resting_active` when the draft is QUEUED, so a refused mirror is never re-sent and the software
+cross fallback is suppressed). Also found: #992 stopped the Schwab ineligible-for-session cache being written (12/12 before, 0/30 on
+09-17) — the operator parked it. LC1 (#1005) and PA1 (#1006, #1009) were specified by `claude-1`, built by `codex-2`.
+
+**Review findings that changed the PRs.** #1005: the reworked RESERVE1 row counted late-close rejects as `guard_working` — a
+20-reject burst would have read GREEN ⇒ separate LATECLOSE1 row, verified by running the PR's SQL on the box (4 episodes / 47
+rejects / max 20, identical to the independent census). #1006: the resubmit was awaited inside the serial tick consumer and raced
+the intent lane — `claude-1`'s probe showed a v2 cancel mid-flight leaving an accepted order nobody cancels ⇒ tick path only marks,
+the serial lane claims and submits. #1010: approval replayable, five refusals unpinned, "operator" is a claim ⇒ single-use,
+every refusal red under removal, header says "deliberate-act gate, not operator authentication". #1011: PASS unreachable (runs only
+after 20:00 ET when no quotes exist), in-process queue measured instead of a cross-process hand-off, UNMEASURED exited 0 ⇒ all three
+fixed; the non-blocking property is now held by a behavioural test. #1012: the pre-check reset the attempt cap on PA1's own
+resubmit — 12 cycles, never reaching the broker ⇒ attempts monotonic, 5 s re-arm. #1014: see below.
+
+**Momentum saw nothing (Fri).** Healthy by systemd, zero prints: its own `T.*` websocket on the shared Massive key was closed `1008
+(policy violation)` 1,325 times 04:00–06:37 ET, and the LIVE gateway took the same kick 222 times (0 in the three prior days). Massive
+allows one websocket per ACCOUNT per cluster — `claude-1` first advised a second key and was wrong. Operator ruling: do not stop it;
+**Option A — one connection, through the gateway, tick by tick** (the architecture doc already says the gateway owns the feed; the
+bot's own socket broke it). #1007 (5×1008 ⇒ 15 min cool-off ⇒ one probe) went live 07:27:53 ET; gateway kicks 290 → 290 over the next
+five minutes, 292 by 10:21 ET across 8 probes. Step 2 (measure before building) is pre-registered (#1008) and tooled (#1011); flat
+files are in the operator's plan — the S3 secret is the existing API key, Access Key ID is the key's UUID (HEAD 200, 2.97 GB).
+
+**The afternoon that drew the line (Fri).** GIPR 12:20 ET looked like a stuck trade and was not (a working buy-stop at 1.22, high
+1.20, zero fills). IMCC's 12:04 flip was the PA1 defect live (Schwab restricted; Webull refused 5.78 vs 5.26 at 11:45; level flat
+19 min; v2 logged a LIVE-mirror cross with nothing resting). Then GIPR filled both brokers 13:05:41 and the false-flip rule fired:
+Schwab sold −1.3%; on Webull the pair was cancelled (`confirmed=2`), cancelled AGAIN ~1 s later, `ORDER_CAN_NOT_BE_CANCEL` was read as
+"unconfirmed", the close REFUSED and dropped — naked 653 s until the software hard stop sold at −8.3%. It repeated live at 14:05
+(−18.4%: the hard stop is a market sell after the level trades, filled 11% below it) and on IMCC at 13:46 (`confirmed=1`, −9.2%).
+`claude-1` told the operator "8/8, may never have worked" — WRONG, read from a log field; fills show 10 sold of 19 fired since 09-01
+("works sometimes", exactly as the operator said). The test suite for this path faked `cancel_exit_pair` as always two clean
+cancels, and the one test simulating a partial cancel ASSERTED giving up.
+
+**The operator's ruling.** No more band-aids: sweep the class from the real history, review what is NOT written, tell codex the
+future cases, never freeze — fix forward. The sweep (09-04→09-18, 141 round trips, 125 opportunities): entries and fill prices are
+sound (entry median +2 / +6 bps); broker-leg exits make the money (Schwab +2.96%, Webull +4.96% median); the damage is software
+exits on Webull — confirmation-exit gap −31.7 pp over 11 both-held exits, `[OMS-EXIT-REPROTECT]` fired 0 times in 10 sessions,
+uncovered windows of 1,985 s (SUNE 09-09), 352 s, 653 s, 611 s, PROTECT-FAILED 3/75. 49,500 historical rejects sorted into five exit
+classes; ≈99% of exit refusals are ONE family under three names (reverse-option / no-position / oversold) on both brokers.
+
+**#1014 — the finish line.** `codex-2` found the second call site (the control loop also handles quote ticks, so two tasks passed
+the in-flight check) and rebuilt the path: claim before the first await, cancel-AND-read release with bounded retries, terminal
+states SOLD / resolved_by_fill / REPROTECTED+PAGED / uncovered+PAGED, fixtures carrying the day's real Webull request ids, a
+nine-row bad-answer matrix, EXITDONE1 (fired vs finished, reads RED on the 09-18 tape: live:orb 4 fired, 1 sold). `claude-1`
+withheld it twice: an in-flight key that leaked forever on one DB error (proved by probe), and 1/2/4 s sleeps inline on the serial
+tick consumer (`claude-1`'s own spec — now 0.5/1.0 s with `inline_seconds=` logged).
+
+**Deploys (Sat).** Fri evening: `codex-2` found the #1010 gate cannot run on a box that predates it (`claude-1` had pinned it
+without asking where it executes), and the standard deploy was then refused twice by the health preflight because momentum-paper's
+truthful `degraded` heartbeat makes the whole overview degraded (#1015 makes a declared paper/no-broker service a warning). Sat
+08:10 ET: `c6e259a0` deployed (weekend: the paper bot publishes no heartbeat, the old preflight passed). The restart evidence read
+8/9 on an MNOV 16:14→16:19 gap from Thursday; `claude-1` proved against Massive 1-min aggregates that MNOV printed no trade in
+those minutes (identical minute sets) ⇒ #1016 grades a gap as a hole only with prints inside it. Sat 19:51:59 ET: `d6a6f59a`
+deployed on the operator's "GO d6a6f59a", PA1 flag ON by his words; verified on the box by `claude-1` (PASS 9/9).
+
+**Corrections owed to the record (`claude-1`):** "second Massive key" advice — wrong; "Option B snapshot-first" — wrong for a
+30-second detector; "8/8 never worked" — wrong unit; pinned #1010 without asking where it runs; 1/2/4 s backoff specified for a
+tick-path call; fleet journal empty for two days because claims were written by hand instead of through `log.sh` (backfilled).

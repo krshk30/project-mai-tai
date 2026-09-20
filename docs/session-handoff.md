@@ -3,112 +3,100 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-09-17 20:55 ET.** Batch `2026-09-17-momentum-first-session-crash-form-t-six-prs-deployed`.
-Integrator for this rotation; `codex-2` executed every merge and deploy and reviews this PR. The author never reviews.
+**Written by `claude-1`, 2026-09-19 (Sat) 20:30 ET.** Batch `2026-09-19-webull-exit-seam-fixes-two-deploys-pa1-live`
+(covers Fri 09-18 and Sat 09-19). Integrator for this rotation; `codex-2` authored every code PR, executed every merge and
+both deploys, and reviews this PR. The author never reviews.
 
-> ⛔⭐⭐⭐ **RECLAIM1 IS LIVE, unchanged.** `MAI_TAI_STRATEGY_SCHWAB_1M_V2_FLIP_OWNED_FIRST_ENTRY_ENABLED=true` read from the running v2
-> (pid `2549985`, `/proc/…/environ`, 16:22 ET). One trade per ATR segment, first resting entry only, no reclaim. A hard-stop exit does
-> NOT release the slot (operator ruling 09-16). ⛔ **Consequence seen live 09-17 (KXIN): a BUY flip that closes within one bar of a
-> confirmation exit has NO entry path** — the reset only re-enables a REST, and a rest exists only while ATR is SHORT. Census: 1 of 6
-> confirmation exits since 09-05 had the flip within 2 bars; a "buy the flip" rule would have lost 3 of the 5 times it fired. **Finding,
-> not a task** — reopens on a second ≤2-bar instance.
+> ⛔⭐⭐⭐ **OPERATOR'S LINE IN THE SAND (09-18).** *"We are just putting a band-aid on each hole."* A bug is not fixed when
+> its test passes. Every bug ⇒ sweep the REAL history for every member of its class, fix the class, and review what the PR
+> did **not** write. Every exit decision must END in a named safe state — **SOLD, or PROTECTED-AGAIN + PAGED** — including for a
+> broker answer we have never seen. No freezes: the design is right, the build was wrong — fix forward. `claude-1` leads the
+> exit-seam effort (authors the unowned items, `codex-2` reviews those; `codex-2` keeps what it had in flight, `claude-1` reviews).
 
 ---
 
-# ✅ PRODUCTION — main and box IN SYNC at `f9233366` on runtime code (main is `68dc1384` = `f9233366` + #1003, an OFFLINE study module)
+# ✅ PRODUCTION — RUNTIME SHA on the box is `d6a6f59a`; GitHub main = `d6a6f59a` + DOCS-ONLY commits (this handoff PR and any later docs PR)
 
 | | |
 |---|---|
-| box (deployed) | **`f9233366e8681c4e8fe34afaf2be138c94796776`** — read FROM THE BOX 2026-09-17 16:22 ET, branch `main`, clean; pulled 16:09:44 ET |
-| GitHub main | **`68dc1384`** — one commit ahead: #1003 `src/project_mai_tai/backtest/momentum_live_rule_baseline.py` + its test + `docs/review-artifacts/…` — a `python -m` study, no service imports it. This handoff PR is docs-only: no sync, no restart |
-| gate pin | `/home/trader/preopen.sh`: `EXPECTED_DATE=2026-09-18` · `EXPECTED_SHA=f9233366…` · `EXPECTED_PID=2549985` · `EXPECTED_START='Thu 2026-09-17 20:14:30 UTC'` · `SNAPSHOT=/home/trader/restart-evidence/v2-before-corrective-20260917T201400Z.json` · `--restarted schwab-1m-v2` · `--expected-alembic-head 20260916_0021` · `--no-schema-change` (read 16:22 ET) |
-| open PRs | **none** at 20:55 ET besides this handoff. #1000 and #1003 both merged after review |
-| exposure | after-restart evidence 16:14 ET: **open managed rows 0 · nonzero account-position rows 0 · both live accounts flat before and after** |
-| merges 09-17 (**7**) | **#997** Momentum heartbeat crash loop · **#998** per-bar suppressed-rest line · **#999** Momentum Form T eligibility · **#1000** Momentum 20% trigger + fresh-move re-entry + shared tape · **#1001** 24/7 service restart-storm paging · **#1002** ntfy delivery receipts · **#1003** 30-session live-rule baseline harness (offline) |
-| migration | `alembic_version = 20260916_0021`, unchanged (no schema change today) |
+| box (deployed) | **`d6a6f59a88dfe9d5cdf9f1746a18b8dcf76b732b`** — read FROM THE BOX by `claude-1` 2026-09-19 19:57:48 ET, clean |
+| GitHub main | runtime-identical to the box. Main moves ahead of `d6a6f59a` by **docs-only** commits the moment this PR merges — that is the normal, allowed divergence, NOT "behind". **Invariant to check at session start:** `git diff --name-only d6a6f59a origin/main` lists only `docs/**`; anything else means the box is behind on real code. Open PR besides this one: **#1013** (offline Momentum baseline control; pinned @ `4e4f1d0e` on an older base — needs a rebase + re-pin) |
+| gate pin | `/home/trader/preopen.sh`: `EXPECTED_DATE=2026-09-21` · `EXPECTED_SHA=d6a6f59a…` · `EXPECTED_PID=2549985` · `EXPECTED_START='Thu 2026-09-17 20:14:30 UTC'` · `SNAPSHOT=…/v2-before-corrective-20260917T201400Z.json` · `--restarted schwab-1m-v2 --restarted oms --restarted strategy` · `--expected-alembic-head 20260916_0021` · `--no-schema-change` (read 19:57 ET) |
+| restart evidence | The gate's OWN command run read-only by `claude-1` 19:58 ET (output to `/tmp`): **rc 0, PASS 9/9**; bar-continuity = gaps spanning restart 1/162 → **`NO_TRADES_IN_GAP`** (MNOV 09-17 16:15–16:18 ET = 0,0,0,0). ⚠ `…/v2-restart-evidence-20260921.md` on disk is the 09-19 **morning** file (8/9 FAIL, pre-#1016) — Monday's gate overwrites it; do not quote it |
+| exposure | 19:57 ET: **open managed rows 0 · non-zero account-position rows 0 · both live accounts flat** |
+| flags | From `/proc/<oms pid>/environ`: **`MAI_TAI_OMS_V2_WEBULL_MIRROR_DEFERRED_RESUBMIT_ENABLED=true`** (operator 09-19: *"yes turn it on for monday.. i will go with your recommendation"*; env file line 222, the only new line) · `…WEBULL_LATE_CLOSE_GUARD_ENABLED` **ABSENT** (default false) · **#1014 has NO flag — live since 09-19 08:10:23 ET** · quantity unchanged |
+| merges 09-18/19 (**11**) | **#1005** LC1 late-close guard (flag off) · **#1006**+**#1009** PA1 deferred mirror resubmit · **#1007** Momentum 1008 cool-off · **#1008** Step 2 protocol · **#1010** deploy gate (cannot run yet — see open items) · **#1011** Step 2 tooling (unwired) · **#1012** PA1b pre-check · **#1014** confirmation-exit invariant · **#1015** preflight: paper observer = warning · **#1016** restart-evidence gap check |
+| migration | `alembic_version = 20260916_0021`, unchanged |
 
-## Restarts — all 09-17 after the close, `NRestarts=0`, 0 tracebacks after start (verified on the box 16:22 ET)
+## Restarts (all `NRestarts=0`, 0 tracebacks after start — verified on the box)
 
 | service | pid | started (ET) | why |
 |---|---|---|---|
-| **schwab-1m-v2** | **2549985** | 16:14:30 | #998. Restarted TWICE: the first landed exactly on a bar timestamp and the strict bar-continuity checker could not bracket it; `codex-2` took a fresh flat snapshot and repeated it — evidence **9/9 PASS without a waiver**, BOOT-HOLD released 16:14:37 `reconstructed_uncapped=0` |
-| **momentum-paper** | **2548204** | 16:10:00 | #997 + #999 + #1000. Was crash-looping 03:55–06:20 ET (1,244 restarts); stopped by hand 06:20 ET on operator yes; started with the deploy. **Publishes NO heartbeat after the close by design** — first real proof is **03:55 ET 09-18** |
-| oms 2270050 · control 2273848 · strategy 2274173 · reconciler 1626620 · market-data 2202865 · market-capture 2202817 · orb 2051823 | — | unchanged | — |
+| **oms** | **3107580** | Sat 09-19 19:51:59 | deploy `d6a6f59a` (#1015 #1016 #1012) + PA1 flag. Earlier same day 08:10:23 → pid 3014661 for `c6e259a0` (#1005 #1006 #1009 #1014) |
+| **strategy** | **3107596** | Sat 09-19 19:51:59 | OMS deploy restarts strategy (both times) |
+| **momentum-paper** | **2704889** | Fri 09-18 07:27:53 | #1007, intraday, paper unit only, on operator yes |
+| schwab-1m-v2 2549985 · control 2273848 · reconciler 1626620 · market-data 2202865 · market-capture 2202817 · orb 2051823 | — | unchanged | — |
 
-## After-restart evidence (`v2_restart_evidence.py`, run by `codex-2` 16:14 ET, re-read by `claude-1` 16:22 ET)
+## What is LIVE and what to READ Monday 09-21 (owner · first read) — report the numbers to the operator UNPROMPTED
 
-**9/9 PASS.** Restarted 1/1 · not-restarted unchanged · flat before/after · running-process flags 5/5 (first-entry true, reclaim false,
-seed false) · REST warmup · BOOT-HOLD released · bar continuity 0 gaps spanning the restart · tracebacks 0. Fleet health `latest.txt`
-**18/18 GREEN** at 16:20 ET (nine services × inactive/restart-storm rows). Notification self-test HTTP 200, receipt `Oj26jnaYWncH`.
+| change | first evidence to read | owner |
+|---|---|---|
+| **#1014 Webull confirmation exit ends SOLD / resolved_by_fill / REPROTECTED+PAGED** (claim before first await; cancel-AND-read release with 0.5 s + 1.0 s retries; class-D one corrected retry) | `EXITDONE1` fired vs sold/reprotected **per broker** (09-18 tape: live:orb fired 4, sold 1, gap 3; schwab 2/2) · every `inline_seconds=` (retries still run INLINE on the serial tick consumer) · any `[OMS-V2-CONFIRMATION-EXIT-PAGE]` / `…-CORRECTED-RETRY]` | claude-1 |
+| **PA1 + PA1b (flag ON): refused Webull resting mirror is re-sent inside 8%; a mirror > 8% from the market is deferred before submit; cap 3, 5 s re-arm, serial lane only** | from 07:00 ET: `[OMS-WEBULL-MIRROR-DEFERRED]` by decision · `ORDER_RISK_RULE_PRICE_AGGRESSIVE` rejects (baseline 41 in 4 sessions; 11 on IMCC alone 09-18) · segments where the primary filled with no Webull order (baseline 2: MEDS 09-16, IMCC 09-18) · Webull orders per `fanout_slot_id`. **KILL SWITCH:** a duplicate leg on one slot, or a resubmit after a v2 cancel ⇒ remove env line 222, flat-check, restart oms, tell the operator at once. Zero deferrals = UNEXERCISED | claude-1 |
+| **#1007 Momentum cool-off** (5×1008 ⇒ 15 min ⇒ ONE probe) | 04:00 ET: 5 kicks then cool-off; gateway `1008 (policy violation)` count per probe (09-18: 290 → 292 over 8 probes). Bot receives **no prints** until Step 3 — a quiet Momentum page is expected, not a pass | codex-2 |
+| **#1015 / #1016** | first weekday-evening deploy: momentum-paper printed as `NON-BLOCKING paper observer`; any restart-spanning gap graded against Massive 1-min aggregates (refused 09:30–16:00 ET) | codex-2 |
+| **#1005 LC1** | merged, deployed, **flag OFF** — nothing to read until the operator enables it (not the same day as PA1) | operator → codex-2 |
 
-## What is LIVE tonight and what to READ tomorrow (owner · first read)
+## What happened (one paragraph each — the narrative is in `handoff-log.md`)
 
-| change | live? | first evidence to read | owner |
-|---|---|---|---|
-| **#997 heartbeat `degraded` while the feed is closed** (was `waiting`, an invalid literal ⇒ crash loop) | live (unit 16:10) | **03:55–04:15 ET:** MainPID stable, NRestarts flat, 0 `ValidationError`, heartbeat `degraded` then `healthy` once `T.*` connects. If the unit dies, **#1001 pages** (inactive or >3 restarts/5 min) | codex-2 |
-| **#999 condition 12 (Form T) NEUTRAL** — the old rule rejected 100% of pre-market prints (0/100,162 DAIC) | live | **06:30 ET:** eligible/total prints, excluded BY CODE (37 should dominate; 12-alone must be zero), and whether live `T.*` frames carry `x` and `trfi` (count of None) | codex-2 |
-| **#1000 20% trigger, no cooldown, fresh post-exit low required, shared evidence tape keyed (id, exchange, trf, t)** | live | **09:35 ET:** detections/fills/NO_FILL/UNANSWERABLE/targets/stops per bot; PATH rows vs prints in the union of event ranges; `tape_key_collisions`; unit RSS during any squeeze. Detector status reads **`UNCALIBRATED`** until the baseline exists | codex-2 |
-| **#998 `[V2-RESTING-SUPPRESSED-BAR]`** — one line per eligible bar while a segment's first slot is consumed (the deduped `[V2-RESTING-SLOT-CONSUMED]` is untouched; SLOTCLEAR1 unaffected) | live (v2 16:14) | lines per suppressed segment vs that segment's eligible bars. Four boot-capped SHORT segments exist tonight (AEMD, DAIC, MNOV, NUWE) but the resting window is closed ⇒ **UNEXERCISED**; first reading in the first in-window consumed segment | claude-1 |
-| **#1001 fleet-runtime paging** — nine units, per-service fingerprints, expiring `maintenance.txt`, root cron `*/5 * * * *` (trader line removed) | live all day | any page names one unit and one condition; a planned stop must be entered in `/home/trader/fleet_health/maintenance.txt` (`<unit> <until-ISO-UTC> <reason>`) or it pages | codex-2 |
-| **#1002 `[NTFY-DELIVERY]` receipts** — the known-defect watch pages only through this sender | live | every page attempt logs `accepted= http_status= message_id=`; a non-2xx stays un-acked and retries | codex-2 |
-| **#992 mirror lag / shape guard** (deployed 09-16) | live | **first read 09-17:** 16 mirror attempts — 9 accepted (lag 402–1,556 ms, one >1 s), 5 rejected at Webull (TURB ×2, AEMD ×3), **2 `abandoned_no_fresh_quote`** (TURB 09:45, AEMD 10:10) ⇒ the 2,000 ms fallback revisit is now live, owner claude-1 | claude-1 |
-| **#993 SHORT-segment seed cap** (deployed 09-16) | live | 6 caps since the 09-16 restart, 6/6 with the SELL older than the watch start; 0 RED. Every restart caps every seeded SHORT name (5 at 19:43 ET 09-16, 4 at 16:14 ET 09-17) — expected, resets at the 04:00 roll | claude-1 |
-
-## ⛔ MISSED TODAY — trades and tasks, so tomorrow can start on them (operator asked for this list)
-
-**The day's live tape (fills, both accounts, 09-17):** Schwab v2 **7 round trips, 4 wins, median +2.92%, gross +$1.16** (qty 2) ·
-Webull fan-out leg **11 round trips, 7 wins, median +4.94%, gross +$1.43** (qty 1). Same-second entries diverged across brokers three
-times (AEMD 13:27 Webull +5.07% / Schwab −2.44%; DAIC 11:16 +5.56% / −1.95%; DAIC 08:50 +4.84% / +2.92%) — the CONF3 dispersion class.
-
-| missed | what it cost | why | tomorrow's task (owner) |
-|---|---|---|---|
-| **KXIN 09:54 ET BUY flip** — 1.68 → 1.95 (+16%; +5% was inside the flip's own next bar) | one +5% winner on the Webull leg; Schwab could not trade it at all | Webull rest filled 2 bars early → confirmation exit sold −1.5% → owner reset 09:53:24 → the real flip closed 38 s later; a reset only re-enables a REST and rests need a SHORT bar; reclaim is OFF | **none** (finding, 1 of 6 in two weeks; a buy-the-flip rule lost 3 of 5). Reopens on a second ≤2-bar instance (claude-1) |
-| **KXIN + TURB on Schwab** — 5/5 and 25/25 opens rejected "must be placed with a broker" | every Schwab entry on both names; Webull took TURB 3 trades (−1.5%, +4.9%, −7.8%) | Schwab-restricted symbols; we resend every bar | intake spec: after the first such reject, mark the symbol Schwab-ineligible for the session; log it (claude-1 spec → codex-2 build) |
-| **Momentum 30/60 — the entire first session** (04:11–09:30 ET) | 0 detections on a morning with AEMD 1.43 → 14 pre-market | 03:55 crash loop (#997) and, underneath it, the Form T rule that rejected 100% of pre-market prints (#999) | both deployed 16:10 ET; **first real session is 09-18** — reads at 03:55, 06:30, 09:35 ET (codex-2) |
-| **AEMD before 10:45 ET** — 10 Webull `PRICE_AGGRESSIVE` rejects (10:03–15:06), 22 Schwab rests cancelled by reprice before the first fill | unknown; the first fill came at 10:51 after the 10× move | the resting stop chased a fast tape; Webull refuses stops far above the ask | the PRICE_AGGRESSIVE distance census from #976 fields is still owed (codex-2, unchanged from 09-16) |
-| **USDE** — 5 Webull mirrors `NO_FRESH_QUOTE`, 11 Schwab rests cancelled, no fill | none proven | the #992 fallback abandons when the OMS snapshot is stale | read the abandon lines' quote ages vs the 2,000 ms fallback (claude-1) |
-| **One Webull round trip per Schwab trade is the design; sizes are qty 2 / qty 1** | — | — | no task; noted so the +$ figures are read as percentages |
-
-**Tasks planned today and NOT done (carry):** the one-week broker-refusal census (147 `event_source='broker'` rejects since 09-10 —
-the week is complete, census not run; claude-1) · the late-close-after-broker-fill guard (needs the operator's yes; codex-2) ·
-`abandoned_no_fresh_quote` fallback read (claude-1) · Schwab-ineligible-for-session spec (claude-1) · seed-cap-per-restart measurement
-(claude-1) · Momentum 30-session baseline (running; codex-2) · the `momentum-paper` `_publish_state()` exception guard (one publish error
-still kills the unit; codex-2, never started).
-
-## The 30-session baseline (#1003) — RUNNING, results UNSEEN
-
-`codex-2` is capturing 30 sessions ending **2026-09-16** (after-close only, ~23.5k API calls/session, 3/30 at 18:35 ET, 0 rate-limit
-lines on the live gateway). Frozen before capture: `DETECTOR_SUSPECT` = detections > 10; **more than 3 of 30 suspect sessions rejects
-the band and recommends nearest-rank P95 (never below 10)**; 09-17 was already seen (14/16 detections, 29/30 fills on AEMD) and is
-EXCLUDED from calibration. ⛔ Neither agent reads a partial report; the replay runs only at 30/30. The study changes no runtime; the
-operator decides.
-
-## Rulings and approvals made today (operator)
-
-1. **Both deploys after hours** — #997 was not deployed intraday even though Momentum was down (half its window was already lost).
-2. **Stop the Momentum crash loop at 06:20 ET** — a full-market Massive subscription was being opened and dropped every ~7 s on the key the live gateway shares.
-3. **Condition 12 neutral** — accepted as a defect repair of the pre-registered rule (the study used Massive 1-second bars, which count Form T prints).
-4. **20% trigger with immediate fresh-move re-entry** — recorded in `docs/momentum-paper-bot.md` as operator-approved; `codex-2` merged #1000 on it. ⚠ `claude-1` did not witness the approval directly; it was asked twice and not contradicted.
-5. **Close-out tonight** — this PR.
+- **Fri 09-18, three Webull false-flip exits failed the same way:** pair cancelled (`confirmed=2`), a second task cancelled it
+  again, `ORDER_CAN_NOT_BE_CANCEL` was scored "unconfirmed", the close was REFUSED and forgotten. GIPR 1.20→1.1001 (**−8.3%**,
+  Schwab −1.3%), GIPR 1.14→0.93 (**−18.4%**, Schwab −2.2%; the software hard stop filled 11% below its level), IMCC 5.53→5.0201
+  (**−9.2%**). The next real flip was also missed because the slot is not reset while the Webull close is pending.
+- **IMCC 12:04 ET flip not traded:** Schwab restricted (13 refusals), Webull refused the 5.78 rest at 11:45 as PRICE_AGGRESSIVE
+  (+9.9% over 5.26), the level stayed flat 19 min so nothing re-mirrored, v2 logged a "LIVE mirror" cross with nothing resting.
+- **Momentum saw zero prints:** its own `T.*` socket on the shared Massive key was kicked 1,325× and kicked the live gateway 222×.
+  Limit is one websocket per ACCOUNT per cluster. Operator ruling: **Option A — one connection, through the gateway, tick by tick.**
+- **Two deploys Sat 09-19** by the standard watched procedure; the new #1010 gate could not run (box predated it), and the first
+  attempt Fri evening was refused twice by the health preflight because momentum-paper's truthful `degraded` heartbeat blocked it.
 
 ## Open items — each with an OWNER and a NEXT ACTION (nothing boards without both)
 
 | item | owner | next action |
 |---|---|---|
-| **Late software close after a broker leg already filled** — the RESERVE1 "recurrences" 09-14..09-16 (BMGL ×1, VEEA ×20, DLXY ×4, ZTG ×5, reject `NEW_NO_POSITION_…_CAN_NOT_SELL_SHORT_FOR_LT_2K`) all hit an ALREADY-FLAT Webull position: broker OCO stop/target filled first (VEEA 13:49:20), our sells came 1–6 s later (13:49:21–29), our `oco_exit` row was written 54 s late. **Zero harm.** ⛔ The only thing stopping these sells from OPENING A SHORT is the <$2k margin rule in the refusal text | operator → codex-2 | operator decides (asked 18:35 ET): treat a `NEW_NO_POSITION` reject as terminal for the close episode + one position re-read; split the watch row by evidence (LATE_CLOSE_AFTER_BROKER_FILL vs a true reservation). Codex builds on yes, claude reviews |
-| RESERVE1 watch row title is a WRONG REASON for 30/30 of its recent rejects | codex-2 | part of the item above; until then a RESERVE1 RECURRENCE means "late close", not "reserved shares" |
-| `abandoned_no_fresh_quote` ×2 on 09-17 (TURB 09:45, AEMD 10:10) | claude-1 | read the abandon lines' quote ages and the 2,000 ms fallback; propose or close after 5 sessions of denominators |
-| Schwab-restricted names (KXIN 09-17 5/5 "Opening transactions for this security must be placed with a broker"; ZTG 09-16) — we keep sending opens Schwab will refuse | claude-1 | intake spec: after the first such reject, mark the symbol Schwab-ineligible for the session (per-broker eligibility design exists); observability + no new order path |
-| `[V2-CW-SEED-CAP]` fires on EVERY seeded SHORT name at EVERY restart (watch_start = boot) | claude-1 | measure only: count caps per restart vs names that later printed a watched SELL; no rule change without that number |
-| Momentum 30-session baseline | codex-2 | finish capture 30/30 → replay off-box → report.md + report.json + tape sha256 list + band verdict verbatim |
-| Momentum unit memory: the 600 s tape-fingerprint map (~180k entries at AEMD rates) | codex-2 | report peak RSS on the first live squeeze |
-| ~20 other `ops/health` senders still log no ntfy receipt | none (parked) | only if a page is disputed again |
-| G5 parity five bad days · ZTG ASK_PAST_BAND 0.5% band · 07:00–07:08 blind window · Webull PRICE_AGGRESSIVE distance census · post-close hand-cancel of one leg | unchanged from 09-16 | see 09-16 handoff-log entry; none moved today |
+| **Every other Webull software exit still uses the old one-try release** (CW_HARD_STOP 58 rejected / 6 filled, CW_FLOOR 17 rejected + 17 cancelled / 10 filled, 09-04→09-18) and the confirmation retries run inline on the tick consumer | **claude-1** (claim on `oms/service.py`) | one repaired take-back-and-sell routine for hard stop / floor / flip / overnight flatten, retries off the tick path; codex-2 reviews; not deployed without a live-tape fixture per class A–E |
+| **Hard stop is a market sell AFTER the level trades** (GIPR −18.4%) | claude-1 | `docs/review-artifacts/webull-exit-seam/HARD_STOP_DESIGN.md` — how −8% is held at the BROKER for a released / never-protected leg |
+| **WEBULL-PROTECT-FAILED 3 of 75** (IMRN 09-04, QCLS 09-16, DLXY 09-16 — held with no broker stop) | claude-1 | `PROTECT_FAILED_FORENSIC.md`: the 5 attach answers each, then the same terminal rule |
+| **Webull API pressure** (~1,261 `TOO_MANY_REQUESTS`, 416 status-fetch failures in 10 sessions) | claude-1 | `WEBULL_API_BUDGET.md`: calls/min by endpoint vs where the 429s land; no fix before the table |
+| Re-attach of a FULL pair while an old leg may still work is **ASSUMED** to be refused by Webull's share reservation | codex-2 | capture the real response the first time the tape shows it; add the fixture |
+| #1010 deploy gate cannot run on a box that predates it | codex-2 | bootstrap PR: tools dir outside the repo, sha256-verified, exec bits committed, first-install path stated |
+| LC1 flag (late-close pacing) | operator → codex-2 | operator decides a day AFTER PA1 has been read; never both the same day |
+| Momentum Step 2 measurement (tooling #1011 pinned; flat files reachable, 09-17 file 2.97 GB) | codex-2 | population count may run detached on a weekend; the replay needs a **FLAT 16:05–20:00 ET weekday window** (no quote ticks after 20:00 ⇒ criterion 3 UNMEASURED). Step 3 stays blocked |
+| #1003 baseline report | codex-2 | #1013 (order-aware control, 60/60 exact, 1,296 same-ms extras explained) needs rebase + re-pin; the report stays unread until then |
+| Small test pins | codex-2 | LATECLOSE1 `<= 3` threshold · Momentum one-probe + connected-during-streak heartbeat · gateway needle `1008 (policy violation)` · behavioural v2 claim-expiry test · gate-level main-moved refusal · #1016 zero-transaction row |
+| Schwab-ineligible cache no longer written after #992 (KXIN 5/5, TURB 25/25, IMCC 13) | none — **parked by the operator 09-18** | costs rejects only; reopen on request |
+| Schwab refuses to open **37 of 39** Webull-only opportunities (09-04→09-18) | operator | design question raised 09-18: keep those names at 1 share on Webull until `EXITDONE1` is clean for 5 sessions? Not yet answered |
+| **Schwab resting STOP_LIMIT goes out with wire `limit == stop`** — **45 of 532** submissions since 09-01 (8.46%): **39 accepted / 6 rejected**. v2 sends e.g. stop 1.2166 / limit 1.2227 (0.5% band); the Schwab wire rounds both to 1.22 while Webull's tick-adjust sends 1.22 / 1.23 (GIPR 09-18). Separate harm check by `codex-2`: **0 of 39** accepted orders were triggered by a positive-size print and ended unfilled (BENF 09-16 13:15:06 excluded, size 0) — **no harm measured, cause NOT resolved** | codex-2 | state the reject reason for each of the 6 rejected; show where the Schwab adapter rounds stop and limit onto one tick; propose (no code yet) whether the limit should be tick-adjusted upward like Webull's `raw_valid_wire_collapsed` path; re-run the n/N harm count when the population doubles |
+| PA1's 8% band rests on ONE session (09-17: 57 accepts +0.36..+14.91%, 15 rejects +10.33..+35.42%) | claude-1 | re-measure accepted vs refused stop-to-market distance over 09-21..09-25 under PA1b; keep or move the constant with the denominator stated (replaces the 09-16 "distance census" row owned by codex-2) |
+| `abandoned_no_fresh_quote` — 14 of 86 mirror attempts on 09-17 (TURB 7, USDE 5, AEMD 2), 0 trades lost; the quote AGE is computed and discarded, so it cannot be read | claude-1 | count abandons / attempts / trades lost for 09-21..09-25; then either close it or spec one log field (`age_ms`) for codex-2 |
+| `[V2-CW-SEED-CAP]` fires on every symbol ADD, not only at restarts (26 SHORT caps 09-16→09-18; 2 in-window, NUWE 09-17 — the capped flip went +2.8% then −12%) | claude-1 | measure only, 5 sessions: in-window caps vs names that later printed a watched SELL; no rule change without that number |
+| G5 parity: five bad days (08-11 95.7%, 08-12 89.8%, 08-19 95.3%, 08-25 80.8%, 08-28 83.4%) | none — parked | only if the Massive ATR seed is revisited: per-symbol breakdown of those days |
+| ZTG 09-16 08:47 ET `ASK_PAST_BAND` (0.5% band) cost a +5% winner one bar later | operator | rule decision: keep or widen the band — nothing built |
+| Blind window 07:00–07:08 ET / no pre-07:00 Schwab bars | operator | the seed was the lever and failed its gate; PRE07 census stays as is — reopen only on the operator's word |
+| Hand-cancel of ONE leg is not a stop (FTFT 09-16: Schwab cancelled by hand, Webull mirror filled 17 min later) | operator | operating procedure, no code: hand-cancel AND set the manual-stop lever so both legs stop |
 
-## Pre-open 09-18 (`preopen.sh` pins moved by `codex-2` 16:14 ET, verified by `claude-1` 16:22 ET)
+## Rulings and approvals (operator, 09-18 / 09-19)
 
-Run the gate and the grades as usual. Expect: `EXPECTED_SHA=f9233366`, v2 pid `2549985`, snapshot `v2-before-corrective-20260917T201400Z`,
-no waiver line, BOOT1/SEED1 green. ⛔ **All seven pins move on every restart** — this morning's gate failed because only four of them had
-moved (stale snapshot, stale `--restarted` list, stale schema mode). Expected 03:55 ET: Momentum prepares its session and stays up;
-its heartbeat reads `degraded` until `T.*` connects — that is the fix working, not a fault. Any `[V2-CW-SEED-CAP] … SHORT` line before
-07:00 on a 04:00-watchlist name is still a RED.
+1. Fix **Webull "can't sell short"** and **PRICE_AGGRESSIVE**; every other 09-10..09-17 census row accepted as-is.
+2. **Do not stop, disable or remove momentum-paper** — it is the proving ground; **Option A** architecture; no extra Massive connection.
+3. **No freeze — fix forward.** Unknown broker answer ⇒ retry → re-protect → page (standing rule for every exit).
+4. **`claude-1` is the lead agent** on the exit seam; `codex-2` keeps in-flight PRs.
+5. **Preflight policy:** a service declaring `execution_mode=paper` AND `broker_route=none` is a warning, not a block (#1015).
+6. **GO `c6e259a0`** (Sat 08:10 ET) and **"GO d6a6f59a"** (Sat ~19:50 ET). **PA1 flag ON for Monday**; LC1 stays off.
+
+## Pre-open 09-21 (`preopen.sh` pins set by `codex-2` 09-19 ~19:55 ET, read by `claude-1` 19:57 ET)
+
+Run the gate and the grades as usual. Expect `EXPECTED_SHA=d6a6f59a`, v2 pid `2549985`, the 09-17 corrective snapshot, restarted
+list v2 + oms + strategy, evidence **9/9** with the MNOV `NO_TRADES_IN_GAP` row. ⛔ All seven pins move on every restart —
+an unattended-upgrade restart over the weekend would stale them; the gate will say so. 03:55–04:00 ET: momentum-paper takes five
+1008s and cools off — the fix working. From 07:00 ET `claude-1` watches PA1 live.
