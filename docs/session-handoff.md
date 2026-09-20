@@ -15,12 +15,12 @@ both deploys, and reviews this PR. The author never reviews.
 
 ---
 
-# ✅ PRODUCTION — main and box IN SYNC at `d6a6f59a` (this handoff PR is docs-only: no sync, no restart)
+# ✅ PRODUCTION — RUNTIME SHA on the box is `d6a6f59a`; GitHub main = `d6a6f59a` + DOCS-ONLY commits (this handoff PR and any later docs PR)
 
 | | |
 |---|---|
 | box (deployed) | **`d6a6f59a88dfe9d5cdf9f1746a18b8dcf76b732b`** — read FROM THE BOX by `claude-1` 2026-09-19 19:57:48 ET, clean |
-| GitHub main | **`d6a6f59a`** at write time. Open PR besides this one: **#1013** (offline Momentum baseline control; pinned @ `4e4f1d0e` on an older base — needs a rebase + re-pin) |
+| GitHub main | runtime-identical to the box. Main moves ahead of `d6a6f59a` by **docs-only** commits the moment this PR merges — that is the normal, allowed divergence, NOT "behind". **Invariant to check at session start:** `git diff --name-only d6a6f59a origin/main` lists only `docs/**`; anything else means the box is behind on real code. Open PR besides this one: **#1013** (offline Momentum baseline control; pinned @ `4e4f1d0e` on an older base — needs a rebase + re-pin) |
 | gate pin | `/home/trader/preopen.sh`: `EXPECTED_DATE=2026-09-21` · `EXPECTED_SHA=d6a6f59a…` · `EXPECTED_PID=2549985` · `EXPECTED_START='Thu 2026-09-17 20:14:30 UTC'` · `SNAPSHOT=…/v2-before-corrective-20260917T201400Z.json` · `--restarted schwab-1m-v2 --restarted oms --restarted strategy` · `--expected-alembic-head 20260916_0021` · `--no-schema-change` (read 19:57 ET) |
 | restart evidence | The gate's OWN command run read-only by `claude-1` 19:58 ET (output to `/tmp`): **rc 0, PASS 9/9**; bar-continuity = gaps spanning restart 1/162 → **`NO_TRADES_IN_GAP`** (MNOV 09-17 16:15–16:18 ET = 0,0,0,0). ⚠ `…/v2-restart-evidence-20260921.md` on disk is the 09-19 **morning** file (8/9 FAIL, pre-#1016) — Monday's gate overwrites it; do not quote it |
 | exposure | 19:57 ET: **open managed rows 0 · non-zero account-position rows 0 · both live accounts flat** |
@@ -76,7 +76,14 @@ both deploys, and reviews this PR. The author never reviews.
 | Small test pins | codex-2 | LATECLOSE1 `<= 3` threshold · Momentum one-probe + connected-during-streak heartbeat · gateway needle `1008 (policy violation)` · behavioural v2 claim-expiry test · gate-level main-moved refusal · #1016 zero-transaction row |
 | Schwab-ineligible cache no longer written after #992 (KXIN 5/5, TURB 25/25, IMCC 13) | none — **parked by the operator 09-18** | costs rejects only; reopen on request |
 | Schwab refuses to open **37 of 39** Webull-only opportunities (09-04→09-18) | operator | design question raised 09-18: keep those names at 1 share on Webull until `EXITDONE1` is clean for 5 sessions? Not yet answered |
-| Carried unchanged from 09-17: late software close after a broker fill (now LC1) · `abandoned_no_fresh_quote` (14/86 on 09-17, 0 trades lost, age not logged) · seed-cap fires on every symbol ADD (26 since #993, 2 in-window, n=1 saved a loser) · G5 parity · ZTG ASK_PAST_BAND · 07:00–07:08 blind window · hand-cancel of one leg | as on 09-17 | none moved |
+| **Schwab resting STOP_LIMIT goes out with wire `limit == stop`** — **45 of 532** submissions since 09-01 (8.46%): **39 accepted / 6 rejected**. v2 sends e.g. stop 1.2166 / limit 1.2227 (0.5% band); the Schwab wire rounds both to 1.22 while Webull's tick-adjust sends 1.22 / 1.23 (GIPR 09-18). Separate harm check by `codex-2`: **0 of 39** accepted orders were triggered by a positive-size print and ended unfilled (BENF 09-16 13:15:06 excluded, size 0) — **no harm measured, cause NOT resolved** | codex-2 | state the reject reason for each of the 6 rejected; show where the Schwab adapter rounds stop and limit onto one tick; propose (no code yet) whether the limit should be tick-adjusted upward like Webull's `raw_valid_wire_collapsed` path; re-run the n/N harm count when the population doubles |
+| PA1's 8% band rests on ONE session (09-17: 57 accepts +0.36..+14.91%, 15 rejects +10.33..+35.42%) | claude-1 | re-measure accepted vs refused stop-to-market distance over 09-21..09-25 under PA1b; keep or move the constant with the denominator stated (replaces the 09-16 "distance census" row owned by codex-2) |
+| `abandoned_no_fresh_quote` — 14 of 86 mirror attempts on 09-17 (TURB 7, USDE 5, AEMD 2), 0 trades lost; the quote AGE is computed and discarded, so it cannot be read | claude-1 | count abandons / attempts / trades lost for 09-21..09-25; then either close it or spec one log field (`age_ms`) for codex-2 |
+| `[V2-CW-SEED-CAP]` fires on every symbol ADD, not only at restarts (26 SHORT caps 09-16→09-18; 2 in-window, NUWE 09-17 — the capped flip went +2.8% then −12%) | claude-1 | measure only, 5 sessions: in-window caps vs names that later printed a watched SELL; no rule change without that number |
+| G5 parity: five bad days (08-11 95.7%, 08-12 89.8%, 08-19 95.3%, 08-25 80.8%, 08-28 83.4%) | none — parked | only if the Massive ATR seed is revisited: per-symbol breakdown of those days |
+| ZTG 09-16 08:47 ET `ASK_PAST_BAND` (0.5% band) cost a +5% winner one bar later | operator | rule decision: keep or widen the band — nothing built |
+| Blind window 07:00–07:08 ET / no pre-07:00 Schwab bars | operator | the seed was the lever and failed its gate; PRE07 census stays as is — reopen only on the operator's word |
+| Hand-cancel of ONE leg is not a stop (FTFT 09-16: Schwab cancelled by hand, Webull mirror filled 17 min later) | operator | operating procedure, no code: hand-cancel AND set the manual-stop lever so both legs stop |
 
 ## Rulings and approvals (operator, 09-18 / 09-19)
 
