@@ -1,0 +1,9 @@
+{
+  "pr_number": 1017,
+  "range_base": "d6a6f59a88dfe9d5cdf9f1746a18b8dcf76b732b",
+  "range_head": "28d06479ca0a084b716a5468c73c39e9a4bc9479",
+  "reviewed_at": "2026-09-20T00:09:59Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified exact three-file docs-only shape; production identities, flags, alembic and seven Monday pins against the box; handoff-log append-only; regenerated manifest byte-identical 112/112; correction delta closes docs-only divergence, Schwab STOP_LIMIT population, and explicit owner/action gaps."
+}
