@@ -30,6 +30,7 @@ approval_value() {
 REPO_DIR="${1:-}"
 EXPECTED_SHA="${2:-}"
 APPROVAL_FILE="${3:-}"
+TOOLS_DIR="${4:-$REPO_DIR}"
 
 [[ -n "$APPROVAL_FILE" && -f "$APPROVAL_FILE" ]] \
   || refuse_authorization "no operator approval record was supplied"
@@ -98,9 +99,22 @@ fi
 [[ -d "$REPO_DIR/.git" ]] \
   || refuse_authorization "production repository is missing: $REPO_DIR"
 PYTHON_BIN="$REPO_DIR/.venv/bin/python"
-PREFLIGHT="$REPO_DIR/src/project_mai_tai/deploy_preflight.py"
-OMS_FENCE="$REPO_DIR/ops/preflight/preflight_oms_restart.sh"
-DEPLOY="$REPO_DIR/ops/systemd/deploy_service.sh"
+PREFLIGHT="$TOOLS_DIR/src/project_mai_tai/deploy_preflight.py"
+OMS_FENCE="$TOOLS_DIR/ops/preflight/preflight_oms_restart.sh"
+DEPLOY="$TOOLS_DIR/ops/systemd/deploy_service.sh"
+
+if [[ "$TOOLS_DIR" != "$REPO_DIR" ]]; then
+  SOURCE_SHA_FILE="$TOOLS_DIR/DEPLOY_GATE_SOURCE_SHA"
+  MANIFEST="$TOOLS_DIR/ops/systemd/deploy_gate_tools.sha256"
+  [[ -f "$SOURCE_SHA_FILE" && "$(cat "$SOURCE_SHA_FILE")" == "$EXPECTED_SHA" ]] \
+    || refuse_authorization "external deploy-gate tools do not name the approved target SHA"
+  [[ -f "$MANIFEST" ]] \
+    || refuse_authorization "external deploy-gate checksum manifest is missing"
+  if ! (cd "$TOOLS_DIR" && sha256sum -c "ops/systemd/deploy_gate_tools.sha256" >/dev/null); then
+    refuse_authorization "external deploy-gate checksum verification failed"
+  fi
+fi
+
 for required in "$PYTHON_BIN" "$PREFLIGHT" "$OMS_FENCE" "$DEPLOY"; do
   [[ -x "$required" || "$required" == *.py && -f "$required" ]] \
     || refuse_authorization "required reviewed deploy component is missing: $required"
@@ -110,7 +124,7 @@ CURRENT_SHA="$(git -C "$REPO_DIR" rev-parse HEAD)"
 [[ "$CURRENT_SHA" != "$EXPECTED_SHA" ]] \
   || refuse_authorization "already deployed — a second restart is not authorised"
 
-echo "[DEPLOY-AUTHORISED] deployment=$DEPLOYMENT expected_sha=$EXPECTED_SHA expires_at=$EXPIRES_AT_UTC"
+echo "[DEPLOY-AUTHORISED] deployment=$DEPLOYMENT expected_sha=$EXPECTED_SHA expires_at=$EXPIRES_AT_UTC tools_dir=$TOOLS_DIR"
 
 set +e
 "$PYTHON_BIN" "$PREFLIGHT" --service oms --overview-url "$APP_OVERVIEW_URL"
