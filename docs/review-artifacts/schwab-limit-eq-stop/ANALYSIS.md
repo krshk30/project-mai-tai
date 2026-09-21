@@ -96,8 +96,10 @@ In `_apply_v2_oco_bracket_entry`, after both values are rounded: if `limit <= st
 $1.00, 0.0001 at or below). Log one line when it fires, as Webull's adapter does.
 
 - **Reach:** $1–$2 names only, ~8.5% of Schwab resting entries (47 of 551); nothing else changes by construction.
-- **Cost:** the band on those orders becomes one cent = 0.50–1.00% instead of 0. The $1–$2 bucket already sends up to 0.962%
-  on non-collapsed orders, so this introduces no band wider than ones live today.
+- **Cost:** the band on those orders becomes one cent = 0.50–1.00% instead of 0. ⚠ CORRECTED 09-21: I first wrote that this
+  "introduces no band wider than ones live today" (live max 0.962% in this bucket, 0.976% across all buckets). Replaying all 551
+  real intents through the built fix (PR #1024) gives a widest LIFTED band of **0.990%** — a stop just above $1.00. So it does
+  exceed the widest band sent so far, by 0.014 points, on the cheapest names only.
 - **What it does NOT fix:** QCLS-style gaps through a one-cent band, and the stop-rounded-down question above.
 - **File:** `src/project_mai_tai/oms/service.py` — held by `claude-1` for sweep item 1, so it can ride in that work or as its
   own small PR; it needs a fixture from this table (GIPR 09-18: 1.2166 / 1.2227 → 1.22 / 1.23) and a control above $2.00 where
