@@ -615,6 +615,11 @@ class OmsRiskService:
     )
     _EXIT_RELEASE_INCIDENT_SOURCE = "oms_v2_exit_release_unresolved"
     _CONFIRMATION_EXIT_INCIDENT_SOURCE = "oms_v2_confirmation_exit_reprotected"
+    # #3 (operator, 2026-09-21): a Webull share with no resting broker stop for longer than this
+    # pages, WHATEVER routine left it that way. Not cuttable; independent of every exit path.
+    _WEBULL_UNCOVERED_PAGE_SECONDS = 30.0
+    _WEBULL_UNCOVERED_INCIDENT_SOURCE = "oms_v2_webull_uncovered_share"
+    _WEBULL_PROTECT_STATE_KEY = "webull_protect_state"
     _CONFIRMATION_EXIT_EXPIRY_SECONDS = 180.0
     # This recovery still runs inline on the serial quote consumer. Keep the bounded retry
     # short until it moves to a dedicated lane; the marker timings make the actual stall visible.
@@ -999,6 +1004,14 @@ class OmsRiskService:
                 else:
                     self.logger.debug("broker state sync complete: %s", sync_summary)
                 last_broker_sync = now
+                # #3: the uncovered-share page runs on the sync cadence, independent of every exit
+                # routine. Wrapped - it must never break the control loop, and never be silent.
+                try:
+                    await self._check_webull_uncovered_shares()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-WEBULL-UNCOVERED-SHARE] status=CHECK_FAILED")
                 # Bug A follow-up: re-arm native stop guards whose immediate arm reverse-
                 # rejected on an unsettled cancel/fill. Non-blocking, on the sync cadence.
                 # getattr guard: __new__-constructed test instances may lack the attribute.
@@ -2988,6 +3001,9 @@ class OmsRiskService:
                 # not the filled entry coid. Without it the pair can be placed but never released,
                 # and its eventual child fill can never be attributed after a restart.
                 self._webull_protect_base[(broker_account_name, symbol.upper())] = coid
+                self.__dict__.setdefault("_webull_protect_failed", set()).discard(
+                    (broker_account_name, symbol.upper())
+                )
                 persisted = await self._persist_webull_protect_base(
                     broker_account_name, symbol, coid,
                     entry_client_order_id=entry_client_order_id,
@@ -3023,6 +3039,12 @@ class OmsRiskService:
             symbol, broker_account_name, quantity, entry_price, session_hint,
             target, protect, attempts,
         )
+        # The uncovered-share page reads this: a RE-attach that fails leaves the OLD (cancelled)
+        # pair's handle persisted, which would otherwise read as "a pair is resting".
+        self.__dict__.setdefault("_webull_protect_failed", set()).add(
+            (broker_account_name, symbol.upper())
+        )
+        await self._persist_webull_protect_state(broker_account_name, symbol, "attach_failed")
         return False
 
     async def _webull_protect_unplaceable_reason(
@@ -3202,6 +3224,14 @@ class OmsRiskService:
             return release
         self._clear_exit_reservation_retry_state(key)
         self._exit_reservation_released.add(key)
+        try:
+            # The caller's session (never a nested one): it commits with the close it is building.
+            self._mark_webull_protect_state(session, broker_account_name, symbol, "released")
+        except Exception:  # noqa: BLE001 - the release already happened; never block the sell
+            self.logger.exception(
+                "[OMS-WEBULL-PROTECT-STATE] sym=%s acct=%s state=released status=PERSIST_FAILED",
+                symbol, broker_account_name,
+            )
         self.logger.info(
             "[OMS-EXIT-RELEASE] %s %s base=%s requested=%d confirmed=%d release_confirmed=1 — "
             "success: every addressed exit leg is cancelled or already absent, so the software "
@@ -4326,6 +4356,411 @@ class OmsRiskService:
         decision.unprotected_seconds[acct] = elapsed
         return elapsed
 
+    async def _check_webull_uncovered_shares(self) -> int:
+        """The uncovered-share page: an INDEPENDENT net under every Webull exit routine.
+
+        On 2026-09-21 four Webull shares sat 474-663 s with their bracket cancelled and no sell,
+        and nothing told the operator: the routine that dropped them was also the only thing that
+        could have raised the alarm. This check does not know or care which routine ran. On the
+        broker-sync cadence it looks at every OPEN managed row on a Webull account during the
+        regular session and asks one question - is a native pair resting for it?
+
+          covered  = a protect-pair handle exists for the position (the entry's own combo, or the
+                     persisted / in-memory handle of the attached pair) AND that pair has not been
+                     released for a software close AND the last attach did not end PROTECT-FAILED
+                     (a failed RE-attach leaves the old, cancelled pair's handle behind; the
+                     `[OMS-EXIT-REPROTECT]` path clears the released latch before it knows).
+          uncovered for >= 30 s  =>  ERROR line + ONE critical incident per episode (the pager
+                     delivers it). Causes it sees: released-and-not-sold (2026-09-21 x4), never
+                     protected (QCLS / DLXY 2026-09-16), a release nobody recovered.
+
+        It does NOT see a fill the OMS has not detected (no managed row exists yet) - that is the
+        status-read starvation defect and its own page. Returns the number of pages raised.
+        """
+        since: dict[tuple[str, str], datetime] = self.__dict__.setdefault(
+            "_webull_uncovered_since", {}
+        )
+        paged: set[tuple[str, str]] = self.__dict__.setdefault("_webull_uncovered_paged", set())
+        attach_failed: set[tuple[str, str]] = self.__dict__.setdefault(
+            "_webull_protect_failed", set()
+        )
+        reopened: set[tuple[str, str]] = self.__dict__.setdefault(
+            "_webull_uncovered_reopened", set()
+        )
+        webull_acct = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+        ).strip()
+        if not webull_acct or not _is_regular_market_session():
+            since.clear()
+            paged.clear()
+            return 0
+
+        def _read(session: Session) -> dict[tuple[str, str], tuple[str, str, str]]:
+            # ⛔ The worklist is the DATABASE's open rows, never `_managed_v2_symbols`: an in-memory
+            # list that lost a key is the blind-list defect `_poll_native_oco_exits` already had,
+            # and a net must not share its blind spot with the thing it is a net for.
+            out: dict[tuple[str, str], tuple[str, str, str]] = {}
+            for symbol in sorted(
+                self.store.list_open_managed_symbols(session, broker_account_name=webull_acct)
+            ):
+                row = self.store.get_open_managed_position(
+                    session, broker_account_name=webull_acct, symbol=symbol
+                )
+                if row is None:
+                    continue
+                entry = self._find_oco_entry_order(session, webull_acct, symbol)
+                base = self._oco_exit_base_for_entry(
+                    entry, broker_account_name=webull_acct, symbol=symbol
+                )
+                durable = str(
+                    dict(getattr(entry, "payload", None) or {}).get(
+                        self._WEBULL_PROTECT_STATE_KEY, ""
+                    )
+                    or ""
+                )
+                out[(webull_acct, symbol)] = (str(row.id), str(base or ""), durable)
+            return out
+
+        state = await self._run_db(_read, commit=False)
+        now = utcnow()
+        for key in list(since):
+            if key not in state:  # the row closed: sold, stopped, resolved - the episode is over
+                since.pop(key, None)
+                paged.discard(key)
+                reopened.discard(key)
+        for key in list(attach_failed):
+            if key not in state and self._is_v2_webull_account(key[0]):
+                attach_failed.discard(key)
+        raised = 0
+        for key, (row_id, base, durable) in state.items():
+            acct, symbol = key
+            # Memory OR the durable mark: either one saying "uncovered" wins. The durable mark is
+            # what survives an OMS restart; only a later ATTACHED rewrites it to "resting".
+            released = key in self._exit_reservation_released or durable == "released"
+            failed = (acct, symbol.upper()) in attach_failed or durable == "attach_failed"
+            if base and not released and not failed:
+                if key in paged:
+                    self.logger.warning(
+                        "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s row=%s status=COVERED_AGAIN "
+                        "uncovered_seconds=%.1f",
+                        symbol, acct, row_id,
+                        (now - since.get(key, now)).total_seconds(),
+                    )
+                since.pop(key, None)
+                if key in paged:
+                    reopened.add(key)  # a LATER episode on this row is news, not a duplicate
+                paged.discard(key)
+                continue
+            started_at = since.setdefault(key, now)
+            elapsed = (now - started_at).total_seconds()
+            if elapsed < self._WEBULL_UNCOVERED_PAGE_SECONDS or key in paged:
+                continue
+            cause = (
+                "pair_released_not_sold"
+                if released
+                else "reattach_failed" if failed and base else "never_protected"
+            )
+            self.logger.error(
+                "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s row=%s status=PAGE cause=%s "
+                "uncovered_seconds=%.1f threshold_seconds=%.0f - a Webull share is held with NO "
+                "resting broker stop; the software ladder is its only cover",
+                symbol, acct, row_id, cause, elapsed, self._WEBULL_UNCOVERED_PAGE_SECONDS,
+            )
+            if await self._page_webull_uncovered_share(
+                acct, symbol, managed_row_id=row_id, cause=cause, uncovered_seconds=elapsed,
+                new_episode=key in reopened,
+            ):
+                # ⛔ Only a COMMITTED incident ends the paging duty. A failed write leaves the
+                # episode unpaged, so the next sync tries again - for as long as it takes.
+                paged.add(key)
+                raised += 1
+        return raised
+
+    async def _page_webull_uncovered_share(
+        self,
+        acct: str,
+        symbol: str,
+        *,
+        managed_row_id: str,
+        cause: str,
+        uncovered_seconds: float,
+        new_episode: bool = False,
+    ) -> bool:
+        """Persist one critical incident; the pager delivers it. Never raises into the loop.
+
+        Returns True only when an OPEN incident for this managed row is committed - this write's,
+        or an earlier one (the in-memory `paged` set does not survive a restart; the row does).
+        `new_episode` = this process saw the row covered again since its last page, so an open
+        incident from the EARLIER episode must not swallow this one.
+        """
+
+        def _write(session: Session) -> None:
+            already = [] if new_episode else session.scalars(
+                select(SystemIncident).where(
+                    SystemIncident.service_name == SERVICE_NAME,
+                    SystemIncident.status != "closed",
+                )
+            ).all()
+            if any(
+                isinstance(incident.payload, dict)
+                and incident.payload.get("source") == self._WEBULL_UNCOVERED_INCIDENT_SOURCE
+                and incident.payload.get("managed_row_id") == managed_row_id
+                for incident in already
+            ):
+                return
+            session.add(
+                SystemIncident(
+                    service_name=SERVICE_NAME,
+                    severity="critical",
+                    title=(
+                        f"UNCOVERED: {symbol} on {acct} has NO broker stop "
+                        f"({int(uncovered_seconds)}s); check now"
+                    )[:255],
+                    status="open",
+                    payload={
+                        "source": self._WEBULL_UNCOVERED_INCIDENT_SOURCE,
+                        "broker_account_name": acct,
+                        "symbol": symbol,
+                        "managed_row_id": managed_row_id,
+                        "cause": cause,
+                        "uncovered_seconds": round(float(uncovered_seconds), 1),
+                    },
+                    opened_at=utcnow(),
+                )
+            )
+
+        try:
+            await self._run_db(_write, commit=True)
+        except Exception:  # noqa: BLE001 - a failed page must be loud, never fatal
+            self.logger.exception(
+                "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s status=PAGE_FAILED - the incident "
+                "was NOT written; retrying on the next sync",
+                symbol, acct,
+            )
+            return False
+        return True
+
+    def _mark_webull_protect_state(
+        self, session: Session, acct: str, symbol: str, state: str
+    ) -> bool:
+        """Write the DURABLE protect state onto the position's entry order, in `session`.
+
+        `resting` / `released` / `attach_failed`. The uncovered-share page reads it, because the
+        release latch and the failed-attach mark live in memory and an OMS restart erases them
+        while the old, cancelled pair's handle stays persisted - which read as "covered".
+        """
+        entry = self._find_oco_entry_order(session, acct, symbol)
+        if entry is None:
+            return False
+        payload = dict(entry.payload or {})
+        payload[self._WEBULL_PROTECT_STATE_KEY] = state
+        payload[f"{self._WEBULL_PROTECT_STATE_KEY}_at"] = utcnow().isoformat()
+        entry.payload = payload
+        session.flush()
+        return True
+
+    async def _persist_webull_protect_state(self, acct: str, symbol: str, state: str) -> bool:
+        """Own-transaction form, for callers that hold no session. Never raises."""
+        try:
+            return bool(
+                await self._run_db(
+                    lambda session: self._mark_webull_protect_state(session, acct, symbol, state),
+                    commit=True,
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - the memory latch still covers this process
+            self.logger.exception(
+                "[OMS-WEBULL-PROTECT-STATE] sym=%s acct=%s state=%s status=PERSIST_FAILED - the "
+                "uncovered-share page falls back to the in-memory latch until the next write",
+                symbol, acct, state,
+            )
+            return False
+
+    async def _webull_cancel_then_sell(
+        self,
+        acct: str,
+        symbol: str,
+        *,
+        exit_tag: str,
+        reason: str,
+        kind: str,
+        reference_bid: float,
+        expected_row_id: str,
+        expires_at: datetime,
+        decision: _ConfirmationFanoutDecision,
+        reference_price: float | None = None,
+        close_context: dict[str, str] | None = None,
+        confirmation: dict[str, object] | None = None,
+    ) -> str:
+        """THE ONE cancel-then-sell path for a Webull software exit.
+
+        Webull exposes no stand-down signal, so a software exit must take the native pair back
+        before it can sell (the shares are reserved). Cancelling that pair is IRREVERSIBLE: from
+        that instant the share has no broker stop. This routine is therefore written in three
+        phases, and the order IS the fix:
+
+          1. ABORTABLE checks - open row, same position, C3 settlement state, no exit already
+             working. Any refusal here leaves the broker pair resting: nothing was touched.
+          2. RELEASE - cancel AND read both legs, bounded retries (`_prepare_confirmation_webull_leg`
+             re-protects and pages by itself when the broker's answer stays unreadable).
+          3. SELL, then the terminal-state guarantee. NOTHING abortable runs after the release:
+             no quote-age check, no bid check, no second identity check. Every way out is one of
+             sold / close_submitted / resolved_by_fill / flat / reprotected / uncovered+paged.
+
+        Live 2026-09-21 (docs/review-artifacts/webull-exit-seam/CONFIRMATION_EXIT_LIVE_FAILURE_0921.md):
+        the confirmation exit released first and ran the generic quote-age guard AFTERWARDS, on a
+        quote its own inline awaits had aged past the limit - 4 of 5 clean releases ended with no
+        sell, no re-protect, no page, 474-663 s with no broker stop (the fifth, NCPL 15:07 ET, sold:
+        its quote was ~1 s old going in, so the same 2.5 s release left it under the limit).
+
+        `exit_tag` names the caller. Wired tonight: CONFIRMATION_EXIT. CALL SITES TO FLIP NEXT
+        (same defect shape - one-try release, silent drop on refusal; YMAT 2026-09-09 is the
+        measured miss): CW_HARD_STOP, CW_FLOOR, CW_FLIP and the overnight flatten. They pass
+        their own `reason` / `kind` / `reference_price` and a decision whose `source_fill_id`
+        identifies the exit (e.g. ``f"{exit_tag}:{managed_row_id}"``); nothing in here is
+        confirmation-specific except the optional `confirmation` payload carried into recovery.
+        """
+        started_at = time.monotonic()
+        close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
+        protection = ""
+
+        def _done(outcome: str) -> str:
+            self.logger.info(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s row=%s outcome=%s "
+                "protection=%s seconds=%.3f",
+                exit_tag, symbol, acct, expected_row_id or "-", outcome, protection or "-",
+                time.monotonic() - started_at,
+            )
+            return outcome
+
+        # ---- 1. ABORTABLE: the broker pair is still resting; a refusal costs nothing ----------
+        if not self._is_protective_v2_exit(reason):
+            # The resting pair IS the profit-taking exit. Only a safety exit may take it back, so a
+            # future caller cannot cancel a broker stop on behalf of a target or a scale-out.
+            self.logger.error(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s reason=%s "
+                "reason=not_a_protective_exit - refused BEFORE any release",
+                exit_tag, symbol, acct, reason,
+            )
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+        try:
+            snapshot = await self._run_db(
+                lambda session: self._read_v2_managed_snapshot(
+                    session, acct, symbol, close_on_fill
+                ),
+                commit=False,
+            )
+        except Exception:  # noqa: BLE001 - an unreadable row never authorises a release
+            self.logger.exception(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s reason=row_read_failed "
+                "- refused BEFORE any release",
+                exit_tag, symbol, acct,
+            )
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+        if snapshot is None:
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="no_open_row")
+            return _done("no_open_row")
+        if expected_row_id and snapshot.managed_row_id != expected_row_id:
+            self.logger.error(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s bound_row=%s open_row=%s "
+                "reason=different_position - refused BEFORE any release",
+                exit_tag, symbol, acct, expected_row_id, snapshot.managed_row_id,
+            )
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+        c3_action = self._post_exit_stale_held_action(acct, symbol, snapshot)
+        if c3_action == "fresh_flat":
+            await self._close_post_exit_stale_held_row(acct, symbol)
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="flat")
+            return _done("flat")
+        if c3_action not in ("not_applicable", "fresh_held_retry"):
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+        if snapshot.dedup_active:
+            # A previously-triggered exit owns the shares and wins the time ordering.
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+
+        # ---- 2. IRREVERSIBLE: take the pair back ------------------------------------------
+        protection = await self._prepare_confirmation_webull_leg(
+            acct,
+            symbol,
+            expected_row_id=expected_row_id,
+            expires_at=expires_at,
+            decision=decision,
+        )
+        if protection == "released":
+            self._start_confirmation_unprotected_interval(decision, acct, symbol)
+        if protection == "resolved_by_fill":
+            await self._close_resolved_oco_managed_row(
+                acct, symbol, expected_row_id=snapshot.managed_row_id
+            )
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="resolved_by_fill")
+            return _done("resolved_by_fill")
+        if protection in {"reprotected", "uncovered"}:
+            self._finish_confirmation_fanout_leg(
+                decision,
+                acct,
+                outcome=protection,
+                reprotected=protection == "reprotected",
+                uncovered=protection == "uncovered",
+            )
+            return _done(protection)
+        if protection not in {"released", "no_pair"}:
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+
+        # ---- 3. SELL. Nothing abortable from here: the pair is gone --------------------------
+        emit_outcome = "refused"
+        try:
+            position = self._hydrate_v2_position(snapshot)
+            position.update_price(reference_bid)
+            emit_outcome = await self._emit_v2_exit_on_loop(
+                acct,
+                symbol,
+                position,
+                snapshot.entry_price,
+                kind=kind,
+                reference_price=reference_bid if reference_price is None else reference_price,
+                reason=reason,
+                bid=reference_bid,
+                close_on_fill=close_on_fill,
+                confirmation_context=dict(close_context or {}),
+            )
+        except asyncio.CancelledError:
+            self._finish_or_recover_confirmation_leg(
+                decision, acct, symbol, expected_row_id=expected_row_id,
+                outcome="refused", protection=protection, confirmation=confirmation,
+            )
+            _done("cancelled_after_release_recovering")
+            raise
+        except Exception:  # noqa: BLE001 - a failed sell after a release must restore cover
+            self.logger.exception(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s reason=sell_raised "
+                "protection=%s - restoring cover",
+                exit_tag, symbol, acct, protection,
+            )
+        terminal = (
+            emit_outcome if emit_outcome in {"closed", "close_submitted", "no_open_row"}
+            else "refused"
+        )
+        self._finish_or_recover_confirmation_leg(
+            decision,
+            acct,
+            symbol,
+            expected_row_id=expected_row_id,
+            outcome=terminal,
+            protection=protection,
+            confirmation=confirmation,
+        )
+        if terminal == "no_open_row":
+            self._post_exit_stale_held_clear(acct, symbol)
+        return _done(terminal if terminal != "refused" else "sell_refused_recovering")
+
     async def _prepare_confirmation_webull_leg(
         self,
         acct: str,
@@ -4444,6 +4879,7 @@ class OmsRiskService:
             if release.outcome == "released":
                 self._exit_reservation_released.add(key)
                 released_episodes[key] = episode
+                await self._persist_webull_protect_state(acct, symbol, "released")
                 self.logger.info(
                     "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED] sym=%s acct=%s base=%s "
                     "attempt=%d/%d requested=2 confirmed=2 inline_seconds=%.3f",
@@ -5307,13 +5743,40 @@ class OmsRiskService:
                         )
                     return
                 if self._is_v2_webull_account(acct):
-                    protection = await self._prepare_confirmation_webull_leg(
+                    # One-shot claim BEFORE the routine's first await: the in-flight key above
+                    # already keeps a second quote task out, and dictionary identity makes the
+                    # pop episode-specific.
+                    if confirmation_pending.get(key) is not confirmation:
+                        return
+                    confirmation_pending.pop(key, None)
+                    await self._webull_cancel_then_sell(
                         acct,
                         symbol,
+                        exit_tag="CONFIRMATION_EXIT",
+                        reason="oms_v2_managed_exit:CONFIRMATION_EXIT",
+                        kind="HARD",
+                        reference_bid=float(quote.get("bid") or 0.0),
                         expected_row_id=bound_row_id,
                         expires_at=expires_at,
-                        decision=fanout_decision,
+                        decision=fanout_decision
+                        or _ConfirmationFanoutDecision(
+                            symbol=symbol,
+                            source_fill_id=str(confirmation.get("source_fill_id", "") or ""),
+                            accounts=(acct,),
+                        ),
+                        close_context={
+                            "flip_owner_confirmation_exit": "true",
+                            "confirmation_fanout_slot_id": str(
+                                confirmation.get("fanout_slot_id", "") or ""
+                            ),
+                            "confirmation_managed_row_id": bound_row_id,
+                            "confirmation_source_fill_id": str(
+                                confirmation.get("source_fill_id", "") or ""
+                            ),
+                        },
+                        confirmation=confirmation,
                     )
+                    return
                 else:
                     protection = await self._reconcile_confirmation_exit_protection(acct, symbol)
                 if (
@@ -5375,16 +5838,43 @@ class OmsRiskService:
             # lives in the predicate: anything short of fresh broker confirmation runs
             # the ladder instead of skipping it.
             return
-        if not quote:
-            return
-        received_at = quote.get("received_at")
-        if isinstance(received_at, datetime):
-            age_ms = (utcnow() - received_at).total_seconds() * 1000.0
-            if age_ms > float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
-                return  # stale quote — never act on a gap
-        bid = float(quote.get("bid") or 0.0)
-        if bid <= 0:
-            return
+        if confirmation is None:
+            if not quote:
+                return
+            received_at = quote.get("received_at")
+            if isinstance(received_at, datetime):
+                age_ms = (utcnow() - received_at).total_seconds() * 1000.0
+                if age_ms > float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
+                    return  # stale quote — never act on a gap
+            bid = float(quote.get("bid") or 0.0)
+            if bid <= 0:
+                return
+        else:
+            # ⛔⭐⭐ ONE FRESHNESS DECISION PER CONFIRMATION EXIT, TAKEN BEFORE THE RELEASE (2026-09-21).
+            # The confirmation guard above already required THIS quote to be present, newer than
+            # the decision, inside the max age and with a positive bid -- and only then was the
+            # protection released, which is irreversible. The generic guards used to run again
+            # here on the SAME quote object. By then the Schwab leg and the Webull release had both
+            # been awaited inline on the serial tick consumer (which cannot receive a newer quote
+            # while it is blocked), so the quote had aged past the limit by OUR OWN latency, the
+            # second pass bare-returned, and -- the pending decision having been popped above --
+            # nothing ever retried. Live 2026-09-21, 4 of the day's 5 clean releases: GLND 5.17 s, GRML
+            # 5.98 s, NCPL, GLND 6.75 s from FIRED to RELEASED; shares left 474-663 s with no
+            # broker stop, no sell, no re-protect, no page and no log line.
+            # The first pass authorised the release; nothing after it may veto the sell. For a
+            # market close the bid is a price REFERENCE, not a permission.
+            received_at = quote.get("received_at") if quote else None
+            if isinstance(received_at, datetime):
+                age_ms = (utcnow() - received_at).total_seconds() * 1000.0
+                max_age_ms = float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000))
+                if age_ms > max_age_ms:
+                    self.logger.info(
+                        "[OMS-V2-CONFIRMATION-EXIT-QUOTE-AGED] sym=%s acct=%s protection=%s "
+                        "age_ms=%.0f max_age_ms=%.0f decision=proceed — freshness was decided "
+                        "before the release; the quote aged during our own inline awaits",
+                        symbol, acct, protection, age_ms, max_age_ms,
+                    )
+            bid = float((quote or {}).get("bid") or 0.0)
         # #6 (CLRO desync fix): mark closed on the confirmed FILL, not on submit. Default on.
         close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
         try:
@@ -6142,6 +6632,9 @@ class OmsRiskService:
                 return False
             payload = dict(entry.payload or {})
             payload["webull_protect_base_client_order_id"] = base_client_order_id
+            # A pair IS resting again: the only thing that may clear a durable released/failed mark.
+            payload[self._WEBULL_PROTECT_STATE_KEY] = "resting"
+            payload[f"{self._WEBULL_PROTECT_STATE_KEY}_at"] = utcnow().isoformat()
             entry.payload = payload
             session.flush()
             return True

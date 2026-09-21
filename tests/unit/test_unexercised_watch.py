@@ -237,6 +237,7 @@ def test_inc1_reads_all_incident_types_from_the_same_pager_route(monkeypatch):
     assert "'oms_v2_cw_flip_uncovered'" in statements[0]
     assert "'oms_v2_exit_release_unresolved'" in statements[0]
     assert "'oms_v2_confirmation_exit_reprotected'" in statements[0]
+    assert "'oms_v2_webull_uncovered_share'" in statements[0]
 
 
 def test_inc1_forced_incident_reaches_the_watchers_page_channel(tmp_path, monkeypatch):
@@ -772,3 +773,53 @@ def test_check_halt_RAISES_on_an_unparsable_line_rather_than_reporting_a_clean_z
     _stub_denominator(monkeypatch)
     with pytest.raises(RuntimeError, match="could not be classified"):
         uw.check_halt()
+
+
+def test_the_pager_delivers_every_incident_source_the_oms_can_write():
+    """2026-09-21: the OMS wrote two critical incidents whose `source` the INSTALLED pager did not
+    query, so nothing reached the phone. A source the OMS writes and the pager does not read is a
+    page nobody delivers - discover the OMS's sources from its code, not from a list kept here."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    service = (root / "src" / "project_mai_tai" / "oms" / "service.py").read_text(encoding="utf-8")
+    written = set(re.findall(r'_INCIDENT_SOURCE\s*=\s*"([a-z0-9_]+)"', service))
+    assert "oms_v2_webull_uncovered_share" in written  # control: the discovery finds real sources
+    assert len(written) >= 3
+
+    statements: list[str] = []
+    original = uw._psql
+    uw._psql = lambda sql: statements.append(sql) or []
+    try:
+        uw._inc1_open_incidents()
+    finally:
+        uw._psql = original
+    undelivered = {source for source in written if f"'{source}'" not in statements[0]}
+    assert undelivered == set(), f"the OMS writes incidents the pager never reads: {undelivered}"
+
+
+def test_uncovered_share_pages_once_with_account_symbol_cause_and_seconds(tmp_path, monkeypatch):
+    row = json.loads(_inc1_row(source="oms_v2_webull_uncovered_share"))
+    row.update(
+        {
+            "title": "UNCOVERED: GLND on live:orb has NO broker stop (31s); check now",
+            "account": "live:orb",
+            "symbol": "GLND",
+            "cause": "pair_released_not_sold",
+            "uncovered_seconds": "31.0",
+        }
+    )
+    pages: list[tuple[str, str]] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [json.dumps(row)])
+    monkeypatch.setattr(uw, "page", lambda title, body: pages.append((title, body)) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+
+    assert len(pages) == 1
+    assert pages[0][0].startswith("UNCOVERED: GLND on live:orb")
+    assert "account=live:orb symbol=GLND" in pages[0][1]
+    assert "cause=pair_released_not_sold uncovered_seconds=31.0" in pages[0][1]
+    assert "native protection was cancelled" not in pages[0][1]  # not the generic INC1 body
