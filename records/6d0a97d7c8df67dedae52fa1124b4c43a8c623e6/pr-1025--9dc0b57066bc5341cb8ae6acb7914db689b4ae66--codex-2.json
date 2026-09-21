@@ -1,0 +1,9 @@
+{
+  "pr_number": 1025,
+  "range_base": "9dc0b57066bc5341cb8ae6acb7914db689b4ae66",
+  "range_head": "6d0a97d7c8df67dedae52fa1124b4c43a8c623e6",
+  "reviewed_at": "2026-09-21T15:02:44Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified the GLND and GRML released-then-silent timing against the post-release return paths, the NCPL unanswerable re-protection tape, the prior-review gap, sequential newest-first poll ordering, and the corrected shared-account ownership invariant."
+}
