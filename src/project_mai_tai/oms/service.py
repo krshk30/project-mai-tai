@@ -4531,7 +4531,6 @@ class OmsRiskService:
         confirmation-specific except the optional `confirmation` payload carried into recovery.
         """
         started_at = time.monotonic()
-        key = (acct, symbol)
         close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
         protection = ""
 
@@ -4666,8 +4665,8 @@ class OmsRiskService:
             protection=protection,
             confirmation=confirmation,
         )
-        self._post_exit_stale_held_clear(acct, symbol) if terminal == "no_open_row" else None
-        _ = key
+        if terminal == "no_open_row":
+            self._post_exit_stale_held_clear(acct, symbol)
         return _done(terminal if terminal != "refused" else "sell_refused_recovering")
 
     async def _prepare_confirmation_webull_leg(
@@ -5766,7 +5765,7 @@ class OmsRiskService:
             # been awaited inline on the serial tick consumer (which cannot receive a newer quote
             # while it is blocked), so the quote had aged past the limit by OUR OWN latency, the
             # second pass bare-returned, and -- the pending decision having been popped above --
-            # nothing ever retried. Live 2026-09-21, 4 of 4 clean releases: GLND 5.17 s, GRML
+            # nothing ever retried. Live 2026-09-21, 4 of the day's 5 clean releases: GLND 5.17 s, GRML
             # 5.98 s, NCPL, GLND 6.75 s from FIRED to RELEASED; shares left 474-663 s with no
             # broker stop, no sell, no re-protect, no page and no log line.
             # The first pass authorised the release; nothing after it may veto the sell. For a
