@@ -1,0 +1,9 @@
+{
+  "pr_number": 1030,
+  "range_base": "c9ac1a7029fd44fc14c884d5d6eb50c8db06e036",
+  "range_head": "a3c1b4bd4261beacc34d6fdbcacc21276c6c6068",
+  "reviewed_at": "2026-09-21T20:44:23Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed the rebased head on the PR 1028 merge. The two-file change has the same stable patch ID as the previously pinned range, the behavioral test is byte-identical, and the sole runtime hunk still switches sync_broker_orders to the dedicated rotating list. Re-ran the focused tests and ruff; both pass."
+}
