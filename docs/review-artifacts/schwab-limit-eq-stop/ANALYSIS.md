@@ -1,0 +1,128 @@
+# Schwab resting STOP_LIMIT goes out with `limit == stop`
+
+**Author `claude-1`, 2026-09-21. Reviewer `codex-2`. Analysis + proposal — NO code in this PR.**
+Board row it answers (09-19 handoff, moved `codex-2` → `claude-1` by the operator 09-21): *state the reject reason for each of
+the 6 rejected; show where the Schwab adapter rounds stop and limit onto one tick; propose (no code yet) whether the limit
+should be tick-adjusted upward like Webull's `raw_valid_wire_collapsed` path; re-run the n/N harm count.*
+
+## Verdict
+
+1. **It is not the Schwab adapter and not the wire — it is the OMS.** `_apply_v2_oco_bracket_entry`
+   (`oms/service.py:11172`) rounds `stop_price` and `limit_price` **independently** with `_schwab_round` (`:214`,
+   nearest cent above $1.00) at `:11271` and `:11273`. v2 sends stop 1.2166 / limit 1.2227; the OMS turns both into 1.22 before
+   the adapter ever sees them. The handoff's "the Schwab wire rounds both" is wrong at that one word.
+2. **It happens only between $1.00 and $2.00, and there it is one order in three.** v2's band is 0.5% (measured median 0.5000%,
+   range 0.4919–0.5073). Half a percent is less than one cent below $2.00, so stop and limit can land on the same cent; at or
+   below $1.00 Schwab takes 4 decimals and above $2.00 the band is a cent or more. **47 of 145** orders in the $1–$2 bucket
+   collapsed; **0 of 406** outside it.
+3. **0 of the 6 rejects were caused by it.** Five are *"Opening transactions for this security must be placed with a broker"*
+   (Schwab-restricted names), one is *"The stop price must be above the current ask"* (late arrival). Same answers the
+   non-collapsed orders get.
+4. **Harm: none measured — and barely exercised.** Of the 41 accepted collapsed orders, 23 have captured tape; only **2** were
+   ever triggered, and both filled. 21 never triggered (no chance of harm), 14 cancelled orders have no tape (UNMEASURED), and
+   the other 4 fills have no tape but did fill. `0 of 2`, not `0 of 39`.
+5. **But the mechanism is real and one step away.** In the same $1–$2 bucket, **4 of 12** non-collapsed fills executed ABOVE
+   their stop — they used the band. A collapsed order has no band to use: it fills only if the ask is exactly at the stop
+   (5 of 6 collapsed fills are exactly at the stop, 0 above). And QCLS 09-16 13:43 ET shows the miss itself on a ONE-cent band:
+   stop 1.06 / limit 1.07, 897 prints at or above the stop, ask up to 1.23, never filled.
+6. **Proposal (no code here):** after rounding, if `wire_limit <= wire_stop`, lift the limit one tick above the stop — the rule
+   Webull's adapter already applies (`[WEBULL-BUY-STOP-LIMIT-TICK-ADJUSTED] … polarity=wire_limit_gt_wire_stop`). GIPR 09-18:
+   Schwab got 1.22 / 1.22, Webull got 1.22 / 1.23 for the same signal.
+
+## Population
+
+`broker_orders` on `live:schwab_1m_v2`, `order_type='STOP_LIMIT'`, `side='buy'`, submitted 2026-09-01 → 2026-09-18 inclusive:
+**551** orders. Intended prices = `trade_intents.payload.metadata`; wire prices = the first `broker_order_events` metadata
+carrying `stop_price` (551 of 551 have it). **`limit == stop`: 47 of 551 (8.53%)** — cancelled 35, filled 6, rejected 6.
+⚠ `codex-2`'s 09-19 figure was 45 of 532 (39 accepted / 6 rejected); mine runs one session later (09-18: 3 of 37 collapsed).
+The 6 rejects are the same 6.
+
+| wire stop | orders | collapsed | wire band (limit/stop − 1), median · min · max |
+|---|---|---|---|
+| ≤ $1.00 (4 decimals) | 10 | 0 | 0.501% · 0.494 · 0.503 |
+| **$1.00 – $2.00** | **145** | **47** | **0.559% · 0.000 · 0.962** |
+| $2.00 – $5.00 | 179 | 0 | 0.467% · 0.254 · 0.976 |
+| ≥ $5.00 | 217 | 0 | 0.499% · 0.352 · 0.619 |
+
+By session (collapsed / all): 09-01 3/83 · 09-02 13/53 · 09-03 0/15 · 09-04 5/19 · 09-08 3/51 · 09-09 0/43 · 09-10 0/12 ·
+09-11 0/46 · 09-14 0/5 · 09-15 1/43 · 09-16 17/58 · 09-17 2/86 · 09-18 3/37. It tracks how many $1–$2 names we trade that day.
+
+## The six rejects (all times ET)
+
+| submitted | symbol | intent stop / limit | wire stop / limit | Schwab's answer |
+|---|---|---|---|---|
+| 09-02 11:33:03 | VIOT | 1.6355 / 1.6437 | 1.64 / 1.64 | Opening transactions for this security must be placed with a broker |
+| 09-02 13:43:30 | NCPL | 1.0780 / 1.0834 | 1.08 / 1.08 | The stop price must be above the current ask for buy stop orders… |
+| 09-04 11:30:04 | CDTG | 1.5070 / 1.5146 | 1.51 / 1.51 | Opening transactions for this security must be placed with a broker |
+| 09-15 09:34:04 | SUGP | 1.1466 / 1.1524 | 1.15 / 1.15 | Opening transactions for this security must be placed with a broker |
+| 09-17 09:43:03 | KXIN | 1.7362 / 1.7449 | 1.74 / 1.74 | Opening transactions for this security must be placed with a broker |
+| 09-17 09:43:04 | TURB | 1.6562 / 1.6644 | 1.66 / 1.66 | Opening transactions for this security must be placed with a broker |
+
+Schwab accepts a stop-limit whose limit equals its stop (41 accepted). Neither reject reason mentions the limit.
+
+## Harm count — and the control that nearly voided it
+
+Test: while the order rested, did the market reach the stop, and did the order then fail to fill? Bucket $1–$2 only (the only
+place collapse occurs), accepted orders only (filled or cancelled): 41 collapsed, 56 not. Tape = `market_capture_trades` /
+`market_capture_quotes`.
+
+⛔ **My first two runs FAILED THEIR CONTROL and I nearly reported them.** An order that FILLED must have been triggered, so the
+filled orders are the known-positive. Run 1 (prints ≥ stop, window `accepted → filled event`) saw the trigger in **1 of 18**
+filled orders; run 2 (ask ≥ stop) in **0 of 5**. Two causes: (a) capture holds **no tape at all** for these symbols on
+09-01…09-04 — 48 of the 97 orders; (b) Schwab stamps the fill at whole-second precision (`13:05:41.000`) and the triggering
+prints land later INSIDE that second, so a window ending at the fill event cuts them off.
+
+The control, by where the window ends (5 filled $1–$2 orders that have tape):
+
+| window end | print ≥ stop seen | ask ≥ stop seen |
+|---|---|---|
+| the fill event (`…:41.000`) | 1 of 5 | 0 of 5 |
+| + 1 s — the complete fill second | **5 of 5** | 2 of 5 |
+| + 2 s — **the window the tables below use** | **5 of 5** | 4 of 5 |
+| + 3 s | 5 of 5 | 5 of 5 |
+
+⚠ CORRECTED after `codex-2`'s review: my draft said "with the fill second included … 5 of 5 by prints, 4 of 5 by ask". The 4 of 5
+is the **+2 s** window my query actually used; the complete fill second alone gives 2 of 5 by ask. The PRINT control is the one
+that holds at the honest window (5 of 5 at +1 s), so **prints are the trigger test here**; the captured ask trails the prints by
+2–3 s, the same quote-vs-trade disagreement recorded in `webull-exit-seam/HARD_STOP_DESIGN.md`, and is reported only alongside.
+⇒ a "0 triggered-and-unfilled" is only a result if the filled orders light up first. **The 09-19 `0 of 39` is RETRACTED by
+`codex-2` (09-21):** its query was not retained, and no captured tape covered 09-01…09-04, so missing data had been read as "no
+trigger". The tape-qualified `0 of 2` below supersedes it.
+
+| $1–$2, accepted | orders | with tape | filled | triggered (print ≥ stop) | …and UNFILLED |
+|---|---|---|---|---|---|
+| collapsed (`limit == stop`) | 41 | 23 | 6 | 2 | **0** |
+| not collapsed | 56 | 26 | 12 | 4 | **1** (QCLS 09-16 13:43:15→13:48:02, stop 1.06 / limit 1.07, 897 of 4,901 prints ≥ stop, max ask 1.23) |
+
+Where the fills landed, $1–$2: collapsed n=6 — below stop 1, at stop 5, **above stop 0**; not collapsed n=12 — below 5, at 3,
+**above 4**. The band is used by a third of the fills that have one.
+
+## A second thing the same two lines do (not in the row — flagged, not proposed)
+
+`_schwab_round` rounds the STOP to the nearest cent too: across all 551 the wire stop is **above** the intended ATR level in
+264, **below** it in 246, equal in 41. A stop rounded DOWN triggers before the level the strategy computed (up to half a cent —
+0.4% on a $1.20 name). Whether the buy-stop should ever sit below the ATR line is a strategy question for the operator, not a
+rounding detail; I have not measured what it costs or earns.
+
+## Proposal — for review, not built
+
+In `_apply_v2_oco_bracket_entry`, after both values are rounded: if `limit <= stop`, set `limit = stop + one tick` (0.01 above
+$1.00, 0.0001 at or below). Log one line when it fires, as Webull's adapter does.
+
+- **Reach:** $1–$2 names only, ~8.5% of Schwab resting entries (47 of 551); nothing else changes by construction.
+- **Cost:** the band on those orders becomes one cent = 0.50–1.00% instead of 0. ⚠ CORRECTED 09-21: I first wrote that this
+  "introduces no band wider than ones live today" (live max 0.962% in this bucket, 0.976% across all buckets). Replaying all 551
+  real intents through the built fix (PR #1024) gives a widest LIFTED band of **0.990%** — a stop just above $1.00. So it does
+  exceed the widest band sent so far, by 0.014 points, on the cheapest names only.
+- **What it does NOT fix:** QCLS-style gaps through a one-cent band, and the stop-rounded-down question above.
+- **File:** `src/project_mai_tai/oms/service.py` — held by `claude-1` for sweep item 1, so it can ride in that work or as its
+  own small PR; it needs a fixture from this table (GIPR 09-18: 1.2166 / 1.2227 → 1.22 / 1.23) and a control above $2.00 where
+  nothing may change.
+
+## What this cannot see
+
+- 14 cancelled collapsed orders with no captured tape (09-01…09-04): whether any was triggered and missed is UNMEASURED.
+- Whether Schwab triggers a buy stop on last trade or on the ask. Its reject text speaks of the ask; the control matched prints 5 of 5 at the
+  complete fill second and the ask only 2 of 5 there (4 of 5 at +2 s, 5 of 5 at +3 s). Both were run; they agree on the harm count.
+- Fills that a band would have caught and a collapse lost leave no trace except "cancelled" — which is why the exercised
+  denominator (2) matters more than the population (41).
