@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -10,6 +12,12 @@ GATE = ROOT / "ops/systemd/deploy_oms_strategy_authorized.sh"
 DEPLOY_SERVICE = ROOT / "ops/systemd/deploy_service.sh"
 EXPECTED_SHA = "a" * 40
 CURRENT_SHA = "c" * 40
+DEPLOY_GATE_PAYLOAD = (
+    "ops/preflight/preflight_oms_restart.sh",
+    "ops/systemd/deploy_oms_strategy_authorized.sh",
+    "ops/systemd/deploy_service.sh",
+    "src/project_mai_tai/deploy_preflight.py",
+)
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -42,17 +50,13 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
 
     _write_executable(
         repo / ".venv/bin/python",
-        "#!/usr/bin/env bash\n"
-        'echo "preflight:$*" >> "$CALL_LOG"\n'
-        'exit "${PREFLIGHT_RC:-0}"\n',
+        '#!/usr/bin/env bash\necho "preflight:$*" >> "$CALL_LOG"\nexit "${PREFLIGHT_RC:-0}"\n',
     )
     (repo / "src/project_mai_tai").mkdir(parents=True)
     (repo / "src/project_mai_tai/deploy_preflight.py").write_text("# fixture\n")
     _write_executable(
         repo / "ops/preflight/preflight_oms_restart.sh",
-        "#!/usr/bin/env bash\n"
-        'echo fence >> "$CALL_LOG"\n'
-        'exit "${FENCE_RC:-0}"\n',
+        '#!/usr/bin/env bash\necho fence >> "$CALL_LOG"\nexit "${FENCE_RC:-0}"\n',
     )
     _write_executable(
         repo / "ops/systemd/deploy_service.sh",
@@ -94,6 +98,10 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         fake_bin / "git",
         "#!/usr/bin/env bash\n"
         'echo "git:$*" >> "$CALL_LOG"\n'
+        'if [[ "$*" == *" show ${EXPECTED_SHA}:ops/systemd/deploy_gate_tools.sha256" ]]; then\n'
+        '  cat "$APPROVED_MANIFEST_PATH"\n'
+        "  exit $?\n"
+        "fi\n"
         'if [[ "$*" == *"rev-parse origin/main" ]]; then echo "$EXPECTED_SHA"; fi\n'
         'if [[ "$*" == *"rev-parse HEAD" ]]; then\n'
         '  if [[ -e "$DEPLOY_MARKER" ]]; then echo "$EXPECTED_SHA"; else echo "$CURRENT_SHA"; fi\n'
@@ -121,9 +129,13 @@ def _run_gate(
     env: dict[str, str],
     *,
     expected_sha: str = EXPECTED_SHA,
+    tools_dir: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    command = ["bash", GATE, repo, expected_sha, str(approval) if approval else ""]
+    if tools_dir is not None:
+        command.append(str(tools_dir))
     return subprocess.run(
-        ["bash", GATE, repo, expected_sha, str(approval) if approval else ""],
+        command,
         check=False,
         capture_output=True,
         text=True,
@@ -146,9 +158,28 @@ def _replace_field(approval: Path, key: str, value: str) -> None:
     )
 
 
-def _assert_authorization_refused(
-    result: subprocess.CompletedProcess[str], call_log: Path
-) -> None:
+def _external_tools(tmp_path: Path, repo: Path) -> tuple[Path, Path]:
+    tools = tmp_path / "external-tools"
+    for relative in DEPLOY_GATE_PAYLOAD:
+        source = GATE if relative.endswith("deploy_oms_strategy_authorized.sh") else repo / relative
+        target = tools / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    (tools / "DEPLOY_GATE_SOURCE_SHA").write_text(EXPECTED_SHA + "\n", encoding="utf-8")
+    manifest = tools / "ops/systemd/deploy_gate_tools.sha256"
+    manifest.write_text(
+        "".join(
+            f"{hashlib.sha256((tools / relative).read_bytes()).hexdigest()}  {relative}\n"
+            for relative in DEPLOY_GATE_PAYLOAD
+        ),
+        encoding="utf-8",
+    )
+    approved_manifest = tmp_path / "approved-deploy-gate-tools.sha256"
+    shutil.copy2(manifest, approved_manifest)
+    return tools, approved_manifest
+
+
+def _assert_authorization_refused(result: subprocess.CompletedProcess[str], call_log: Path) -> None:
     assert result.returncode == 3
     assert "DEPLOY NOT AUTHORISED" in result.stdout
     calls = _calls(call_log)
@@ -240,9 +271,7 @@ def test_wrong_deployment_name_refuses_before_preflight(tmp_path: Path) -> None:
 def test_unknown_approval_field_refuses_before_preflight(tmp_path: Path) -> None:
     repo, approval, call_log, env = _fixture(tmp_path)
     approval.write_text(
-        approval.read_text(encoding="utf-8").replace(
-            "AUTHORITY=operator", "UNEXPECTED_FIELD=true"
-        ),
+        approval.read_text(encoding="utf-8").replace("AUTHORITY=operator", "UNEXPECTED_FIELD=true"),
         encoding="utf-8",
     )
 
@@ -305,6 +334,79 @@ def test_already_deployed_sha_refuses_before_preflight(tmp_path: Path) -> None:
     assert "already deployed" in result.stderr
 
 
+def test_external_reviewed_tools_can_gate_an_older_production_checkout(
+    tmp_path: Path,
+) -> None:
+    repo, approval, call_log, env = _fixture(tmp_path)
+    tools, approved_manifest = _external_tools(tmp_path, repo)
+    env["APPROVED_MANIFEST_PATH"] = str(approved_manifest)
+    (repo / "src/project_mai_tai/deploy_preflight.py").unlink()
+    (repo / "ops/preflight/preflight_oms_restart.sh").unlink()
+    (repo / "ops/systemd/deploy_service.sh").unlink()
+
+    result = _run_gate(repo, approval, env, tools_dir=tools)
+
+    assert result.returncode == 0, result.stderr
+    calls = _calls(call_log)
+    assert f"git:-C {repo} show {EXPECTED_SHA}:ops/systemd/deploy_gate_tools.sha256" in calls
+    assert any(
+        line.startswith(f"preflight:{tools}/src/project_mai_tai/deploy_preflight.py")
+        for line in calls
+    )
+    assert "fence" in calls
+    assert f"deploy:{EXPECTED_SHA}:{repo} main oms" in calls
+    assert f"tools_dir={tools}" in result.stdout
+
+
+def test_external_tools_for_a_different_sha_refuse_before_preflight(
+    tmp_path: Path,
+) -> None:
+    repo, approval, call_log, env = _fixture(tmp_path)
+    tools, _approved_manifest = _external_tools(tmp_path, repo)
+    (tools / "DEPLOY_GATE_SOURCE_SHA").write_text("b" * 40 + "\n", encoding="utf-8")
+
+    result = _run_gate(repo, approval, env, tools_dir=tools)
+
+    _assert_authorization_refused(result, call_log)
+    assert "do not name the approved target SHA" in result.stderr
+
+
+def test_missing_approved_manifest_object_refuses_before_preflight(
+    tmp_path: Path,
+) -> None:
+    repo, approval, call_log, env = _fixture(tmp_path)
+    tools, _approved_manifest = _external_tools(tmp_path, repo)
+    env["APPROVED_MANIFEST_PATH"] = str(tmp_path / "missing-approved-manifest")
+
+    result = _run_gate(repo, approval, env, tools_dir=tools)
+
+    _assert_authorization_refused(result, call_log)
+    assert "approved deploy-gate manifest object is missing" in result.stderr
+
+
+def test_tool_and_local_manifest_rewrite_refuse_against_approved_commit(
+    tmp_path: Path,
+) -> None:
+    repo, approval, call_log, env = _fixture(tmp_path)
+    tools, approved_manifest = _external_tools(tmp_path, repo)
+    env["APPROVED_MANIFEST_PATH"] = str(approved_manifest)
+    deploy = tools / "ops/systemd/deploy_service.sh"
+    deploy.write_text(deploy.read_text(encoding="utf-8") + "# tampered\n", encoding="utf-8")
+    local_manifest = tools / "ops/systemd/deploy_gate_tools.sha256"
+    local_manifest.write_text(
+        "".join(
+            f"{hashlib.sha256((tools / relative).read_bytes()).hexdigest()}  {relative}\n"
+            for relative in DEPLOY_GATE_PAYLOAD
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate(repo, approval, env, tools_dir=tools)
+
+    _assert_authorization_refused(result, call_log)
+    assert "approved deploy-gate manifest" in result.stderr
+
+
 def test_consumed_approval_cannot_be_reused(tmp_path: Path) -> None:
     repo, approval, call_log, env = _fixture(tmp_path)
     first = _run_gate(repo, approval, env)
@@ -329,7 +431,7 @@ def test_preflight_refusal_never_reaches_fence_or_deploy(tmp_path: Path) -> None
     assert _calls(call_log) == [
         f"git:-C {repo} rev-parse HEAD",
         f"preflight:{repo}/src/project_mai_tai/deploy_preflight.py --service oms "
-        "--overview-url http://127.0.0.1:8100/api/overview"
+        "--overview-url http://127.0.0.1:8100/api/overview",
     ]
     assert "one-shot live OMS preflight" in result.stderr
 
@@ -399,9 +501,7 @@ def test_deploy_service_refuses_if_main_moved_past_the_approved_sha(tmp_path: Pa
     author = tmp_path / "author"
     box = tmp_path / "box"
     subprocess.run(["git", "init", "--bare", origin], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "init", "-b", "main", author], check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-b", "main", author], check=True, capture_output=True)
     _git(author, "config", "user.email", "deploy-test@example.invalid")
     _git(author, "config", "user.name", "Deploy Test")
     (author / "value.txt").write_text("base\n", encoding="utf-8")
