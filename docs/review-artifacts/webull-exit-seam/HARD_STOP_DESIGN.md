@@ -13,8 +13,8 @@ Board row it answers: *"Hard stop is a market sell AFTER the level trades (GIPR 
    confirmation exit and sweep item 1 extends to every other software exit. **No new hard-stop mechanism is proposed.**
 3. **The rule this note adds:** on Webull the software hard stop is the SECOND line, never the first. A leg that holds shares
    and has no resting native stop is a defect state with a deadline, not a normal state.
-4. **One thing to measure before anything is built:** the software stop decided 2.66 s (GIPR) and 0.65 s (IMCC) after the first
-   captured TRADE through the level. n=2. A log field, not a rule change.
+4. **One thing to measure before anything is built:** the software stop decided **3.07 s** (GIPR) and **0.19 s** (IMCC) after the first
+   captured TRADE at or below the level. n=2. A log field, not a rule change.
 
 ## Population — every FILLED `CW_HARD_STOP` close, both live accounts, 2026-09-04 → 2026-09-18
 
@@ -22,15 +22,19 @@ Source: `broker_orders` ⋈ `trade_intents.reason='oms_v2_managed_exit:CW_HARD_S
 level = `metadata.reference_price`; tape = `market_capture_trades` / `market_capture_quotes`. **7 rows — 1 Schwab, 6 Webull**
 (the 6 matches the handoff's "58 rejected / 6 filled"). Rejected closes are NOT in this table; they are sweep item 1.
 
-| decided (ET) | symbol | account | level | fill | fill vs level | decision − first trade ≤ level |
+| close accepted (ET) | symbol | account | level | fill | fill vs level | software `decided_at` − first captured trade ≤ level (prior 120 s) |
 |---|---|---|---|---|---|---|
 | 09-04 09:31:25 | IMRN | live:schwab_1m_v2 | 1.7751 | 1.8150 | **+2.25%** | UNMEASURED (0 captured trades in the 120 s before) |
 | 09-04 15:22:14 | CDTG | live:orb | 1.2920 | 1.3050 | **+1.01%** | UNMEASURED (0 captured trades) |
 | 09-04 15:31:30 | IMRN | live:orb | 1.6910 | 1.6901 | **−0.05%** | UNMEASURED (0 captured trades) |
 | 09-15 15:46:49 | MEDS | live:orb | 1.7480 | 1.7401 | **−0.45%** | none — no trade at/below the level before the decision (861 trades captured) |
 | 09-18 13:17:52 | GIPR | live:orb | 1.1040 | 1.1001 | **−0.35%** | none (1,298 trades captured) |
-| 09-18 14:15:05 | GIPR | live:orb | 1.0488 | 0.9300 | **−11.33%** | **2.66 s** (1,814 trades captured) |
-| 09-18 14:21:35 | IMCC | live:orb | 5.0876 | 5.0201 | **−1.33%** | **0.65 s** (878 trades captured) |
+| 09-18 14:15:05 | GIPR | live:orb | 1.0488 | 0.9300 | **−11.33%** | **3.07 s** — decided 14:15:04.660, first trade ≤ level 14:15:01.588 (1,814 trades captured) |
+| 09-18 14:21:35 | IMCC | live:orb | 5.0876 | 5.0201 | **−1.33%** | **0.19 s** — decided 14:21:35.060, first trade ≤ level 14:21:34.871 (878 trades captured) |
+
+⚠ Self-correction (`claude-1`, second commit): the first draft's lag column read 2.66 s / 0.65 s. Those were measured from the
+broker ACCEPT event to the start of the last unbroken run of prints at or below the level — not what the header said. The column
+now uses ONE stated definition, from the log's `decided_at`. The first column is the accept time and is labelled so.
 
 Median −0.35%. Drop GIPR 14:15 by name: range −1.33%..+2.25%. ⛔ Seven fills is a small population; it supports "the
 mechanism is not the class defect", not "the mechanism is proven".
@@ -51,13 +55,15 @@ mechanism is not the class defect", not "the mechanism is proven".
 | 14:15:05.047 | market sell accepted | `broker_order_events` |
 | 14:15:09.465 | filled **0.93** — 4.4 s after accept, into the pinned market | `fills` |
 
-**What a resting native stop would have done [inferred, not pinned]:** triggered by the 14:15:01.588 print and filled somewhere
-inside that second's range 1.04 → 0.9735, i.e. **−8.8% to −14.6%** on the 1.14 entry, against the actual **−18.4%**. So the naked
-window cost **3.8 to 9.6 points** here — and even a perfect broker stop does NOT hold −8% through a one-second collapse. −8% is a
-trigger level, never a guaranteed exit price; nothing in this note changes that.
+**What a resting native stop would have done:** the 14:15:01.588 print proves it would have TRIGGERED — **3.07 s before the
+software decision** (14:15:04.660). That is the strongest statement this tape supports. The fill price of the resulting market
+order, and therefore the loss avoided, are **UNMEASURED**: in a collapse like this it could have filled later or lower than that
+second's prints (correction from `codex-2`'s review — the first draft asserted a fill range and a saved-loss range; both removed).
+−8% is a trigger level, never a guaranteed exit price; nothing in this note changes that.
 
 ⚠ **Unresolved:** the captured quote stream shows bid 1.07 at 14:15:02.090 while captured trades print 0.9735 at 14:15:01. The
-two streams disagree by ~3 s. Capture `received_at − event_ts` medians in that window: quotes 950 ms, trades 7,745 ms (a burst
+two streams disagree by ~3 s. Capture `received_at − event_ts` medians for `event_ts` 14:15:01 ≤ t < 14:15:05 ET: quotes n=93, **1,087.79 ms**; trades n=1,490,
+**7,745.77 ms** (a burst
 backlog in the capture consumer — this is the CAPTURE's lag, not a measurement of what the OMS saw). Which clock is right is not
 pinned; the OMS does not log the quote age it acted on.
 
@@ -65,7 +71,7 @@ pinned; the OMS does not log the quote age it acted on.
 
 | state of a Webull leg that holds shares | first line | second line | what is missing today |
 |---|---|---|---|
-| **A. PROTECTED** — native pair resting | the broker's stop | **Schwab:** the software ladder STANDS DOWN on fresh broker confirmation (`_native_oco_stand_down_active`, `MAI_TAI_OMS_NATIVE_OCO_STAND_DOWN_ENABLED=true` read from the OMS process 09-21). **Webull: the stand-down FAILS OPEN** — the docstrings at `oms/service.py:3088-3093` and `:7868` say Webull exposes no confirmation capability, so the ladder runs ALONGSIDE the resting pair and must take the pair back before it can sell (the shares are reserved) | **on Webull the software hard stop and the native stop sit at the SAME level (both −8%) and race.** Requirement for sweep item 1: at the hard-stop level the routine must treat a filled or working native stop leg as the exit (`resolved_by_fill`) and must never end with the pair cancelled and no sell. [read from docstrings, NOT traced on a tape — reviewer please check] |
+| **A. PROTECTED** — native pair resting | the broker's stop | **Schwab:** the software ladder STANDS DOWN on fresh broker confirmation (`_native_oco_stand_down_active`, `MAI_TAI_OMS_NATIVE_OCO_STAND_DOWN_ENABLED=true` read from the OMS process 09-21). **Webull: the stand-down FAILS OPEN — confirmed in code by the reviewer:** `RoutingBrokerAdapter.fetch_armed_native_oco_symbols` returns an empty set when the routed adapter lacks the capability, the Webull adapter has no such method, so `_native_oco_armed_confirmed_at` is never refreshed, the predicate is false, and the ladder runs BESIDE the resting pair (it must take the pair back before it can sell — the shares are reserved) | **two −8% mechanisms whose LEVELS MAY DIFFER.** The native pair's stop is priced off an anchor chosen when the pair is built (fresh live ask, else the Schwab fill — `oms/service.py:2067-2095`); `CW_HARD_STOP` is priced off the managed Webull row's own entry (`:5658-5659`). They share the percentage, not the anchor. Same level is MEASURED only on the two GIPR 09-18 trades (1.1040 / 1.1040 and 1.0488 / 1.0488); for every other position it is unknown which trips first. Requirement for sweep item 1, whichever trips first: the routine must treat a filled or working native stop leg as the exit (`resolved_by_fill`) and must never end with the pair cancelled and no sell |
 | **B. RELEASED for a software close** (confirmation, hard stop, floor, flip, overnight flatten) | the software close, retried by broker-answer class | **re-attach the pair, then page** — the #1014 terminal rule | #1014 covers the confirmation exit only. **Sweep item 1** moves the other four onto the same routine. A release with no close and no re-attach inside the deadline is the GIPR state and must be impossible |
 | **C. NEVER PROTECTED** — all attach attempts failed (3 of 75 positions: IMRN 09-04, QCLS 09-16, DLXY 09-16) | none today — software ladder only | — | `PROTECT_FAILED_FORENSIC.md` reads the 5 attach answers each. Proposed terminal rule, to be confirmed by that forensic: attach failed ⇒ **flatten now + page**; never sit bare behind the software stop |
 | **D. EXTENDED HOURS** — a native stop leg is refused or cannot trigger | software hard stop | — | out of scope here; the software stop IS the only line and the row stays as it is. Stated so nobody reads state A as covering 04:00–09:30 |
@@ -80,7 +86,7 @@ proposal; the reviewer should push on it. It is a detector, not a fix — the fi
 - **No stop-limit, no "sell at the level" limit order.** In the GIPR second a limit at 1.0488 would not have filled at all.
 - **No tighter stop percentage.** 8.0 is the operator's number (`MAI_TAI_OMS_V2_CW_HARD_STOP_PCT=8.0`, read from the OMS
   process 09-21).
-- **No trade-print trigger yet.** Two instances (2.66 s, 0.65 s) are a reason to MEASURE. Ask for `codex-2`/sweep item 1: log, on
+- **No trade-print trigger yet.** Two instances (3.07 s, 0.19 s) are a reason to MEASURE. Ask for `codex-2`/sweep item 1: log, on
   every hard-stop decision, the age of the quote acted on (`quote_age_ms`) and the bid. Five sessions of that field decide
   whether a last-trade trigger is worth building.
 
