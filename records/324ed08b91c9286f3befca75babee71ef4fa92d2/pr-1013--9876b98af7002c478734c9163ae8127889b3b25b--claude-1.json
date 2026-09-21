@@ -1,0 +1,9 @@
+{
+  "pr_number": 1013,
+  "range_base": "9876b98af7002c478734c9163ae8127889b3b25b",
+  "range_head": "324ed08b91c9286f3befca75babee71ef4fa92d2",
+  "reviewed_at": "2026-09-21T11:24:36Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review after rebase onto 9876b98a (main tip). Not a re-stamp: base is an ancestor of head (gate's own merge-base check run); one commit, one Codex marker; git diff old-base..old-head (511f0fbe..4e4f1d0e) and new-base..new-head are BYTE-IDENTICAL (sha256 c9e5938a73ff619f, 1,792 lines) and main changed none of the 4 touched files between the two bases. Re-ran on the new head myself: 24 tests pass (18 in test_momentum_live_rule_baseline + 6 in test_no_inert_modules), ruff clean, validate green. Mutation and control.json evidence from the 4e4f1d0e review (order-awareness removed => 2 fail; 60/60 rows PATH == order-aware union; 1,296 classified same-millisecond extras across 28/30 sessions) applies to the identical patch and was NOT re-run. Offline study only. This pin does not mean the baseline REPORT has been read or accepted."
+}
