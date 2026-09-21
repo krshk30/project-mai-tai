@@ -1,13 +1,17 @@
-# 2026-09-21 — the Webull confirmation exit failed LIVE on its first run after #1014
+# 2026-09-21 — the Webull confirmation exit failed LIVE: 3 fired, 0 sold (first session after #1014)
 
 **Author `claude-1`, written during the session it happened in (10:25 ET). Reviewer `codex-2`. NO code in this PR.**
 Operator, 10:20 ET: *"this is recurring, I thought we fixed it last week… this time we need to really make sure we fix it."*
 
 ## Verdict
 
-1. **#1014's promise — every confirmation exit ends SOLD, resolved-by-fill, or REPROTECTED + PAGED — was broken on its
-   first live exercise.** GLND 10:18 ET: Webull's bracket was cancelled cleanly (`confirmed=2`), and then **nothing**: no sell,
-   no re-protect, no page, no log line. 1 of 1 live Webull exercises failed. Schwab's leg of the same exit sold in 2.8 s.
+1. **#1014's promise — every confirmation exit ends SOLD, resolved-by-fill, or REPROTECTED + PAGED — did not hold on its
+   first live session. Webull: 3 fired, 0 sold by the exit** (Schwab, same three exits: 3 fired, 3 sold).
+   **GLND 10:18 and GRML 10:34 ET — identical:** bracket cancelled cleanly (`confirmed=2`), then **nothing** — no sell, no
+   re-protect, no page, no log line; the shares sat **663 s** and **621 s** with no broker stop until the software ladder
+   happened to sell them (+10.5%, +5.1% — luck, not design). **NCPL 10:32 ET — a different hole:** the cancel was refused and
+   unreadable 3 of 3, so the routine re-protected and paged as designed — by placing a SECOND full bracket over one whose
+   state it could not read, and Webull accepted it.
 2. **Cause [inferred from code + timing; the return is SILENT, which is itself the defect]:** the SAME freshness guard runs
    TWICE on ONE quote with seconds of inline broker awaits between the two runs. `_evaluate_v2_managed_exit` reads the quote
    once at the top; the first guard (`oms/service.py:5250`–`:5252`) found it fresh and authorised the release; the release
@@ -25,8 +29,9 @@ Operator, 10:20 ET: *"this is recurring, I thought we fixed it last week… this
    ET) — no bracket, no managed row — because `GET /trade/order/detail` for that ONE order was refused `429` on **59 of 59**
    polls while other orders' reads were served. Same seam, different hole: the exit path trusts a status read it cannot get.
 5. **The watch worked.** `EXITDONE1` went `RECURRENCE` at 10:20 ET: `live:orb: fired=1 sold=0 reprotected=0 gap=1`.
-6. **Cost so far: small, by luck and by size.** One share each. NCPL −8.3% on Webull (its native stop filled once attached) vs
-   −7.4% on Schwab. GLND: still held at the time of writing, quote 2.85 / 2.86 against a 2.85 entry.
+6. **Cost: small, by size and by luck.** One share per name. Webull vs Schwab on the three exits: GLND +10.5% vs +0.5%, GRML
+   +5.1% vs −1.5%, NCPL −8.2% vs about −5%. Two of three came out AHEAD because the dropped exit let a winner run — the same
+   mechanism that produced GIPR −18.4% on 09-18. Operator's ruling 10:52 ET: keep running as is today, one share per name.
 
 ## Tape — GLND, all times ET (log stamps are UTC − 4 h)
 
@@ -43,6 +48,35 @@ Operator, 10:20 ET: *"this is recurring, I thought we fixed it last week… this
 | 10:18:25 → 10:23:42 (every ~30 s) | `[OMS-OCO-EXIT-FILL] live:orb GLND exit-fill fetch FAILED (transient, e.g. 429)` ×9 | `oms.log` |
 | 10:20:08 | `[RECURRENCE] EXITDONE1 … live:orb: fired=1 sold=0 reprotected=0 gap=1` | regression watch `STATUS.txt` |
 | 10:23:55 | broker position `live:orb GLND 1` still held; managed row open, so the software ladder still watches it; **no broker stop** | `account_positions`, `virtual_positions` |
+
+## Tape — GRML 10:34 ET: the same failure, second time (all times ET)
+
+| time | event |
+|---|---|
+| 10:32:41 | both legs filled (Webull 1 @ 7.18, bracket attached 10:32:42 — target 7.5390, stop 6.6056; Schwab 2 @ 7.1785) |
+| 10:34:00.600 / .605 | confirmation exit FIRED, both accounts |
+| 10:34:02.931 → 10:34:04.067 | Schwab released, market sell 2 → **filled 7.07 (−1.5%)**, flat 10:34:04.105 |
+| **10:34:06.581** | **Webull `[…-WEBULL-RELEASED] attempt=1/3 requested=2 confirmed=2 inline_seconds=2.455`** — FIRED→RELEASED 5.98 s |
+| 10:34:06.581 → 10:44:26 | nothing for live:orb except `exit-fill fetch FAILED (429)`; no sell, no REPROTECTED, no PAGE |
+| 10:44:26.523 | software ladder `CW_FLOOR` (ref 7.5223) → market sell **filled 7.545 (+5.1%)**; `COVERAGE-RESTORED released_unprotected_seconds=620.855` |
+
+## Tape — NCPL 10:32 ET: release UNANSWERABLE → a second bracket (all times ET)
+
+| time | event |
+|---|---|
+| 10:30:11 → 10:30:12.995 | Webull 1 @ 1.22, pair `…protect-f2c25c5bc86a` attached (target 1.2810, stop 1.1224); Schwab 2 @ 1.21 |
+| 10:32:02.255 / .324 | confirmation exit FIRED, both accounts; Schwab sold 2 (ref 1.15), flat 10:32:11.033 |
+| 10:32:11.6 → 10:32:15.8 | Webull release, 3 attempts: `/trade/order/cancel` on legs T and S refused **`ORDER_CAN_NOT_BE_CANCEL` ×4**; `/trade/order/detail` on the same legs refused **`429` ×5**. `[…-WEBULL-RETRY] attempt=1/3 … 2/3 … 3/3 outcome=unanswerable`, `inline_seconds` 2.621 → 3.440 → 4.793 |
+| **10:32:16.301** | **`[WEBULL-EXIT-PAIR-PLACED]` NEW pair `…protect-8eb18c3df517` (target 1.2810, stop 1.1224) — Webull ACCEPTED it, `combo_order_id` returned** |
+| 10:32:16.313 / .327 | `[…-REPROTECTED] protected=1 reason=release_unanswerable_after_3_attempts missing_legs=unknown:target,stop inline_seconds=5.261` + `[…-PAGE] status=OPEN` |
+| 10:41:55.963 | the NEW pair's stop leg filled 1 @ 1.12 (**−8.2%**); racing software close suppressed (`[OMS-EXIT-PAIR-RESOLVED]`); flat |
+| ~10:50 | operator checked the Webull app: **no orphan NCPL orders** |
+
+What this tape settles, and what it does not: the 09-19 handoff carried an ASSUMPTION that re-attaching a full pair while an old
+leg may still work "is refused by Webull's share reservation". **Webull did not refuse it.** Whether the old pair was actually
+still working between 10:32 and 10:41 is UNKNOWN — we could neither cancel nor read it — and no double sell reached our tape
+(0 `CAN_NOT_SELL_SHORT`, position 0 not negative). "REPROTECTED" was reached as designed; the design is what needs the question:
+**never attach over a bracket whose state is unknown** — first learn its state by a read that cannot be starved.
 
 ## The code path (main `f2f4615`, `src/project_mai_tai/oms/service.py`)
 
@@ -71,8 +105,8 @@ was already taken on a fresh quote at 10:18:02; by `:5384` the only thing left t
 already performed, and the guard's effect is to walk away from it.
 
 **It is close to deterministic, not bad luck.** The quote's age at `:5384` = (Schwab leg, inline) + (Webull release, inline).
-Today 2.8 s + 2.4 s = 5.2 s. Any day both legs hold the position and Schwab's close takes more than ~2.5 s, the Webull leg
-arrives stale. ⚠ n = 1; the 09-18 failures predate #1014 and had a different cause (double cancel scored "unconfirmed").
+GLND 2.8 s + 2.4 s = 5.2 s; GRML FIRED→RELEASED = 5.98 s. **2 of 2 clean releases ended this way.** Any day both legs hold the position and Schwab's close takes more than ~2.5 s, the Webull leg
+arrives stale. ⚠ n = 2, one session; the 09-18 failures predate #1014 and had a different cause (double cancel scored "unconfirmed").
 
 ## Why the previous fix (#1014) missed it
 
@@ -160,5 +194,4 @@ Proposed for after the 16:00 close, in `oms/service.py` (held by `claude-1`), `c
 - Which of the four returns actually fired. `:5384` fits the clock to within 0.2 s; none of them logs. Step 1 above settles it.
 - Whether `[OMS-OCO-EXIT-FILL] … fetch FAILED (429)` ×9 is a consequence (the sync looking for a fill on legs we cancelled) or
   a contributor. It began 17 s AFTER the silent return, so it is not the cause of the missing sell.
-- How GLND ends. At the time of writing the share is still held with no broker stop; the operator chose to wait 10 minutes.
 - Whether Webull's 429 allowance is per order, per endpoint, per app key or per account.
