@@ -70,10 +70,24 @@ place collapse occurs), accepted orders only (filled or cancelled): 41 collapsed
 filled orders are the known-positive. Run 1 (prints ≥ stop, window `accepted → filled event`) saw the trigger in **1 of 18**
 filled orders; run 2 (ask ≥ stop) in **0 of 5**. Two causes: (a) capture holds **no tape at all** for these symbols on
 09-01…09-04 — 48 of the 97 orders; (b) Schwab stamps the fill at whole-second precision (`13:05:41.000`) and the triggering
-prints land later INSIDE that second, so a window ending at the fill event cuts them off. With the fill second included the
-control reads **5 of 5 by prints, 4 of 5 by ask**. ⇒ a "0 triggered-and-unfilled" is only a result if the filled orders light up first. I do not know how the
-09-19 `0 of 39` windowed its tape or whether it covered 09-01…09-04; reviewer, please say — if it ended at the fill event or
-leaned on this capture for those days, it has the same hole.
+prints land later INSIDE that second, so a window ending at the fill event cuts them off.
+
+The control, by where the window ends (5 filled $1–$2 orders that have tape):
+
+| window end | print ≥ stop seen | ask ≥ stop seen |
+|---|---|---|
+| the fill event (`…:41.000`) | 1 of 5 | 0 of 5 |
+| + 1 s — the complete fill second | **5 of 5** | 2 of 5 |
+| + 2 s — **the window the tables below use** | **5 of 5** | 4 of 5 |
+| + 3 s | 5 of 5 | 5 of 5 |
+
+⚠ CORRECTED after `codex-2`'s review: my draft said "with the fill second included … 5 of 5 by prints, 4 of 5 by ask". The 4 of 5
+is the **+2 s** window my query actually used; the complete fill second alone gives 2 of 5 by ask. The PRINT control is the one
+that holds at the honest window (5 of 5 at +1 s), so **prints are the trigger test here**; the captured ask trails the prints by
+2–3 s, the same quote-vs-trade disagreement recorded in `webull-exit-seam/HARD_STOP_DESIGN.md`, and is reported only alongside.
+⇒ a "0 triggered-and-unfilled" is only a result if the filled orders light up first. **The 09-19 `0 of 39` is RETRACTED by
+`codex-2` (09-21):** its query was not retained, and no captured tape covered 09-01…09-04, so missing data had been read as "no
+trigger". The tape-qualified `0 of 2` below supersedes it.
 
 | $1–$2, accepted | orders | with tape | filled | triggered (print ≥ stop) | …and UNFILLED |
 |---|---|---|---|---|---|
