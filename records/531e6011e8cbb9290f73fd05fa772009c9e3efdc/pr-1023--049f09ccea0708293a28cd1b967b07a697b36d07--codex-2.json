@@ -1,0 +1,9 @@
+{
+  "pr_number": 1023,
+  "range_base": "049f09ccea0708293a28cd1b967b07a697b36d07",
+  "range_head": "531e6011e8cbb9290f73fd05fa772009c9e3efdc",
+  "reviewed_at": "2026-09-21T14:18:51Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-derived the full population, rejection reasons, harm denominator, fill-second timing controls, rounding location, and proposal bounds; verified the corrected rebased docs diff is byte-identical to the reviewed content."
+}
