@@ -122,7 +122,7 @@ $1.00, 0.0001 at or below). Log one line when it fires, as Webull's adapter does
 ## What this cannot see
 
 - 14 cancelled collapsed orders with no captured tape (09-01…09-04): whether any was triggered and missed is UNMEASURED.
-- Whether Schwab triggers a buy stop on last trade or on the ask. Its reject text speaks of the ask; the control matched prints
-  5 of 5 and ask 4 of 5. Both were run; they agree on the harm count.
+- Whether Schwab triggers a buy stop on last trade or on the ask. Its reject text speaks of the ask; the control matched prints 5 of 5 at the
+  complete fill second and the ask only 2 of 5 there (4 of 5 at +2 s, 5 of 5 at +3 s). Both were run; they agree on the harm count.
 - Fills that a band would have caught and a collapse lost leave no trace except "cancelled" — which is why the exercised
   denominator (2) matters more than the population (41).
