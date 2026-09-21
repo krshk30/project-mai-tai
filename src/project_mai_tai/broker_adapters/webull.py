@@ -44,6 +44,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_POSITIONS_THROTTLE_SECS = 10.0
 _DEFAULT_POSITIONS_BACKOFF_BASE_SECS = 5.0
 _DEFAULT_POSITIONS_BACKOFF_MAX_SECS = 60.0
+_DEFAULT_TODAY_ORDERS_CACHE_SECS = 2.0
+_ACCEPTED_CANCEL_EVIDENCE_SECS = 10.0
 
 
 # Webull instrument status ranking, best first. Lower wins.
@@ -63,6 +65,26 @@ class WebullPositionsUnavailable(Exception):
     aborts before clearing virtuals); an empty list would classify as FLAT_INFERRED and, outside
     the fresh-fill grace, could clear a live protective stop or drop a collision guard. Never
     downgrade this to a `[]` return."""
+
+class _EndpointCountingClient:
+    """Count every SDK call without changing the client surface used by operation helpers."""
+
+    def __init__(self, delegate: object, recorder) -> None:
+        self._delegate = delegate
+        self._recorder = recorder
+
+    def get_response(self, request):
+        try:
+            response = self._delegate.get_response(request)
+        except Exception as exc:
+            self._recorder(request, response=None, error=exc)
+            raise
+        self._recorder(request, response=response, error=None)
+        return response
+
+    def __getattr__(self, name: str):
+        return getattr(self._delegate, name)
+
 
 # Webull OrderStatus -> our ExecutionReport.event_type. Values cover both the enum-name
 # form ("PARTIAL_FILLED") and the human form ("PARTIAL FILLED") the SDK exposes.
@@ -130,7 +152,11 @@ class WebullBrokerAdapter:
             accounts_by_name if accounts_by_name is not None else configured_webull_accounts(settings)
         )
         self._client = client  # injectable for tests; otherwise lazily built
+        self._counting_client: _EndpointCountingClient | None = None
         self._client_lock = threading.Lock()
+        self._endpoint_call_lock = threading.Lock()
+        self._endpoint_call_minute: str | None = None
+        self._endpoint_call_counts: dict[str, list[int]] = {}
         self._instrument_cache: dict[str, str] = {}
         self._instrument_lock = threading.Lock()
         # Position-sync rate-limit guard (per broker-account-name). ORB and the v2 mirror share
@@ -153,6 +179,11 @@ class WebullBrokerAdapter:
         self._positions_cache: dict[str, tuple[float, list[BrokerPositionSnapshot]]] = {}
         self._positions_backoff_until: dict[str, float] = {}  # monotonic deadline
         self._positions_backoff_secs: dict[str, float] = {}   # current (growing) backoff window
+        self._today_orders_cache_secs = _DEFAULT_TODAY_ORDERS_CACHE_SECS
+        self._today_orders_lock = threading.Lock()
+        self._today_orders_cache: dict[str, tuple[float, dict[str, dict[str, object]]]] = {}
+        self._accepted_cancel_lock = threading.Lock()
+        self._accepted_cancel_at: dict[tuple[str, str], float] = {}
         # Combo brackets already re-priced off their master fill (base coids). In-memory only: a
         # repeat after a restart re-sends identical prices, which is a harmless no-op replace.
         self._bracket_realigned: set[str] = set()
@@ -248,7 +279,20 @@ class WebullBrokerAdapter:
         # Always read both deterministic legs after the requests. A cancel refusal can mean the
         # OCO filled between the software decision and the cancel; treating that as merely
         # "unconfirmed" makes the OMS send a redundant close against an already-resolving position.
-        return [await self._confirm_cancel_order(account, request) for request, _ in initial]
+        confirmed: list[ExecutionReport] = []
+        for request, initial_report in initial:
+            report = await self._confirm_cancel_order(account, request)
+            # The SDK can accept our cancel, then answer the immediate retry with
+            # ORDER_CAN_NOT_BE_CANCEL while the detail endpoint is rate-limited. That sequence is
+            # positive terminal evidence for the leg; do not erase it with an unreadable read.
+            if (
+                report.metadata.get("cancel_outcome") == "could_not_tell"
+                and initial_report.metadata.get("cancel_outcome")
+                == "confirmed_after_accepted_request"
+            ):
+                report = initial_report
+            confirmed.append(report)
+        return confirmed
 
     async def release_exit_pair_for_close(
         self, *, broker_account_name: str, symbol: str, base_client_order_id: str
@@ -389,7 +433,6 @@ class WebullBrokerAdapter:
     def _exit_fill_blocking(
         self, account: WebullAccountConfig, symbol: str, base: str
     ) -> dict[str, object] | None:
-        client = self._get_client()
         try:
             from webull.trade.request.get_order_detail_request import OrderDetailRequest
         except ImportError:  # pragma: no cover - SDK layout fallback
@@ -402,9 +445,10 @@ class WebullBrokerAdapter:
         for suffix in ("T", "S"):                       # STOP_PROFIT first (the common winner)
             od = OrderDetailRequest()
             od.set_account_id(account.account_id)
-            od.set_client_order_id(self._combo_leg_coid(base, suffix))
+            client_order_id = self._combo_leg_coid(base, suffix)
+            od.set_client_order_id(client_order_id)
             try:
-                body = self._body(client.get_response(od))
+                _, body = self._order_detail_body_with_fallback(account, od, client_order_id)
             except Exception as exc:  # noqa: BLE001
                 if self._is_order_not_found(exc):
                     continue                            # leg never existed -> not an error
@@ -715,10 +759,101 @@ class WebullBrokerAdapter:
         except ValueError:
             return None
 
+    def _today_order_detail_blocking(
+        self,
+        account: WebullAccountConfig,
+        client_order_id: str,
+    ) -> dict[str, object] | None:
+        """Read one of our orders through the independent list-today endpoint.
+
+        This is the ownership-safe fallback for a starved ``/trade/order/detail`` call. The
+        account-wide response is evidence only after an exact match on OUR client_order_id;
+        account positions are never consulted and cannot authorize an order, row, or sell.
+        """
+        cache_secs = float(
+            getattr(self, "_today_orders_cache_secs", _DEFAULT_TODAY_ORDERS_CACHE_SECS)
+        )
+        lock = getattr(self, "_today_orders_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._today_orders_lock = lock
+        cache = getattr(self, "_today_orders_cache", None)
+        if cache is None:
+            cache = {}
+            self._today_orders_cache = cache
+        cache_key = account.account_id
+        with lock:
+            cached = cache.get(cache_key)
+            if cached is not None and time.monotonic() - cached[0] < cache_secs:
+                return cached[1].get(client_order_id)
+
+            try:
+                from webull.trade.request.get_today_orders_request import TodayOrdersListRequest
+            except ImportError:  # pragma: no cover - SDK layout fallback
+                return None
+
+            client = self._get_client()
+            rows_by_client_id: dict[str, dict[str, object]] = {}
+            last_client_order_id = ""
+            for _ in range(20):
+                request = TodayOrdersListRequest()
+                request.set_account_id(account.account_id)
+                if hasattr(request, "set_page_size"):
+                    request.set_page_size(100)
+                if last_client_order_id and hasattr(request, "set_last_client_order_id"):
+                    request.set_last_client_order_id(last_client_order_id)
+                body = self._body(client.get_response(request))
+                if not isinstance(body, dict):
+                    break
+                rows = body.get("orders")
+                if not isinstance(rows, list):
+                    break
+                for raw in rows:
+                    if not isinstance(raw, dict):
+                        continue
+                    coid = self._first_str(raw, "client_order_id", "clientOrderId")
+                    if coid:
+                        rows_by_client_id[coid] = raw
+                if not body.get("has_next") and not body.get("hasNext"):
+                    break
+                if not rows:
+                    break
+                last = rows[-1]
+                last_client_order_id = (
+                    self._first_str(last, "client_order_id", "clientOrderId")
+                    if isinstance(last, dict)
+                    else None
+                ) or ""
+                if not last_client_order_id:
+                    break
+            cache[cache_key] = (time.monotonic(), rows_by_client_id)
+            return rows_by_client_id.get(client_order_id)
+
+    def _order_detail_body_with_fallback(
+        self,
+        account: WebullAccountConfig,
+        detail_request: object,
+        client_order_id: str,
+    ) -> tuple[int, object]:
+        try:
+            response = self._get_client().get_response(detail_request)
+            return self._response_status(response), self._body(response)
+        except Exception as exc:
+            if not self._is_rate_limited(exc):
+                raise
+            alternate = self._today_order_detail_blocking(account, client_order_id)
+            if alternate is None:
+                raise
+            logger.warning(
+                "[WEBULL-ORDER-READ-FALLBACK] primary=/trade/order/detail "
+                "alternate=/trade/orders/list-today client_order_id=%s outcome=matched",
+                client_order_id,
+            )
+            return 200, alternate
+
     def _fetch_order_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
     ) -> ExecutionReport | None:
-        client = self._get_client()
         try:
             from webull.trade.request.get_order_detail_request import OrderDetailRequest
         except ImportError:  # pragma: no cover - SDK layout fallback
@@ -747,7 +882,7 @@ class WebullBrokerAdapter:
             od.set_account_id(account.account_id)
             od.set_client_order_id(coid)
             try:
-                body = self._body(client.get_response(od))
+                _, body = self._order_detail_body_with_fallback(account, od, coid)
                 break
             except Exception as exc:  # noqa: BLE001 - only ORDER_NOT_FOUND is retryable here
                 if index == len(lookups) - 1 or not self._is_order_not_found(exc):
@@ -893,6 +1028,29 @@ class WebullBrokerAdapter:
                         metadata={**dict(request.metadata), "cancel_outcome": "already_absent"},
                     )
                 ]
+            if self._is_order_cannot_cancel(exc) and self._consume_recent_accepted_cancel(
+                account, request.client_order_id
+            ):
+                return [
+                    ExecutionReport(
+                        event_type="cancelled",
+                        origin="broker",
+                        client_order_id=request.client_order_id,
+                        symbol=request.symbol,
+                        side=request.side,
+                        intent_type=request.intent_type,
+                        quantity=request.quantity,
+                        reason=(
+                            "cancel terminal: ORDER_CAN_NOT_BE_CANCEL followed our own "
+                            "accepted cancel request"
+                        ),
+                        metadata={
+                            **dict(request.metadata),
+                            "webull_error_code": "ORDER_CAN_NOT_BE_CANCEL",
+                            "cancel_outcome": "confirmed_after_accepted_request",
+                        },
+                    )
+                ]
             return [self._reject_from_exception(request, exc)]
 
     def _cancel_blocking(
@@ -915,6 +1073,7 @@ class WebullBrokerAdapter:
                     origin="broker",
                 )
             ]
+        self._remember_accepted_cancel(account, request.client_order_id)
         return [
             ExecutionReport(
                 event_type="accepted",
@@ -928,6 +1087,32 @@ class WebullBrokerAdapter:
                 metadata={**dict(request.metadata), "cancel_outcome": "requested"},
             )
         ]
+
+    def _remember_accepted_cancel(self, account: WebullAccountConfig, client_order_id: str) -> None:
+        lock = getattr(self, "_accepted_cancel_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._accepted_cancel_lock = lock
+        accepted = getattr(self, "_accepted_cancel_at", None)
+        if accepted is None:
+            accepted = {}
+            self._accepted_cancel_at = accepted
+        with lock:
+            accepted[(account.account_id, client_order_id)] = time.monotonic()
+
+    def _consume_recent_accepted_cancel(
+        self, account: WebullAccountConfig, client_order_id: str
+    ) -> bool:
+        lock = getattr(self, "_accepted_cancel_lock", None)
+        accepted = getattr(self, "_accepted_cancel_at", None)
+        if lock is None or accepted is None:
+            return False
+        with lock:
+            accepted_at = accepted.pop((account.account_id, client_order_id), None)
+        return (
+            accepted_at is not None
+            and time.monotonic() - accepted_at <= _ACCEPTED_CANCEL_EVIDENCE_SECS
+        )
 
     async def _confirm_cancel_order(
         self, account: WebullAccountConfig, request: OrderRequest
@@ -962,8 +1147,9 @@ class WebullBrokerAdapter:
         detail = OrderDetailRequest()
         detail.set_account_id(account.account_id)
         detail.set_client_order_id(request.client_order_id)
-        response = self._get_client().get_response(detail)
-        http_status = self._response_status(response)
+        http_status, body = self._order_detail_body_with_fallback(
+            account, detail, request.client_order_id
+        )
         if http_status < 200 or http_status >= 300:
             return ExecutionReport(
                 event_type="accepted", origin="unknown",
@@ -972,7 +1158,6 @@ class WebullBrokerAdapter:
                 reason=f"cancel confirmation returned HTTP {http_status}",
                 metadata={**dict(request.metadata), "cancel_outcome": "could_not_tell"},
             )
-        body = self._body(response)
         items = body.get("items") if isinstance(body, dict) else None
         item = items[0] if isinstance(items, list) and items and isinstance(items[0], dict) else {}
         raw_status = str(
@@ -1042,10 +1227,10 @@ class WebullBrokerAdapter:
     # ------------------------------------------------------------------ client / instrument
     def _get_client(self) -> object:
         if self._client is not None:
-            return self._client
+            return self._counted_client_for(self._client)
         with self._client_lock:
             if self._client is not None:
-                return self._client
+                return self._counted_client_for(self._client)
             if not (self.app_key and self.app_secret):
                 raise RuntimeError("Webull credentials are not configured (app key/secret)")
             from webull.core.client import ApiClient
@@ -1054,7 +1239,87 @@ class WebullBrokerAdapter:
             if self.host and hasattr(client, "add_endpoint"):
                 client.add_endpoint(self.region_id, self.host)
             self._client = client
-            return client
+            return self._counted_client_for(client)
+
+    def _counted_client_for(self, client: object) -> _EndpointCountingClient:
+        counted = getattr(self, "_counting_client", None)
+        if counted is None or counted._delegate is not client:
+            counted = _EndpointCountingClient(client, self._record_endpoint_call)
+            self._counting_client = counted
+        return counted
+
+    def _record_endpoint_call(
+        self,
+        request: object,
+        *,
+        response: object | None,
+        error: Exception | None,
+    ) -> None:
+        """Keep observable per-minute success/failure counts for every SDK endpoint."""
+        endpoint = str(
+            getattr(request, "_action_name", "")
+            or getattr(request, "_kind", "")
+            or type(request).__name__
+        )
+        clock = getattr(self, "_endpoint_clock", None)
+        now = clock() if callable(clock) else datetime.now(UTC)
+        minute = now.astimezone(UTC).isoformat(timespec="minutes")
+        status = self._response_status(response) if response is not None else 0
+        failed = error is not None or status >= 400
+        lock = getattr(self, "_endpoint_call_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._endpoint_call_lock = lock
+        with lock:
+            prior_minute = getattr(self, "_endpoint_call_minute", None)
+            counts = getattr(self, "_endpoint_call_counts", None)
+            if counts is None:
+                counts = {}
+                self._endpoint_call_counts = counts
+            if prior_minute is not None and prior_minute != minute:
+                self._log_endpoint_call_counts(prior_minute, counts)
+                counts.clear()
+            self._endpoint_call_minute = minute
+            counter = counts.setdefault(endpoint, [0, 0])
+            counter[1 if failed else 0] += 1
+            if failed:
+                logger.warning(
+                    "[WEBULL-ENDPOINT-CALLS] minute=%s endpoint=%s success=%d failure=%d "
+                    "total=%d partial=1",
+                    minute,
+                    endpoint,
+                    counter[0],
+                    counter[1],
+                    sum(counter),
+                )
+
+    @staticmethod
+    def _log_endpoint_call_counts(minute: str, counts: dict[str, list[int]]) -> None:
+        for endpoint, (success, failure) in sorted(counts.items()):
+            logger.info(
+                "[WEBULL-ENDPOINT-CALLS] minute=%s endpoint=%s success=%d failure=%d "
+                "total=%d partial=0",
+                minute,
+                endpoint,
+                success,
+                failure,
+                success + failure,
+            )
+
+    def endpoint_call_counts(self) -> dict[str, dict[str, int]]:
+        """Return the current UTC minute without exposing account or order identifiers."""
+        lock = getattr(self, "_endpoint_call_lock", None)
+        if lock is None:
+            return {}
+        with lock:
+            return {
+                endpoint: {
+                    "success": values[0],
+                    "failure": values[1],
+                    "total": values[0] + values[1],
+                }
+                for endpoint, values in self._endpoint_call_counts.items()
+            }
 
     def _resolve_instrument_id(self, client: object, symbol: str) -> str | None:
         key = str(symbol).upper().strip()
@@ -1540,6 +1805,13 @@ class WebullBrokerAdapter:
         if str(code).upper() == "ORDER_NOT_FOUND":
             return True
         return "ORDER_NOT_FOUND" in str(exc).upper()
+
+    @staticmethod
+    def _is_order_cannot_cancel(exc: BaseException) -> bool:
+        code = getattr(exc, "code", None) or getattr(exc, "error_code", None)
+        if str(code).upper() == "ORDER_CAN_NOT_BE_CANCEL":
+            return True
+        return "ORDER_CAN_NOT_BE_CANCEL" in str(exc).upper()
 
     @staticmethod
     def _combo_leg_coid(base: str, suffix: str) -> str:

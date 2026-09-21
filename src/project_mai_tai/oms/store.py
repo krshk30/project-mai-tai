@@ -51,6 +51,9 @@ class OmsStore:
         }
     )
 
+    def __init__(self) -> None:
+        self._open_order_sync_rotation_offset = 0
+
     def list_open_orders(
         self,
         session: Session,
@@ -64,7 +67,24 @@ class OmsStore:
         )
         if broker_account_ids:
             query = query.where(BrokerOrder.broker_account_id.in_(broker_account_ids))
-        return session.scalars(query).all()
+        return list(session.scalars(query).all())
+
+    def list_open_orders_for_sync(
+        self,
+        session: Session,
+        *,
+        broker_account_ids: list[UUID] | None = None,
+    ) -> list[BrokerOrder]:
+        orders = self.list_open_orders(session, broker_account_ids=broker_account_ids)
+        if len(orders) < 2:
+            return orders
+        # A fixed newest-first pass made the same old Webull order consume the tail-end 429 on
+        # every cycle while newer orders were always served first. Only the synchronization loop
+        # advances this cursor; membership checks keep list_open_orders() stable and cannot cancel
+        # the rotation by consuming offsets between syncs.
+        offset = self._open_order_sync_rotation_offset % len(orders)
+        self._open_order_sync_rotation_offset = (offset + 1) % len(orders)
+        return orders[offset:] + orders[:offset]
 
     def list_active_broker_accounts(self, session: Session) -> list[BrokerAccount]:
         return session.scalars(

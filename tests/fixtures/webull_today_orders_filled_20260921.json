@@ -1,0 +1,35 @@
+{
+  "captured_trade_date_et": "2026-09-21",
+  "row": {
+    "account_id": "ACCOUNT_ID_REDACTED",
+    "client_order_id": "CLIENT_ORDER_ID_REDACTED",
+    "combo_ticker_type": "STOCK",
+    "combo_type": "STOP_LOSS",
+    "extended_hours_trading": false,
+    "items": [
+      {
+        "category": "US_STOCK",
+        "commission": "0.000",
+        "currency": "USD",
+        "entrust_type": "QTY",
+        "filled_price": "1.11",
+        "filled_qty": "1",
+        "instrument_id": "INSTRUMENT_ID_REDACTED",
+        "last_filled_time": "2026-09-21 14:17:44.527+0000",
+        "order_status": "FILLED",
+        "order_type": "STOP_LOSS",
+        "place_time": "2026-09-21 14:16:41.257+0000",
+        "qty": "1",
+        "side": "SELL",
+        "stop_price": "1.11",
+        "symbol": "NCPL",
+        "transaction_fee": "0.02"
+      }
+    ],
+    "order_id": "ORDER_ID_REDACTED",
+    "order_type": "STP",
+    "tif": "DAY"
+  },
+  "sanitization": "account, broker-order, client-order, combo, and instrument identifiers replaced; keys and non-identifier values retained",
+  "source": "GET /trade/orders/list-today"
+}

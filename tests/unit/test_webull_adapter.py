@@ -8,10 +8,12 @@ and the defensive parsing for the order shapes still to be confirmed by a funded
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import types
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +22,12 @@ from project_mai_tai.broker_adapters.webull import (
     WebullAccountConfig,
     WebullBrokerAdapter,
     WebullPositionsUnavailable,
+)
+
+_TODAY_ORDERS_FILLED_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "webull_today_orders_filled_20260921.json"
 )
 
 
@@ -111,6 +119,10 @@ def fake_sdk(monkeypatch):
         reg(pkg)
     reg("webull.trade.request.place_order_request", PlaceOrderRequest=_make_req("place"))
     reg("webull.trade.request.get_order_detail_request", OrderDetailRequest=_make_req("detail"))
+    reg(
+        "webull.trade.request.get_today_orders_request",
+        TodayOrdersListRequest=_make_req("today"),
+    )
     reg("webull.trade.request.get_account_positions_request", AccountPositionsRequest=_make_req("positions"))
     reg("webull.trade.request.cancel_order_request", CancelOrderRequest=_make_req("cancel"))
 
@@ -139,9 +151,13 @@ def _adapter(client, **overrides) -> WebullBrokerAdapter:
     adapter.app_secret = "as"
     adapter.accounts_by_name = {"live:orb": WebullAccountConfig(account_id="ACC1")}
     adapter._client = client
+    adapter._counting_client = None
     import threading
 
     adapter._client_lock = threading.Lock()
+    adapter._endpoint_call_lock = threading.Lock()
+    adapter._endpoint_call_minute = None
+    adapter._endpoint_call_counts = {}
     adapter._instrument_cache = {}
     adapter._instrument_lock = threading.Lock()
     # Position-sync throttle/backoff state (set by __init__ in production; here for __new__).
@@ -152,6 +168,11 @@ def _adapter(client, **overrides) -> WebullBrokerAdapter:
     adapter._positions_cache = {}
     adapter._positions_backoff_until = {}
     adapter._positions_backoff_secs = {}
+    adapter._today_orders_cache_secs = 2.0
+    adapter._today_orders_lock = threading.Lock()
+    adapter._today_orders_cache = {}
+    adapter._accepted_cancel_lock = threading.Lock()
+    adapter._accepted_cancel_at = {}
     for k, v in overrides.items():
         setattr(adapter, k, v)
     return adapter
@@ -670,6 +691,99 @@ async def test_fetch_order_update_parses_requests_response(fake_sdk) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rate_limited_detail_uses_exact_client_id_from_today_orders(fake_sdk) -> None:
+    fixture = json.loads(_TODAY_ORDERS_FILLED_FIXTURE.read_text(encoding="utf-8"))
+    row = fixture["row"]
+    client = _FakeClient(
+        {
+            "today": {
+                "hasNext": False,
+                "orders": [row],
+            }
+        }
+    )
+    client.raises["detail"] = _ServerException("TOO_MANY_REQUESTS", "Too many requests", 429)
+
+    report = await _adapter(client).fetch_order_update(
+        _order(
+            client_order_id=row["client_order_id"],
+            symbol=row["items"][0]["symbol"],
+            quantity=Decimal(row["items"][0]["qty"]),
+        )
+    )
+
+    assert report is not None
+    assert report.event_type == "filled"
+    assert report.broker_order_id == "ORDER_ID_REDACTED"
+    assert report.filled_quantity == Decimal("1")
+    assert report.fill_price == Decimal("1.11")
+    assert report.reported_at == datetime(2026, 9, 21, 14, 17, 44, 527000, tzinfo=UTC)
+    assert client.calls == {"detail": 1, "today": 1}
+
+
+@pytest.mark.asyncio
+async def test_today_orders_fallback_cannot_claim_another_client_order_id(fake_sdk) -> None:
+    client = _FakeClient(
+        {
+            "today": {
+                "hasNext": False,
+                "orders": [
+                    {
+                        "client_order_id": "somebody-elses-order",
+                        "order_id": "NOT-OURS",
+                        "items": [
+                            {
+                                "order_status": "FILLED",
+                                "filled_qty": "5",
+                                "filled_price": "9.99",
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+    )
+    client.raises["detail"] = _ServerException("TOO_MANY_REQUESTS", "Too many requests", 429)
+
+    report = await _adapter(client).fetch_order_update(_order())
+
+    assert report is None
+    assert client.calls == {"detail": 1, "today": 1}
+
+
+@pytest.mark.asyncio
+async def test_today_orders_fallback_is_shared_and_counts_each_endpoint(fake_sdk) -> None:
+    client = _FakeClient(
+        {
+            "today": {
+                "hasNext": False,
+                "orders": [
+                    {
+                        "client_order_id": coid,
+                        "order_id": f"broker-{coid}",
+                        "items": [{"order_status": "SUBMITTED", "filled_qty": "0"}],
+                    }
+                    for coid in ("order-a", "order-b")
+                ],
+            }
+        }
+    )
+    client.raises["detail"] = _ServerException("TOO_MANY_REQUESTS", "Too many requests", 429)
+    adapter = _adapter(client)
+
+    first = await adapter.fetch_order_update(_order(client_order_id="order-a"))
+    second = await adapter.fetch_order_update(_order(client_order_id="order-b"))
+
+    assert first is not None and first.event_type == "accepted"
+    assert second is not None and second.event_type == "accepted"
+    assert client.calls == {"detail": 2, "today": 1}
+    assert adapter.endpoint_call_counts() == {
+        "detail": {"success": 0, "failure": 2, "total": 2},
+        "today": {"success": 1, "failure": 0, "total": 1},
+    }
+
+
+@pytest.mark.asyncio
 async def test_list_positions_maps_holdings(fake_sdk) -> None:
     client = _FakeClient(
         {
@@ -849,6 +963,120 @@ async def test_cancel_pair_forced_417_with_unreadable_detail_is_not_clear(fake_s
         for report in release.reports
     )
     assert client.calls == {"cancel": 2, "detail": 2}
+
+
+@pytest.mark.asyncio
+async def test_accepted_cancel_then_cannot_cancel_survives_unreadable_detail(fake_sdk) -> None:
+    class _C(_FakeClient):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.cancel_calls_by_coid: dict[str, int] = {}
+
+        def get_response(self, req):
+            self.last[req._kind] = req
+            self.calls[req._kind] = self.calls.get(req._kind, 0) + 1
+            if req._kind == "cancel":
+                coid = str(req.values["client_order_id"])
+                count = self.cancel_calls_by_coid.get(coid, 0) + 1
+                self.cancel_calls_by_coid[coid] = count
+                if count == 1:
+                    return _Resp({})
+                raise _ServerException("ORDER_CAN_NOT_BE_CANCEL", "ORDER_CAN_NOT_BE_CANCEL", 417)
+            if req._kind in {"detail", "today"}:
+                raise _ServerException("TOO_MANY_REQUESTS", "Too many requests", 429)
+            return _Resp({})
+
+    client = _C()
+    adapter = _adapter(client, _CANCEL_CONFIRM_DELAY_SECONDS=0)
+
+    first = await adapter.release_exit_pair_for_close(
+        broker_account_name="live:orb",
+        symbol="AAPL",
+        base_client_order_id="protect-base",
+    )
+    second = await adapter.release_exit_pair_for_close(
+        broker_account_name="live:orb",
+        symbol="AAPL",
+        base_client_order_id="protect-base",
+    )
+
+    assert first.outcome == "unanswerable"
+    assert second.outcome == "released"
+    assert [report.event_type for report in second.reports] == ["cancelled", "cancelled"]
+    assert all(
+        report.metadata["cancel_outcome"] == "confirmed_after_accepted_request"
+        for report in second.reports
+    )
+
+
+@pytest.mark.asyncio
+async def test_accepted_cancel_evidence_cannot_confirm_a_different_leg(fake_sdk) -> None:
+    class _C(_FakeClient):
+        def get_response(self, req):
+            self.last[req._kind] = req
+            self.calls[req._kind] = self.calls.get(req._kind, 0) + 1
+            if req._kind == "cancel":
+                coid = str(req.values["client_order_id"])
+                if coid.endswith("T"):
+                    return _Resp({})
+                raise _ServerException(
+                    "ORDER_CAN_NOT_BE_CANCEL",
+                    "ORDER_CAN_NOT_BE_CANCEL",
+                    417,
+                )
+            if req._kind in {"detail", "today"}:
+                raise _ServerException("TOO_MANY_REQUESTS", "Too many requests", 429)
+            return _Resp({})
+
+    result = await _adapter(
+        _C({}),
+        _CANCEL_CONFIRM_DELAY_SECONDS=0,
+    ).release_exit_pair_for_close(
+        broker_account_name="live:orb",
+        symbol="AAPL",
+        base_client_order_id="protect-base",
+    )
+
+    assert result.outcome == "unanswerable"
+    stop_report = next(
+        report for report in result.reports if report.client_order_id.endswith("S")
+    )
+    assert stop_report.metadata["cancel_outcome"] == "could_not_tell"
+    assert stop_report.metadata["cancel_outcome"] != "confirmed_after_accepted_request"
+
+
+@pytest.mark.asyncio
+async def test_accepted_cancel_evidence_expires_after_ten_seconds(
+    fake_sdk,
+    monkeypatch,
+) -> None:
+    class _C(_FakeClient):
+        def get_response(self, req):
+            self.last[req._kind] = req
+            self.calls[req._kind] = self.calls.get(req._kind, 0) + 1
+            if req._kind == "cancel" and self.calls[req._kind] > 1:
+                raise _ServerException(
+                    "ORDER_CAN_NOT_BE_CANCEL",
+                    "ORDER_CAN_NOT_BE_CANCEL",
+                    417,
+                )
+            return _Resp({})
+
+    now = [100.0]
+    monkeypatch.setattr(
+        "project_mai_tai.broker_adapters.webull.time.monotonic",
+        lambda: now[0],
+    )
+    adapter = _adapter(_C({}))
+    request = _order(intent_type="cancel", side="sell")
+
+    first = await adapter.submit_order(request)
+    now[0] = 111.0
+    expired = await adapter.submit_order(request)
+
+    assert first[0].metadata["cancel_outcome"] == "requested"
+    assert expired[0].event_type == "rejected"
+    assert expired[0].metadata.get("cancel_outcome") != "confirmed_after_accepted_request"
 
 
 @pytest.mark.asyncio
