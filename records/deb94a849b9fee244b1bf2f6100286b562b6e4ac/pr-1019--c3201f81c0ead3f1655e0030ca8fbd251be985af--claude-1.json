@@ -1,0 +1,9 @@
+{
+  "pr_number": 1019,
+  "range_base": "c3201f81c0ead3f1655e0030ca8fbd251be985af",
+  "range_head": "deb94a849b9fee244b1bf2f6100286b562b6e4ac",
+  "reviewed_at": "2026-09-21T11:41:10Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Reviewed both commits (99788b0 bootstrap, deb94a8 manifest anchoring). Withheld at c7d0c79b: installer and gate verified a release against the manifest INSIDE that release; my dual mutation (edit a tool AND its line in the release manifest) returned ALREADY INSTALLED rc 0. At deb94a8: same mutation on a scratch git repo is now REFUSED rc 1 ('existing release manifest differs from the approved source manifest'); control (tool only) still refused. Code mutations in the PR tree: reverting the gate to the local manifest turns 3 tests red (happy path asserts the git-show call, missing-object, dual-rewrite); reverting the installer fix turns exactly test_existing_tool_and_manifest_rewrite red; tree restored. The gate tests use a STUB git, so I ran the real pipeline myself (git -C repo show SHA:manifest | sha256sum -c - from the release dir): tampered rc 1, clean rc 0, absent object rc 128. Also: base is ancestor, one Codex marker per commit, 4/4 manifest hashes recomputed, 4 entry points committed 100755, 29 tests in the two files pass. NOT covered: a tampered gate script can skip its own check (inherent to self-hosted verification; accident model, not adversary); 'immutable' wording dropped rather than enforced; nothing here has run on the box."
+}
