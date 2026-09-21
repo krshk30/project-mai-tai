@@ -1,0 +1,9 @@
+{
+  "pr_number": 1021,
+  "range_base": "80d824a3efc8e2c73be61c4b958850e68882c347",
+  "range_head": "0fafc1f5a205d0c8bbb8a70bffd8140f26821a4f",
+  "reviewed_at": "2026-09-21T12:20:12Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Read both forensic documents and independently re-derived the 77/74/3 marker population, 500 fetch failures, all 1,473 ServerException 429 blocks with both breakdowns, 17 accepted-then-cancelled floor orders, IMRN false alarm timing, and ET conversion from box logs and database evidence."
+}
