@@ -1,0 +1,9 @@
+{
+  "pr_number": 1031,
+  "range_base": "2a4d444a422d7784aed3604c4a0e7c3fca9ef7a1",
+  "range_head": "743f48cae22130b95fb590e3660280d3023edcea",
+  "reviewed_at": "2026-09-21T23:11:43Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed all three close-out files against the live box; verified docs-only range, append-only handoff log, 175/175 manifest identity, 9/9 restart evidence, pager state, PA1 whole-log counts, open-item ownership, and Momentum capture wording."
+}
