@@ -191,7 +191,7 @@ def test_record_fill_if_needed_is_noop_for_duplicate_broker_fill_id() -> None:
         assert fill_two is None
 
 
-def test_open_order_poll_start_rotates_without_changing_membership() -> None:
+def test_sync_order_poll_rotates_while_membership_reads_stay_stable() -> None:
     session_factory = build_test_session_factory()
     store = OmsStore()
     with session_factory() as session:
@@ -235,13 +235,27 @@ def test_open_order_poll_start_rotates_without_changing_membership() -> None:
             order.updated_at = anchor + timedelta(seconds=index)
         session.flush()
 
-        passes = [
-            [order.client_order_id for order in store.list_open_orders(session)] for _ in range(3)
-        ]
+        sync_passes = []
+        membership_passes = []
+        for _ in range(3):
+            sync_passes.append(
+                [
+                    order.client_order_id
+                    for order in store.list_open_orders_for_sync(session)
+                ]
+            )
+            for _ in range(2):
+                membership_passes.append(
+                    [order.client_order_id for order in store.list_open_orders(session)]
+                )
 
-    assert passes == [
+    assert sync_passes == [
         ["order-2", "order-1", "order-0"],
         ["order-1", "order-0", "order-2"],
         ["order-0", "order-2", "order-1"],
     ]
-    assert all(set(order_ids) == {"order-0", "order-1", "order-2"} for order_ids in passes)
+    assert membership_passes == [["order-2", "order-1", "order-0"]] * 6
+    assert all(
+        set(order_ids) == {"order-0", "order-1", "order-2"}
+        for order_ids in sync_passes
+    )

@@ -8,10 +8,12 @@ and the defensive parsing for the order shapes still to be confirmed by a funded
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import types
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +22,12 @@ from project_mai_tai.broker_adapters.webull import (
     WebullAccountConfig,
     WebullBrokerAdapter,
     WebullPositionsUnavailable,
+)
+
+_TODAY_ORDERS_FILLED_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "webull_today_orders_filled_20260921.json"
 )
 
 
@@ -684,34 +692,32 @@ async def test_fetch_order_update_parses_requests_response(fake_sdk) -> None:
 
 @pytest.mark.asyncio
 async def test_rate_limited_detail_uses_exact_client_id_from_today_orders(fake_sdk) -> None:
+    fixture = json.loads(_TODAY_ORDERS_FILLED_FIXTURE.read_text(encoding="utf-8"))
+    row = fixture["row"]
     client = _FakeClient(
         {
             "today": {
                 "hasNext": False,
-                "orders": [
-                    {
-                        "client_order_id": "orb-AAPL-open-1",
-                        "order_id": "WB-FALLBACK",
-                        "items": [
-                            {
-                                "order_status": "FILLED",
-                                "filled_qty": "5",
-                                "filled_price": "2.91",
-                            }
-                        ],
-                    }
-                ],
+                "orders": [row],
             }
         }
     )
     client.raises["detail"] = _ServerException("TOO_MANY_REQUESTS", "Too many requests", 429)
 
-    report = await _adapter(client).fetch_order_update(_order())
+    report = await _adapter(client).fetch_order_update(
+        _order(
+            client_order_id=row["client_order_id"],
+            symbol=row["items"][0]["symbol"],
+            quantity=Decimal(row["items"][0]["qty"]),
+        )
+    )
 
     assert report is not None
     assert report.event_type == "filled"
-    assert report.broker_order_id == "WB-FALLBACK"
-    assert report.fill_price == Decimal("2.91")
+    assert report.broker_order_id == "ORDER_ID_REDACTED"
+    assert report.filled_quantity == Decimal("1")
+    assert report.fill_price == Decimal("1.11")
+    assert report.reported_at == datetime(2026, 9, 21, 14, 17, 44, 527000, tzinfo=UTC)
     assert client.calls == {"detail": 1, "today": 1}
 
 
@@ -1001,6 +1007,76 @@ async def test_accepted_cancel_then_cannot_cancel_survives_unreadable_detail(fak
         report.metadata["cancel_outcome"] == "confirmed_after_accepted_request"
         for report in second.reports
     )
+
+
+@pytest.mark.asyncio
+async def test_accepted_cancel_evidence_cannot_confirm_a_different_leg(fake_sdk) -> None:
+    class _C(_FakeClient):
+        def get_response(self, req):
+            self.last[req._kind] = req
+            self.calls[req._kind] = self.calls.get(req._kind, 0) + 1
+            if req._kind == "cancel":
+                coid = str(req.values["client_order_id"])
+                if coid.endswith("T"):
+                    return _Resp({})
+                raise _ServerException(
+                    "ORDER_CAN_NOT_BE_CANCEL",
+                    "ORDER_CAN_NOT_BE_CANCEL",
+                    417,
+                )
+            if req._kind in {"detail", "today"}:
+                raise _ServerException("TOO_MANY_REQUESTS", "Too many requests", 429)
+            return _Resp({})
+
+    result = await _adapter(
+        _C({}),
+        _CANCEL_CONFIRM_DELAY_SECONDS=0,
+    ).release_exit_pair_for_close(
+        broker_account_name="live:orb",
+        symbol="AAPL",
+        base_client_order_id="protect-base",
+    )
+
+    assert result.outcome == "unanswerable"
+    stop_report = next(
+        report for report in result.reports if report.client_order_id.endswith("S")
+    )
+    assert stop_report.metadata["cancel_outcome"] == "could_not_tell"
+    assert stop_report.metadata["cancel_outcome"] != "confirmed_after_accepted_request"
+
+
+@pytest.mark.asyncio
+async def test_accepted_cancel_evidence_expires_after_ten_seconds(
+    fake_sdk,
+    monkeypatch,
+) -> None:
+    class _C(_FakeClient):
+        def get_response(self, req):
+            self.last[req._kind] = req
+            self.calls[req._kind] = self.calls.get(req._kind, 0) + 1
+            if req._kind == "cancel" and self.calls[req._kind] > 1:
+                raise _ServerException(
+                    "ORDER_CAN_NOT_BE_CANCEL",
+                    "ORDER_CAN_NOT_BE_CANCEL",
+                    417,
+                )
+            return _Resp({})
+
+    now = [100.0]
+    monkeypatch.setattr(
+        "project_mai_tai.broker_adapters.webull.time.monotonic",
+        lambda: now[0],
+    )
+    adapter = _adapter(_C({}))
+    request = _order(intent_type="cancel", side="sell")
+
+    first = await adapter.submit_order(request)
+    now[0] = 111.0
+    expired = await adapter.submit_order(request)
+
+    assert first[0].metadata["cancel_outcome"] == "requested"
+    assert expired[0].event_type == "rejected"
+    assert expired[0].metadata.get("cancel_outcome") != "confirmed_after_accepted_request"
 
 
 @pytest.mark.asyncio
