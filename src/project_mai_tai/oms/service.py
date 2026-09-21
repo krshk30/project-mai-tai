@@ -11169,6 +11169,43 @@ class OmsRiskService:
                 return True
         return False
 
+    def _lift_collapsed_schwab_stop_limit(
+        self, symbol: str, md: dict, raw_stop: object, raw_limit: object
+    ) -> None:
+        """Keep the slippage band alive when cent-rounding folds the limit onto the stop.
+
+        v2 sends limit = stop * (1 + band) with a 0.5% band. Below $2.00 that band is under one
+        cent, and `_schwab_round` rounds stop and limit independently, so both can land on the same
+        cent: GIPR 2026-09-18 1.2166 / 1.2227 went to Schwab as 1.22 / 1.22 while the Webull leg of
+        the same signal went out 1.22 / 1.23. Measured 09-01..09-18: 47 of 145 resting entries on
+        $1-$2 names, 0 of 406 elsewhere (docs/review-artifacts/schwab-limit-eq-stop/ANALYSIS.md).
+        A stop-limit with no band fills only if the ask is exactly the stop at the trigger.
+
+        Same rule as the Webull adapter's `raw_valid_wire_collapsed` adjust: ONLY when the raw
+        prices were a valid band (limit > stop) and rounding removed it, lift the limit ONE tick
+        above the stop. A raw limit at or below the raw stop is an upstream defect and is left
+        exactly as it is - this must not paper over it.
+        """
+        try:
+            wire_stop = Decimal(str(md.get("stop_price")))
+            wire_limit = Decimal(str(md.get("limit_price")))
+            if Decimal(str(raw_limit)) <= Decimal(str(raw_stop)):
+                return
+        except (InvalidOperation, TypeError, ValueError):
+            return
+        if wire_limit > wire_stop:
+            return
+        # Schwab tick rule: above $1.00 two decimals, at or below four. One tick up from exactly
+        # $1.0000 must be $1.01 - $1.0001 would be a four-decimal price above $1 (firm-reject).
+        tick = Decimal("0.0001") if wire_stop < Decimal("1") else Decimal("0.01")
+        md["limit_price"] = _schwab_round(float(wire_stop + tick))
+        md["schwab_buy_stop_limit_tick_adjusted"] = "true"
+        self.logger.warning(
+            "[SCHWAB-BUY-STOP-LIMIT-TICK-ADJUSTED] %s raw_stop=%s raw_limit=%s wire_stop=%s "
+            "wire_limit=%s trigger=raw_valid_wire_collapsed polarity=wire_limit_gt_wire_stop",
+            symbol, raw_stop, raw_limit, md["stop_price"], md["limit_price"],
+        )
+
     def _apply_v2_oco_bracket_entry(self, *, event: TradeIntentEvent) -> None:
         """Attach native-OCO bracket metadata to a v2 buy-open so the Schwab adapter places a
         TRIGGER->OCO combo instead of a single-leg order. No-op / byte-identical when the flag
@@ -11267,10 +11304,12 @@ class OmsRiskService:
             # (the ATR line = trigger) and limit_price (line*(1+band) = the slippage cap); the
             # adapter needs BOTH. Round both to the Schwab tick rule (firm-rejects off-tick).
             md["bracket_entry_type"] = "STOP_LIMIT"
+            raw_stop, raw_limit = md.get("stop_price"), md.get("limit_price")
             if md.get("stop_price"):
                 md["stop_price"] = _schwab_round(float(md["stop_price"]))
             if md.get("limit_price"):
                 md["limit_price"] = _schwab_round(float(md["limit_price"]))
+            self._lift_collapsed_schwab_stop_limit(payload.symbol, md, raw_stop, raw_limit)
         elif order_type == "LIMIT":
             md["bracket_entry_type"] = "LIMIT"
         else:
