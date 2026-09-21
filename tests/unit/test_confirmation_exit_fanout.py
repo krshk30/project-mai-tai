@@ -1496,3 +1496,67 @@ async def test_missing_webull_row_is_counted_without_blocking_schwab(monkeypatch
         service.logger.lines
     )
     assert "legs_no_open_row=1" in "\n".join(service.logger.lines)
+
+
+class _ClockAdvancingAdapter(_FanoutAdapter):
+    """A fake broker that COSTS TIME. Every real release on 2026-09-21 took 2.4-2.8 s inline on
+    the serial tick consumer; the zero-latency fake above can never age a quote across it."""
+
+    def __init__(self, clock: dict[str, datetime], *, release_seconds: float) -> None:
+        super().__init__()
+        self._clock = clock
+        self._release_seconds = release_seconds
+
+    async def release_exit_pair_for_close(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str
+    ) -> ExitPairReleaseResult:
+        result = await super().release_exit_pair_for_close(
+            broker_account_name=broker_account_name,
+            symbol=symbol,
+            base_client_order_id=base_client_order_id,
+        )
+        self._clock["now"] += timedelta(seconds=self._release_seconds)
+        return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("schwab_leg_seconds", "release_seconds"),
+    (
+        # quote age when the Webull leg STARTS, then the inline release. The first guard passes
+        # (< 5 s); the same quote is past 5 s once the release returns. GLND 10:18 is measured
+        # from the tape (quote 14:18:02.783Z, released 14:18:07.953Z = 5.17 s); for the other three
+        # the entry age was never logged, so any value in (5 - release, 5) reproduces them.
+        pytest.param(2.74, 2.433, id="GLND-1018-measured-5.17s"),
+        pytest.param(2.60, 2.455, id="GRML-1034-release-2.455s"),
+        pytest.param(2.30, 2.750, id="NCPL-1355-release-2.75s"),
+        pytest.param(2.30, 2.754, id="GLND-1420-release-2.754s"),
+        # CONTROL: the same path with a broker that answers fast already sells on unfixed code,
+        # so this test can come out green as well as red.
+        pytest.param(0.50, 0.500, id="control-fast-broker-sells"),
+    ),
+)
+async def test_webull_confirmation_exit_sells_after_a_release_that_aged_its_own_quote(
+    monkeypatch, schwab_leg_seconds: float, release_seconds: float
+) -> None:
+    # 2026-09-21 live, 4 of 4: the Webull pair was released `confirmed=2` and then NOTHING was
+    # sent - no sell, no re-protect, no page. The quote that authorised the release was re-checked
+    # AFTER the release; by then the Schwab leg and the release itself (both inline on the serial
+    # tick consumer, which cannot receive a newer quote while blocked) had aged it past 5,000 ms.
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    clock = {"now": datetime.now(UTC)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+    adapter = _ClockAdvancingAdapter(clock, release_seconds=release_seconds)
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    await _arm_decision(service)
+    service._latest_quotes_by_symbol[SYMBOL]["received_at"] = clock["now"]
+
+    # the Schwab leg ran first on the same quote and cost this much wall clock
+    clock["now"] += timedelta(seconds=schwab_leg_seconds)
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert len(adapter.cancel_pair_calls) == 1, "the pair was released exactly once"
+    assert _sell_accounts(sf) == [WEBULL], (
+        "a confirmed release must be followed by the sell - not by a silent return"
+    )
