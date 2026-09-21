@@ -43,6 +43,13 @@ WEBULL = "live:orb"
 SYMBOL = "IMRN"
 
 
+@pytest.fixture(autouse=True)
+def _inject_regular_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    # This suite drives `_attach_webull_protection`, which is RTH-gated: it must not read the
+    # machine clock (test_oms_test_clock_policy). A test that needs the closed session sets it.
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+
+
 class _FakeRedis:
     async def xadd(self, *args, **kwargs):
         return b"1-1"
