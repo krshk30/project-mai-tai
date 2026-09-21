@@ -528,6 +528,91 @@ def test_v2_claim_expiry_cannot_emit_a_second_leg_while_the_mirror_is_active() -
     assert "and not state.webull_resting_active" in on_fill
 
 
+_CLAIM_SEGMENT_MS = 1787846400000
+
+
+def _v2_strategy_with_an_expiring_claim(*, mirror_live: bool):
+    """A v2 strategy whose Webull claim was taken 31 s ago (grace is 30 s) and never confirmed."""
+    from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
+
+    clock = {"ms": _CLAIM_SEGMENT_MS}
+    strategy = SchwabV2Strategy(
+        Settings(
+            strategy_schwab_1m_v2_confirmed_window_enabled=True,
+            strategy_schwab_1m_v2_cw_v2_enabled=True,
+            strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+            strategy_schwab_1m_v2_webull_resting_mirror_enabled=True,
+        )
+    )
+    strategy._resting_session_is_eh = lambda now=None: False
+    strategy._now_ms = lambda: clock["ms"]
+    strategy._entries_held = False
+    strategy._resting_entry_enabled = True
+    strategy._liquidity_floor_ok = lambda _state: True
+    state = strategy.watchlist_state("MIMI")
+    state.fanout_segment_id = _CLAIM_SEGMENT_MS
+    state.resting_active = True
+    state.resting_level = 5.0
+    state.last_resting_placed_slot = "first"
+    state.webull_resting_active = mirror_live
+    state.fanout_mirror_cross_below_seen = True
+    state.fanout_webull_claimed = True
+    state.fanout_claim_ms = _CLAIM_SEGMENT_MS
+    state.fanout_claim_outcome = "queued"
+    clock["ms"] = _CLAIM_SEGMENT_MS + 31_000
+    state.bars.append(
+        OHLCVBar(
+            timestamp_ms=clock["ms"] - 30_000,
+            open=4.9, high=5.0, low=4.8, close=4.95, volume=25_000,
+        )
+    )
+    return strategy, state
+
+
+def _cross_again(strategy, state, caplog) -> str:
+    import logging
+
+    from project_mai_tai.market_data.schwab_v2_rest_client import Quote
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="project_mai_tai.strategy_core.schwab_1m_v2"):
+        strategy._fanout_rth_resting_cross(
+            state, Quote("MIMI", 5.01, 5.03, 5.02, strategy._now_ms(), 0)
+        )
+    return caplog.text
+
+
+def test_v2_claim_expiry_with_a_live_mirror_emits_no_second_leg_behaviourally(caplog) -> None:
+    # PA1b pin. The source-text test above proves the guard is WRITTEN in the right order; this one
+    # runs it. The 30 s claim expires while the Webull mirror is still resting, the price crosses
+    # the level again - and no second Webull leg may be queued for the slot.
+    strategy, state = _v2_strategy_with_an_expiring_claim(mirror_live=True)
+
+    log = _cross_again(strategy, state, caplog)
+
+    assert "[V2-FANOUT-CLAIM-EXPIRED]" in log, "the expiry itself must have been exercised"
+    assert state.fanout_webull_claimed is False
+    assert state.webull_resting_active is True
+    assert "[V2-FANOUT-RTH-RESTING]" not in log
+    assert strategy.drain_webull_fanout_intents() == []
+
+    # and it stays shut on every later cross while the mirror rests
+    assert "[V2-FANOUT-RTH-RESTING]" not in _cross_again(strategy, state, caplog)
+    assert strategy.drain_webull_fanout_intents() == []
+
+
+def test_v2_claim_expiry_control_the_same_cross_does_emit_once_the_mirror_is_gone(caplog) -> None:
+    # CONTROL for the test above: identical state and clock, only `webull_resting_active` differs.
+    # If this did not emit, the no-second-leg assertion could never come out false.
+    strategy, state = _v2_strategy_with_an_expiring_claim(mirror_live=False)
+
+    log = _cross_again(strategy, state, caplog)
+
+    assert "[V2-FANOUT-CLAIM-EXPIRED]" in log
+    assert "[V2-FANOUT-RTH-RESTING]" in log
+    assert len(strategy.drain_webull_fanout_intents()) == 1
+
+
 @pytest.mark.asyncio
 async def test_price_aggressive_mirror_queues_the_serial_pipeline_inside_eight_percent(
     monkeypatch,
