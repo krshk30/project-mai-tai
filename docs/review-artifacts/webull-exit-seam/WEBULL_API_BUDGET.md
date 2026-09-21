@@ -80,7 +80,8 @@ blocks, not orders. Not reconciled; do not mix the two.
 ## Not proposed here (the row says no fix before the table — this IS the table)
 
 Candidates the table points at, for the reviewer to argue with, none built: one combined read per pair instead of `S` + `T`;
-slower polling of a resting ENTRY order that the broker will report on fill anyway; back-off after a 429 instead of the next
+slower polling of a resting ENTRY order (⚠ the trade-off is later fill detection, and the fill already reaches the OMS late —
+5.4 s on IMRN 09-04, 75 s on DLXY 09-16 in `PROTECT_FAILED_FORENSIC.md`; this candidate may be the wrong direction); back-off after a 429 instead of the next
 cycle's identical read. Each needs the per-endpoint call counter first, or its effect cannot be measured.
 
 ## What this cannot see
