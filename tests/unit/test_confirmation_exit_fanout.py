@@ -1545,6 +1545,9 @@ class _ClockAdvancingAdapter(_FanoutAdapter):
         # CONTROL: the same path with a broker that answers fast already sells on unfixed code,
         # so this test can come out green as well as red.
         pytest.param(0.50, 0.500, id="control-fast-broker-sells"),
+        # LIVE control, NCPL 15:07:19 ET 2026-09-21 - the ONE Webull confirmation exit that sold on
+        # the old code: same 2.5 s release, but the quote was ~1 s old going in (3.5 s < 5 s).
+        pytest.param(1.00, 2.546, id="NCPL-1507-sold-live-on-old-code"),
     ),
 )
 async def test_webull_confirmation_exit_sells_after_a_release_that_aged_its_own_quote(
@@ -1630,18 +1633,30 @@ async def test_uncovered_page_fires_once_for_a_released_share_that_was_never_sol
     assert all(item["broker_account_name"] != SCHWAB for item in incidents)
 
 
+@pytest.mark.parametrize(
+    "resting_seconds",
+    [
+        pytest.param(1370, id="VRME-1135-to-1158-native-fill"),
+        pytest.param(102, id="VRME-1346-to-1348-native-fill"),
+        pytest.param(1889, id="AVAT-1223-pair-rests-until-the-1255-flip"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_uncovered_page_stays_silent_for_a_share_whose_pair_is_resting(monkeypatch) -> None:
-    # CONTROL - AVAT / VRME / GRML round trips 2026-09-21: bracket attached within ~1 s and left
-    # alone until a native leg filled. Minutes pass; nothing may page.
+async def test_uncovered_page_stays_silent_for_a_share_whose_pair_is_resting(
+    monkeypatch, resting_seconds: int
+) -> None:
+    # CONTROL - the Webull round trips that WORKED on 2026-09-21: bracket attached within ~1 s and
+    # left alone until a native leg filled (VRME x2) or the flip exit took it (AVAT). The whole
+    # measured resting time passes at the production sync cadence; nothing may page or release.
     service, sf, clock = _uncovered_service(monkeypatch)
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
 
-    for _ in range(12):
+    for _ in range(resting_seconds // 15 + 1):
         assert await service._check_webull_uncovered_shares() == 0
         clock["now"] += timedelta(seconds=15)
     assert _uncovered_incidents(sf) == []
     assert "[OMS-WEBULL-UNCOVERED-SHARE]" not in "\n".join(service.logger.lines)
+    assert (WEBULL, SYMBOL) not in service._exit_reservation_released
 
 
 @pytest.mark.asyncio
