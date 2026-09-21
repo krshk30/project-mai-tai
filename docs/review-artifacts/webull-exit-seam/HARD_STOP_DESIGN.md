@@ -13,8 +13,8 @@ Board row it answers: *"Hard stop is a market sell AFTER the level trades (GIPR 
    confirmation exit and sweep item 1 extends to every other software exit. **No new hard-stop mechanism is proposed.**
 3. **The rule this note adds:** on Webull the software hard stop is the SECOND line, never the first. A leg that holds shares
    and has no resting native stop is a defect state with a deadline, not a normal state.
-4. **One thing to measure before anything is built:** the software stop decided **3.07 s** (GIPR) and **0.19 s** (IMCC) after the first
-   captured TRADE at or below the level. n=2. A log field, not a rule change.
+4. **One thing to measure before anything is built:** in the 4 rows with capture, a trade printed at or below the level BEFORE the
+   software decided in **3 of 4**: 0.110 s (GIPR 13:17), 0.189 s (IMCC), **3.072 s** (GIPR 14:15). MEDS: 0 of 859. A log field, not a rule change.
 
 ## Population — every FILLED `CW_HARD_STOP` close, both live accounts, 2026-09-04 → 2026-09-18
 
@@ -22,19 +22,20 @@ Source: `broker_orders` ⋈ `trade_intents.reason='oms_v2_managed_exit:CW_HARD_S
 level = `metadata.reference_price`; tape = `market_capture_trades` / `market_capture_quotes`. **7 rows — 1 Schwab, 6 Webull**
 (the 6 matches the handoff's "58 rejected / 6 filled"). Rejected closes are NOT in this table; they are sweep item 1.
 
-| close accepted (ET) | symbol | account | level | fill | fill vs level | software `decided_at` − first captured trade ≤ level (prior 120 s) |
-|---|---|---|---|---|---|---|
-| 09-04 09:31:25 | IMRN | live:schwab_1m_v2 | 1.7751 | 1.8150 | **+2.25%** | UNMEASURED (0 captured trades in the 120 s before) |
-| 09-04 15:22:14 | CDTG | live:orb | 1.2920 | 1.3050 | **+1.01%** | UNMEASURED (0 captured trades) |
-| 09-04 15:31:30 | IMRN | live:orb | 1.6910 | 1.6901 | **−0.05%** | UNMEASURED (0 captured trades) |
-| 09-15 15:46:49 | MEDS | live:orb | 1.7480 | 1.7401 | **−0.45%** | none — no trade at/below the level before the decision (861 trades captured) |
-| 09-18 13:17:52 | GIPR | live:orb | 1.1040 | 1.1001 | **−0.35%** | none (1,298 trades captured) |
-| 09-18 14:15:05 | GIPR | live:orb | 1.0488 | 0.9300 | **−11.33%** | **3.07 s** — decided 14:15:04.660, first trade ≤ level 14:15:01.588 (1,814 trades captured) |
-| 09-18 14:21:35 | IMCC | live:orb | 5.0876 | 5.0201 | **−1.33%** | **0.19 s** — decided 14:21:35.060, first trade ≤ level 14:21:34.871 (878 trades captured) |
+| software `decided_at` (ET, from the log) | symbol | account | level | fill | fill vs level | captured trades in the 120 s to `decided_at` | `decided_at` − first captured trade ≤ level |
+|---|---|---|---|---|---|---|---|
+| 09-04 09:31:24.840 | IMRN | live:schwab_1m_v2 | 1.7751 | 1.8150 | **+2.25%** | 0 | UNMEASURED (no capture) |
+| 09-04 15:22:11.524 | CDTG | live:orb | 1.2920 | 1.3050 | **+1.01%** | 0 | UNMEASURED (no capture) |
+| 09-04 15:31:27.830 | IMRN | live:orb | 1.6910 | 1.6901 | **−0.05%** | 0 | UNMEASURED (no capture) |
+| 09-15 15:46:49.432 | MEDS | live:orb | 1.7480 | 1.7401 | **−0.45%** | 859 | none — 0 of 859 at/below the level |
+| 09-18 13:17:52.036 | GIPR | live:orb | 1.1040 | 1.1001 | **−0.35%** | 1,297 | **0.110 s** — first ≤ level 13:17:51.926 @ 1.1000 (18 of 1,297) |
+| 09-18 14:15:04.660 | GIPR | live:orb | 1.0488 | 0.9300 | **−11.33%** | 1,808 | **3.072 s** — first ≤ level 14:15:01.588 @ 1.0400 (1,269 of 1,808) |
+| 09-18 14:21:35.060 | IMCC | live:orb | 5.0876 | 5.0201 | **−1.33%** | 869 | **0.189 s** — first ≤ level 14:21:34.871 @ 5.0800 (111 of 869) |
 
-⚠ Self-correction (`claude-1`, second commit): the first draft's lag column read 2.66 s / 0.65 s. Those were measured from the
-broker ACCEPT event to the start of the last unbroken run of prints at or below the level — not what the header said. The column
-now uses ONE stated definition, from the log's `decided_at`. The first column is the accept time and is labelled so.
+⚠ Corrections to this column. Draft 1 read 2.66 s / 0.65 s — measured from the broker ACCEPT event to a last-run start, not what
+the header said (`claude-1`). Draft 2 fixed the two numbers but kept ACCEPT-time denominators and missed the earlier GIPR close, which
+also printed through its level 110 ms before the decision — so n=3, not n=2 (`codex-2`, second review). Every cell is now recomputed
+from the log's `decided_at` by ONE query: trades with `decided_at − 120 s ≤ event_ts ≤ decided_at`.
 
 Median −0.35%. Drop GIPR 14:15 by name: range −1.33%..+2.25%. ⛔ Seven fills is a small population; it supports "the
 mechanism is not the class defect", not "the mechanism is proven".
@@ -86,7 +87,7 @@ proposal; the reviewer should push on it. It is a detector, not a fix — the fi
 - **No stop-limit, no "sell at the level" limit order.** In the GIPR second a limit at 1.0488 would not have filled at all.
 - **No tighter stop percentage.** 8.0 is the operator's number (`MAI_TAI_OMS_V2_CW_HARD_STOP_PCT=8.0`, read from the OMS
   process 09-21).
-- **No trade-print trigger yet.** Two instances (3.07 s, 0.19 s) are a reason to MEASURE. Ask for `codex-2`/sweep item 1: log, on
+- **No trade-print trigger yet.** Three instances (0.110 s, 0.189 s, 3.072 s; 3 of the 4 rows with capture) are a reason to MEASURE. Ask for `codex-2`/sweep item 1: log, on
   every hard-stop decision, the age of the quote acted on (`quote_age_ms`) and the bid. Five sessions of that field decide
   whether a last-trade trigger is worth building.
 
