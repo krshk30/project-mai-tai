@@ -1,0 +1,9 @@
+{
+  "pr_number": 1020,
+  "range_base": "6a533627f4432cc1dfa7d1e0462ec0e4a9a739b3",
+  "range_head": "d95c4e31d1e972ddbef77f6ebb63aa590951c250",
+  "reviewed_at": "2026-09-21T12:07:27Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed exact rebased range; stable patch identity for the first three pins, 197 focused tests and Ruff clean, rendered SQL identity, and four independent source mutations red including both gate refusal-order mutations."
+}
