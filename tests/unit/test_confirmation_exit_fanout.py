@@ -744,7 +744,7 @@ def test_released_unprotected_interval_tracks_duration_and_current_count(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_released_webull_pair_fresh_flat_preserves_interval_in_summary(
+async def test_webull_fresh_flat_is_closed_without_releasing_the_pair(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
@@ -775,7 +775,12 @@ async def test_released_webull_pair_fresh_flat_preserves_interval_in_summary(
     ]
     assert len(summaries) == 1
     assert "live:orb:flat" in summaries[0]
-    assert "released_unprotected_seconds_max=4.000" in summaries[0]
+    # 2026-09-21 contract change: the settlement (C3) check is ABORTABLE, so the shared
+    # cancel-then-sell routine runs it BEFORE the irreversible release. A position the broker
+    # already reports flat is closed without ever cancelling a pair - there is no unprotected
+    # interval to preserve, which is strictly safer than the 4.000 s this test used to pin.
+    assert adapter.cancel_pair_calls == []
+    assert "released_unprotected_seconds_max=0.000" in summaries[0]
     assert "released_unprotected_current=0" in summaries[0]
 
 
@@ -1017,7 +1022,7 @@ async def test_released_webull_leg_that_rejects_is_reprotected(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_released_webull_leg_is_reprotected_when_a_pre_send_guard_stops_it(
+async def test_a_pre_send_guard_stops_the_webull_exit_before_any_release(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
@@ -1044,15 +1049,21 @@ async def test_released_webull_leg_is_reprotected_when_a_pre_send_guard_stops_it
 
     await service._evaluate_v2_managed_exit(SCHWAB, SYMBOL)
     await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
-    await service._confirmation_exit_recovery_tasks.pop()
 
-    assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "known-protect-base")]
-    assert reprotected == [(WEBULL, SYMBOL)]
+    # 2026-09-21 contract change: "an exit already works for these shares" is an ABORTABLE
+    # check, so the shared routine runs it BEFORE the irreversible release. The Webull pair is
+    # never cancelled, so there is nothing to re-protect: the broker's stop never left.
+    # (A sell REFUSED after a real release is still re-protected -
+    # test_released_webull_leg_that_rejects_is_reprotected.)
+    assert adapter.cancel_pair_calls == []
+    assert reprotected == []
+    assert not service._confirmation_exit_recovery_tasks
     assert _sell_accounts(sf) == [SCHWAB]
     assert (WEBULL, SYMBOL) not in service._confirmation_exit_pending
-    assert "legs_released=2 legs_reprotected=1 legs_uncovered=0" in "\n".join(
-        service.logger.lines
-    )
+    lines = "\n".join(service.logger.lines)
+    assert "legs_reprotected=0 legs_uncovered=0" in lines
+    assert "[OMS-WEBULL-CANCEL-THEN-SELL] exit=CONFIRMATION_EXIT" in lines
+    assert "outcome=refused_before_release" in lines
 
 
 @pytest.mark.asyncio

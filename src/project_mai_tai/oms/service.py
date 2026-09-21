@@ -4326,6 +4326,179 @@ class OmsRiskService:
         decision.unprotected_seconds[acct] = elapsed
         return elapsed
 
+    async def _webull_cancel_then_sell(
+        self,
+        acct: str,
+        symbol: str,
+        *,
+        exit_tag: str,
+        reason: str,
+        kind: str,
+        reference_bid: float,
+        expected_row_id: str,
+        expires_at: datetime,
+        decision: _ConfirmationFanoutDecision,
+        reference_price: float | None = None,
+        close_context: dict[str, str] | None = None,
+        confirmation: dict[str, object] | None = None,
+    ) -> str:
+        """THE ONE cancel-then-sell path for a Webull software exit.
+
+        Webull exposes no stand-down signal, so a software exit must take the native pair back
+        before it can sell (the shares are reserved). Cancelling that pair is IRREVERSIBLE: from
+        that instant the share has no broker stop. This routine is therefore written in three
+        phases, and the order IS the fix:
+
+          1. ABORTABLE checks - open row, same position, C3 settlement state, no exit already
+             working. Any refusal here leaves the broker pair resting: nothing was touched.
+          2. RELEASE - cancel AND read both legs, bounded retries (`_prepare_confirmation_webull_leg`
+             re-protects and pages by itself when the broker's answer stays unreadable).
+          3. SELL, then the terminal-state guarantee. NOTHING abortable runs after the release:
+             no quote-age check, no bid check, no second identity check. Every way out is one of
+             sold / close_submitted / resolved_by_fill / flat / reprotected / uncovered+paged.
+
+        Live 2026-09-21 (docs/review-artifacts/webull-exit-seam/CONFIRMATION_EXIT_LIVE_FAILURE_0921.md):
+        the confirmation exit released first and ran the generic quote-age guard AFTERWARDS, on a
+        quote its own inline awaits had aged past the limit - 4 of 4 clean releases ended with no
+        sell, no re-protect, no page, 474-663 s with no broker stop.
+
+        `exit_tag` names the caller. Wired tonight: CONFIRMATION_EXIT. CALL SITES TO FLIP NEXT
+        (same defect shape - one-try release, silent drop on refusal; YMAT 2026-09-09 is the
+        measured miss): CW_HARD_STOP, CW_FLOOR, CW_FLIP and the overnight flatten. They pass
+        their own `reason` / `kind` / `reference_price` and a decision whose `source_fill_id`
+        identifies the exit (e.g. ``f"{exit_tag}:{managed_row_id}"``); nothing in here is
+        confirmation-specific except the optional `confirmation` payload carried into recovery.
+        """
+        started_at = time.monotonic()
+        key = (acct, symbol)
+        close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
+        protection = ""
+
+        def _done(outcome: str) -> str:
+            self.logger.info(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s row=%s outcome=%s "
+                "protection=%s seconds=%.3f",
+                exit_tag, symbol, acct, expected_row_id or "-", outcome, protection or "-",
+                time.monotonic() - started_at,
+            )
+            return outcome
+
+        # ---- 1. ABORTABLE: the broker pair is still resting; a refusal costs nothing ----------
+        try:
+            snapshot = await self._run_db(
+                lambda session: self._read_v2_managed_snapshot(
+                    session, acct, symbol, close_on_fill
+                ),
+                commit=False,
+            )
+        except Exception:  # noqa: BLE001 - an unreadable row never authorises a release
+            self.logger.exception(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s reason=row_read_failed "
+                "- refused BEFORE any release",
+                exit_tag, symbol, acct,
+            )
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+        if snapshot is None:
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="no_open_row")
+            return _done("no_open_row")
+        if expected_row_id and snapshot.managed_row_id != expected_row_id:
+            self.logger.error(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s bound_row=%s open_row=%s "
+                "reason=different_position - refused BEFORE any release",
+                exit_tag, symbol, acct, expected_row_id, snapshot.managed_row_id,
+            )
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+        c3_action = self._post_exit_stale_held_action(acct, symbol, snapshot)
+        if c3_action == "fresh_flat":
+            await self._close_post_exit_stale_held_row(acct, symbol)
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="flat")
+            return _done("flat")
+        if c3_action not in ("not_applicable", "fresh_held_retry"):
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+        if snapshot.dedup_active:
+            # A previously-triggered exit owns the shares and wins the time ordering.
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+
+        # ---- 2. IRREVERSIBLE: take the pair back ------------------------------------------
+        protection = await self._prepare_confirmation_webull_leg(
+            acct,
+            symbol,
+            expected_row_id=expected_row_id,
+            expires_at=expires_at,
+            decision=decision,
+        )
+        if protection == "released":
+            self._start_confirmation_unprotected_interval(decision, acct, symbol)
+        if protection == "resolved_by_fill":
+            await self._close_resolved_oco_managed_row(
+                acct, symbol, expected_row_id=snapshot.managed_row_id
+            )
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="resolved_by_fill")
+            return _done("resolved_by_fill")
+        if protection in {"reprotected", "uncovered"}:
+            self._finish_confirmation_fanout_leg(
+                decision,
+                acct,
+                outcome=protection,
+                reprotected=protection == "reprotected",
+                uncovered=protection == "uncovered",
+            )
+            return _done(protection)
+        if protection not in {"released", "no_pair"}:
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
+
+        # ---- 3. SELL. Nothing abortable from here: the pair is gone --------------------------
+        emit_outcome = "refused"
+        try:
+            position = self._hydrate_v2_position(snapshot)
+            position.update_price(reference_bid)
+            emit_outcome = await self._emit_v2_exit_on_loop(
+                acct,
+                symbol,
+                position,
+                snapshot.entry_price,
+                kind=kind,
+                reference_price=reference_bid if reference_price is None else reference_price,
+                reason=reason,
+                bid=reference_bid,
+                close_on_fill=close_on_fill,
+                confirmation_context=dict(close_context or {}),
+            )
+        except asyncio.CancelledError:
+            self._finish_or_recover_confirmation_leg(
+                decision, acct, symbol, expected_row_id=expected_row_id,
+                outcome="refused", protection=protection, confirmation=confirmation,
+            )
+            _done("cancelled_after_release_recovering")
+            raise
+        except Exception:  # noqa: BLE001 - a failed sell after a release must restore cover
+            self.logger.exception(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s reason=sell_raised "
+                "protection=%s - restoring cover",
+                exit_tag, symbol, acct, protection,
+            )
+        terminal = (
+            emit_outcome if emit_outcome in {"closed", "close_submitted", "no_open_row"}
+            else "refused"
+        )
+        self._finish_or_recover_confirmation_leg(
+            decision,
+            acct,
+            symbol,
+            expected_row_id=expected_row_id,
+            outcome=terminal,
+            protection=protection,
+            confirmation=confirmation,
+        )
+        self._post_exit_stale_held_clear(acct, symbol) if terminal == "no_open_row" else None
+        _ = key
+        return _done(terminal if terminal != "refused" else "sell_refused_recovering")
+
     async def _prepare_confirmation_webull_leg(
         self,
         acct: str,
@@ -5307,13 +5480,40 @@ class OmsRiskService:
                         )
                     return
                 if self._is_v2_webull_account(acct):
-                    protection = await self._prepare_confirmation_webull_leg(
+                    # One-shot claim BEFORE the routine's first await: the in-flight key above
+                    # already keeps a second quote task out, and dictionary identity makes the
+                    # pop episode-specific.
+                    if confirmation_pending.get(key) is not confirmation:
+                        return
+                    confirmation_pending.pop(key, None)
+                    await self._webull_cancel_then_sell(
                         acct,
                         symbol,
+                        exit_tag="CONFIRMATION_EXIT",
+                        reason="oms_v2_managed_exit:CONFIRMATION_EXIT",
+                        kind="HARD",
+                        reference_bid=float(quote.get("bid") or 0.0),
                         expected_row_id=bound_row_id,
                         expires_at=expires_at,
-                        decision=fanout_decision,
+                        decision=fanout_decision
+                        or _ConfirmationFanoutDecision(
+                            symbol=symbol,
+                            source_fill_id=str(confirmation.get("source_fill_id", "") or ""),
+                            accounts=(acct,),
+                        ),
+                        close_context={
+                            "flip_owner_confirmation_exit": "true",
+                            "confirmation_fanout_slot_id": str(
+                                confirmation.get("fanout_slot_id", "") or ""
+                            ),
+                            "confirmation_managed_row_id": bound_row_id,
+                            "confirmation_source_fill_id": str(
+                                confirmation.get("source_fill_id", "") or ""
+                            ),
+                        },
+                        confirmation=confirmation,
                     )
+                    return
                 else:
                     protection = await self._reconcile_confirmation_exit_protection(acct, symbol)
                 if (
