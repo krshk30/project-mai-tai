@@ -1,0 +1,9 @@
+{
+  "pr_number": 1013,
+  "range_base": "35b36cc56ff42ed55b7e251084a4e3091593abcc",
+  "range_head": "9a69b9cd1b10eea1d2c354934b328ad496c019ae",
+  "reviewed_at": "2026-09-21T11:34:29Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-review after rebase onto 35b36cc5 (main tip after the docs-only #1018 merge). Not a re-stamp: base is an ancestor of head (gate's own merge-base check run); one commit, one Codex marker; git diff base..head is BYTE-IDENTICAL to the diff reviewed at 4e4f1d0e and 324ed08b (sha256 c9e5938a73ff619f, 1,792 lines); main changed none of the 4 touched files. Re-ran on this head myself: 24 tests pass (18 + 6 in test_no_inert_modules). Mutation and control.json evidence from the 4e4f1d0e review applies to the identical patch and was NOT re-run. Offline study only. This pin does not mean the baseline REPORT has been read or accepted."
+}
