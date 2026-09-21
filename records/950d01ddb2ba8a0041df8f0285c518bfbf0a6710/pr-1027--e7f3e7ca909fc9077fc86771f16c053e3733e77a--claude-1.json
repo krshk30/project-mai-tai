@@ -1,0 +1,9 @@
+{
+  "pr_number": 1027,
+  "range_base": "e7f3e7ca909fc9077fc86771f16c053e3733e77a",
+  "range_head": "950d01ddb2ba8a0041df8f0285c518bfbf0a6710",
+  "reviewed_at": "2026-09-21T18:23:43Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Lane B (Webull status-read starvation), both commits read in full. Withheld at ad7f1235 for three defects, all fixed at 950d01dd and each now held by a test I broke myself: (1) rotation cursor was shared by 3 callers of list_open_orders (my probe: 6 consecutive syncs started at the same order) - now only list_open_orders_for_sync advances it; mutation 'membership reads advance the cursor' => test_sync_order_poll_rotates_while_membership_reads_stay_stable RED. (2) per-leg accepted-cancel evidence - mutation 'any accepted cancel vouches for any leg' passed all 83 tests at ad7f1235, now => test_accepted_cancel_evidence_cannot_confirm_a_different_leg RED; window 10 s -> 1000 s => ..._expires_after_ten_seconds RED. (3) list-today row shape - a REAL sanitized row is committed (tests/fixtures/webull_today_orders_filled_20260921.json: NCPL native stop, FILLED 1 @ 1.11, last_filled_time 2026-09-21 14:17:44.527+0000 - the same fill I observed live in oms.log at that millisecond); the fallback test parses it to event filled / qty 1 / price 1.11 / reported_at 14:17:44.527Z; mutation 'fallback returns an empty items body' => that test RED. Earlier mutation (return any row when ours is missing) still RED. 88 tests pass in the two files, ruff clean, fixture secrets-scanned, oms/service.py untouched, base is ancestor, one Codex marker per commit. NOT covered / must be read with this pin: list_open_orders_for_sync has NO CALLER until claude-1's lane A PR changes oms/service.py:8307 - until then the rotation is INERT and deploying #1027 alone does not rotate the poll; no negative cache when list-today itself 429s; nothing has run on the box; [WEBULL-ENDPOINT-CALLS] adds a WARNING per failed call."
+}
