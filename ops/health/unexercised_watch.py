@@ -360,11 +360,13 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "'protection_restored', payload->>'protection_restored', "
         "'missing_legs', payload->>'missing_legs', 'reason', payload->>'reason', "
         "'attempts', payload->>'attempts', "
-        "'max_attempts', payload->>'max_attempts', 'terminal', payload->>'terminal')::text "
+        "'max_attempts', payload->>'max_attempts', 'terminal', payload->>'terminal', "
+        "'cause', payload->>'cause', "
+        "'uncovered_seconds', payload->>'uncovered_seconds')::text "
         "from system_incidents where status != 'closed' "
         "and payload->>'source' in "
         "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved',"
-        "'oms_v2_confirmation_exit_reprotected') "
+        "'oms_v2_confirmation_exit_reprotected','oms_v2_webull_uncovered_share') "
         "order by opened_at, id"
     )
     incidents: list[dict[str, str]] = []
@@ -467,6 +469,16 @@ def _run_inc1_pager_unlocked(
                         if restored
                         else "Broker protection could not be proved restored; check the position now."
                     )
+                )
+            elif incident.get("source") == "oms_v2_webull_uncovered_share":
+                body = (
+                    "UNCOVERED: a Webull share is held with NO resting broker stop.\n"
+                    f"account={incident.get('account') or 'UNKNOWN'} "
+                    f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
+                    f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'}\n"
+                    f"cause={incident.get('cause') or 'UNKNOWN'} "
+                    f"uncovered_seconds={incident.get('uncovered_seconds') or 'UNKNOWN'}\n"
+                    "The software ladder is its only cover. Close it or restore protection now."
                 )
             else:
                 body = (
