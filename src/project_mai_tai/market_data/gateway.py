@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
+from pathlib import Path
 import socket
+import time
 from collections.abc import Iterable, Mapping
 
 from redis.asyncio import Redis
@@ -26,6 +29,11 @@ from project_mai_tai.market_data.models import (
 from project_mai_tai.market_data.protocols import SnapshotProvider, TradeStreamProvider
 from project_mai_tai.market_data.publisher import MarketDataPublisher
 from project_mai_tai.market_data.reference_cache import ReferenceDataCache
+from project_mai_tai.momentum_gateway_handoff import (
+    BoundedPaperHandoff,
+    connect_consumer_socket,
+    encode_trade_frame,
+)
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
 
@@ -43,8 +51,7 @@ def _is_transient_redis_reload_error(exc: RedisError) -> bool:
     """Recognize only restart-shaped Redis failures, never all Redis errors."""
 
     return (
-        isinstance(exc, (BusyLoadingError, RedisTimeoutError))
-        or type(exc) is RedisConnectionError
+        isinstance(exc, (BusyLoadingError, RedisTimeoutError)) or type(exc) is RedisConnectionError
     )
 
 
@@ -100,6 +107,19 @@ class MarketDataGatewayService:
         self._subscription_offsets = {
             stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"): "$",
         }
+        self._momentum_handoff = (
+            BoundedPaperHandoff(
+                capacity=max(1, self.settings.momentum_paper_gateway_queue_capacity)
+            )
+            if self.settings.momentum_paper_gateway_feed_enabled
+            else None
+        )
+        self._momentum_socket: socket.socket | None = None
+        self._momentum_sent_frames = 0
+        self._momentum_would_block_drops = 0
+        self._momentum_unavailable_drops = 0
+        self._momentum_oversized_drops = 0
+        self._momentum_global_subscription_active = False
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -113,6 +133,16 @@ class MarketDataGatewayService:
         await self._restore_subscription_state()
 
         loop = asyncio.get_running_loop()
+        if self._momentum_handoff is not None:
+            set_raw_callback = getattr(self.trade_stream, "set_raw_trade_callback", None)
+            set_global_subscription = getattr(
+                self.trade_stream, "set_global_trade_subscription", None
+            )
+            if not callable(set_raw_callback) or not callable(set_global_subscription):
+                raise RuntimeError(
+                    "Momentum gateway feed requires raw-trade and global-subscription support"
+                )
+            set_raw_callback(self._offer_momentum_trade)
         await self.trade_stream.start(
             on_trade=lambda record: loop.call_soon_threadsafe(self._trade_queue.put_nowait, record),
             on_quote=lambda record: loop.call_soon_threadsafe(self._quote_queue.put_nowait, record),
@@ -128,6 +158,7 @@ class MarketDataGatewayService:
             self._heartbeat_loop(stop_event),
             name="market-data-heartbeat",
         )
+        critical_tasks = [heartbeat_task]
         tasks = [
             asyncio.create_task(self._snapshot_loop(stop_event)),
             asyncio.create_task(self._subscription_loop(stop_event)),
@@ -135,6 +166,13 @@ class MarketDataGatewayService:
             heartbeat_task,
             asyncio.create_task(self._reference_refresh_loop(stop_event)),
         ]
+        if self._momentum_handoff is not None:
+            momentum_handoff_task = asyncio.create_task(
+                self._momentum_handoff_loop(stop_event),
+                name="market-data-momentum-handoff",
+            )
+            tasks.append(momentum_handoff_task)
+            critical_tasks.append(momentum_handoff_task)
         if self._active_symbols and self.settings.market_data_warmup_enabled:
             tasks.append(
                 asyncio.create_task(
@@ -143,11 +181,15 @@ class MarketDataGatewayService:
             )
 
         try:
-            await self._wait_for_stop_or_heartbeat_failure(stop_event, heartbeat_task)
+            await self._wait_for_stop_or_critical_task_failure(stop_event, critical_tasks)
         finally:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            await self._disconnect_momentum_handoff()
+            set_raw_callback = getattr(self.trade_stream, "set_raw_trade_callback", None)
+            if callable(set_raw_callback):
+                set_raw_callback(None)
             await self.trade_stream.stop()
             await self._publish_heartbeat(
                 "stopping",
@@ -155,45 +197,57 @@ class MarketDataGatewayService:
             )
             await self.redis.aclose()
 
-    async def _wait_for_stop_or_heartbeat_failure(
+    async def _wait_for_stop_or_critical_task_failure(
         self,
         stop_event: asyncio.Event,
-        heartbeat_task: asyncio.Task[None],
+        critical_tasks: list[asyncio.Task[None]],
     ) -> None:
-        """Return on shutdown; otherwise make heartbeat-task death process-fatal.
+        """Return on shutdown; otherwise make critical-task death process-fatal.
 
-        A completed heartbeat task can never be treated as a healthy live
-        process. systemd's restart counter is the durable external signal.
+        A completed heartbeat or Momentum-forwarder task can never be treated
+        as a healthy live process. systemd's restart counter is the durable
+        external signal.
         """
 
         stop_waiter = asyncio.create_task(stop_event.wait(), name="market-data-stop-waiter")
         try:
             done, _pending = await asyncio.wait(
-                {stop_waiter, heartbeat_task},
+                {stop_waiter, *critical_tasks},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if heartbeat_task not in done:
+            failed_tasks = [task for task in done if task is not stop_waiter]
+            if not failed_tasks:
                 return
-            if heartbeat_task.cancelled():
+            failed_task = failed_tasks[0]
+            task_name = failed_task.get_name()
+            marker = (
+                "MARKET-DATA-HEARTBEAT-TASK-DIED"
+                if failed_task.get_name() == "market-data-heartbeat"
+                else "MARKET-DATA-MOMENTUM-HANDOFF-TASK-DIED"
+            )
+            if failed_task.cancelled():
                 self.logger.critical(
-                    "[MARKET-DATA-HEARTBEAT-TASK-DIED] outcome=process_exit "
-                    "reason=unexpected_cancel"
+                    "[%s] outcome=process_exit reason=unexpected_cancel task=%s",
+                    marker,
+                    task_name,
                 )
-                raise RuntimeError("market-data heartbeat task cancelled unexpectedly")
-            failure = heartbeat_task.exception()
+                raise RuntimeError(f"{task_name} cancelled unexpectedly")
+            failure = failed_task.exception()
             if failure is not None:
                 self.logger.critical(
-                    "[MARKET-DATA-HEARTBEAT-TASK-DIED] outcome=process_exit "
-                    "reason=exception error=%s",
+                    "[%s] outcome=process_exit reason=exception error=%s task=%s",
+                    marker,
                     type(failure).__name__,
+                    task_name,
                 )
                 raise failure
             if not stop_event.is_set():
                 self.logger.critical(
-                    "[MARKET-DATA-HEARTBEAT-TASK-DIED] outcome=process_exit "
-                    "reason=unexpected_return"
+                    "[%s] outcome=process_exit reason=unexpected_return task=%s",
+                    marker,
+                    task_name,
                 )
-                raise RuntimeError("market-data heartbeat task returned before shutdown")
+                raise RuntimeError(f"{task_name} returned before shutdown")
         finally:
             stop_waiter.cancel()
             await asyncio.gather(stop_waiter, return_exceptions=True)
@@ -253,7 +307,9 @@ class MarketDataGatewayService:
 
     async def publish_snapshot_batch_once(self, snapshots: Iterable[SnapshotRecord]) -> int:
         snapshot_list = list(snapshots)
-        reference_payloads = self.reference_cache.as_payloads(snapshot.symbol for snapshot in snapshot_list)
+        reference_payloads = self.reference_cache.as_payloads(
+            snapshot.symbol for snapshot in snapshot_list
+        )
         # Count symbols the scanner will silently drop for want of a reference entry (see __init__).
         # `as_payloads` yields ReferenceDataPayload objects in production; accept plain mappings too
         # so a swapped-in cache (tests, fixtures) can't turn an observability counter into a crash.
@@ -333,9 +389,7 @@ class MarketDataGatewayService:
                 await self._ensure_reference_data()
                 after = self.reference_cache.ticker_count()
                 if after != before:
-                    self.logger.info(
-                        "reference data refreshed: %s -> %s tickers", before, after
-                    )
+                    self.logger.info("reference data refreshed: %s -> %s tickers", before, after)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -441,6 +495,84 @@ class MarketDataGatewayService:
                 quote = await self._quote_queue.get()
                 await self._publish_quote_tick_safely(quote)
 
+    def _offer_momentum_trade(self, raw_trade: dict[str, object]) -> None:
+        if self._momentum_handoff is None or not self._momentum_global_subscription_active:
+            return
+        self._momentum_handoff.offer(raw_trade, received_ns=time.time_ns())
+
+    async def _momentum_handoff_loop(self, stop_event: asyncio.Event) -> None:
+        assert self._momentum_handoff is not None
+        socket_path = str(Path(self.settings.momentum_paper_gateway_socket_path).expanduser())
+        while not stop_event.is_set():
+            if self._momentum_socket is None:
+                try:
+                    self._momentum_socket = connect_consumer_socket(socket_path)
+                except OSError:
+                    await self._wait_for_momentum_handoff(stop_event)
+                    continue
+                await self._set_momentum_global_subscription(True)
+                self.logger.info(
+                    "[MOMENTUM-GATEWAY-HANDOFF] decision=connected socket=%s",
+                    socket_path,
+                )
+
+            try:
+                frame = await asyncio.wait_for(self._momentum_handoff.get(), timeout=0.25)
+            except TimeoutError:
+                if not Path(socket_path).exists():
+                    await self._disconnect_momentum_handoff()
+                continue
+
+            try:
+                payload = encode_trade_frame(frame)
+                try:
+                    sent = self._momentum_socket.send(payload)
+                except OSError as exc:
+                    if exc.errno == errno.EMSGSIZE:
+                        self._momentum_oversized_drops += 1
+                    elif exc.errno in {errno.EAGAIN, errno.EWOULDBLOCK, errno.ENOBUFS}:
+                        self._momentum_would_block_drops += 1
+                    elif exc.errno in {
+                        errno.ENOENT,
+                        errno.ECONNREFUSED,
+                        errno.ENOTCONN,
+                        errno.EPIPE,
+                    }:
+                        self._momentum_unavailable_drops += 1
+                        await self._disconnect_momentum_handoff()
+                    else:
+                        raise
+                else:
+                    if sent != len(payload):
+                        raise RuntimeError("Momentum Unix datagram write was partial")
+                    self._momentum_sent_frames += 1
+            finally:
+                self._momentum_handoff.task_done()
+
+    @staticmethod
+    async def _wait_for_momentum_handoff(stop_event: asyncio.Event) -> None:
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=0.25)
+        except TimeoutError:
+            return
+
+    async def _set_momentum_global_subscription(self, enabled: bool) -> None:
+        setter = getattr(self.trade_stream, "set_global_trade_subscription", None)
+        if not callable(setter):
+            raise RuntimeError("trade stream cannot manage the Momentum global subscription")
+        await setter(enabled)
+        self._momentum_global_subscription_active = enabled
+
+    async def _disconnect_momentum_handoff(self) -> None:
+        if self._momentum_socket is not None:
+            self._momentum_socket.close()
+            self._momentum_socket = None
+            self.logger.warning(
+                "[MOMENTUM-GATEWAY-HANDOFF] decision=disconnected reason=consumer_unavailable"
+            )
+        if self._momentum_global_subscription_active:
+            await self._set_momentum_global_subscription(False)
+
     async def _publish_trade_tick_safely(self, trade: TradeTickRecord) -> None:
         try:
             await self.publisher.publish_trade_tick(trade)
@@ -481,6 +613,21 @@ class MarketDataGatewayService:
                         # $1-10); a sudden RISE is the stale-cache signature worth alerting on.
                         "snapshots_without_reference": str(self._snapshots_without_reference),
                         "last_snapshot_symbols": str(self._last_snapshot_symbol_count),
+                        "momentum_handoff_enabled": str(self._momentum_handoff is not None).lower(),
+                        "momentum_handoff_connected": str(
+                            self._momentum_global_subscription_active
+                        ).lower(),
+                        "momentum_handoff_sent_frames": str(self._momentum_sent_frames),
+                        "momentum_handoff_queue_drops": str(
+                            self._momentum_handoff.counters.dropped_frames
+                            if self._momentum_handoff is not None
+                            else 0
+                        ),
+                        "momentum_handoff_socket_drops": str(
+                            self._momentum_would_block_drops
+                            + self._momentum_unavailable_drops
+                            + self._momentum_oversized_drops
+                        ),
                     },
                 )
 

@@ -53,7 +53,6 @@ LAUNCHED_NOT_IMPORTED: dict[str, str] = {
         "Deploy Service invokes it with python -m after each systemd restart"
     ),
     "project_mai_tai.maintenance.reset_active_state": "maintenance CLI; has __main__",
-    "project_mai_tai.momentum_gateway_handoff": ("measured by the Step 2 protocol; not wired"),
 }
 
 # ⛔⭐⭐ IMPORTED BY NOTHING **AND** LAUNCHED BY NOTHING. Findings, not exemptions.

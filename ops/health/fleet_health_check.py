@@ -73,13 +73,11 @@ _MOMENTUM_LOG_PATH = Path(
         "/var/log/project-mai-tai/momentum-paper.log",
     )
 )
-_MARKET_DATA_POLICY_NEEDLE = b"1008"
+_MARKET_DATA_POLICY_NEEDLE = b"1008 (policy violation)"
 _MOMENTUM_POLICY_COOLOFF_NEEDLE = (
     b"[MOMENTUM-PAPER-FEED-POLICY] decision=cooloff reason=feed_policy_violation"
 )
-_MOMENTUM_POLICY_RECOVERED_NEEDLE = (
-    b"[MOMENTUM-PAPER-FEED-POLICY] decision=recovered"
-)
+_MOMENTUM_POLICY_RECOVERED_NEEDLE = b"[MOMENTUM-PAPER-FEED-POLICY] decision=recovered"
 
 # These units are expected to run continuously. Deliberately inactive units such as trade-coach
 # and tv-alerts stay out of the inventory so an intentional stop cannot become a page.
@@ -232,9 +230,7 @@ def _write_socket_evidence_state(
     momentum_policy_active: bool,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle, tmp_name = tempfile.mkstemp(
-        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
-    )
+    handle, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     tmp = Path(tmp_name)
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:

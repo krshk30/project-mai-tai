@@ -8,9 +8,12 @@ from types import SimpleNamespace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -20,6 +23,11 @@ from project_mai_tai.momentum_paper.conditions import build_condition_snapshot
 from project_mai_tai.momentum_paper.engine import MomentumPaperEngine
 from project_mai_tai.momentum_paper.models import MomentumTapeRecord, TradePrint
 from project_mai_tai.momentum_paper.store import MomentumPaperStore, session_record
+from project_mai_tai.momentum_gateway_handoff import (
+    connect_consumer_socket,
+    encode_trade_frame,
+    ParsedTradeFrame,
+)
 from project_mai_tai.runtime_registry import (
     configured_broker_account_registrations,
     configured_strategy_registrations,
@@ -411,6 +419,50 @@ async def test_five_consecutive_policy_closes_cool_off_for_fifteen_minutes_then_
 
 
 @pytest.mark.asyncio
+async def test_policy_cooloff_allows_one_probe_then_rearms_without_resetting_streak() -> None:
+    class PolicyCloseWebsocket:
+        def subscribe(self, *_subscriptions: str) -> None:
+            return None
+
+        async def connect(self, _handler) -> None:
+            raise ConnectionClosedError(
+                Close(code=1008, reason="policy violation"),
+                Close(code=1008, reason="policy violation"),
+                True,
+            )
+
+        async def close(self) -> None:
+            return None
+
+    now = datetime(2026, 9, 18, 11, 0, tzinfo=UTC)
+    sockets: list[PolicyCloseWebsocket] = []
+
+    def factory() -> PolicyCloseWebsocket:
+        websocket = PolicyCloseWebsocket()
+        sockets.append(websocket)
+        return websocket
+
+    service = MomentumPaperService(
+        Settings(momentum_paper_enabled=True),
+        websocket_client_factory=factory,
+        clock=lambda: now,
+    )
+    service._policy_violation_streak = 5
+    service._policy_cooloff_until = now
+
+    await service._start_stream()
+    assert service._websocket_task is not None
+    await service._websocket_task
+    assert len(sockets) == 1
+    assert service._policy_violation_streak == 6
+    assert service._policy_cooloff_until == now + timedelta(minutes=15)
+
+    for _ in range(10):
+        await service._start_stream()
+    assert len(sockets) == 1
+
+
+@pytest.mark.asyncio
 async def test_policy_cooloff_heartbeat_is_degraded_with_the_explicit_reason() -> None:
     class RecordingRedis:
         def __init__(self) -> None:
@@ -442,9 +494,38 @@ async def test_policy_cooloff_heartbeat_is_degraded_with_the_explicit_reason() -
     assert heartbeat["status"] == "degraded"
     assert heartbeat["details"]["feed_reason"] == "feed_policy_violation"
     assert heartbeat["details"]["consecutive_policy_violations"] == "5"
-    assert heartbeat["details"]["policy_cooloff_until"] == (
-        now + timedelta(minutes=15)
-    ).isoformat()
+    assert heartbeat["details"]["policy_cooloff_until"] == (now + timedelta(minutes=15)).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_connected_feed_during_a_policy_streak_is_still_degraded() -> None:
+    class RecordingRedis:
+        def __init__(self) -> None:
+            self.rows: list[tuple[str, dict[str, str]]] = []
+
+        async def xadd(self, stream: str, fields: dict[str, str], **_kwargs) -> None:
+            self.rows.append((stream, fields))
+
+    redis = RecordingRedis()
+    service = MomentumPaperService(
+        Settings(momentum_paper_enabled=True),
+        redis_client=redis,  # type: ignore[arg-type]
+    )
+    service._session_date = date(2026, 9, 18)
+    service._engine = MomentumPaperEngine(
+        prior_closes={"ABCD": Decimal("1")},
+        condition_version="fixture",
+        coverage_started_ms=_et_ms("04:00:00"),
+    )
+    service._connected = True
+    service._policy_violation_streak = 4
+
+    await service._publish_state()
+
+    heartbeat = json.loads(redis.rows[0][1]["data"])["payload"]
+    assert heartbeat["status"] == "degraded"
+    assert heartbeat["details"]["streamer_connected"] == "true"
+    assert heartbeat["details"]["feed_reason"] == "feed_policy_violation"
 
 
 def test_policy_state_clears_only_after_a_stable_minute() -> None:
@@ -454,16 +535,90 @@ def test_policy_state_clears_only_after_a_stable_minute() -> None:
     service._connected_since = connected_at
     service._policy_violation_streak = 5
 
-    service._clear_policy_violation_after_stable_connection(
-        connected_at + timedelta(seconds=59)
-    )
+    service._clear_policy_violation_after_stable_connection(connected_at + timedelta(seconds=59))
     assert service._policy_violation_streak == 5
-
-    service._clear_policy_violation_after_stable_connection(
-        connected_at + timedelta(seconds=60)
-    )
+    service._clear_policy_violation_after_stable_connection(connected_at + timedelta(seconds=60))
     assert service._policy_violation_streak == 0
     assert service._policy_cooloff_until is None
+
+
+@pytest.mark.asyncio
+async def test_gateway_feed_recovers_from_a_real_1008_close_without_opening_another_socket(
+    tmp_path: Path,
+) -> None:
+    class PolicyCloseWebsocket:
+        async def connect(self, _handler) -> None:
+            raise ConnectionClosedError(
+                Close(code=1008, reason="policy violation"),
+                Close(code=1008, reason="policy violation"),
+                True,
+            )
+
+        async def close(self) -> None:
+            return None
+
+    websocket_factory_calls = 0
+
+    def forbidden_websocket_factory() -> object:
+        nonlocal websocket_factory_calls
+        websocket_factory_calls += 1
+        raise AssertionError("gateway mode must not create a second Massive websocket")
+
+    now = datetime(2026, 9, 21, 8, 5, tzinfo=UTC)
+    del tmp_path
+    socket_path = Path(f"/tmp/mt-{uuid4().hex}.sock")
+    service = MomentumPaperService(
+        Settings(
+            momentum_paper_enabled=True,
+            momentum_paper_gateway_feed_enabled=True,
+            momentum_paper_gateway_socket_path=str(socket_path),
+        ),
+        store=_store(),
+        websocket_client_factory=forbidden_websocket_factory,
+        clock=lambda: now,
+    )
+    service._condition_snapshot = _condition_snapshot()
+    service._engine = MomentumPaperEngine(
+        prior_closes={"AEMD": Decimal("1")},
+        condition_version="fixture",
+        coverage_started_ms=0,
+    )
+
+    failed = PolicyCloseWebsocket()
+    service._websocket = failed
+    await service._connect(failed)
+    assert service._policy_violation_streak == 1
+
+    await service._start_stream()
+    producer = connect_consumer_socket(str(socket_path))
+    try:
+        producer.send(
+            encode_trade_frame(
+                ParsedTradeFrame(
+                    received_ns=1,
+                    trades=(
+                        {
+                            "ev": "T",
+                            "sym": "AEMD",
+                            "p": 1.1,
+                            "s": 10,
+                            "t": int(now.timestamp() * 1000),
+                            "c": [12],
+                            "i": "trade-id",
+                            "x": 11,
+                            "trfi": 501,
+                        },
+                    ),
+                )
+            )
+        )
+        while not service._connected:
+            await asyncio.sleep(0)
+    finally:
+        producer.close()
+        await service._stop_stream()
+
+    assert websocket_factory_calls == 0
 
 
 def test_new_process_announces_stable_connection_to_clear_an_old_health_latch(
@@ -475,12 +630,8 @@ def test_new_process_announces_stable_connection_to_clear_an_old_health_latch(
     service._connected_since = connected_at
     caplog.set_level("INFO")
 
-    service._clear_policy_violation_after_stable_connection(
-        connected_at + timedelta(seconds=60)
-    )
-    service._clear_policy_violation_after_stable_connection(
-        connected_at + timedelta(seconds=120)
-    )
+    service._clear_policy_violation_after_stable_connection(connected_at + timedelta(seconds=60))
+    service._clear_policy_violation_after_stable_connection(connected_at + timedelta(seconds=120))
 
     recovered = [
         message

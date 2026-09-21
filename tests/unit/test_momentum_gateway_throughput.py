@@ -316,17 +316,17 @@ def test_zero_quote_precheck_is_written_unmeasured() -> None:
     assert measured_or_unmeasured(1, absent_reason="NO_QUOTE_TICKS") == "MEASURED"
 
 
-def test_candidate_handoff_is_not_imported_by_a_runtime_gateway_or_service() -> None:
+def test_measured_handoff_is_imported_by_both_runtime_endpoints() -> None:
     root = Path(__file__).resolve().parents[2] / "src" / "project_mai_tai"
     runtime_paths = [root / "market_data" / "gateway.py", *sorted((root / "services").glob("*.py"))]
 
-    offenders = [
+    importers = [
         str(path.relative_to(root))
         for path in runtime_paths
         if "momentum_gateway_handoff" in path.read_text(encoding="utf-8")
     ]
 
-    assert offenders == []
+    assert importers == ["market_data/gateway.py", "services/momentum_paper_app.py"]
 
 
 @pytest.mark.asyncio
@@ -500,9 +500,7 @@ async def test_flatness_is_rechecked_between_replays_and_stops_the_next_run() ->
         return spec
 
     with pytest.raises(ReplayAborted, match="position appeared"):
-        await run_guarded_replays(
-            ("1x", "3x", "dead"), access_checker=check, replay_runner=replay
-        )
+        await run_guarded_replays(("1x", "3x", "dead"), access_checker=check, replay_runner=replay)
 
     assert checks == 2
     assert runs == ["1x"]

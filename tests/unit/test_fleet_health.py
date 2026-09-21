@@ -181,6 +181,26 @@ def test_market_data_1008_is_red_from_socket_evidence_even_if_a_heartbeat_says_h
     assert "new_matches=1" in market_row[2]
 
 
+def test_market_data_non_policy_text_containing_1008_is_not_a_policy_page(
+    tmp_path: Path,
+) -> None:
+    market = tmp_path / "market-data.log"
+    momentum = tmp_path / "momentum-paper.log"
+    state = tmp_path / "socket-offsets.json"
+    market.write_text("reference id=1008 outcome=healthy\n", encoding="utf-8")
+    momentum.write_text("", encoding="utf-8")
+
+    rows = fhc.check_massive_socket_policy_violations(
+        state_path=state,
+        market_data_log=market,
+        momentum_log=momentum,
+    )
+
+    market_row = next(row for row in rows if row[1].endswith("market-data:massive-1008"))
+    assert market_row[0] == "GREEN"
+    assert "new_matches=0" in market_row[2]
+
+
 def test_socket_evidence_is_incremental_and_a_new_1008_rearms_after_a_clean_sample(
     tmp_path: Path,
 ) -> None:
@@ -225,8 +245,7 @@ def test_momentum_pages_only_on_the_fifth_close_cooloff_marker(tmp_path: Path) -
     market.write_text("", encoding="utf-8")
     momentum.write_text(
         "\n".join(
-            f"received 1008 (policy violation) consecutive={number}"
-            for number in range(1, 5)
+            f"received 1008 (policy violation) consecutive={number}" for number in range(1, 5)
         )
         + "\n",
         encoding="utf-8",
@@ -265,9 +284,7 @@ def test_momentum_pages_only_on_the_fifth_close_cooloff_marker(tmp_path: Path) -
 
     def momentum_level(rows):
         return next(
-            row[0]
-            for row in rows
-            if row[1].endswith("momentum-paper:feed-policy-violation")
+            row[0] for row in rows if row[1].endswith("momentum-paper:feed-policy-violation")
         )
 
     assert momentum_level(first) == "GREEN"
