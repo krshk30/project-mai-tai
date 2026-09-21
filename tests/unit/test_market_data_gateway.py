@@ -397,11 +397,21 @@ def test_global_trade_handoff_keeps_raw_identity_without_publishing_unwatched_tr
                 id="trade-wire-id",
                 exchange=11,
                 trf_id=501,
-            )
+            ),
+            SimpleNamespace(
+                ev="T",
+                symbol="WATCHED",
+                price=2.50,
+                size=10,
+                sip_timestamp=1_789_555_200_124,
+                conditions=[12],
+                id="second-wire-id",
+                exchange=12,
+            ),
         ]
     )
 
-    assert watched_trades == []
+    assert [trade.symbol for trade in watched_trades] == ["WATCHED"]
     assert raw_trades == [
         {
             "ev": "T",
@@ -414,7 +424,19 @@ def test_global_trade_handoff_keeps_raw_identity_without_publishing_unwatched_tr
             "i": "trade-wire-id",
             "x": 11,
             "trfi": 501,
-        }
+        },
+        {
+            "ev": "T",
+            "sym": "WATCHED",
+            "p": 2.50,
+            "s": 10,
+            "t": 1_789_555_200_124,
+            "y": None,
+            "c": [12],
+            "i": "second-wire-id",
+            "x": 12,
+            "trfi": None,
+        },
     ]
 
 

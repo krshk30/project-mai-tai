@@ -1,8 +1,9 @@
-"""After-hours Step 2 measurement for the proposed Momentum gateway hand-off.
+"""After-hours Step 2 measurement for the Momentum gateway hand-off.
 
-Nothing in production imports this module.  It reads Massive daily trade flat
-files, replays one measured peak minute through the standalone bounded hand-off,
-and observes existing Redis streams with read-only ``XREAD`` calls.
+This CLI remains standalone even though the runtime gateway and paper service
+now import the measured hand-off primitive behind a default-off feature flag.
+It reads Massive daily trade flat files, replays one measured peak minute, and
+observes existing Redis streams with read-only ``XREAD`` calls.
 """
 
 from __future__ import annotations
