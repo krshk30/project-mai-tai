@@ -1,0 +1,9 @@
+{
+  "pr_number": 1024,
+  "range_base": "f2f4615763a63152543f1f1984da4a45ca0670c7",
+  "range_head": "98b7a78121eea62cf7986b99e83967a139ec51e6",
+  "reviewed_at": "2026-09-21T14:31:05Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed the byte-identical rebase of the Schwab post-rounding tick lift, including exact-one-dollar and sub-dollar boundaries, raw-invalid and Webull negative space, neighboring tests, and discriminating mutations."
+}
