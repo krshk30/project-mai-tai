@@ -1,0 +1,9 @@
+{
+  "pr_number": 1030,
+  "range_base": "1a68941e282cf754b67548f4e1b827054fb7bf8a",
+  "range_head": "92df6048b8c54c141a42c66e49c9076bf4a6969d",
+  "reviewed_at": "2026-09-21T20:26:14Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the sole synchronization call-site activation of the dedicated rotating open-order list and its isolation from membership checks. Ran the behavioral starvation and full-budget controls plus ruff; independently reverting the call to the fixed newest-first list made the oldest-order starvation test fail."
+}
