@@ -1,0 +1,9 @@
+{
+  "pr_number": 1018,
+  "range_base": "9876b98af7002c478734c9163ae8127889b3b25b",
+  "range_head": "f93af30d180e3b50b7bfe76c3470c840ac7a40ed",
+  "reviewed_at": "2026-09-21T11:24:08Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the docs-only hard-stop design through two correction rounds; independently reconciled all 65 CW_HARD_STOP orders, seven fills, state-A Webull fail-open routing, decision-time tape counts and 0.110/0.189/3.072-second crossings, capture-lag medians, and proposal-vs-measurement labels."
+}
