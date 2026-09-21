@@ -615,6 +615,10 @@ class OmsRiskService:
     )
     _EXIT_RELEASE_INCIDENT_SOURCE = "oms_v2_exit_release_unresolved"
     _CONFIRMATION_EXIT_INCIDENT_SOURCE = "oms_v2_confirmation_exit_reprotected"
+    # #3 (operator, 2026-09-21): a Webull share with no resting broker stop for longer than this
+    # pages, WHATEVER routine left it that way. Not cuttable; independent of every exit path.
+    _WEBULL_UNCOVERED_PAGE_SECONDS = 30.0
+    _WEBULL_UNCOVERED_INCIDENT_SOURCE = "oms_v2_webull_uncovered_share"
     _CONFIRMATION_EXIT_EXPIRY_SECONDS = 180.0
     # This recovery still runs inline on the serial quote consumer. Keep the bounded retry
     # short until it moves to a dedicated lane; the marker timings make the actual stall visible.
@@ -999,6 +1003,14 @@ class OmsRiskService:
                 else:
                     self.logger.debug("broker state sync complete: %s", sync_summary)
                 last_broker_sync = now
+                # #3: the uncovered-share page runs on the sync cadence, independent of every exit
+                # routine. Wrapped - it must never break the control loop, and never be silent.
+                try:
+                    await self._check_webull_uncovered_shares()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-WEBULL-UNCOVERED-SHARE] status=CHECK_FAILED")
                 # Bug A follow-up: re-arm native stop guards whose immediate arm reverse-
                 # rejected on an unsettled cancel/fill. Non-blocking, on the sync cadence.
                 # getattr guard: __new__-constructed test instances may lack the attribute.
@@ -4325,6 +4337,133 @@ class OmsRiskService:
         elapsed = max(0.0, (utcnow() - started_at).total_seconds()) if started_at else 0.0
         decision.unprotected_seconds[acct] = elapsed
         return elapsed
+
+    async def _check_webull_uncovered_shares(self) -> int:
+        """The uncovered-share page: an INDEPENDENT net under every Webull exit routine.
+
+        On 2026-09-21 four Webull shares sat 474-663 s with their bracket cancelled and no sell,
+        and nothing told the operator: the routine that dropped them was also the only thing that
+        could have raised the alarm. This check does not know or care which routine ran. On the
+        broker-sync cadence it looks at every OPEN managed row on a Webull account during the
+        regular session and asks one question - is a native pair resting for it?
+
+          covered  = a protect-pair handle exists for the position (the entry's own combo, or the
+                     persisted / in-memory handle of the attached pair) AND that pair has not been
+                     released for a software close.
+          uncovered for >= 30 s  =>  ERROR line + ONE critical incident per episode (the pager
+                     delivers it). Causes it sees: released-and-not-sold (2026-09-21 x4), never
+                     protected (QCLS / DLXY 2026-09-16), a release nobody recovered.
+
+        It does NOT see a fill the OMS has not detected (no managed row exists yet) - that is the
+        status-read starvation defect and its own page. Returns the number of pages raised.
+        """
+        since: dict[tuple[str, str], datetime] = self.__dict__.setdefault(
+            "_webull_uncovered_since", {}
+        )
+        paged: set[tuple[str, str]] = self.__dict__.setdefault("_webull_uncovered_paged", set())
+        keys = [
+            (acct, symbol)
+            for acct, symbol in list(getattr(self, "_managed_v2_symbols", set()))
+            if self._is_v2_webull_account(acct)
+        ]
+        if not keys or not _is_regular_market_session():
+            since.clear()
+            paged.clear()
+            return 0
+
+        def _read(session: Session) -> dict[tuple[str, str], tuple[str, str]]:
+            out: dict[tuple[str, str], tuple[str, str]] = {}
+            for acct, symbol in keys:
+                row = self.store.get_open_managed_position(
+                    session, broker_account_name=acct, symbol=symbol
+                )
+                if row is None:
+                    continue
+                entry = self._find_oco_entry_order(session, acct, symbol)
+                base = self._oco_exit_base_for_entry(
+                    entry, broker_account_name=acct, symbol=symbol
+                )
+                out[(acct, symbol)] = (str(row.id), str(base or ""))
+            return out
+
+        state = await self._run_db(_read, commit=False)
+        now = utcnow()
+        for key in list(since):
+            if key not in state:  # the row closed: sold, stopped, resolved - the episode is over
+                since.pop(key, None)
+                paged.discard(key)
+        raised = 0
+        for key, (row_id, base) in state.items():
+            acct, symbol = key
+            released = key in self._exit_reservation_released
+            if base and not released:
+                if key in paged:
+                    self.logger.warning(
+                        "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s row=%s status=COVERED_AGAIN "
+                        "uncovered_seconds=%.1f",
+                        symbol, acct, row_id,
+                        (now - since.get(key, now)).total_seconds(),
+                    )
+                since.pop(key, None)
+                paged.discard(key)
+                continue
+            started_at = since.setdefault(key, now)
+            elapsed = (now - started_at).total_seconds()
+            if elapsed < self._WEBULL_UNCOVERED_PAGE_SECONDS or key in paged:
+                continue
+            paged.add(key)
+            cause = "pair_released_not_sold" if released else "never_protected"
+            self.logger.error(
+                "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s row=%s status=PAGE cause=%s "
+                "uncovered_seconds=%.1f threshold_seconds=%.0f - a Webull share is held with NO "
+                "resting broker stop; the software ladder is its only cover",
+                symbol, acct, row_id, cause, elapsed, self._WEBULL_UNCOVERED_PAGE_SECONDS,
+            )
+            await self._page_webull_uncovered_share(
+                acct, symbol, managed_row_id=row_id, cause=cause, uncovered_seconds=elapsed
+            )
+            raised += 1
+        return raised
+
+    async def _page_webull_uncovered_share(
+        self,
+        acct: str,
+        symbol: str,
+        *,
+        managed_row_id: str,
+        cause: str,
+        uncovered_seconds: float,
+    ) -> None:
+        """Persist one critical incident; the pager delivers it. Never raises into the loop."""
+
+        def _write(session: Session) -> None:
+            session.add(
+                SystemIncident(
+                    service_name=SERVICE_NAME,
+                    severity="critical",
+                    title=(
+                        f"UNCOVERED: {symbol} on {acct} has NO broker stop "
+                        f"({int(uncovered_seconds)}s); check now"
+                    )[:255],
+                    status="open",
+                    payload={
+                        "source": self._WEBULL_UNCOVERED_INCIDENT_SOURCE,
+                        "broker_account_name": acct,
+                        "symbol": symbol,
+                        "managed_row_id": managed_row_id,
+                        "cause": cause,
+                        "uncovered_seconds": round(float(uncovered_seconds), 1),
+                    },
+                    opened_at=utcnow(),
+                )
+            )
+
+        try:
+            await self._run_db(_write, commit=True)
+        except Exception:  # noqa: BLE001 - a failed page must be loud, never fatal
+            self.logger.exception(
+                "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s status=PAGE_FAILED", symbol, acct
+            )
 
     async def _webull_cancel_then_sell(
         self,

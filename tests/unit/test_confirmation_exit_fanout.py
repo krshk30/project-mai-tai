@@ -1571,3 +1571,169 @@ async def test_webull_confirmation_exit_sells_after_a_release_that_aged_its_own_
     assert _sell_accounts(sf) == [WEBULL], (
         "a confirmed release must be followed by the sell - not by a silent return"
     )
+
+
+# --------------------------------------------------------------------------------------------
+# #3 - the uncovered-share page. Independent of every exit routine: it only asks whether an
+# OPEN Webull managed row has a native pair resting. Shapes below are 2026-09-21 tapes.
+# --------------------------------------------------------------------------------------------
+
+
+def _uncovered_incidents(sf: sessionmaker) -> list[dict[str, object]]:
+    from project_mai_tai.db.models import SystemIncident
+
+    with sf() as session:
+        rows = session.scalars(select(SystemIncident).order_by(SystemIncident.opened_at)).all()
+        return [
+            dict(row.payload or {}, title=row.title, severity=row.severity)
+            for row in rows
+            if (row.payload or {}).get("source") == "oms_v2_webull_uncovered_share"
+        ]
+
+
+def _uncovered_service(monkeypatch, *, rth: bool = True):
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: rth)
+    clock = {"now": datetime(2026, 9, 21, 14, 18, 7, tzinfo=UTC)}
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
+    service, sf = _service(fanout=True, adapter=_FanoutAdapter())
+    service.logger = _CapturedLogger()
+    return service, sf, clock
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_fires_once_for_a_released_share_that_was_never_sold(
+    monkeypatch,
+) -> None:
+    # GLND 10:18 / GRML 10:34 / NCPL 13:55 / GLND 14:20 ET, 2026-09-21: pair cancelled, no sell,
+    # 474-663 s with no broker stop and NO alert of any kind.
+    service, sf, clock = _uncovered_service(monkeypatch)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    service._exit_reservation_released.add((WEBULL, SYMBOL))
+
+    assert await service._check_webull_uncovered_shares() == 0  # t = 0, the clock starts
+    clock["now"] += timedelta(seconds=29)
+    assert await service._check_webull_uncovered_shares() == 0  # 29 s: a normal exit is this fast
+    clock["now"] += timedelta(seconds=2)
+    assert await service._check_webull_uncovered_shares() == 1  # 31 s: PAGE
+    clock["now"] += timedelta(seconds=600)
+    assert await service._check_webull_uncovered_shares() == 0  # one page per episode
+
+    incidents = _uncovered_incidents(sf)
+    assert len(incidents) == 1
+    assert incidents[0]["severity"] == "critical"
+    assert incidents[0]["cause"] == "pair_released_not_sold"
+    assert incidents[0]["symbol"] == SYMBOL and incidents[0]["broker_account_name"] == WEBULL
+    assert "UNCOVERED" in str(incidents[0]["title"])
+    text = "\n".join(service.logger.lines)
+    assert text.count("[OMS-WEBULL-UNCOVERED-SHARE]") == 1 and "status=PAGE" in text
+    # Schwab is never this check's business
+    assert all(item["broker_account_name"] != SCHWAB for item in incidents)
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_stays_silent_for_a_share_whose_pair_is_resting(monkeypatch) -> None:
+    # CONTROL - AVAT / VRME / GRML round trips 2026-09-21: bracket attached within ~1 s and left
+    # alone until a native leg filled. Minutes pass; nothing may page.
+    service, sf, clock = _uncovered_service(monkeypatch)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+
+    for _ in range(12):
+        assert await service._check_webull_uncovered_shares() == 0
+        clock["now"] += timedelta(seconds=15)
+    assert _uncovered_incidents(sf) == []
+    assert "[OMS-WEBULL-UNCOVERED-SHARE]" not in "\n".join(service.logger.lines)
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_stays_silent_for_a_release_that_sells_inside_the_window(
+    monkeypatch,
+) -> None:
+    # CONTROL - AVAT 12:55 and GLND 13:38 ET flip exits 2026-09-21: released, sold ~3 s later.
+    service, sf, clock = _uncovered_service(monkeypatch)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    service._exit_reservation_released.add((WEBULL, SYMBOL))
+    assert await service._check_webull_uncovered_shares() == 0
+
+    clock["now"] += timedelta(seconds=3)
+    with sf() as session:  # the sell filled: the managed row closes
+        row = service.store.get_open_managed_position(
+            session, broker_account_name=WEBULL, symbol=SYMBOL
+        )
+        row.status = "closed"
+        session.commit()
+    clock["now"] += timedelta(seconds=120)
+    assert await service._check_webull_uncovered_shares() == 0
+    assert _uncovered_incidents(sf) == []
+    assert (WEBULL, SYMBOL) not in service._webull_uncovered_since
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_fires_for_a_share_that_never_got_a_pair(monkeypatch) -> None:
+    # QCLS / DLXY 2026-09-16: every attach attempt failed; until now that was a log line only.
+    service, sf, clock = _uncovered_service(monkeypatch)  # no protect base at all
+
+    assert await service._check_webull_uncovered_shares() == 0
+    clock["now"] += timedelta(seconds=31)
+    assert await service._check_webull_uncovered_shares() == 1
+    assert _uncovered_incidents(sf)[0]["cause"] == "never_protected"
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_pages_again_only_for_a_new_episode(monkeypatch) -> None:
+    service, sf, clock = _uncovered_service(monkeypatch)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    service._exit_reservation_released.add((WEBULL, SYMBOL))
+    await service._check_webull_uncovered_shares()
+    clock["now"] += timedelta(seconds=31)
+    assert await service._check_webull_uncovered_shares() == 1
+
+    service._exit_reservation_released.discard((WEBULL, SYMBOL))  # re-protected
+    clock["now"] += timedelta(seconds=15)
+    assert await service._check_webull_uncovered_shares() == 0
+    assert "status=COVERED_AGAIN" in "\n".join(service.logger.lines)
+
+    service._exit_reservation_released.add((WEBULL, SYMBOL))  # released again later
+    clock["now"] += timedelta(seconds=15)
+    assert await service._check_webull_uncovered_shares() == 0
+    clock["now"] += timedelta(seconds=31)
+    assert await service._check_webull_uncovered_shares() == 1
+    assert len(_uncovered_incidents(sf)) == 2
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_is_regular_session_only(monkeypatch) -> None:
+    # Outside RTH a Webull native pair cannot rest at all; the software ladder is the design.
+    service, sf, clock = _uncovered_service(monkeypatch, rth=False)
+    service._exit_reservation_released.add((WEBULL, SYMBOL))
+    await service._check_webull_uncovered_shares()
+    clock["now"] += timedelta(seconds=300)
+    assert await service._check_webull_uncovered_shares() == 0
+    assert _uncovered_incidents(sf) == []
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_catches_a_dropped_exit_even_when_the_exit_routine_is_broken(
+    monkeypatch,
+) -> None:
+    # INDEPENDENCE. Re-create 2026-09-21 inside the REAL routine: the pair is really released,
+    # then the sell is refused AND the recovery is silenced (as if a future bug dropped it again).
+    # The exit path says nothing - the net still pages, from broker-facing state alone.
+    service, sf, clock = _uncovered_service(monkeypatch)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    await _arm_decision(service)
+    service._latest_quotes_by_symbol[SYMBOL]["received_at"] = clock["now"]
+
+    async def _sell_refused(*args, **kwargs) -> str:
+        return "refused"
+
+    monkeypatch.setattr(service, "_emit_v2_exit_on_loop", _sell_refused)
+    monkeypatch.setattr(service, "_finish_or_recover_confirmation_leg", lambda *a, **k: None)
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    assert (WEBULL, SYMBOL) in service._exit_reservation_released  # really released
+    assert _sell_accounts(sf) == []  # and really not sold
+
+    assert await service._check_webull_uncovered_shares() == 0
+    clock["now"] += timedelta(seconds=31)
+    assert await service._check_webull_uncovered_shares() == 1
+    assert _uncovered_incidents(sf)[0]["cause"] == "pair_released_not_sold"
