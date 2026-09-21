@@ -3000,6 +3000,9 @@ class OmsRiskService:
                 # not the filled entry coid. Without it the pair can be placed but never released,
                 # and its eventual child fill can never be attributed after a restart.
                 self._webull_protect_base[(broker_account_name, symbol.upper())] = coid
+                self.__dict__.setdefault("_webull_protect_failed", set()).discard(
+                    (broker_account_name, symbol.upper())
+                )
                 persisted = await self._persist_webull_protect_base(
                     broker_account_name, symbol, coid,
                     entry_client_order_id=entry_client_order_id,
@@ -3034,6 +3037,11 @@ class OmsRiskService:
             "STOP; the software ladder is the only cover. Place one by hand.",
             symbol, broker_account_name, quantity, entry_price, session_hint,
             target, protect, attempts,
+        )
+        # The uncovered-share page reads this: a RE-attach that fails leaves the OLD (cancelled)
+        # pair's handle persisted, which would otherwise read as "a pair is resting".
+        self.__dict__.setdefault("_webull_protect_failed", set()).add(
+            (broker_account_name, symbol.upper())
         )
         return False
 
@@ -4349,7 +4357,9 @@ class OmsRiskService:
 
           covered  = a protect-pair handle exists for the position (the entry's own combo, or the
                      persisted / in-memory handle of the attached pair) AND that pair has not been
-                     released for a software close.
+                     released for a software close AND the last attach did not end PROTECT-FAILED
+                     (a failed RE-attach leaves the old, cancelled pair's handle behind; the
+                     `[OMS-EXIT-REPROTECT]` path clears the released latch before it knows).
           uncovered for >= 30 s  =>  ERROR line + ONE critical incident per episode (the pager
                      delivers it). Causes it sees: released-and-not-sold (2026-09-21 x4), never
                      protected (QCLS / DLXY 2026-09-16), a release nobody recovered.
@@ -4361,6 +4371,9 @@ class OmsRiskService:
             "_webull_uncovered_since", {}
         )
         paged: set[tuple[str, str]] = self.__dict__.setdefault("_webull_uncovered_paged", set())
+        attach_failed: set[tuple[str, str]] = self.__dict__.setdefault(
+            "_webull_protect_failed", set()
+        )
         keys = [
             (acct, symbol)
             for acct, symbol in list(getattr(self, "_managed_v2_symbols", set()))
@@ -4392,11 +4405,15 @@ class OmsRiskService:
             if key not in state:  # the row closed: sold, stopped, resolved - the episode is over
                 since.pop(key, None)
                 paged.discard(key)
+        for key in list(attach_failed):
+            if key not in state and self._is_v2_webull_account(key[0]):
+                attach_failed.discard(key)
         raised = 0
         for key, (row_id, base) in state.items():
             acct, symbol = key
             released = key in self._exit_reservation_released
-            if base and not released:
+            failed = (acct, symbol.upper()) in attach_failed
+            if base and not released and not failed:
                 if key in paged:
                     self.logger.warning(
                         "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s row=%s status=COVERED_AGAIN "
@@ -4412,7 +4429,11 @@ class OmsRiskService:
             if elapsed < self._WEBULL_UNCOVERED_PAGE_SECONDS or key in paged:
                 continue
             paged.add(key)
-            cause = "pair_released_not_sold" if released else "never_protected"
+            cause = (
+                "pair_released_not_sold"
+                if released
+                else "reattach_failed" if failed and base else "never_protected"
+            )
             self.logger.error(
                 "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s row=%s status=PAGE cause=%s "
                 "uncovered_seconds=%.1f threshold_seconds=%.0f - a Webull share is held with NO "

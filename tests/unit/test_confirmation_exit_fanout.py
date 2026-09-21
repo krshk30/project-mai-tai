@@ -1746,6 +1746,52 @@ async def test_uncovered_page_fires_for_a_share_that_never_got_a_pair(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_uncovered_page_fires_when_a_reattach_failed_and_left_the_old_handle(
+    monkeypatch,
+) -> None:
+    # Self-review find, 2026-09-21: `[OMS-EXIT-REPROTECT]` clears the released latch BEFORE it knows
+    # whether the new pair attached, and a failed attach leaves the OLD (cancelled) pair's handle
+    # persisted. "handle exists AND not released" would read that share as covered - for ever.
+    # Driven through the REAL attach routine with a broker that refuses every attempt.
+    service, sf, clock = _uncovered_service(monkeypatch)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "old-cancelled-protect-base"
+    assert await service._check_webull_uncovered_shares() == 0  # resting: covered
+
+    async def _held(*args, **kwargs):
+        return service_module._PositionRead.HELD
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    service.broker_adapter.reject_accounts = {WEBULL}  # every attach attempt is refused
+    monkeypatch.setattr(service, "_broker_symbol_position_state", _held)
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    service._exit_reservation_released.discard((WEBULL, SYMBOL))  # what line `[OMS-EXIT-REPROTECT]` does
+    attached = await service._attach_webull_protection(
+        broker_account_name=WEBULL, symbol=SYMBOL, quantity=1, entry_price=2.84,
+        strategy_code="schwab_1m_v2",
+    )
+    assert attached is False
+
+    assert await service._check_webull_uncovered_shares() == 0  # the 30 s clock starts
+    clock["now"] += timedelta(seconds=31)
+    assert await service._check_webull_uncovered_shares() == 1
+    assert _uncovered_incidents(sf)[0]["cause"] == "reattach_failed"
+    assert "[WEBULL-PROTECT-FAILED]" in "\n".join(service.logger.lines)  # the REAL failure ending
+
+    # CONTROL: a later attach that succeeds ends the episode - covered again, no second page.
+    service.broker_adapter.reject_accounts = set()
+    assert await service._attach_webull_protection(
+        broker_account_name=WEBULL, symbol=SYMBOL, quantity=1, entry_price=2.84,
+        strategy_code="schwab_1m_v2",
+    )
+    clock["now"] += timedelta(seconds=120)
+    assert await service._check_webull_uncovered_shares() == 0
+    assert "status=COVERED_AGAIN" in "\n".join(service.logger.lines)
+    assert len(_uncovered_incidents(sf)) == 1
+
+
+@pytest.mark.asyncio
 async def test_uncovered_page_pages_again_only_for_a_new_episode(monkeypatch) -> None:
     service, sf, clock = _uncovered_service(monkeypatch)
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
