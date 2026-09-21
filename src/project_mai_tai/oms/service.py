@@ -8797,7 +8797,10 @@ class OmsRiskService:
                 strategy.id: strategy
                 for strategy in session.scalars(select(Strategy)).all()
             }
-            open_orders = self.store.list_open_orders(
+            # ⛔ The ROTATING list, not `list_open_orders` (#1027). That one is newest-`updated_at`
+            # first, and Webull's order-detail budget runs out part-way through a pass, so the same
+            # OLD order drew the 429 on every sync: NCPL 2026-09-21, a filled entry unseen ~786 s.
+            open_orders = self.store.list_open_orders_for_sync(
                 session,
                 broker_account_ids=list(account_lookup.keys()),
             )
