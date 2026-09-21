@@ -1,9 +1,0 @@
-{
-  "pr_number": 1024,
-  "range_base": "049f09ccea0708293a28cd1b967b07a697b36d07",
-  "range_head": "21b55beb2f0c65bff8f29b333f2f7560a1fe0d3e",
-  "reviewed_at": "2026-09-21T14:18:57Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Reviewed the Schwab-only post-rounding tick lift, raw-invalid and Webull negative space, exact-one-dollar and sub-dollar boundaries, metadata reach, 151 neighboring tests, and three discriminating mutations; verified the rebased diff is byte-identical."
-}
