@@ -17,6 +17,11 @@ _QUOTED_SENSITIVE_WEBULL_VALUE = re.compile(
     rf"(?P=key_quote)\s*[:=]\s*)(?P<value_quote>['\"])[^'\"]*(?P=value_quote)",
     re.IGNORECASE,
 )
+_ESCAPED_QUOTED_SENSITIVE_WEBULL_VALUE = re.compile(
+    rf'(?P<prefix>\\"{_SENSITIVE_WEBULL_FIELD}\\"\s*[:=]\s*\\")'
+    r'(?P<value>[^"\\\r\n]*)(?P<suffix>\\")',
+    re.IGNORECASE,
+)
 _BARE_SENSITIVE_WEBULL_VALUE = re.compile(
     rf"(?P<prefix>(?P<key_quote>['\"]?){_SENSITIVE_WEBULL_FIELD}"
     rf"(?P=key_quote)\s*[:=]\s*+)(?P<value>(?!['\"])[^,\n}}\]]+)",
@@ -25,12 +30,16 @@ _BARE_SENSITIVE_WEBULL_VALUE = re.compile(
 
 
 def _redact_webull_sdk_request(message: str) -> str:
+    redacted = _ESCAPED_QUOTED_SENSITIVE_WEBULL_VALUE.sub(
+        lambda match: f"{match.group('prefix')}{_REDACTED}{match.group('suffix')}",
+        message,
+    )
     redacted = _QUOTED_SENSITIVE_WEBULL_VALUE.sub(
         lambda match: (
             f"{match.group('prefix')}{match.group('value_quote')}"
             f"{_REDACTED}{match.group('value_quote')}"
         ),
-        message,
+        redacted,
     )
     return _BARE_SENSITIVE_WEBULL_VALUE.sub(
         lambda match: f"{match.group('prefix')}{_REDACTED}",
