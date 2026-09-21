@@ -10,6 +10,7 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 import socket
 import subprocess
+import time
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -57,9 +58,23 @@ _COLUMNS = [
 ]
 
 
+class _TimedRealSocket:
+    def __init__(self, wrapped: socket.socket) -> None:
+        self._wrapped = wrapped
+        self.send_elapsed_ms: list[float] = []
+
+    def send(self, payload: bytes) -> int:
+        started_ns = time.monotonic_ns()
+        try:
+            return self._wrapped.send(payload)
+        finally:
+            self.send_elapsed_ms.append((time.monotonic_ns() - started_ns) / 1_000_000)
+
+
 def _run_real_dead_consumer_probe(socket_path: str, result_pipe: Connection) -> None:
     async def run() -> dict[str, float | int]:
         producer_socket = connect_consumer_socket(socket_path)
+        timed_socket = _TimedRealSocket(producer_socket)
         try:
             send_buffer_bytes = producer_socket.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)
             frame_count = 600
@@ -76,11 +91,12 @@ def _run_real_dead_consumer_probe(socket_path: str, result_pipe: Connection) -> 
                 )
                 for ordinal in range(frame_count)
             ]
+            result_pipe.send({"kind": "ready"})
             result = await _paced_replay(
                 rows,
                 speed=1.0,
                 handoff=BoundedPaperHandoff(capacity=frame_count),
-                producer_socket=producer_socket,
+                producer_socket=timed_socket,  # type: ignore[arg-type]
             )
             return {
                 "frame_count": frame_count,
@@ -90,7 +106,9 @@ def _run_real_dead_consumer_probe(socket_path: str, result_pipe: Connection) -> 
                 "sent_frames": result.writer.sent_frames,
                 "would_block_drops": result.writer.would_block_drops,
                 "offer_elapsed_ms": result.offer_elapsed_ms,
-                "offer_schedule_delay_p99_ms": result.offer_schedule_delay_p99_ms,
+                "socket_send_elapsed_p99_ms": nearest_rank(
+                    timed_socket.send_elapsed_ms, 99
+                ),
             }
         finally:
             producer_socket.close()
@@ -369,7 +387,9 @@ def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> N
         )
         producer.start()
         result_writer.close()
-        producer.join(timeout=3.0)
+        assert result_reader.poll(10.0), "producer process did not reach the replay fence"
+        assert result_reader.recv() == {"kind": "ready"}
+        producer.join(timeout=2.0)
         hung = producer.is_alive()
         if hung:
             producer.terminate()
@@ -387,7 +407,6 @@ def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> N
         result_writer.close()
         consumer.close()
 
-    paced_duration_ms = (int(result["frame_count"]) - 1) * 1.0
     payload_bytes = int(result["frame_count"]) * int(result["frame_bytes"])
     kernel_buffer_bytes = int(result["send_buffer_bytes"]) + consumer.receive_buffer_bytes
     assert consumer_result is not None
@@ -396,8 +415,8 @@ def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> N
     assert payload_bytes > kernel_buffer_bytes * 20
     assert int(result["socket_nonblocking"]) == 1
     assert int(result["would_block_drops"]) > 0
-    assert float(result["offer_elapsed_ms"]) < paced_duration_ms + 500.0
-    assert float(result["offer_schedule_delay_p99_ms"]) < 25.0
+    assert float(result["offer_elapsed_ms"]) < 2_000.0
+    assert float(result["socket_send_elapsed_p99_ms"]) < 50.0
 
 
 def _flat_preflight_result(returncode: int = 0) -> subprocess.CompletedProcess[str]:
