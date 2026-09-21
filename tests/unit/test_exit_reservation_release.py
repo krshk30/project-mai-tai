@@ -41,6 +41,10 @@ _EXPLICIT_NON_PROTECTIVE_REASONS = {
 }
 
 
+# Routines that take `reason=` and hand it unchanged to `_emit_v2_exit_on_loop`.
+_REASON_FORWARDING_ROUTINES = {"_webull_cancel_then_sell"}
+
+
 def _bind_string_constants(target: ast.expr, value: ast.expr, out: dict[str, set[str]]) -> None:
     if isinstance(target, ast.Name) and isinstance(value, ast.Constant):
         if isinstance(value.value, str):
@@ -82,10 +86,34 @@ def _emitted_managed_exit_reasons() -> set[str]:
             if isinstance(node, ast.Assign):
                 for target in node.targets:
                     _bind_string_constants(target, node.value, bindings)
+        # A routine that only FORWARDS its own `reason=` parameter to the emit is not where the
+        # reason is decided - its callers are. Follow exactly one hop: the forwarded name is skipped
+        # inside the routine, and every call TO the routine is held to the same contract as an emit.
+        forwarded: set[int] = set()
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or _called_name(node) != "_emit_v2_exit_on_loop":
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name in _REASON_FORWARDING_ROUTINES
+                and any(arg.arg == "reason" for arg in node.args.kwonlyargs + node.args.args)
+            ):
+                forwarded.update(id(inner) for inner in ast.walk(node) if isinstance(inner, ast.Call))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            called = _called_name(node)
+            if called != "_emit_v2_exit_on_loop" and called not in _REASON_FORWARDING_ROUTINES:
                 continue
             reason = next((kw.value for kw in node.keywords if kw.arg == "reason"), None)
+            if (
+                id(node) in forwarded
+                and called == "_emit_v2_exit_on_loop"
+                and isinstance(reason, ast.Name)
+                and reason.id == "reason"
+            ):
+                continue
+            if called in _REASON_FORWARDING_ROUTINES and reason is None:
+                emitted.add(f"unresolved:{called} called without reason=")
+                continue
             if isinstance(reason, ast.Constant) and isinstance(reason.value, str):
                 if reason.value.startswith(_MANAGED_EXIT_PREFIX):
                     emitted.add(reason.value)

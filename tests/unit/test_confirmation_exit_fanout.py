@@ -1066,6 +1066,58 @@ async def test_a_pre_send_guard_stops_the_webull_exit_before_any_release(
     assert "outcome=refused_before_release" in lines
 
 
+@pytest.mark.parametrize(
+    ("reason", "released"),
+    [
+        pytest.param("oms_v2_managed_exit:CW_TARGET", False, id="profit-target-may-not-cancel-a-stop"),
+        pytest.param("oms_v2_managed_exit:SCALE_PCT2", False, id="scale-out-may-not-cancel-a-stop"),
+        # CONTROL + the next call site: the hard stop (YMAT 2026-09-09) IS allowed through.
+        pytest.param("oms_v2_managed_exit:CW_HARD_STOP", True, id="control-hard-stop-releases"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_shared_routine_takes_the_pair_back_only_for_a_protective_exit(
+    monkeypatch, reason: str, released: bool
+) -> None:
+    # The routine forwards its caller's `reason`. The resting pair IS the profit-taking exit, so a
+    # future call site must not be able to cancel a broker stop for a target or a scale-out.
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    decision = service_module._ConfirmationFanoutDecision(
+        symbol=SYMBOL, source_fill_id=f"test:{reason}", accounts=(WEBULL,)
+    )
+    with sf() as session:
+        row_id = str(
+            service.store.get_open_managed_position(
+                session, broker_account_name=WEBULL, symbol=SYMBOL
+            ).id
+        )
+
+    outcome = await service._webull_cancel_then_sell(
+        WEBULL,
+        SYMBOL,
+        exit_tag=reason.rsplit(":", 1)[-1],
+        reason=reason,
+        kind="HARD",
+        reference_bid=2.40,
+        expected_row_id=row_id,  # a caller binds the row it decided on; "" is refused unreleased
+        expires_at=datetime.now(UTC) + timedelta(seconds=60),
+        decision=decision,
+    )
+
+    if released:
+        assert len(adapter.cancel_pair_calls) == 1
+        assert _sell_accounts(sf) == [WEBULL]
+    else:
+        assert outcome == "refused_before_release"
+        assert adapter.cancel_pair_calls == []
+        assert _sell_accounts(sf) == []
+        assert "reason=not_a_protective_exit" in "\n".join(service.logger.lines)
+
+
 @pytest.mark.asyncio
 async def test_confirmed_webull_release_is_idempotent_for_the_exact_episode(
     monkeypatch,
@@ -1553,7 +1605,7 @@ class _ClockAdvancingAdapter(_FanoutAdapter):
 async def test_webull_confirmation_exit_sells_after_a_release_that_aged_its_own_quote(
     monkeypatch, schwab_leg_seconds: float, release_seconds: float
 ) -> None:
-    # 2026-09-21 live, 4 of 4: the Webull pair was released `confirmed=2` and then NOTHING was
+    # 2026-09-21 live, 4 of the 5 releases: the pair was released `confirmed=2` and then NOTHING was
     # sent - no sell, no re-protect, no page. The quote that authorised the release was re-checked
     # AFTER the release; by then the Schwab leg and the release itself (both inline on the serial
     # tick consumer, which cannot receive a newer quote while blocked) had aged it past 5,000 ms.

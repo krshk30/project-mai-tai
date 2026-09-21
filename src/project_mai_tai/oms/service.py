@@ -4498,8 +4498,9 @@ class OmsRiskService:
 
         Live 2026-09-21 (docs/review-artifacts/webull-exit-seam/CONFIRMATION_EXIT_LIVE_FAILURE_0921.md):
         the confirmation exit released first and ran the generic quote-age guard AFTERWARDS, on a
-        quote its own inline awaits had aged past the limit - 4 of 4 clean releases ended with no
-        sell, no re-protect, no page, 474-663 s with no broker stop.
+        quote its own inline awaits had aged past the limit - 4 of 5 clean releases ended with no
+        sell, no re-protect, no page, 474-663 s with no broker stop (the fifth, NCPL 15:07 ET, sold:
+        its quote was ~1 s old going in, so the same 2.5 s release left it under the limit).
 
         `exit_tag` names the caller. Wired tonight: CONFIRMATION_EXIT. CALL SITES TO FLIP NEXT
         (same defect shape - one-try release, silent drop on refusal; YMAT 2026-09-09 is the
@@ -4523,6 +4524,16 @@ class OmsRiskService:
             return outcome
 
         # ---- 1. ABORTABLE: the broker pair is still resting; a refusal costs nothing ----------
+        if not self._is_protective_v2_exit(reason):
+            # The resting pair IS the profit-taking exit. Only a safety exit may take it back, so a
+            # future caller cannot cancel a broker stop on behalf of a target or a scale-out.
+            self.logger.error(
+                "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s reason=%s "
+                "reason=not_a_protective_exit - refused BEFORE any release",
+                exit_tag, symbol, acct, reason,
+            )
+            self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+            return _done("refused_before_release")
         try:
             snapshot = await self._run_db(
                 lambda session: self._read_v2_managed_snapshot(
