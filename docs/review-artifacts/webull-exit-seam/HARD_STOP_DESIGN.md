@@ -1,0 +1,99 @@
+# Hard stop on Webull — how −8% is held at the broker
+
+**Author `claude-1`, 2026-09-21. Reviewer `codex-2`. Design note — NO code in this PR.**
+Board row it answers: *"Hard stop is a market sell AFTER the level trades (GIPR −18.4%)"* (handoff 09-19, owner `claude-1`).
+
+## Verdict (read this, skip the rest if short of time)
+
+1. **The row's premise does not survive the sweep.** "Market sell after the level trades" is how all 7 filled `CW_HARD_STOP`
+   closes worked, and 6 of 7 filled within −1.33%..+2.25% of the level (median **−0.35%**). GIPR 14:15 ET is **1 of 7**.
+2. **GIPR −18.4% was a leg left NAKED, then a one-second collapse.** The Webull pair (native stop 1.0488) was cancelled by the
+   confirmation exit at 14:05:10 ET, the close was refused, nothing was re-attached, and 10 minutes later 445,704 shares traded
+   from 1.09 to 0.9735 inside one second. The defect is the release-without-re-protect — the class #1014 fixed for the
+   confirmation exit and sweep item 1 extends to every other software exit. **No new hard-stop mechanism is proposed.**
+3. **The rule this note adds:** on Webull the software hard stop is the SECOND line, never the first. A leg that holds shares
+   and has no resting native stop is a defect state with a deadline, not a normal state.
+4. **One thing to measure before anything is built:** in the 4 rows with capture, a trade printed at or below the level BEFORE the
+   software decided in **3 of 4**: 0.110 s (GIPR 13:17), 0.189 s (IMCC), **3.072 s** (GIPR 14:15). MEDS: 0 of 859. A log field, not a rule change.
+
+## Population — every FILLED `CW_HARD_STOP` close, both live accounts, 2026-09-04 → 2026-09-18
+
+Source: `broker_orders` ⋈ `trade_intents.reason='oms_v2_managed_exit:CW_HARD_STOP'`, `status='filled'`; price = `fills.price`;
+level = `metadata.reference_price`; tape = `market_capture_trades` / `market_capture_quotes`. **7 rows — 1 Schwab, 6 Webull**
+(the 6 matches the handoff's "58 rejected / 6 filled"). Rejected closes are NOT in this table; they are sweep item 1.
+
+| software `decided_at` (ET, from the log) | symbol | account | level | fill | fill vs level | captured trades in the 120 s to `decided_at` | `decided_at` − first captured trade ≤ level |
+|---|---|---|---|---|---|---|---|
+| 09-04 09:31:24.840 | IMRN | live:schwab_1m_v2 | 1.7751 | 1.8150 | **+2.25%** | 0 | UNMEASURED (no capture) |
+| 09-04 15:22:11.524 | CDTG | live:orb | 1.2920 | 1.3050 | **+1.01%** | 0 | UNMEASURED (no capture) |
+| 09-04 15:31:27.830 | IMRN | live:orb | 1.6910 | 1.6901 | **−0.05%** | 0 | UNMEASURED (no capture) |
+| 09-15 15:46:49.432 | MEDS | live:orb | 1.7480 | 1.7401 | **−0.45%** | 859 | none — 0 of 859 at/below the level |
+| 09-18 13:17:52.036 | GIPR | live:orb | 1.1040 | 1.1001 | **−0.35%** | 1,297 | **0.110 s** — first ≤ level 13:17:51.926 @ 1.1000 (18 of 1,297) |
+| 09-18 14:15:04.660 | GIPR | live:orb | 1.0488 | 0.9300 | **−11.33%** | 1,808 | **3.072 s** — first ≤ level 14:15:01.588 @ 1.0400 (1,269 of 1,808) |
+| 09-18 14:21:35.060 | IMCC | live:orb | 5.0876 | 5.0201 | **−1.33%** | 869 | **0.189 s** — first ≤ level 14:21:34.871 @ 5.0800 (111 of 869) |
+
+⚠ Corrections to this column. Draft 1 read 2.66 s / 0.65 s — measured from the broker ACCEPT event to a last-run start, not what
+the header said (`claude-1`). Draft 2 fixed the two numbers but kept ACCEPT-time denominators and missed the earlier GIPR close, which
+also printed through its level 110 ms before the decision — so n=3, not n=2 (`codex-2`, second review). Every cell is now recomputed
+from the log's `decided_at` by ONE query: trades with `decided_at − 120 s ≤ event_ts ≤ decided_at`.
+
+Median −0.35%. Drop GIPR 14:15 by name: range −1.33%..+2.25%. ⛔ Seven fills is a small population; it supports "the
+mechanism is not the class defect", not "the mechanism is proven".
+
+## GIPR 09-18, second trade — the tape (all times ET)
+
+| time | event | source |
+|---|---|---|
+| 14:03:16 | Webull buy 1 @ 1.14; pair attached 14:03:21 — target 1.1970, **native stop 1.0488** | `fills`, `[WEBULL-PROTECT-ATTACHED]` |
+| 14:05:07 | confirmation exit: Schwab sold 2 @ 1.115 (−2.2%) | `fills` |
+| 14:05:10.580 | Webull pair released `requested=2 confirmed=2`; 14:05:11.110 close **REFUSED** `reason=pair_cancel_unconfirmed reports=2 confirmed=0`; **nothing re-attached** | `[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED]` / `-REFUSED]` |
+| 14:05:10.6 → 14:15:04.7 | **Webull leg holds 1 share with NO order at the broker — 594 s** | `[OMS-OCO-EXIT-MISS]` ×3, no attach line |
+| 14:15:00 | 15 trades, 1.08–1.0899 | `market_capture_trades` |
+| **14:15:01** | **985 trades, 445,704 shares, 1.09 → 0.9735.** First trade ≤ 1.0488 at **14:15:01.588** | same |
+| 14:15:04.055 | first trade ≤ 0.95; from here every print is **0.93** (pinned — reads like a price band; NOT verified) | same |
+| 14:15:04.495 | first captured QUOTE with bid ≤ 1.0488 (bid 1.04) | `market_capture_quotes` |
+| 14:15:04.660 | software decides `CW_HARD_STOP` — **165 ms after that quote** | `[OMS-V2-MANAGED-EXIT] decided_at` |
+| 14:15:05.047 | market sell accepted | `broker_order_events` |
+| 14:15:09.465 | filled **0.93** — 4.4 s after accept, into the pinned market | `fills` |
+
+**What a resting native stop would have done:** the 14:15:01.588 print proves it would have TRIGGERED — **3.07 s before the
+software decision** (14:15:04.660). That is the strongest statement this tape supports. The fill price of the resulting market
+order, and therefore the loss avoided, are **UNMEASURED**: in a collapse like this it could have filled later or lower than that
+second's prints (correction from `codex-2`'s review — the first draft asserted a fill range and a saved-loss range; both removed).
+−8% is a trigger level, never a guaranteed exit price; nothing in this note changes that.
+
+⚠ **Unresolved:** the captured quote stream shows bid 1.07 at 14:15:02.090 while captured trades print 0.9735 at 14:15:01. The
+two streams disagree by ~3 s. Capture `received_at − event_ts` medians for `event_ts` 14:15:01 ≤ t < 14:15:05 ET: quotes n=93, **1,087.79 ms**; trades n=1,490,
+**7,745.77 ms** (a burst
+backlog in the capture consumer — this is the CAPTURE's lag, not a measurement of what the OMS saw). Which clock is right is not
+pinned; the OMS does not log the quote age it acted on.
+
+## The design — four states, each ends SOLD or PROTECTED-AGAIN + PAGED
+
+| state of a Webull leg that holds shares | first line | second line | what is missing today |
+|---|---|---|---|
+| **A. PROTECTED** — native pair resting | the broker's stop | **Schwab:** the software ladder STANDS DOWN on fresh broker confirmation (`_native_oco_stand_down_active`, `MAI_TAI_OMS_NATIVE_OCO_STAND_DOWN_ENABLED=true` read from the OMS process 09-21). **Webull: the stand-down FAILS OPEN — confirmed in code by the reviewer:** `RoutingBrokerAdapter.fetch_armed_native_oco_symbols` returns an empty set when the routed adapter lacks the capability, the Webull adapter has no such method, so `_native_oco_armed_confirmed_at` is never refreshed, the predicate is false, and the ladder runs BESIDE the resting pair (it must take the pair back before it can sell — the shares are reserved) | **two −8% mechanisms whose LEVELS MAY DIFFER.** The native pair's stop is priced off an anchor chosen when the pair is built (fresh live ask, else the Schwab fill — `oms/service.py:2067-2095`); `CW_HARD_STOP` is priced off the managed Webull row's own entry (`:5658-5659`). They share the percentage, not the anchor. Same level is MEASURED only on the two GIPR 09-18 trades (1.1040 / 1.1040 and 1.0488 / 1.0488); for every other position it is unknown which trips first. Requirement for sweep item 1, whichever trips first: the routine must treat a filled or working native stop leg as the exit (`resolved_by_fill`) and must never end with the pair cancelled and no sell |
+| **B. RELEASED for a software close** (confirmation, hard stop, floor, flip, overnight flatten) | the software close, retried by broker-answer class | **re-attach the pair, then page** — the #1014 terminal rule | #1014 covers the confirmation exit only. **Sweep item 1** moves the other four onto the same routine. A release with no close and no re-attach inside the deadline is the GIPR state and must be impossible |
+| **C. NEVER PROTECTED** — all attach attempts failed (3 of 75 positions: IMRN 09-04, QCLS 09-16, DLXY 09-16) | none today — software ladder only | — | `PROTECT_FAILED_FORENSIC.md` reads the 5 attach answers each. Proposed terminal rule, to be confirmed by that forensic: attach failed ⇒ **flatten now + page**; never sit bare behind the software stop |
+| **D. EXTENDED HOURS** — a native stop leg is refused or cannot trigger | software hard stop | — | out of scope here; the software stop IS the only line and the row stays as it is. Stated so nobody reads state A as covering 04:00–09:30 |
+
+**Deadline for B and C.** GIPR sat bare for 644 s (13:07:07.7 → 13:17:52.0) and 594 s, measured here from the `WEBULL-RELEASED` line to the
+hard-stop decision (the 09-18 sweep quotes 653 s / 611 s with a different end point); SUNE 09-09 for 1,985 s [sweep number, not re-derived]. Proposal: a leg that holds shares with no
+resting native stop during RTH for more than **30 s** is paged as `UNCOVERED`, whatever routine put it there. The number is a
+proposal; the reviewer should push on it. It is a detector, not a fix — the fix is B.
+
+## What is explicitly NOT proposed
+
+- **No stop-limit, no "sell at the level" limit order.** In the GIPR second a limit at 1.0488 would not have filled at all.
+- **No tighter stop percentage.** 8.0 is the operator's number (`MAI_TAI_OMS_V2_CW_HARD_STOP_PCT=8.0`, read from the OMS
+  process 09-21).
+- **No trade-print trigger yet.** Three instances (0.110 s, 0.189 s, 3.072 s; 3 of the 4 rows with capture) are a reason to MEASURE. Ask for `codex-2`/sweep item 1: log, on
+  every hard-stop decision, the age of the quote acted on (`quote_age_ms`) and the bid. Five sessions of that field decide
+  whether a last-trade trigger is worth building.
+
+## What this note cannot see
+
+- The 58 REJECTED Webull hard-stop closes — how long each position stayed open after its first refusal, and what it cost. That
+  is the larger number and it belongs to sweep item 1's fixtures, not here.
+- Capture had 0 trades for the three 09-04 rows, so their detection lag is UNMEASURED, not zero.
+- Whether 0.93 was a LULD band. Read from the prints only.
