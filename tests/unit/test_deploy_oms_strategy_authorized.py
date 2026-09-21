@@ -12,6 +12,12 @@ GATE = ROOT / "ops/systemd/deploy_oms_strategy_authorized.sh"
 DEPLOY_SERVICE = ROOT / "ops/systemd/deploy_service.sh"
 EXPECTED_SHA = "a" * 40
 CURRENT_SHA = "c" * 40
+DEPLOY_GATE_PAYLOAD = (
+    "ops/preflight/preflight_oms_restart.sh",
+    "ops/systemd/deploy_oms_strategy_authorized.sh",
+    "ops/systemd/deploy_service.sh",
+    "src/project_mai_tai/deploy_preflight.py",
+)
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -92,6 +98,10 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         fake_bin / "git",
         "#!/usr/bin/env bash\n"
         'echo "git:$*" >> "$CALL_LOG"\n'
+        'if [[ "$*" == *" show ${EXPECTED_SHA}:ops/systemd/deploy_gate_tools.sha256" ]]; then\n'
+        '  cat "$APPROVED_MANIFEST_PATH"\n'
+        "  exit $?\n"
+        "fi\n"
         'if [[ "$*" == *"rev-parse origin/main" ]]; then echo "$EXPECTED_SHA"; fi\n'
         'if [[ "$*" == *"rev-parse HEAD" ]]; then\n'
         '  if [[ -e "$DEPLOY_MARKER" ]]; then echo "$EXPECTED_SHA"; else echo "$CURRENT_SHA"; fi\n'
@@ -148,15 +158,9 @@ def _replace_field(approval: Path, key: str, value: str) -> None:
     )
 
 
-def _external_tools(tmp_path: Path, repo: Path) -> Path:
+def _external_tools(tmp_path: Path, repo: Path) -> tuple[Path, Path]:
     tools = tmp_path / "external-tools"
-    payload = (
-        "ops/preflight/preflight_oms_restart.sh",
-        "ops/systemd/deploy_oms_strategy_authorized.sh",
-        "ops/systemd/deploy_service.sh",
-        "src/project_mai_tai/deploy_preflight.py",
-    )
-    for relative in payload:
+    for relative in DEPLOY_GATE_PAYLOAD:
         source = GATE if relative.endswith("deploy_oms_strategy_authorized.sh") else repo / relative
         target = tools / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -166,11 +170,13 @@ def _external_tools(tmp_path: Path, repo: Path) -> Path:
     manifest.write_text(
         "".join(
             f"{hashlib.sha256((tools / relative).read_bytes()).hexdigest()}  {relative}\n"
-            for relative in payload
+            for relative in DEPLOY_GATE_PAYLOAD
         ),
         encoding="utf-8",
     )
-    return tools
+    approved_manifest = tmp_path / "approved-deploy-gate-tools.sha256"
+    shutil.copy2(manifest, approved_manifest)
+    return tools, approved_manifest
 
 
 def _assert_authorization_refused(result: subprocess.CompletedProcess[str], call_log: Path) -> None:
@@ -332,7 +338,8 @@ def test_external_reviewed_tools_can_gate_an_older_production_checkout(
     tmp_path: Path,
 ) -> None:
     repo, approval, call_log, env = _fixture(tmp_path)
-    tools = _external_tools(tmp_path, repo)
+    tools, approved_manifest = _external_tools(tmp_path, repo)
+    env["APPROVED_MANIFEST_PATH"] = str(approved_manifest)
     (repo / "src/project_mai_tai/deploy_preflight.py").unlink()
     (repo / "ops/preflight/preflight_oms_restart.sh").unlink()
     (repo / "ops/systemd/deploy_service.sh").unlink()
@@ -341,9 +348,13 @@ def test_external_reviewed_tools_can_gate_an_older_production_checkout(
 
     assert result.returncode == 0, result.stderr
     calls = _calls(call_log)
-    assert f"preflight:{tools}/src/project_mai_tai/deploy_preflight.py" in calls[1]
-    assert calls[2] == "fence"
-    assert calls[5] == f"deploy:{EXPECTED_SHA}:{repo} main oms"
+    assert f"git:-C {repo} show {EXPECTED_SHA}:ops/systemd/deploy_gate_tools.sha256" in calls
+    assert any(
+        line.startswith(f"preflight:{tools}/src/project_mai_tai/deploy_preflight.py")
+        for line in calls
+    )
+    assert "fence" in calls
+    assert f"deploy:{EXPECTED_SHA}:{repo} main oms" in calls
     assert f"tools_dir={tools}" in result.stdout
 
 
@@ -351,7 +362,7 @@ def test_external_tools_for_a_different_sha_refuse_before_preflight(
     tmp_path: Path,
 ) -> None:
     repo, approval, call_log, env = _fixture(tmp_path)
-    tools = _external_tools(tmp_path, repo)
+    tools, _approved_manifest = _external_tools(tmp_path, repo)
     (tools / "DEPLOY_GATE_SOURCE_SHA").write_text("b" * 40 + "\n", encoding="utf-8")
 
     result = _run_gate(repo, approval, env, tools_dir=tools)
@@ -360,16 +371,40 @@ def test_external_tools_for_a_different_sha_refuse_before_preflight(
     assert "do not name the approved target SHA" in result.stderr
 
 
-def test_tampered_external_tools_refuse_before_preflight(tmp_path: Path) -> None:
+def test_missing_approved_manifest_object_refuses_before_preflight(
+    tmp_path: Path,
+) -> None:
     repo, approval, call_log, env = _fixture(tmp_path)
-    tools = _external_tools(tmp_path, repo)
-    deploy = tools / "ops/systemd/deploy_service.sh"
-    deploy.write_text(deploy.read_text(encoding="utf-8") + "# tampered\n", encoding="utf-8")
+    tools, _approved_manifest = _external_tools(tmp_path, repo)
+    env["APPROVED_MANIFEST_PATH"] = str(tmp_path / "missing-approved-manifest")
 
     result = _run_gate(repo, approval, env, tools_dir=tools)
 
     _assert_authorization_refused(result, call_log)
-    assert "checksum verification failed" in result.stderr
+    assert "approved deploy-gate manifest object is missing" in result.stderr
+
+
+def test_tool_and_local_manifest_rewrite_refuse_against_approved_commit(
+    tmp_path: Path,
+) -> None:
+    repo, approval, call_log, env = _fixture(tmp_path)
+    tools, approved_manifest = _external_tools(tmp_path, repo)
+    env["APPROVED_MANIFEST_PATH"] = str(approved_manifest)
+    deploy = tools / "ops/systemd/deploy_service.sh"
+    deploy.write_text(deploy.read_text(encoding="utf-8") + "# tampered\n", encoding="utf-8")
+    local_manifest = tools / "ops/systemd/deploy_gate_tools.sha256"
+    local_manifest.write_text(
+        "".join(
+            f"{hashlib.sha256((tools / relative).read_bytes()).hexdigest()}  {relative}\n"
+            for relative in DEPLOY_GATE_PAYLOAD
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate(repo, approval, env, tools_dir=tools)
+
+    _assert_authorization_refused(result, call_log)
+    assert "approved deploy-gate manifest" in result.stderr
 
 
 def test_consumed_approval_cannot_be_reused(tmp_path: Path) -> None:

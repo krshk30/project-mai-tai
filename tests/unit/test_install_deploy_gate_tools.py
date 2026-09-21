@@ -101,6 +101,31 @@ def test_existing_verified_release_is_idempotent(tmp_path: Path) -> None:
     assert "ALREADY INSTALLED" in second.stdout
 
 
+def test_existing_tool_and_manifest_rewrite_refuse_against_source_manifest(
+    tmp_path: Path,
+) -> None:
+    source, sha = _write_source(tmp_path)
+    destination = tmp_path / "tools"
+    first = _run_installer(source, sha, destination)
+    assert first.returncode == 0
+    release = destination / "releases" / sha
+    deploy = release / "ops/systemd/deploy_service.sh"
+    deploy.write_text(deploy.read_text(encoding="utf-8") + "# tampered\n", encoding="utf-8")
+    local_manifest = release / "ops/systemd/deploy_gate_tools.sha256"
+    local_manifest.write_text(
+        "".join(
+            f"{hashlib.sha256((release / relative).read_bytes()).hexdigest()}  {relative}\n"
+            for relative in PAYLOAD
+        ),
+        encoding="utf-8",
+    )
+
+    second = _run_installer(source, sha, destination)
+
+    assert second.returncode == 1
+    assert "differs from the approved source manifest" in second.stderr
+
+
 def test_checksum_drift_refuses_without_installing(tmp_path: Path) -> None:
     source, _sha = _write_source(tmp_path)
     target = source / "src/project_mai_tai/deploy_preflight.py"

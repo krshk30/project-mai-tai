@@ -61,7 +61,9 @@ if [[ -d "$RELEASE_DIR" ]]; then
     || fail "existing release has no source marker"
   [[ "$(cat "$RELEASE_DIR/DEPLOY_GATE_SOURCE_SHA")" == "$EXPECTED_SHA" ]] \
     || fail "existing release source marker does not match"
-  (cd "$RELEASE_DIR" && sha256sum -c "$MANIFEST_REL" >/dev/null) \
+  cmp -s "$MANIFEST" "$RELEASE_DIR/$MANIFEST_REL" \
+    || fail "existing release manifest differs from the approved source manifest"
+  (cd "$RELEASE_DIR" && sha256sum -c "$MANIFEST" >/dev/null) \
     || fail "existing release checksum verification failed"
   echo "DEPLOY-GATE TOOLS ALREADY INSTALLED tools_dir=$RELEASE_DIR sha=$EXPECTED_SHA"
   exit 0
@@ -81,7 +83,7 @@ mkdir -p "$STAGING/$(dirname "$MANIFEST_REL")"
 cp -p "$MANIFEST" "$STAGING/$MANIFEST_REL"
 printf '%s\n' "$EXPECTED_SHA" > "$STAGING/DEPLOY_GATE_SOURCE_SHA"
 
-(cd "$STAGING" && sha256sum -c "$MANIFEST_REL" >/dev/null) \
+(cd "$STAGING" && sha256sum -c "$MANIFEST" >/dev/null) \
   || fail "installed checksum verification failed"
 for path in "${EXECUTABLE_PATHS[@]}"; do
   [[ -x "$STAGING/$path" ]] || fail "installed $path lost its executable bit"

@@ -105,13 +105,18 @@ DEPLOY="$TOOLS_DIR/ops/systemd/deploy_service.sh"
 
 if [[ "$TOOLS_DIR" != "$REPO_DIR" ]]; then
   SOURCE_SHA_FILE="$TOOLS_DIR/DEPLOY_GATE_SOURCE_SHA"
-  MANIFEST="$TOOLS_DIR/ops/systemd/deploy_gate_tools.sha256"
+  MANIFEST_REL="ops/systemd/deploy_gate_tools.sha256"
   [[ -f "$SOURCE_SHA_FILE" && "$(cat "$SOURCE_SHA_FILE")" == "$EXPECTED_SHA" ]] \
     || refuse_authorization "external deploy-gate tools do not name the approved target SHA"
-  [[ -f "$MANIFEST" ]] \
+  [[ -f "$TOOLS_DIR/$MANIFEST_REL" ]] \
     || refuse_authorization "external deploy-gate checksum manifest is missing"
-  if ! (cd "$TOOLS_DIR" && sha256sum -c "ops/systemd/deploy_gate_tools.sha256" >/dev/null); then
-    refuse_authorization "external deploy-gate checksum verification failed"
+  if ! (
+    set -o pipefail
+    cd "$TOOLS_DIR"
+    git -C "$REPO_DIR" show "$EXPECTED_SHA:$MANIFEST_REL" | sha256sum -c - >/dev/null
+  ); then
+    refuse_authorization \
+      "approved deploy-gate manifest object is missing or checksum verification failed"
   fi
 fi
 

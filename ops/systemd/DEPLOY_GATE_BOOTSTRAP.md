@@ -1,8 +1,8 @@
 # Deploy-gate bootstrap
 
 The production checkout may predate `deploy_oms_strategy_authorized.sh`. Advancing that checkout
-first would bypass the gate it is meant to enforce. The reviewed bootstrap therefore installs an
-immutable tool release outside the production repository, verifies it, and runs the gate from
+first would bypass the gate it is meant to enforce. The reviewed bootstrap therefore installs a
+verified tool release outside the production repository and runs the gate from
 there while `/home/trader/project-mai-tai` remains on the old commit.
 
 ## First installation
@@ -36,5 +36,7 @@ once:
 ```
 
 The fourth argument selects the external reviewed components. The gate verifies
-`DEPLOY_GATE_SOURCE_SHA` and every payload checksum before any preflight or checkout movement.
-Only the authorized `deploy_service.sh` call can fast-forward production to `SHA`.
+`DEPLOY_GATE_SOURCE_SHA`, reads the checksum manifest from the approved Git commit object, and
+checks every installed payload against that trusted copy before any preflight or checkout
+movement. The manifest stored beside the tools is informational and is never its own trust
+anchor. Only the authorized `deploy_service.sh` call can fast-forward production to `SHA`.
