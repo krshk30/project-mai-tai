@@ -1,0 +1,9 @@
+{
+  "pr_number": 1022,
+  "range_base": "aea2d113fc7f0b3aaf65f15ac17994a129501c8c",
+  "range_head": "e7787d6c8d61d4d49bee45d4bf45bf844f079028",
+  "reviewed_at": "2026-09-21T13:57:34Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Reviewed both commits (e74872d filter, e7787d6 escaped-body fix). Withheld at e74872d5: on a REAL oms.log-20260919 ServerException block (secret values replaced with fakes on the box) x-app-key 1->0 and x-signature 1->0 but account_id 2->1 - the escaped POST body \"_content\": \"{\\\"account_id\\\":...}\" was not matched and the fixture was GET-shaped. At e7787d6c the same real POST block gives app key 1->0, signature 1->0, account_id 2->0, while _action_name, BOTH copies of client_order_id (plain and escaped), the 'ServerException:HTTP Status: 417, Code: ...' line and the RequestID are all KEPT, so the WEBULL_API_BUDGET parser still works on the output. Mutations: install call removed => both original tests red (first head); log.py reverted to the first head => exactly the new escaped-content test red; tree restored. 3 tests pass, ruff clean, validate green, base is ancestor, one Codex marker per commit. NOT covered: x-signature-nonce / x-timestamp survive (not credentials); install is oms-risk only (the five webull scripts do not call configure_logging; harness journals hold 0 x-app-key lines in 14 days); the 10,494 lines already at rest in 20 rotated files are untouched by design; nothing has run on the box."
+}
