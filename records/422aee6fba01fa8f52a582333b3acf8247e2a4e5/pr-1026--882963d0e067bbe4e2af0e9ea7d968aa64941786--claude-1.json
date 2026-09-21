@@ -1,0 +1,9 @@
+{
+  "pr_number": 1026,
+  "range_base": "882963d0e067bbe4e2af0e9ea7d968aa64941786",
+  "range_head": "422aee6fba01fa8f52a582333b3acf8247e2a4e5",
+  "reviewed_at": "2026-09-21T15:23:27Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Test fixtures only (tests/webull_confirmation_exit_fixtures.py +226 -2), no runtime code. Verified against the box's oms.log myself, not against the PR text: all 9 Webull request ids resolve to the stated millisecond, endpoint, leg and code - five GET /trade/order/detail 429s (S 14:32:11.649, S :13.673, S :14.492, T :15.771, S :15.843) and four POST /trade/order/cancel ORDER_CAN_NOT_BE_CANCEL (T :14.250, S :14.337, T :15.614, S :15.713). Attempt 1's window holds only the two 429 reads and NO cancel refusal, so Webull accepted the first cancels; the fixture's 'T cancelled/confirmed, S could_not_tell' for attempts 1-2 and 'both could_not_tell' for attempt 3 matches the OMS lines unreadable=1,1,2 working=0 - that leg state is INFERRED from those counts (no success response is logged), which the docstring should say as GLND's does; non-blocking. GLND/GRML release timestamps match [..-WEBULL-RELEASED] 14:18:07.953 / 14:34:06.581; replacement pair combo id D9J6RD8CGUM8EU1HTT4OHDDIS9 and 1.2810/1.1224 match [WEBULL-EXIT-PAIR-PLACED] 14:32:16.301. Secrets scan of the diff: no app key, signature or account id. Module imports and every factory returns the stated shapes; 74 confirmation-exit tests pass, ruff clean. NOT covered: nothing consumes these fixtures yet, so no mutation is possible - the consuming tests are tonight's fix PR and will be reviewed there."
+}
