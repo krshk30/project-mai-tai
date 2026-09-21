@@ -4271,3 +4271,78 @@ deployed on the operator's "GO d6a6f59a", PA1 flag ON by his words; verified on 
 **Corrections owed to the record (`claude-1`):** "second Massive key" advice — wrong; "Option B snapshot-first" — wrong for a
 30-second detector; "8/8 never worked" — wrong unit; pinned #1010 without asking where it runs; 1/2/4 s backoff specified for a
 tick-path call; fleet journal empty for two days because claims were written by hand instead of through `log.sh` (backfilled).
+
+## 2026-09-21 — Monday: last week's exit fix met its first live day and dropped four Webull shares, the pager turned out never to have delivered a page, and thirteen PRs later the shared exit path and a working page are on the box
+
+**Written by `claude-1` (integrator). `codex-2` executed every merge and the deploy and reviews this entry.**
+
+**Pre-open and the board.** Gate green. The operator closed three rows outright — Webull stays at **1 share**, the ZTG 0.5% band, the
+hand-cancel procedure — moved the Schwab `limit == stop` analysis and four non-Momentum test pins from `codex-2` to `claude-1`, and gave
+the `x-app-key`-in-logs fix to `codex-2`. `codex-2` reported Momentum connected 83 s of 9,300 s (0.9%): the second `T.*` connection
+exceeds Massive's allowance; the fix is to route through the gateway (#1029, still draft tonight).
+
+**PA1 proved itself; #1014 did not.** PA1/PA1b is the day's one proven-live item: 8 refused Webull mirrors re-sent, 7 accepted, 0
+rejected, 22 forgotten on a v2 cancel as designed, **0 `PRICE_AGGRESSIVE` rejects** (41 in the four sessions before), no duplicate
+legs. #1014 — Saturday's "every confirmation exit ends SOLD or REPROTECTED+PAGED" — fired six times on Webull: **one sold, one
+re-protected, four ended in nothing at all.** GLND 10:18 ET sat 663 s with its bracket cancelled, GRML 10:34 621 s, NCPL 13:55 474 s,
+GLND 14:20 3,654 s until `CW_FLOOR` took it out at +3.8% — the operator's word for the winners was "lucky", and he was right. Schwab
+the same day: 9 of 9. Webull `CW_FLIP` exits: 3 of 3.
+
+**Why, and why the fix missed it.** The release is ~2.5 s of inline awaits on the serial tick consumer, which cannot receive a newer
+quote while blocked. After it, `_evaluate_v2_managed_exit` ran the generic 5,000 ms stale-quote guard a SECOND time on the same quote
+object and bare-returned — after `confirmation_pending.pop`, so nothing retried, nothing re-protected, nothing logged. A race on the
+quote's age going in: NCPL 15:07 sold on the old code because its quote was ~1 s old (3.5 s < 5 s). Measured end to end for GLND
+10:18 (5.17 s); for the other three the entry age was never logged and any value in (5 − release, 5) s reproduces — stated as such
+in #1028. #1014 guaranteed an ending for every BROKER ANSWER; this drop happens between two broker answers, on our own guard, and
+every #1014 test used a fake broker that answers in 0 s. The new fake advances the clock by the measured release time.
+
+**The second defect, found the same morning.** NCPL's Webull fill went unseen ~786 s, GRML's ~255 s: open orders are polled
+newest-`updated_at` first, sequentially, and the order-detail budget ran out mid-pass, so the same old order drew the 429 every
+sync. The operator split the work: **A (dropped exit) → `claude-1`, B (starvation) → `codex-2`.** B = #1027 (rotation, list-today
+fallback keyed on OUR `client_order_id`, per-endpoint counter); `claude-1`'s review caveat was that the rotation had NO CALLER —
+closed by #1030. `codex-2` caught `claude-1`'s unsafe item in #1025: the shared `account_positions` book may PAGE and trigger an
+order-specific read, never authorise a managed row or a sell (#605).
+
+**The operator's rulings that shaped the code (~15:00 ET).** Scope = #1 (the dropped exit) + #3 (a page for any uncovered share)
+ONLY. #1 must be written as the SHARED cancel-then-sell path with hard stop and floor as call sites flipped next — *"an increment
+that forces its own rewrite changes nothing."* The uncovered-share page is never cuttable. The "58 refused vs 6 filled" hard-stop
+headline had to be counted in EPISODES before anything was ranked on it: **5 episodes — four redundant bursts after the native stop
+had already filled (BURST4, cured by LC1, tomorrow) and ONE real miss, YMAT 09-09 08:41:53 ET pre-market.** YMAT had to be the named
+case in the PR, because "a fix argued from today's four tapes alone is a fix argued from one session". REGREEN: all evidence re-run
+on the final, post-restructure code. FALLBACK at 18:30 ET — not needed.
+
+**What self-review and the gates caught in #1028 before `codex-2` saw it.** The full unit suite (not the focused one) failed two
+real gates: the managed-exit reason scanner could not classify a forwarded `reason=` (fixed with a runtime guard — only a PROTECTIVE
+exit may take the pair back — plus a one-hop scanner, mutation-checked), and `test_oms_test_clock_policy`. Reading "who else writes
+this state?" found that `[OMS-EXIT-REPROTECT]` clears the released latch before it knows the re-attach worked, so a failed re-attach
+would have read "covered" for ever. And "who delivers this page?" found the day's largest fact:
+
+**The pager had never delivered an exit-seam page.** `/home/trader/unexercised_watch/watch.py` is an installed, sha-pinned copy; it
+was three repo versions stale and queried one source. #1002/#1014's pager changes were merged and never installed. Eight critical
+incidents since 09-15 — MYSZ, VEEA, FTFT, DLXY, ZTG, NCPL, GLND, GRML — reached the phone zero times. `claude-1` had told everyone to
+expect TWO (a 3-day query window truncated the denominator); `codex-2` correctly stopped at 8 ≠ 2, each linked row was verified
+closed at quantity 0, the operator authorized closing all eight, and the rerun read `open=0`. That run is the first end-to-end
+delivery the route has ever made. #1028 adds a gate that discovers every `*_INCIDENT_SOURCE` in the OMS and fails if the pager does
+not read it.
+
+**`codex-2`'s review of #1028: withheld once, on the net, not the path.** Three P1s: a failed incident write suppressed the page for
+the whole episode; an OMS restart turned a released bracket into "covered" (`claude-1` had DECLARED that as a limit — a declared hole
+in a never-cut net is still a hole); the worklist came from the in-memory set, the blind-list pattern already fixed elsewhere. Fixed
+with commit-before-marking, a durable `webull_protect_state` on the entry order (only a real ATTACHED clears it; the generic release
+writes through the caller's session, never a nested one), and the database's open rows as the worklist — each with a restart test
+over the same database and a mutation that turns it red (M1–M16 in total). Pinned, merged 16:31 ET; #1030 rebased, re-pinned, merged
+16:45 ET; deploy `2a4d444a` on the operator's "go ahead and deploy now", 16:52:43 ET, PASS 9/9, book flat.
+
+**The live watch failed four times** and the operator asked for the split exactly: three distinct causes — a `cut` that
+block-buffers (blind 06:55–09:38 ET, first trade missed), a filter with no broker-leg close markers, a reconnect loop that quit
+after six tries (blind 11:28–12:41 ET) — **and one unexplained**: 13:26–14:03 ET, armed the whole time, zero events while GLND 13:38
+and NCPL 13:55 were written. Not an expiry gap (armed 17:26:24Z → expiry notice 18:03:20Z); not a dead connection (keepalive + a
+60-try reconnect loop, and the identical command delivered 8 events in the half hour before). Replaced by a 30 s offset-tracked
+poller with a heartbeat and a 15-minute full read that compares broker positions with managed rows.
+
+**Corrections owed to the record (`claude-1`):** "re-protected + PAGED" all day meant "row written"; "expect 2 open incidents" was 8;
+the carried "58 rejected / 6 filled" overstated the hard-stop problem about tenfold; "no band wider than ones live today" in
+#1023/#1024 was wrong (0.990% vs 0.976%, corrected in both); the `limit == stop` harm "0 of 39" is retracted to 0 of 2 measurable;
+#1025's first draft would have let the shared broker book open a managed row; "this release was faster than the drops" (NCPL 15:07)
+was wrong — same 2.5 s, fresher quote; one real Webull account id was printed once in terminal output and the local copy sanitised;
+M5 and M7 each ran VOID the first time and were re-run.
