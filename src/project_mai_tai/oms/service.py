@@ -619,6 +619,7 @@ class OmsRiskService:
     # pages, WHATEVER routine left it that way. Not cuttable; independent of every exit path.
     _WEBULL_UNCOVERED_PAGE_SECONDS = 30.0
     _WEBULL_UNCOVERED_INCIDENT_SOURCE = "oms_v2_webull_uncovered_share"
+    _WEBULL_PROTECT_STATE_KEY = "webull_protect_state"
     _CONFIRMATION_EXIT_EXPIRY_SECONDS = 180.0
     # This recovery still runs inline on the serial quote consumer. Keep the bounded retry
     # short until it moves to a dedicated lane; the marker timings make the actual stall visible.
@@ -3043,6 +3044,7 @@ class OmsRiskService:
         self.__dict__.setdefault("_webull_protect_failed", set()).add(
             (broker_account_name, symbol.upper())
         )
+        await self._persist_webull_protect_state(broker_account_name, symbol, "attach_failed")
         return False
 
     async def _webull_protect_unplaceable_reason(
@@ -3222,6 +3224,14 @@ class OmsRiskService:
             return release
         self._clear_exit_reservation_retry_state(key)
         self._exit_reservation_released.add(key)
+        try:
+            # The caller's session (never a nested one): it commits with the close it is building.
+            self._mark_webull_protect_state(session, broker_account_name, symbol, "released")
+        except Exception:  # noqa: BLE001 - the release already happened; never block the sell
+            self.logger.exception(
+                "[OMS-WEBULL-PROTECT-STATE] sym=%s acct=%s state=released status=PERSIST_FAILED",
+                symbol, broker_account_name,
+            )
         self.logger.info(
             "[OMS-EXIT-RELEASE] %s %s base=%s requested=%d confirmed=%d release_confirmed=1 — "
             "success: every addressed exit leg is cancelled or already absent, so the software "
@@ -4374,29 +4384,41 @@ class OmsRiskService:
         attach_failed: set[tuple[str, str]] = self.__dict__.setdefault(
             "_webull_protect_failed", set()
         )
-        keys = [
-            (acct, symbol)
-            for acct, symbol in list(getattr(self, "_managed_v2_symbols", set()))
-            if self._is_v2_webull_account(acct)
-        ]
-        if not keys or not _is_regular_market_session():
+        reopened: set[tuple[str, str]] = self.__dict__.setdefault(
+            "_webull_uncovered_reopened", set()
+        )
+        webull_acct = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+        ).strip()
+        if not webull_acct or not _is_regular_market_session():
             since.clear()
             paged.clear()
             return 0
 
-        def _read(session: Session) -> dict[tuple[str, str], tuple[str, str]]:
-            out: dict[tuple[str, str], tuple[str, str]] = {}
-            for acct, symbol in keys:
+        def _read(session: Session) -> dict[tuple[str, str], tuple[str, str, str]]:
+            # ⛔ The worklist is the DATABASE's open rows, never `_managed_v2_symbols`: an in-memory
+            # list that lost a key is the blind-list defect `_poll_native_oco_exits` already had,
+            # and a net must not share its blind spot with the thing it is a net for.
+            out: dict[tuple[str, str], tuple[str, str, str]] = {}
+            for symbol in sorted(
+                self.store.list_open_managed_symbols(session, broker_account_name=webull_acct)
+            ):
                 row = self.store.get_open_managed_position(
-                    session, broker_account_name=acct, symbol=symbol
+                    session, broker_account_name=webull_acct, symbol=symbol
                 )
                 if row is None:
                     continue
-                entry = self._find_oco_entry_order(session, acct, symbol)
+                entry = self._find_oco_entry_order(session, webull_acct, symbol)
                 base = self._oco_exit_base_for_entry(
-                    entry, broker_account_name=acct, symbol=symbol
+                    entry, broker_account_name=webull_acct, symbol=symbol
                 )
-                out[(acct, symbol)] = (str(row.id), str(base or ""))
+                durable = str(
+                    dict(getattr(entry, "payload", None) or {}).get(
+                        self._WEBULL_PROTECT_STATE_KEY, ""
+                    )
+                    or ""
+                )
+                out[(webull_acct, symbol)] = (str(row.id), str(base or ""), durable)
             return out
 
         state = await self._run_db(_read, commit=False)
@@ -4405,14 +4427,17 @@ class OmsRiskService:
             if key not in state:  # the row closed: sold, stopped, resolved - the episode is over
                 since.pop(key, None)
                 paged.discard(key)
+                reopened.discard(key)
         for key in list(attach_failed):
             if key not in state and self._is_v2_webull_account(key[0]):
                 attach_failed.discard(key)
         raised = 0
-        for key, (row_id, base) in state.items():
+        for key, (row_id, base, durable) in state.items():
             acct, symbol = key
-            released = key in self._exit_reservation_released
-            failed = (acct, symbol.upper()) in attach_failed
+            # Memory OR the durable mark: either one saying "uncovered" wins. The durable mark is
+            # what survives an OMS restart; only a later ATTACHED rewrites it to "resting".
+            released = key in self._exit_reservation_released or durable == "released"
+            failed = (acct, symbol.upper()) in attach_failed or durable == "attach_failed"
             if base and not released and not failed:
                 if key in paged:
                     self.logger.warning(
@@ -4422,13 +4447,14 @@ class OmsRiskService:
                         (now - since.get(key, now)).total_seconds(),
                     )
                 since.pop(key, None)
+                if key in paged:
+                    reopened.add(key)  # a LATER episode on this row is news, not a duplicate
                 paged.discard(key)
                 continue
             started_at = since.setdefault(key, now)
             elapsed = (now - started_at).total_seconds()
             if elapsed < self._WEBULL_UNCOVERED_PAGE_SECONDS or key in paged:
                 continue
-            paged.add(key)
             cause = (
                 "pair_released_not_sold"
                 if released
@@ -4440,10 +4466,14 @@ class OmsRiskService:
                 "resting broker stop; the software ladder is its only cover",
                 symbol, acct, row_id, cause, elapsed, self._WEBULL_UNCOVERED_PAGE_SECONDS,
             )
-            await self._page_webull_uncovered_share(
-                acct, symbol, managed_row_id=row_id, cause=cause, uncovered_seconds=elapsed
-            )
-            raised += 1
+            if await self._page_webull_uncovered_share(
+                acct, symbol, managed_row_id=row_id, cause=cause, uncovered_seconds=elapsed,
+                new_episode=key in reopened,
+            ):
+                # ⛔ Only a COMMITTED incident ends the paging duty. A failed write leaves the
+                # episode unpaged, so the next sync tries again - for as long as it takes.
+                paged.add(key)
+                raised += 1
         return raised
 
     async def _page_webull_uncovered_share(
@@ -4454,10 +4484,30 @@ class OmsRiskService:
         managed_row_id: str,
         cause: str,
         uncovered_seconds: float,
-    ) -> None:
-        """Persist one critical incident; the pager delivers it. Never raises into the loop."""
+        new_episode: bool = False,
+    ) -> bool:
+        """Persist one critical incident; the pager delivers it. Never raises into the loop.
+
+        Returns True only when an OPEN incident for this managed row is committed - this write's,
+        or an earlier one (the in-memory `paged` set does not survive a restart; the row does).
+        `new_episode` = this process saw the row covered again since its last page, so an open
+        incident from the EARLIER episode must not swallow this one.
+        """
 
         def _write(session: Session) -> None:
+            already = [] if new_episode else session.scalars(
+                select(SystemIncident).where(
+                    SystemIncident.service_name == SERVICE_NAME,
+                    SystemIncident.status != "closed",
+                )
+            ).all()
+            if any(
+                isinstance(incident.payload, dict)
+                and incident.payload.get("source") == self._WEBULL_UNCOVERED_INCIDENT_SOURCE
+                and incident.payload.get("managed_row_id") == managed_row_id
+                for incident in already
+            ):
+                return
             session.add(
                 SystemIncident(
                     service_name=SERVICE_NAME,
@@ -4483,8 +4533,50 @@ class OmsRiskService:
             await self._run_db(_write, commit=True)
         except Exception:  # noqa: BLE001 - a failed page must be loud, never fatal
             self.logger.exception(
-                "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s status=PAGE_FAILED", symbol, acct
+                "[OMS-WEBULL-UNCOVERED-SHARE] sym=%s acct=%s status=PAGE_FAILED - the incident "
+                "was NOT written; retrying on the next sync",
+                symbol, acct,
             )
+            return False
+        return True
+
+    def _mark_webull_protect_state(
+        self, session: Session, acct: str, symbol: str, state: str
+    ) -> bool:
+        """Write the DURABLE protect state onto the position's entry order, in `session`.
+
+        `resting` / `released` / `attach_failed`. The uncovered-share page reads it, because the
+        release latch and the failed-attach mark live in memory and an OMS restart erases them
+        while the old, cancelled pair's handle stays persisted - which read as "covered".
+        """
+        entry = self._find_oco_entry_order(session, acct, symbol)
+        if entry is None:
+            return False
+        payload = dict(entry.payload or {})
+        payload[self._WEBULL_PROTECT_STATE_KEY] = state
+        payload[f"{self._WEBULL_PROTECT_STATE_KEY}_at"] = utcnow().isoformat()
+        entry.payload = payload
+        session.flush()
+        return True
+
+    async def _persist_webull_protect_state(self, acct: str, symbol: str, state: str) -> bool:
+        """Own-transaction form, for callers that hold no session. Never raises."""
+        try:
+            return bool(
+                await self._run_db(
+                    lambda session: self._mark_webull_protect_state(session, acct, symbol, state),
+                    commit=True,
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - the memory latch still covers this process
+            self.logger.exception(
+                "[OMS-WEBULL-PROTECT-STATE] sym=%s acct=%s state=%s status=PERSIST_FAILED - the "
+                "uncovered-share page falls back to the in-memory latch until the next write",
+                symbol, acct, state,
+            )
+            return False
 
     async def _webull_cancel_then_sell(
         self,
@@ -4787,6 +4879,7 @@ class OmsRiskService:
             if release.outcome == "released":
                 self._exit_reservation_released.add(key)
                 released_episodes[key] = episode
+                await self._persist_webull_protect_state(acct, symbol, "released")
                 self.logger.info(
                     "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED] sym=%s acct=%s base=%s "
                     "attempt=%d/%d requested=2 confirmed=2 inline_seconds=%.3f",
@@ -6539,6 +6632,9 @@ class OmsRiskService:
                 return False
             payload = dict(entry.payload or {})
             payload["webull_protect_base_client_order_id"] = base_client_order_id
+            # A pair IS resting again: the only thing that may clear a durable released/failed mark.
+            payload[self._WEBULL_PROTECT_STATE_KEY] = "resting"
+            payload[f"{self._WEBULL_PROTECT_STATE_KEY}_at"] = utcnow().isoformat()
             entry.payload = payload
             session.flush()
             return True

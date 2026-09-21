@@ -1857,3 +1857,175 @@ async def test_uncovered_page_catches_a_dropped_exit_even_when_the_exit_routine_
     clock["now"] += timedelta(seconds=31)
     assert await service._check_webull_uncovered_shares() == 1
     assert _uncovered_incidents(sf)[0]["cause"] == "pair_released_not_sold"
+
+
+# --------------------------------------------------------------------------------------------
+# codex-2 review of c4343657 (2026-09-21): three holes in the net itself.
+# --------------------------------------------------------------------------------------------
+
+
+def _restarted(service: OmsRiskService, sf: sessionmaker) -> OmsRiskService:
+    """A NEW OMS process over the SAME database: every in-memory latch, mark and timer is gone."""
+    fresh = OmsRiskService(
+        service.settings,
+        redis_client=_FakeRedis(),
+        session_factory=sf,
+        broker_adapter=_FanoutAdapter(),
+    )
+    fresh.logger = _CapturedLogger()
+    assert (WEBULL, SYMBOL) not in fresh._exit_reservation_released
+    assert not fresh.__dict__.get("_webull_protect_failed")
+    return fresh
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_retries_on_the_next_sync_when_the_incident_write_fails(
+    monkeypatch,
+) -> None:
+    # P1-1: the key used to enter `paged` BEFORE the write, and the writer swallows its failure -
+    # one bad commit suppressed the page for the whole episode.
+    service, sf, clock = _uncovered_service(monkeypatch)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    service._exit_reservation_released.add((WEBULL, SYMBOL))
+    assert await service._check_webull_uncovered_shares() == 0
+    clock["now"] += timedelta(seconds=31)
+
+    real_run_db = service._run_db
+    failures = {"left": 1}
+
+    async def _flaky_run_db(fn, *, commit=False):
+        if commit and failures["left"]:
+            failures["left"] -= 1
+            raise RuntimeError("database is unavailable")
+        return await real_run_db(fn, commit=commit)
+
+    monkeypatch.setattr(service, "_run_db", _flaky_run_db)
+
+    assert await service._check_webull_uncovered_shares() == 0  # the write failed: NOT a page
+    assert _uncovered_incidents(sf) == []
+    assert "status=PAGE_FAILED" in "\n".join(service.logger.lines)
+    assert (WEBULL, SYMBOL) not in service._webull_uncovered_paged
+
+    clock["now"] += timedelta(seconds=15)
+    assert await service._check_webull_uncovered_shares() == 1  # next sync: retried, delivered
+    assert len(_uncovered_incidents(sf)) == 1
+    clock["now"] += timedelta(seconds=15)
+    assert await service._check_webull_uncovered_shares() == 0  # and only once
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_survives_a_restart_after_a_confirmed_release(monkeypatch) -> None:
+    # P1-2: the release latch is memory; the OLD pair's handle is persisted. A restarted OMS read
+    # "handle exists, nothing released" = covered, and never started its timer.
+    service, sf, clock = _uncovered_service(monkeypatch)
+    # production shape: the attach PERSISTED its handle, so it outlives the restart
+    assert await service._persist_webull_protect_base(WEBULL, SYMBOL, "known-protect-base")
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    with sf() as session:
+        row_id = str(
+            service.store.get_open_managed_position(
+                session, broker_account_name=WEBULL, symbol=SYMBOL
+            ).id
+        )
+    assert await _prepare_webull_leg(service, expected_row_id=row_id) == "released"  # REAL release
+
+    fresh = _restarted(service, sf)
+    assert await fresh._check_webull_uncovered_shares() == 0  # the timer starts on the first pass
+    clock["now"] += timedelta(seconds=31)
+    assert await fresh._check_webull_uncovered_shares() == 1
+    assert _uncovered_incidents(sf)[0]["cause"] == "pair_released_not_sold"
+
+    # A SECOND restart mid-episode must not page the same row again: the open incident is durable.
+    again = _restarted(service, sf)
+    assert await again._check_webull_uncovered_shares() == 0
+    clock["now"] += timedelta(seconds=31)
+    assert await again._check_webull_uncovered_shares() == 0 or len(_uncovered_incidents(sf)) == 1
+    assert len(_uncovered_incidents(sf)) == 1
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_survives_a_restart_after_a_failed_reattach(monkeypatch) -> None:
+    service, sf, clock = _uncovered_service(monkeypatch)
+    # production shape: the ORIGINAL attach persisted its handle; that pair was later cancelled
+    assert await service._persist_webull_protect_base(
+        WEBULL, SYMBOL, "old-cancelled-protect-base"
+    )
+
+    async def _held(*args, **kwargs):
+        return service_module._PositionRead.HELD
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(service, "_broker_symbol_position_state", _held)
+    service.broker_adapter.reject_accounts = {WEBULL}
+    assert not await service._attach_webull_protection(
+        broker_account_name=WEBULL, symbol=SYMBOL, quantity=1, entry_price=2.84,
+        strategy_code="schwab_1m_v2",
+    )
+
+    fresh = _restarted(service, sf)
+    assert await fresh._check_webull_uncovered_shares() == 0
+    clock["now"] += timedelta(seconds=31)
+    assert await fresh._check_webull_uncovered_shares() == 1
+    assert _uncovered_incidents(sf)[0]["cause"] == "reattach_failed"
+
+    # CONTROL: a pair that really attached reads covered after a restart - for as long as it rests.
+    monkeypatch.setattr(fresh, "_broker_symbol_position_state", _held)
+    assert await fresh._attach_webull_protection(
+        broker_account_name=WEBULL, symbol=SYMBOL, quantity=1, entry_price=2.84,
+        strategy_code="schwab_1m_v2",
+    )
+    healthy = _restarted(service, sf)
+    for _ in range(10):
+        clock["now"] += timedelta(seconds=15)
+        assert await healthy._check_webull_uncovered_shares() == 0
+    assert len(_uncovered_incidents(sf)) == 1
+
+
+@pytest.mark.asyncio
+async def test_uncovered_page_reads_open_rows_from_the_database_not_the_memory_list(
+    monkeypatch,
+) -> None:
+    # P1-3: the worklist came from `_managed_v2_symbols` - the blind-list pattern already fixed in
+    # `_poll_native_oco_exits`. An open row the memory set lost was invisible to the net.
+    service, sf, clock = _uncovered_service(monkeypatch)
+    service._exit_reservation_released.add((WEBULL, SYMBOL))
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    service._managed_v2_symbols.clear()  # the in-memory list has lost the position
+
+    assert await service._check_webull_uncovered_shares() == 0
+    clock["now"] += timedelta(seconds=31)
+    assert await service._check_webull_uncovered_shares() == 1
+    assert _uncovered_incidents(sf)[0]["symbol"] == SYMBOL
+
+
+@pytest.mark.asyncio
+async def test_a_generic_software_exit_release_is_durable_too(monkeypatch) -> None:
+    # The OTHER writer of the release latch: CW_HARD_STOP / CW_FLOOR / CW_FLIP release through
+    # `_release_exit_reservation_before_close`, inside the caller's session. Driven through the REAL
+    # emit path with a broker that cancels the pair and then REFUSES the sell (YMAT 2026-09-09's
+    # shape), then a restart: the mark must have been COMMITTED by the caller, not just flushed.
+    service, sf, clock = _uncovered_service(monkeypatch)
+    assert await service._persist_webull_protect_base(WEBULL, SYMBOL, "known-protect-base")
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    service.broker_adapter.reject_accounts = {WEBULL}
+    snapshot = await service._run_db(
+        lambda session: service._read_v2_managed_snapshot(session, WEBULL, SYMBOL, True),
+        commit=False,
+    )
+    position = service._hydrate_v2_position(snapshot)
+    position.update_price(9.40)
+
+    await service._emit_v2_exit_on_loop(
+        WEBULL, SYMBOL, position, snapshot.entry_price, kind="HARD", reference_price=9.40,
+        reason="oms_v2_managed_exit:CW_HARD_STOP", bid=9.40, close_on_fill=True,
+    )
+    assert len(service.broker_adapter.cancel_pair_calls) == 1  # the pair really was taken back
+
+    fresh = _restarted(service, sf)
+    assert await fresh._check_webull_uncovered_shares() == 0
+    clock["now"] += timedelta(seconds=31)
+    assert await fresh._check_webull_uncovered_shares() == 1
+    assert _uncovered_incidents(sf)[0]["cause"] == "pair_released_not_sold"
