@@ -5375,16 +5375,43 @@ class OmsRiskService:
             # lives in the predicate: anything short of fresh broker confirmation runs
             # the ladder instead of skipping it.
             return
-        if not quote:
-            return
-        received_at = quote.get("received_at")
-        if isinstance(received_at, datetime):
-            age_ms = (utcnow() - received_at).total_seconds() * 1000.0
-            if age_ms > float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
-                return  # stale quote — never act on a gap
-        bid = float(quote.get("bid") or 0.0)
-        if bid <= 0:
-            return
+        if confirmation is None:
+            if not quote:
+                return
+            received_at = quote.get("received_at")
+            if isinstance(received_at, datetime):
+                age_ms = (utcnow() - received_at).total_seconds() * 1000.0
+                if age_ms > float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
+                    return  # stale quote — never act on a gap
+            bid = float(quote.get("bid") or 0.0)
+            if bid <= 0:
+                return
+        else:
+            # ⛔⭐⭐ ONE FRESHNESS DECISION PER CONFIRMATION EXIT, TAKEN BEFORE THE RELEASE (2026-09-21).
+            # The confirmation guard above already required THIS quote to be present, newer than
+            # the decision, inside the max age and with a positive bid -- and only then was the
+            # protection released, which is irreversible. The generic guards used to run again
+            # here on the SAME quote object. By then the Schwab leg and the Webull release had both
+            # been awaited inline on the serial tick consumer (which cannot receive a newer quote
+            # while it is blocked), so the quote had aged past the limit by OUR OWN latency, the
+            # second pass bare-returned, and -- the pending decision having been popped above --
+            # nothing ever retried. Live 2026-09-21, 4 of 4 clean releases: GLND 5.17 s, GRML
+            # 5.98 s, NCPL, GLND 6.75 s from FIRED to RELEASED; shares left 474-663 s with no
+            # broker stop, no sell, no re-protect, no page and no log line.
+            # The first pass authorised the release; nothing after it may veto the sell. For a
+            # market close the bid is a price REFERENCE, not a permission.
+            received_at = quote.get("received_at") if quote else None
+            if isinstance(received_at, datetime):
+                age_ms = (utcnow() - received_at).total_seconds() * 1000.0
+                max_age_ms = float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000))
+                if age_ms > max_age_ms:
+                    self.logger.info(
+                        "[OMS-V2-CONFIRMATION-EXIT-QUOTE-AGED] sym=%s acct=%s protection=%s "
+                        "age_ms=%.0f max_age_ms=%.0f decision=proceed — freshness was decided "
+                        "before the release; the quote aged during our own inline awaits",
+                        symbol, acct, protection, age_ms, max_age_ms,
+                    )
+            bid = float((quote or {}).get("bid") or 0.0)
         # #6 (CLRO desync fix): mark closed on the confirmed FILL, not on submit. Default on.
         close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
         try:
