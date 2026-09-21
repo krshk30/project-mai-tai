@@ -162,8 +162,8 @@ minute. **Hypothesis, NOT verified:** a fixed polling order plus a small per-win
 every time. `codex-2`, 10:28 ET [reported, not yet verified by me]: open orders are sorted newest `updated_at` FIRST and polled
 sequentially; `fetch_order_update` does no scheduling of its own — so an order whose reads keep failing never gets a fresh
 `updated_at`, stays at the tail, and is the one still waiting when the allowance runs out. A failure that keeps itself at the
-back of the queue. `account_positions` had the truth 12 minutes before the order poll did — and nothing listens to it for this
-purpose.
+back of the queue. `account_positions` showed a Webull NCPL share 12 minutes before the order poll did. That is a reason to PAGE
+and to try another order-specific read — not evidence that our order filled: the book is shared (see fix item 6).
 
 ## The fix — what "really fixed" has to mean this time
 
@@ -180,9 +180,16 @@ Proposed for after the 16:00 close, in `oms/service.py` (held by `claude-1`), `c
 4. **No silent return anywhere on an exit path.** Each abort logs `reason=`; today's cause had to be inferred from a stopwatch.
 5. **Get the release off the serial tick consumer**, or at least stop paying for the Schwab leg's latency in the Webull leg's
    freshness budget (evaluate legs concurrently, or Webull first). This is the "retries off the tick path" half of sweep item 1.
-6. **Fill detection must not depend on one starvable read.** When an order read fails N times and `account_positions` shows the
-   shares, treat the position as filled: open the managed row, attach the bracket, page. Plus the per-endpoint call counter
-   from `WEBULL_API_BUDGET.md`, so the starvation itself can be measured and then removed.
+6. **Fill detection must not depend on one starvable read — and must not be replaced by an unsafe one.** ⚠ CORRECTED after
+   `codex-2`'s review: my draft said "when `account_positions` shows the shares, treat the position as filled: open the
+   managed row, attach the bracket". **Wrong, and it breaks a rule we already paid for.** `account_positions` is the SHARED
+   broker book — it holds the operator's manual trades and anything else in the account — so it can never prove that OUR order
+   filled, and it must never authorise a managed row, a bracket or a sell (#605: we once booked the operator's manual trade;
+   the invariant is on ACTING). What a position that our orders cannot explain MAY do: **page**, and trigger an
+   **order-specific alternate read keyed on our own `client_order_id`** (a different endpoint than the starved
+   `/trade/order/detail` — e.g. the account's order list / today's fills filtered to our id), which alone may open the row.
+   Alongside: stop the starvation itself — rotate the poll order so a failing read cannot pin itself to the tail, and add the
+   per-endpoint call counter from `WEBULL_API_BUDGET.md` so the allowance can be measured.
 7. **Tests replay REAL tapes, each seen red first:** GLND 09-21 (this file), NCPL 09-21, GIPR ×2 and IMCC 09-18, DLXY 09-16
    (accepted-then-cancelled in a halt). A mutation per guarantee: delete the recovery call ⇒ red; move the release back above
    the guards ⇒ red.
