@@ -1,0 +1,9 @@
+{
+  "pr_number": 1028,
+  "range_base": "1a68941e282cf754b67548f4e1b827054fb7bf8a",
+  "range_head": "901e6a4a203e66aa913f6920cae1075d65d97303",
+  "reviewed_at": "2026-09-21T20:26:14Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed the exact rebased head and the three P1 closures: incident-write failure retries before in-memory paging is latched; released and failed protection state survives a new OMS process through the entry-order payload; the independent net enumerates open managed rows from the database. Read transaction boundaries and pager source coverage, ran 151 focused tests plus ruff, and independently proved removing durable released-state recognition makes the restart control fail."
+}
