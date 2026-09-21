@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import create_engine
@@ -189,3 +189,59 @@ def test_record_fill_if_needed_is_noop_for_duplicate_broker_fill_id() -> None:
 
         assert fill_one is not None
         assert fill_two is None
+
+
+def test_open_order_poll_start_rotates_without_changing_membership() -> None:
+    session_factory = build_test_session_factory()
+    store = OmsStore()
+    with session_factory() as session:
+        strategy = store.ensure_strategy(session, "orb", name="ORB")
+        account = store.ensure_broker_account(
+            session, "live:orb", provider="webull", environment="live"
+        )
+        intent = store.create_trade_intent(
+            session,
+            strategy=strategy,
+            broker_account=account,
+            event=TradeIntentEvent(
+                source_service="test",
+                payload=TradeIntentPayload(
+                    strategy_code="orb",
+                    broker_account_name="live:orb",
+                    symbol="AAPL",
+                    side="buy",
+                    quantity=Decimal("1"),
+                    intent_type="open",
+                    reason="ENTRY",
+                    metadata={},
+                ),
+            ),
+        )
+        anchor = datetime(2026, 9, 21, 14, 0, tzinfo=UTC)
+        for index in range(3):
+            order = store.get_or_create_order(
+                session,
+                intent=intent,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id=f"order-{index}",
+                symbol="AAPL",
+                side="buy",
+                quantity=Decimal("1"),
+                metadata={},
+                broker_order_id=f"broker-{index}",
+                status="accepted",
+            )
+            order.updated_at = anchor + timedelta(seconds=index)
+        session.flush()
+
+        passes = [
+            [order.client_order_id for order in store.list_open_orders(session)] for _ in range(3)
+        ]
+
+    assert passes == [
+        ["order-2", "order-1", "order-0"],
+        ["order-1", "order-0", "order-2"],
+        ["order-0", "order-2", "order-1"],
+    ]
+    assert all(set(order_ids) == {"order-0", "order-1", "order-2"} for order_ids in passes)

@@ -51,6 +51,9 @@ class OmsStore:
         }
     )
 
+    def __init__(self) -> None:
+        self._open_order_rotation_offset = 0
+
     def list_open_orders(
         self,
         session: Session,
@@ -64,7 +67,16 @@ class OmsStore:
         )
         if broker_account_ids:
             query = query.where(BrokerOrder.broker_account_id.in_(broker_account_ids))
-        return session.scalars(query).all()
+        orders = list(session.scalars(query).all())
+        if len(orders) < 2:
+            return orders
+        # A fixed newest-first pass made the same old Webull order consume the tail-end 429 on
+        # every cycle while newer orders were always served first. Rotate the start point without
+        # changing the membership or the durable DB ordering, so every open order reaches the
+        # front within N syncs even when an endpoint budget expires mid-pass.
+        offset = self._open_order_rotation_offset % len(orders)
+        self._open_order_rotation_offset = (offset + 1) % len(orders)
+        return orders[offset:] + orders[:offset]
 
     def list_active_broker_accounts(self, session: Session) -> list[BrokerAccount]:
         return session.scalars(
