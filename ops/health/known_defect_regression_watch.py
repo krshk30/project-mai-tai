@@ -871,6 +871,11 @@ def validate_readings(readings: Sequence[Reading]) -> list[Reading]:
     return sorted(rows, key=lambda row: list(SPEC_BY_KEY).index(row.key))
 
 
+# LATECLOSE1 threshold: an episode that stops within this many rejected close orders is the guard
+# working; one more is a recurrence. One name, so the two SQL predicates cannot drift apart.
+LATE_CLOSE_GUARD_MAX_REJECTS = 3
+_LATE_CLOSE_GUARD_MAX_REJECTS_TOKEN = "__LATE_CLOSE_GUARD_MAX_REJECTS__"
+
 DATABASE_SQL = r"""
 BEGIN READ ONLY;
 WITH bounds AS (
@@ -970,10 +975,12 @@ counts AS (
       (SELECT count(*) FROM classified_reject_episodes
        WHERE late_close_after_fill)::int AS late_close_episodes_webull,
       (SELECT count(*) FROM classified_reject_episodes
-       WHERE late_close_after_fill AND reject_orders <= 3)::int
+       WHERE late_close_after_fill
+         AND reject_orders <= __LATE_CLOSE_GUARD_MAX_REJECTS__)::int
         AS late_close_guard_working_episodes_webull,
       (SELECT count(*) FROM classified_reject_episodes
-       WHERE late_close_after_fill AND reject_orders > 3)::int
+       WHERE late_close_after_fill
+         AND reject_orders > __LATE_CLOSE_GUARD_MAX_REJECTS__)::int
         AS late_close_recurrence_episodes_webull,
       coalesce((SELECT max(reject_orders) FROM classified_reject_episodes
                 WHERE late_close_after_fill), 0)::int
@@ -1021,7 +1028,7 @@ SELECT json_build_object(
     'virtual_zero_held_rows_webull', virtual_zero_held_rows_webull
 )::text FROM counts;
 ROLLBACK;
-"""
+""".replace(_LATE_CLOSE_GUARD_MAX_REJECTS_TOKEN, str(LATE_CLOSE_GUARD_MAX_REJECTS))
 
 
 def _query_database(since: datetime) -> dict[str, int]:

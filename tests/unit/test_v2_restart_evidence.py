@@ -1107,6 +1107,36 @@ def test_massive_empty_response_is_not_an_empty_clean_tape(monkeypatch) -> None:
         )
 
 
+def test_massive_zero_transaction_row_is_not_clean_no_trades_evidence(monkeypatch) -> None:
+    # #1016 pin. NO_TRADES_IN_GAP is proven by Massive returning NO row for a minute. A row that IS
+    # present but says n=0 is a shape Massive does not produce for an empty minute, so it must read
+    # as "source unknown" - never as a quiet minute that passes the restart gate.
+    in_gap_ms = int(datetime(2026, 9, 17, 20, 16, tzinfo=UTC).timestamp() * 1000)
+
+    class ZeroTransactionResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"status": "OK", "resultsCount": 1, "results": [{"t": in_gap_ms, "n": 0, "v": 0}]}
+            ).encode()
+
+    monkeypatch.setattr(vre, "urlopen", lambda *_args, **_kwargs: ZeroTransactionResponse())
+    with pytest.raises(vre.AggregateSourceUnknown, match="duplicate or empty aggregate minutes"):
+        vre._fetch_massive_minute_aggregates(
+            "MNOV",
+            datetime(2026, 9, 17, 20, 15, tzinfo=UTC),
+            datetime(2026, 9, 17, 20, 18, tzinfo=UTC),
+            api_key="secret",
+        )
+
+
 def test_massive_gap_lookup_refuses_regular_session_before_reading_credentials() -> None:
     commands: list[list[str]] = []
     fetch = vre._massive_gap_fetcher(

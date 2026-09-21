@@ -102,7 +102,9 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         '  cat "$APPROVED_MANIFEST_PATH"\n'
         "  exit $?\n"
         "fi\n"
-        'if [[ "$*" == *"rev-parse origin/main" ]]; then echo "$EXPECTED_SHA"; fi\n'
+        'if [[ "$*" == *"rev-parse origin/main" ]]; then\n'
+        '  echo "${REMOTE_MAIN_SHA:-$EXPECTED_SHA}"\n'
+        "fi\n"
         'if [[ "$*" == *"rev-parse HEAD" ]]; then\n'
         '  if [[ -e "$DEPLOY_MARKER" ]]; then echo "$EXPECTED_SHA"; else echo "$CURRENT_SHA"; fi\n'
         "fi\n",
@@ -472,6 +474,34 @@ def test_valid_go_and_both_preflights_reach_only_the_pinned_deploy(tmp_path: Pat
     assert len(list(approval.parent.glob(f"{approval.name}.used-*"))) == 1
     assert "[DEPLOY-APPROVAL-CONSUMED]" in result.stdout
     assert f"[DEPLOY-COMPLETE] deployment=oms-strategy sha={EXPECTED_SHA}" in result.stdout
+
+
+def test_gate_refuses_when_origin_main_moved_after_the_approval(tmp_path: Path) -> None:
+    # Gate-level pin. `deploy_service.sh` has its own main-moved refusal (tested below), but the
+    # gate must refuse FIRST: by then the approval is the only thing standing between a stale GO
+    # and a restart, so it has to survive the refusal unconsumed and deploy must never be called.
+    repo, approval, call_log, env = _fixture(tmp_path)
+    moved = "d" * 40
+    env["REMOTE_MAIN_SHA"] = moved
+
+    result = _run_gate(repo, approval, env)
+
+    assert result.returncode == 3
+    assert "DEPLOY NOT AUTHORISED" in result.stdout
+    assert f"origin/main moved after approval: expected {EXPECTED_SHA}, found {moved}" in (
+        result.stdout + result.stderr
+    )
+    calls = _calls(call_log)
+    # the refusal comes AFTER both preflights and the fetch - it is the last look before consuming
+    assert calls[-2:] == [
+        f"git:-C {repo} fetch origin main",
+        f"git:-C {repo} rev-parse origin/main",
+    ]
+    assert "fence" in calls
+    assert not any(line.startswith("deploy") for line in calls)
+    assert approval.exists(), "a refused approval must stay usable for the corrected run"
+    assert list(approval.parent.glob(f"{approval.name}.used-*")) == []
+    assert "[DEPLOY-APPROVAL-CONSUMED]" not in result.stdout
 
 
 def test_before_1605_et_refuses_before_preflight(tmp_path: Path) -> None:

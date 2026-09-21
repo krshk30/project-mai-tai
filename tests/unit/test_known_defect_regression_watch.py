@@ -1339,3 +1339,26 @@ def test_phantom_detail_carries_a_population_error() -> None:
     assert "population_error=managed/account-position population changed during read" in (
         reading.detail
     )
+
+
+def test_late_close_threshold_is_one_named_constant_used_by_both_sql_predicates() -> None:
+    # LATECLOSE1 pin: "guard working" and "recurrence" must split the episodes at ONE threshold.
+    # A literal edited in one predicate and not the other would make an episode count as both,
+    # or as neither, and the row would still render.
+    assert watch.LATE_CLOSE_GUARD_MAX_REJECTS == 3
+    sql = re.sub(r"\s+", " ", watch.DATABASE_SQL)
+    assert "__LATE_CLOSE_GUARD_MAX_REJECTS__" not in sql
+
+    guarded = re.findall(
+        r"late_close_after_fill AND reject_orders (\S+) (\d+)\)::int "
+        r"AS late_close_guard_working_episodes_webull",
+        sql,
+    )
+    recurrence = re.findall(
+        r"late_close_after_fill AND reject_orders (\S+) (\d+)\)::int "
+        r"AS late_close_recurrence_episodes_webull",
+        sql,
+    )
+    threshold = str(watch.LATE_CLOSE_GUARD_MAX_REJECTS)
+    assert guarded == [("<=", threshold)]
+    assert recurrence == [(">", threshold)]
