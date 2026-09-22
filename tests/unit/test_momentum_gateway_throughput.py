@@ -170,11 +170,15 @@ def test_population_counts_zeros_in_p99_and_writes_ordered_peak_tape(tmp_path: P
     assert [row["source_ns"] for row in rows] == sorted(row["source_ns"] for row in rows)
 
 
-def test_population_accepts_massive_integral_decimal_trade_size(tmp_path: Path) -> None:
+@pytest.mark.parametrize("raw_size", ["18", "18.000000"])
+def test_population_accepts_massive_integral_trade_size(
+    tmp_path: Path,
+    raw_size: str,
+) -> None:
     source = _flat_file(
         tmp_path / "2026-09-17.csv.gz",
         [_ns(8, 0, 0)],
-        size="18.000000",
+        size=raw_size,
     )
 
     result = summarize_massive_flat_file(source, tmp_path / "replay")

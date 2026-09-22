@@ -1164,8 +1164,8 @@ def _flat_file_key(day: date) -> str:
 
 def _fetch_population_command(args: argparse.Namespace) -> int:
     try:
-        if datetime.now(_ET).time() < _AFTER_HOURS_START:
-            raise RuntimeError("population downloads are restricted to 20:00 ET or later")
+        # Flat-file population capture is offline REST/S3 work; the live replay keeps
+        # its separate flat-book and time-window gates below in _suite_command_async.
         require_replay_niceness()
         sessions = tuple(date.fromisoformat(value) for value in args.session)
         if len(sessions) < 3:
