@@ -387,6 +387,7 @@ class _ConfirmationFanoutDecision:
     symbol: str
     source_fill_id: str
     accounts: tuple[str, ...]
+    exit_tag: str = "CONFIRMATION_EXIT"  # CW_HARD_STOP / CW_FLOOR share the same routine
     outcomes: dict[str, str] = field(default_factory=dict)
     released: set[str] = field(default_factory=set)
     reprotected: set[str] = field(default_factory=set)
@@ -620,6 +621,10 @@ class OmsRiskService:
     _WEBULL_UNCOVERED_PAGE_SECONDS = 30.0
     _WEBULL_UNCOVERED_INCIDENT_SOURCE = "oms_v2_webull_uncovered_share"
     _WEBULL_PROTECT_STATE_KEY = "webull_protect_state"
+    # #4 (2026-09-22): a software hard stop / floor on Webull runs on the shared cancel-then-sell
+    # routine. A refused run ends re-protected or paged; the NEXT quote may try again, but not
+    # every quote (YMAT 2026-09-09: 3 refusals inside one second, then nothing).
+    _WEBULL_CW_EXIT_RETRY_SECONDS = 10.0
     _CONFIRMATION_EXIT_EXPIRY_SECONDS = 180.0
     # This recovery still runs inline on the serial quote consumer. Keep the bounded retry
     # short until it moves to a dedicated lane; the marker timings make the actual stall visible.
@@ -4578,6 +4583,59 @@ class OmsRiskService:
             )
             return False
 
+    async def _webull_cw_exit_on_shared_path(
+        self,
+        acct: str,
+        symbol: str,
+        *,
+        tag: str,
+        ref: float,
+        bid: float,
+        expected_row_id: str,
+    ) -> str:
+        """CW_HARD_STOP / CW_FLOOR on a Webull account -> `_webull_cancel_then_sell`.
+
+        One run per position at a time (concurrent quote tasks fall through), and after a run
+        that did not sell, the next attempt waits `_WEBULL_CW_EXIT_RETRY_SECONDS` - the routine
+        has already re-protected or paged, so a quote-rate retry storm buys nothing.
+        """
+        key = (acct, symbol)
+        inflight: set[tuple[str, str]] = self.__dict__.setdefault("_webull_cw_exit_inflight", set())
+        next_try: dict[tuple[str, str], float] = self.__dict__.setdefault(
+            "_webull_cw_exit_next_try", {}
+        )
+        if key in inflight:
+            return "inflight"
+        if time.monotonic() < next_try.get(key, 0.0):
+            return "paced"
+        inflight.add(key)
+        try:
+            outcome = await self._webull_cancel_then_sell(
+                acct,
+                symbol,
+                exit_tag=tag,
+                reason=f"oms_v2_managed_exit:{tag}",
+                kind="HARD",
+                reference_bid=bid,
+                expected_row_id=expected_row_id,
+                expires_at=utcnow() + timedelta(seconds=self._CONFIRMATION_EXIT_EXPIRY_SECONDS),
+                decision=_ConfirmationFanoutDecision(
+                    symbol=symbol,
+                    source_fill_id=f"{tag}:{expected_row_id}",
+                    accounts=(acct,),
+                    exit_tag=tag,
+                ),
+                reference_price=ref,
+            )
+        finally:
+            inflight.discard(key)
+        if outcome in {"closed", "close_submitted", "resolved_by_fill", "flat", "no_open_row"}:
+            next_try.pop(key, None)
+            self._cw_floor_armed.discard(key)
+        else:
+            next_try[key] = time.monotonic() + self._WEBULL_CW_EXIT_RETRY_SECONDS
+        return outcome
+
     async def _webull_cancel_then_sell(
         self,
         acct: str,
@@ -5044,9 +5102,9 @@ class OmsRiskService:
                 "reason": reason,
             }
             title = (
-                f"Confirmation exit REPROTECTED: {symbol} on {acct}; close incomplete"
+                f"{decision.exit_tag} exit REPROTECTED: {symbol} on {acct}; close incomplete"
                 if protected
-                else f"Confirmation exit protection FAILED: {symbol} on {acct}; check now"
+                else f"{decision.exit_tag} exit protection FAILED: {symbol} on {acct}; check now"
             )[:255]
             if incident is None:
                 session.add(
@@ -5273,10 +5331,17 @@ class OmsRiskService:
         protection: str,
         confirmation: dict[str, object] | None = None,
     ) -> None:
-        """Never terminalize a released Webull leg without restoring cover or proving flat."""
+        """Never terminalize an UNCOVERED Webull leg without restoring cover or proving flat.
+
+        Uncovered = the pair was released for this sell, OR there never was one (`no_pair`: a
+        pre-market fill, a failed attach). Both shapes leave the share with no broker stop; a
+        refused sell on either must end re-protected or paged. YMAT 2026-09-09 was the second
+        shape: pre-market hard stop, sell refused three times, no pair to release, no recovery,
+        78 minutes open. Before #4 only `released` reached this recovery.
+        """
         if (
             self._is_v2_webull_account(acct)
-            and protection == "released"
+            and protection in {"released", "no_pair"}
             and outcome not in {"closed", "close_submitted", "flat", "resolved_by_fill"}
         ):
             recovery_confirmation = dict(confirmation or {})
@@ -6149,6 +6214,17 @@ class OmsRiskService:
                         ref, tag = entry_price * (1.0 - self._cw_stop_pct / 100.0), "CW_HARD_STOP"
                     else:  # flip: full close at the current bid (trend exit)
                         ref, tag = bid, "CW_FLIP"
+                    if tag in {"CW_HARD_STOP", "CW_FLOOR"} and self._is_v2_webull_account(acct):
+                        # #4: THE SHARED PATH. The bracket owns target/stop while it rests
+                        # (`native_oco_stand_down` returned above), so this is reached only with
+                        # NO pair resting - never protected, pre-market, or released - exactly
+                        # YMAT 2026-09-09 (pre-market hard stop, 3 refusals, then 78 min open).
+                        # Every run ends sold / resolved / flat / re-protected / paged.
+                        await self._webull_cw_exit_on_shared_path(
+                            acct, symbol, tag=tag, ref=ref, bid=bid,
+                            expected_row_id=snapshot.managed_row_id,
+                        )
+                        return
                     emit_outcome = await self._emit_v2_exit_on_loop(
                         acct, symbol, position, entry_price, kind="HARD",
                         reference_price=ref, reason=f"oms_v2_managed_exit:{tag}",
