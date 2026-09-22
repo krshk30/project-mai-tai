@@ -359,7 +359,7 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "'risk_state', payload->>'risk_state', 'exit_action', payload->>'exit_action', "
         "'protection_restored', payload->>'protection_restored', "
         "'missing_legs', payload->>'missing_legs', 'reason', payload->>'reason', "
-        "'attempts', payload->>'attempts', "
+        "'attempts', payload->>'attempts', 'exit_tag', payload->>'exit_tag', "
         "'max_attempts', payload->>'max_attempts', 'terminal', payload->>'terminal', "
         "'cause', payload->>'cause', "
         "'uncovered_seconds', payload->>'uncovered_seconds')::text "
@@ -456,8 +456,9 @@ def _run_inc1_pager_unlocked(
                 )
             elif incident.get("source") == "oms_v2_confirmation_exit_reprotected":
                 restored = incident.get("protection_restored") == "true"
+                exit_name = (incident.get("exit_tag") or "CONFIRMATION_EXIT").replace("_", " ").lower()
                 body = (
-                    "EXITDONE1: a Webull confirmation exit did not sell the held leg.\n"
+                    f"EXITDONE1: a Webull {exit_name} did not sell the held leg.\n"
                     f"account={incident.get('account') or 'UNKNOWN'} "
                     f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
                     f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'}\n"

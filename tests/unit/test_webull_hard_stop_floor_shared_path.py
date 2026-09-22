@@ -10,6 +10,7 @@ Webull row and a broker that answers like Webull did.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -202,3 +203,73 @@ async def test_CONTROL_a_resting_bracket_still_owns_the_stop(monkeypatch) -> Non
 
     assert _sell_accounts(sf) == []
     assert "[OMS-WEBULL-CANCEL-THEN-SELL]" not in "\n".join(service.logger.lines)
+
+
+@pytest.mark.asyncio
+async def test_no_second_sell_while_the_first_refusal_is_still_recovering(monkeypatch) -> None:
+    # #1032 review P1: a refused sell only SPAWNS recovery. Ten seconds later the ladder must not
+    # send another sell while that recovery is still reading the broker / re-attaching.
+    adapter = _FanoutAdapter(reject_accounts={WEBULL})
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    _cw(service)
+    service._webull_protect_base.pop((WEBULL, SYMBOL), None)
+    gate = asyncio.Event()  # the broker read hangs until we release it
+
+    async def _blocked_read(*args, **kwargs):
+        await gate.wait()
+        return service_module._PositionRead.HELD
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(service, "_broker_symbol_position_state", _blocked_read)
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(service_module, "time", SimpleNamespace(monotonic=lambda: clock["t"]))
+    _quote(service, 9.40)
+
+    def _closes() -> int:
+        return len([a for a in adapter.submitted if a.side == "sell" and "CW_HARD_STOP" in a.reason])
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    assert _closes() == 1
+    assert service._webull_recovery_in_progress(WEBULL, SYMBOL)
+
+    clock["t"] += 60.0  # well past the 10 s pacing - recovery is STILL running
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    assert _closes() == 1, "a second sell raced a running recovery"
+
+    gate.set()  # the broker answers; recovery finishes
+    for task in list(service.__dict__.get("_confirmation_exit_recovery_tasks", set())):
+        await task
+    assert not service._webull_recovery_in_progress(WEBULL, SYMBOL)
+    clock["t"] += 60.0
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    assert _closes() == 2  # CONTROL: once recovery has ended, the ladder may try again
+
+
+@pytest.mark.asyncio
+async def test_a_never_protected_share_is_not_reported_as_released(monkeypatch) -> None:
+    # #1032 review P2: recovery used to record released=True unconditionally.
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    adapter = _FanoutAdapter(reject_accounts={WEBULL})
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    _cw(service)
+    service._webull_protect_base.pop((WEBULL, SYMBOL), None)
+
+    async def _held(*args, **kwargs):
+        return service_module._PositionRead.HELD
+
+    monkeypatch.setattr(service, "_broker_symbol_position_state", _held)
+    _quote(service, 9.40)
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    for task in list(service.__dict__.get("_confirmation_exit_recovery_tasks", set())):
+        await task
+
+    fanout = [l for l in service.logger.lines if "[OMS-V2-CONFIRMATION-EXIT-FANOUT]" in l][-1]
+    assert "legs_released=0" in fanout and "legs_uncovered=1" in fanout
+    assert "released_accounts=-" in fanout
+    incident = [i for i in _incidents(sf) if i.get("broker_account_name") == WEBULL][0]
+    assert incident["exit_tag"] == "CW_HARD_STOP"

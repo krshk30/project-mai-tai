@@ -823,3 +823,36 @@ def test_uncovered_share_pages_once_with_account_symbol_cause_and_seconds(tmp_pa
     assert "account=live:orb symbol=GLND" in pages[0][1]
     assert "cause=pair_released_not_sold uncovered_seconds=31.0" in pages[0][1]
     assert "native protection was cancelled" not in pages[0][1]  # not the generic INC1 body
+
+
+def test_a_hard_stop_page_names_the_hard_stop_not_a_confirmation_exit(tmp_path, monkeypatch):
+    # #1032 review P2: the title named the exit but the body still said "confirmation exit".
+    row = json.loads(_inc1_row(source="oms_v2_confirmation_exit_reprotected"))
+    row.update(
+        {
+            "title": "CW_HARD_STOP exit protection FAILED: YMAT on live:orb; check now",
+            "account": "live:orb",
+            "symbol": "YMAT",
+            "exit_tag": "CW_HARD_STOP",
+            "protection_restored": "false",
+            "missing_legs": "target,stop",
+            "reason": "close_refused",
+        }
+    )
+    pages: list[tuple[str, str]] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [json.dumps(row)])
+    monkeypatch.setattr(uw, "page", lambda title, body: pages.append((title, body)) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+
+    assert pages[0][1].startswith("EXITDONE1: a Webull cw hard stop did not sell the held leg.")
+    assert "confirmation exit" not in pages[0][1]
+    assert "could not be proved restored" in pages[0][1]
+
+
+def test_the_pager_query_reads_exit_tag(monkeypatch):
+    statements: list[str] = []
+    monkeypatch.setattr(uw, "_psql", lambda sql: statements.append(sql) or [])
+    uw._inc1_open_incidents()
+    assert "'exit_tag', payload->>'exit_tag'" in statements[0]

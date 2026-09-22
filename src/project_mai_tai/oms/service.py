@@ -4606,6 +4606,10 @@ class OmsRiskService:
         )
         if key in inflight:
             return "inflight"
+        if self._webull_recovery_in_progress(acct, symbol):
+            # The previous run's recovery is still reading the broker / re-attaching. A second
+            # sell now would race it (#1032 review, P1).
+            return "recovering"
         if time.monotonic() < next_try.get(key, 0.0):
             return "paced"
         inflight.add(key)
@@ -5096,6 +5100,7 @@ class OmsRiskService:
                 "symbol": symbol,
                 "managed_row_id": expected_row_id,
                 "source_fill_id": decision.source_fill_id,
+                "exit_tag": decision.exit_tag,
                 "close_outcome": "reprotected" if protected else "protection_failed",
                 "protection_restored": protected,
                 "missing_legs": missing_legs,
@@ -5237,8 +5242,14 @@ class OmsRiskService:
         *,
         expected_row_id: str,
         confirmation: dict[str, object] | None = None,
+        protection: str = "released",
     ) -> None:
-        """After a refused sell, prove flat or restore broker protection and page once."""
+        """After a refused sell, prove flat or restore broker protection and page once.
+
+        `protection` is the state the sell ran under: "released" (we cancelled the pair) or
+        "no_pair" (there never was one). Telemetry must not report a release that never happened.
+        """
+        released = protection == "released"
         try:
             state = await self._broker_symbol_position_state(acct, symbol)
             if state is _PositionRead.FLAT_CONFIRMED and await self._close_confirmation_flat_leg(
@@ -5248,7 +5259,7 @@ class OmsRiskService:
                     decision, acct, symbol, resolution="flat"
                 )
                 self._finish_confirmation_fanout_leg(
-                    decision, acct, outcome="flat", released=True
+                    decision, acct, outcome="flat", released=released
                 )
                 return
             result = await self._reprotect_confirmation_webull_leg(
@@ -5263,7 +5274,7 @@ class OmsRiskService:
                 decision,
                 acct,
                 outcome=result,
-                released=True,
+                released=released,
                 reprotected=result == "reprotected",
                 uncovered=result == "uncovered",
             )
@@ -5277,11 +5288,12 @@ class OmsRiskService:
                 self.__dict__.setdefault("_confirmation_unprotected_since", {})
             )
             self.logger.exception(
-                "[OMS-V2-CONFIRMATION-EXIT-UNCOVERED] sym=%s acct=%s released=1 "
+                "[OMS-V2-CONFIRMATION-EXIT-UNCOVERED] sym=%s acct=%s released=%d "
                 "reprotected=0 uncovered=1 released_unprotected_seconds=%.3f "
                 "released_unprotected_current=%d reason=recovery_failed",
                 symbol,
                 acct,
+                int(released),
                 elapsed,
                 currently_unprotected,
             )
@@ -5295,7 +5307,7 @@ class OmsRiskService:
                 protected=False,
             )
             self._finish_confirmation_fanout_leg(
-                decision, acct, outcome="uncovered", released=True, uncovered=True
+                decision, acct, outcome="uncovered", released=released, uncovered=True
             )
 
     def _spawn_confirmation_webull_recovery(
@@ -5306,6 +5318,7 @@ class OmsRiskService:
         *,
         expected_row_id: str,
         confirmation: dict[str, object] | None = None,
+        protection: str = "released",
     ) -> None:
         task = asyncio.create_task(
             self._recover_released_confirmation_webull_leg(
@@ -5314,11 +5327,28 @@ class OmsRiskService:
                 symbol,
                 expected_row_id=expected_row_id,
                 confirmation=confirmation,
+                protection=protection,
             )
         )
         tasks = self.__dict__.setdefault("_confirmation_exit_recovery_tasks", set())
         tasks.add(task)
         task.add_done_callback(tasks.discard)
+        # Per-position handle: a software exit must not send another sell while this recovery is
+        # still reading the broker / re-attaching (#1032 review, P1).
+        by_key: dict[tuple[str, str], asyncio.Task] = self.__dict__.setdefault(
+            "_confirmation_exit_recovery_by_key", {}
+        )
+        by_key[(acct, symbol)] = task
+
+        def _forget(done: asyncio.Task, key=(acct, symbol)) -> None:
+            if by_key.get(key) is done:
+                by_key.pop(key, None)
+
+        task.add_done_callback(_forget)
+
+    def _webull_recovery_in_progress(self, acct: str, symbol: str) -> bool:
+        task = self.__dict__.get("_confirmation_exit_recovery_by_key", {}).get((acct, symbol))
+        return task is not None and not task.done()
 
     def _finish_or_recover_confirmation_leg(
         self,
@@ -5352,6 +5382,7 @@ class OmsRiskService:
                 symbol,
                 expected_row_id=expected_row_id,
                 confirmation=recovery_confirmation,
+                protection=protection,
             )
             return
         if self._is_v2_webull_account(acct) and protection == "released":
