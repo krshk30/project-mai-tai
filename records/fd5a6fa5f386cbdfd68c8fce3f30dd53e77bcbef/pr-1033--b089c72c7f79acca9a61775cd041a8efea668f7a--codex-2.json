@@ -1,0 +1,9 @@
+{
+  "pr_number": 1033,
+  "range_base": "b089c72c7f79acca9a61775cd041a8efea668f7a",
+  "range_head": "fd5a6fa5f386cbdfd68c8fce3f30dd53e77bcbef",
+  "reviewed_at": "2026-09-22T20:57:37Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed #1033 design in full: option B and marker corrected, unsupported delivery latency removed, A+C operator choice and unexercised C risk stated accurately. Validate green; no blocking findings."
+}
