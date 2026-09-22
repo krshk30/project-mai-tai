@@ -468,13 +468,13 @@ def _flat_trade_frame(row: Mapping[str, str]) -> dict[str, object]:
     conditions = [int(value) for value in row["conditions"].split(",") if value]
     trf = int(row["trf_id"] or 0)
     size = Decimal(row["size"])
-    if size != size.to_integral_value():
-        raise ValueError(f"flat-file trade size must be integral: {row['size']}")
     return {
         "ev": "T",
         "sym": row["ticker"],
         "t": int(row["sip_timestamp"]),
         "p": row["price"],
+        # Massive flat files include fractional-share sizes; live T.* frames use
+        # integer share counts, so mirror the provider boundary's truncation.
         "s": int(size),
         "c": conditions,
         "i": row["id"],

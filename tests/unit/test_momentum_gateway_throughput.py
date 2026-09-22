@@ -188,15 +188,20 @@ def test_population_accepts_massive_integral_trade_size(
     assert row["frame"]["s"] == 18
 
 
-def test_population_refuses_fractional_trade_size(tmp_path: Path) -> None:
+def test_population_matches_live_integer_shape_for_fractional_trade_size(
+    tmp_path: Path,
+) -> None:
     source = _flat_file(
         tmp_path / "2026-09-17.csv.gz",
         [_ns(8, 0, 0)],
-        size="18.500000",
+        size="0.199846",
     )
 
-    with pytest.raises(ValueError, match="trade size must be integral"):
-        summarize_massive_flat_file(source, tmp_path / "replay")
+    result = summarize_massive_flat_file(source, tmp_path / "replay")
+
+    with gzip.open(result.replay_tape, "rt", encoding="utf-8") as handle:
+        row = json.loads(next(handle))
+    assert row["frame"]["s"] == 0
 
 
 def test_flat_file_signing_uses_path_style_and_never_emits_the_secret() -> None:
