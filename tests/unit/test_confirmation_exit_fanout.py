@@ -902,25 +902,40 @@ async def test_rejecting_webull_leg_does_not_block_schwab_and_reports_one_denomi
     adapter = _FanoutAdapter(reject_accounts={WEBULL})
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    async def _held(*args, **kwargs):
+        return service_module._PositionRead.HELD
+
+    monkeypatch.setattr(service_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(service, "_broker_symbol_position_state", _held)
     await _arm_decision(service)
 
     await service._evaluate_v2_managed_exit(SCHWAB, SYMBOL)
     await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    for task in list(service.__dict__.get("_confirmation_exit_recovery_tasks", set())):
+        await task
 
     assert _sell_accounts(sf) == [SCHWAB, WEBULL]
-    assert [request.broker_account_name for request in adapter.submitted] == [SCHWAB, WEBULL]
+    assert [request.broker_account_name for request in adapter.submitted][:2] == [SCHWAB, WEBULL]
     lines = [
         line
         for line in service.logger.lines
         if "[OMS-V2-CONFIRMATION-EXIT-FANOUT]" in line
     ]
     assert len(lines) == 1
-    assert (
-        "legs_total=2 legs_closed=1 legs_close_submitted=0 legs_refused=1 "
-        "legs_no_open_row=0"
-    ) in lines[0]
+    # 2026-09-22 contract change (#4): a BARE Webull leg (no pair) whose sell is refused is no
+    # longer a terminal "refused" - it is uncovered, so it goes through recovery like a released
+    # one (YMAT 09-09 shape). This broker refuses the re-attach too, so it ends UNCOVERED + PAGED.
+    assert "legs_total=2 legs_closed=1 legs_close_submitted=0" in lines[0]
+    assert "legs_uncovered=1" in lines[0]
     assert "live:schwab_1m_v2:closed" in lines[0]
-    assert "live:orb:refused" in lines[0]
+    assert "live:orb:uncovered" in lines[0]
+    assert any(
+        "exit protection FAILED" in str(row.get("title", "")) for row in _incidents_all(sf)
+    )
 
 
 @pytest.mark.asyncio
@@ -1639,6 +1654,14 @@ async def test_webull_confirmation_exit_sells_after_a_release_that_aged_its_own_
 # #3 - the uncovered-share page. Independent of every exit routine: it only asks whether an
 # OPEN Webull managed row has a native pair resting. Shapes below are 2026-09-21 tapes.
 # --------------------------------------------------------------------------------------------
+
+
+def _incidents_all(sf: sessionmaker) -> list[dict[str, object]]:
+    from project_mai_tai.db.models import SystemIncident
+
+    with sf() as session:
+        rows = session.scalars(select(SystemIncident).order_by(SystemIncident.opened_at)).all()
+        return [dict(row.payload or {}, title=row.title) for row in rows]
 
 
 def _uncovered_incidents(sf: sessionmaker) -> list[dict[str, object]]:
