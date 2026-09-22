@@ -268,7 +268,7 @@ async def test_a_never_protected_share_is_not_reported_as_released(monkeypatch) 
     for task in list(service.__dict__.get("_confirmation_exit_recovery_tasks", set())):
         await task
 
-    fanout = [l for l in service.logger.lines if "[OMS-V2-CONFIRMATION-EXIT-FANOUT]" in l][-1]
+    fanout = [line for line in service.logger.lines if "[OMS-V2-CONFIRMATION-EXIT-FANOUT]" in line][-1]
     assert "legs_released=0" in fanout and "legs_uncovered=1" in fanout
     assert "released_accounts=-" in fanout
     incident = [i for i in _incidents(sf) if i.get("broker_account_name") == WEBULL][0]
