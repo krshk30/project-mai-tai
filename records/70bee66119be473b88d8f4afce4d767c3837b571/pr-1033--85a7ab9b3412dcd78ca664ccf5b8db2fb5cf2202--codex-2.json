@@ -1,0 +1,9 @@
+{
+  "pr_number": 1033,
+  "range_base": "85a7ab9b3412dcd78ca664ccf5b8db2fb5cf2202",
+  "range_head": "70bee66119be473b88d8f4afce4d767c3837b571",
+  "reviewed_at": "2026-09-22T20:59:56Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed rebased #1033: diff is byte-identical to reviewed fd5a6fa (SHA-256 d0abcd22ff731cea59f146932325b62c3a3f8e0b7247d0495dd9a7192461dbb3); both Claude-authored commits retained their markers. Design remains review-clean."
+}
