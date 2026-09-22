@@ -4677,9 +4677,10 @@ class OmsRiskService:
         sell, no re-protect, no page, 474-663 s with no broker stop (the fifth, NCPL 15:07 ET, sold:
         its quote was ~1 s old going in, so the same 2.5 s release left it under the limit).
 
-        `exit_tag` names the caller. Wired tonight: CONFIRMATION_EXIT. CALL SITES TO FLIP NEXT
-        (same defect shape - one-try release, silent drop on refusal; YMAT 2026-09-09 is the
-        measured miss): CW_HARD_STOP, CW_FLOOR, CW_FLIP and the overnight flatten. They pass
+        `exit_tag` names the caller. Wired: CONFIRMATION_EXIT (#1028, 2026-09-21); CW_HARD_STOP
+        and CW_FLOOR via `_webull_cw_exit_on_shared_path` (#1032, 2026-09-22 - YMAT 2026-09-09 was
+        the measured miss). STILL TO FLIP: CW_FLIP (own release path, 3/3 live 09-21) and the
+        overnight flatten. Callers pass
         their own `reason` / `kind` / `reference_price` and a decision whose `source_fill_id`
         identifies the exit (e.g. ``f"{exit_tag}:{managed_row_id}"``); nothing in here is
         confirmation-specific except the optional `confirmation` payload carried into recovery.
