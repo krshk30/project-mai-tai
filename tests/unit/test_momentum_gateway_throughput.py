@@ -124,7 +124,7 @@ def _ns(hour: int, minute: int, second: int) -> int:
     return int(observed.timestamp() * 1_000_000_000)
 
 
-def _flat_file(path: Path, timestamps: list[int]) -> Path:
+def _flat_file(path: Path, timestamps: list[int], *, size: str | int = 1) -> Path:
     with gzip.open(path, "wt", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=_COLUMNS)
         writer.writeheader()
@@ -140,7 +140,7 @@ def _flat_file(path: Path, timestamps: list[int]) -> Path:
                     "price": "2.00",
                     "sequence_number": sequence,
                     "sip_timestamp": timestamp,
-                    "size": 1,
+                    "size": size,
                     "tape": 1,
                     "trf_id": 0,
                     "trf_timestamp": 0,
@@ -168,6 +168,31 @@ def test_population_counts_zeros_in_p99_and_writes_ordered_peak_tape(tmp_path: P
     with gzip.open(result.replay_tape, "rt", encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle]
     assert [row["source_ns"] for row in rows] == sorted(row["source_ns"] for row in rows)
+
+
+def test_population_accepts_massive_integral_decimal_trade_size(tmp_path: Path) -> None:
+    source = _flat_file(
+        tmp_path / "2026-09-17.csv.gz",
+        [_ns(8, 0, 0)],
+        size="18.000000",
+    )
+
+    result = summarize_massive_flat_file(source, tmp_path / "replay")
+
+    with gzip.open(result.replay_tape, "rt", encoding="utf-8") as handle:
+        row = json.loads(next(handle))
+    assert row["frame"]["s"] == 18
+
+
+def test_population_refuses_fractional_trade_size(tmp_path: Path) -> None:
+    source = _flat_file(
+        tmp_path / "2026-09-17.csv.gz",
+        [_ns(8, 0, 0)],
+        size="18.500000",
+    )
+
+    with pytest.raises(ValueError, match="trade size must be integral"):
+        summarize_massive_flat_file(source, tmp_path / "replay")
 
 
 def test_flat_file_signing_uses_path_style_and_never_emits_the_secret() -> None:

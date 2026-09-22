@@ -14,6 +14,7 @@ from collections import Counter
 import csv
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, time
+from decimal import Decimal
 import gzip
 import hashlib
 import hmac
@@ -466,12 +467,15 @@ def _open_csv(path: Path):
 def _flat_trade_frame(row: Mapping[str, str]) -> dict[str, object]:
     conditions = [int(value) for value in row["conditions"].split(",") if value]
     trf = int(row["trf_id"] or 0)
+    size = Decimal(row["size"])
+    if size != size.to_integral_value():
+        raise ValueError(f"flat-file trade size must be integral: {row['size']}")
     return {
         "ev": "T",
         "sym": row["ticker"],
         "t": int(row["sip_timestamp"]),
         "p": row["price"],
-        "s": int(row["size"]),
+        "s": int(size),
         "c": conditions,
         "i": row["id"],
         "x": int(row["exchange"]),
