@@ -118,6 +118,7 @@ class VariantResult:
 
 @dataclass(frozen=True)
 class RetryOneReport:
+    source_commit: str
     start: date
     end: date
     managed_rows: int
@@ -129,6 +130,7 @@ class RetryOneReport:
     noncausal_observed_trips: int
     as_traded: dict[str, object]
     variants: tuple[VariantResult, ...]
+    comparisons: dict[str, object]
     forgone_winners_at_one_retry: tuple[str, ...]
     vsa_replay: dict[str, object]
     dcoy_replay: dict[str, object]
@@ -458,7 +460,9 @@ def _variant(
     )
 
 
-def evaluate(data: StudyInput, start: date, end: date) -> RetryOneReport:
+def evaluate(
+    data: StudyInput, start: date, end: date, *, source_commit: str = ""
+) -> RetryOneReport:
     observed, unknown = _map_observed_trips(data)
     sequences, noncausal = _causal_sequences(observed, data)
     variants = tuple(_variant(sequences, value) for value in (0, 1, 2))
@@ -506,6 +510,7 @@ def evaluate(data: StudyInput, start: date, end: date) -> RetryOneReport:
         }
 
     return RetryOneReport(
+        source_commit=source_commit,
         start=start,
         end=end,
         managed_rows=len(data.managed_rows),
@@ -519,6 +524,26 @@ def evaluate(data: StudyInput, start: date, end: date) -> RetryOneReport:
         noncausal_observed_trips=noncausal,
         as_traded=_summary(observed_legs),
         variants=variants,
+        comparisons={
+            "max_one_minus_as_traded_return_pct": str(
+                (
+                    variants[1].return_sum_pct
+                    - Decimal(str(_summary(observed_legs)["return_sum_pct"]))
+                ).quantize(Decimal("0.0001"))
+            ),
+            "max_one_minus_max_zero_return_pct": str(
+                (variants[1].return_sum_pct - variants[0].return_sum_pct).quantize(
+                    Decimal("0.0001")
+                )
+            ),
+            "max_one_better_than_as_traded": (
+                variants[1].return_sum_pct
+                > Decimal(str(_summary(observed_legs)["return_sum_pct"]))
+            ),
+            "max_one_better_than_max_zero": (
+                variants[1].return_sum_pct > variants[0].return_sum_pct
+            ),
+        },
         forgone_winners_at_one_retry=tuple(forgone),
         vsa_replay=named(date(2026, 9, 23), "VSA"),
         dcoy_replay=named(date(2026, 9, 22), "DCOY"),
@@ -643,6 +668,7 @@ def render_markdown(report: RetryOneReport) -> str:
         "# RETRY-ONE causal backtest",
         "",
         f"Window: {report.start} through {report.end}. Both live broker legs; no dollars.",
+        f"Source commit: `{report.source_commit}`.",
         "",
         "## Population",
         "",
@@ -666,6 +692,11 @@ def render_markdown(report: RetryOneReport) -> str:
             "As traded: "
             f"{report.as_traded['trades']} broker trades, {report.as_traded['winners']} winners, "
             f"{report.as_traded['losers']} losers, sum {report.as_traded['return_sum_pct']}%.",
+            "",
+            "Comparison: max_retries=1 minus as-traded = "
+            f"{report.comparisons['max_one_minus_as_traded_return_pct']} points; "
+            "max_retries=1 minus max_retries=0 = "
+            f"{report.comparisons['max_one_minus_max_zero_return_pct']} points.",
             "",
             "## Broker split",
             "",
@@ -711,12 +742,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--end", type=date.fromisoformat, default=date(2026, 9, 23))
     parser.add_argument("--json", type=Path, required=True)
     parser.add_argument("--markdown", type=Path, required=True)
+    parser.add_argument("--source-commit", required=True)
     args = parser.parse_args(argv)
     database_url = os.environ.get("MAI_TAI_DATABASE_URL", "").strip()
     if not database_url:
         raise SystemExit("MAI_TAI_DATABASE_URL is required")
     data = DbRetryOneDataSource(_session_factory(database_url)).load(args.start, args.end)
-    report = evaluate(data, args.start, args.end)
+    report = evaluate(data, args.start, args.end, source_commit=args.source_commit)
     args.json.parent.mkdir(parents=True, exist_ok=True)
     args.markdown.parent.mkdir(parents=True, exist_ok=True)
     args.json.write_text(
