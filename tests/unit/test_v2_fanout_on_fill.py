@@ -58,12 +58,12 @@ def test_it_will_not_fire_when_the_claim_is_already_held() -> None:
     assert "not state.fanout_webull_claimed" in s
 
 
-def test_it_anchors_on_the_RESTING_LEVEL_not_a_quote() -> None:
-    """The point of firing on the fill is that we know the price. Anchor both the entry and the
-    band on the level the primary actually filled at."""
+def test_it_anchors_on_the_RESTING_TRIGGER_not_a_quote() -> None:
+    """The fill path must use the broker trigger, never the raw ATR line or a later quote."""
     s = _src()
-    assert "entry_px=state.resting_level" in s
-    assert "band_anchor=state.resting_level" in s
+    assert "entry_px=resting_trigger" in s
+    assert "band_anchor=resting_trigger" in s
+    assert "resting_line=state.resting_level" in s
 
 
 def test_extended_hours_is_excluded() -> None:

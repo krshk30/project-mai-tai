@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
@@ -86,6 +88,7 @@ def test_eh_arms_software_rest_without_a_broker_draft() -> None:
     out = _arm(strat, st, trail=9.5, now_ms=PRE_WIN + 1000)
     assert out == []                                              # NOTHING sent to the broker
     assert st.resting_active is True and st.resting_level == 9.5  # armed in memory
+    assert st.resting_trigger == 9.5
 
 
 def test_rth_still_places_a_broker_stop_limit() -> None:
@@ -127,6 +130,45 @@ def test_no_emit_below_the_level() -> None:
     strat._now_ms = lambda: PRE_WIN + 2000
     assert strat.on_quote("TEST", Quote("TEST", 9.40, 9.42, 9.41, PRE_WIN + 2000, 0)) is None
     assert st.resting_flip_ms == 0                               # not triggered
+
+
+def test_offset_does_not_emit_when_price_crosses_line_but_not_trigger() -> None:
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    st = strat.watchlist_state("TEST")
+    _arm(strat, st, trail=10.0, now_ms=PRE_WIN + 1000)
+    assert st.resting_level == 10.0
+    assert st.resting_trigger == pytest.approx(10.05)
+
+    strat._now_ms = lambda: PRE_WIN + 2000
+    assert (
+        strat.on_quote(
+            "TEST",
+            Quote("TEST", 10.03, 10.05, 10.049, PRE_WIN + 2000, 0),
+        )
+        is None
+    )
+    assert st.resting_flip_ms == 0
+
+
+def test_offset_emits_above_trigger_with_trigger_anchored_cap() -> None:
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    st = strat.watchlist_state("TEST")
+    _arm(strat, st, trail=10.0, now_ms=PRE_WIN + 1000)
+
+    strat._now_ms = lambda: PRE_WIN + 2000
+    draft = strat.on_quote(
+        "TEST",
+        Quote("TEST", 10.05, 10.07, 10.06, PRE_WIN + 2000, 0),
+    )
+
+    assert draft is not None
+    assert draft.metadata["cw_flip_level"] == "10.0000"
+    assert draft.metadata["stop_price"] == "10.0500"
+    assert draft.metadata["reference_price"] == "10.0500"
+    assert draft.metadata["entry_price"] == "10.0500"
+    assert draft.metadata["limit_price"] == "10.1002"
+    assert draft.metadata["resting_level"] == "10.0500"
+    assert draft.metadata["resting_offset_pct"] == "0.5"
 
 
 def test_cross_emits_exactly_once_per_trigger() -> None:

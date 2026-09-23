@@ -551,8 +551,11 @@ class Settings(BaseSettings):
     # Discover CONF1 candidates from both configured v2 accounts and dedupe sibling fills by the
     # durable fanout slot. Default OFF keeps the deployed Schwab-only discovery byte-identical.
     strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled: bool = False
-    # The slippage-cap band for the resting buy-stop-limit: limit = line * (1 + band%). 9-day study:
-    # 0.5% = best mean / 92% fill (fills the pullback, not the spike). Tunable without code.
+    # Trigger offset above the ATR line. Zero preserves the historical stop-at-line behavior.
+    # The independently configured band remains a slippage cap above this trigger.
+    strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct: float = 0.0
+    # The slippage-cap band for the resting buy-stop-limit: limit = trigger * (1 + band%).
+    # 9-day study: 0.5% = best mean / 92% fill (fills the pullback, not the spike).
     strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct: float = 0.5
     # STABLE-REST cadence (2026-07-23, the NVVE live lesson): re-place the resting order ONLY when the
     # ATR trail moves >= this %, never every 0.2% wiggle. The 0.2% flicker cancelled/re-placed ~every
@@ -1034,8 +1037,8 @@ class Settings(BaseSettings):
     # ⛔⭐⭐ FAN-OUT ON FILL (2026-08-13) — DEFAULT **ON**, because OFF is the defect.
     #
     # The Webull leg used to be fired by `_fanout_rth_resting_cross`, which watched quotes for price
-    # to reach `resting_level`. But the Schwab stop-limit sits AT THE BROKER and fills the instant
-    # price touches that level — and the detector's own `position_qty != 0` gate then blocks it,
+    # to reach the resting trigger. But the Schwab stop-limit sits AT THE BROKER and fills the instant
+    # price touches that trigger — and the detector's own `position_qty != 0` gate then blocks it,
     # because by the next quote tick we are already holding. A race against the broker, lost almost
     # every time.
     #

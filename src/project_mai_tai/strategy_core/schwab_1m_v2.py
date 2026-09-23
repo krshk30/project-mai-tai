@@ -300,7 +300,8 @@ class SymbolState:
     # latch and can never be orphaned. That property is why this change needs no second latch —
     # see docs/v2-reactive-resting-entry-design.md §4 (#580 / EGG-POLA).
     resting_active: bool = False               # a resting entry is armed (broker order OR EH soft-rest)
-    resting_level: float = 0.0                 # the stop price (the ATR line) the resting order sits at
+    resting_level: float = 0.0                 # raw ATR line; stable-rest reprice baseline
+    resting_trigger: float = 0.0               # offset stop price the resting order sits at
     resting_below_floor_bars: int = 0          # consecutive completed thin bars while the rest works
     # ⛔⭐ SET AT PLACEMENT, READ AT CANCEL. `resting_active` is True for BOTH an RTH broker order and
     # an EH in-memory soft-rest, so it cannot answer "is something live at the BROKER?". Asking the
@@ -321,7 +322,7 @@ class SymbolState:
     resting_flip_ms: int = 0                    # ms-wall-clock the up-flip fired while resting (fill may be
     #                                             settling); 0 = not pending. Silences re-emits through the lag.
     # Dual-broker FAN-OUT once-per-flip latch for the RTH-resting Webull leg (software-detected at
-    # resting_level). Set when the Webull MARKET leg fires; reset with the other per-flip claims at the
+    # resting_trigger). Set when the Webull MARKET leg fires; reset with the other per-flip claims at the
     # new BUY flip / position close, so a reclaim can fire a fresh Webull leg. INERT unless fan-out is on.
     fanout_webull_claimed: bool = False
     # ⛔⭐⭐ WALL-CLOCK MS THE CLAIM ABOVE WAS TAKEN (2026-08-13). The claim is taken when the leg is
@@ -714,6 +715,14 @@ class SchwabV2Strategy:
         self._resting_entry_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled", False)
         )
+        self._resting_trigger_offset_pct = float(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct",
+                0.0,
+            )
+            or 0.0
+        )
         self._resting_entry_band_pct = float(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct", 0.5) or 0.5
         )
@@ -766,7 +775,7 @@ class SchwabV2Strategy:
         self._pending_intents: list[TradeIntentDraft] = []
         # Dual-broker FAN-OUT (docs/per-broker-eligibility-webull-fallback-design.md). When ON, every
         # up-cross also produces a SECOND Webull MARKET-at-cross buy-open leg (reactive + EH-resting
-        # piggyback on the existing cross; RTH-resting adds a software detector at resting_level).
+        # piggyback on the existing cross; RTH-resting adds a software detector at resting_trigger).
         # The Webull-leg drafts accumulate here and are drained + emitted by the bot through a second
         # emitter bound to the Webull account. OFF (default) => no second leg, byte-identical (the OMS
         # mirror-on-fill owns the Webull side).
@@ -1933,11 +1942,13 @@ class SchwabV2Strategy:
         cleared = bool(
             state.resting_active
             or state.resting_level
+            or state.resting_trigger
             or state.resting_flip_ms
             or state.resting_below_floor_bars
         )
         state.resting_active = False
         state.resting_level = 0.0
+        state.resting_trigger = 0.0
         state.resting_flip_ms = 0
         state.resting_below_floor_bars = 0
         return cleared
@@ -2424,8 +2435,8 @@ class SchwabV2Strategy:
         # ⭐⭐ FIRE THE WEBULL LEG *ON THE SCHWAB FILL* — not by re-detecting the cross (2026-08-13).
         #
         # ⛔ THE DEFECT THIS REPLACES. `_fanout_rth_resting_cross` watched quotes for price to reach
-        # `resting_level` and fired the Webull leg then. But the Schwab stop-limit sits AT THE BROKER,
-        # so it fills the instant price touches that level — and the detector's own gate
+        # the broker trigger and fired the Webull leg then. But the Schwab stop-limit sits AT THE BROKER,
+        # so it fills the instant price touches that trigger — and the detector's own gate
         # (`position_qty != 0` → return) then blocks it, because by the next quote tick we are
         # already holding. It was a race against the broker, and the broker won almost every time.
         #
@@ -2435,12 +2446,13 @@ class SchwabV2Strategy:
         # just closed and briefly re-opened the gate. XHG, which Schwab never traded at all, fired
         # 7 of 7 — the leg works precisely when the primary is NOT involved. That is the tell.
         #
-        # The fill is a fact we are already told. Use it. No detection, no race, and the anchor is
-        # the level the primary actually filled at.
+        # The fill is a fact we are already told. Use it. No detection, no race, and anchor the
+        # fan-out band on the trigger where the primary order was eligible to fill.
         #
         # ⛔ THE LANDMINE, per the comment above: `SymbolState` is per SYMBOL, not per account, so
         # the Webull leg's OWN fill lands in this same transition. `fanout_webull_claimed` is what
         # stops that becoming a second order — it is set BEFORE the draft is queued, below.
+        resting_trigger = self._active_resting_trigger(state)
         if (
             prev_held == 0
             and state.position_qty_held > 0
@@ -2452,6 +2464,7 @@ class SchwabV2Strategy:
             # too would put TWO Webull orders behind one signal.
             and not state.webull_resting_active
             and state.resting_level > 0.0
+            and resting_trigger > 0.0
             and bool(state.last_resting_placed_slot)   # a RESTING entry placed this order
             and not self._resting_session_is_eh()      # EH has its own soft-rest cross path
         ):
@@ -2465,21 +2478,27 @@ class SchwabV2Strategy:
                 reason="schwab_resting_fill",
             ):
                 logger.info(
-                    "[V2-FANOUT-ON-FILL] %s schwab resting entry FILLED at level=%.4f -> parallel "
-                    "Webull leg queued immediately (no cross re-detection, no race)",
-                    symbol, state.resting_level,
+                    "[V2-FANOUT-ON-FILL] %s schwab resting entry FILLED line=%.4f "
+                    "trigger=%.4f band_pct=%.2f offset_pct=%.2f -> parallel Webull leg "
+                    "queued immediately (no cross re-detection, no race)",
+                    symbol,
+                    state.resting_level,
+                    resting_trigger,
+                    self._resting_band_pct_value(),
+                    self._resting_offset_pct_value(),
                 )
                 self._pending_webull_fanout_intents.append(
                     self._build_webull_fanout_draft(
                         state,
-                        # Anchor BOTH the price and the band on the level the primary filled at — that
-                        # is the price we decided to buy, and it is what the Schwab leg actually paid.
-                        entry_px=state.resting_level,
+                        # Anchor both the expected price and band on the resting trigger. The actual
+                        # Schwab execution remains broker truth and may differ within the limit cap.
+                        entry_px=resting_trigger,
                         session_is_eh=False,
                         source="rth_resting",
                         entry_n=state.cw_entries_this_flip + 1,
                         entry_slot=state.last_resting_placed_slot,
-                        band_anchor=state.resting_level,
+                        band_anchor=resting_trigger,
+                        resting_line=state.resting_level,
                         shared_identity=shared_identity,
                     )
                 )
@@ -3088,6 +3107,7 @@ class SchwabV2Strategy:
         # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
         state.resting_active = False
         state.resting_level = 0.0
+        state.resting_trigger = 0.0
         state.resting_is_broker_order = False
         state.resting_slot = "first"
         state.last_resting_placed_slot = "first"
@@ -3795,7 +3815,7 @@ class SchwabV2Strategy:
             "cw_resting_suppressed_segment_id=%d cw_resting_suppressed_bars=%d "
             "cw_resting_taken=%s cw_reclaim_taken=%s "
             "resting_below_floor_bars=%d fanout_segment_id=%d position_qty_held=%s resting_active=%s "
-            "resting_flip_ms=%d resting_level=%.4f resting_slot=%s "
+            "resting_flip_ms=%d resting_level=%.4f resting_trigger=%.4f resting_slot=%s "
             "flip_owner_evidence_at_ms=%d flip_owner_evidence_readable=%s "
             "flip_owner_open_positions=%d flip_owner_phase=%s",
             state.symbol, state.cw_armed, state.cw_bars_waited, state.cw_trigger,
@@ -3809,7 +3829,8 @@ class SchwabV2Strategy:
             state.cw_reclaim_taken, state.resting_below_floor_bars,
             state.fanout_segment_id,
             state.position_qty_held, state.resting_active, state.resting_flip_ms,
-            state.resting_level, state.resting_slot, state.flip_owner_evidence_at_ms,
+            state.resting_level, state.resting_trigger, state.resting_slot,
+            state.flip_owner_evidence_at_ms,
             state.flip_owner_evidence_readable, len(state.flip_owner_open_positions),
             state.flip_owner_phase,
         )
@@ -4137,6 +4158,24 @@ class SchwabV2Strategy:
         """Wall-clock now in ms. A method so tests can control the silence-on-fill grace."""
         return int(datetime.now(UTC).timestamp() * 1000)
 
+    def _resting_trigger_for_line(self, line: float) -> float:
+        """Return the broker/software trigger while preserving the ATR line for repricing."""
+        return float(line) * (1.0 + self._resting_offset_pct_value() / 100.0)
+
+    def _resting_offset_pct_value(self) -> float:
+        """Return the configured offset, including for legacy partial strategy fixtures."""
+        return float(getattr(self, "_resting_trigger_offset_pct", 0.0) or 0.0)
+
+    def _resting_band_pct_value(self) -> float:
+        """Return the configured cap band, including for legacy partial strategy fixtures."""
+        return float(getattr(self, "_resting_entry_band_pct", 0.5) or 0.5)
+
+    @staticmethod
+    def _active_resting_trigger(state: SymbolState) -> float:
+        """Read the placed trigger, falling back to the line for pre-offset in-memory fixtures."""
+        trigger = float(state.resting_trigger or 0.0)
+        return trigger if trigger > 0.0 else float(state.resting_level or 0.0)
+
     def _resting_in_window(self, now: datetime | None = None) -> bool:
         """RTH gate for the resting entry: 09:30-16:00 ET = the full regular session (matches the OMS
         OTOCO emit gate `_is_regular_market_session`). UNLIKE the reactive entry it does NOT skip
@@ -4184,11 +4223,15 @@ class SchwabV2Strategy:
                 reason="first_rest_working",
             ):
                 return
-        limit = line * (1.0 + self._resting_entry_band_pct / 100.0)
+        trigger = self._resting_trigger_for_line(line)
+        band_pct = self._resting_band_pct_value()
+        offset_pct = self._resting_offset_pct_value()
+        limit = trigger * (1.0 + band_pct / 100.0)
         state.resting_active = True
         state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel
         state.last_resting_placed_slot = slot
         state.resting_level = line
+        state.resting_trigger = trigger
         state.resting_below_floor_bars = 0
         if self._eh_resting_enabled and self._resting_session_is_eh():
             state.resting_is_broker_order = False      # soft-rest: nothing goes to the broker
@@ -4197,14 +4240,28 @@ class SchwabV2Strategy:
             # emits the marketable EH-LIMIT on the up-cross). No broker draft is queued; the state machine
             # (reprice / grace / window) is otherwise byte-identical.
             logger.info(
-                "[V2-RESTING-EH-ARM] %s slot=%s soft-rest at level=%.4f (EH; broker stop dead, watching quotes)",
-                state.symbol, slot, line,
+                "[V2-RESTING-EH-ARM] %s slot=%s line=%.4f trigger=%.4f "
+                "band_pct=%.2f offset_pct=%.2f soft-rest armed "
+                "(EH; broker stop dead, watching quotes)",
+                state.symbol,
+                slot,
+                line,
+                trigger,
+                band_pct,
+                offset_pct,
             )
             return
         state.resting_is_broker_order = True           # a REAL broker order from here on
         logger.info(
-            "[V2-RESTING-PLACE] %s slot=%s stop=%.4f limit=%.4f (band %.2f%%)",
-            state.symbol, slot, line, limit, self._resting_entry_band_pct,
+            "[V2-RESTING-PLACE] %s slot=%s line=%.4f trigger=%.4f limit=%.4f "
+            "band_pct=%.2f offset_pct=%.2f",
+            state.symbol,
+            slot,
+            line,
+            trigger,
+            limit,
+            band_pct,
+            offset_pct,
         )
         shared_fanout_identity: dict[str, str] = {}
         if self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled:
@@ -4223,9 +4280,11 @@ class SchwabV2Strategy:
             metadata={
                 "path": "ATR Flip", "atr_variant": "CW-v2-resting",
                 "order_type": "STOP_LIMIT",
-                "reference_price": f"{line:.4f}", "entry_price": f"{line:.4f}",
-                "stop_price": f"{line:.4f}", "limit_price": f"{limit:.4f}",
+                "reference_price": f"{trigger:.4f}", "entry_price": f"{trigger:.4f}",
+                "stop_price": f"{trigger:.4f}", "limit_price": f"{limit:.4f}",
                 "cw_flip_level": f"{line:.4f}", "resting_entry": "true",
+                "resting_band_pct": f"{band_pct}",
+                "resting_offset_pct": f"{offset_pct}",
                 # SEGMENT IDENTITY (2026-07-27). Reclaim was turned back ON, and judging it needs
                 # first-entry vs reclaim split from LIVE fills. `cw_flip_level` is NOT a flip id --
                 # it repeats across segments whenever the ATR trail has not moved (FIEE booked two
@@ -4273,10 +4332,17 @@ class SchwabV2Strategy:
                     state.symbol, segment_id, entry_n,
                 )
                 logger.info(
-                    "[V2-WEBULL-RESTING-PLACE] %s slot=%s stop=%.4f limit=%.4f — mirrored rest "
+                    "[V2-WEBULL-RESTING-PLACE] %s slot=%s line=%.4f trigger=%.4f limit=%.4f "
+                    "band_pct=%.2f offset_pct=%.2f — mirrored rest "
                     "sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit "
                     "master)",
-                    state.symbol, slot, line, limit,
+                    state.symbol,
+                    slot,
+                    line,
+                    trigger,
+                    limit,
+                    band_pct,
+                    offset_pct,
                 )
                 self._pending_webull_direct_intents.append(
                     TradeIntentDraft(
@@ -4288,9 +4354,12 @@ class SchwabV2Strategy:
                         metadata={
                             "path": "ATR Flip", "atr_variant": "CW-v2-fanout",
                             "order_type": "STOP_LIMIT",
-                            "stop_price": f"{line:.4f}", "limit_price": f"{limit:.4f}",
-                            "reference_price": f"{line:.4f}", "entry_price": f"{line:.4f}",
+                            "stop_price": f"{trigger:.4f}", "limit_price": f"{limit:.4f}",
+                            "reference_price": f"{trigger:.4f}",
+                            "entry_price": f"{trigger:.4f}",
                             "cw_flip_level": f"{line:.4f}",
+                            "resting_band_pct": f"{band_pct}",
+                            "resting_offset_pct": f"{offset_pct}",
                             "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
                             "resting_entry": "true",
                             "cw_entry_n": str(entry_n),
@@ -4305,6 +4374,7 @@ class SchwabV2Strategy:
 
     def _queue_resting_cancel(self, state: SymbolState, *, reason: str) -> None:
         was_level = state.resting_level
+        was_trigger = self._active_resting_trigger(state)
         was_broker_order = state.resting_is_broker_order
         was_webull_resting = state.webull_resting_active
         webull_reason = reason
@@ -4313,6 +4383,7 @@ class SchwabV2Strategy:
         was_slot = state.resting_slot
         state.resting_active = False
         state.resting_level = 0.0
+        state.resting_trigger = 0.0
         state.resting_is_broker_order = False
         state.resting_slot = "first"
         state.resting_below_floor_bars = 0
@@ -4345,22 +4416,30 @@ class SchwabV2Strategy:
                 reason = "flip_no_fill_soft_rest"
             logger.info(
                 "[V2-RESTING-EH-DISARM] %s slot=%s reason=%s "
-                "resting_below_floor_bars=%d level=%.4f",
+                "resting_below_floor_bars=%d line=%.4f trigger=%.4f "
+                "band_pct=%.2f offset_pct=%.2f",
                 state.symbol,
                 was_slot,
                 reason,
                 was_below_floor_bars,
                 was_level,
+                was_trigger,
+                self._resting_band_pct_value(),
+                self._resting_offset_pct_value(),
             )
         else:
             logger.info(
                 "[V2-RESTING-CANCEL] %s slot=%s reason=%s "
-                "resting_below_floor_bars=%d level=%.4f",
+                "resting_below_floor_bars=%d line=%.4f trigger=%.4f "
+                "band_pct=%.2f offset_pct=%.2f",
                 state.symbol,
                 was_slot,
                 reason,
                 was_below_floor_bars,
                 was_level,
+                was_trigger,
+                self._resting_band_pct_value(),
+                self._resting_offset_pct_value(),
             )
             self._pending_intents.append(TradeIntentDraft(
                 symbol=state.symbol, side="buy", intent_type="cancel",
@@ -4374,8 +4453,16 @@ class SchwabV2Strategy:
         # book we cannot reliably read back. The cancel goes on the DIRECT queue so it bypasses
         # `_maybe_emit`'s entry gates, exactly as the Schwab cancel above does.
         if was_webull_resting:
-            logger.info("[V2-WEBULL-RESTING-CANCEL] %s reason=%s level=%.4f — cancelling the mirror",
-                        state.symbol, reason, was_level)
+            logger.info(
+                "[V2-WEBULL-RESTING-CANCEL] %s reason=%s line=%.4f trigger=%.4f "
+                "band_pct=%.2f offset_pct=%.2f — cancelling the mirror",
+                state.symbol,
+                reason,
+                was_level,
+                was_trigger,
+                self._resting_band_pct_value(),
+                self._resting_offset_pct_value(),
+            )
             # A cancel manages an existing order; it must never mint or persist a new economic
             # opportunity. Carry an identity only when the state already owns one. OMS can still
             # cancel an unbound mirror by account and symbol.
@@ -4808,9 +4895,10 @@ class SchwabV2Strategy:
         return tuple(accounts)
 
     def _resting_stop_ask_allows(
-        self, state: SymbolState, stop_price: float, *, slot: str
+        self, state: SymbolState, line: float, *, slot: str
     ) -> bool:
         """Evaluate and record every RTH stop-vs-ask pricing decision for each broker leg."""
+        trigger = self._resting_trigger_for_line(line)
         quote = state.last_quote
         if quote is None:
             ask, age_ms, reason, held = None, None, "no_quote_fail_open", False
@@ -4818,7 +4906,7 @@ class SchwabV2Strategy:
             ask, age_ms, evidence = self._resting_ask_evidence(quote)
             if evidence != "fresh_quote":
                 reason, held = evidence, True
-            elif ask is not None and ask > 0.0 and stop_price <= ask:
+            elif ask is not None and ask > 0.0 and trigger <= ask:
                 reason, held = "stop_not_above_ask", True
             elif ask is not None and ask <= 0.0:
                 reason, held = "nonpositive_ask_fail_open", False
@@ -4832,13 +4920,17 @@ class SchwabV2Strategy:
         for account in self._resting_pricing_accounts():
             log(
                 "[V2-STOP-ASK-PRICE-CHECK] symbol=%s account=%s slot=%s evaluated=1 "
-                "held=%d reason=%s stop=%.4f ask=%s quote_age_ms=%s max_age_ms=%d",
+                "held=%d reason=%s line=%.4f trigger=%.4f band_pct=%.2f "
+                "offset_pct=%.2f ask=%s quote_age_ms=%s max_age_ms=%d",
                 state.symbol,
                 account,
                 slot,
                 int(held),
                 reason,
-                stop_price,
+                line,
+                trigger,
+                self._resting_band_pct_value(),
+                self._resting_offset_pct_value(),
                 ask_text,
                 age_text,
                 max_age_ms,
@@ -4848,8 +4940,8 @@ class SchwabV2Strategy:
     def _eh_resting_cross_check(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         """EH software-emulated resting TRIGGER (P-B2). A broker buy-stop-limit can't trigger in extended
         hours (Schwab RTH-only; Webull stops 417), so while software-resting in EH we watch quotes and, on
-        the ATR up-cross (a live print reaching the resting level), emit a MARKETABLE EH-LIMIT buy. The OMS
-        band-caps it to min(ask, level*(1+band)) and ABANDONS a gap-through (ask past the band) — the same
+        the ATR up-cross (a live print reaching the offset trigger), emit a MARKETABLE EH-LIMIT buy. The OMS
+        band-caps it to min(ask, trigger*(1+band)) and ABANDONS a gap-through (ask past the band) — the same
         no-chase / gap-through-miss semantics the RTH broker stop-limit has. The draft is routed through
         `_maybe_emit`, which stamps session=AM/PM + the limit at the ask (P-B1's `_apply_extended_hours_
         routing`), then the OMS applies the authoritative band-cap off its OWN feed.
@@ -4865,7 +4957,9 @@ class SchwabV2Strategy:
             return None
         if not self._resting_session_is_eh():         # RTH -> the broker stop-limit owns the cross
             return None
-        if not (state.resting_active and state.resting_level > 0.0):
+        line = float(state.resting_level or 0.0)
+        trigger = self._active_resting_trigger(state)
+        if not (state.resting_active and line > 0.0 and trigger > 0.0):
             return None
         if state.position_qty != 0 or state.resting_flip_ms:   # already filling / in the settle grace
             return None
@@ -4875,24 +4969,30 @@ class SchwabV2Strategy:
         bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
         if not bar_ms or (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
             return None
-        # The up-cross = a live print (fallback mid) reaching the resting level = the broker stop trigger.
+        # The up-cross = a live print (fallback mid) reaching the offset trigger.
         px = float(getattr(quote, "last_price", 0.0) or 0.0)
         if px <= 0.0:
             bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
             ask0 = float(getattr(quote, "ask_price", 0.0) or 0.0)
             px = (bid + ask0) / 2.0 if (bid > 0.0 and ask0 > 0.0) else 0.0
-        if px <= 0.0 or px < state.resting_level:
+        if px <= 0.0 or px < trigger:
             return None
-        level = state.resting_level
-        cap = level * (1.0 + self._resting_entry_band_pct / 100.0)
+        cap = trigger * (1.0 + self._resting_band_pct_value() / 100.0)
         # Enter the settle grace BEFORE returning so a burst of quotes can't double-emit (emit exactly once
         # per cross). The bar-track then HOLDs through the grace (silence-on-fill) and either sees the fill
         # (position_qty != 0 -> clear) or grace-expires and disarms/re-arms (flip_no_fill), all in memory.
         state.resting_flip_ms = self._now_ms()
         state.last_entry_price = px
         logger.info(
-            "[V2-RESTING-EH-CROSS] %s px=%.4f >= level=%.4f -> marketable EH-LIMIT buy (cap=%.4f band=%.2f%%)",
-            state.symbol, px, level, cap, self._resting_entry_band_pct,
+            "[V2-RESTING-EH-CROSS] %s px=%.4f line=%.4f trigger=%.4f cap=%.4f "
+            "band_pct=%.2f offset_pct=%.2f -> marketable EH-LIMIT buy",
+            state.symbol,
+            px,
+            line,
+            trigger,
+            cap,
+            self._resting_band_pct_value(),
+            self._resting_offset_pct_value(),
         )
         shared_fanout_identity: dict[str, str] = {}
         if self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled:
@@ -4913,10 +5013,11 @@ class SchwabV2Strategy:
             ):
                 self._pending_webull_fanout_intents.append(
                     self._build_webull_fanout_draft(
-                        state, entry_px=level, session_is_eh=True, source="eh_resting",
+                        state, entry_px=trigger, session_is_eh=True, source="eh_resting",
                         # NOT yet incremented on this path -- this leg is the NEXT entry.
                         entry_n=state.cw_entries_this_flip + 1,
                         entry_slot=state.last_resting_placed_slot,
+                        resting_line=line,
                         shared_identity=shared_fanout_identity,
                     )
                 )
@@ -4927,10 +5028,12 @@ class SchwabV2Strategy:
             metadata={
                 "path": "ATR Flip", "atr_variant": "CW-v2-resting",
                 "order_type": "limit",                       # marketable EH-LIMIT (NOT a broker STOP_LIMIT)
-                "reference_price": f"{level:.4f}", "entry_price": f"{level:.4f}",
-                "resting_level": f"{level:.4f}",
-                "resting_band_pct": f"{self._resting_entry_band_pct}",
-                "cw_flip_level": f"{level:.4f}",
+                "reference_price": f"{trigger:.4f}", "entry_price": f"{trigger:.4f}",
+                "stop_price": f"{trigger:.4f}", "limit_price": f"{cap:.4f}",
+                "resting_level": f"{trigger:.4f}",
+                "resting_band_pct": f"{self._resting_band_pct_value()}",
+                "resting_offset_pct": f"{self._resting_offset_pct_value()}",
+                "cw_flip_level": f"{line:.4f}",
                 "resting_entry": "true", "eh_resting": "true",
                 "cw_entry_slot": state.last_resting_placed_slot,
                 **shared_fanout_identity,
@@ -5063,6 +5166,7 @@ class SchwabV2Strategy:
     def _build_webull_fanout_draft(
         self, state: SymbolState, *, entry_px: float, session_is_eh: bool, source: str,
         entry_n: int, entry_slot: str | None = None, band_anchor: float | None = None,
+        resting_line: float | None = None,
         shared_identity: dict[str, str] | None = None,
     ) -> TradeIntentDraft:
         """Build the parallel Webull FAN-OUT leg draft (account-agnostic; the bot routes it to the
@@ -5093,7 +5197,13 @@ class SchwabV2Strategy:
             "entry_price": f"{entry_px:.4f}",
             "reference_price": f"{entry_px:.4f}",
             "cw_flip_level": (
-                f"{state.cw_flip_level:.4f}" if state.cw_flip_level > 0.0 else f"{entry_px:.4f}"
+                f"{resting_line:.4f}"
+                if resting_line is not None and resting_line > 0.0
+                else (
+                    f"{state.cw_flip_level:.4f}"
+                    if state.cw_flip_level > 0.0
+                    else f"{entry_px:.4f}"
+                )
             ),
             "fanout_leg": "webull",
             "fanout_source": source,
@@ -5122,6 +5232,9 @@ class SchwabV2Strategy:
         # the OCO bracket and must keep meaning "where we expect to fill".
         if band_anchor is not None and band_anchor > 0:
             md["resting_band_anchor"] = f"{band_anchor:.4f}"
+        if resting_line is not None and resting_line > 0:
+            md["resting_band_pct"] = f"{self._resting_band_pct_value()}"
+            md["resting_offset_pct"] = f"{self._resting_offset_pct_value()}"
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",
@@ -5134,8 +5247,8 @@ class SchwabV2Strategy:
     def _fanout_rth_resting_cross(self, state: SymbolState, quote: Quote) -> None:
         """RTH-RESTING Webull leg (operator decision 2026-07-25, Option 1). In RTH resting mode the
         Schwab side is a broker stop-limit the broker fills at the cross — the bot does NO
-        cross-detection there. This software-detects a live print reaching `resting_level` (the same
-        level the Schwab stop sits at) and queues the Webull MARKET leg IN PARALLEL, once per flip.
+        cross-detection there. This software-detects a live print reaching `resting_trigger` (the
+        Schwab stop price) and queues the Webull MARKET leg IN PARALLEL, once per flip.
         Templated on `_eh_resting_cross_check` but RTH-only. No-op unless fan-out is ON AND a Schwab
         RTH resting order is live AND flat AND not already claimed this flip."""
         if not self._dual_broker_fanout_enabled:
@@ -5146,7 +5259,9 @@ class SchwabV2Strategy:
             return
         if self._resting_session_is_eh():                   # EH -> the EH cross-check queues it instead
             return
-        if not (state.resting_active and state.resting_level > 0.0):
+        line = float(state.resting_level or 0.0)
+        trigger = self._active_resting_trigger(state)
+        if not (state.resting_active and line > 0.0 and trigger > 0.0):
             return
         # ⭐⭐ RELEASE A CLAIM THAT NEVER BECAME A POSITION (2026-08-13).
         # The claim below is taken at QUEUE time. If the leg is then blocked -- by our own band cap,
@@ -5192,11 +5307,11 @@ class SchwabV2Strategy:
                     obs_bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
                     obs_ask = float(getattr(quote, "ask_price", 0.0) or 0.0)
                     obs_px = (obs_bid + obs_ask) / 2.0 if (obs_bid > 0.0 and obs_ask > 0.0) else 0.0
-                if 0.0 < obs_px < state.resting_level:
+                if 0.0 < obs_px < trigger:
                     # EDGE RE-ARM (#862): a print below the level makes the next at-or-above
                     # print a REAL up-cross. Repeated quotes above one level emit nothing.
                     state.fanout_mirror_cross_below_seen = True
-                elif obs_px >= state.resting_level > 0.0 and state.fanout_mirror_cross_below_seen:
+                elif obs_px >= trigger > 0.0 and state.fanout_mirror_cross_below_seen:
                     obs_slot_id = str(state.fanout_claim_slot_id or "").strip()
                     if not obs_slot_id and int(state.fanout_segment_id or 0) > 0:
                         obs_slot_id = fanout_slot_id(
@@ -5213,14 +5328,16 @@ class SchwabV2Strategy:
                         state.fanout_mirror_cross_seq += 1
                         logger.info(
                             "[V2-FANOUT-MIRROR-LIVE-CROSS] %s slot_id=%s cross_seq=%d px=%.4f "
-                            "level=%.4f — D20 DENOMINATOR (#862): one real live up-cross of a "
+                            "line=%.4f trigger=%.4f — D20 DENOMINATOR (#862): one real live "
+                            "up-cross of a "
                             "LIVE mirror level; the guards below may rightly suppress the emit, "
                             "this line fires anyway (zero next session = UNEXERCISED, not clean)",
                             state.symbol,
                             obs_slot_id,
                             state.fanout_mirror_cross_seq,
                             obs_px,
-                            state.resting_level,
+                            line,
+                            trigger,
                         )
         if state.position_qty != 0 or state.fanout_webull_claimed:
             return
@@ -5241,7 +5358,7 @@ class SchwabV2Strategy:
             bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
             ask0 = float(getattr(quote, "ask_price", 0.0) or 0.0)
             px = (bid + ask0) / 2.0 if (bid > 0.0 and ask0 > 0.0) else 0.0
-        if px <= 0.0 or px < state.resting_level:
+        if px <= 0.0 or px < trigger:
             return
         if not self._liquidity_floor_ok(state):
             # LIQUIDITY FLOOR (2026-07-28). This leg fires from a SOFTWARE price-cross detector, so
@@ -5256,8 +5373,14 @@ class SchwabV2Strategy:
         ):
             return
         logger.info(
-            "[V2-FANOUT-RTH-RESTING] %s px=%.4f >= resting_level=%.4f -> parallel Webull MARKET leg",
-            state.symbol, px, state.resting_level,
+            "[V2-FANOUT-RTH-RESTING] %s px=%.4f line=%.4f trigger=%.4f "
+            "band_pct=%.2f offset_pct=%.2f -> parallel Webull MARKET leg",
+            state.symbol,
+            px,
+            line,
+            trigger,
+            self._resting_band_pct_value(),
+            self._resting_offset_pct_value(),
         )
         self._pending_webull_fanout_intents.append(
             self._build_webull_fanout_draft(
@@ -5265,17 +5388,18 @@ class SchwabV2Strategy:
                 # NOT yet incremented on this path -- this leg is the NEXT entry.
                 entry_n=state.cw_entries_this_flip + 1,
                 entry_slot=state.last_resting_placed_slot,
+                resting_line=line,
                 shared_identity=shared_identity,
                 # ⛔⭐ THE BAND MUST MEASURE FROM THE LEVEL WE DECIDED TO BUY AT, NOT FROM WHERE WE
                 # NOTICED (2026-08-13). `entry_px` here is the price at which SOFTWARE detected the
-                # cross, which on a fast move is far above `resting_level` -- live FGI 08-13: level
+                # cross, which on a fast move is far above `resting_trigger` -- live FGI 08-13: trigger
                 # 8.3015, detected at 8.6461. A band off `entry_px` therefore permits the whole
-                # 4.15% run-up and only caps beyond it. The Schwab primary rests AT the level and
-                # caps at level*(1+band); this makes the fan-out leg measure the same way.
+                # 4.15% run-up and only caps beyond it. The Schwab primary rests AT the trigger and
+                # caps at trigger*(1+band); this makes the fan-out leg measure the same way.
                 # ⛔ Passed SEPARATELY and NOT via `entry_px`, because `entry_px` also anchors the
                 # OCO bracket -- re-anchoring that to the level would have set FGI's target below
                 # its own fill price. See `_apply_v2_rth_fanout_limit`.
-                band_anchor=state.resting_level,
+                band_anchor=trigger,
             )
         )
 

@@ -273,6 +273,7 @@ def _resting_state(strat, *, level=9.5, now_ms=RTH_MS):
     st = strat.watchlist_state("TEST")
     st.resting_active = True
     st.resting_level = level
+    st.resting_trigger = strat._resting_trigger_for_line(level)
     st.bars.append(_bar(level + 1, ts=now_ms))            # fresh live bar
     strat._resting_session_is_eh = lambda now=None: False  # RTH
     strat._now_ms = lambda: now_ms
@@ -292,6 +293,25 @@ def test_rth_resting_cross_queues_webull_market_leg():
     # Second cross same flip -> claimed -> no re-queue.
     strat._fanout_rth_resting_cross(st, _quote(9.55))
     assert strat.drain_webull_fanout_intents() == []
+
+
+def test_rth_resting_cross_waits_for_the_offset_trigger() -> None:
+    strat = _strat(
+        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True,
+        strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5,
+    )
+    st = _resting_state(strat, level=10.0)
+
+    strat._fanout_rth_resting_cross(st, _quote(10.049))
+    assert strat.drain_webull_fanout_intents() == []
+    assert st.fanout_webull_claimed is False
+
+    strat._fanout_rth_resting_cross(st, _quote(10.05))
+    legs = strat.drain_webull_fanout_intents()
+    assert len(legs) == 1
+    assert legs[0].metadata["cw_flip_level"] == "10.0000"
+    assert legs[0].metadata["resting_band_anchor"] == "10.0500"
+    assert legs[0].metadata["resting_offset_pct"] == "0.5"
 
 
 def test_rth_resting_primary_and_cross_fired_webull_leg_share_identity():
