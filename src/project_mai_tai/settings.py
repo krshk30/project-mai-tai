@@ -524,6 +524,11 @@ class Settings(BaseSettings):
     # entry owned by one confirmed BUY flip. Missing ownership evidence refuses entry. OFF bypasses
     # every new read, record and gate, restoring the pre-RECLAIM1 behaviour after a v2 restart.
     strategy_schwab_1m_v2_flip_owned_first_entry_enabled: bool = False
+    # RETRY-ONE: after every sibling from a first-rest episode is durably closed, hand the
+    # opportunity back for a bounded number of fresh crosses that trade date. OFF preserves the
+    # confirmation-only reset exactly. The count is anchored to the 04:00 ET strategy session.
+    strategy_schwab_1m_v2_retry_one_enabled: bool = False
+    strategy_schwab_1m_v2_retry_one_max_retries: int = 1
     # P1.3 + P1.4 armed-segment safety (ONE flag gates the boot-mark AND the boot-hold; they are one
     # change). ON: reconstructed CW-v2 segments are capped on db-seed so a restart can't re-issue the
     # per-segment entry cap (the CPHI class), CW-v2 entries are held on boot until a self-verify
