@@ -47,6 +47,10 @@ LAUNCHED_NOT_IMPORTED: dict[str, str] = {
         "read-only after-close PRE07 study; launched with python -m and referenced from docs/"
     ),
     "project_mai_tai.backtest.proximity_sweep": "study CLI; referenced from scripts/ and docs/",
+    "project_mai_tai.backtest.retry_one": (
+        "read-only after-close RETRY-ONE causal study; launched with python -m and referenced "
+        "from docs/review-artifacts/retry-one/"
+    ),
     "project_mai_tai.backtest.study_report": "study CLI; referenced from docs/",
     "project_mai_tai.deploy_preflight": "standalone blocking deploy tooling; has __main__",
     "project_mai_tai.post_restart_health_gate": (
