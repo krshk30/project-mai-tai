@@ -68,6 +68,7 @@ from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipConfirmationClose,
     FlipEntryOwnershipStore,
+    FlipPositionClose,
     FlipPositionBook,
     FlipPositionLeg,
 )
@@ -119,6 +120,97 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
 logger = logging.getLogger(__name__)
 
 INTERVAL_SECS = 60
+_RETRY_ONE_EXIT_REASONS = frozenset(
+    {"CONFIRMATION_EXIT", "CW_HARD_STOP", "CW_FLOOR", "CW_FLIP"}
+)
+
+
+def _retry_one_exit_reason(order: BrokerOrder, intent: TradeIntent | None) -> str:
+    reason = str(getattr(intent, "reason", "") or "")
+    prefix = "oms_v2_managed_exit:"
+    if reason.startswith(prefix):
+        exit_reason = reason[len(prefix) :].strip().upper()
+        if exit_reason in _RETRY_ONE_EXIT_REASONS:
+            return exit_reason
+    if str(getattr(order, "order_type", "") or "").strip().lower() == "oco_exit":
+        return "OCO_RESOLVED_FLAT"
+    return ""
+
+
+def _retry_one_closes_by_symbol(
+    closed_rows: list[OmsManagedPosition],
+    exit_rows: list[tuple[Fill, BrokerOrder, BrokerAccount, TradeIntent | None]],
+) -> dict[str, tuple[FlipPositionClose, ...]]:
+    """Attribute terminal sell fills to exact, already-closed managed episodes."""
+
+    order_totals: dict[object, Decimal] = {}
+    order_context: dict[
+        object, tuple[Fill, BrokerOrder, BrokerAccount, TradeIntent | None]
+    ] = {}
+    for fill, order, account, intent in exit_rows:
+        order_totals[order.id] = order_totals.get(order.id, Decimal("0")) + Decimal(
+            fill.quantity
+        )
+        prior = order_context.get(order.id)
+        if prior is None or fill.filled_at > prior[0].filled_at:
+            order_context[order.id] = (fill, order, account, intent)
+
+    candidates: list[tuple[datetime, str, str, str, str]] = []
+    for order_id, filled_quantity in order_totals.items():
+        fill, order, account, intent = order_context[order_id]
+        if filled_quantity < Decimal(order.quantity):
+            continue
+        exit_reason = _retry_one_exit_reason(order, intent)
+        if not exit_reason:
+            continue
+        intent_payload = dict(getattr(intent, "payload", None) or {})
+        intent_metadata = intent_payload.get("metadata")
+        metadata = {
+            **(dict(intent_metadata) if isinstance(intent_metadata, dict) else {}),
+            **dict(order.payload or {}),
+        }
+        candidates.append(
+            (
+                fill.filled_at,
+                str(account.name or "").strip(),
+                str(order.symbol or "").strip().upper(),
+                str(metadata.get("confirmation_managed_row_id", "") or "").strip(),
+                exit_reason,
+            )
+        )
+
+    rows_by_key: dict[tuple[str, str], list[OmsManagedPosition]] = {}
+    for row in closed_rows:
+        key = (str(row.broker_account_name), str(row.symbol).upper())
+        rows_by_key.setdefault(key, []).append(row)
+
+    closes: dict[str, list[FlipPositionClose]] = {}
+    for (account_name, symbol), rows in rows_by_key.items():
+        ordered = sorted(rows, key=lambda value: value.entry_time)
+        for index, row in enumerate(ordered):
+            next_entry = ordered[index + 1].entry_time if index + 1 < len(ordered) else None
+            row_id = str(row.id)
+            matching = [
+                candidate
+                for candidate in candidates
+                if candidate[1] == account_name
+                and candidate[2] == symbol
+                and candidate[0] >= row.entry_time
+                and candidate[0] <= row.updated_at
+                and (next_entry is None or candidate[0] < next_entry)
+                and (not candidate[3] or candidate[3] == row_id)
+            ]
+            if not matching:
+                continue
+            terminal = max(matching, key=lambda value: value[0])
+            closes.setdefault(symbol, []).append(
+                FlipPositionClose(
+                    account_name=account_name,
+                    managed_row_id=row_id,
+                    exit_reason=terminal[4],
+                )
+            )
+    return {symbol: tuple(values) for symbol, values in closes.items()}
 
 
 class ConfirmationDiscoveryConfigurationError(RuntimeError):
@@ -584,8 +676,20 @@ class SchwabV2BotService:
         self.flip_entry_ownership_store = FlipEntryOwnershipStore(self.session_factory)
         try:
             restored = self.flip_entry_ownership_store.restore_active()
+            restored_retry_budgets = (
+                self.flip_entry_ownership_store.restore_retry_budgets()
+                if bool(
+                    getattr(
+                        self.settings,
+                        "strategy_schwab_1m_v2_retry_one_enabled",
+                        False,
+                    )
+                )
+                else {}
+            )
         except Exception:  # noqa: BLE001 - unreadable ownership must refuse entries
             restored = {}
+            restored_retry_budgets = {}
             restore_readable = False
             logger.exception(
                 "[V2-FLIP-OWNER-RESTORE] evaluated=0 restored=0 could_not_tell=1 "
@@ -605,11 +709,20 @@ class SchwabV2BotService:
                 raise RuntimeError("flip entry ownership store is not configured")
             store.record(record, active=active, reason=reason)
 
+        def persist_retry_budget(symbol: str, closes_today: int) -> None:
+            store = self.flip_entry_ownership_store
+            if store is None:
+                raise RuntimeError("flip entry ownership store is not configured")
+            store.record_retry_budget(symbol, closes_today)
+
         self.strategy.configure_flip_entry_ownership(
             persist,
             active_segments=active_segments,
             restored=restored,
             restore_readable=restore_readable,
+            retry_budget_persist=persist_retry_budget,
+            restored_retry_budgets=restored_retry_budgets,
+            retry_budget_restore_readable=restore_readable,
         )
 
     @property
@@ -2227,6 +2340,18 @@ class SchwabV2BotService:
                 readable=False,
                 legs_by_symbol={},
             )
+        retry_one_enabled = bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_retry_one_enabled",
+                False,
+            )
+        )
+        session_start = _current_scanner_session_start_utc()
+        closed_rows: list[OmsManagedPosition] = []
+        retry_exit_rows: list[
+            tuple[Fill, BrokerOrder, BrokerAccount, TradeIntent | None]
+        ] = []
         try:
             with self.session_factory() as session:
                 rows = session.scalars(
@@ -2246,11 +2371,38 @@ class SchwabV2BotService:
                         Strategy.code == STRATEGY_CODE,
                         BrokerAccount.name.in_(accounts),
                         Fill.side == "sell",
-                        Fill.filled_at >= _current_scanner_session_start_utc(),
+                        Fill.filled_at >= session_start,
                         TradeIntent.reason
                         == "oms_v2_managed_exit:CONFIRMATION_EXIT",
                     )
                 ).all()
+                if retry_one_enabled:
+                    closed_rows = list(
+                        session.scalars(
+                            select(OmsManagedPosition).where(
+                                OmsManagedPosition.strategy_code == STRATEGY_CODE,
+                                OmsManagedPosition.broker_account_name.in_(accounts),
+                                OmsManagedPosition.status == "closed",
+                                OmsManagedPosition.current_quantity == 0,
+                                OmsManagedPosition.entry_time >= session_start,
+                            )
+                        ).all()
+                    )
+                    retry_exit_rows = list(
+                        session.execute(
+                            select(Fill, BrokerOrder, BrokerAccount, TradeIntent)
+                            .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
+                            .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
+                            .join(Strategy, Strategy.id == Fill.strategy_id)
+                            .outerjoin(TradeIntent, TradeIntent.id == BrokerOrder.intent_id)
+                            .where(
+                                Strategy.code == STRATEGY_CODE,
+                                BrokerAccount.name.in_(accounts),
+                                Fill.side == "sell",
+                                Fill.filled_at >= session_start,
+                            )
+                        ).all()
+                    )
                 terminal_unfilled: dict[str, frozenset[int]] = {}
                 terminal_evaluated = 0
                 if unknown_opportunities:
@@ -2369,17 +2521,23 @@ class SchwabV2BotService:
                     fanout_slot_id=slot_id,
                 )
             )
+        retry_closes_by_symbol = (
+            _retry_one_closes_by_symbol(closed_rows, retry_exit_rows)
+            if retry_one_enabled
+            else {}
+        )
         observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
         logger.info(
             "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=%d known=1 unknown=0 symbols=%d "
             "confirmation_evaluated=%d confirmation_closes=%d skipped_unbound=%d malformed=%d "
-            "unfilled_opportunities_evaluated=%d terminal_unfilled=%d",
+            "retry_closes=%d unfilled_opportunities_evaluated=%d terminal_unfilled=%d",
             len(rows),
             len(by_symbol),
             confirmation_evaluated,
             sum(len(values) for values in closes_by_symbol.values()),
             confirmation_skipped_unbound,
             confirmation_malformed,
+            sum(len(values) for values in retry_closes_by_symbol.values()),
             terminal_evaluated,
             sum(len(values) for values in terminal_unfilled.values()),
         )
@@ -2390,6 +2548,7 @@ class SchwabV2BotService:
             confirmation_closes_by_symbol={
                 symbol: tuple(closes) for symbol, closes in closes_by_symbol.items()
             },
+            closes_by_symbol=retry_closes_by_symbol,
             terminal_unfilled_opportunities_by_symbol=terminal_unfilled,
         )
 

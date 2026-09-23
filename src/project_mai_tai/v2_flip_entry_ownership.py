@@ -13,6 +13,7 @@ from project_mai_tai.fanout_segment_store import current_session_anchor
 
 
 SNAPSHOT_TYPE = "v2_flip_entry_ownership"
+RETRY_BUDGET_SNAPSHOT_TYPE = "v2_retry_one_budget"
 SCHEMA_VERSION = 1
 ACTIVE_PHASES = frozenset(
     {
@@ -45,6 +46,15 @@ class FlipConfirmationClose:
 
 
 @dataclass(frozen=True)
+class FlipPositionClose:
+    """A durable terminal close attributed to one exact managed-position row."""
+
+    account_name: str
+    managed_row_id: str
+    exit_reason: str
+
+
+@dataclass(frozen=True)
 class FlipPositionBook:
     observed_at_ms: int
     readable: bool
@@ -52,6 +62,9 @@ class FlipPositionBook:
     confirmation_closes_by_symbol: Mapping[
         str, tuple[FlipConfirmationClose, ...]
     ] = field(default_factory=dict)
+    closes_by_symbol: Mapping[str, tuple[FlipPositionClose, ...]] = field(
+        default_factory=dict
+    )
     terminal_unfilled_opportunities_by_symbol: Mapping[
         str, frozenset[int]
     ] = field(default_factory=dict)
@@ -111,6 +124,64 @@ class FlipEntryOwnershipStore:
                 )
             )
             session.commit()
+
+    def record_retry_budget(
+        self,
+        symbol: str,
+        closes_today: int,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        observed_at = now or datetime.now(UTC)
+        with self._session_factory() as session:
+            session.add(
+                DashboardSnapshot(
+                    snapshot_type=RETRY_BUDGET_SNAPSHOT_TYPE,
+                    payload={
+                        "schema_version": SCHEMA_VERSION,
+                        "strategy_code": "schwab_1m_v2",
+                        "symbol": str(symbol).strip().upper(),
+                        "closes_today": max(0, int(closes_today)),
+                    },
+                    created_at=observed_at,
+                )
+            )
+            session.commit()
+
+    def restore_retry_budgets(
+        self, *, now: datetime | None = None
+    ) -> Mapping[str, int]:
+        anchor = current_session_anchor(now)
+        with self._session_factory() as session:
+            rows = session.scalars(
+                select(DashboardSnapshot)
+                .where(
+                    DashboardSnapshot.snapshot_type == RETRY_BUDGET_SNAPSHOT_TYPE,
+                    DashboardSnapshot.created_at >= anchor,
+                )
+                .order_by(DashboardSnapshot.created_at, DashboardSnapshot.id)
+            ).all()
+
+        latest: dict[str, int] = {}
+        for row in rows:
+            if not isinstance(row.payload, dict):
+                raise ValueError(f"unreadable retry budget snapshot {row.id}")
+            payload = row.payload
+            symbol = str(payload.get("symbol", "")).strip().upper()
+            if (
+                not symbol
+                or payload.get("strategy_code") != "schwab_1m_v2"
+                or int(payload.get("schema_version", 0) or 0) != SCHEMA_VERSION
+            ):
+                raise ValueError(f"invalid retry budget snapshot {row.id}")
+            try:
+                closes_today = int(payload.get("closes_today", 0) or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"invalid retry budget snapshot {row.id}") from exc
+            if closes_today < 0:
+                raise ValueError(f"invalid retry budget snapshot {row.id}")
+            latest[symbol] = closes_today
+        return latest
 
     def restore_active(
         self, *, now: datetime | None = None
