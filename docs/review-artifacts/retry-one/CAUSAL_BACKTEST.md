@@ -1,7 +1,7 @@
 # RETRY-ONE causal backtest
 
 Window: 2026-08-24 through 2026-09-23. Both live broker legs; no dollars.
-Source commit: `4014fb8e79904608c8d76b7a8861e278d02b6863`.
+Source commit: `223a4b015a7daf82c928a46e296ac34064d215f1`.
 
 ## Population
 
