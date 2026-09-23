@@ -1,0 +1,9 @@
+{
+  "pr_number": 1035,
+  "range_base": "685c36daba044e93f84f1f1a8a7e77194bfe1737",
+  "range_head": "75938a22368b05eb19b4fed11e12043fb0c3c9af",
+  "reviewed_at": "2026-09-23T16:18:27Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Implements spec #1034 (resting entry trigger OFFSET). Both commits read in full. Spec's frozen details verified in the diff and each held by a mutation I ran myself against the PR's 8 test files (170 tests): F1 ask guard on the trigger - mutation 'guard on the raw line' => 2 RED (first + reclaim); F2 resting_level stays the LINE (reprice baselines :4668/:4857 untouched), new resting_trigger - mutation 'reprice baseline on the trigger' => 1 RED; F3 cw_flip_level == line, stop/reference/entry == trigger, limit == trigger*(1+band), resting_offset_pct recorded, same on first/reclaim/EH/mirror/fan-out - mutation 'cw_flip_level = trigger' => 3 RED; 'offset on the limit only' => 10 RED; 'EH cross fires on the line' => 2 RED. F4 markers print line= trigger= band_pct= offset_pct=. Default 0.0 = byte-identical (test_trigger_offset_defaults_to_zero + 170 existing tests green). OMS EH band cap reads metadata resting_level, now the trigger - consistent with the spec (cap relative to the trigger). Full unit suite on 75938a2: 4230 passed / 47 failed = the 46-name host-tooling baseline + the Momentum timing flake (not this PR). ruff clean. NOT covered: nothing has run on the box; deploy value 0.5 is an ENV change on its own day (never with C's first day); pass mark after deploy in the spec (avoided losers vs haircut cost, by name, 5 sessions); the replay evidence is directional, not a backtest."
+}
