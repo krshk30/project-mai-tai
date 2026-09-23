@@ -1,0 +1,9 @@
+{
+  "pr_number": 1038,
+  "range_base": "70253e4acca611bb75660c53684902e6282d320e",
+  "range_head": "0d283e9b5b0b6a8e0eb89002473235d1b762e802",
+  "reviewed_at": "2026-09-23T20:20:57Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "GAPHOLD build of spec #1037 (operator's rule: detect the gap on the clock while the symbol still prints, hold ENTRIES only, resume after 2 x atr_period contiguous bars with the ATR/trail RE-SEEDED from those bars). Read in full: strategy_core (155+), bot service (109+/2-), settings (4+), tests (324+). Verified: clock detect in _evaluate_gap_holds requires bar_age > 90 s AND a print newer than the last bar within 90 s (quiet stock excluded); begin_gap_hold drops queued opens, cancels both resting legs via _release_post_close_entry_state(reason=bar_gap), resets the ATR state at the hole; _prepare_gap_hold_bar restarts the count and re-resets on a recovery gap; _maybe_resume_gap_hold requires 2*atr_period; the bot routing gate drops OPEN drafts only, closes pass. Six mutations I ran (file byte-restored after each): no re-seed => RED; required = 2*period-1 => 2 RED; begin_gap_hold without the cancel => RED; detect ignoring 'still printing' => RED; routing gate dropping closes => RED; recovery gap not restarting the count => RED. (Two first-aim mutations landed on belt-and-braces lines and survived; re-aimed at the carrying lines, both RED.) 102 tests in the gap-hold + resting suites; full unit suite on 0d283e9b: 4236 passed / 47 failed = the 46-name host-tooling baseline + the Momentum timing flake; ruff clean; main is an ancestor; validate pass. Default False = byte-identical (test_flag_off_is_inert). NOT covered: nothing has run on the box; _evaluate_gap_holds runs per quote over all subscribed symbols (cheap dict reads, not measured under load); deploy is a flag on its own day; the watcher's 'REST empty => halt' mislabel is filed separately, not fixed here."
+}
