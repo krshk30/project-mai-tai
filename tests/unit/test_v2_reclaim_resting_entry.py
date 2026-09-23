@@ -111,6 +111,58 @@ def test_reclaim_rests_at_the_segment_high(monkeypatch, caplog) -> None:
     )
 
 
+def test_reclaim_offset_preserves_line_metadata_and_moves_order_prices(monkeypatch) -> None:
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+
+    strat._cw_v2_reclaim_resting_track(st)
+
+    assert st.resting_level == 10.0
+    assert st.resting_trigger == pytest.approx(10.05)
+    md = _places(strat)[0].metadata
+    assert md["cw_flip_level"] == "10.0000"
+    assert md["stop_price"] == "10.0500"
+    assert md["reference_price"] == "10.0500"
+    assert md["entry_price"] == "10.0500"
+    assert md["limit_price"] == "10.1002"
+    assert md["resting_offset_pct"] == "0.5"
+
+
+def test_reclaim_offset_keeps_reprice_boundary_on_raw_segment_high(monkeypatch) -> None:
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=100.0)
+    strat._cw_v2_reclaim_resting_track(st)
+    strat._pending_intents.clear()
+
+    st.cw_segment_high = 100.99
+    strat._cw_v2_reclaim_resting_track(st)
+    assert _cancels(strat) == []
+    assert st.resting_level == 100.0
+    assert st.resting_trigger == pytest.approx(100.5)
+
+    st.cw_segment_high = 101.0
+    strat._cw_v2_reclaim_resting_track(st)
+    assert len(_cancels(strat)) == 1
+
+
+def test_reclaim_stop_ask_guard_uses_offset_trigger(monkeypatch) -> None:
+    admitted = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    _rth(admitted, monkeypatch)
+    admitted_state = _armed(sym="ADMIT", seg_high=9.98)
+    admitted_state.last_quote = Quote("ADMIT", 9.99, 10.00, 9.995, RTH, 0)
+    admitted._cw_v2_reclaim_resting_track(admitted_state)
+    assert _places(admitted)[0].metadata["stop_price"] == "10.0299"
+
+    refused = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    _rth(refused, monkeypatch)
+    refused_state = _armed(sym="REFUSE", seg_high=9.90)
+    refused_state.last_quote = Quote("REFUSE", 9.99, 10.00, 9.995, RTH, 0)
+    refused._cw_v2_reclaim_resting_track(refused_state)
+    assert _places(refused) == []
+
+
 def test_it_stands_down_while_the_FIRST_slot_owns_the_order(monkeypatch) -> None:
     """ONE RESTING ORDER PER SYMBOL. `_resting_entry_already_open` refuses a second live buy per
     symbol; this is why it is never reached."""

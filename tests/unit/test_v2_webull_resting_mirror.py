@@ -62,6 +62,8 @@ def test_the_webull_cancel_is_ACTUALLY_QUEUED_when_a_mirror_was_live() -> None:
     s._pending_webull_direct_intents = []
     s._atr_qty = 2
     s._webull_fanout_qty = 1
+    s._resting_entry_band_pct = 0.5
+    s._resting_trigger_offset_pct = 0.0
 
     st = strat.SymbolState(symbol="TEST")
     st.resting_active = True
@@ -78,11 +80,14 @@ def test_the_webull_cancel_is_ACTUALLY_QUEUED_when_a_mirror_was_live() -> None:
     assert st.webull_resting_active is False, "the flag must be cleared so it cannot double-cancel"
 
 
-def _place_stub(mirror_on: bool) -> tuple[object, "strat.SymbolState"]:
+def _place_stub(
+    mirror_on: bool, *, offset_pct: float = 0.0
+) -> tuple[object, "strat.SymbolState"]:
     s = object.__new__(strat.SchwabV2Strategy)
     s._pending_intents = []
     s._pending_webull_direct_intents = []
     s._resting_entry_band_pct = 0.5
+    s._resting_trigger_offset_pct = offset_pct
     s._eh_resting_enabled = False
     s._resting_session_is_eh = lambda *a, **k: False      # RTH
     s._atr_qty = 2
@@ -127,6 +132,19 @@ def test_the_two_legs_rest_at_the_SAME_price() -> None:
     assert schwab["limit_price"] == webull["limit_price"]
 
 
+def test_the_two_legs_share_the_same_offset_trigger() -> None:
+    s, st = _place_stub(mirror_on=True, offset_pct=0.5)
+    strat.SchwabV2Strategy._queue_resting_place(s, st, 10.0, slot="first")
+    schwab = s._pending_intents[0].metadata
+    webull = s._pending_webull_direct_intents[0].metadata
+
+    assert st.resting_level == 10.0
+    assert schwab["cw_flip_level"] == webull["cw_flip_level"] == "10.0000"
+    assert schwab["stop_price"] == webull["stop_price"] == "10.0500"
+    assert schwab["limit_price"] == webull["limit_price"] == "10.1002"
+    assert schwab["resting_offset_pct"] == webull["resting_offset_pct"] == "0.5"
+
+
 def test_no_webull_cancel_when_no_mirror_was_live() -> None:
     """The mirror off (or never placed) must not emit a spurious cancel for a non-existent order."""
     s = object.__new__(strat.SchwabV2Strategy)
@@ -134,6 +152,8 @@ def test_no_webull_cancel_when_no_mirror_was_live() -> None:
     s._pending_webull_direct_intents = []
     s._atr_qty = 2
     s._webull_fanout_qty = 1
+    s._resting_entry_band_pct = 0.5
+    s._resting_trigger_offset_pct = 0.0
 
     st = strat.SymbolState(symbol="TEST")
     st.resting_active = True

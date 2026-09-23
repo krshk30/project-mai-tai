@@ -10,6 +10,8 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
 
@@ -69,8 +71,27 @@ def test_places_a_stop_limit_at_the_short_trail() -> None:
     assert md["stop_price"] == "9.5000"               # the ATR line = trigger
     assert md["limit_price"] == "9.5475"              # line * (1 + 0.5% band) = fill cap
     assert md["reference_price"] == "9.5000" and md["entry_price"] == "9.5000"  # target/stop off the line
+    assert md["cw_flip_level"] == "9.5000"
+    assert md["resting_offset_pct"] == "0.0"
     assert "ATR Flip" in d.reason                     # keeps the ATR-only belt
     assert st.resting_active is True and st.resting_level == 9.5
+    assert st.resting_trigger == 9.5
+
+
+def test_offset_moves_the_trigger_and_limit_without_moving_the_line() -> None:
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    st = strat.watchlist_state("TEST")
+
+    md = _tick(strat, st, trail=10.0)[0].metadata
+
+    assert st.resting_level == 10.0
+    assert st.resting_trigger == pytest.approx(10.05)
+    assert md["cw_flip_level"] == "10.0000"
+    assert md["stop_price"] == "10.0500"
+    assert md["reference_price"] == "10.0500"
+    assert md["entry_price"] == "10.0500"
+    assert md["limit_price"] == "10.1002"
+    assert md["resting_offset_pct"] == "0.5"
 
 
 def test_band_is_tunable() -> None:
@@ -104,6 +125,21 @@ def test_reprice_threshold_is_tunable() -> None:
     assert _tick(strat, st, trail=9.40) == []                        # 1.05% < 2% -> HOLD
 
 
+def test_offset_keeps_the_first_rest_reprice_boundary_on_the_raw_line() -> None:
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    st = strat.watchlist_state("TEST")
+    _tick(strat, st, trail=100.0)
+
+    assert _tick(strat, st, trail=100.99) == []
+    assert st.resting_level == 100.0
+    assert st.resting_trigger == pytest.approx(100.5)
+
+    out = _tick(strat, st, trail=101.0)
+    assert [draft.intent_type for draft in out] == ["cancel"]
+    replaced = _tick(strat, st, trail=101.0)[0]
+    assert replaced.metadata["stop_price"] == "101.5050"
+
+
 def test_small_trail_move_does_not_replace() -> None:
     strat = _strat()
     st = strat.watchlist_state("TEST")
@@ -132,6 +168,22 @@ def test_stop_leq_ask_guard_skips_the_place(caplog) -> None:
     st.last_quote = Quote("TEST", 9.05, 9.10, 9.08, IN_WIN, 0)       # ask 9.10 < trail 9.50 -> place
     out = _tick(strat, st, trail=9.50, now_ms=IN_WIN + 1000)
     assert len(out) == 1 and out[0].intent_type == "open"
+
+
+def test_stop_ask_guard_admits_when_only_the_offset_trigger_is_above_ask() -> None:
+    from project_mai_tai.market_data.schwab_v2_rest_client import Quote
+
+    admitted = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    admitted_state = admitted.watchlist_state("ADMIT")
+    admitted_state.last_quote = Quote("ADMIT", 9.99, 10.00, 9.995, IN_WIN, 0)
+    out = _tick(admitted, admitted_state, trail=9.98, now_ms=IN_WIN + 1000)
+    assert [draft.intent_type for draft in out] == ["open"]
+    assert out[0].metadata["stop_price"] == "10.0299"
+
+    refused = _strat(strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct=0.5)
+    refused_state = refused.watchlist_state("REFUSE")
+    refused_state.last_quote = Quote("REFUSE", 9.99, 10.00, 9.995, IN_WIN, 0)
+    assert _tick(refused, refused_state, trail=9.90, now_ms=IN_WIN + 1000) == []
 
 
 def test_present_but_stale_quote_cannot_authorize_a_buy_stop() -> None:

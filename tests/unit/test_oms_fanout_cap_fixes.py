@@ -53,10 +53,10 @@ def test_a_LIMIT_master_is_accepted_by_the_guard() -> None:
 
 
 # ------------------------------------------------------------------- DEFECT 2: the band anchor
-def test_rth_resting_passes_the_RESTING_LEVEL_as_the_band_anchor() -> None:
-    """THE REGRESSION: the band must measure from the level, not from where we noticed."""
+def test_rth_resting_passes_the_RESTING_TRIGGER_as_the_band_anchor() -> None:
+    """THE REGRESSION: the band starts at the broker trigger, not the later observed quote."""
     src = inspect.getsource(strat.SchwabV2Strategy._fanout_rth_resting_cross)
-    assert "band_anchor=state.resting_level" in src
+    assert "band_anchor=trigger" in src
 
 
 def test_entry_px_is_NOT_repointed_at_the_level() -> None:
