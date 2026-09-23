@@ -534,8 +534,8 @@ class DbRetryOneDataSource:
                     "JOIN strategies s ON s.id=f.strategy_id "
                     "LEFT JOIN trade_intents i ON i.id=o.intent_id "
                     "WHERE s.code='schwab_1m_v2' "
-                    "AND f.filled_at >= (:start::date - interval '2 minutes') "
-                    "AND f.filled_at < (:end_exclusive::date + interval '5 minutes') "
+                    "AND f.filled_at >= (CAST(:start AS date) - interval '2 minutes') "
+                    "AND f.filled_at < (CAST(:end_exclusive AS date) + interval '5 minutes') "
                     "AND a.name IN ('live:schwab_1m_v2','live:orb') "
                     "ORDER BY f.filled_at"
                 ),
