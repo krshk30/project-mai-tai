@@ -61,7 +61,12 @@ def _settings(*, enabled: bool, max_retries: int = 1, dual: bool = False) -> Set
 
 
 def _strategy(
-    *, enabled: bool = True, max_retries: int = 1, dual: bool = False
+    *,
+    enabled: bool = True,
+    max_retries: int = 1,
+    dual: bool = False,
+    persist_error: bool = False,
+    restore_readable: bool = True,
 ) -> tuple[SchwabV2Strategy, list[int], list[tuple[str, int]]]:
     strategy = SchwabV2Strategy(
         _settings(enabled=enabled, max_retries=max_retries, dual=dual)
@@ -74,11 +79,17 @@ def _strategy(
     strategy._liquidity_floor_ok = lambda _state: True
     strategy._resting_stop_ask_allows = lambda _state, _line, slot: True
     strategy.configure_fanout_identity_persistence(lambda *_args: None)
+
+    def _persist_budget(symbol: str, count: int) -> None:
+        if persist_error:
+            raise RuntimeError("budget store unavailable")
+        retry_writes.append((symbol, count))
+
     strategy.configure_flip_entry_ownership(
         lambda *_args: None,
         restore_readable=True,
-        retry_budget_persist=lambda symbol, count: retry_writes.append((symbol, count)),
-        retry_budget_restore_readable=True,
+        retry_budget_persist=_persist_budget,
+        retry_budget_restore_readable=restore_readable,
     )
     return strategy, clock, retry_writes
 
@@ -272,6 +283,102 @@ def test_one_open_sibling_cannot_release_the_shared_opportunity() -> None:
     assert state.flip_owner_phase == "provisional"
     assert state.flip_owner_opportunity_id == opportunity
     assert writes == []
+
+
+def test_flat_siblings_wait_for_every_exact_close_before_releasing_once() -> None:
+    strategy, clock, writes = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "ATTRLAG")
+    mirror = strategy.drain_webull_direct_intents()[0]
+    _fill_webull(strategy, "ATTRLAG", opportunity, mirror)
+    strategy.update_position("ATTRLAG", 2, held_qty=2)
+    _book(
+        strategy,
+        clock,
+        "ATTRLAG",
+        legs=(
+            _leg(PRIMARY, "attrlag-primary", clock),
+            _leg(WEBULL, "attrlag-webull", clock),
+        ),
+    )
+    assert state.flip_owner_position_ids == {
+        PRIMARY: "attrlag-primary",
+        WEBULL: "attrlag-webull",
+    }
+
+    strategy.update_position("ATTRLAG", 0, held_qty=0)
+    _book(
+        strategy,
+        clock,
+        "ATTRLAG",
+        closes=(_close(WEBULL, "attrlag-webull", "CW_HARD_STOP"),),
+    )
+
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_opportunity_id == opportunity
+    assert writes == []
+
+    clock[0] += 20_000
+    _book(
+        strategy,
+        clock,
+        "ATTRLAG",
+        closes=(
+            _close(PRIMARY, "attrlag-primary", "CW_HARD_STOP"),
+            _close(WEBULL, "attrlag-webull", "CW_HARD_STOP"),
+        ),
+    )
+
+    assert state.flip_owner_phase == "idle"
+    assert writes == [("ATTRLAG", 1)]
+    _book(
+        strategy,
+        clock,
+        "ATTRLAG",
+        closes=(
+            _close(PRIMARY, "attrlag-primary", "CW_HARD_STOP"),
+            _close(WEBULL, "attrlag-webull", "CW_HARD_STOP"),
+        ),
+    )
+    assert writes == [("ATTRLAG", 1)]
+
+
+def test_retry_budget_persist_failure_holds_the_owner_fail_closed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    strategy, clock, writes = _strategy(persist_error=True)
+    state, opportunity = _place_first(strategy, clock, "PERSISTFAIL")
+    _fill_primary(strategy, clock, "PERSISTFAIL", "persist-fail-row")
+    caplog.set_level(logging.INFO)
+    _close_primary(
+        strategy,
+        clock,
+        "PERSISTFAIL",
+        "persist-fail-row",
+        "CW_HARD_STOP",
+    )
+
+    assert state.flip_owner_phase == "consumed"
+    assert state.flip_owner_opportunity_id == opportunity
+    assert state.retry_one_budget_readable is False
+    assert writes == []
+    assert "action=held reason=retry_budget_persist_failed" in caplog.text
+
+
+def test_unreadable_retry_budget_restore_refuses_the_first_entry(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    strategy, clock, writes = _strategy(restore_readable=False)
+    state = strategy.watchlist_state("RESTOREFAIL")
+    state.bars.append(_bar(clock[0]))
+    _book(strategy, clock, "RESTOREFAIL")
+    caplog.set_level(logging.INFO)
+
+    strategy._queue_resting_place(state, 3.859, slot="first")
+
+    assert state.retry_one_budget_readable is False
+    assert strategy.drain_pending_intents() == []
+    assert writes == []
+    assert "reason=retry_budget_unreadable" in caplog.text
 
 
 def test_retry_budget_holds_the_second_close_and_the_0400_roll_clears_it(

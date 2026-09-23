@@ -1774,6 +1774,11 @@ class SchwabV2Strategy:
                     state,
                     reason="confirmation_exit_closed_all_siblings_before_flip",
                 )
+            elif self._retry_one_enabled:
+                self._set_flip_owner_unknown(
+                    state,
+                    reason="preflip_flat_waiting_for_complete_close_attribution",
+                )
             else:
                 state.flip_owner_phase = "consumed"
                 consumed = self._persist_flip_owner(
