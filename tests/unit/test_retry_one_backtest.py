@@ -181,6 +181,9 @@ def test_dcoy_one_retry_keeps_two_trips_and_drops_the_third() -> None:
     report = evaluate(_population(), date(2026, 8, 24), date(2026, 9, 23))
 
     assert report.dcoy_replay["logical_trips"] == 3
+    assert report.dcoy_replay["trips"][1]["fresh_cross_at_et"].startswith(
+        "2026-09-22T11:03"
+    )
     max_one = next(row for row in report.variants if row.max_retries == 1)
     max_two = next(row for row in report.variants if row.max_retries == 2)
     assert max_two.logical_trips == max_one.logical_trips + 1

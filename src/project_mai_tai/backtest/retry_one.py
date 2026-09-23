@@ -81,6 +81,7 @@ class StudyInput:
 class LegResult:
     account: str
     source: str
+    entry_order_type: str
     entry_at: datetime
     exit_at: datetime
     entry_price: Decimal
@@ -238,6 +239,7 @@ def _map_observed_trips(data: StudyInput) -> tuple[list[LogicalTrip], int]:
             LegResult(
                 account=row.account,
                 source="observed",
+                entry_order_type=entry.order_type,
                 entry_at=entry.filled_at,
                 exit_at=exit_at,
                 entry_price=entry.price,
@@ -288,6 +290,15 @@ def _fresh_cross(
     return None
 
 
+def _armed_below_line(
+    bars: tuple[Bar, ...], *, after: datetime, line: Decimal, before: datetime
+) -> bool:
+    return any(
+        bar.at > after and bar.at <= before and bar.close < line
+        for bar in bars
+    )
+
+
 def _model_counterfactual(
     bars: tuple[Bar, ...],
     *,
@@ -330,6 +341,7 @@ def _model_counterfactual(
         LegResult(
             account=account,
             source="modeled",
+            entry_order_type="MODELED_STOP",
             entry_at=crossed_at,
             exit_at=exit_at,
             entry_price=line,
@@ -371,6 +383,20 @@ def _causal_sequences(
                 line=trip.line,
                 before=trip.opened_at,
             )
+            if (
+                crossed_at is None
+                and any(leg.entry_order_type.upper() == "STOP_LIMIT" for leg in trip.legs)
+                and _armed_below_line(
+                    bars,
+                    after=prior.closed_at,
+                    line=trip.line,
+                    before=trip.opened_at,
+                )
+            ):
+                # A broker STOP_LIMIT fill is definitive cross evidence. Stored minute bars can
+                # round the high by one tick (DCOY 11:03: 5.7900 vs trigger 5.7912), so the fill
+                # resolves that boundary without inventing a crossing price.
+                crossed_at = trip.opened_at
             if crossed_at is None:
                 noncausal += 1
                 continue
