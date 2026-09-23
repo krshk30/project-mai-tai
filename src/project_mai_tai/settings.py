@@ -452,6 +452,10 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_atr_flip_vol_floor: int = 10000
     strategy_schwab_1m_v2_atr_flip_period: int = 5             # ATRPeriod (parity)
     strategy_schwab_1m_v2_atr_flip_factor: float = 3.5         # ATRFactor (parity)
+    # GAPHOLD: refuse new entries while live prints continue but Schwab's 1-minute
+    # bars are stale. Default OFF preserves the deployed strategy behavior.
+    strategy_schwab_1m_v2_gap_hold_enabled: bool = False
+    strategy_schwab_1m_v2_gap_hold_detect_seconds: float = 90.0
     # CSV of symbols (or "*") for which `[V2-ATR-PROBE]` logs each evaluated bar's
     # ATR state (tr/loss/trail/state/touch). Diagnostic-only; default empty = off.
     strategy_schwab_1m_v2_atr_flip_probe_symbols: str = ""
