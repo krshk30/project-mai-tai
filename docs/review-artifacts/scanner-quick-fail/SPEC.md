@@ -1,3 +1,5 @@
+# ⛔ FAILED the independent out-of-sample test 2026-09-23 — NOT BUILT. Kept as the record.
+
 # SPEC — QUICK-FAIL: a confirmed stock that gives the spike back within 10 minutes is dropped for the day (SCANNER level)
 
 **Written by `claude-1` 2026-09-23 ~13:45 ET, operator's words: "write the spec to codex on quick fail… we will do backtest
@@ -68,3 +70,14 @@ Entry offset (live), target +5 / stop −8, retries (RETRY-ONE, boarded next), W
 Flag ON on its own day, never with another flag. Pass mark over 5 sessions: `[CONFIRMED-QUICK-FAIL]` count per day, and for
 each dropped name what our bots would have traded (the bot's own `[V2-CW-ARM]` still fires on unsubscribed data? — no: once
 purged, the bot has no bars; so the grade is the STOCK's later path from bars, not our trades). UNEXERCISED until then.
+
+## Result (codex-2, 2026-09-23, independent code, pre-registered gate): FAIL — not built
+
+Out-of-sample 08-01 → 08-23, Schwab, 10-min confirm-price rule: quick-fail group **58/101 = 57% winners** (gate: ≤ 45%),
+kept 32/44 = 73%; ATR-trail variant 13/28 = 46%; Webull 63/114 = 55%. Re-run on the original window with the correct
+method: quick-fail 42/77 = 55% — the 36% vs 59% split in the evidence section above **does not reproduce**.
+
+Two defects in `claude-1`'s replay, both `claude-1`'s: (1) `min(event_at)` and `min(price)` were taken separately across a
+day's CONFIRM rows, so the "confirm price" could come from a later re-confirm than the time; (2) the whole stock-day was
+skipped retroactively, including trades placed BEFORE the failing close, which the rule as written could never have done.
+Full report: `project-mai-tai-artifacts/scanner-quick-fail-20260923/`.
