@@ -231,6 +231,12 @@ class SymbolState:
     # net_delta verdict. Set in on_quote when a quote crosses the resting trail;
     # resolved in on_quote (window elapsed) or on_bar (heartbeat/flip-invalidation).
     atr_hold_pending: "PendingHold | None" = None
+    # GAPHOLD is entry-only. While active, ATR mathematics is rebuilt exclusively
+    # from contiguous live bars observed after the hole.
+    gap_hold_active: bool = False
+    gap_hold_detected_at_ms: int = 0
+    gap_hold_last_live_bar_ms: int = 0
+    gap_hold_contiguous_bars: int = 0
     # Confirmed-window entry (ATR variant "CW"; flag-gated, INERT when
     # strategy_schwab_1m_v2_confirmed_window_enabled is off — never read/written on the
     # A/B path). After a BUY flip we arm and wait 3 bars, tracking the highest high of
@@ -594,6 +600,23 @@ class SchwabV2Strategy:
         self._atr_sell_observed_bar_by_symbol: dict[str, int] = {}
         self._atr_period = max(
             1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_period", 5))
+        )
+        self._gap_hold_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_gap_hold_enabled", False)
+        )
+        self._gap_hold_detect_ms = max(
+            1,
+            int(
+                float(
+                    getattr(
+                        self.settings,
+                        "strategy_schwab_1m_v2_gap_hold_detect_seconds",
+                        90.0,
+                    )
+                    or 90.0
+                )
+                * 1000
+            ),
         )
         self._atr_factor = float(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_factor", 3.5)
@@ -2744,6 +2767,14 @@ class SchwabV2Strategy:
         else:
             state.bars.append(ohlcv)
 
+        if (
+            self._gap_hold_enabled
+            and state.gap_hold_active
+            and self._bar_observation_phase == "live"
+            and is_new_bar
+        ):
+            self._prepare_gap_hold_bar(state, ohlcv)
+
         # Only update VWAP accumulators on genuinely new bars; revisions
         # to the same minute must not double-count volume.
         if is_new_bar:
@@ -2765,6 +2796,8 @@ class SchwabV2Strategy:
         # touch). See docs/intrabar-hold-confirmation-design.md.
         state = self.watchlist_state(symbol)
         state.last_quote = quote
+        if self._gap_hold_enabled and state.gap_hold_active:
+            return None
         # CW-v2: intrabar break entry (rule 6/7 + reclaim + ORB skip). When the sub-flag is on it
         # OWNS the CW entry via this quote path; the bar-close _cw_entry is a no-op. No-op (returns
         # None like the base) when the sub-flag is off.
@@ -2975,6 +3008,117 @@ class SchwabV2Strategy:
         state.atr_prev_state = None
         state.atr_state_age = 0
         state.atr_short_flip_bar_ts = 0
+
+    @staticmethod
+    def _drop_queued_open_intents_for_symbol(
+        intents: list[TradeIntentDraft], symbol: str
+    ) -> list[TradeIntentDraft]:
+        normalized = symbol.upper()
+        return [
+            draft
+            for draft in intents
+            if not (
+                draft.intent_type == "open" and draft.symbol.upper() == normalized
+            )
+        ]
+
+    def gap_hold_active(self, symbol: str) -> bool:
+        if not getattr(self, "_gap_hold_enabled", False):
+            return False
+        state = self._symbol_states.get(symbol.upper())
+        return bool(state is not None and state.gap_hold_active)
+
+    @staticmethod
+    def _gap_hold_has_resting_order(state: SymbolState) -> bool:
+        return bool(state.resting_active or state.webull_resting_active)
+
+    def begin_gap_hold(
+        self,
+        symbol: str,
+        *,
+        detected_at_ms: int,
+        last_bar_age_s: float,
+        last_print_age_s: float,
+    ) -> bool:
+        """Enter the per-symbol entry hold and invalidate every pre-gap entry signal."""
+
+        if not self._gap_hold_enabled:
+            return False
+        state = self.watchlist_state(symbol.upper())
+        if state.gap_hold_active:
+            return False
+
+        # A draft queued before the clock sweep is stale permission. Drop opens first,
+        # then use the established cancellation path for orders already at either broker.
+        self._pending_intents = self._drop_queued_open_intents_for_symbol(
+            self._pending_intents, state.symbol
+        )
+        self._pending_webull_direct_intents = self._drop_queued_open_intents_for_symbol(
+            self._pending_webull_direct_intents, state.symbol
+        )
+        self._pending_webull_fanout_intents = self._drop_queued_open_intents_for_symbol(
+            self._pending_webull_fanout_intents, state.symbol
+        )
+        _, _, cancel_requested = self._release_post_close_entry_state(
+            state, reason="bar_gap"
+        )
+
+        state.gap_hold_active = True
+        state.gap_hold_detected_at_ms = int(detected_at_ms)
+        state.gap_hold_last_live_bar_ms = 0
+        state.gap_hold_contiguous_bars = 0
+        self._reset_atr_indicator_state(
+            state, session_start_ts_ms(int(detected_at_ms))
+        )
+        state.atr_fired_in_short_seg = False
+        state.atr_hold_pending = None
+        if self._atr_rearm_enabled:
+            self._set_atr_guard(state, "UNCLAIMED")
+        logger.warning(
+            "[V2-GAP-HOLD] %s last_bar_age_s=%.1f last_print_age_s=%.1f "
+            "cancel_requested=%d held_qty=%d entry_allowed=0",
+            state.symbol,
+            last_bar_age_s,
+            last_print_age_s,
+            int(cancel_requested),
+            int(state.position_qty_held),
+        )
+        return True
+
+    def _prepare_gap_hold_bar(self, state: SymbolState, bar: OHLCVBar) -> None:
+        previous = int(state.gap_hold_last_live_bar_ms or 0)
+        gap_ms = int(bar.timestamp_ms) - previous if previous else 0
+        if previous and gap_ms > self._gap_hold_detect_ms:
+            self._reset_atr_indicator_state(
+                state, session_start_ts_ms(int(bar.timestamp_ms))
+            )
+            state.atr_fired_in_short_seg = False
+            state.atr_hold_pending = None
+            if self._atr_rearm_enabled:
+                self._set_atr_guard(state, "UNCLAIMED")
+            state.gap_hold_contiguous_bars = 0
+            logger.warning(
+                "[V2-GAP-HOLD] %s reason=recovery_gap gap_seconds=%.1f "
+                "contiguous_bars=0 entry_allowed=0",
+                state.symbol,
+                gap_ms / 1000.0,
+            )
+        state.gap_hold_last_live_bar_ms = int(bar.timestamp_ms)
+        state.gap_hold_contiguous_bars += 1
+
+    def _maybe_resume_gap_hold(self, state: SymbolState) -> bool:
+        required = 2 * self._atr_period
+        if not state.gap_hold_active or state.gap_hold_contiguous_bars < required:
+            return False
+        state.gap_hold_active = False
+        logger.info(
+            "[V2-GAP-RESUME] %s contiguous_bars=%d required_bars=%d trail=%s entry_allowed=1",
+            state.symbol,
+            state.gap_hold_contiguous_bars,
+            required,
+            f"{state.atr_trail:.4f}" if state.atr_trail is not None else "none",
+        )
+        return True
 
     @staticmethod
     def _atr_indicator_snapshot(state: SymbolState) -> dict[str, object]:
@@ -4521,6 +4665,10 @@ class SchwabV2Strategy:
         not "every short bar"."""
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
             return
+        if self.gap_hold_active(state.symbol):
+            if self._gap_hold_has_resting_order(state):
+                self._queue_resting_cancel(state, reason="bar_gap")
+            return
         if self._entries_held:   # boot-hold suppresses all entries
             return
         # ⛔⭐⭐ SLOT SEPARATION — THE #580 / EGG-POLA SURFACE.
@@ -5491,6 +5639,13 @@ class SchwabV2Strategy:
         # touch/flip signal is consumed in the emit region below, and only when
         # the enable flag is on. Returns the per-bar signal (or None).
         atr_signal = self._update_atr_state(state, state.bars[-1])
+
+        if self._gap_hold_enabled and state.gap_hold_active:
+            resumed = self._maybe_resume_gap_hold(state)
+            if not resumed:
+                # EXIT observations remain live; every ENTRY state machine below is held.
+                self._observe_atr_sell(state, atr_signal)
+                return None
 
         # ⛔ POST-CLOSE IS EXIT-ONLY, NOT "ENTRY STATE THAT HAPPENS NOT TO EMIT".
         #

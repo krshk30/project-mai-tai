@@ -94,7 +94,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import (
     Quote,
     SchwabV2RestClient,
 )
-from project_mai_tai.market_data.schwab_v2_streamer import SchwabV2Streamer
+from project_mai_tai.market_data.schwab_v2_streamer import SchwabTick, SchwabV2Streamer
 from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core.time_utils import (
@@ -418,6 +418,21 @@ class SchwabV2BotService:
         self._started_at_ms: int = int(datetime.now(UTC).timestamp() * 1000)
         self._last_bar_processed_at_ms: int = 0
         self._last_quote_at_ms: dict[str, int] = {}
+        self._gap_hold_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_gap_hold_enabled", False)
+        )
+        self._gap_hold_detect_seconds = max(
+            0.001,
+            float(
+                getattr(
+                    self.settings,
+                    "strategy_schwab_1m_v2_gap_hold_detect_seconds",
+                    90.0,
+                )
+                or 90.0
+            ),
+        )
+        self._gap_last_print_at_ms: dict[str, int] = {}
         # Latest quote (bid/ask) per symbol — fed by _handle_quote, read at emit to
         # source the extended-hours limit price (mirrors legacy _resolve_routed_price,
         # which routes entries at the live ask). RTH ignores it (order stays market).
@@ -685,7 +700,11 @@ class SchwabV2BotService:
         self.streamer = SchwabV2Streamer(
             self.settings,
             on_chart_bar=self._handle_bar_from_streamer,
-            on_tick=self.tick_writer.on_tick if self.tick_writer is not None else None,
+            on_tick=(
+                self._handle_stream_tick
+                if self._gap_hold_enabled
+                else (self.tick_writer.on_tick if self.tick_writer is not None else None)
+            ),
         )
 
         loop = asyncio.get_running_loop()
@@ -1655,6 +1674,9 @@ class SchwabV2BotService:
         )
 
     async def _position_poll_pass(self) -> None:
+        evaluate_gap_holds = getattr(self, "_evaluate_gap_holds", None)
+        if callable(evaluate_gap_holds):
+            await evaluate_gap_holds()
         maps = await asyncio.to_thread(self._fetch_position_maps)
         if maps is None:
             if bool(
@@ -4454,6 +4476,20 @@ class SchwabV2BotService:
         # stall is a real fault vs a quiet/closed market.
         self._last_quote_at_ms[symbol] = int(now.timestamp() * 1000)
         self._last_quote_by_symbol[str(symbol).upper()] = quote
+        if self._gap_hold_enabled:
+            observed_at_ms = max(
+                int(getattr(quote, "trade_time_ms", 0) or 0),
+                int(getattr(quote, "quote_time_ms", 0) or 0),
+            )
+            if self._halt_observation_time(observed_at_ms) is not None:
+                normalized = str(symbol).upper()
+                self._gap_last_print_at_ms[normalized] = max(
+                    observed_at_ms,
+                    self._gap_last_print_at_ms.get(normalized, 0),
+                )
+            # Close the interval between five-second clock sweeps: the quote that proves
+            # the symbol is still active must not be allowed to cross a stale resting line.
+            await self._evaluate_gap_holds(now)
         try:
             self._observe_halt_from_quote(symbol, quote)
         except Exception:
@@ -4469,6 +4505,59 @@ class SchwabV2BotService:
         await self._maybe_emit(draft)
         # Dual-broker fan-out: emit any Webull legs the strategy queued this quote (no-op if off).
         await self._emit_webull_fanout_legs()
+
+    async def _handle_stream_tick(self, tick: SchwabTick) -> None:
+        if self._gap_hold_enabled and self._halt_observation_time(tick.event_ts_ms) is not None:
+            normalized = str(tick.symbol).upper()
+            self._gap_last_print_at_ms[normalized] = max(
+                int(tick.event_ts_ms),
+                self._gap_last_print_at_ms.get(normalized, 0),
+            )
+        if self.tick_writer is not None:
+            await self.tick_writer.on_tick(tick)
+
+    async def _evaluate_gap_holds(self, now: datetime | None = None) -> list[str]:
+        if not self._gap_hold_enabled:
+            return []
+        current = now or datetime.now(UTC)
+        if not self._within_entry_window(current):
+            return []
+        now_ms = int(current.timestamp() * 1000)
+        held: list[str] = []
+        for symbol in sorted(self._subscription_symbols()):
+            state = self.strategy._symbol_states.get(symbol)
+            if state is None or not state.bars or state.gap_hold_active:
+                continue
+            last_bar_ms = int(state.bars[-1].timestamp_ms)
+            last_print_ms = int(self._gap_last_print_at_ms.get(symbol, 0))
+            bar_age_s = (now_ms - last_bar_ms) / 1000.0
+            print_age_s = (
+                (now_ms - last_print_ms) / 1000.0 if last_print_ms else float("inf")
+            )
+            if not (
+                bar_age_s > self._gap_hold_detect_seconds
+                and last_print_ms > last_bar_ms
+                and 0.0 <= print_age_s <= self._gap_hold_detect_seconds
+            ):
+                continue
+            logger.warning(
+                "[V2-GAP-DETECT] %s last_bar_age_s=%.1f last_print_age_s=%.1f "
+                "detect_seconds=%.1f",
+                symbol,
+                bar_age_s,
+                print_age_s,
+                self._gap_hold_detect_seconds,
+            )
+            if self.strategy.begin_gap_hold(
+                symbol,
+                detected_at_ms=now_ms,
+                last_bar_age_s=bar_age_s,
+                last_print_age_s=print_age_s,
+            ):
+                held.append(symbol)
+        if held:
+            await self._drain_direct_strategy_intents()
+        return held
 
     def _persist_bar(self, symbol: str, bar: ChartBar) -> None:
         """Atomic upsert into strategy_bar_history on
@@ -4635,6 +4724,24 @@ class SchwabV2BotService:
         # and would silently change five existing entry paths. With `_exit_coverage` empty — every
         # pre-change state, and every existing test — this guard is INERT and byte-neutral.
         _sym = str(getattr(draft, "symbol", "")).upper()
+        strategy = getattr(self, "strategy", None)
+        gap_hold_active = getattr(strategy, "gap_hold_active", None)
+        if (
+            getattr(draft, "intent_type", "") == "open"
+            and callable(gap_hold_active)
+            and gap_hold_active(_sym)
+        ):
+            logger.warning(
+                "[V2-GAP-HOLD] %s dropped_open=1 reason=%s entry_allowed=0",
+                _sym,
+                getattr(draft, "reason", ""),
+            )
+            await self._record_local_fanout_outcome(
+                draft,
+                outcome="dropped_routing",
+                reason="bar_gap_hold",
+            )
+            return "dropped_routing"
         if (
             getattr(draft, "intent_type", "") == "open"
             and _sym in getattr(self, "_exit_coverage", set())
