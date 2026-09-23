@@ -33,6 +33,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 
@@ -44,6 +46,11 @@ KUST_BID_TAPE: list[tuple[int, float]] = [
 ]
 KUST_EXIT_LIMIT = 1.74          # what the ladder actually placed, bid-sourced
 KUST_STALE_REPRICE = 1.77       # the 13:28:20 order — placed ABOVE the bid off a stale reference
+
+
+@pytest.fixture(autouse=True)
+def _regular_session_clock(monkeypatch):
+    monkeypatch.setattr("project_mai_tai.oms.service._extended_hours_session", lambda now=None: None)
 
 
 def _svc(**over) -> OmsRiskService:
@@ -245,11 +252,27 @@ def test_logging_survives_a_service_without_the_tracking_dict() -> None:
     assert any("[OMS-P0A-HOLD]" in ln for ln in svc.logger.lines)
 
 
-def test_the_eh_session_is_the_case_that_matters() -> None:
-    """KUST was session=AM. The hold predicate has no session gating, so the EH exit qualifies on
-    exactly the same terms as an RTH one — this pins that it is not accidentally RTH-only."""
+def test_the_eh_session_is_held_only_while_the_clock_is_am(monkeypatch) -> None:
     svc = _svc()
+    monkeypatch.setattr("project_mai_tai.oms.service._extended_hours_session", lambda now=None: "AM")
     assert svc._managed_exit_refresh_exempt(_held_order(session="AM"), bid=1.76) is True
+    assert svc._managed_exit_refresh_exempt(_held_order(session="NORMAL"), bid=1.76) is False
+
+
+def test_whlr_am_exit_is_not_held_after_0930() -> None:
+    svc = _svc_with_logger()
+    order = _held_order(order_id="WHLR-AM", limit_price=4.88, session="AM")
+    order.symbol = "WHLR"
+    assert svc._managed_exit_refresh_exempt(order, bid=5.00) is False
+    assert svc._p0a_decline_reason(order, bid=5.00) == "session_mismatch"
+    svc._log_p0a_hold_edge(order, bid=5.00)
+    svc._log_p0a_hold_release(order, bid=5.00)
+    assert "reason=session_mismatch" in svc.logger.lines[-1]
+    assert "session=AM clock_session=NORMAL" in svc.logger.lines[-1]
+
+
+def test_regular_order_still_holds_while_marketable() -> None:
+    svc = _svc()
     assert svc._managed_exit_refresh_exempt(_held_order(session="NORMAL"), bid=1.76) is True
 
 
@@ -281,6 +304,7 @@ def test_p0a_decline_reason_matches_predicate() -> None:
         (_exit_order(limit_price=None), 1.76),                   # no limit price
         (_exit_order(limit_price=0.0), 1.76),                    # zero limit price
         (_exit_order(), KUST_EXIT_LIMIT),                        # limit == bid, still marketable
+        (_held_order(session="AM"), 1.76),                       # stale clock session
     ]
     for order, bid in cases:
         exempt = svc._managed_exit_refresh_exempt(order, bid=bid)

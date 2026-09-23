@@ -264,6 +264,27 @@ def _extended_hours_session(now: datetime | None = None) -> str | None:
     return "AM" if current < regular_open else "PM"
 
 
+def _stamp_managed_exit_session(metadata: dict[str, str], now: datetime | None = None) -> str:
+    session = _extended_hours_session(now) or "NORMAL"
+    metadata["session"] = session
+    if session == "NORMAL":
+        metadata.pop("extended_hours", None)
+    else:
+        metadata["extended_hours"] = "true"
+    return session
+
+
+def _managed_exit_session_matches_clock(metadata: dict[str, object]) -> bool:
+    current = _extended_hours_session() or "NORMAL"
+    carried = str(metadata.get("session", "NORMAL") or "NORMAL").strip().upper()
+    extended = str(metadata.get("extended_hours", "") or "").strip().lower()
+    if carried != current:
+        return False
+    if current == "NORMAL":
+        return extended not in {"true", "1", "yes"}
+    return extended not in {"false", "0", "no"}
+
+
 def _is_regular_market_session(now: datetime | None = None) -> bool:
     return _extended_hours_session(now) is None
 
@@ -8324,8 +8345,8 @@ class OmsRiskService:
         if confirmation_context:
             metadata.update(confirmation_context)
         order_type = "market"
-        session_code = _extended_hours_session()
-        if session_code is not None and bid and bid > 0:
+        session_code = _stamp_managed_exit_session(metadata)
+        if session_code != "NORMAL" and bid and bid > 0:
             if intent_type == "scale":
                 routed = _format_limit_price(bid)  # profit-taking: at the bid, zero buffer
             else:  # "close" = hard-stop / floor: buffered marketable limit that must fill
@@ -8387,6 +8408,12 @@ class OmsRiskService:
             metadata=dict(metadata),
             order_type=order_type,
             time_in_force="day",
+        )
+        self.logger.info(
+            "[OMS-V2-EXIT-PLACE] acct=%s sym=%s client_order_id=%s "
+            "session=%s clock_session=%s",
+            row.broker_account_name, row.symbol, request.client_order_id,
+            metadata["session"], _extended_hours_session() or "NORMAL",
         )
         reports = await self.broker_adapter.submit_order(request)
         events = await self._record_order_reports(
@@ -8976,7 +9003,13 @@ class OmsRiskService:
                 status_changed = report.event_type != previous_status
                 should_refresh = (
                     report.event_type in self.store.OPEN_ORDER_STATUSES
-                    and self._should_refresh_working_order(order)
+                    and (
+                        self._should_refresh_working_order(order)
+                        or (
+                            str((order.payload or {}).get("oms_v2_managed_exit", "")).strip().lower() == "true"
+                            and not _managed_exit_session_matches_clock(order.payload or {})
+                        )
+                    )
                 )
 
                 if status_changed or fill is not None:
@@ -13295,6 +13328,8 @@ class OmsRiskService:
         payload = order.payload or {}
         if str(payload.get("oms_v2_managed_exit", "")).strip().lower() != "true":
             return "not_managed_exit"
+        if not _managed_exit_session_matches_clock(payload):
+            return "session_mismatch"
         if str(payload.get("order_type", "")).strip().upper() != "LIMIT":
             return "not_limit"
         try:
@@ -13534,9 +13569,12 @@ class OmsRiskService:
             return
         secs = (datetime.now(UTC) - started[0]).total_seconds()
         self.logger.info(
-            "[OMS-P0A-HOLD-RELEASED] %s held %.1fs then released to the refresh (limit=%s bid=%s) — "
-            "the bid fell through the limit; repricing is correct here, not churn",
+            "[OMS-P0A-HOLD-RELEASED] %s held %.1fs then released to the refresh "
+            "(limit=%s bid=%s session=%s clock_session=%s reason=%s)",
             order.symbol, secs, (order.payload or {}).get("limit_price"), bid,
+            (order.payload or {}).get("session") or "NORMAL",
+            _extended_hours_session() or "NORMAL",
+            self._p0a_decline_reason(order, bid=bid) or "unknown",
         )
 
     def _managed_exit_refresh_exempt(self, order: BrokerOrder, *, bid: float | None) -> bool:
@@ -13570,6 +13608,8 @@ class OmsRiskService:
             return False
         payload = order.payload or {}
         if str(payload.get("oms_v2_managed_exit", "")).strip().lower() != "true":
+            return False
+        if not _managed_exit_session_matches_clock(payload):
             return False
         if str(payload.get("order_type", "")).strip().upper() != "LIMIT":
             return False   # a MARKET exit has no resting price to protect
@@ -13701,6 +13741,7 @@ class OmsRiskService:
         refreshed_metadata = await self._build_refreshed_order_metadata(
             broker_account_name=broker_account_name,
             order=order,
+            intent_type=intent.intent_type,
         )
         if refreshed_metadata is None:
             return {"orders": 0, "terminal_orders": 0, "published_events": []}
@@ -13743,6 +13784,8 @@ class OmsRiskService:
             return {"orders": 0, "terminal_orders": 0, "published_events": []}
 
         replacement_client_order_id = self._replacement_client_order_id(order.client_order_id)
+        if str(refreshed_metadata.get("oms_v2_managed_exit", "")).strip().lower() == "true":
+            _stamp_managed_exit_session(refreshed_metadata)
         prior_attempt_id = str(refreshed_metadata.get("fanout_attempt_id", "") or "").strip()
         if str(refreshed_metadata.get("fanout_slot_id", "") or "").strip():
             refreshed_metadata["fanout_attempt_id"] = replacement_client_order_id
@@ -13763,6 +13806,13 @@ class OmsRiskService:
             order_type=str(refreshed_metadata.get("order_type", order.order_type)),
             time_in_force=str(refreshed_metadata.get("time_in_force", order.time_in_force)),
         )
+        if str(refreshed_metadata.get("oms_v2_managed_exit", "")).strip().lower() == "true":
+            self.logger.info(
+                "[OMS-V2-EXIT-REPLACE] acct=%s sym=%s client_order_id=%s "
+                "session=%s clock_session=%s",
+                broker_account_name, order.symbol, replacement_client_order_id,
+                refreshed_metadata["session"], _extended_hours_session() or "NORMAL",
+            )
         replacement_reports = await self.broker_adapter.submit_order(replacement_request)
         replacement_event = TradeIntentEvent(
             source_service=SERVICE_NAME,
@@ -13797,6 +13847,7 @@ class OmsRiskService:
         *,
         broker_account_name: str,
         order: BrokerOrder,
+        intent_type: str = "close",
     ) -> dict[str, str] | None:
         metadata = {str(k): str(v) for k, v in (order.payload or {}).items()}
         metadata["watchdog_refresh"] = "true"
@@ -13804,6 +13855,26 @@ class OmsRiskService:
         metadata["watchdog_replaced_at"] = utcnow().isoformat()
 
         order_type = str(metadata.get("order_type", order.order_type or "market")).lower()
+        if (
+            str(metadata.get("oms_v2_managed_exit", "")).strip().lower() == "true"
+            and order_type == "market"
+            and _extended_hours_session() is not None
+        ):
+            quote = await self._fetch_quote_for_order(
+                broker_account_name=broker_account_name, symbol=order.symbol,
+            )
+            bid = quote.get("bid_price")
+            if bid is None or bid <= 0:
+                return None
+            if intent_type == "scale":
+                routed = _format_limit_price(bid)
+            else:
+                buffer_pct = float(getattr(self.settings, "oms_v2_exit_eh_protective_limit_buffer_pct", 0.5))
+                routed = _panic_limit_price(bid, buffer_pct)
+            if routed is None:
+                return None
+            metadata.update({"order_type": "limit", "limit_price": routed, "price_source": "bid"})
+            return metadata
         if order_type != "limit":
             return metadata
 
