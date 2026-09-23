@@ -34,15 +34,19 @@ last_bar_age_s= last_print_age_s=`.
 (`[V2-GAP-HOLD] SYM`). An OPEN position is untouched — its exits keep running; this rule is about ENTRIES only.
 
 **RESUME on fresh good bars — no repair of the old hole required.** Count contiguous live bars since the hole (each within
-90 s of the previous). When `gap_hold_resume_bars` (spec: **10**) contiguous bars have arrived:
+90 s of the previous). When `2 × atr_period` contiguous bars have arrived (**= 10 with the live period 5** — DERIVED from
+the code, not chosen: the Wilder ATR is seeded from the SMA of the first `period` true ranges, which needs `period + 1`
+bars, and the trail / flip state machine needs a prior trail and prior state, which the code itself documents as
+"`atr_signal` is None until the trail is defined ~2×period bars" — i.e. the SAME warmup the strategy applies to a newly
+promoted symbol; live `ATR_FLIP_PERIOD` is unset ⇒ default 5, factor 3.5):
 - **re-seed the ATR / trail from those bars only** — the pre-hole ATR state is discarded, so the trail is never computed
   across the hole (the NUWE 07-30 / BENF 09-23 mechanism). Wilder(5) is fully re-seeded by 10 bars;
 - re-arm; the next flip on the fresh series may rest again. `[V2-GAP-RESUME] SYM contiguous_bars=10 trail=`.
 A new gap inside the 10 restarts the count. REST back-fill (`_fetch_recent_closed_bars`) is a nice-to-have that can
 shorten the wait when Schwab has the candles; it is NOT required and its absence never blocks resume.
 
-Settings: `strategy_schwab_1m_v2_gap_hold_enabled` (default False = byte-identical), `gap_hold_detect_seconds` = 90,
-`gap_hold_resume_bars` = 10.
+Settings: `strategy_schwab_1m_v2_gap_hold_enabled` (default False = byte-identical), `gap_hold_detect_seconds` = 90.
+The resume count is `2 × strategy_schwab_1m_v2_atr_flip_period`, not a separate knob — one number, one source.
 
 **What this would have done to BENF:** gapped from ~12:05 → held; bars 12:45, 12:46, 12:47 then 12:52 (a hole) → count
 restarts; 12:52, 12:53 … → resume no earlier than ~13:02 with a trail seeded from 12:52 onward. No order at 12:53.
@@ -58,10 +62,10 @@ recorded here only so the trade-off is visible: with Schwab-only repair, a BENF-
    on both legs, no emit on the next flip while held. Control: last bar 91 s old AND last print 91 s old (quiet stock) ⇒ no hold.
 3. Resume: 10 contiguous bars after the hole ⇒ ATR/trail re-seeded from those 10 only (assert the trail equals a fresh
    5-period Wilder on those bars, NOT the value carried across the hole) ⇒ `[V2-GAP-RESUME]`; the next flip may rest.
-4. A second gap at bar 7 of 10 ⇒ the count restarts; no resume at bar 10 of the original count.
+4. A second gap at bar 7 of 10 ⇒ the count restarts; no resume at bar 10 of the original count. Period 3 ⇒ resume at 6 (the count follows the period).
 5. An OPEN position on a held symbol still exits (target / stop / confirmation) — the hold never blocks a sell.
 6. BENF 09-23 replay from the stored bars ⇒ no rest at 12:46, no fill at 12:53; resume ≥ 13:02.
-7. Mutations: resume without re-seeding (trail carried across the hole) ⇒ test 3 RED; resume at 9 bars ⇒ test 4 RED;
+7. Mutations: resume without re-seeding (trail carried across the hole) ⇒ test 3 RED; resume at 9 bars ⇒ test 4 RED; a fixed 10 that ignores the period ⇒ the period-3 case RED;
    hold not cancelling the mirror ⇒ test 2 RED; detect ignoring "still printing" ⇒ control in test 2 RED.
 
 ## Grade after deploy
