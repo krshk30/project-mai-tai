@@ -1,0 +1,9 @@
+{
+  "pr_number": 1041,
+  "range_base": "ea71f61457cd53b0f1e2b33a141203aa55fc54db",
+  "range_head": "58bbfbe28d02c1e4055dfe73a71f27d8902f73af",
+  "reviewed_at": "2026-09-23T21:20:17Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RETRY-ONE build of spec #1039 (any close of the first try hands the flip back; per-symbol per-day retry budget, durable, fail-closed). Withheld at 984eb05 for two test gaps; both closed at 58bbfbe2: (1) flat siblings with only ONE close record on file stay blocked until every exact close arrives - my mutation 'release when any sibling has a close' now RED (test_flat_siblings_wait_for_every_exact_close_before_releasing_once); (2) persist failure fail-closed - mutation RED (test_retry_budget_persist_failure_holds_the_owner_fail_closed); unreadable restore refuses the FIRST entry at admission (test_unreadable_retry_budget_restore_refuses_the_first_entry) - the later else-branch in _retry_one_release_or_hold is dominated by that admission refusal, so a mutation there survives by construction, not by a hole. Budget never increments => 3 RED; budget not reset at the 04:00 roll => 1 RED; any-exit detection disabled => 5 RED. 155 tests across 7 suites, ruff clean, validate pass, rebased onto #1040 (main is an ancestor). Causal study read: max_retries=1 = +44.4 vs as-traded, -0.4 vs max_retries=0, max=2 -83; VSA retry +5% both legs. OPERATOR RULING 17:15 ET: merge with the flag OFF; re-run the study after 5 sessions on the 0.5% offset, then he decides 0/1. NOT covered: nothing has run on the box; the backtest CLI is registered but not exercised on the box."
+}
