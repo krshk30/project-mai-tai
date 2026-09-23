@@ -1,0 +1,9 @@
+{
+  "pr_number": 1040,
+  "range_base": "23568d786e9ac331538fdb13b0943ec8706149d4",
+  "range_head": "4c729b314143f8c429408fff86e9121bf0fd3265",
+  "reviewed_at": "2026-09-23T20:52:09Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "WHLR session fix (managed exits use the placement-time session; a stale AM order is not held after 09:30 and is refreshed immediately). Diff read in full (service.py +76/-5, 3 test files). Withheld at 9706c13e for one item: test_rth_no_oco_position_ladder_emits_market_exit pinned the ABSENCE of a session key; explicit NORMAL is wire-identical (schwab.py:1324 defaults absent -> NORMAL); the test now asserts session==NORMAL, 1-line delta to 4c729b31. Four mutations on 9706c13e (code identical at 4c729b31 except that test): replacement keeps the old session => 3 RED; P0A hold ignores session => 2 RED; mismatch does not force an immediate refresh => 3 RED; first emit stamps only in EH (the old code) => 6 RED. 183 affected tests + 286 across 6 related suites pass; full unit suite on 9706c13e = 4241/48 = baseline + that test (now fixed) + the Momentum flake; ruff clean; validate pass on 4c729b31; main is an ancestor. Box count accepted: 4 mismatches of 65 Schwab v2 exit submissions since 09-08, all WHLR 09-23. NOT covered: the new EH market->limit conversion for a NORMAL->PM boundary (test present, never exercised live); nothing has run on the box; deploys tonight on the operator's GO with the offset, C and GAPHOLD flags ON per his ruling."
+}
