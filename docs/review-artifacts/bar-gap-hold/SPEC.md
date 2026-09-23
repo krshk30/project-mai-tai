@@ -19,22 +19,33 @@ from spanning it. **It does not stop trading on the hole.** The REST repair (`_f
 the deque; `report_bar_gaps.py` repairs the database, not live memory. The gap watcher **misclassified BENF as a halt**
 because "Schwab REST empty" was read as "no prints" — false here.
 
-## The rule (v2 strategy, per symbol)
+## The rule (v2 strategy, per symbol) — operator's correction 15:05 ET: never "held for the day"
 
-**HOLD.** When `[V2-ATR-BAR-GAP]` fires for a symbol during the entry window:
-- cancel that symbol's resting order (Schwab + the Webull mirror) with `reason=bar_gap`, and refuse new entries on it
-  (`[V2-GAP-HOLD] SYM gap_min= last_bar= held_since=`);
-- an OPEN position is untouched — its exits keep running on whatever bars arrive; this rule is about ENTRIES.
+> "We need 10 mins of good bars to resume. Be smart enough to find the missing bars as soon as it happens, block trading,
+> and resume once we have good bars without a gap."
 
-**REPAIR.** Attempt a contiguous reconstruction of the hole from Schwab REST price history for that one symbol, inserted
-into live memory in order (the deque must accept back-filled older bars for this purpose — a code change, tested), then
-recompute the trail on the contiguous series. Log `[V2-GAP-REPAIR] SYM missing= fetched= contiguous=0|1`.
+**DETECT, immediately.** Today the gap marker fires only when the NEXT bar finally arrives (≥ 90 s late) — during the hole
+nothing fires. GAPHOLD detects on the clock: a subscribed symbol in the entry window whose last bar is older than
+`gap_hold_detect_seconds` (spec: 90) **while the symbol is still printing** (a LEVELONE quote/trade or an OMS quote newer
+than the last bar) is GAPPED now. A symbol that is genuinely quiet (no prints either) is not a gap. `[V2-GAP-DETECT] SYM
+last_bar_age_s= last_print_age_s=`.
 
-**RESUME.** Re-arm only when the last `gap_hold_min_contiguous_bars` (spec: 15) bars are contiguous AND the repair was
-complete. If Schwab REST cannot supply the hole (BENF), **the symbol stays held for the session** — never resume on the
-sparse series. Log `[V2-GAP-RESUME] SYM` / `[V2-GAP-HELD-FOR-SESSION] SYM reason=rest_empty`.
+**HOLD.** On detect: cancel that symbol's resting order (Schwab + the Webull mirror, `reason=bar_gap`), refuse new entries
+(`[V2-GAP-HOLD] SYM`). An OPEN position is untouched — its exits keep running; this rule is about ENTRIES only.
 
-Settings: `strategy_schwab_1m_v2_gap_hold_enabled` (default False = byte-identical), `gap_hold_min_contiguous_bars` = 15.
+**RESUME on fresh good bars — no repair of the old hole required.** Count contiguous live bars since the hole (each within
+90 s of the previous). When `gap_hold_resume_bars` (spec: **10**) contiguous bars have arrived:
+- **re-seed the ATR / trail from those bars only** — the pre-hole ATR state is discarded, so the trail is never computed
+  across the hole (the NUWE 07-30 / BENF 09-23 mechanism). Wilder(5) is fully re-seeded by 10 bars;
+- re-arm; the next flip on the fresh series may rest again. `[V2-GAP-RESUME] SYM contiguous_bars=10 trail=`.
+A new gap inside the 10 restarts the count. REST back-fill (`_fetch_recent_closed_bars`) is a nice-to-have that can
+shorten the wait when Schwab has the candles; it is NOT required and its absence never blocks resume.
+
+Settings: `strategy_schwab_1m_v2_gap_hold_enabled` (default False = byte-identical), `gap_hold_detect_seconds` = 90,
+`gap_hold_resume_bars` = 10.
+
+**What this would have done to BENF:** gapped from ~12:05 → held; bars 12:45, 12:46, 12:47 then 12:52 (a hole) → count
+restarts; 12:52, 12:53 … → resume no earlier than ~13:02 with a trail seeded from 12:52 onward. No order at 12:53.
 
 ## Open question for the operator (not a proposal — the standing rule is "no data-source change")
 Our own captured tape (`market_capture_trades`, Massive) had every BENF print. Rebuilding the missing minutes from it
@@ -43,14 +54,15 @@ recorded here only so the trade-off is visible: with Schwab-only repair, a BENF-
 
 ## Tests codex-2 should write
 1. Control: enabled=False ⇒ byte-identical (the 166 gap markers still print, nothing held).
-2. A gap marker on a symbol with a resting order ⇒ cancel with `reason=bar_gap` on both legs, `[V2-GAP-HOLD]`, no new
-   emit on the next flip while held.
-3. REST returns the full hole ⇒ bars inserted in order, trail recomputed, `[V2-GAP-REPAIR] contiguous=1`; after 15
-   contiguous live bars ⇒ `[V2-GAP-RESUME]` and the next flip may rest again.
-4. REST returns 0 (the BENF shape) ⇒ `[V2-GAP-HELD-FOR-SESSION]`; a later flip that day does not rest; the next session
-   clears the hold at the 04:00 roll.
+2. Clock detect: last bar 91 s old while a quote is 5 s old ⇒ `[V2-GAP-DETECT]` + `[V2-GAP-HOLD]`, resting order cancelled
+   on both legs, no emit on the next flip while held. Control: last bar 91 s old AND last print 91 s old (quiet stock) ⇒ no hold.
+3. Resume: 10 contiguous bars after the hole ⇒ ATR/trail re-seeded from those 10 only (assert the trail equals a fresh
+   5-period Wilder on those bars, NOT the value carried across the hole) ⇒ `[V2-GAP-RESUME]`; the next flip may rest.
+4. A second gap at bar 7 of 10 ⇒ the count restarts; no resume at bar 10 of the original count.
 5. An OPEN position on a held symbol still exits (target / stop / confirmation) — the hold never blocks a sell.
-6. Mutation: resume without the contiguity check ⇒ test 4 RED; hold not cancelling the mirror ⇒ test 2 RED.
+6. BENF 09-23 replay from the stored bars ⇒ no rest at 12:46, no fill at 12:53; resume ≥ 13:02.
+7. Mutations: resume without re-seeding (trail carried across the hole) ⇒ test 3 RED; resume at 9 bars ⇒ test 4 RED;
+   hold not cancelling the mirror ⇒ test 2 RED; detect ignoring "still printing" ⇒ control in test 2 RED.
 
 ## Grade after deploy
 Per session: `[V2-GAP-HOLD]` count, held-for-session count, and for each held name what the sparse-series line would have
