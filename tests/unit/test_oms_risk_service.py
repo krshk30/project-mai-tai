@@ -1954,6 +1954,85 @@ async def test_oms_service_refreshes_remaining_quantity_for_stale_sell_order() -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("old_session", "clock_session", "old_type", "expected_session", "expected_type"),
+    [
+        ("AM", None, "limit", "NORMAL", "limit"),
+        ("NORMAL", "PM", "limit", "PM", "limit"),
+        ("NORMAL", "PM", "market", "PM", "limit"),
+    ],
+)
+async def test_whlr_managed_exit_refresh_uses_current_session(
+    monkeypatch, capsys, old_session: str, clock_session: str | None, old_type: str,
+    expected_session: str, expected_type: str,
+) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service._extended_hours_session",
+        lambda now=None: clock_session,
+    )
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter(bid_price=5.00, ask_price=5.02)
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_working_order_refresh_seconds=5,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service._latest_quotes_by_symbol["WHLR"] = {"bid": 5.00}
+    store = OmsStore()
+    with session_factory() as session:
+        strategy = store.ensure_strategy(
+            session, "schwab_1m_v2", name="Schwab 1m v2", execution_mode="paper", metadata_json={},
+        )
+        account = store.ensure_broker_account(
+            session, "paper:schwab_1m_v2", provider="schwab", environment="development",
+        )
+        intent = TradeIntent(
+            strategy_id=strategy.id, broker_account_id=account.id, symbol="WHLR",
+            side="sell", intent_type="close", quantity=Decimal("2"),
+            reason="oms_v2_managed_exit:CW_FLOOR", status="submitted", payload={"metadata": {}},
+        )
+        session.add(intent)
+        session.flush()
+        stale_time = datetime.now(UTC) - timedelta(seconds=0.1)
+        payload = {
+            "oms_v2_managed_exit": "true", "order_type": old_type,
+            "time_in_force": "day", "limit_price": "4.88",
+            "reference_price": "4.88", "price_source": "bid", "session": old_session,
+        }
+        if old_session != "NORMAL":
+            payload["extended_hours"] = "true"
+        session.add(BrokerOrder(
+            intent_id=intent.id, strategy_id=strategy.id, broker_account_id=account.id,
+            client_order_id="schwab_1m_v2-WHLR-close-whlr", broker_order_id="ord-123",
+            symbol="WHLR", side="sell", order_type=old_type, time_in_force="day",
+            quantity=Decimal("2"), status="accepted", payload=payload,
+            submitted_at=stale_time, updated_at=stale_time,
+        ))
+        session.commit()
+
+    summary = await service.sync_broker_orders(account_names=["paper:schwab_1m_v2"])
+
+    assert summary == {"orders": 1, "terminal_orders": 1}
+    assert [request.intent_type for request in adapter.submit_requests] == ["cancel", "close"]
+    replacement = adapter.submit_requests[-1]
+    assert replacement.metadata["session"] == expected_session
+    assert replacement.metadata["order_type"] == expected_type
+    assert (replacement.metadata.get("extended_hours") == "true") is (expected_session == "PM")
+    if old_type == "market":
+        assert Decimal(replacement.metadata["limit_price"]) <= Decimal("5.00")
+    assert f"session={expected_session} clock_session={expected_session}" in capsys.readouterr().out
+    with session_factory() as session:
+        orders = session.scalars(select(BrokerOrder).where(BrokerOrder.symbol == "WHLR")).all()
+        assert sorted(order.status for order in orders) == ["accepted", "cancelled"]
+        assert next(order for order in orders if order.status == "accepted").payload["session"] == expected_session
+
+
+@pytest.mark.asyncio
 async def test_oms_service_refreshes_stop_guard_sell_order_with_wider_panic_limit() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()

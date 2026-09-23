@@ -363,7 +363,8 @@ async def test_rth_exit_stays_market_byte_identical(monkeypatch) -> None:
 
     m = _meta(_sell_intents(sf)[0])
     assert m["order_type"] == "market"               # unchanged
-    assert "session" not in m and "limit_price" not in m
+    assert m["session"] == "NORMAL" and "extended_hours" not in m
+    assert "limit_price" not in m
     assert m["reference_price"] == "9.8500"          # leg level, unchanged
 
 
@@ -443,7 +444,28 @@ async def test_eh_missing_bid_falls_back_to_market(monkeypatch) -> None:
     assert events
     m = _meta(_sell_intents(sf)[0])
     assert m["order_type"] == "market"               # fail-safe: no bid → market, not blocked
-    assert "session" not in m
+    assert m["session"] == "PM"
+
+
+@pytest.mark.asyncio
+async def test_rth_exit_clears_entry_am_session(monkeypatch) -> None:
+    _force_session(monkeypatch, None)
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf, entry=10.0, qty=100)
+    with sf() as s:
+        row = svc.store.get_open_managed_position(s, broker_account_name=ACCT, symbol=SYM)
+        events = await svc._emit_v2_managed_sell(
+            s, row, intent_type="close", quantity=100,
+            reference_price=9.85, reason="oms_v2_managed_exit:HARD_STOP", bid=9.80,
+            confirmation_context={"session": "AM", "extended_hours": "true"},
+        )
+        s.commit()
+    assert events
+    m = _meta(_sell_intents(sf)[0])
+    assert m["session"] == "NORMAL"
+    assert "extended_hours" not in m
+    assert m["order_type"] == "market"
 
 
 # --------------------------------------------------------------------------- (E6)
@@ -452,9 +474,10 @@ def test_extended_hours_session_boundaries() -> None:
     """The session helper the exit routing keys off (America/New_York)."""
     from zoneinfo import ZoneInfo
     et = ZoneInfo("America/New_York")
-    assert _extended_hours_session(datetime(2026, 7, 6, 8, 0, tzinfo=et)) == "AM"    # pre-market
-    assert _extended_hours_session(datetime(2026, 7, 6, 14, 0, tzinfo=et)) is None   # RTH
-    assert _extended_hours_session(datetime(2026, 7, 6, 16, 30, tzinfo=et)) == "PM"  # after-hours
+    assert _extended_hours_session(datetime(2026, 9, 23, 9, 29, 59, tzinfo=et)) == "AM"
+    assert _extended_hours_session(datetime(2026, 9, 23, 9, 30, tzinfo=et)) is None
+    assert _extended_hours_session(datetime(2026, 9, 23, 15, 59, 59, tzinfo=et)) is None
+    assert _extended_hours_session(datetime(2026, 9, 23, 16, 0, tzinfo=et)) == "PM"
 
 
 # ---- #6: mark closed on FILL not submit (CLRO closed-on-submit desync fix) --------------

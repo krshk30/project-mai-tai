@@ -191,7 +191,7 @@ async def test_rth_no_oco_position_ladder_emits_market_exit(monkeypatch) -> None
     assert len(sells) == 1
     m = _meta(sells[0])
     assert m["order_type"] == "market"                # RTH → normal MARKET exit
-    assert "session" not in m and "limit_price" not in m
+    assert m["session"] == "NORMAL" and "limit_price" not in m
     assert m["reference_price"] == "9.5000"
     assert sells[0].reason.endswith("CW_HARD_STOP")
 
