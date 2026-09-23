@@ -1,0 +1,9 @@
+{
+  "pr_number": 1034,
+  "range_base": "8cc7f74d620ff7912712d6dc6d0cb57fbc99eb53",
+  "range_head": "2e54c23f8c70aad3cab8725d2cd9afe42557eac8",
+  "reviewed_at": "2026-09-23T14:05:44Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed amended resting-trigger-offset spec: F1 ask admission uses trigger; F2 line/trigger state split preserves exact reprice cadence; F3 metadata preserves ATR line and prices from trigger; F4 names real markers. Additional production use named before build: Schwab-fill fanout and lifecycle resets use resting_trigger."
+}
