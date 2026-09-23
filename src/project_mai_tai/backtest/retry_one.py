@@ -596,7 +596,7 @@ class DbRetryOneDataSource:
             bars = (
                 session.execute(
                     text(
-                        "SELECT DISTINCT ON (symbol,bar_time) symbol,bar_time,open_price," 
+                        "SELECT DISTINCT ON (symbol,bar_time) symbol,bar_time,open_price,"
                         "high_price,low_price,close_price FROM strategy_bar_history "
                         "WHERE strategy_code='schwab_1m_v2' AND interval_secs=60 "
                         "AND symbol = ANY(:symbols) "
