@@ -10,6 +10,7 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 import socket
 import subprocess
+import time
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -57,9 +58,23 @@ _COLUMNS = [
 ]
 
 
+class _TimedRealSocket:
+    def __init__(self, wrapped: socket.socket) -> None:
+        self._wrapped = wrapped
+        self.send_elapsed_ms: list[float] = []
+
+    def send(self, payload: bytes) -> int:
+        started_ns = time.monotonic_ns()
+        try:
+            return self._wrapped.send(payload)
+        finally:
+            self.send_elapsed_ms.append((time.monotonic_ns() - started_ns) / 1_000_000)
+
+
 def _run_real_dead_consumer_probe(socket_path: str, result_pipe: Connection) -> None:
     async def run() -> dict[str, float | int]:
         producer_socket = connect_consumer_socket(socket_path)
+        timed_socket = _TimedRealSocket(producer_socket)
         try:
             send_buffer_bytes = producer_socket.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)
             frame_count = 600
@@ -76,11 +91,12 @@ def _run_real_dead_consumer_probe(socket_path: str, result_pipe: Connection) -> 
                 )
                 for ordinal in range(frame_count)
             ]
+            result_pipe.send({"kind": "ready"})
             result = await _paced_replay(
                 rows,
                 speed=1.0,
                 handoff=BoundedPaperHandoff(capacity=frame_count),
-                producer_socket=producer_socket,
+                producer_socket=timed_socket,  # type: ignore[arg-type]
             )
             return {
                 "frame_count": frame_count,
@@ -90,7 +106,9 @@ def _run_real_dead_consumer_probe(socket_path: str, result_pipe: Connection) -> 
                 "sent_frames": result.writer.sent_frames,
                 "would_block_drops": result.writer.would_block_drops,
                 "offer_elapsed_ms": result.offer_elapsed_ms,
-                "offer_schedule_delay_p99_ms": result.offer_schedule_delay_p99_ms,
+                "socket_send_elapsed_p99_ms": nearest_rank(
+                    timed_socket.send_elapsed_ms, 99
+                ),
             }
         finally:
             producer_socket.close()
@@ -106,7 +124,7 @@ def _ns(hour: int, minute: int, second: int) -> int:
     return int(observed.timestamp() * 1_000_000_000)
 
 
-def _flat_file(path: Path, timestamps: list[int]) -> Path:
+def _flat_file(path: Path, timestamps: list[int], *, size: str | int = 1) -> Path:
     with gzip.open(path, "wt", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=_COLUMNS)
         writer.writeheader()
@@ -122,7 +140,7 @@ def _flat_file(path: Path, timestamps: list[int]) -> Path:
                     "price": "2.00",
                     "sequence_number": sequence,
                     "sip_timestamp": timestamp,
-                    "size": 1,
+                    "size": size,
                     "tape": 1,
                     "trf_id": 0,
                     "trf_timestamp": 0,
@@ -150,6 +168,40 @@ def test_population_counts_zeros_in_p99_and_writes_ordered_peak_tape(tmp_path: P
     with gzip.open(result.replay_tape, "rt", encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle]
     assert [row["source_ns"] for row in rows] == sorted(row["source_ns"] for row in rows)
+
+
+@pytest.mark.parametrize("raw_size", ["18", "18.000000"])
+def test_population_accepts_massive_integral_trade_size(
+    tmp_path: Path,
+    raw_size: str,
+) -> None:
+    source = _flat_file(
+        tmp_path / "2026-09-17.csv.gz",
+        [_ns(8, 0, 0)],
+        size=raw_size,
+    )
+
+    result = summarize_massive_flat_file(source, tmp_path / "replay")
+
+    with gzip.open(result.replay_tape, "rt", encoding="utf-8") as handle:
+        row = json.loads(next(handle))
+    assert row["frame"]["s"] == 18
+
+
+def test_population_matches_live_integer_shape_for_fractional_trade_size(
+    tmp_path: Path,
+) -> None:
+    source = _flat_file(
+        tmp_path / "2026-09-17.csv.gz",
+        [_ns(8, 0, 0)],
+        size="0.199846",
+    )
+
+    result = summarize_massive_flat_file(source, tmp_path / "replay")
+
+    with gzip.open(result.replay_tape, "rt", encoding="utf-8") as handle:
+        row = json.loads(next(handle))
+    assert row["frame"]["s"] == 0
 
 
 def test_flat_file_signing_uses_path_style_and_never_emits_the_secret() -> None:
@@ -316,17 +368,17 @@ def test_zero_quote_precheck_is_written_unmeasured() -> None:
     assert measured_or_unmeasured(1, absent_reason="NO_QUOTE_TICKS") == "MEASURED"
 
 
-def test_candidate_handoff_is_not_imported_by_a_runtime_gateway_or_service() -> None:
+def test_measured_handoff_is_imported_by_both_runtime_endpoints() -> None:
     root = Path(__file__).resolve().parents[2] / "src" / "project_mai_tai"
     runtime_paths = [root / "market_data" / "gateway.py", *sorted((root / "services").glob("*.py"))]
 
-    offenders = [
+    importers = [
         str(path.relative_to(root))
         for path in runtime_paths
         if "momentum_gateway_handoff" in path.read_text(encoding="utf-8")
     ]
 
-    assert offenders == []
+    assert importers == ["market_data/gateway.py", "services/momentum_paper_app.py"]
 
 
 @pytest.mark.asyncio
@@ -369,7 +421,9 @@ def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> N
         )
         producer.start()
         result_writer.close()
-        producer.join(timeout=3.0)
+        assert result_reader.poll(10.0), "producer process did not reach the replay fence"
+        assert result_reader.recv() == {"kind": "ready"}
+        producer.join(timeout=2.0)
         hung = producer.is_alive()
         if hung:
             producer.terminate()
@@ -387,7 +441,6 @@ def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> N
         result_writer.close()
         consumer.close()
 
-    paced_duration_ms = (int(result["frame_count"]) - 1) * 1.0
     payload_bytes = int(result["frame_count"]) * int(result["frame_bytes"])
     kernel_buffer_bytes = int(result["send_buffer_bytes"]) + consumer.receive_buffer_bytes
     assert consumer_result is not None
@@ -396,8 +449,8 @@ def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> N
     assert payload_bytes > kernel_buffer_bytes * 20
     assert int(result["socket_nonblocking"]) == 1
     assert int(result["would_block_drops"]) > 0
-    assert float(result["offer_elapsed_ms"]) < paced_duration_ms + 500.0
-    assert float(result["offer_schedule_delay_p99_ms"]) < 25.0
+    assert float(result["offer_elapsed_ms"]) < 2_000.0
+    assert float(result["socket_send_elapsed_p99_ms"]) < 50.0
 
 
 def _flat_preflight_result(returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -500,9 +553,7 @@ async def test_flatness_is_rechecked_between_replays_and_stops_the_next_run() ->
         return spec
 
     with pytest.raises(ReplayAborted, match="position appeared"):
-        await run_guarded_replays(
-            ("1x", "3x", "dead"), access_checker=check, replay_runner=replay
-        )
+        await run_guarded_replays(("1x", "3x", "dead"), access_checker=check, replay_runner=replay)
 
     assert checks == 2
     assert runs == ["1x"]

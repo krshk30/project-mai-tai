@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import logging
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import date, timedelta
 
 from project_mai_tai.market_data.models import (
@@ -87,7 +87,11 @@ class MassiveSnapshotProvider:
     def fetch_all_snapshots(self) -> list[SnapshotRecord]:
         client = self._get_rest_client()
         snapshots = client.get_snapshot_all("stocks", include_otc=False)
-        return [self._normalize_snapshot(snapshot) for snapshot in snapshots if getattr(snapshot, "ticker", None)]
+        return [
+            self._normalize_snapshot(snapshot)
+            for snapshot in snapshots
+            if getattr(snapshot, "ticker", None)
+        ]
 
     def get_grouped_daily_multi(self, days: int = 20) -> dict[str, list[float]]:
         client = self._get_rest_client()
@@ -192,7 +196,9 @@ class MassiveSnapshotProvider:
             timestamp_raw = _to_int(getattr(agg, "timestamp", None))
             if close is None or timestamp_raw is None:
                 continue
-            timestamp = timestamp_raw / 1000 if timestamp_raw > 1_000_000_000_000 else float(timestamp_raw)
+            timestamp = (
+                timestamp_raw / 1000 if timestamp_raw > 1_000_000_000_000 else float(timestamp_raw)
+            )
             bars.append(
                 HistoricalBarRecord(
                     open=_to_float(getattr(agg, "open", None)) or close,
@@ -283,7 +289,9 @@ class MassiveSnapshotProvider:
             bid_size=_to_int(getattr(last_quote, "bid_size", None)),
             ask_size=_to_int(getattr(last_quote, "ask_size", None)),
             todays_change_percent=_to_float(getattr(snapshot, "todays_change_percent", None)),
-            updated_ns=_to_int(getattr(snapshot, "updated", None) or getattr(snapshot, "updated_ns", None)),
+            updated_ns=_to_int(
+                getattr(snapshot, "updated", None) or getattr(snapshot, "updated_ns", None)
+            ),
         )
 
 
@@ -299,6 +307,8 @@ class MassiveTradeStream:
         self._on_trade: Callable[[TradeTickRecord], None] | None = None
         self._on_quote: Callable[[QuoteTickRecord], None] | None = None
         self._on_agg: Callable[[LiveBarRecord], None] | None = None
+        self._on_raw_trade: Callable[[dict[str, object]], None] | None = None
+        self._global_trade_subscription_enabled = False
         self._provider_aggregate_subscriptions_enabled = bool(enable_aggregate_subscriptions)
         self._aggregate_subscriptions_allowed = True
 
@@ -339,16 +349,38 @@ class MassiveTradeStream:
             return
 
         if to_remove:
-            self._ws.unsubscribe(*[f"T.{symbol}" for symbol in sorted(to_remove)])
+            if not self._global_trade_subscription_enabled:
+                self._ws.unsubscribe(*[f"T.{symbol}" for symbol in sorted(to_remove)])
             self._ws.unsubscribe(*[f"Q.{symbol}" for symbol in sorted(to_remove)])
             if self._aggregate_subscriptions_enabled:
                 self._ws.unsubscribe(*[f"A.{symbol}" for symbol in sorted(to_remove)])
         if to_add:
-            self._ws.subscribe(*[f"T.{symbol}" for symbol in sorted(to_add)])
+            if not self._global_trade_subscription_enabled:
+                self._ws.subscribe(*[f"T.{symbol}" for symbol in sorted(to_add)])
             self._ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(to_add)])
             if self._aggregate_subscriptions_enabled:
                 self._ws.subscribe(*[f"A.{symbol}" for symbol in sorted(to_add)])
             self._mark_coverage_started(to_add)
+
+    def set_raw_trade_callback(self, callback: Callable[[dict[str, object]], None] | None) -> None:
+        self._on_raw_trade = callback
+
+    async def set_global_trade_subscription(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._global_trade_subscription_enabled:
+            return
+        self._global_trade_subscription_enabled = enabled
+        if self._ws is None or not self._connected:
+            return
+        symbols = sorted(self._subscriptions)
+        if enabled:
+            if symbols:
+                self._ws.unsubscribe(*[f"T.{symbol}" for symbol in symbols])
+            self._ws.subscribe("T.*")
+        else:
+            self._ws.unsubscribe("T.*")
+            if symbols:
+                self._ws.subscribe(*[f"T.{symbol}" for symbol in symbols])
 
     async def _run_loop(self) -> None:
         # We use the massive WebSocketClient's *async* connect() entrypoint
@@ -366,8 +398,11 @@ class MassiveTradeStream:
             try:
                 ws = self._build_client()
                 self._ws = ws
-                if self._subscriptions:
+                if self._global_trade_subscription_enabled:
+                    ws.subscribe("T.*")
+                elif self._subscriptions:
                     ws.subscribe(*[f"T.{symbol}" for symbol in sorted(self._subscriptions)])
+                if self._subscriptions:
                     ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(self._subscriptions)])
                     if self._aggregate_subscriptions_enabled:
                         ws.subscribe(*[f"A.{symbol}" for symbol in sorted(self._subscriptions)])
@@ -402,29 +437,38 @@ class MassiveTradeStream:
     def _handle_messages(self, messages) -> None:
         for message in messages:
             try:
-                event_type = getattr(message, "event_type", None) or getattr(message, "ev", None)
-                symbol = getattr(message, "symbol", None)
-                if not symbol or symbol not in self._subscriptions:
+                event_type = self._message_value(message, "event_type", "ev")
+                symbol = str(self._message_value(message, "symbol", "sym") or "").upper()
+                if not symbol:
                     continue
 
-                if event_type == "T" and self._on_trade is not None:
-                    price = _to_float(getattr(message, "price", None))
+                if event_type == "T":
+                    if self._global_trade_subscription_enabled and self._on_raw_trade is not None:
+                        self._on_raw_trade(self._raw_trade_payload(message, symbol))
+                    if symbol not in self._subscriptions or self._on_trade is None:
+                        continue
+                    price = _to_float(self._message_value(message, "price", "p"))
                     if price is None or price <= 0:
                         continue
                     self._on_trade(
                         TradeTickRecord(
                             symbol=symbol,
                             price=price,
-                            size=int(getattr(message, "size", 0) or 0),
+                            size=int(self._message_value(message, "size", "s") or 0),
                             timestamp_ns=_to_int(
-                                getattr(message, "sip_timestamp", None) or getattr(message, "timestamp", None)
+                                self._message_value(message, "sip_timestamp", "timestamp", "t")
                             ),
-                            exchange=str(getattr(message, "exchange", "")) or None,
+                            exchange=str(self._message_value(message, "exchange", "x") or "")
+                            or None,
                         )
                     )
-                elif event_type == "Q" and self._on_quote is not None:
-                    bid = _to_float(getattr(message, "bid_price", None))
-                    ask = _to_float(getattr(message, "ask_price", None))
+                elif (
+                    event_type == "Q"
+                    and symbol in self._subscriptions
+                    and self._on_quote is not None
+                ):
+                    bid = _to_float(self._message_value(message, "bid_price"))
+                    ask = _to_float(self._message_value(message, "ask_price"))
                     if bid is None or ask is None:
                         continue
                     self._on_quote(
@@ -436,12 +480,40 @@ class MassiveTradeStream:
                             ask_size=_to_int(getattr(message, "ask_size", None)),
                         )
                     )
-                elif event_type == "A" and self._on_agg is not None:
+                elif (
+                    event_type == "A" and symbol in self._subscriptions and self._on_agg is not None
+                ):
                     bar = self._normalize_aggregate_bar(message, symbol)
                     if bar is not None:
                         self._on_agg(bar)
             except Exception:
                 logger.exception("Failed to normalize Massive stream message")
+
+    @staticmethod
+    def _message_value(message: object, *names: str) -> object:
+        for name in names:
+            if isinstance(message, Mapping) and name in message:
+                return message[name]
+            value = getattr(message, name, None)
+            if value is not None:
+                return value
+        return None
+
+    @classmethod
+    def _raw_trade_payload(cls, message: object, symbol: str) -> dict[str, object]:
+        conditions = cls._message_value(message, "conditions", "c")
+        return {
+            "ev": "T",
+            "sym": symbol,
+            "p": cls._message_value(message, "price", "p"),
+            "s": cls._message_value(message, "size", "s") or 0,
+            "t": cls._message_value(message, "sip_timestamp", "timestamp", "t"),
+            "y": cls._message_value(message, "participant_timestamp", "y", "pt"),
+            "c": list(conditions) if isinstance(conditions, (list, tuple)) else conditions,
+            "i": cls._message_value(message, "id", "trade_id", "i") or "",
+            "x": cls._message_value(message, "exchange", "x"),
+            "trfi": cls._message_value(message, "trf_id", "trfi"),
+        }
 
     @property
     def _aggregate_subscriptions_enabled(self) -> bool:

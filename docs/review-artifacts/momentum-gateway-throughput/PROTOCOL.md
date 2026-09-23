@@ -2,7 +2,9 @@
 
 Status: **PRE-REGISTERED / UNMEASURED**  
 Date frozen: 2026-09-18  
-Scope: Momentum Step 2 only. This document changes no runtime behavior and authorizes no Step 3 code.
+Scope: the frozen Momentum Step 2 rules. On 2026-09-21 the operator directed implementation to
+start; Step 3 may exist only as default-off draft code until this table passes and independent
+review accepts the evidence. This document authorizes neither merge nor activation.
 
 ## Question
 
@@ -67,10 +69,10 @@ clock. A connected-but-non-reading consumer must fill the socket, increment a de
 would-block drop counter, and leave producer offer-loop duration within the same +10% or +50 ms
 allowance as the active-consumer 3x run. Queue drops and socket drops are reported separately.
 
-Known Step 2 limit: the replay tape emits one trade per frame. A live Massive websocket frame may
-batch many trades, and a Unix datagram larger than the socket buffer raises `EMSGSIZE`; Step 2 does
-not exercise that batched-frame shape. Before Step 3 is wired, oversized batches must be split or
-counted and dropped without terminating the writer task.
+Known Step 2 limit: the replay tape emits one trade per frame and does not reproduce Massive's
+upstream packet batching. The draft runtime iterates a received batch and offers each trade as its
+own local datagram; an unexpected oversized datagram is counted and dropped without terminating
+the writer task. The measurement therefore grades per-trade forwarding, not upstream packet shape.
 
 ### Existing-work sampling
 
@@ -126,18 +128,20 @@ read.
 | 1x replay | pending | N/A | N/A | N/A | pending | pending | pending | UNMEASURED |
 | 3x replay | pending | N/A | N/A | N/A | pending | pending | pending | UNMEASURED |
 
-Step 3 stays blocked until this table is complete, the verdict is PASS, and independent review has
-accepted the evidence.
+Step 3 merge and activation stay blocked until this table is complete, the verdict is PASS, and
+independent review has accepted the evidence.
 
-## Step 2 executable (not wired)
+## Step 2 executable and default-off draft wiring
 
-The measurement implementation is intentionally standalone:
+The measurement CLI is intentionally standalone. The hand-off primitive is shared with the
+default-off draft runtime so the replay grades the same queue and socket writer shape:
 
 - `project_mai_tai.momentum_gateway_handoff` is the proposed parse-and-forward path: an
   `asyncio.Queue` with non-awaiting `put_nowait`, drop-oldest behavior, and explicit input,
   forwarded, dropped, and parse-failure counters. Its writer uses a non-blocking local Unix
-  datagram socket and its measurement consumer is a separate spawned process. No gateway or
-  service imports it.
+  datagram socket and its measurement consumer is a separate spawned process. The market-data
+  gateway and Momentum paper service import it only behind
+  `MAI_TAI_MOMENTUM_PAPER_GATEWAY_FEED_ENABLED`, whose default remains false.
 - `project_mai_tai.backtest.momentum_gateway_throughput population` reads complete Massive
   `us_stocks_sip/trades_v1/YYYY/MM/YYYY-MM-DD.csv.gz` files. Massive describes these as daily,
   whole-market SIP files containing tick-level trades from exchanges and dark pools:

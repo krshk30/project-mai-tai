@@ -1,8 +1,9 @@
-"""After-hours Step 2 measurement for the proposed Momentum gateway hand-off.
+"""After-hours Step 2 measurement for the Momentum gateway hand-off.
 
-Nothing in production imports this module.  It reads Massive daily trade flat
-files, replays one measured peak minute through the standalone bounded hand-off,
-and observes existing Redis streams with read-only ``XREAD`` calls.
+This CLI remains standalone even though the runtime gateway and paper service
+now import the measured hand-off primitive behind a default-off feature flag.
+It reads Massive daily trade flat files, replays one measured peak minute, and
+observes existing Redis streams with read-only ``XREAD`` calls.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from collections import Counter
 import csv
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, time
+from decimal import Decimal
 import gzip
 import hashlib
 import hmac
@@ -465,12 +467,15 @@ def _open_csv(path: Path):
 def _flat_trade_frame(row: Mapping[str, str]) -> dict[str, object]:
     conditions = [int(value) for value in row["conditions"].split(",") if value]
     trf = int(row["trf_id"] or 0)
+    size = Decimal(row["size"])
     return {
         "ev": "T",
         "sym": row["ticker"],
         "t": int(row["sip_timestamp"]),
         "p": row["price"],
-        "s": int(row["size"]),
+        # Massive flat files include fractional-share sizes; live T.* frames use
+        # integer share counts, so mirror the provider boundary's truncation.
+        "s": int(size),
         "c": conditions,
         "i": row["id"],
         "x": int(row["exchange"]),
@@ -1159,8 +1164,8 @@ def _flat_file_key(day: date) -> str:
 
 def _fetch_population_command(args: argparse.Namespace) -> int:
     try:
-        if datetime.now(_ET).time() < _AFTER_HOURS_START:
-            raise RuntimeError("population downloads are restricted to 20:00 ET or later")
+        # Flat-file population capture is offline REST/S3 work; the live replay keeps
+        # its separate flat-book and time-window gates below in _suite_command_async.
         require_replay_niceness()
         sessions = tuple(date.fromisoformat(value) for value in args.session)
         if len(sessions) < 3:

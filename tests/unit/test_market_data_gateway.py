@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 import threading
 import time
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from websockets.exceptions import ConnectionClosedError
@@ -13,7 +15,13 @@ from websockets.frames import Close
 from project_mai_tai.events import MarketDataSubscriptionEvent, MarketDataSubscriptionPayload
 from project_mai_tai.market_data.massive_provider import MassiveTradeStream
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
-from project_mai_tai.market_data.models import HistoricalBarRecord, LiveBarRecord, SnapshotRecord, TradeTickRecord
+from project_mai_tai.market_data.models import (
+    HistoricalBarRecord,
+    LiveBarRecord,
+    SnapshotRecord,
+    TradeTickRecord,
+)
+from project_mai_tai.momentum_gateway_handoff import UnixDatagramPaperReceiver
 from project_mai_tai.settings import Settings
 
 
@@ -69,7 +77,9 @@ class FakeSnapshotProvider:
         del days
         return {}
 
-    def get_ticker_details_batch(self, tickers, batch_size: int = 10, delay_between_batches: float = 0.2):
+    def get_ticker_details_batch(
+        self, tickers, batch_size: int = 10, delay_between_batches: float = 0.2
+    ):
         del tickers, batch_size, delay_between_batches
         return {}
 
@@ -109,6 +119,64 @@ class FakeTradeStream:
 
     async def sync_subscriptions(self, symbols) -> None:
         self.synced.append(sorted(symbols))
+
+
+class MomentumCapableFakeTradeStream(FakeTradeStream):
+    def __init__(self) -> None:
+        super().__init__()
+        self.raw_callback = None
+        self.global_subscription_states: list[bool] = []
+
+    def set_raw_trade_callback(self, callback) -> None:
+        self.raw_callback = callback
+
+    async def set_global_trade_subscription(self, enabled: bool) -> None:
+        self.global_subscription_states.append(enabled)
+
+
+@pytest.mark.asyncio
+async def test_massive_stream_swaps_symbol_trades_for_one_global_subscription() -> None:
+    class RecordingSocket:
+        def __init__(self) -> None:
+            self.subscribed: list[tuple[str, ...]] = []
+            self.unsubscribed: list[tuple[str, ...]] = []
+
+        def subscribe(self, *subscriptions: str) -> None:
+            self.subscribed.append(subscriptions)
+
+        def unsubscribe(self, *subscriptions: str) -> None:
+            self.unsubscribed.append(subscriptions)
+
+    stream = MassiveTradeStream(api_key="test")
+    socket = RecordingSocket()
+    stream._ws = socket  # type: ignore[assignment]
+    stream._connected = True
+    stream._subscriptions = {"AEMD", "GLND"}
+
+    await stream.set_global_trade_subscription(True)
+    await stream.set_global_trade_subscription(False)
+
+    assert socket.unsubscribed == [("T.AEMD", "T.GLND"), ("T.*",)]
+    assert socket.subscribed == [("T.*",), ("T.AEMD", "T.GLND")]
+
+
+@pytest.mark.asyncio
+async def test_momentum_handoff_task_failure_is_process_fatal() -> None:
+    service = MarketDataGatewayService(
+        settings=Settings(redis_stream_prefix="test"),
+        redis_client=FakeRedis(),
+        snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(),
+        reference_cache=FakeReferenceCache(),
+    )
+    stop_event = asyncio.Event()
+
+    async def fail() -> None:
+        raise RuntimeError("handoff failed")
+
+    task = asyncio.create_task(fail(), name="market-data-momentum-handoff")
+    with pytest.raises(RuntimeError, match="handoff failed"):
+        await service._wait_for_stop_or_critical_task_failure(stop_event, [task])
 
 
 class FakeReferenceCache:
@@ -202,7 +270,9 @@ async def test_apply_subscription_event_unions_static_and_consumer_symbols() -> 
 
 
 @pytest.mark.asyncio
-async def test_apply_subscription_event_replace_does_not_replay_warmup_when_symbols_unchanged() -> None:
+async def test_apply_subscription_event_replace_does_not_replay_warmup_when_symbols_unchanged() -> (
+    None
+):
     redis = FakeRedis()
     trade_stream = FakeTradeStream()
     service = MarketDataGatewayService(
@@ -305,6 +375,111 @@ def test_massive_trade_stream_accepts_and_normalizes_aggregate_callback() -> Non
     assert bars[0].trade_count == 150
 
 
+def test_global_trade_handoff_keeps_raw_identity_without_publishing_unwatched_trade() -> None:
+    raw_trades: list[dict[str, object]] = []
+    watched_trades: list[TradeTickRecord] = []
+    stream = MassiveTradeStream(api_key="test")
+    stream._subscriptions = {"WATCHED"}
+    stream._global_trade_subscription_enabled = True
+    stream.set_raw_trade_callback(raw_trades.append)
+    stream._on_trade = watched_trades.append
+
+    stream._handle_messages(
+        [
+            SimpleNamespace(
+                ev="T",
+                symbol="OUTSIDE",
+                price=1.25,
+                size=40,
+                sip_timestamp=1_789_555_200_123,
+                participant_timestamp=1_789_555_100_999,
+                conditions=[12, 14, 41],
+                id="trade-wire-id",
+                exchange=11,
+                trf_id=501,
+            ),
+            SimpleNamespace(
+                ev="T",
+                symbol="WATCHED",
+                price=2.50,
+                size=10,
+                sip_timestamp=1_789_555_200_124,
+                conditions=[12],
+                id="second-wire-id",
+                exchange=12,
+            ),
+        ]
+    )
+
+    assert [trade.symbol for trade in watched_trades] == ["WATCHED"]
+    assert raw_trades == [
+        {
+            "ev": "T",
+            "sym": "OUTSIDE",
+            "p": 1.25,
+            "s": 40,
+            "t": 1_789_555_200_123,
+            "y": 1_789_555_100_999,
+            "c": [12, 14, 41],
+            "i": "trade-wire-id",
+            "x": 11,
+            "trfi": 501,
+        },
+        {
+            "ev": "T",
+            "sym": "WATCHED",
+            "p": 2.50,
+            "s": 10,
+            "t": 1_789_555_200_124,
+            "y": None,
+            "c": [12],
+            "i": "second-wire-id",
+            "x": 12,
+            "trfi": None,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_enables_wildcard_only_while_momentum_socket_exists(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+    socket_path = Path(f"/tmp/mt-{uuid4().hex}.sock")
+    stream = MomentumCapableFakeTradeStream()
+    service = MarketDataGatewayService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            momentum_paper_gateway_feed_enabled=True,
+            momentum_paper_gateway_socket_path=str(socket_path),
+        ),
+        redis_client=FakeRedis(),
+        snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=stream,
+        reference_cache=FakeReferenceCache(),
+    )
+    receiver = UnixDatagramPaperReceiver(str(socket_path))
+    receiver.open()
+    stop = asyncio.Event()
+    task = asyncio.create_task(service._momentum_handoff_loop(stop))
+    try:
+        while not service._momentum_global_subscription_active:
+            await asyncio.sleep(0)
+        service._offer_momentum_trade({"ev": "T", "sym": "AEMD", "p": 2.5, "s": 10, "t": 1})
+        frame = await asyncio.wait_for(receiver.receive(), timeout=1)
+        assert frame.trades[0]["sym"] == "AEMD"
+
+        receiver.close()
+        while service._momentum_global_subscription_active:
+            await asyncio.sleep(0.01)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+        receiver.close()
+
+    assert stream.global_subscription_states == [True, False]
+
+
 def test_massive_trade_stream_prefers_direct_aggregate_transactions() -> None:
     bars = []
     stream = MassiveTradeStream(api_key="test")
@@ -359,7 +534,9 @@ def test_massive_trade_stream_derives_trade_count_from_average_size_field() -> N
 
 
 @pytest.mark.asyncio
-async def test_massive_trade_stream_downgrades_aggregate_subscriptions_after_policy_violation() -> None:
+async def test_massive_trade_stream_downgrades_aggregate_subscriptions_after_policy_violation() -> (
+    None
+):
     class FakeWebSocketClient:
         def __init__(self) -> None:
             self.subscriptions: list[str] = []
@@ -402,6 +579,7 @@ async def test_massive_trade_stream_downgrades_aggregate_subscriptions_after_pol
     await stream.sync_subscriptions(["UGRO"])
 
     try:
+
         async def aggregate_disabled() -> None:
             while stream._aggregate_subscriptions_allowed:
                 await asyncio.sleep(0.01)
@@ -417,7 +595,9 @@ async def test_massive_trade_stream_downgrades_aggregate_subscriptions_after_pol
 
 
 @pytest.mark.asyncio
-async def test_massive_trade_stream_defaults_to_trade_quote_only_even_with_live_bar_handler() -> None:
+async def test_massive_trade_stream_defaults_to_trade_quote_only_even_with_live_bar_handler() -> (
+    None
+):
     class FakeWebSocketClient:
         def __init__(self) -> None:
             self.subscriptions: list[str] = []
@@ -454,6 +634,7 @@ async def test_massive_trade_stream_defaults_to_trade_quote_only_even_with_live_
     await stream.sync_subscriptions(["UGRO"])
 
     try:
+
         async def connected() -> None:
             while not clients or not clients[0].subscriptions:
                 await asyncio.sleep(0.01)
@@ -521,7 +702,9 @@ async def test_stream_publish_loop_publishes_live_bar_events() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_publish_loop_survives_single_market_data_publish_failure(caplog: pytest.LogCaptureFixture) -> None:
+async def test_stream_publish_loop_survives_single_market_data_publish_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     redis = FlakyMarketDataRedis()
     service = MarketDataGatewayService(
         settings=Settings(redis_stream_prefix="test"),
@@ -641,7 +824,10 @@ async def test_live_bars_can_publish_while_historical_warmup_is_inflight() -> No
 
 async def _wait_for_event(redis: FakeRedis, stream: str, event_type: str) -> None:
     while True:
-        if any(saved_stream == stream and payload["event_type"] == event_type for saved_stream, payload, _kwargs in redis.entries):
+        if any(
+            saved_stream == stream and payload["event_type"] == event_type
+            for saved_stream, payload, _kwargs in redis.entries
+        ):
             return
         await asyncio.sleep(0)
 
@@ -752,6 +938,7 @@ async def test_reference_refresh_disabled_by_zero_interval() -> None:
 @pytest.mark.asyncio
 async def test_refresh_failure_keeps_serving_the_old_cache() -> None:
     """A refresh blowing up must never kill the gateway — the stale cache keeps serving."""
+
     class Exploding(CountingReferenceCache):
         def load_from_cache(self) -> bool:
             self.load_calls += 1
@@ -775,10 +962,20 @@ async def test_counts_snapshots_with_no_reference_entry() -> None:
     service = _svc(FakeReferenceCache())
     await service.publish_snapshot_batch_once(
         [
-            SnapshotRecord(symbol="UGRO", previous_close=2.10, day_close=2.35,
-                           day_volume=900_000, last_trade_price=2.36),
-            SnapshotRecord(symbol="DFNS", previous_close=4.35, day_close=0.0,
-                           day_volume=0, last_trade_price=7.13),
+            SnapshotRecord(
+                symbol="UGRO",
+                previous_close=2.10,
+                day_close=2.35,
+                day_volume=900_000,
+                last_trade_price=2.36,
+            ),
+            SnapshotRecord(
+                symbol="DFNS",
+                previous_close=4.35,
+                day_close=0.0,
+                day_volume=0,
+                last_trade_price=7.13,
+            ),
         ]
     )
     assert service._last_snapshot_symbol_count == 2

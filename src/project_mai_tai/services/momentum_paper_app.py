@@ -42,6 +42,7 @@ from project_mai_tai.momentum_paper.store import (
     session_closed_record,
     session_record,
 )
+from project_mai_tai.momentum_gateway_handoff import UnixDatagramPaperReceiver
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core.time_utils import US_MARKET_HOLIDAYS
 
@@ -163,6 +164,8 @@ class MomentumPaperService:
         self._engine: MomentumPaperEngine | None = None
         self._websocket: object | None = None
         self._websocket_task: asyncio.Task[None] | None = None
+        self._gateway_receiver: UnixDatagramPaperReceiver | None = None
+        self._gateway_task: asyncio.Task[None] | None = None
         self._connected = False
         self._connected_since: datetime | None = None
         self._stable_connection_reported = False
@@ -224,9 +227,9 @@ class MomentumPaperService:
             return
         await self._persist(self._engine.advance_clock(self._now_ms()))
         await self._flush_path_buffer_if_due()
-        if _STREAM_AT <= et.time() < _CLOSE_AT and self._websocket_task is None:
+        if _STREAM_AT <= et.time() < _CLOSE_AT and not self._feed_task_active():
             await self._start_stream()
-        if et.time() >= _TAIL_AT and not self._tail_mode and self._websocket is not None:
+        if et.time() >= _TAIL_AT and not self._tail_mode and self._feed_is_open():
             self._enter_tail_mode()
         if et.time() >= _CLOSE_AT and not self._session_closed:
             await self._persist(self._engine.close_session(self._now_ms()))
@@ -344,6 +347,9 @@ class MomentumPaperService:
         return snapshot, closes
 
     async def _start_stream(self) -> None:
+        if self.settings.momentum_paper_gateway_feed_enabled:
+            await self._start_gateway_stream()
+            return
         if self._websocket is not None or self._websocket_task is not None:
             await self._stop_stream()
         now = self._clock()
@@ -363,6 +369,48 @@ class MomentumPaperService:
         self._tail_mode = False
         self._websocket_task = asyncio.create_task(self._connect(websocket))
         logger.info("[MOMENTUM-PAPER-FEED] subscribed=T.* mode=global")
+
+    async def _start_gateway_stream(self) -> None:
+        if self._gateway_receiver is not None or self._gateway_task is not None:
+            await self._stop_stream()
+        receiver = UnixDatagramPaperReceiver(self.settings.momentum_paper_gateway_socket_path)
+        receiver.open()
+        self._gateway_receiver = receiver
+        self._tail_mode = False
+        self._gateway_task = asyncio.create_task(
+            self._connect_gateway(receiver),
+            name="momentum-paper-gateway-feed",
+        )
+        logger.info(
+            "[MOMENTUM-PAPER-FEED] mode=gateway_global socket=%s",
+            receiver.socket_path,
+        )
+
+    async def _connect_gateway(self, receiver: UnixDatagramPaperReceiver) -> None:
+        try:
+            while self._gateway_receiver is receiver:
+                frame = await receiver.receive()
+                await self._handle_messages(frame.trades)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "[MOMENTUM-PAPER-FEED] gateway handoff failed; current paths fail closed"
+            )
+        finally:
+            unexpected_disconnect = self._gateway_receiver is receiver
+            self._connected = False
+            self._connected_since = None
+            if unexpected_disconnect and self._feed_gap_started_ms is None:
+                self._feed_gap_started_ms = self._now_ms()
+                logger.warning(
+                    "[MOMENTUM-PAPER-FEED] gateway handoff ended; current paths fail closed"
+                )
+            receiver.close()
+            if self._gateway_receiver is receiver:
+                self._gateway_receiver = None
+            if self._gateway_task is asyncio.current_task():
+                self._gateway_task = None
 
     async def _connect(self, websocket: object) -> None:
         try:
@@ -413,8 +461,12 @@ class MomentumPaperService:
             await self._persist(self._engine.ingest(trade))
 
     def _enter_tail_mode(self) -> None:
-        assert self._websocket is not None
         assert self._engine is not None
+        if self.settings.momentum_paper_gateway_feed_enabled:
+            self._tail_mode = True
+            logger.info("[MOMENTUM-PAPER-FEED] mode=gateway_tail")
+            return
+        assert self._websocket is not None
         symbols = sorted(
             {str(row["symbol"]) for row in self._engine.active_events if str(row.get("symbol", ""))}
         )
@@ -428,11 +480,23 @@ class MomentumPaperService:
         )
 
     async def _stop_stream(self) -> None:
+        gateway_receiver = self._gateway_receiver
+        gateway_task = self._gateway_task
+        self._gateway_receiver = None
+        self._gateway_task = None
         websocket = self._websocket
         task = self._websocket_task
         self._websocket = None
         self._websocket_task = None
         self._connected = False
+        if gateway_receiver is not None:
+            gateway_receiver.close()
+        if gateway_task is not None and not gateway_task.done():
+            gateway_task.cancel()
+            try:
+                await gateway_task
+            except asyncio.CancelledError:
+                pass
         if websocket is not None:
             result = websocket.close()
             if asyncio.iscoroutine(result):
@@ -444,6 +508,16 @@ class MomentumPaperService:
             except asyncio.CancelledError:
                 pass
         await self._flush_path_buffer(force=True)
+
+    def _feed_task_active(self) -> bool:
+        if self.settings.momentum_paper_gateway_feed_enabled:
+            return self._gateway_task is not None
+        return self._websocket_task is not None
+
+    def _feed_is_open(self) -> bool:
+        if self.settings.momentum_paper_gateway_feed_enabled:
+            return self._gateway_receiver is not None
+        return self._websocket is not None
 
     async def _persist(self, records: Iterable[MomentumTapeRecord]) -> None:
         rows = tuple(records)
@@ -493,11 +567,7 @@ class MomentumPaperService:
             payload=HeartbeatPayload(
                 service_name=SERVICE_NAME,
                 instance_name=SERVICE_NAME,
-                status=(
-                    "healthy"
-                    if self._connected and not feed_policy_violation
-                    else "degraded"
-                ),
+                status=("healthy" if self._connected and not feed_policy_violation else "degraded"),
                 details={
                     "execution_mode": "paper",
                     "broker_route": "none",
@@ -507,15 +577,21 @@ class MomentumPaperService:
                         if feed_policy_violation
                         else ("" if self._connected else "feed_disconnected")
                     ),
-                    "consecutive_policy_violations": str(
-                        self._policy_violation_streak
-                    ),
+                    "consecutive_policy_violations": str(self._policy_violation_streak),
                     "policy_cooloff_until": (
                         self._policy_cooloff_until.isoformat()
                         if self._policy_cooloff_until is not None
                         else ""
                     ),
-                    "subscription_mode": "symbol_tail" if self._tail_mode else "T.*",
+                    "subscription_mode": (
+                        "gateway_tail"
+                        if self.settings.momentum_paper_gateway_feed_enabled and self._tail_mode
+                        else (
+                            "gateway_global"
+                            if self.settings.momentum_paper_gateway_feed_enabled
+                            else ("symbol_tail" if self._tail_mode else "T.*")
+                        )
+                    ),
                     "active_paths": str(len(self._engine.active_events)),
                     "excluded_prints": str(self._engine.session_excluded_prints),
                 },
@@ -585,17 +661,12 @@ class MomentumPaperService:
 
     def _clear_policy_violation(self, *, reason: str) -> None:
         prior = self._policy_violation_streak
-        if (
-            prior == 0
-            and self._policy_cooloff_until is None
-            and reason != "stable_connection"
-        ):
+        if prior == 0 and self._policy_cooloff_until is None and reason != "stable_connection":
             return
         self._policy_violation_streak = 0
         self._policy_cooloff_until = None
         logger.info(
-            "[MOMENTUM-PAPER-FEED-POLICY] decision=recovered "
-            "reason=%s prior_consecutive_1008=%d",
+            "[MOMENTUM-PAPER-FEED-POLICY] decision=recovered reason=%s prior_consecutive_1008=%d",
             reason,
             prior,
         )

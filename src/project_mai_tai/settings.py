@@ -65,9 +65,7 @@ class Settings(BaseSettings):
     tradingview_alerts_notification_twilio_from_number: str = ""
     tradingview_alerts_notification_twilio_to_number: str = ""
 
-    database_url: str = (
-        "postgresql+psycopg://mai_tai:change-me@localhost:5432/project_mai_tai"
-    )
+    database_url: str = "postgresql+psycopg://mai_tai:change-me@localhost:5432/project_mai_tai"
     redis_url: str = "redis://localhost:6379/0"
     redis_stream_prefix: str = "mai_tai"
     redis_snapshot_batch_stream_maxlen: int = 180
@@ -87,6 +85,13 @@ class Settings(BaseSettings):
     # Isolated raw-trade paper study. Default OFF: no Massive connection, DB read,
     # dashboard registration, or runtime process is created until explicitly enabled.
     momentum_paper_enabled: bool = False
+    # Route the Momentum paper observer through the existing Massive gateway connection instead
+    # of opening a second websocket. Default OFF until the Step 2 throughput gate passes.
+    momentum_paper_gateway_feed_enabled: bool = False
+    momentum_paper_gateway_socket_path: str = (
+        "/home/trader/.cache/project-mai-tai/momentum-paper.sock"
+    )
+    momentum_paper_gateway_queue_capacity: int = 4096
     market_data_snapshot_interval_seconds: int = 5
     market_data_reference_cache_path: str = "data/cache/reference_data.json"
     # PERIODIC REFERENCE REFRESH (2026-07-27, the DFNS/LGHL incident). `_ensure_reference_data()` was
@@ -177,14 +182,14 @@ class Settings(BaseSettings):
     # ORB paper observer. The switch starts or stops market-data observation only;
     # broker routing is structurally absent regardless of this value.
     orb_enabled: bool = False
-    orb_execution_mode: str = "bar_close"   # "bar_close" (parity) | "intrabar"
+    orb_execution_mode: str = "bar_close"  # "bar_close" (parity) | "intrabar"
     orb_or_minutes: int = 5
     orb_vol_mult: float = 1.5
     orb_width_max_pct: float = 12.0
     orb_width_min_pct: float = 2.0
-    orb_cutoff_minutes: int = 60            # last entry = open + 60m = 10:30 ET
+    orb_cutoff_minutes: int = 60  # last entry = open + 60m = 10:30 ET
     orb_trail_pct: float = 8.0
-    orb_universe_lead_minutes: int = 5      # confirmed by open - 5m = 09:25
+    orb_universe_lead_minutes: int = 5  # confirmed by open - 5m = 09:25
     orb_broker_account_name: str = "paper:orb"
     orb_quantity: int = 10
     # Retained for rollback/config compatibility only. The ORB paper observer ignores
@@ -202,13 +207,13 @@ class Settings(BaseSettings):
     # Running-high alone retains the legacy dynamic reference. The broker-free ORB env also
     # enables orb_resting_entry_enabled, selecting the fixed 09:25-09:30 paper order model.
     orb_running_high_enabled: bool = False
-    orb_running_high_window_minutes: int = 30   # entries only 09:30 .. open+30 = 10:00 ET
+    orb_running_high_window_minutes: int = 30  # entries only 09:30 .. open+30 = 10:00 ET
     orb_running_high_gap_cap_pct: float = 1.5
 
     # Historical quote-pricing selector, retained for rollback and evidence compatibility.
     # The paper observer records the selected policy but never invokes the OMS pricing path.
     orb_oms_quote_priced_entry_enabled: bool = False
-    orb_oms_quote_priced_max_age_ms: int = 2000   # tunable: max ask staleness to price off
+    orb_oms_quote_priced_max_age_ms: int = 2000  # tunable: max ask staleness to price off
     # Fixed opening-high resting-entry paper model. The isolated env enables it; the
     # observer records modeled order decisions only and has no broker route.
     orb_resting_entry_enabled: bool = False
@@ -239,7 +244,9 @@ class Settings(BaseSettings):
     orb_window_flatten_enabled: bool = False
     orb_window_flatten_hour_et: int = 10
     orb_window_flatten_minute_et: int = 0
-    orb_window_flatten_strategies: str = "orb"   # v2 deliberately absent (different window; design 9)
+    orb_window_flatten_strategies: str = (
+        "orb"  # v2 deliberately absent (different window; design 9)
+    )
     # v2 overnight flatten (safety only): close every OMS-managed v2 position at 19:55 ET so nothing
     # rides past the 20:00 fillable gate naked (v2 arms zero native stops). Full-qty LIMIT+session close
     # via the existing v2 exit path (EH-fillable; a market order won't fill in AH). OFF => byte-identical.
@@ -443,15 +450,15 @@ class Settings(BaseSettings):
     # to Schwab. Reversible kill: flip back to False + restart → v2 re-isolated to
     # paper. Pair with broker_provider=schwab + account_name=live:schwab_1m_v2.
     strategy_schwab_1m_v2_go_live_enabled: bool = False
-    strategy_schwab_1m_v2_atr_flip_variant: str = "B"          # "A" or "B"
-    strategy_schwab_1m_v2_atr_flip_quantity: int = 10          # live-paper size
+    strategy_schwab_1m_v2_atr_flip_variant: str = "B"  # "A" or "B"
+    strategy_schwab_1m_v2_atr_flip_quantity: int = 10  # live-paper size
     # ⭐ 10000, matching PRODUCTION (2026-07-28). The default said 5000 while the box had run
     # `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_VOL_FLOOR=10000` all along, so anyone reading this
     # file saw the wrong number -- I nearly reported it as the live value. Operator confirmed
     # 10000 is what should run. Aligned so code and box agree.
     strategy_schwab_1m_v2_atr_flip_vol_floor: int = 10000
-    strategy_schwab_1m_v2_atr_flip_period: int = 5             # ATRPeriod (parity)
-    strategy_schwab_1m_v2_atr_flip_factor: float = 3.5         # ATRFactor (parity)
+    strategy_schwab_1m_v2_atr_flip_period: int = 5  # ATRPeriod (parity)
+    strategy_schwab_1m_v2_atr_flip_factor: float = 3.5  # ATRFactor (parity)
     # CSV of symbols (or "*") for which `[V2-ATR-PROBE]` logs each evaluated bar's
     # ATR state (tr/loss/trail/state/touch). Diagnostic-only; default empty = off.
     strategy_schwab_1m_v2_atr_flip_probe_symbols: str = ""
@@ -910,15 +917,21 @@ class Settings(BaseSettings):
     # services have legit slow queries and keep the untimed engine. Set
     # `MAI_TAI_OMS_DB_TIMEOUTS_ENABLED=false` to revert to the untimed engine.
     oms_db_timeouts_enabled: bool = True
-    oms_db_statement_timeout_ms: int = 5000  # per-statement; every OMS query is sub-second normally (100x+ headroom)
+    oms_db_statement_timeout_ms: int = (
+        5000  # per-statement; every OMS query is sub-second normally (100x+ headroom)
+    )
     oms_db_lock_timeout_ms: int = 3000
     oms_db_connect_timeout_s: int = 5
-    oms_db_pool_timeout_s: int = 5  # bounds waiting for a free pooled connection (both tasks share the pool)
+    oms_db_pool_timeout_s: int = (
+        5  # bounds waiting for a free pooled connection (both tasks share the pool)
+    )
     oms_db_pool_recycle_s: int = 1800
     # PR-E: roll #391's DB-timeout treatment fleet-wide to the NON-OMS services (they still
     # used the untimed factory -> a stalled DB connection could hang them unbounded, the same
     # latent class the OMS had). Timeouts ONLY (bound hangs) — no off-loop restructuring.
-    service_db_timeouts_enabled: bool = True  # fleet master flag (rollback lever: false = all untimed)
+    service_db_timeouts_enabled: bool = (
+        True  # fleet master flag (rollback lever: false = all untimed)
+    )
     # Per-service rollback: comma-separated service names to EXCLUDE (leave untimed) even when the
     # fleet flag is on — e.g. "reconciler,control". Env: MAI_TAI_SERVICE_DB_TIMEOUTS_DISABLED_SERVICES.
     service_db_timeouts_disabled_services: str = ""
@@ -1263,9 +1276,7 @@ class Settings(BaseSettings):
         if not self.protected_symbols.strip():
             return frozenset()
         return frozenset(
-            symbol.strip().upper()
-            for symbol in self.protected_symbols.split(",")
-            if symbol.strip()
+            symbol.strip().upper() for symbol in self.protected_symbols.split(",") if symbol.strip()
         )
 
     @computed_field
@@ -1402,7 +1413,7 @@ class Settings(BaseSettings):
             return normalized_account
         provider = self.provider_for_account(normalized_account)
         if provider == "schwab" and normalized_account.startswith("paper:"):
-            return f'live:{normalized_account.split(":", 1)[1]}'
+            return f"live:{normalized_account.split(':', 1)[1]}"
         return normalized_account
 
     @computed_field

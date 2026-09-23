@@ -1,9 +1,4 @@
-"""Standalone candidate hand-off for the Momentum gateway throughput study.
-
-This module is intentionally not wired into the market-data gateway.  Step 2
-replays raw Massive frames through the same parser and bounded queue that Step 3
-would use, without changing a running service.
-"""
+"""Bounded local hand-off shared by the Momentum study and production gateway."""
 
 from __future__ import annotations
 
@@ -39,6 +34,8 @@ class HandoffCounters:
 class SocketWriterCounters:
     sent_frames: int
     would_block_drops: int
+    unavailable_drops: int = 0
+    oversized_drops: int = 0
 
 
 @dataclass(frozen=True)
@@ -218,8 +215,7 @@ class CrossProcessPaperConsumer:
         self.mode = mode
         self.raw_samples_path = raw_samples_path
         self.socket_path = str(
-            Path(tempfile.gettempdir())
-            / f"mai-tai-mgw-{os.getpid()}-{uuid.uuid4().hex[:10]}.sock"
+            Path(tempfile.gettempdir()) / f"mai-tai-mgw-{os.getpid()}-{uuid.uuid4().hex[:10]}.sock"
         )
         self._stop_event = context.Event()
         self._control, child_control = context.Pipe(duplex=True)
@@ -300,10 +296,62 @@ class CrossProcessPaperConsumer:
 
 def connect_consumer_socket(socket_path: str) -> socket.socket:
     producer_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    producer_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8_192)
-    producer_socket.setblocking(False)
-    producer_socket.connect(socket_path)
+    try:
+        producer_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8_192)
+        producer_socket.setblocking(False)
+        producer_socket.connect(socket_path)
+    except BaseException:
+        producer_socket.close()
+        raise
     return producer_socket
+
+
+def encode_trade_frame(frame: ParsedTradeFrame) -> bytes:
+    return json.dumps(
+        {"received_ns": frame.received_ns, "trades": frame.trades},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def decode_trade_frame(raw: bytes) -> ParsedTradeFrame:
+    payload = json.loads(raw)
+    trades = payload.get("trades")
+    if not isinstance(trades, list) or any(not isinstance(row, dict) for row in trades):
+        raise ValueError("Momentum gateway frame has invalid trades")
+    return ParsedTradeFrame(
+        received_ns=int(payload["received_ns"]),
+        trades=tuple(dict(row) for row in trades),
+    )
+
+
+class UnixDatagramPaperReceiver:
+    """Production-side local receiver shared by no other service."""
+
+    def __init__(self, socket_path: str) -> None:
+        self.socket_path = str(Path(socket_path).expanduser())
+        self._socket: socket.socket | None = None
+
+    def open(self) -> None:
+        path = Path(self.socket_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+        receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        receiver.setblocking(False)
+        receiver.bind(self.socket_path)
+        self._socket = receiver
+
+    async def receive(self) -> ParsedTradeFrame:
+        if self._socket is None:
+            raise RuntimeError("Momentum gateway receiver is not open")
+        raw = await asyncio.get_running_loop().sock_recv(self._socket, 1_048_576)
+        return decode_trade_frame(raw)
+
+    def close(self) -> None:
+        if self._socket is not None:
+            self._socket.close()
+            self._socket = None
+        Path(self.socket_path).unlink(missing_ok=True)
 
 
 async def drain_handoff_to_socket(
@@ -313,23 +361,23 @@ async def drain_handoff_to_socket(
 ) -> SocketWriterCounters:
     sent_frames = 0
     would_block_drops = 0
+    oversized_drops = 0
     while not producer_done.is_set() or handoff.size:
         try:
             frame = await asyncio.wait_for(handoff.get(), timeout=0.05)
         except TimeoutError:
             continue
         try:
-            payload = json.dumps(
-                {"received_ns": frame.received_ns, "trades": frame.trades},
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
+            payload = encode_trade_frame(frame)
             try:
                 sent = producer_socket.send(payload)
             except OSError as exc:
-                if exc.errno not in {errno.EAGAIN, errno.EWOULDBLOCK, errno.ENOBUFS}:
+                if exc.errno == errno.EMSGSIZE:
+                    oversized_drops += 1
+                elif exc.errno in {errno.EAGAIN, errno.EWOULDBLOCK, errno.ENOBUFS}:
+                    would_block_drops += 1
+                else:
                     raise
-                would_block_drops += 1
             else:
                 if sent != len(payload):
                     raise RuntimeError("Unix datagram write was unexpectedly partial")
@@ -339,4 +387,5 @@ async def drain_handoff_to_socket(
     return SocketWriterCounters(
         sent_frames=sent_frames,
         would_block_drops=would_block_drops,
+        oversized_drops=oversized_drops,
     )
