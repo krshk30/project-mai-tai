@@ -199,7 +199,7 @@
   "mapped_legs": 403,
   "noncausal_observed_trips": 20,
   "observed_logical_trips": 275,
-  "source_commit": "94fa1f30d2452952ea13841cf29cffb972894911",
+  "source_commit": "4014fb8e79904608c8d76b7a8861e278d02b6863",
   "start": "2026-08-24",
   "synthetic_logical_trips": 19,
   "unknown_rows": 28,
