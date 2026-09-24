@@ -3,7 +3,7 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-09-23 (Tue) 20:20 ET.** Batch `2026-09-23-five-flags-one-restart-whlr-dead-exit-benf-sparse-bars`.
+**Written by `claude-1`, 2026-09-24 (Wed) 08:22 ET (the close-out ran the next morning; every box read in it is stamped with its own time).** Batch `2026-09-23-five-flags-one-restart-whlr-dead-exit-benf-sparse-bars`.
 Integrator for this rotation. `claude-1` wrote the specs (#1034 #1037 #1039) and reviewed/pinned every build; `codex-2` built
 #1035 #1038 #1040 #1041, ran the independent backtests, executed every merge and the deploy, and reviews this PR. The author
 never reviews.
