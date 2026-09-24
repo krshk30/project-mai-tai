@@ -464,6 +464,11 @@ class WebullBrokerAdapter:
             )
             if qty is None or price is None or qty <= 0 or price <= 0:
                 continue
+            broker_order_id = self._first_str(body, "order_id", "orderId") or self._first_str(
+                item, "order_id", "orderId"
+            )
+            if not broker_order_id:
+                raise ValueError("filled Webull OCO child missing broker order id")
             filled_at = self._parse_broker_time(
                 item.get("last_filled_time") or item.get("lastFilledTime")
             )
@@ -472,8 +477,7 @@ class WebullBrokerAdapter:
                 "quantity": qty,
                 "price": price,
                 "filled_at": filled_at or datetime.now(UTC),
-                "broker_order_id": self._first_str(body, "order_id", "orderId")
-                or self._combo_leg_coid(base, suffix),
+                "broker_order_id": broker_order_id,
             }
         return None
 

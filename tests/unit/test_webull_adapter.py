@@ -1473,6 +1473,17 @@ async def test_exit_fill_reads_the_take_profit_leg(fake_sdk) -> None:
 
 
 @pytest.mark.asyncio
+async def test_filled_oco_leg_without_broker_order_id_cannot_be_attributed(fake_sdk) -> None:
+    body = _leg("FILLED", "1.9500", oid="WB-WETO-STOP")
+    del body["order_id"]
+    client = _LegClient({_BASE + "S": body})
+
+    with pytest.raises(ValueError, match="missing broker order id"):
+        await _adapter(client).fetch_oco_exit_fill("live:orb", "WETO", _BASE)
+    assert client.seen == [_BASE + "T", _BASE + "S"]
+
+
+@pytest.mark.asyncio
 async def test_only_one_detail_call_when_the_target_filled(fake_sdk) -> None:
     """⛔ RATE LIMIT. In an OCO exactly one leg can fill, so the second lookup is waste. Probing
     4 symbols x 2 legs back-to-back live returned 1 result then three 417/TOO_MANY_REQUESTS."""
