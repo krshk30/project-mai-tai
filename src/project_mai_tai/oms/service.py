@@ -9000,6 +9000,15 @@ class OmsRiskService:
                     report=report,
                     payload=payload,
                 )
+                self._record_broker_rejection(
+                    session,
+                    report=report,
+                    broker_account_id=order.broker_account_id,
+                    broker_account_name=account.name,
+                    symbol=order.symbol,
+                    client_order_id=order.client_order_id,
+                    intent_type=intent.intent_type,
+                )
                 status_changed = report.event_type != previous_status
                 should_refresh = (
                     report.event_type in self.store.OPEN_ORDER_STATUSES
@@ -12714,17 +12723,15 @@ class OmsRiskService:
                 status=report.event_type,
                 reason=report.reason,
             )
-            if report.event_type == "rejected" and is_schwab_opening_ineligible_reason(
-                report.reason
-            ):
-                self.store.record_schwab_ineligible_entry(
-                    session,
-                    broker_account_id=broker_account_id,
-                    symbol=request.symbol,
-                    session_date=self._current_session_day(report.reported_at),
-                    reason_text=report.reason or "",
-                    first_seen_at=report.reported_at,
-                )
+            self._record_broker_rejection(
+                session,
+                report=report,
+                broker_account_id=broker_account_id,
+                broker_account_name=intent_event.payload.broker_account_name,
+                symbol=request.symbol,
+                client_order_id=request.client_order_id,
+                intent_type=request.intent_type,
+            )
             # Dual-broker fan-out: symmetric Webull ineligible-today cache. Only a CLEAR
             # not-tradable Webull OPEN reject (never 429/transient — the classifier vetoes those)
             # on a Webull-provider account marks only future opens ineligible for the day. A close
@@ -13979,6 +13986,74 @@ class OmsRiskService:
             if report.event_type == "rejected" and self._is_stop_rejection_reason(report.reason):
                 return report.reason or "stop_rejected"
         return None
+
+    def _record_broker_rejection(
+        self,
+        session: Session,
+        *,
+        report: ExecutionReport,
+        broker_account_id: UUID,
+        broker_account_name: str,
+        symbol: str,
+        client_order_id: str,
+        intent_type: str,
+    ) -> None:
+        if report.event_type != "rejected":
+            return
+        self.logger.warning(
+            "[OMS-BROKER-REJECT] sym=%s acct=%s coid=%s reason=%s",
+            symbol, broker_account_name, client_order_id, report.reason or "-",
+        )
+        account = session.get(BrokerAccount, broker_account_id)
+        if (
+            intent_type != "open"
+            or account is None
+            or account.provider != "schwab"
+            or not is_schwab_opening_ineligible_reason(report.reason)
+        ):
+            return
+
+        session_date = self._current_session_day(report.reported_at)
+        self.store.record_schwab_ineligible_entry(
+            session,
+            broker_account_id=broker_account_id,
+            symbol=symbol,
+            session_date=session_date,
+            reason_text=report.reason or "",
+            first_seen_at=report.reported_at,
+        )
+        if not broker_account_name.startswith("live:"):
+            return
+
+        # A closed page must still count: one policy incident per symbol and ET day.
+        incidents = session.scalars(
+            select(SystemIncident).where(SystemIncident.service_name == SERVICE_NAME)
+        ).all()
+        if any(
+            isinstance(incident.payload, dict)
+            and incident.payload.get("source") == "schwab_opening_policy_reject"
+            and incident.payload.get("symbol") == symbol
+            and incident.payload.get("session_date") == session_date
+            for incident in incidents
+        ):
+            return
+        session.add(
+            SystemIncident(
+                service_name=SERVICE_NAME,
+                severity="critical",
+                title=f"SCHWAB OPEN REFUSED: {symbol} on {broker_account_name}; check Webull-only exposure"[:255],
+                status="open",
+                payload={
+                    "source": "schwab_opening_policy_reject",
+                    "broker_account_name": broker_account_name,
+                    "symbol": symbol,
+                    "session_date": session_date,
+                    "client_order_id": client_order_id,
+                    "reason": report.reason or "",
+                },
+                opened_at=report.reported_at,
+            )
+        )
 
     def _has_cached_schwab_ineligible_symbol(
         self,
