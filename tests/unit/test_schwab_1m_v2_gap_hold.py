@@ -102,37 +102,51 @@ def test_flag_off_is_inert() -> None:
     assert state.resting_active is True
 
 
+def _seed_last_bar(bot: SchwabV2BotService, symbol: str, stamp_ms: int) -> None:
+    state = bot.strategy.watchlist_state(symbol)
+    state.bars.append(
+        OHLCVBar(
+            timestamp_ms=stamp_ms,
+            open=2.5,
+            high=2.6,
+            low=2.4,
+            close=2.5,
+            volume=20_000,
+        )
+    )
+    state.resting_active = True
+    state.resting_is_broker_order = True
+    state.webull_resting_active = True
+    state.resting_level = 2.58
+    state.resting_trigger = 2.58
+
+
 @pytest.mark.asyncio
 async def test_clock_detect_holds_and_cancels_both_legs_while_quiet_stock_does_not(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Age is measured from the bar's CLOSE (start + 60 s), never from its START stamp.
+
+    2026-09-24 production: a 1-minute bar is stamped at its start and delivered ~1 s after
+    its close, so a HEALTHY stream reads 60-120 s "old" against the start stamp and a 90 s
+    threshold tripped every minute at :30 on every watchlist name (GAPHOLD held everything).
+    HEALTHY below is that exact state: stamped 91 s ago = closed 31 s ago = one bar late at
+    most, prints fresh. It must NOT be held. BENF is a real hole: closed 91 s ago (the next
+    bar is 31 s overdue) while the tape still prints.
+    """
     bot = SchwabV2BotService(_settings())
-    bot._watchlist = {"BENF", "QUIET"}
+    bot._watchlist = {"BENF", "QUIET", "HEALTHY"}
     primary = _Emitter()
     webull = _Emitter()
     bot.intent_emitter = primary  # type: ignore[assignment]
     bot.webull_intent_emitter = webull  # type: ignore[assignment]
 
-    for symbol in ("BENF", "QUIET"):
-        state = bot.strategy.watchlist_state(symbol)
-        state.bars.append(
-            OHLCVBar(
-                timestamp_ms=MIDDAY_MS - 91_000,
-                open=2.5,
-                high=2.6,
-                low=2.4,
-                close=2.5,
-                volume=20_000,
-            )
-        )
-        state.resting_active = True
-        state.resting_is_broker_order = True
-        state.webull_resting_active = True
-        state.resting_level = 2.58
-        state.resting_trigger = 2.58
-
+    _seed_last_bar(bot, "BENF", MIDDAY_MS - 151_000)  # closed 91 s ago
+    _seed_last_bar(bot, "QUIET", MIDDAY_MS - 151_000)  # closed 91 s ago, no prints since
+    _seed_last_bar(bot, "HEALTHY", MIDDAY_MS - 91_000)  # closed 31 s ago = normal cadence
     bot._gap_last_print_at_ms["BENF"] = MIDDAY_MS - 5_000
-    bot._gap_last_print_at_ms["QUIET"] = MIDDAY_MS - 91_000
+    bot._gap_last_print_at_ms["QUIET"] = MIDDAY_MS - 151_000
+    bot._gap_last_print_at_ms["HEALTHY"] = MIDDAY_MS - 5_000
     caplog.set_level(logging.INFO)
 
     held = await bot._evaluate_gap_holds(datetime.fromtimestamp(MIDDAY_MS / 1000, UTC))
@@ -140,12 +154,75 @@ async def test_clock_detect_holds_and_cancels_both_legs_while_quiet_stock_does_n
     assert held == ["BENF"]
     assert bot.strategy.gap_hold_active("BENF")
     assert not bot.strategy.gap_hold_active("QUIET")
+    assert not bot.strategy.gap_hold_active("HEALTHY")
+    assert [draft.symbol for draft in primary.drafts] == ["BENF"]
     assert [draft.intent_type for draft in primary.drafts] == ["cancel"]
     assert [draft.intent_type for draft in webull.drafts] == ["cancel"]
     assert primary.drafts[0].metadata["reason"] == "bar_gap"
     assert webull.drafts[0].metadata["reason"] == "bar_gap"
-    assert any("[V2-GAP-DETECT] BENF" in message for message in caplog.messages)
+    detect_lines = [m for m in caplog.messages if "[V2-GAP-DETECT]" in m]
+    assert len(detect_lines) == 1 and "BENF" in detect_lines[0]
+    assert "last_bar_close_age_s=91.0" in detect_lines[0]
     assert any("[V2-GAP-HOLD] BENF" in message for message in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_healthy_stream_is_never_held_across_a_full_minute() -> None:
+    """Sweep the whole delivery cycle: a bar stamped T, delivered at T+61 s, is the newest
+    bar for every clock second until T+121 s. No second of that cycle may detect a gap."""
+    bot = SchwabV2BotService(_settings())
+    bot._watchlist = {"BENF"}
+    bot.intent_emitter = _Emitter()  # type: ignore[assignment]
+    bot.webull_intent_emitter = _Emitter()  # type: ignore[assignment]
+    _seed_last_bar(bot, "BENF", MIDDAY_MS)
+    for age_s in range(61, 122):
+        now_ms = MIDDAY_MS + age_s * 1000
+        bot._gap_last_print_at_ms["BENF"] = now_ms - 1_000
+        held = await bot._evaluate_gap_holds(datetime.fromtimestamp(now_ms / 1000, UTC))
+        assert held == [], f"healthy stream held at start-age {age_s}s"
+    assert not bot.strategy.gap_hold_active("BENF")
+
+
+@pytest.mark.asyncio
+async def test_first_minutes_of_the_entry_window_are_not_a_gap(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """07:00 ET: Schwab sends no bars before 07:00 (the known blind window), so every name's
+    newest bar is YESTERDAY's while the tape prints. That is the session's start, not a hole
+    inside a series — holding it would cost the first 10+ minutes of the window on every name.
+    A symbol with no live bar in the current 04:00 ET session is skipped (once, logged)."""
+    bot = SchwabV2BotService(_settings())
+    bot._watchlist = {"BENF"}
+    bot.intent_emitter = _Emitter()  # type: ignore[assignment]
+    bot.webull_intent_emitter = _Emitter()  # type: ignore[assignment]
+    yesterday_close = int(datetime(2026, 9, 22, 19, 59, tzinfo=ET).timestamp() * 1000)
+    seven_am = int(datetime(2026, 9, 23, 7, 0, 3, tzinfo=ET).timestamp() * 1000)
+    _seed_last_bar(bot, "BENF", yesterday_close)
+    bot._gap_last_print_at_ms["BENF"] = seven_am - 700
+    caplog.set_level(logging.INFO)
+
+    for offset_s in (0, 5, 60):
+        now_ms = seven_am + offset_s * 1000
+        bot._gap_last_print_at_ms["BENF"] = now_ms - 700
+        held = await bot._evaluate_gap_holds(datetime.fromtimestamp(now_ms / 1000, UTC))
+        assert held == []
+    assert not bot.strategy.gap_hold_active("BENF")
+    skip_lines = [m for m in caplog.messages if "[V2-GAP-DETECT-SKIP] BENF" in m]
+    assert len(skip_lines) == 1  # throttled: once per symbol per session
+    assert "reason=no_live_bar_this_session" in skip_lines[0]
+
+    # The first live bar of the session (07:08 ET, closed 07:09) arms the detector: a
+    # hole after it, with the tape printing, is a real gap again.
+    first_bar = int(datetime(2026, 9, 23, 7, 8, tzinfo=ET).timestamp() * 1000)
+    bot.strategy.watchlist_state("BENF").bars.append(
+        OHLCVBar(
+            timestamp_ms=first_bar, open=2.5, high=2.6, low=2.4, close=2.5, volume=20_000
+        )
+    )
+    later = first_bar + 60_000 + 91_000  # closed 91 s ago
+    bot._gap_last_print_at_ms["BENF"] = later - 1_000
+    held = await bot._evaluate_gap_holds(datetime.fromtimestamp(later / 1000, UTC))
+    assert held == ["BENF"]
 
 
 @pytest.mark.asyncio
