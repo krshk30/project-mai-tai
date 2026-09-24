@@ -1,0 +1,9 @@
+{
+  "pr_number": 1042,
+  "range_base": "e0eb883105ba9eab04ff54396cf3cea7f81a864f",
+  "range_head": "df6a1a2373db4de65b09febcf46037333496c895",
+  "reviewed_at": "2026-09-24T12:41:34Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Verified box runtime SHA and OMS/strategy/v2 PIDs; four new flags plus unflagged code fix, ledger-repair and 09-23 counts; corrected Momentum rc2 UNMEASURED evidence and weekday labels; append-only handoff log; 112/112 manifest byte-identical to regeneration; every open row has owner and next action."
+}
