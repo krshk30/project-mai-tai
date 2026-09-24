@@ -4347,7 +4347,7 @@ the carried "58 rejected / 6 filled" overstated the hard-stop problem about tenf
 was wrong — same 2.5 s, fresher quote; one real Webull account id was printed once in terminal output and the local copy sanitised;
 M5 and M7 each ran VOID the first time and were re-run.
 
-## 2026-09-23 — Tuesday: the exit seam held on day two, a dead sell sat on Schwab all day, a −8% trade came from a quarter of the bars, a rule failed its own second test, and five changes went live in one restart
+## 2026-09-23 — Wednesday: the exit seam held on day two, a dead sell sat on Schwab all day, a −8% trade came from a quarter of the bars, a rule failed its own second test, and five changes went live in one restart
 
 **Written by `claude-1` (integrator). `codex-2` built four PRs, ran two independent backtests, executed every merge, the
 ledger repair and the deploy, and reviews this entry.**
@@ -4392,10 +4392,13 @@ required `codex-2`'s own causal backtest on an unseen window first. Result 57% v
 `min(event_at)` and `min(price)` taken from different rows; whole stock-days skipped retroactively. The "+31 for the month" was
 withdrawn by name. Rule saved to memory: a selection rule is a hypothesis until the other agent reproduces it.
 
-**Five flags in one restart.** The operator's rule for the day: whatever is built ships enabled, with his approval per flag.
-Offset 0.5, C (the 09:30 bracket, built in August, never exercised), GAPHOLD, RETRY-ONE (first set off on `claude-1`'s "clean the
+**Five changes in one deploy window: four newly enabled flags plus one code fix.** The operator's rule for the day: whatever is
+built ships enabled, with his approval per flag. Offset 0.5, C (the 09:30 bracket, built in August, never exercised), GAPHOLD, RETRY-ONE (first set off on `claude-1`'s "clean the
 false flips first" reasoning, then "correct codex, the retry flag is on"), plus #1040 — deployed `e0eb8831` 19:50 ET after the
 ledger repair, verified on the box by content. Tomorrow is graded one marker per change.
+
+**Momentum.** The 09-23 detached Step 2 run aborted at 16:25:41 ET, rc=2 UNMEASURED: the one-minute load was 3.697 against the
+protocol's frozen 3.5 ceiling; zero frames, no valid replay. It retries only from a fresh ten-minute baseline.
 
 **Corrections owed to the record (`claude-1`):** BENF's cause, twice wrong before right; the buffer rows mislabelled; QUICK-FAIL's
 numbers withdrawn; RETRY-ONE first set off against the operator's standing rule; "expect 2" on 09-22 was 8; the `resolved_by_fill`
