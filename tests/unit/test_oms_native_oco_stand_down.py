@@ -290,20 +290,23 @@ def _reconcile_service(
 
 
 @pytest.mark.asyncio
-async def test_resolved_by_fill_closes_phantom_row_with_no_ladder_rejects() -> None:
-    """THE FIX. The broker's execution record shows the OCO resolved by a FILL -> the row is closed
-    on the sync, and the symbol leaves BOTH the managed set and the resolving set -> the ladder
-    never resumes, so it never fires the ~3 rejected closes."""
+async def test_resolved_signal_without_child_detail_keeps_row_open() -> None:
+    """A filled-child signal is not enough to close until its execution is durable."""
     service = _reconcile_service(resolved={SYMBOL})
     service._native_oco_resolving[(ACCT, SYMBOL)] = utcnow()
     service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    pages = []
+
+    async def _page(acct, symbol, *, reason):
+        pages.append((acct, symbol, reason))
+
+    service._page_oco_exit_fill_unrecorded = _page
 
     await service._refresh_native_oco_armed_state(None)
 
-    assert service.store.closed_calls == 1                         # row closed directly
-    assert (ACCT, SYMBOL) not in service._native_oco_resolving     # resolving cleared
-    assert (ACCT, SYMBOL) not in service._managed_v2_symbols       # left the managed set
-    assert service._native_oco_stand_down_active(ACCT, SYMBOL) is False
+    assert service.store.closed_calls == 0
+    assert (ACCT, SYMBOL) in service._managed_v2_symbols
+    assert pages == [(ACCT, SYMBOL, "no_child_fill_detail")]
     assert service.broker_adapter.resolved_calls == [(ACCT, (SYMBOL,))]
 
 
