@@ -1,0 +1,9 @@
+{
+  "pr_number": 1043,
+  "range_base": "3ad91c2acc50255fed8e1a0f2ac450e3fb45edb5",
+  "range_head": "20608383ce5c7e908474e8c5db9df42b81fddbdf",
+  "reviewed_at": "2026-09-24T15:34:59Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Reviewed codex-2's single commit 20608383 (tree byte-identical to the previously reviewed 8653e6a0; claude-1's RED contract tests/unit/test_schwab_1m_v2_gap_hold.py unchanged). Code: gap age = now - (last_bar_start + INTERVAL), i.e. from the bar CLOSE; print must be newer than the close; symbols with no live bar in the current 04:00 ET session are skipped with a once-per-session [V2-GAP-DETECT-SKIP]; prints = trade-kind ticks / quote trade_time only. Ran at head: 9/9 gap-hold tests pass, ruff clean. My own mutations on the same tree: (1) measure from START again => clock_detect + healthy_stream RED; (2) remove the session skip => first_minutes RED. Production check of the trades-only print source on the box (09-24 11:00-14:00 UTC, 7 watchlist names): 603 tape-minutes, 1 minute (NCPL) with tape trades and no LEVELONE trade tick; PFSA max inter-tick gap 7.7 s vs the 90 s detect window. Not deployed; GAP_HOLD stays OFF; re-enabling is the operator's decision."
+}
