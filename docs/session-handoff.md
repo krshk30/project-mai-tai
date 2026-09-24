@@ -3,116 +3,114 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-09-21 (Mon) 18:31 ET.** Batch `2026-09-21-webull-false-flip-shared-path-pager-live-thirteen-prs`.
-Integrator for this rotation. `claude-1` authored #1018 #1020 #1021 #1023 #1024 #1025 #1028 #1030 (`codex-2` reviewed);
-`codex-2` authored #1013 #1019 #1022 #1026 #1027 (`claude-1` reviewed), executed every merge and the deploy, and reviews this PR.
-The author never reviews.
+**Written by `claude-1`, 2026-09-23 (Tue) 20:20 ET.** Batch `2026-09-23-five-flags-one-restart-whlr-dead-exit-benf-sparse-bars`.
+Integrator for this rotation. `claude-1` wrote the specs (#1034 #1037 #1039) and reviewed/pinned every build; `codex-2` built
+#1035 #1038 #1040 #1041, ran the independent backtests, executed every merge and the deploy, and reviews this PR. The author
+never reviews.
 
-> ⛔⭐⭐⭐ **OPERATOR'S STANDING LINES.** (09-18) Every bug ⇒ sweep the REAL history for its class; every exit must END in a named
-> safe state — SOLD, or PROTECTED-AGAIN + PAGED. No freezes — fix forward. (09-21) **"An increment that forces its own rewrite
-> changes nothing"** — build the SHARED path, siblings are call sites flipped next. **The uncovered-share page is never cuttable.**
-> Count EPISODES before ranking a refusal total (the "58 refused hard stops" were 5 episodes, 1 real miss).
+> ⛔⭐⭐⭐ **OPERATOR'S STANDING LINES.** (09-18) Every bug ⇒ sweep the class; every exit ENDS in a named safe state. (09-21) Build the
+> SHARED path; the uncovered-share page is never cuttable. (09-23, NEW) **"Whatever we are building today, the flag is ENABLED
+> so we can validate — do not ship disabled by flag; every flag needs my approval."** And: **clean the false flips first, then judge
+> the real ATR flips on the cleaned tape.** A selection rule of `claude-1`'s is a hypothesis until `codex-2` reproduces it
+> causally on a window `claude-1` has not seen (QUICK-FAIL failed exactly that test and was not built).
 
 ---
 
-# ✅ PRODUCTION — RUNTIME SHA on the box is `2a4d444a`; GitHub main = `2a4d444a` + DOCS-ONLY commits (this handoff PR and later docs PRs)
+# ✅ PRODUCTION — RUNTIME SHA on the box is `e0eb8831`; GitHub main = `e0eb8831` + DOCS-ONLY commits (this handoff PR and later docs PRs)
 
 | | |
 |---|---|
-| box (deployed) | **`2a4d444a422d7784aed3604c4a0e7c3fca9ef7a1`** — read FROM THE BOX by `claude-1` 2026-09-21 18:27:38 ET, clean (`dirty=0`) |
-| GitHub main | runtime-identical to the box **as of this deploy**. ⛔ The old "main = box + docs only" invariant was **FALSE all day 09-21** (main ran up to 28 non-docs files ahead of `d6a6f59a` while PRs merged intraday). It is true again tonight. **Ritual step 4 must still RUN the diff** (`git diff --name-only <box-sha> origin/main`), never assume it |
-| gate pin | `/home/trader/preopen.sh` (set by `codex-2`, read by `claude-1` 18:27 ET): `EXPECTED_DATE=2026-09-22` · `EXPECTED_SHA=2a4d444a…` · `EXPECTED_PID=2549985` · `EXPECTED_START='Thu 2026-09-17 20:14:30 UTC'` |
-| restart evidence | `codex-2` after the deploy: **PASS 9/9** (not re-run by `claude-1`) |
-| exposure | 18:20 ET: **non-zero account-position rows 0 · open managed rows 0 · both live accounts flat**. 09-21 fills: live:orb 16 buys / 16 sells · live:schwab_1m_v2 20 / 20 |
-| flags | From `/proc/<oms pid>/environ` 18:27 ET: `…WEBULL_MIRROR_DEFERRED_RESUBMIT_ENABLED=true` (PA1) · `…EXIT_RELEASE_RESERVATION_ENABLED=true` · `…DUAL_BROKER_FANOUT_ENABLED=true` · `…WEBULL_MIRROR_ENABLED=true` · `…WEBULL_MIRROR_EH_ENABLED=true`. **LC1 late-close guard: still OFF** |
-| Webull size | **1 share** (operator 09-21, row closed) |
-| merges 09-21 (**13**) | **#1018** hard-stop design (docs) · **#1013** Momentum baseline ordering · **#1019** deploy-gate bootstrap · **#1020** four test pins · **#1021** PROTECT-FAILED forensic + API budget (docs) · **#1022** Webull SDK log redaction · **#1023** Schwab `limit == stop` analysis (docs) · **#1024** one-tick limit lift · **#1025** live-failure write-up (docs) · **#1026** production fixtures · **#1027** status-read starvation · **#1028** shared cancel-then-sell + uncovered-share page + pager source · **#1030** sync loop uses the rotating list |
-| deployed tonight | everything above that is runtime: **#1019 #1020 #1022 #1024 #1027 #1028 #1030**, one deploy, operator GO *"go ahead and deploy now"*, `codex-2` executed 16:52 ET |
+| box (deployed) | **`e0eb883105ba9eab04ff54396cf3cea7f81a864f`** — read FROM THE BOX by `claude-1` 2026-09-23 20:05 ET, clean (`dirty=0`) |
+| GitHub main | runtime-identical to the box as of this deploy. Ritual step 4 must RUN `git diff --name-only <box-sha> origin/main` — never assume it |
+| gate pin | `/home/trader/preopen.sh` (set by `codex-2`, read by `claude-1` 20:1x ET): `EXPECTED_DATE=2026-09-24` · `EXPECTED_SHA=e0eb8831…` · `EXPECTED_PID=33096` (v2) · `EXPECTED_START='Wed 2026-09-23 23:52:45 UTC'` |
+| restart evidence | `codex-2` after the deploy: **PASS 9/9** incl. VSA `NO_TRADES_IN_GAP` (not re-run by `claude-1`) |
+| exposure | 20:05 ET: **open managed rows 0 · non-zero positions 0 · both live accounts flat**; reconciler **0 open critical** (after the two ledger writes below) |
+| **flags — ALL ON, first night for five of them** | From `/proc/<pid>/environ`, oms AND v2, 20:05 ET: `RESTING_TRIGGER_OFFSET_PCT=0.5` (#1035) · `RTH_EDGE_BRACKET_ENABLED=true` (C, #647 — **never exercised**) · `GAP_HOLD_ENABLED=true` (#1038) · `RETRY_ONE_ENABLED=true` (#1041, max_retries 1) · `LATE_CLOSE_GUARD_ENABLED=true` (LC1, since 09-22) · `MIRROR_DEFERRED_RESUBMIT_ENABLED=true` (PA1, proven). ⛔ **FIVE changes in ONE restart by the operator's word** — tomorrow is graded by one marker per change (table below) so the suspects stay separable |
+| Webull size | 1 share |
+| merges 09-23 (**5**) | **#1034** offset spec (docs) · **#1035** resting trigger offset · **#1038** GAPHOLD · **#1040** WHLR session fix · **#1041** RETRY-ONE. Plus #1036 (QUICK-FAIL, FAILED record), #1037 (GAPHOLD spec), #1039 (RETRY-ONE spec) open as docs |
+| deployed tonight | main `e0eb8831` = all of the above; one restart 19:50:34 ET (oms 32368, strategy 32379), v2 19:52:45 ET (33096). Operator GO 19:25 ET *"approved, write the two fills and deploy"* |
+| ledger repair, operator-authorized | The deploy gate stopped on 2 reconciler criticals: IPDN and MSS on live:orb had a buy with no sell in `fills` — their native STOP legs filled at Webull and **`claude-1`'s `resolved_by_fill` ending (#1032) closed the row WITHOUT recording the child fill**. `codex-2` wrote the two sells from Webull's execution record: IPDN `1314b7d5…` 6.10 @10:37:07.638, MSS `152f5a7a…` 2.15 @12:52:25.373. Reconciler cleared itself to 0. **Fix owed (claude-1): record the child fill before closing the row; check the 09-21 confirmation-exit `resolved_by_fill` cases for the same hole** |
 | migration | `alembic_version = 20260916_0021`, unchanged |
-| **pager** | ⛔ **NEW FACT:** the INC1 pager is an INSTALLED, sha-pinned COPY (`/home/trader/unexercised_watch/watch.py`, root cron, `* 11-21 UTC` = 07:00–17:59 ET). It was repo version `313ea80` — three versions stale, reading ONE source — so **8 critical exit-seam incidents since 09-15 reached the phone 0 times**. Re-installed tonight from `2a4d444a` (sha `384a7e37…` == repo file, 3 crontab guards re-pinned). **First end-to-end proof ever:** 8 of 8 delivered, the eight closed by id, rerun `NO_OPEN_INCIDENT open=0` (22:00:15Z). **Merging `ops/health/unexercised_watch.py` never installs it** |
+| pager | Installed copy re-installed 09-22 (sha `102d329d`), `exit_tag` rendered; 0 open incidents at close-out |
 
-## Restarts (all `NRestarts=0`; 0 tracebacks after start for oms — verified on the box 17:52 ET)
+## Restarts (all `NRestarts=0`; 0 tracebacks after start — verified on the box 20:05 ET)
 
 | service | pid | started (ET) | why |
 |---|---|---|---|
-| **oms** | **3576222** | Mon 09-21 16:52:43 | deploy `2a4d444a` |
-| **strategy** | **3576233** | Mon 09-21 16:52:43 | OMS deploy restarts strategy |
-| schwab-1m-v2 2549985 · control 2273848 · reconciler 1626620 · market-data 2202865 · market-capture 2202817 · momentum-paper 2704889 · orb 2051823 | — | unchanged | — |
+| **oms** | **32368** | Tue 09-23 19:50:34 | deploy `e0eb8831` + four flags |
+| **strategy** | **32379** | Tue 09-23 19:50:34 | same |
+| **schwab-1m-v2** | **33096** | Tue 09-23 19:52:45 | same (v2 reads the offset / gap-hold / retry flags) |
+| control 2273848 · reconciler 1626620 · market-data 2202865 · market-capture 2202817 · momentum-paper 2704889 · orb 2051823 | — | unchanged | — |
 
-## What is LIVE and what to READ Tuesday 09-22 (owner · first read) — report the numbers to the operator UNPROMPTED
+## What is LIVE and what to READ Wednesday 09-24 (owner · first read) — report UNPROMPTED, one marker per change
 
 | change | first evidence to read | owner |
 |---|---|---|
-| **#1028 Webull false-flip exit on the SHARED `_webull_cancel_then_sell`** (abortable checks → irreversible release → sell + terminal-state guarantee; ONE quote-freshness decision, before the release) | **Report the FIRST real Webull confirmation exit within minutes.** `[OMS-WEBULL-CANCEL-THEN-SELL] exit=CONFIRMATION_EXIT … outcome= protection= seconds=` — every run must end `closed / close_submitted / resolved_by_fill / flat / reprotected / uncovered`; `[OMS-V2-CONFIRMATION-EXIT-QUOTE-AGED]` gives the quote age that was never logged before. **Pass mark: `EXITDONE1` live:orb gap = 0 over 5 EXERCISED sessions.** 09-21 baseline on the old code: live:orb fired 6 / sold 1 / reprotected 1 / **gap 4**; schwab 9 / 9. Status: **DEPLOYED, UNPROVEN** | claude-1 |
-| **#1028 uncovered-share page** (`_check_webull_uncovered_shares`, RTH only, 30 s) | `[OMS-WEBULL-UNCOVERED-SHARE] status=PAGE cause=pair_released_not_sold \| reattach_failed \| never_protected`, then `INC1_STATUS.txt` `open>=1` **and** `delivered_now>=1`. Row written ≠ delivered. It cannot see: a fill the OMS has not detected; pre-market / after-hours (a YMAT 09-09 repeat is still silent). A release whose sell is still working after 30 s also pages — true statement | claude-1 |
-| **#1027 + #1030 status-read rotation + list-today fallback** | time from a Webull fill to `[OMS-V2-MANAGED-OPEN]` (09-21: NCPL ~786 s, GRML ~255 s unseen); `codex-2`'s per-endpoint call counter vs where the 429s land | codex-2 (claude-1 reads the OPEN lag) |
-| **#1024 one-tick limit lift** (`_lift_collapsed_schwab_stop_limit`) | Schwab STOP_LIMIT submissions with wire `limit == stop` should be 0 (was 45 of 532 since 09-01) | claude-1 |
-| **#1022 SDK log redaction** | `x-app-key` / signature / escaped `_content` account id absent from `oms.log` after 16:52 ET | codex-2 |
-| **PA1 + PA1b** — **PROVEN LIVE 09-21, the only proven item** | 09-21 whole log: queued 8 · resubmitted 8 · accepted 7 · rejected 0 · forgotten 22 · cap reached 0 · **`PRICE_AGGRESSIVE` rejects 0** (baseline 41 in 4 sessions) · no duplicate legs · the v2-cancel drop path exercised. (8 resubmitted vs 7 accepted: the eighth is not reconciled here) | claude-1 (passive 5-session counts due Fri 09-25) |
-| **#1005 LC1 late-close guard** | flag OFF. Operator ruling 09-21: **lands TOMORROW** as the cure for BURST4 (redundant sells after the native stop already filled). GRML 15:58 ET 09-21 = a live instance: ~9 refused sells in 7 s, native legs filled 9.54 / 9.55, ended flat correctly | operator → codex-2 |
-| **#1007 Momentum cool-off** | unchanged; bot still receives no prints until #1029 | codex-2 |
+| **#1040 exit session** (WHLR: every exit kept the ENTRY's pre-market session; a 4.88 sell sat dead 09:32→14:09 with the bid at 5.00; 8 sells, 0 fills, open at the close, hand-closed 16:17) | `[OMS-V2-EXIT-PLACE]` / `[OMS-V2-EXIT-REPLACE]` **`session=` must equal `clock_session=`** on every managed exit, especially any pre-market entry still held after 09:30. Box count: 4 mismatches of 65 exits since 09-08, all WHLR | claude-1 |
+| **#1035 entry offset 0.5%** (the operator's "1%"; trigger = line × 1.005, band 0.5% unchanged as the slippage cap) | `[V2-RESTING-PLACE] line= trigger= offset_pct=0.50`; count flips that crossed the line but never reached the trigger and then fell (avoided losers) vs winners that missed +5% by < 0.5% (the haircut). Replay: month −50.8 → −24.4, 30 losers avoided, 0 winners lost; 09-23 replay: 10 of 27 trades avoided, all losers | claude-1 |
+| **C — RTH-edge bracket** (#647, built 08-04, **never once exercised**) | `[WEBULL-PROTECT-ATTACHED] … session=RTH` at ~09:30:xx for a pre-market share still held at the open (≈ 1 in 7 pre-market entries — may take days). Anything else at 09:30 on a pre-market name is the first read | codex-2 |
+| **#1038 GAPHOLD** (BENF 09-23: Schwab sent 8 of 51 minutes of bars while the tape printed thousands; the sparse series flipped the line to 2.58 vs the chart's ~2.80; fill 2.58 → −8% in 10 s) | `[V2-GAP-DETECT]` / `[V2-GAP-HOLD]` / `[V2-GAP-RESUME]` counts and names; a hold on a name that then flipped; **resume only after 2×ATR-period (10) contiguous bars with the trail re-seeded**. 342 `[V2-ATR-BAR-GAP]` markers in the 09-23 v2 log — expect holds | claude-1 |
+| **#1041 RETRY-ONE** (any close of the first try hands the flip back — VSA 09-23 15:50: a Webull-only fill stopped in 60 s locked the flip as "consumed", the real flip was refused, +5% missed on both brokers; cap = one retry per name per day) | `[V2-FLIP-OWNER-RETRY] closes_today= retries_left= action=released\|held` by name; P&L of every retry taken. Causal study: max_retries=1 = +44 vs as-traded, −0.4 vs 0, max=2 −83 | claude-1 |
+| **#1032 hard stop / floor on the shared path** (deployed 09-22 evening) | **Exercised 15× on 09-23**: BENF hard stop ×8 + floor ×2, DCOY floor, VSA hard stop, and 3 `resolved_by_fill` (IPDN, MSS, BENF — the ledger gap above). `[OMS-WEBULL-CANCEL-THEN-SELL] exit=CW_*` outcomes; **BENF 10:46–10:51: 8 sells over 5 min before flat, paged at 31 s — why the first 7 did not fill is UNREAD** | claude-1 |
+| **#1028 confirmation exit on the shared path** | Day 2 clean: 09-23 live:orb fired 6 → close_submitted 5 (MSS ×3, IPDN, DCOY, ARTL) + 1 re-protected (QNME 10:15, paged the same minute); 09-22: 6/6. `EXITDONE1` gap = 0, sessions 2 of 5 | claude-1 |
+| **LC1** (09-22) | 0 `CAN_NOT_SELL_SHORT` refusals on 09-23, 0 probes — **not yet exercised** (`LATECLOSE1` row) | codex-2 |
+| **PA1** | proven; 0 `PRICE_AGGRESSIVE` rejects 09-23; passive counts due **Fri 09-25** | claude-1 |
 
-## What happened 09-21 (one paragraph each — the narrative is in `handoff-log.md`)
+## What happened 09-23 (one paragraph each — the narrative is in `handoff-log.md`)
 
-- **#1014 met its first live day and failed.** 4 of 5 clean Webull releases ended with no sell, no re-protect, no page: GLND 10:18
-  (663 s uncovered), GRML 10:34 (621 s), NCPL 13:55 (474 s), GLND 14:20 (3,654 s, left by `CW_FLOOR` at +3.8% — luck). The release
-  takes ~2.5 s inline on the serial consumer, then the generic 5 s stale-quote guard ran AGAIN on the same quote and bare-returned
-  after the pending decision was popped. A race on quote age: NCPL 15:07 sold because its quote was ~1 s old going in. [pinned for
-  GLND 10:18, 5.17 s measured; single-candidate inference for the other three.] #1014's tests used a broker that answers in 0 s.
-- **Status-read starvation (defect B).** Open orders polled newest-first, the Webull detail budget ran out mid-pass, the same old
-  order drew the 429 every sync: NCPL's fill unseen ~786 s, GRML ~255 s.
-- **The pager had never delivered an exit-seam page** (see PRODUCTION row). Every "paged" written before tonight meant "row written".
-- **DENOM58 / HSFLOOR answered.** 58 refused Webull hard-stop closes (09-04→09-18) = **5 episodes**: 4 redundant bursts after the
-  native stop had filled, **1 real miss — YMAT 09-09 08:41:53 ET pre-market**, 3 refusals then nothing, open 78 min. 44 floor close
-  orders = 20 episodes, 10 still untraced (FLOOR10).
-- **`claude-1`'s live watch failed four times:** three distinct causes (a block-buffering `cut`; a filter without broker-leg close
-  markers; a reconnect loop that gave up after 6 tries) **and one UNEXPLAINED** (13:26–14:03 ET, armed, 0 events, two hypotheses
-  tested and refuted). Replaced by a 30 s offset-tracked poller + heartbeat + a 15-min full read (broker positions vs managed rows).
-- **Retracted / corrected numbers:** the Schwab `limit == stop` harm "0 of 39" is **RETRACTED** → **0 of 2** measurable (tape
-  exists only for 2; ask-through 2/5 with the fill second included, 4/5 at +2 s). `claude-1` told everyone to expect **2** open
-  incidents — a 3-day query window truncated it; the pager found **8**. The 09-19 handoff's Webull totals are stale: verified
-  09-21 = 1,473 `TOO_MANY_REQUESTS` / 500 status-fetch failures / 77 attach episodes.
+- **The Webull exit seam held on day 2** (6 fired / 5 sold / 1 re-protected + paged), and the shared hard-stop/floor path was
+  exercised 15 times on its first day.
+- **BENF −8.1% in 10 s was SPARSE BARS**, not the strategy: Schwab delivered 8 of 51 minutes on a name printing thousands
+  (codex: CHART and LEVELONE silent for the same minutes, subscription intact, REST returned none of the missing candles). The
+  operator saw the line at ~2.80 on his chart; ours was 2.58. `claude-1` argued two wrong causes first (a 13%-below-the-line entry
+  "by design"; a distance rule). ⇒ GAPHOLD, built and ON.
+- **WHLR sat with a dead sell all day**: exits carried the entry's pre-market session; the P0A hold "held" an order that could not
+  fill for 4.6 h. Hand-closed 16:17 at ≈ −4%. ⇒ #1040, built, pinned, ON tonight.
+- **VSA 15:50 real flip refused** after a Webull-only fill stopped in 60 s "consumed" the flip and reclaim is off; +5% missed on
+  both brokers. ⇒ RETRY-ONE, built and ON.
+- **The operator's "1% buffer" = a 0.5% trigger offset**: today we buy AT the line; the 0.5% band is a slippage cap. Month replay
+  −50.8 → −24.4 at 0.5% offset; a 1.0% offset was worse (−28.5, five targets lost). ⇒ #1035, ON at 0.5.
+- **QUICK-FAIL FAILED** codex's independent out-of-sample backtest (57% vs 73% winners, gate ≤45%/≥55%) — two defects in
+  `claude-1`'s replay (separate `min()` aggregates; retroactive skipping). **Not built**; the "+31 for the month" figure is withdrawn.
+- **Target 5→3→2 and stop 5→3→2 grids**: no combination positive; −8% stop is the strongest lever (already live); +2% target 76%
+  winners but the same money. Nothing changed there.
+- **Momentum:** #1029 still draft; **no replay result reported since 09-22 20:06 ET**; parser fixed (`ac91ea20`), capture "running" —
+  status owed by `codex-2`.
 
-## Open items — each with an OWNER and a NEXT ACTION (nothing boards without both)
+## Open items — each with an OWNER and a NEXT ACTION
 
 | item | owner | next action |
 |---|---|---|
-| **HSFLOOR — `CW_HARD_STOP` + `CW_FLOOR` (then `CW_FLIP`, overnight flatten) still use the old one-try release** | **claude-1** (claim on `oms/service.py` kept) | flip them onto `_webull_cancel_then_sell` as call sites; **YMAT 09-09 is the named case**; the routine already refuses a non-protective reason and a `CW_HARD_STOP` control runs through it |
-| **FLOOR10** — 10 floor episodes (CDTG, BNC, NUR, MOBX, SUNE ×2, FTFT, YMAT, DLXY 14:31, DAIC) untraced | claude-1 | how each actually exited (native leg already filled vs share left open) — owed WITH the hard-stop PR, operator is holding me to it |
-| **BURST4** — self-inflicted refusals after the native stop filled (5 instances incl. GRML 09-21) | operator → codex-2 | LC1 flag tomorrow; do not re-derive |
-| **INCCLOSE** — nothing ever closes an exit-seam incident (five sat open 6 days after the position closed) | claude-1 | small PR: auto-close when the linked managed row closes; until then close by id after each page |
-| **The uncovered-share page is RTH-only and blind to an undetected fill** | claude-1 (design) / codex-2 (undetected fill, lane B) | pre-market cover needs a different question (no pair can rest pre-market); raise with the hard-stop PR |
-| **Live-watch failure #4 unexplained** | claude-1 | none planned — the replacement does not depend on the cause; reopen if the poller ever misses against a full read |
-| Pager install is manual | codex-2 | any PR touching `ops/health/unexercised_watch.py` ⇒ install + re-pin 3 crontab guards as its own verified deploy step; `test_the_pager_delivers_every_incident_source_the_oms_can_write` gates the source list |
-| ~165 "order stuck in accepted" noise warnings / day | codex-2 (proposed, not yet accepted) | triage: real vs the rotation's by-product |
-| **#1029 Momentum through the gateway** (draft, `898e2c67`, validate green) | codex-2 | population capture = detached one-shot 20:10 ET 09-21 (first attempt 18:04 ET correctly refused `UNMEASURED` 0/3); then the frozen replay in a flat 16:05–20:00 ET window; `claude-1` reviews, reading the CONTROL first. **No promise of Momentum trading 09-22** |
-| Momentum test pins left from the 09-19 list (one-probe + connected-during-streak heartbeat · gateway needle `1008 (policy violation)`) | codex-2 | the four non-Momentum pins shipped in #1020; these two stay with Lane M |
-| #1003 baseline report | codex-2 | #1013 merged `c3201f81`; the REPORT is still unread |
-| Re-attach of a FULL pair while an old leg may still work is ASSUMED refused | codex-2 | NCPL 10:32 09-21 had a SECOND bracket accepted after an unanswerable release — read that tape; it may be the first real answer |
-| Passive 5-session counts, due **Fri 09-25** | claude-1 | PA1 8% band (accepted vs refused distance) · `abandoned_no_fresh_quote` · `[V2-CW-SEED-CAP]` in-window caps. Count through Friday, build nothing |
-| Schwab-ineligible cache (#992) · G5 parity · blind window 07:00–07:08 | none — parked by the operator | reopen on request |
-| Schwab refuses 37 of 39 Webull-only opportunities | operator | unanswered design question; Webull stays at 1 share regardless |
+| **resolved_by_fill records no child fill** (IPDN, MSS 09-23; the deploy gate caught it) | **claude-1** | record the fill via the child-exit attribution before `_close_resolved_oco_managed_row`; test that the reconciler stays clean; check the 09-21 confirmation-exit `resolved_by_fill` cases |
+| **BENF 10:46: 8 hard-stop sells over 5 min before flat** (paged at 31 s) | claude-1 | read the sells' order type/price vs the market; why 7 did not fill |
+| **Gap watcher labels "REST empty" as a halt** (false for BENF) | codex-2 | filed; fix the label |
+| **Momentum #1029** | codex-2 | replay result + status — not reported since 09-22; `claude-1` reviews, reading the CONTROL first |
+| Retry study re-run | claude-1 → codex-2 | after 5 sessions on the offset: causal, max_retries {0,1}; then the operator decides |
+| Auto-close incidents when the row closes · FLOOR10 (10 floor episodes untraced) · passive counts (PA1 band, no-fresh-quote abandons, seed-cap) due Fri | claude-1 | small PR · after close-out · Fri |
+| Live-watch failure #4 (13:26–14:03 ET 09-21) | claude-1 | unexplained; replacement (offset poller + full reads) has not missed since |
+| Pre-market cover option D (single-leg stop) | operator | only on his word: one hand probe |
+| TREND1 / 30-min / spike patterns | — | measured, suspended by the operator; results in memory |
 
-**NOCHASE — closed by the operator 09-21, do not re-raise without a SECOND instance:** Webull issue-table rows #4, #6 (do not build
-#1018's rule separately), #7, #9 (count through Friday, build nothing), #11. **Closed rows:** Webull size (1 share) · ZTG 0.5% band ·
-hand-cancel procedure · DENOM58 (58 → 1) · #8 PA1 (closed as a win).
+**NOCHASE stays closed.** QUICK-FAIL is FAILED, not parked.
 
-## Rulings and approvals (operator, 09-21)
+## Rulings and approvals (operator, 09-23)
 
-1. **Webull stays at 1 share.** ZTG band and hand-cancel rows closed.
-2. `limit == stop` analysis and the four non-Momentum test pins moved `codex-2` → `claude-1`; `x-app-key` log fix → `codex-2`.
-3. One-cent (one-tick) limit lift approved as its own small PR (#1024).
-4. Naked Webull shares intraday: **(a) keep running, no intraday restart or config stop-gap**; "let the software ladder manage it".
-5. **A/B split:** `claude-1` = dropped confirmation exit (A, `oms/service.py`); `codex-2` = status-read starvation (B, Webull adapter).
-6. **Tonight's scope = #1 + #3 only**, #1 written as the SHARED path; #5 (hard stop / floor) next and `claude-1`'s. **FALLBACK**
-   (direct fix + page if the shared path was not green by 18:30 ET) — **not needed**: #1028 merged 16:31 ET.
-7. **REGREEN:** evidence must be re-run on the FINAL code and say so. **YMAT 09-09 must be the named case.**
-8. **Pager re-install approved** as its own verified deploy step; **all eight incidents authorized closed** after the proof.
-9. **Deploy GO** ("go ahead and deploy now") → `2a4d444a`, 16:52 ET. **LC1 lands tomorrow**, never the same day as another flag.
+1. LC1 flag ON (09-22 evening, done). C approved: "let's enable it".
+2. "Go with 0.5" for the trigger offset (his "1%"); deploy tonight after market.
+3. **"Whatever we are building today, flag enabled, so we can validate; do not set disabled by flag; you need my approval."**
+   ⇒ offset + C + GAPHOLD + RETRY-ONE all ON tonight (RETRY-ONE first set OFF on `claude-1`'s reasoning, then **"correct
+   codex, the retry flag is on"**).
+4. GAPHOLD: **never "held for the day"** — detect at once (clock, while still printing), block entries, resume after 10 good
+   contiguous bars (validated in the code as 2×ATR-period), re-seeded.
+5. RETRY-ONE: a hard stop (any close) resets the flip like a confirmation exit; one retry per name per day.
+6. Order of operations: **clean the false flips (offset) first; judge real-flip retries on the cleaned tape.**
+7. QUICK-FAIL: second backtest by codex before building — it failed, not built.
+8. WHLR: hand-closed by the operator 16:17 ET; fix "now" (#1040).
+9. **GO 19:25 ET** "approved, write the two fills and deploy" (the IPDN/MSS ledger writes + the restart).
 
-## Pre-open 09-22 (`preopen.sh` pins set by `codex-2` after the deploy, read by `claude-1` 18:27 ET)
+## Pre-open 09-24 (pins set by `codex-2` 19:5x ET, read by `claude-1` 20:1x ET)
 
-Run the gate and the grades as usual. Expect `EXPECTED_DATE=2026-09-22`, `EXPECTED_SHA=2a4d444a`, v2 pid `2549985`, restarted list
-oms + strategy (16:52:43 ET), evidence **9/9**. ⛔ The pins move on every restart — if LC1's flag is set by an OMS restart before the
-open, `codex-2` re-pins. From 07:00 ET `claude-1` runs the **poller + 15-min full read** (not a `tail -F` stream), reports the first
-Webull false-flip exit within minutes, and checks `INC1_STATUS.txt` for `delivered_now` on any page — a written row is not a page.
+Run the gate and the grades as usual. Expect `EXPECTED_SHA=e0eb8831`, v2 pid `33096`, restarted list oms + strategy + v2,
+evidence **9/9**. From 07:00 ET `claude-1` runs the offset poller + 15-min full reads and reports, unprompted, the FIRST
+sighting of each of the five markers above. A pre-market entry still held at 09:30 is the day's most valuable read (C and #1040
+both). ⛔ With five changes live, an unexpected line is attributed by its marker before anything is touched.
