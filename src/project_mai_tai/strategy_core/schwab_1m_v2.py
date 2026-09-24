@@ -292,6 +292,7 @@ class SymbolState:
     flip_owner_evidence_at_ms: int = 0
     flip_owner_open_positions: dict[str, FlipPositionLeg] = field(default_factory=dict)
     flip_owner_first_rest_placed: bool = False
+    flip_owner_recovery_warning_at_ms: int = 0
     retry_one_closes_today: int = 0
     retry_one_budget_readable: bool = True
     fanout_last_retired_opportunity_id: int = 0
@@ -1070,6 +1071,7 @@ class SchwabV2Strategy:
         state.flip_owner_position_ids.clear()
         state.flip_owner_position_entry_ms.clear()
         state.flip_owner_first_rest_placed = False
+        state.flip_owner_recovery_warning_at_ms = 0
 
     def _retire_flip_owner_opportunity(self, state: SymbolState, *, reason: str) -> bool:
         previous_phase = state.flip_owner_phase
@@ -1575,19 +1577,23 @@ class SchwabV2Strategy:
             return False
 
         self._flip_owner_counts["unknown_recovery_pending"] += 1
-        logger.warning(
-            "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
-            "entry_allowed=0 reason=insufficient_unambiguous_evidence open=%d filled_accounts=%d "
-            "position_ids=%d age_ms=%d",
-            state.symbol,
-            evaluated,
-            self._flip_owner_counts["unknown_recovery_succeeded"],
-            self._flip_owner_counts["unknown_recovery_pending"],
-            len(open_positions),
-            len(state.flip_owner_fill_accounts),
-            len(state.flip_owner_position_ids),
-            age_ms,
-        )
+        now_ms = self._now_ms()
+        last_warning = state.flip_owner_recovery_warning_at_ms
+        if last_warning <= 0 or now_ms < last_warning or now_ms - last_warning >= 60_000:
+            state.flip_owner_recovery_warning_at_ms = now_ms
+            logger.warning(
+                "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+                "entry_allowed=0 reason=insufficient_unambiguous_evidence open=%d filled_accounts=%d "
+                "position_ids=%d age_ms=%d",
+                state.symbol,
+                evaluated,
+                self._flip_owner_counts["unknown_recovery_succeeded"],
+                self._flip_owner_counts["unknown_recovery_pending"],
+                len(open_positions),
+                len(state.flip_owner_fill_accounts),
+                len(state.flip_owner_position_ids),
+                age_ms,
+            )
         return False
 
     def _apply_flip_position_evidence(
@@ -2518,6 +2524,24 @@ class SchwabV2Strategy:
             if state.resting_active or state.webull_resting_active:
                 self._queue_resting_cancel(state, reason=reason)
             released = self._release_arm(state, reason)
+            if (
+                not state.flip_owner_first_rest_placed
+                and not state.resting_active
+                and not state.webull_resting_active
+                and not state.cw_v2_emit_claimed
+                and not state.flip_owner_fill_accounts
+                and not state.flip_owner_position_ids
+                and not state.flip_owner_open_positions
+                and state.position_qty == 0
+                and state.position_qty_held == 0
+                and self._flip_owner_evidence_fresh(state)
+                and self._retire_flip_owner_opportunity(
+                    state, reason="watchlist_removed_without_entry_order"
+                )
+            ):
+                self._symbol_states.pop(symbol, None)
+                self._atr_seeded_session_anchors.pop(symbol.upper(), None)
+                return released
             self._set_flip_owner_unknown(
                 state,
                 reason="watchlist_removed_before_position_episode_ended",
