@@ -362,11 +362,14 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "'attempts', payload->>'attempts', 'exit_tag', payload->>'exit_tag', "
         "'max_attempts', payload->>'max_attempts', 'terminal', payload->>'terminal', "
         "'cause', payload->>'cause', "
+        "'client_order_id', payload->>'client_order_id', "
+        "'session_date', payload->>'session_date', "
         "'uncovered_seconds', payload->>'uncovered_seconds')::text "
         "from system_incidents where status != 'closed' "
         "and payload->>'source' in "
         "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved',"
-        "'oms_v2_confirmation_exit_reprotected','oms_v2_webull_uncovered_share') "
+        "'oms_v2_confirmation_exit_reprotected','oms_v2_webull_uncovered_share',"
+        "'schwab_opening_policy_reject','oco_exit_fill_unrecorded') "
         "order by opened_at, id"
     )
     incidents: list[dict[str, str]] = []
@@ -480,6 +483,28 @@ def _run_inc1_pager_unlocked(
                     f"cause={incident.get('cause') or 'UNKNOWN'} "
                     f"uncovered_seconds={incident.get('uncovered_seconds') or 'UNKNOWN'}\n"
                     "The software ladder is its only cover. Close it or restore protection now."
+                )
+            elif incident.get("source") == "schwab_opening_policy_reject":
+                body = (
+                    "Schwab refused an opening order under its security policy. "
+                    "Webull-only exposure is possible, not proven.\n"
+                    f"account={incident.get('account') or 'UNKNOWN'} "
+                    f"symbol={incident.get('symbol') or 'UNKNOWN'} "
+                    f"session_date={incident.get('session_date') or 'UNKNOWN'}\n"
+                    f"client_order_id={incident.get('client_order_id') or 'UNKNOWN'}\n"
+                    f"reason={incident.get('reason') or 'UNKNOWN'}\n"
+                    "Check the exact broker orders and both account positions; do not infer a fill "
+                    "from a shared position."
+                )
+            elif incident.get("source") == "oco_exit_fill_unrecorded":
+                body = (
+                    "The broker reported an OCO resolution, but the child fill is not in the ledger.\n"
+                    f"account={incident.get('account') or 'UNKNOWN'} "
+                    f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
+                    f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'} "
+                    f"reason={incident.get('reason') or 'UNKNOWN'}\n"
+                    "The managed row remains open. Check the exact child execution and protection; "
+                    "do not infer flatness from the shared account position."
                 )
             else:
                 body = (
