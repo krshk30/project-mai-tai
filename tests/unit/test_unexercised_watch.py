@@ -238,6 +238,41 @@ def test_inc1_reads_all_incident_types_from_the_same_pager_route(monkeypatch):
     assert "'oms_v2_exit_release_unresolved'" in statements[0]
     assert "'oms_v2_confirmation_exit_reprotected'" in statements[0]
     assert "'oms_v2_webull_uncovered_share'" in statements[0]
+    assert "'schwab_opening_policy_reject'" in statements[0]
+    assert "'oco_exit_fill_unrecorded'" in statements[0]
+
+
+@pytest.mark.parametrize(
+    ("source", "symbol", "expected"),
+    [
+        ("schwab_opening_policy_reject", "PMAX", "Webull-only exposure"),
+        ("oco_exit_fill_unrecorded", "WETO", "child fill is not in the ledger"),
+    ],
+)
+def test_new_broker_incidents_reach_the_inc1_sender(
+    tmp_path, monkeypatch, source, symbol, expected
+):
+    row = json.loads(_inc1_row(source=source, symbol=symbol))
+    row.update(
+        {
+            "account": "live:orb" if source == "oco_exit_fill_unrecorded" else "live:schwab_1m_v2",
+            "reason": "child_read_failed" if source == "oco_exit_fill_unrecorded"
+            else "Opening transactions for this security must be placed with a broker. Contact us",
+            "client_order_id": "schwab_1m_v2-PMAX-open-86e63b23ebc4",
+            "session_date": "2026-09-24",
+        }
+    )
+    pages = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [json.dumps(row)])
+    monkeypatch.setattr(uw, "page", lambda title, body: pages.append((title, body)) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+    assert len(pages) == 1
+    assert symbol in pages[0][1]
+    assert expected in pages[0][1]
+    assert "native protection was cancelled" not in pages[0][1]
 
 
 def test_inc1_forced_incident_reaches_the_watchers_page_channel(tmp_path, monkeypatch):
