@@ -1552,6 +1552,57 @@ class OmsRiskService:
                 await self._publish_order_event(order_event)
                 return [order_event]
 
+            # A later v2 retry must not turn a known Schwab policy refusal into a
+            # Webull-only entry. This checks the primary account's cache, not the
+            # Webull account's separate eligibility cache.
+            if (
+                broker_account.provider == "webull"
+                and bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False))
+                and event.payload.strategy_code == "schwab_1m_v2"
+                and event.payload.intent_type == "open"
+                and str(event.payload.side).lower() == "buy"
+                and broker_account.name == self.settings.strategy_schwab_1m_v2_webull_account_name
+            ):
+                primary_account = session.scalar(
+                    select(BrokerAccount).where(
+                        BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name
+                    )
+                )
+                if (
+                    primary_account is not None
+                    and primary_account.provider == "schwab"
+                    and self._has_cached_schwab_ineligible_symbol(
+                        session=session,
+                        broker_account_id=primary_account.id,
+                        symbol=event.payload.symbol,
+                    )
+                ):
+                    self.store.mark_intent_refused(
+                        intent,
+                        origin="skipped_before_submit",
+                        code="schwab_ineligible_cached_primary",
+                    )
+                    self.store.record_fanout_pre_submit_outcome(
+                        session,
+                        intent=intent,
+                        outcome="dropped_ineligible",
+                        reason="schwab_ineligible_cached_primary",
+                        broker_account_name=broker_account.name,
+                    )
+                    order_event = self._build_rejected_event(
+                        event,
+                        intent.id,
+                        reason="schwab_ineligible_cached_primary",
+                    )
+                    session.commit()
+                    self.logger.info(
+                        "[OMS-INTENT-DROPPED] %s %s reason=schwab_ineligible_cached_primary "
+                        "(v2 fan-out Webull leg; no broker order created)",
+                        broker_account.name, event.payload.symbol,
+                    )
+                    await self._publish_order_event(order_event)
+                    return [order_event]
+
             # Dual-broker fan-out: symmetric Webull ineligible-today short-circuit. A Webull open
             # for a name Webull already rejected as not-tradable today is dropped without a broker
             # round-trip. Gated on the fan-out flag so it is INERT (byte-identical, ORB untouched)
