@@ -234,6 +234,50 @@ async def test_no_bid_but_broker_flat_reconciles_the_phantom_row() -> None:
 
 
 @pytest.mark.asyncio
+async def test_broker_flat_read_cannot_close_replacement_phantom_row() -> None:
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf)
+    _force_due(svc)
+    replacement_id = None
+
+    async def replaced_during_read(_acct, _symbol, *, established_at=None):
+        nonlocal replacement_id
+        with sf() as session:
+            old = session.scalar(
+                select(OmsManagedPosition).where(
+                    OmsManagedPosition.symbol == SYM,
+                    OmsManagedPosition.status == "open",
+                )
+            )
+            assert old is not None
+            # SQLite cannot express the production partial unique index for open rows.
+            session.delete(old)
+            session.flush()
+            replacement = svc.store.create_managed_position(
+                session,
+                strategy_code="schwab_1m_v2",
+                broker_account_name=ACCT,
+                symbol=SYM,
+                entry_price=Decimal("11"),
+                quantity=100,
+                entry_path="ATR Flip",
+            )
+            replacement_id = replacement.id
+            session.commit()
+        return True
+
+    svc._broker_symbol_is_flat = replaced_during_read
+    await svc._v2_overnight_flatten()
+
+    with sf() as session:
+        replacement = session.get(OmsManagedPosition, replacement_id)
+    assert replacement is not None and replacement.status == "open"
+    assert replacement.current_quantity == 100
+    assert (ACCT, SYM) in svc._managed_v2_symbols
+
+
+@pytest.mark.asyncio
 async def test_no_bid_while_genuinely_HELD_stays_loud_and_keeps_the_row() -> None:
     """⛔ THE CASE THAT MUST NOT REGRESS. A real position in an empty AH book is NAKED — the
     whole reason this sweep exists. It must keep the row and keep retrying, never 'reconcile'
