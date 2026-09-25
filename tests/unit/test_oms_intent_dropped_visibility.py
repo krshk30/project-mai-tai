@@ -169,14 +169,10 @@ async def test_the_first_broker_refusal_is_not_counted_as_a_dropped_intent() -> 
 
 
 def test_both_broker_branches_are_instrumented_symmetrically() -> None:
-    """⭐ STRUCTURAL (see the file docstring for why the Webull half cannot be behavioural yet).
-
-    Assert on the PAIR, not on either alone: counting both in ONE assertion is what makes
-    'someone instrumented Schwab and forgot Webull' a RED test rather than two independently
-    green ones."""
+    """Both brokers' own eligibility-cache drops must carry the same marker."""
     src = inspect.getsource(OmsRiskService.process_trade_intent)
     assert src.count(MARKER) == 2, (
-        f"expected exactly 2 {MARKER} lines (schwab + webull ineligible-cached); "
+        f"expected exactly 2 {MARKER} lines (Schwab + Webull ineligible-cached); "
         f"found {src.count(MARKER)}"
     )
     webull_branch = src.split('reason="webull_ineligible_cached"', 1)[1].split(
