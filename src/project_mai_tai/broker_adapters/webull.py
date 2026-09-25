@@ -472,11 +472,13 @@ class WebullBrokerAdapter:
             filled_at = self._parse_broker_time(
                 item.get("last_filled_time") or item.get("lastFilledTime")
             )
+            if filled_at is None:
+                raise ValueError("filled Webull OCO child missing broker fill time")
             return {
                 "symbol": str(symbol).upper(),
                 "quantity": qty,
                 "price": price,
-                "filled_at": filled_at or datetime.now(UTC),
+                "filled_at": filled_at,
                 "broker_order_id": broker_order_id,
             }
         return None
