@@ -293,3 +293,36 @@ async def test_weto_already_recorded_child_accepts_equivalent_decimal_scale() ->
         fills = session.scalars(select(Fill).where(Fill.symbol == SYMBOL, Fill.side == "sell")).all()
     assert row is not None and row.status == "closed"
     assert len(fills) == 1
+
+
+@pytest.mark.asyncio
+async def test_weto_existing_fill_with_wrong_broker_order_id_keeps_row_open() -> None:
+    service, sessions, row_id = _service_with_weto()
+    child_id = "WETO-STOP-CHILD-CONTROL"
+    detail = {
+        "symbol": SYMBOL,
+        "quantity": Decimal("1"),
+        "price": Decimal("1.95"),
+        "filled_at": datetime(2026, 9, 24, 13, 43, 44, tzinfo=UTC),
+        "broker_order_id": child_id,
+    }
+    with sessions() as session:
+        entry = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == ENTRY_COID))
+        assert entry is not None
+        assert service._persist_oco_exit_fill(session, ACCOUNT, SYMBOL, entry, detail)
+        child_order = session.scalar(
+            select(BrokerOrder).where(BrokerOrder.client_order_id.contains("-ocoexit-"))
+        )
+        assert child_order is not None
+        child_order.broker_order_id = "OTHER-BROKER-ORDER"
+        session.commit()
+
+    assert await service._close_resolved_oco_managed_row(
+        ACCOUNT, SYMBOL, detail=detail, expected_row_id=row_id
+    ) is False
+    with sessions() as session:
+        row = session.get(OmsManagedPosition, UUID(row_id))
+        incidents = session.scalars(select(SystemIncident)).all()
+    assert row is not None and row.status == "open"
+    assert len(incidents) == 1
+    assert incidents[0].payload["reason"] == "child_fill_not_durable"
