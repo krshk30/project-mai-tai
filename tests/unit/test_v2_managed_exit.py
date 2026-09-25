@@ -540,7 +540,7 @@ def _pair_report(event_type: str) -> ExecutionReport:
 
 
 @pytest.mark.asyncio
-async def test_oco_fill_reconciles_without_a_redundant_software_sell() -> None:
+async def test_oco_fill_signal_without_child_record_stands_down_and_pages() -> None:
     result = ExitPairReleaseResult(
         outcome="resolved_by_fill",
         reports=(_pair_report("filled"), _pair_report("cancelled")),
@@ -557,7 +557,11 @@ async def test_oco_fill_reconciles_without_a_redundant_software_sell() -> None:
     assert adapter.release_calls == [(ACCT, SYM, "protect-base")]
     assert adapter.submitted == []
     assert _sell_intents(sf) == []
-    assert _row(sf).status == "closed"
+    assert _row(sf).status == "open"
+    with sf() as session:
+        incidents = session.scalars(select(SystemIncident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].payload["source"] == "oco_exit_fill_unrecorded"
 
 
 @pytest.mark.asyncio

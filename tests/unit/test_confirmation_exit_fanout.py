@@ -379,7 +379,7 @@ async def _prepare_webull_leg(
             "REPROTECTED+PAGED",
             id="leg-read-working-after-cancelled-report",
         ),
-        pytest.param("leg_filled", "SOLD", id="leg-read-filled"),
+        pytest.param("leg_filled", "FILL_UNRECORDED+PAGED", id="leg-read-filled"),
         pytest.param(
             "unknown_future_answer",
             "REPROTECTED+PAGED",
@@ -390,7 +390,7 @@ async def _prepare_webull_leg(
 async def test_webull_confirmation_bad_answer_matrix_has_only_safe_terminals(
     monkeypatch, row: str, terminal: str
 ) -> None:
-    """Every known bad answer sells, or restores protection and opens one page."""
+    """A filled leg without durable attribution leaves its row open and pages."""
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
@@ -470,6 +470,11 @@ async def test_webull_confirmation_bad_answer_matrix_has_only_safe_terminals(
     if terminal == "SOLD":
         assert decision.outcomes[WEBULL] in {"closed", "resolved_by_fill"}
         assert incidents == []
+    elif terminal == "FILL_UNRECORDED+PAGED":
+        assert decision.outcomes[WEBULL] == "resolved_by_fill"
+        assert len(incidents) == 1
+        assert incidents[0].payload["source"] == "oco_exit_fill_unrecorded"
+        assert _open_row_ids(sf)[WEBULL] == row_id
     else:
         assert decision.outcomes[WEBULL] == "reprotected"
         assert len(incidents) == 1

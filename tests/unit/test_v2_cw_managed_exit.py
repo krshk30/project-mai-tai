@@ -551,7 +551,7 @@ async def test_armed_native_oco_keeps_owning_target_even_with_a_pending_flip() -
 
 @pytest.mark.asyncio
 async def test_cw_flip_defers_when_the_oco_already_resolved_by_fill() -> None:
-    """An OCO child that already sold wins; the flip closes bookkeeping and emits no second sell."""
+    """A resolved answer without a recorded child fill must not close bookkeeping or oversell."""
     sf = _make_sf()
     adapter = _ConfirmationAdapter(armed=True, release_result="resolved_by_fill")
     svc = _svc(sf, cw=True, adapter=adapter)
@@ -565,8 +565,12 @@ async def test_cw_flip_defers_when_the_oco_already_resolved_by_fill() -> None:
 
     assert adapter.release_calls == [(ACCT, "entry-order-1")]
     assert _sell_intents(sf) == []
-    assert _row(sf).status == "closed"
-    assert (ACCT, SYM) not in svc._managed_v2_symbols
+    assert _row(sf).status == "open"
+    assert (ACCT, SYM) in svc._managed_v2_symbols
+    with sf() as session:
+        incidents = session.scalars(select(SystemIncident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].payload["source"] == "oco_exit_fill_unrecorded"
 
 
 @pytest.mark.asyncio

@@ -7030,10 +7030,33 @@ class OmsRiskService:
             )
             return False   # the $0 cancelled-sibling artefact must never become a -100% trade
         child_id = str(detail.get("broker_order_id") or "")
+        if not child_id:
+            _outcome(attributed=0, could_not_tell=1, outcome="missing_child_order_id")
+            return False
         intent = session.get(TradeIntent, entry_order.intent_id) if entry_order.intent_id else None
         if intent is None:
             _outcome(
                 attributed=0, could_not_tell=1, outcome="missing_trade_intent",
+                child_id=child_id,
+            )
+            return False
+        existing_fill = session.scalar(
+            select(Fill).where(Fill.broker_fill_id == f"{child_id}:{qty}")
+        )
+        if existing_fill is not None:
+            existing_order = session.get(BrokerOrder, existing_fill.order_id)
+            expected_coid = oco_exit_client_order_id(entry_order.client_order_id, child_id)
+            attributed = bool(
+                existing_order is not None
+                and existing_order.client_order_id == expected_coid
+                and existing_order.broker_order_id == child_id
+                and existing_fill.broker_account_id == entry_order.broker_account_id
+                and existing_fill.symbol == symbol.upper()
+                and existing_fill.side == "sell"
+            )
+            _outcome(
+                attributed=int(attributed), could_not_tell=int(not attributed),
+                outcome="already_recorded" if attributed else "child_fill_id_belongs_to_other_order",
                 child_id=child_id,
             )
             return False
@@ -7823,6 +7846,58 @@ class OmsRiskService:
         except Exception:  # noqa: BLE001 - diagnostics must never break the protective sync
             return
 
+    async def _page_oco_exit_fill_unrecorded(
+        self, acct: str, symbol: str, *, reason: str
+    ) -> None:
+        def _write(session: Session) -> tuple[str, bool]:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None:
+                return "-", False
+            row_id = str(row.id)
+            incidents = session.scalars(
+                select(SystemIncident).where(SystemIncident.service_name == SERVICE_NAME)
+            ).all()
+            if any(
+                isinstance(incident.payload, dict)
+                and incident.payload.get("source") == "oco_exit_fill_unrecorded"
+                and incident.payload.get("managed_row_id") == row_id
+                for incident in incidents
+            ):
+                return row_id, False
+            session.add(
+                SystemIncident(
+                    service_name=SERVICE_NAME,
+                    severity="critical",
+                    title=f"OCO EXIT FILL UNRECORDED: {symbol} on {acct}; check broker child"[:255],
+                    status="open",
+                    payload={
+                        "source": "oco_exit_fill_unrecorded",
+                        "broker_account_name": acct,
+                        "symbol": symbol,
+                        "managed_row_id": row_id,
+                        "reason": reason,
+                    },
+                    opened_at=utcnow(),
+                )
+            )
+            return row_id, True
+
+        try:
+            row_id, created = await self._run_db(_write, commit=True)
+            if created:
+                self.logger.error(
+                    "[OMS-OCO-EXIT-FILL-UNRECORDED] sym=%s acct=%s row=%s reason=%s "
+                    "status=PAGE row_remains_open=1",
+                    symbol, acct, row_id, reason,
+                )
+        except Exception:  # noqa: BLE001 - the row remains open if paging fails
+            self.logger.exception(
+                "[OMS-OCO-EXIT-FILL-UNRECORDED] sym=%s acct=%s reason=%s status=PAGE_FAILED",
+                symbol, acct, reason,
+            )
+
     async def _close_resolved_oco_managed_row(
         self, acct: str, symbol: str, *, detail=None, expected_row_id: str | None = None
     ) -> bool:
@@ -7839,9 +7914,8 @@ class OmsRiskService:
         positions-endpoint inference. That is authoritative ("the target/stop sold") and carries
         none of the FLAT_INFERRED ambiguity that made the 07-15 ERNA possible: a bracket resolved
         by expiry/cancel (still held) has no filled leg and is never passed here."""
-        # The broker await must stay OUTSIDE `_run_db` (see its docstring), so this is read ->
-        # fetch -> write rather than one unit. Worst case the fetch fails and we close exactly as
-        # before, just without a recorded exit.
+        # The broker await stays OUTSIDE `_run_db`; attribution and row close share one DB
+        # transaction. A failed read must never turn a confirmed child fill into an unpaired close.
         def _read_base(session: Session) -> tuple:
             order = self._find_oco_entry_order(session, acct, symbol)
             return (self._oco_exit_base_for_entry(
@@ -7854,7 +7928,7 @@ class OmsRiskService:
         try:
             if detail is None:
                 base_coid, entry_oid, entry_qty = await self._run_db(_read_base, commit=False)
-        except Exception:  # noqa: BLE001 - bookkeeping only; never block the phantom-row close
+        except Exception:  # noqa: BLE001 - an unknown entry must keep the row open
             self.logger.warning("[OMS-OCO-EXIT-FILL] %s %s entry-order lookup failed", acct, symbol)
         if detail is None:
             # the poll already fetched it; do not spend a second broker round trip (Webull 429s)
@@ -7862,16 +7936,15 @@ class OmsRiskService:
                 acct, symbol, base_coid,
                 entry_broker_order_id=entry_oid, entry_quantity=entry_qty,
             )
-        if detail is _EXIT_FETCH_FAILED:
-            # Transient — hold the managed row open so the next sync retries the fetch, up to the
-            # bounded cap, rather than closing the trade with no exit recorded.
-            if self._defer_for_exit_fetch(acct, symbol):
-                return False
-            detail = None
-        else:
-            self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
+        if detail is _EXIT_FETCH_FAILED or detail is None:
+            await self._page_oco_exit_fill_unrecorded(
+                acct, symbol,
+                reason="child_read_failed" if detail is _EXIT_FETCH_FAILED else "no_child_fill_detail",
+            )
+            return False
+        self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
 
-        def _close(session: Session) -> bool:
+        def _close(session: Session) -> tuple[bool, str]:
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
@@ -7892,17 +7965,70 @@ class OmsRiskService:
                         "the replacement position on the previous position's OCO fill",
                         symbol, acct, expected_row_id, current or "-",
                     )
-                    return False
-            if detail:
-                entry_order = self._find_oco_entry_order(session, acct, symbol)
-                self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
+                    return False, "position_replaced_during_broker_await"
+            entry_order = self._find_oco_entry_order(session, acct, symbol)
+            self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
+            child_id = str(detail.get("broker_order_id") or "")
+            qty = detail.get("quantity")
+            exit_coid = (
+                oco_exit_client_order_id(entry_order.client_order_id, child_id)
+                if entry_order is not None and child_id else ""
+            )
+            durable_fills = session.scalars(
+                select(Fill)
+                .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
+                .where(
+                    BrokerOrder.client_order_id == exit_coid,
+                    BrokerOrder.broker_order_id == child_id,
+                    BrokerOrder.broker_account_id == entry_order.broker_account_id,
+                    BrokerOrder.side == "sell",
+                    Fill.broker_account_id == entry_order.broker_account_id,
+                    Fill.symbol == symbol.upper(),
+                    Fill.side == "sell",
+                    Fill.quantity == Decimal(str(qty)),
+                    Fill.price == Decimal(str(detail.get("price"))),
+                )
+            ).all() if exit_coid and qty is not None else []
+            if not any(
+                str(fill.broker_fill_id or "").startswith(f"{child_id}:")
+                for fill in durable_fills
+            ):
+                return False, "child_fill_not_durable"
             if row is not None:
                 self.store.close_managed_position(session, row)
+                incidents = session.scalars(
+                    select(SystemIncident).where(
+                        SystemIncident.service_name == SERVICE_NAME,
+                        SystemIncident.status == "open",
+                    )
+                ).all()
+                for incident in incidents:
+                    if (
+                        isinstance(incident.payload, dict)
+                        and incident.payload.get("source") == "oco_exit_fill_unrecorded"
+                        and incident.payload.get("managed_row_id") == str(row.id)
+                    ):
+                        incident.status = "closed"
+                        incident.closed_at = utcnow()
             self._close_v2_exit_reject_alarm_incident(session, (acct, symbol))
-            return True
+            return True, "recorded"
 
-        closed_expected_episode = bool(await self._run_db(_close, commit=True))
+        try:
+            closed_expected_episode, failure_reason = await self._run_db(_close, commit=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - failed attribution leaves the row open
+            self.logger.exception(
+                "[OMS-OCO-EXIT-FILL-UNRECORDED] sym=%s acct=%s reason=attribution_write_failed",
+                symbol, acct,
+            )
+            await self._page_oco_exit_fill_unrecorded(
+                acct, symbol, reason="attribution_write_failed"
+            )
+            return False
         if not closed_expected_episode:
+            if failure_reason != "position_replaced_during_broker_await":
+                await self._page_oco_exit_fill_unrecorded(acct, symbol, reason=failure_reason)
             return False
         key = (acct, symbol)
         getattr(self, "_native_oco_resolving", {}).pop(key, None)
@@ -7921,6 +8047,41 @@ class OmsRiskService:
             "record) -> closing phantom managed row (no ladder rejects)",
             symbol, acct,
         )
+        return True
+
+    async def _close_broker_flat_phantom_managed_row(
+        self, acct: str, symbol: str, *, expected_row_id: str
+    ) -> bool:
+        """Clear a no-bid phantom row, without claiming a broker child execution.
+
+        The caller already proved broker-flat after the entry grace. This is not the
+        resolved-by-fill path, and the row identity must survive the broker await.
+        """
+        def _close(session: Session) -> bool:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != expected_row_id:
+                return False
+            self.store.close_managed_position(session, row)
+            self._close_v2_exit_reject_alarm_incident(session, (acct, symbol))
+            return True
+
+        if not await self._run_db(_close, commit=True):
+            self.logger.warning(
+                "[OMS-V2-PHANTOM-FLAT-REFUSED] sym=%s acct=%s expected_row=%s "
+                "reason=position_replaced_during_broker_await",
+                symbol, acct, expected_row_id,
+            )
+            return False
+        key = (acct, symbol)
+        getattr(self, "_native_oco_resolving", {}).pop(key, None)
+        self._managed_v2_symbols.discard(key)
+        self._clear_cw_flip_pending(key)
+        self._cw_floor_armed.discard(key)
+        self._v2_exit_end_episode(key)
+        self._clear_exit_reservation_release(acct, symbol)
+        self._a2_clear(acct, symbol)
         return True
 
     async def _emit_v2_exit_on_loop(
@@ -10503,12 +10664,15 @@ class OmsRiskService:
                 except Exception:  # noqa: BLE001 - an unreadable broker is NOT a flat broker
                     phantom = False
                 if phantom:
-                    await self._close_resolved_oco_managed_row(acct, symbol)
-                    self.logger.info(
-                        "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID but the broker confirms "
-                        "FLAT -> phantom row, reconciled away (nothing to flatten)",
-                        acct, symbol, snapshot.current_quantity,
+                    closed = await self._close_broker_flat_phantom_managed_row(
+                        acct, symbol, expected_row_id=snapshot.managed_row_id
                     )
+                    if closed:
+                        self.logger.info(
+                            "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID but the broker "
+                            "confirms FLAT -> phantom row, reconciled away (nothing to flatten)",
+                            acct, symbol, snapshot.current_quantity,
+                        )
                     continue
                 # Genuinely held with no bid: LOUD + retry next loop (never give up).
                 self.logger.error(
