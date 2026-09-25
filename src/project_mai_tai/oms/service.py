@@ -7049,6 +7049,7 @@ class OmsRiskService:
             attributed = bool(
                 existing_order is not None
                 and existing_order.client_order_id == expected_coid
+                and existing_order.broker_order_id == child_id
                 and existing_fill.broker_account_id == entry_order.broker_account_id
                 and existing_fill.symbol == symbol.upper()
                 and existing_fill.side == "sell"
@@ -7978,8 +7979,10 @@ class OmsRiskService:
                 .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
                 .where(
                     BrokerOrder.client_order_id == exit_coid,
+                    BrokerOrder.broker_order_id == child_id,
                     BrokerOrder.broker_account_id == entry_order.broker_account_id,
                     BrokerOrder.side == "sell",
+                    Fill.broker_account_id == entry_order.broker_account_id,
                     Fill.symbol == symbol.upper(),
                     Fill.side == "sell",
                     Fill.quantity == Decimal(str(qty)),
