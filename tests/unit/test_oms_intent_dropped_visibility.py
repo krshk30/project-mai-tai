@@ -168,20 +168,13 @@ async def test_the_first_broker_refusal_is_not_counted_as_a_dropped_intent() -> 
     )
 
 
-def test_all_cached_ineligible_drop_branches_are_instrumented() -> None:
-    """⭐ STRUCTURAL (see the file docstring for why the Webull half cannot be behavioural yet).
-
-    Count both broker caches and the v2 Webull leg blocked by the primary Schwab cache."""
+def test_both_broker_branches_are_instrumented_symmetrically() -> None:
+    """Both brokers' own eligibility-cache drops must carry the same marker."""
     src = inspect.getsource(OmsRiskService.process_trade_intent)
-    assert src.count(MARKER) == 3, (
-        f"expected exactly 3 {MARKER} lines (Schwab cache, primary-cache Webull drop, "
-        "Webull cache); "
+    assert src.count(MARKER) == 2, (
+        f"expected exactly 2 {MARKER} lines (Schwab + Webull ineligible-cached); "
         f"found {src.count(MARKER)}"
     )
-    primary_cache_branch = src.split('reason="schwab_ineligible_cached_primary"', 1)[1].split(
-        "return [order_event]", 1
-    )[0]
-    assert MARKER in primary_cache_branch
     webull_branch = src.split('reason="webull_ineligible_cached"', 1)[1].split(
         "return [order_event]", 1
     )[0]
