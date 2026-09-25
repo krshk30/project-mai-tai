@@ -8046,6 +8046,41 @@ class OmsRiskService:
         )
         return True
 
+    async def _close_broker_flat_phantom_managed_row(
+        self, acct: str, symbol: str, *, expected_row_id: str
+    ) -> bool:
+        """Clear a no-bid phantom row, without claiming a broker child execution.
+
+        The caller already proved broker-flat after the entry grace. This is not the
+        resolved-by-fill path, and the row identity must survive the broker await.
+        """
+        def _close(session: Session) -> bool:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != expected_row_id:
+                return False
+            self.store.close_managed_position(session, row)
+            self._close_v2_exit_reject_alarm_incident(session, (acct, symbol))
+            return True
+
+        if not await self._run_db(_close, commit=True):
+            self.logger.warning(
+                "[OMS-V2-PHANTOM-FLAT-REFUSED] sym=%s acct=%s expected_row=%s "
+                "reason=position_replaced_during_broker_await",
+                symbol, acct, expected_row_id,
+            )
+            return False
+        key = (acct, symbol)
+        getattr(self, "_native_oco_resolving", {}).pop(key, None)
+        self._managed_v2_symbols.discard(key)
+        self._clear_cw_flip_pending(key)
+        self._cw_floor_armed.discard(key)
+        self._v2_exit_end_episode(key)
+        self._clear_exit_reservation_release(acct, symbol)
+        self._a2_clear(acct, symbol)
+        return True
+
     async def _emit_v2_exit_on_loop(
         self,
         acct: str,
@@ -10626,12 +10661,15 @@ class OmsRiskService:
                 except Exception:  # noqa: BLE001 - an unreadable broker is NOT a flat broker
                     phantom = False
                 if phantom:
-                    await self._close_resolved_oco_managed_row(acct, symbol)
-                    self.logger.info(
-                        "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID but the broker confirms "
-                        "FLAT -> phantom row, reconciled away (nothing to flatten)",
-                        acct, symbol, snapshot.current_quantity,
+                    closed = await self._close_broker_flat_phantom_managed_row(
+                        acct, symbol, expected_row_id=snapshot.managed_row_id
                     )
+                    if closed:
+                        self.logger.info(
+                            "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID but the broker "
+                            "confirms FLAT -> phantom row, reconciled away (nothing to flatten)",
+                            acct, symbol, snapshot.current_quantity,
+                        )
                     continue
                 # Genuinely held with no bid: LOUD + retry next loop (never give up).
                 self.logger.error(
