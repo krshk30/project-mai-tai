@@ -308,6 +308,98 @@ async def test_polled_pmax_policy_reject_is_logged_cached_paged_and_blocks_retry
 
 
 @pytest.mark.asyncio
+async def test_policy_cache_failure_preserves_the_poll_pass_and_other_fill(monkeypatch, capsys) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:", future=True,
+        connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+
+    class _PollBroker:
+        def __init__(self) -> None:
+            self.seen: list[str] = []
+
+        async def fetch_order_update(self, request):
+            self.seen.append(request.symbol)
+            if request.symbol == "PMAX":
+                return ExecutionReport(
+                    event_type="rejected", client_order_id=PMAX_COID,
+                    broker_order_id="1008056980127", symbol="PMAX", side="buy",
+                    intent_type="open", quantity=Decimal("2"), reason=POLICY_REASON,
+                    reported_at=datetime(2026, 9, 24, 18, 24, 11, tzinfo=UTC),
+                )
+            return ExecutionReport(
+                event_type="filled", client_order_id=request.client_order_id,
+                broker_order_id="GLND-BROKER-CONTROL", broker_fill_id="GLND-FILL-CONTROL",
+                symbol="GLND", side="buy", intent_type="open",
+                quantity=Decimal("2"), filled_quantity=Decimal("2"),
+                fill_price=Decimal("4.6184"),
+                reported_at=datetime(2026, 9, 24, 18, 24, 12, tzinfo=UTC),
+            )
+
+    broker = _PollBroker()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=_Redis(), session_factory=sessions, broker_adapter=broker,
+    )
+    service._current_session_day = lambda value=None: "2026-09-24"
+    with sessions() as session:
+        strategy = service.store.ensure_strategy(
+            session, "schwab_1m_v2", name="Schwab 1m v2", execution_mode="live",
+            metadata_json={},
+        )
+        account = service.store.ensure_broker_account(
+            session, "live:schwab_1m_v2", provider="schwab", environment="development",
+        )
+        for symbol, coid, age in (
+            ("PMAX", PMAX_COID, 1),
+            ("GLND", "schwab_1m_v2-GLND-open-bd27b191c9db", 2),
+        ):
+            intent = TradeIntent(
+                strategy_id=strategy.id, broker_account_id=account.id,
+                symbol=symbol, side="buy", intent_type="open", quantity=Decimal("2"),
+                reason="CW_V2_RESTING", status="submitted", payload={},
+            )
+            session.add(intent)
+            session.flush()
+            session.add(BrokerOrder(
+                intent_id=intent.id, strategy_id=strategy.id,
+                broker_account_id=account.id, client_order_id=coid,
+                broker_order_id="1008056980127" if symbol == "PMAX" else "GLND-BROKER-CONTROL",
+                symbol=symbol, side="buy", order_type="stop_limit", time_in_force="day",
+                quantity=Decimal("2"), status="accepted", payload={},
+                updated_at=datetime.now(UTC) - timedelta(seconds=age),
+            ))
+        session.commit()
+
+    original = service.store.record_schwab_ineligible_entry
+
+    def failing_cache(session, **kwargs):
+        assert session.in_nested_transaction(), "policy bookkeeping needs its own savepoint"
+        original(session, **kwargs)
+        raise RuntimeError("cache write failed after flush")
+
+    monkeypatch.setattr(service.store, "record_schwab_ineligible_entry", failing_cache)
+    await service.sync_broker_orders(account_names=["live:schwab_1m_v2"])
+
+    assert broker.seen == ["PMAX", "GLND"]
+    output = capsys.readouterr().out
+    assert "[OMS-BROKER-REJECT] sym=PMAX" in output
+    assert "[OMS-BROKER-REJECT-RECORD-FAILED] sym=PMAX" in output
+    with sessions() as session:
+        orders = {
+            row.symbol: row for row in session.scalars(select(BrokerOrder)).all()
+        }
+        fills = session.scalars(select(Fill)).all()
+        assert session.scalars(select(SchwabIneligibleToday)).all() == []
+        assert session.scalars(select(SystemIncident)).all() == []
+    assert orders["PMAX"].status == "rejected"
+    assert orders["GLND"].status == "filled"
+    assert len(fills) == 1 and fills[0].broker_fill_id == "GLND-FILL-CONTROL"
+
+
+@pytest.mark.asyncio
 async def test_nonpolicy_quote_refusals_do_not_cache_page_or_block_other_entries() -> None:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
