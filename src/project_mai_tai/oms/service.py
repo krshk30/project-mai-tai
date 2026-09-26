@@ -14368,46 +14368,54 @@ class OmsRiskService:
             return
 
         session_date = self._current_session_day(report.reported_at)
-        self.store.record_schwab_ineligible_entry(
-            session,
-            broker_account_id=broker_account_id,
-            symbol=symbol,
-            session_date=session_date,
-            reason_text=report.reason or "",
-            first_seen_at=report.reported_at,
-        )
-        if not broker_account_name.startswith("live:"):
-            return
-
-        # A closed page must still count: one policy incident per symbol and ET day.
-        incidents = session.scalars(
-            select(SystemIncident).where(SystemIncident.service_name == SERVICE_NAME)
-        ).all()
-        if any(
-            isinstance(incident.payload, dict)
-            and incident.payload.get("source") == "schwab_opening_policy_reject"
-            and incident.payload.get("symbol") == symbol
-            and incident.payload.get("session_date") == session_date
-            for incident in incidents
-        ):
-            return
-        session.add(
-            SystemIncident(
-                service_name=SERVICE_NAME,
-                severity="critical",
-                title=f"SCHWAB OPEN REFUSED: {symbol} on {broker_account_name}; check Webull-only exposure"[:255],
-                status="open",
-                payload={
-                    "source": "schwab_opening_policy_reject",
-                    "broker_account_name": broker_account_name,
-                    "symbol": symbol,
-                    "session_date": session_date,
-                    "client_order_id": client_order_id,
-                    "reason": report.reason or "",
-                },
-                opened_at=report.reported_at,
+        try:
+            # A failed cache/page write must not poison the caller's order-status transaction.
+            with session.begin_nested():
+                self.store.record_schwab_ineligible_entry(
+                    session,
+                    broker_account_id=broker_account_id,
+                    symbol=symbol,
+                    session_date=session_date,
+                    reason_text=report.reason or "",
+                    first_seen_at=report.reported_at,
+                )
+                if broker_account_name.startswith("live:"):
+                    # Closed pages still count toward the once-per-symbol/day budget.
+                    existing = session.scalar(
+                        select(SystemIncident.id).where(
+                            SystemIncident.service_name == SERVICE_NAME,
+                            SystemIncident.payload["source"].as_string()
+                            == "schwab_opening_policy_reject",
+                            SystemIncident.payload["symbol"].as_string() == symbol,
+                            SystemIncident.payload["session_date"].as_string() == session_date,
+                        ).limit(1)
+                    )
+                    if existing is None:
+                        session.add(
+                            SystemIncident(
+                                service_name=SERVICE_NAME,
+                                severity="critical",
+                                title=(
+                                    f"SCHWAB OPEN REFUSED: {symbol} on {broker_account_name}; "
+                                    "check Webull-only exposure"
+                                )[:255],
+                                status="open",
+                                payload={
+                                    "source": "schwab_opening_policy_reject",
+                                    "broker_account_name": broker_account_name,
+                                    "symbol": symbol,
+                                    "session_date": session_date,
+                                    "client_order_id": client_order_id,
+                                    "reason": report.reason or "",
+                                },
+                                opened_at=report.reported_at,
+                            )
+                        )
+        except Exception as exc:  # noqa: BLE001 - broker status must survive cache/page failure
+            self.logger.error(
+                "[OMS-BROKER-REJECT-RECORD-FAILED] sym=%s acct=%s coid=%s err=%s",
+                symbol, broker_account_name, client_order_id, type(exc).__name__,
             )
-        )
 
     def _has_cached_schwab_ineligible_symbol(
         self,
