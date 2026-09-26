@@ -204,7 +204,7 @@ async def test_APUS_after_hours_floor_releases_pair_then_uses_marketable_limit(m
     assert len(sells) == 1
     assert sells[0].order_type == "limit"
     assert sells[0].metadata["session"] == "PM"
-    assert float(sells[0].metadata["limit_price"]) <= 10.05
+    assert sells[0].metadata["limit_price"] == "10.00"  # 10.05 bid less the 0.5% safety buffer
     assert float(sells[0].metadata["reference_price"]) == pytest.approx(10.10)
     assert _sell_accounts(sf) == [WEBULL]
 
