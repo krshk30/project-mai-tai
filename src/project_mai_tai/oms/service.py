@@ -418,6 +418,7 @@ class _ConfirmationFanoutDecision:
     source_fill_id: str
     accounts: tuple[str, ...]
     exit_tag: str = "CONFIRMATION_EXIT"  # CW_HARD_STOP / CW_FLOOR share the same routine
+    resolved_fill: dict[str, object] | None = None
     outcomes: dict[str, str] = field(default_factory=dict)
     released: set[str] = field(default_factory=set)
     reprotected: set[str] = field(default_factory=set)
@@ -1074,6 +1075,12 @@ class OmsRiskService:
                     raise
                 except Exception:
                     self.logger.exception("[OMS-V2-EOD-OCO-TRANSITION] sweep failed")
+                try:
+                    await self._retry_webull_eh_ladder_pending()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-WEBULL-EH-LADDER] retry sweep failed")
                 # 16:01 cancel-and-reexit: cancel our OWN working SELL legs, CONFIRM the broker
                 # reports zero, then place a PM limit exit through the managed-exit path. Same 5s
                 # cadence, but the work is claimed ONCE PER POSITION PER DAY inside the method --
@@ -4651,14 +4658,24 @@ class OmsRiskService:
             return "recovering"
         if time.monotonic() < next_try.get(key, 0.0):
             return "paced"
+        eh_ladder = (
+            tag in {"CW_HARD_STOP", "CW_FLOOR"}
+            and not _is_regular_market_session()
+            and self._market_is_fillable()
+        )
+        if eh_ladder:
+            self.__dict__.setdefault("_webull_eh_ladder_pending", {})[key] = (
+                self._session_day_et(), expected_row_id, tag, ref
+            )
         inflight.add(key)
         try:
+            flatten = tag == "V2_OVERNIGHT_FLATTEN"
             outcome = await self._webull_cancel_then_sell(
                 acct,
                 symbol,
                 exit_tag=tag,
-                reason=f"oms_v2_managed_exit:{tag}",
-                kind="HARD",
+                reason="V2_OVERNIGHT_FLATTEN" if flatten else f"oms_v2_managed_exit:{tag}",
+                kind="OVERNIGHT_FLATTEN" if flatten else "HARD",
                 reference_bid=bid,
                 expected_row_id=expected_row_id,
                 expires_at=utcnow() + timedelta(seconds=self._CONFIRMATION_EXIT_EXPIRY_SECONDS),
@@ -4674,10 +4691,55 @@ class OmsRiskService:
             inflight.discard(key)
         if outcome in {"closed", "close_submitted", "resolved_by_fill", "flat", "no_open_row"}:
             next_try.pop(key, None)
-            self._cw_floor_armed.discard(key)
+            if outcome != "close_submitted" or not eh_ladder:
+                self._cw_floor_armed.discard(key)
+            if outcome != "close_submitted":
+                self.__dict__.get("_webull_eh_ladder_pending", {}).pop(key, None)
         else:
             next_try[key] = time.monotonic() + self._WEBULL_CW_EXIT_RETRY_SECONDS
         return outcome
+
+    async def _retry_webull_eh_ladder_pending(self) -> None:
+        """Retry an EH safety exit only after its prior sell stopped working."""
+        pending = self.__dict__.get("_webull_eh_ladder_pending", {})
+        if not pending:
+            return
+        day = self._session_day_et()
+        for key, (pending_day, row_id, tag, ref) in list(pending.items()):
+            if pending_day != day:
+                pending.pop(key, None)
+                continue
+            if not self._market_is_fillable() or _is_regular_market_session():
+                continue
+            acct, symbol = key
+            if key in self.__dict__.get("_oco_exit_fill_pending", {}):
+                continue
+            quote = self._latest_quotes_by_symbol.get(symbol) or {}
+            received_at = quote.get("received_at")
+            if not isinstance(received_at, datetime) or (
+                utcnow() - received_at
+            ).total_seconds() * 1000 > float(
+                getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)
+            ):
+                continue
+            bid = float(quote.get("bid") or 0)
+            if bid <= 0:
+                continue
+            snapshot = await self._run_db(
+                lambda session: self._read_v2_managed_snapshot(
+                    session, acct, symbol,
+                    bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True)),
+                ),
+                commit=False,
+            )
+            if snapshot is None or snapshot.managed_row_id != row_id:
+                pending.pop(key, None)
+                continue
+            if snapshot.dedup_active:
+                continue
+            await self._webull_cw_exit_on_shared_path(
+                acct, symbol, tag=tag, ref=ref, bid=bid, expected_row_id=row_id,
+            )
 
     async def _webull_cancel_then_sell(
         self,
@@ -4798,9 +4860,13 @@ class OmsRiskService:
         if protection == "released":
             self._start_confirmation_unprotected_interval(decision, acct, symbol)
         if protection == "resolved_by_fill":
-            await self._close_resolved_oco_managed_row(
-                acct, symbol, expected_row_id=snapshot.managed_row_id
+            recorded = await self._close_resolved_oco_managed_row(
+                acct, symbol, detail=decision.resolved_fill,
+                expected_row_id=snapshot.managed_row_id,
             )
+            if recorded is False:
+                self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+                return _done("resolved_fill_unrecorded")
             self._finish_confirmation_fanout_leg(decision, acct, outcome="resolved_by_fill")
             return _done("resolved_by_fill")
         if protection in {"reprotected", "uncovered"}:
@@ -4937,13 +5003,45 @@ class OmsRiskService:
             )
             return "released"
         if not _is_regular_market_session():
-            self.logger.error(
-                "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s "
-                "reason=outside_rth_pair_release_would_be_irreversible",
-                symbol,
-                acct,
-            )
-            return "refused"
+            eh_safety_exit = decision.exit_tag in {
+                "CW_FLOOR", "CW_HARD_STOP", "V2_OVERNIGHT_FLATTEN"
+            }
+            if not eh_safety_exit or not self._market_is_fillable():
+                self.logger.error(
+                    "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s "
+                    "reason=outside_rth_pair_release_would_be_irreversible exit=%s",
+                    symbol, acct, decision.exit_tag,
+                )
+                return "refused"
+            # In EH the RTH pair cannot protect the share. Check its exact child fill before
+            # cancelling either leg; a failed read is not evidence that it is safe to sell.
+            read_child = getattr(self.broker_adapter, "fetch_oco_exit_fill", None)
+            if read_child is None:
+                self.logger.error(
+                    "[OMS-WEBULL-EH-PAIR-READ] sym=%s acct=%s exit=%s "
+                    "outcome=CAPABILITY_MISSING pair_untouched=1",
+                    symbol, acct, decision.exit_tag,
+                )
+                return "refused"
+            try:
+                filled_child = await read_child(acct, symbol, base)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a 429 cannot authorise cancellation
+                self.logger.error(
+                    "[OMS-WEBULL-EH-PAIR-READ] sym=%s acct=%s exit=%s outcome=UNANSWERABLE "
+                    "pair_untouched=1",
+                    symbol, acct, decision.exit_tag,
+                    exc_info=True,
+                )
+                return "refused"
+            if filled_child is not None:
+                decision.resolved_fill = filled_child
+                self.logger.info(
+                    "[OMS-WEBULL-EH-PAIR-READ] sym=%s acct=%s exit=%s outcome=RESOLVED_BY_FILL",
+                    symbol, acct, decision.exit_tag,
+                )
+                return "resolved_by_fill"
         attempts = 1 + len(self._CONFIRMATION_EXIT_RELEASE_BACKOFF_SECONDS)
         attempted = 0
         release = ExitPairReleaseResult(outcome="unanswerable")
@@ -4977,6 +5075,7 @@ class OmsRiskService:
                 release = ExitPairReleaseResult(outcome="unanswerable")
 
             if release.outcome == "resolved_by_fill":
+                decision.resolved_fill = self._exit_pair_fill_detail(release)
                 return "resolved_by_fill"
             if release.outcome == "released":
                 self._exit_reservation_released.add(key)
@@ -5967,7 +6066,18 @@ class OmsRiskService:
         else:
             native_oco_stand_down = self._native_oco_stand_down_active(acct, symbol)
         cw_flip_decision = self._fresh_cw_flip_decision(key)
-        if native_oco_stand_down and cw_flip_decision is None:
+        eh_pending = self.__dict__.get("_webull_eh_ladder_pending", {}).get(key)
+        if eh_pending is not None and eh_pending[0] != self._session_day_et():
+            self._webull_eh_ladder_pending.pop(key, None)
+            eh_pending = None
+        eh_retry = (
+            eh_pending is not None
+            and self._is_v2_webull_account(acct)
+            and key not in self.__dict__.get("_oco_exit_fill_pending", {})
+            and not _is_regular_market_session()
+            and self._market_is_fillable()
+        )
+        if native_oco_stand_down and cw_flip_decision is None and not eh_retry:
             # A broker-native OCO owns this exit: target + stop are ONE broker-arbitrated
             # pair. Running the software ladder here would place a THIRD protective sell
             # against the same shares -- the NXTC oversell, merely relocated. Fail-open
@@ -6023,6 +6133,7 @@ class OmsRiskService:
             )
             if snapshot is None:
                 self._managed_v2_symbols.discard((acct, symbol))  # dict mutation stays on-loop
+                self.__dict__.get("_webull_eh_ladder_pending", {}).pop(key, None)
                 self._clear_cw_flip_pending((acct, symbol))  # no open row -> drop any stale flip
                 self._cw_floor_armed.discard((acct, symbol))  # no open row -> drop any armed floor
                 self._post_exit_stale_held_clear(acct, symbol)
@@ -6183,6 +6294,17 @@ class OmsRiskService:
                         confirmation=confirmation,
                     )
                 return
+
+            if eh_retry:
+                _, bound_row, pending_tag, pending_ref = eh_pending
+                if bound_row != snapshot.managed_row_id:
+                    self._webull_eh_ladder_pending.pop(key, None)
+                else:
+                    await self._webull_cw_exit_on_shared_path(
+                        acct, symbol, tag=pending_tag, ref=pending_ref, bid=bid,
+                        expected_row_id=bound_row,
+                    )
+                    return
 
             # Confirmed-window (variant CW) exit: when on, this REPLACES the scale/floor/
             # stoch ladder with a full close at +target% OR -stop% OR a bar-close ATR flip
@@ -10887,11 +11009,17 @@ class OmsRiskService:
                 "(no native stop; software fill impossible after 20:00)",
                 acct, symbol, snapshot.current_quantity,
             )
-            await self._emit_v2_exit_on_loop(
-                acct, symbol, position, snapshot.entry_price,
-                kind="OVERNIGHT_FLATTEN", reference_price=bid, reason="V2_OVERNIGHT_FLATTEN",
-                bid=bid, close_on_fill=close_on_fill,
-            )
+            if self._is_v2_webull_account(acct):
+                await self._webull_cw_exit_on_shared_path(
+                    acct, symbol, tag="V2_OVERNIGHT_FLATTEN", ref=bid, bid=bid,
+                    expected_row_id=snapshot.managed_row_id,
+                )
+            else:
+                await self._emit_v2_exit_on_loop(
+                    acct, symbol, position, snapshot.entry_price,
+                    kind="OVERNIGHT_FLATTEN", reference_price=bid, reason="V2_OVERNIGHT_FLATTEN",
+                    bid=bid, close_on_fill=close_on_fill,
+                )
 
     async def _trigger_hard_stop(
         self,

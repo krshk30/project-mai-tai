@@ -11,12 +11,15 @@ Webull row and a broker that answers like Webull did.
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
-from project_mai_tai.db.models import SystemIncident
+from project_mai_tai.broker_adapters.protocols import ExecutionReport
+from project_mai_tai.db.models import BrokerOrder, Fill, OmsManagedPosition, SystemIncident, TradeIntent
 from project_mai_tai.oms import service as service_module
 from tests.unit.test_confirmation_exit_fanout import (
     SCHWAB,
@@ -174,6 +177,245 @@ async def test_floor_on_webull_uses_the_same_routine(monkeypatch) -> None:
     assert _sell_accounts(sf) == [WEBULL]
     assert "[OMS-WEBULL-CANCEL-THEN-SELL] exit=CW_FLOOR" in "\n".join(service.logger.lines)
     assert (WEBULL, SYMBOL) not in service._cw_floor_armed
+
+
+@pytest.mark.asyncio
+async def test_APUS_after_hours_floor_releases_pair_then_uses_marketable_limit(monkeypatch) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._market_is_fillable = lambda now=None: True
+    _cw(service)
+    service._cw_floor_exit_enabled = True
+    service._cw_floor_armed.add((WEBULL, SYMBOL))
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+
+    async def no_filled_child(*_args, **_kwargs):
+        return None
+
+    adapter.fetch_oco_exit_fill = no_filled_child
+    _quote(service, 10.05)
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert len(adapter.cancel_pair_calls) == 1
+    sells = [r for r in adapter.submitted if r.side == "sell" and "CW_FLOOR" in r.reason]
+    assert len(sells) == 1
+    assert sells[0].order_type == "limit"
+    assert sells[0].metadata["session"] == "PM"
+    assert float(sells[0].metadata["limit_price"]) <= 10.05
+    assert float(sells[0].metadata["reference_price"]) == pytest.approx(10.10)
+    assert _sell_accounts(sf) == [WEBULL]
+
+
+@pytest.mark.asyncio
+async def test_1955_flatten_closes_both_accounts_but_releases_only_webull_pair(monkeypatch) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service.settings.oms_v2_overnight_flatten_enabled = True
+    service._v2_overnight_flatten_due = lambda now=None: True
+    service._market_is_fillable = lambda now=None: True
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+
+    async def no_filled_child(*_args, **_kwargs):
+        return None
+
+    adapter.fetch_oco_exit_fill = no_filled_child
+    _quote(service, 9.80)
+
+    await service._v2_overnight_flatten()
+
+    assert sorted(_sell_accounts(sf)) == sorted((SCHWAB, WEBULL))
+    assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "APUS-protect-base")]
+    assert "[OMS-WEBULL-CANCEL-THEN-SELL] exit=V2_OVERNIGHT_FLATTEN" in "\n".join(
+        service.logger.lines
+    )
+    assert all(
+        request.order_type == "limit"
+        for request in adapter.submitted
+        if request.side == "sell" and request.reason == "V2_OVERNIGHT_FLATTEN"
+    )
+
+
+@pytest.mark.asyncio
+async def test_eh_floor_retries_after_unfilled_limit_expires_even_if_bid_recovers(monkeypatch) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    adapter = _FanoutAdapter()
+    adapter.submit_results.append([
+        ExecutionReport(
+            event_type="accepted", origin="broker", client_order_id="pending-close",
+            broker_order_id="APUS-EH-LIMIT-1", symbol=SYMBOL, side="sell",
+            intent_type="close", quantity=Decimal("1"), filled_quantity=Decimal("0"),
+        )
+    ])
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._market_is_fillable = lambda now=None: True
+    _cw(service)
+    service._cw_floor_exit_enabled = True
+    service._cw_floor_armed.add((WEBULL, SYMBOL))
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+
+    async def no_filled_child(*_args, **_kwargs):
+        return None
+
+    adapter.fetch_oco_exit_fill = no_filled_child
+    _quote(service, 10.05)
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    assert len([r for r in adapter.submitted if "CW_FLOOR" in r.reason]) == 1
+
+    _quote(service, 10.20)
+    await service._retry_webull_eh_ladder_pending()
+    assert len([r for r in adapter.submitted if "CW_FLOOR" in r.reason]) == 1
+
+    with sf() as session:
+        first = session.scalar(select(BrokerOrder).where(BrokerOrder.broker_order_id == "APUS-EH-LIMIT-1"))
+        assert first is not None
+        first.status = "cancelled"
+        session.commit()
+
+    await service._retry_webull_eh_ladder_pending()
+    assert len([r for r in adapter.submitted if "CW_FLOOR" in r.reason]) == 2
+
+
+@pytest.mark.asyncio
+async def test_0930_edge_rearms_prior_rth_webull_share_without_touching_live_pair() -> None:
+    adapter = _FanoutAdapter()
+
+    async def armed(acct, symbols):
+        return {SYMBOL} if acct == SCHWAB else set()
+
+    adapter.fetch_armed_native_oco_symbols = armed
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service.settings.oms_v2_rth_edge_bracket_enabled = True
+    service._v2_rth_edge_bracket_due = lambda now=None: True
+    with sf() as session:
+        rows = session.scalars(select(OmsManagedPosition)).all()
+        for row in rows:
+            row.entry_time = service_module.utcnow() - timedelta(days=1)
+        session.commit()
+
+    await service._v2_rth_edge_bracket()
+
+    pair_requests = [r for r in adapter.submitted if r.reason == "oms_v2_rth_edge_bracket"]
+    assert [r.broker_account_name for r in pair_requests] == [WEBULL]
+
+
+@pytest.mark.asyncio
+async def test_eh_pair_read_429_cannot_cancel_or_sell(monkeypatch) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._market_is_fillable = lambda now=None: True
+    _cw(service)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+
+    async def read_429(*_args, **_kwargs):
+        raise RuntimeError("HTTP Status: 429, Code: TOO_MANY_REQUESTS")
+
+    adapter.fetch_oco_exit_fill = read_429
+    _quote(service, 9.40)
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert adapter.cancel_pair_calls == []
+    assert _sell_accounts(sf) == []
+    assert "outcome=UNANSWERABLE pair_untouched=1" in "\n".join(service.logger.lines)
+
+
+@pytest.mark.asyncio
+async def test_eh_pair_read_filled_child_records_it_without_another_sell(monkeypatch) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._market_is_fillable = lambda now=None: True
+    _cw(service)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+    with sf() as session:
+        entry = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == "webull-stop-limit-entry"))
+        assert entry is not None
+        intent = TradeIntent(
+            strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
+            symbol=SYMBOL, side="buy", intent_type="open", quantity=Decimal("1"),
+            reason="ATR Flip", status="filled", payload={},
+        )
+        session.add(intent)
+        session.flush()
+        entry.intent_id = intent.id
+        entry.payload = dict(entry.payload or {}, webull_protect_base_client_order_id="APUS-protect-base")
+        session.commit()
+
+    async def filled_child(*_args, **_kwargs):
+        return {
+            "symbol": SYMBOL, "quantity": Decimal("1"), "price": Decimal("9.40"),
+            "filled_at": service_module.utcnow(), "broker_order_id": "APUS-STOP-CHILD",
+        }
+
+    adapter.fetch_oco_exit_fill = filled_child
+    _quote(service, 9.40)
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert adapter.cancel_pair_calls == []
+    assert [r for r in adapter.submitted if "CW_HARD_STOP" in r.reason] == []
+    with sf() as session:
+        fills = session.scalars(select(Fill).where(Fill.symbol == SYMBOL, Fill.side == "sell")).all()
+    assert len(fills) == 1
+    assert fills[0].broker_fill_id == "APUS-STOP-CHILD:1"
+
+
+@pytest.mark.asyncio
+async def test_eh_limit_refused_after_pair_release_pages_and_keeps_row(monkeypatch) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    adapter = _FanoutAdapter(reject_accounts={WEBULL})
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._market_is_fillable = lambda now=None: True
+    _cw(service)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+
+    async def no_filled_child(*_args, **_kwargs):
+        return None
+
+    async def held(*_args, **_kwargs):
+        return service_module._PositionRead.HELD
+
+    adapter.fetch_oco_exit_fill = no_filled_child
+    service._broker_symbol_position_state = held
+    _quote(service, 9.40)
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    for task in list(service.__dict__.get("_confirmation_exit_recovery_tasks", set())):
+        await task
+
+    assert len(adapter.cancel_pair_calls) == 1
+    assert any("CW_HARD_STOP" in r.reason for r in adapter.submitted)
+    assert any(i["broker_account_name"] == WEBULL for i in _incidents(sf))
+    with sf() as session:
+        row = service.store.get_open_managed_position(session, broker_account_name=WEBULL, symbol=SYMBOL)
+    assert row is not None and row.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_after_2000_never_releases_pair_for_unfillable_sell(monkeypatch) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._market_is_fillable = lambda now=None: False
+    _cw(service)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+    _quote(service, 9.40)
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert adapter.cancel_pair_calls == []
+    assert _sell_accounts(sf) == []
 
 
 @pytest.mark.asyncio
