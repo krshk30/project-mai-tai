@@ -1,0 +1,9 @@
+{
+  "pr_number": 1047,
+  "range_base": "063e09586ebf5d657ee9d39f15bc64798f84c73a",
+  "range_head": "c136b633dc5ed028b0139f7e43417395413c089a",
+  "reviewed_at": "2026-09-26T23:31:43Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "B8 16:00 native-OCO handover guards (re-review of c136b633 after my change request on 41a3050a). Scope: oms/service.py + tests/unit/test_v2_eod_oco_transition.py only (rebased onto 063e0958). Required change implemented: _observe_v2_native_oco_high_bid (~L8501-8523) no longer requires the armed-confirmation key; it records the max fresh bid (<=5 s) whenever the stand-down predicate returned True (armed OR resolving grace), with the open-row/row-id checks kept at carry/persist time (~L10411-10433). New RED control test_resolving_grace_peak_arms_floor_when_handover_follows (bracket gone 16:00:05, +5% bid 16:00:44, handover 16:01:35 -> floor armed and persisted >= 5.2122). At head: 12/18/100 = 130 tests green. Mutations on the head tree, reverted: armed-only condition restored -> 1 RED; young-grace guard removed -> 1 RED; carry call removed -> 2 RED. Fixture now sets oms_v2_cw_floor_exit_enabled via Settings (production value true, read from /proc). MUST-NOT-BREAK re-verified by reading: eod-latch checked before the grace read; flag OFF byte-identical; weekends skipped and once per (day,acct,sym); no resolving entry -> unchanged path; the carry places no order (Webull legs safe); 19:55 flatten and RTH-edge sweeps untouched. Non-blocking: no test drives a post-handover quote between floor and target to a floor exit (covered by the CW exit suites, not this path). Flag OMS_V2_EOD_OCO_TRANSITION_ENABLED is operator-approved for the batch deploy; not deployed by this pin."
+}
