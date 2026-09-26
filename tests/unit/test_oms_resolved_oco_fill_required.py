@@ -194,6 +194,39 @@ async def test_pending_child_fill_hold_survives_eod_handover_until_attributed() 
 
 
 @pytest.mark.asyncio
+async def test_reject_flat_backstop_cannot_close_a_known_unrecorded_child_fill() -> None:
+    service, sessions, row_id = _service_with_weto()
+
+    async def failed_fetch(*_args, **_kwargs):
+        return _EXIT_FETCH_FAILED
+
+    async def flat_state(*_args, **_kwargs):
+        return "flat"
+
+    async def confirmed_flat(*_args, **_kwargs):
+        return True
+
+    service._fetch_oco_exit_detail = failed_fetch
+    service._broker_symbol_position_state = flat_state
+    service._broker_symbol_is_flat = confirmed_flat
+    assert await service._close_resolved_oco_managed_row(
+        ACCOUNT, SYMBOL, expected_row_id=row_id
+    ) is False
+
+    with sessions() as session:
+        row = session.get(OmsManagedPosition, UUID(row_id))
+        assert row is not None
+        for _ in range(service._MAX_EXIT_FETCH_DEFERRALS + 3):
+            assert await service._v2_close_reconcile_flat(session, ACCOUNT, SYMBOL, row) is False
+        session.commit()
+
+    with sessions() as session:
+        row = session.get(OmsManagedPosition, UUID(row_id))
+        assert row is not None and row.status == "open" and row.current_quantity == 1
+        assert session.scalars(select(Fill).where(Fill.symbol == SYMBOL, Fill.side == "sell")).all() == []
+
+
+@pytest.mark.asyncio
 async def test_pending_child_fill_retries_after_eod_removes_resolution_grace() -> None:
     service, _sessions, row_id = _service_with_weto()
     service._managed_v2_symbols.add((ACCOUNT, SYMBOL))

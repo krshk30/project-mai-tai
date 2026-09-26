@@ -7565,6 +7565,13 @@ class OmsRiskService:
         managed row + disarm quote-eval and return True. Otherwise (still held, read failed, or
         below threshold) return False and keep managing. Clears ONLY on a CONFIRMED-flat read."""
         key = (acct, symbol)
+        pending = self.__dict__.get("_oco_exit_fill_pending", {}).get(key)
+        if pending is not None:
+            if pending.row_id == str(getattr(row, "id", "")):
+                # A broker child already resolved this episode. Its fill writer owns the close;
+                # the reject-driven flat backstop must not discard it after a string of 429s.
+                return False
+            self._oco_exit_fill_pending.pop(key, None)
         self._v2_exit_close_failures[key] = self._v2_exit_close_failures.get(key, 0) + 1
         if self._v2_exit_close_failures[key] < self._V2_EXIT_RECONCILE_AFTER_FAILURES:
             return False
