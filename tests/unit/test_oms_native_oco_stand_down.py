@@ -307,6 +307,7 @@ async def test_resolved_signal_without_child_detail_keeps_row_open() -> None:
     assert service.store.closed_calls == 0
     assert (ACCT, SYMBOL) in service._managed_v2_symbols
     assert pages == [(ACCT, SYMBOL, "no_child_fill_detail")]
+    assert (ACCT, SYMBOL) not in service.__dict__.get("_oco_exit_fill_pending", {})
     assert service.broker_adapter.resolved_calls == [(ACCT, (SYMBOL,))]
 
 

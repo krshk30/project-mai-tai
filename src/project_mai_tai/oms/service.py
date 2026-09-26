@@ -8013,8 +8013,19 @@ class OmsRiskService:
                 entry_broker_order_id=entry_oid, entry_quantity=entry_qty,
             )
         if detail is _EXIT_FETCH_FAILED or detail is None:
+            pending = self.__dict__.get("_oco_exit_fill_pending", {}).get((acct, symbol))
+            if expected_row_id is None and pending is None:
+                await self._page_oco_exit_fill_unrecorded(
+                    acct, symbol,
+                    reason=(
+                        "unscoped_child_read_failed"
+                        if detail is _EXIT_FETCH_FAILED else "no_child_fill_detail"
+                    ),
+                )
+                return False
             await self._hold_unrecorded_oco_exit_fill(
-                acct, symbol, expected_row_id=expected_row_id,
+                acct, symbol,
+                expected_row_id=expected_row_id or (pending.row_id if pending else None),
                 reason="child_read_failed" if detail is _EXIT_FETCH_FAILED else "no_child_fill_detail",
                 page_now=detail is None,
             )
@@ -8044,7 +8055,9 @@ class OmsRiskService:
                     )
                     return False, "position_replaced_during_broker_await"
             entry_order = self._find_oco_entry_order(session, acct, symbol)
-            self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
+            attributed = self._persist_oco_exit_fill(
+                session, acct, symbol, entry_order, detail
+            )
             child_id = str(detail.get("broker_order_id") or "")
             qty = detail.get("quantity")
             exit_coid = (
@@ -8070,7 +8083,9 @@ class OmsRiskService:
                 str(fill.broker_fill_id or "").startswith(f"{child_id}:")
                 for fill in durable_fills
             ):
-                return False, "child_fill_not_durable"
+                return False, (
+                    "child_fill_not_durable" if attributed else "child_attribution_refused"
+                )
             if row is not None:
                 self.store.close_managed_position(session, row)
                 incidents = session.scalars(
@@ -8106,10 +8121,15 @@ class OmsRiskService:
             return False
         if not closed_expected_episode:
             if failure_reason != "position_replaced_during_broker_await":
-                await self._hold_unrecorded_oco_exit_fill(
-                    acct, symbol, expected_row_id=expected_row_id, reason=failure_reason,
-                    page_now=True,
-                )
+                if failure_reason == "child_attribution_refused" and expected_row_id is None:
+                    await self._page_oco_exit_fill_unrecorded(
+                        acct, symbol, reason=failure_reason
+                    )
+                else:
+                    await self._hold_unrecorded_oco_exit_fill(
+                        acct, symbol, expected_row_id=expected_row_id, reason=failure_reason,
+                        page_now=True,
+                    )
             return False
         key = (acct, symbol)
         self.__dict__.get("_oco_exit_fill_pending", {}).pop(key, None)
