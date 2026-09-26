@@ -1,0 +1,9 @@
+{
+  "pr_number": 1045,
+  "range_base": "34fb8c3c4e78e9061bc140feb76e1a1acbc1f647",
+  "range_head": "558e47c0d0248a04211ab152f0bcb2bfa824af8e",
+  "reviewed_at": "2026-09-26T22:35:09Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "B5 LXEH recovery storm. Read the full diff (+58/-13, strategy_core/schwab_1m_v2.py + new tests/unit/test_schwab_1m_v2_retry_one_recovery.py). At head: 8/8 new tests, 13/13 test_v2_retry_one, 250/250 across the 8 flip-owner/release_and_drop test files. Mutations run on the head tree and reverted: resolve-condition forced True => 8 RED (5 ambiguous re-add controls, unreadable-book control, 2 pre-existing FTFT/LATEFILL tests); throttle removed => 1 RED; evidence-freshness dropped => 1 RED; capture-before-cancel of the resting flags dropped => 2 RED. Resolve condition (L2528-2542) is at least as strict as the spec: no rest ever placed on either broker, no fills/positions/open positions, qty 0, cross-account book readable and <=15 s old; ambiguous removals stay UNKNOWN and refuse re-add; RETRY-ONE, the 04:00 reset and never-removed symbols untouched; retire happens via the existing ordered _retire_flip_owner_opportunity so a re-add cannot reuse the retired id (FTFT class). Reach verified on the box: LXEH 09-23 had an opportunity admitted 11:30:02 but no [V2-RESTING-PLACE] and zero broker orders ever, so flip_owner_first_rest_placed=False and this path resolves it. Notes (non-blocking): three defensive guards (cw_v2_emit_claimed, position_qty/held, first_rest_placed) have no failing control; the pending=N counter still increments per 5 s cycle while the line is throttled (cosmetic). ruff clean. Not deployed."
+}
