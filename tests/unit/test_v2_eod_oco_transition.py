@@ -9,15 +9,17 @@ test_v2_overnight_flatten.py. The transition places/cancels NO broker order — 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
+from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 
@@ -75,6 +77,25 @@ def _force_due(svc, due: bool = True) -> None:
     svc._v2_eod_oco_transition_due = lambda now=None: due
 
 
+def _open_apus_row(sf, *, symbol: str = SYM) -> None:
+    with sf() as session:
+        session.add(
+            OmsManagedPosition(
+                strategy_code="schwab_1m_v2",
+                broker_account_name=ACCT,
+                symbol=symbol,
+                entry_price=Decimal("5.11"),
+                original_quantity=2,
+                current_quantity=2,
+                entry_path="ATR Flip",
+                entry_time=_u(2026, 9, 24, 15, 54),
+                status="open",
+                config_name="make_v2_variant",
+            )
+        )
+        session.commit()
+
+
 # --- due-gate: pins the 16:00 threshold (mutate the default minute/hour => red) ---
 
 
@@ -112,6 +133,83 @@ async def test_transition_releases_stand_down():
     # Even if the broker sync re-arms the (expiring) OCO, the latch keeps the ladder running.
     svc._native_oco_armed_confirmed_at[(ACCT, SYM)] = datetime.now(timezone.utc)
     assert svc._native_oco_stand_down_active(ACCT, SYM) is False     # ladder now owns the exit
+
+
+@pytest.mark.asyncio
+async def test_recent_155950_oco_resolution_is_not_released_at_1600():
+    svc = _svc(_make_sf())
+    _arm_managed(svc)
+    svc._native_oco_resolving[(ACCT, SYM)] = datetime.now(timezone.utc) - timedelta(
+        seconds=10
+    )
+    svc._native_oco_armed_confirmed_at.pop((ACCT, SYM), None)
+    _force_due(svc)
+
+    await svc._v2_eod_oco_transition()
+
+    assert (ACCT, SYM) in svc._native_oco_resolving
+    assert (svc._session_day_et(), ACCT, SYM) not in svc._v2_eod_oco_transitioned
+    assert svc._native_oco_stand_down_active(ACCT, SYM) is True
+
+    svc._native_oco_resolving[(ACCT, SYM)] -= timedelta(seconds=91)
+    await svc._v2_eod_oco_transition()
+    assert (svc._session_day_et(), ACCT, SYM) in svc._v2_eod_oco_transitioned
+
+
+@pytest.mark.asyncio
+async def test_apus_peak_during_stand_down_arms_floor_at_handover():
+    sf = _make_sf()
+    svc = _svc(sf)
+    svc._cw_floor_exit_enabled = True
+    _open_apus_row(sf)
+    _arm_managed(svc)
+    svc._latest_quotes_by_symbol[SYM] = {
+        "bid": 5.48,
+        "received_at": datetime.now(timezone.utc),
+    }
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    _force_due(svc)
+    await svc._v2_eod_oco_transition()
+
+    assert (ACCT, SYM) in svc._cw_floor_armed
+    with sf() as session:
+        row = svc.store.get_open_managed_position(
+            session, broker_account_name=ACCT, symbol=SYM
+        )
+        assert row is not None and row.floor_price is not None
+        assert row.floor_price >= Decimal("5.2122")
+        assert session.scalars(select(BrokerOrder)).all() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("bid", "quote_age_seconds"),
+    [(5.15, 0), (5.48, 10)],
+)
+async def test_handover_does_not_arm_floor_without_fresh_target_cross(
+    bid: float, quote_age_seconds: int
+):
+    sf = _make_sf()
+    svc = _svc(sf)
+    svc._cw_floor_exit_enabled = True
+    _open_apus_row(sf)
+    _arm_managed(svc)
+    svc._latest_quotes_by_symbol[SYM] = {
+        "bid": bid,
+        "received_at": datetime.now(timezone.utc) - timedelta(seconds=quote_age_seconds),
+    }
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    _force_due(svc)
+    await svc._v2_eod_oco_transition()
+
+    assert (ACCT, SYM) not in svc._cw_floor_armed
+    with sf() as session:
+        row = svc.store.get_open_managed_position(
+            session, broker_account_name=ACCT, symbol=SYM
+        )
+        assert row is not None and row.floor_price is None
 
 
 @pytest.mark.asyncio
