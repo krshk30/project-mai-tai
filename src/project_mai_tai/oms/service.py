@@ -4865,7 +4865,7 @@ class OmsRiskService:
                 expected_row_id=snapshot.managed_row_id,
             )
             if recorded is False:
-                self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
+                self._finish_confirmation_fanout_leg(decision, acct, outcome="resolved_by_fill")
                 return _done("resolved_fill_unrecorded")
             self._finish_confirmation_fanout_leg(decision, acct, outcome="resolved_by_fill")
             return _done("resolved_by_fill")
