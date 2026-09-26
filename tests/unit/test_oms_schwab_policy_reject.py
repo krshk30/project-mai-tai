@@ -15,6 +15,7 @@ from project_mai_tai.db.models import (
     Base,
     BrokerAccount,
     BrokerOrder,
+    Fill,
     SchwabIneligibleToday,
     SystemIncident,
     TradeIntent,
@@ -80,7 +81,21 @@ class _Broker:
                     quantity=_request.quantity,
                     metadata=dict(_request.metadata),
                     reported_at=datetime(2026, 9, 24, 18, 29, 3, tzinfo=UTC),
-                )
+                ),
+                ExecutionReport(
+                    event_type="filled",
+                    client_order_id=_request.client_order_id,
+                    broker_order_id="WEBULL-PMAX-RETRY-CONTROL",
+                    broker_fill_id="WEBULL-PMAX-RETRY-FILL-CONTROL",
+                    symbol=_request.symbol,
+                    side=_request.side,
+                    intent_type=_request.intent_type,
+                    quantity=_request.quantity,
+                    filled_quantity=Decimal("1"),
+                    fill_price=Decimal("1.6108"),
+                    metadata=dict(_request.metadata),
+                    reported_at=datetime(2026, 9, 24, 18, 29, 3, tzinfo=UTC),
+                ),
             ]
         raise AssertionError("cached policy reject must not reach the broker")
 
@@ -219,7 +234,7 @@ async def test_polled_pmax_policy_reject_is_logged_cached_paged_and_blocks_retry
     )
 
     assert retry[0].payload.reason == "schwab_ineligible_cached"
-    assert webull_retry[0].payload.status == "accepted"
+    assert [event.payload.status for event in webull_retry] == ["accepted", "filled"]
     assert broker.submit_calls == 1
     output = capsys.readouterr().out
     assert output.count(f"[OMS-BROKER-REJECT] sym=PMAX acct=live:schwab_1m_v2 coid={PMAX_COID}") == 1
@@ -232,11 +247,19 @@ async def test_polled_pmax_policy_reject_is_logged_cached_paged_and_blocks_retry
                 BrokerAccount.name == "live:orb", BrokerOrder.symbol == "PMAX"
             )
         ).all()
+        webull_fills = session.scalars(
+            select(Fill).join(BrokerAccount).where(
+                BrokerAccount.name == "live:orb", Fill.symbol == "PMAX"
+            )
+        ).all()
     assert len(cache) == 1 and cache[0].symbol == "PMAX"
     assert len(incidents) == 1
     assert incidents[0].payload["symbol"] == "PMAX"
     assert len(webull_orders) == 1
     assert webull_orders[0].broker_order_id == "WEBULL-PMAX-RETRY-CONTROL"
+    assert len(webull_fills) == 1
+    assert webull_fills[0].quantity == Decimal("1")
+    assert webull_fills[0].price == Decimal("1.6108")
 
     with sessions() as session:
         repeat = ExecutionReport(
