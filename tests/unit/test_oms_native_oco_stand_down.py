@@ -256,7 +256,7 @@ class _RowStore:
     def get_open_managed_position(self, _session: object, *, broker_account_name: str, symbol: str):
         if not self.open:
             return None
-        return type("_Row", (), {"entry_time": utcnow()})()
+        return type("_Row", (), {"id": "test-managed-row", "entry_time": utcnow()})()
 
     def close_managed_position(self, _session: object, _row: object) -> None:
         self.open = False

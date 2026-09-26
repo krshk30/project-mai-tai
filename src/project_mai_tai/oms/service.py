@@ -122,6 +122,15 @@ class _DeferredWebullRestingMirror:
     retry_not_before_monotonic: float = 0.0
 
 
+@dataclass
+class _PendingOcoExitFill:
+    row_id: str
+    first_seen: datetime
+    last_attempt: datetime
+    attempts: int = 0
+    paged: bool = False
+
+
 def oco_exit_client_order_id(entry_client_order_id: str, child_id: str) -> str:
     """Key for the synthetic order row that carries a native-OCO exit leg.
 
@@ -678,6 +687,9 @@ class OmsRiskService:
     _MAX_EXIT_FETCH_DEFERRALS = 3
     # Class-level default: test helpers build instances via __new__, bypassing __init__.
     _oco_exit_fetch_deferrals: dict[tuple[str, str], int] = {}
+    _OCO_EXIT_FILL_PAGE_ATTEMPTS = 5
+    _OCO_EXIT_FILL_PAGE_SECONDS = 120.0
+    _OCO_EXIT_FILL_RETRY_SECONDS = 30.0
 
     def __init__(
         self,
@@ -834,6 +846,7 @@ class OmsRiskService:
         self._exit_reservation_terminal: dict[tuple[str, str], str] = {}
         # Consecutive TRANSIENT exit-fill fetch failures per (acct, symbol). See _defer_for_exit_fetch.
         self._oco_exit_fetch_deferrals: dict[tuple[str, str], int] = {}
+        self._oco_exit_fill_pending: dict[tuple[str, str], _PendingOcoExitFill] = {}
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
         self._v2_exit_engine: ExitEngine = ExitEngine(self._v2_exit_config)
         # Confirmed-window (variant CW) exit [PR #2/3]. Gated on the SAME switch the
@@ -3898,6 +3911,7 @@ class OmsRiskService:
                 entry_path=entry_path,
                 config_name="make_v2_variant",
             )
+            self.__dict__.get("_oco_exit_fill_pending", {}).pop((broker_account_name, symbol), None)
             self._managed_v2_symbols.add((broker_account_name, symbol))  # slice-3: arm quote-path eval
             # P0.2 SCHWAB settlement anchor. Instrumentation must NEVER be load-bearing on the
             # live fill path, so this is guarded: a duck-typed caller (tests call this hook with a
@@ -7730,6 +7744,8 @@ class OmsRiskService:
                 )
             if now - self._oco_exit_poll_at.get(key, -1e9) < min_secs:
                 continue
+            if self.__dict__.get("_oco_exit_fill_pending", {}).get(key) is not None:
+                continue  # the bounded resolution retry lane owns this known filled child
             self._oco_exit_poll_at[key] = now      # stamp BEFORE the call: a failure must not spin
             def _read_entry(session: Session, _a=acct, _s=symbol) -> tuple:
                 o = self._find_oco_entry_order(session, _a, _s)
@@ -7898,6 +7914,63 @@ class OmsRiskService:
                 symbol, acct, reason,
             )
 
+    async def _hold_unrecorded_oco_exit_fill(
+        self, acct: str, symbol: str, *, expected_row_id: str | None, reason: str,
+        page_now: bool = False,
+    ) -> None:
+        key = (acct, symbol)
+        pending_fills = self.__dict__.setdefault("_oco_exit_fill_pending", {})
+
+        def _read_row_id(session: Session) -> str:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            return str(row.id) if row is not None else ""
+
+        try:
+            row_id = await self._run_db(_read_row_id, commit=False)
+        except Exception:  # noqa: BLE001 - do not replace broker uncertainty with a guessed row
+            self.logger.exception(
+                "[OMS-OCO-EXIT-FILL-PENDING] sym=%s acct=%s row lookup failed", symbol, acct
+            )
+            await self._page_oco_exit_fill_unrecorded(acct, symbol, reason="row_lookup_failed")
+            return
+        if not row_id or (expected_row_id is not None and row_id != expected_row_id):
+            pending_fills.pop(key, None)
+            return
+
+        now = utcnow()
+        pending = pending_fills.get(key)
+        if pending is None or pending.row_id != row_id:
+            pending = _PendingOcoExitFill(row_id=row_id, first_seen=now, last_attempt=now)
+            pending_fills[key] = pending
+        pending.last_attempt = now
+        pending.attempts += 1
+        self.logger.warning(
+            "[OMS-OCO-EXIT-FILL-PENDING] sym=%s acct=%s row=%s reason=%s attempt=%d/%d "
+            "ladder=HELD",
+            symbol, acct, row_id, reason, pending.attempts, self._OCO_EXIT_FILL_PAGE_ATTEMPTS,
+        )
+        elapsed = (now - pending.first_seen).total_seconds()
+        if not pending.paged and (
+            page_now or pending.attempts >= self._OCO_EXIT_FILL_PAGE_ATTEMPTS
+            or elapsed >= self._OCO_EXIT_FILL_PAGE_SECONDS
+        ):
+            pending.paged = True
+            await self._page_oco_exit_fill_unrecorded(acct, symbol, reason=reason)
+
+    async def _page_aged_pending_oco_exit_fills(self) -> None:
+        now = utcnow()
+        for (acct, symbol), pending in list(
+            self.__dict__.get("_oco_exit_fill_pending", {}).items()
+        ):
+            if pending.paged or (now - pending.first_seen).total_seconds() < self._OCO_EXIT_FILL_PAGE_SECONDS:
+                continue
+            pending.paged = True
+            await self._page_oco_exit_fill_unrecorded(
+                acct, symbol, reason="child_fill_unrecorded_after_retry_window"
+            )
+
     async def _close_resolved_oco_managed_row(
         self, acct: str, symbol: str, *, detail=None, expected_row_id: str | None = None
     ) -> bool:
@@ -7931,15 +8004,19 @@ class OmsRiskService:
         except Exception:  # noqa: BLE001 - an unknown entry must keep the row open
             self.logger.warning("[OMS-OCO-EXIT-FILL] %s %s entry-order lookup failed", acct, symbol)
         if detail is None:
+            pending = self.__dict__.get("_oco_exit_fill_pending", {}).get((acct, symbol))
+            if pending is not None and pending.paged:
+                return False
             # the poll already fetched it; do not spend a second broker round trip (Webull 429s)
             detail = await self._fetch_oco_exit_detail(
                 acct, symbol, base_coid,
                 entry_broker_order_id=entry_oid, entry_quantity=entry_qty,
             )
         if detail is _EXIT_FETCH_FAILED or detail is None:
-            await self._page_oco_exit_fill_unrecorded(
-                acct, symbol,
+            await self._hold_unrecorded_oco_exit_fill(
+                acct, symbol, expected_row_id=expected_row_id,
                 reason="child_read_failed" if detail is _EXIT_FETCH_FAILED else "no_child_fill_detail",
+                page_now=detail is None,
             )
             return False
         self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
@@ -8022,15 +8099,20 @@ class OmsRiskService:
                 "[OMS-OCO-EXIT-FILL-UNRECORDED] sym=%s acct=%s reason=attribution_write_failed",
                 symbol, acct,
             )
-            await self._page_oco_exit_fill_unrecorded(
-                acct, symbol, reason="attribution_write_failed"
+            await self._hold_unrecorded_oco_exit_fill(
+                acct, symbol, expected_row_id=expected_row_id, reason="attribution_write_failed",
+                page_now=True,
             )
             return False
         if not closed_expected_episode:
             if failure_reason != "position_replaced_during_broker_await":
-                await self._page_oco_exit_fill_unrecorded(acct, symbol, reason=failure_reason)
+                await self._hold_unrecorded_oco_exit_fill(
+                    acct, symbol, expected_row_id=expected_row_id, reason=failure_reason,
+                    page_now=True,
+                )
             return False
         key = (acct, symbol)
+        self.__dict__.get("_oco_exit_fill_pending", {}).pop(key, None)
         getattr(self, "_native_oco_resolving", {}).pop(key, None)
         self._managed_v2_symbols.discard(key)
         self._clear_cw_flip_pending(key)
@@ -8679,6 +8761,8 @@ class OmsRiskService:
         # AttributeError there would propagate into the exit loop. Missing state resolves
         # to "no confirmation" -> the ladder runs, which is the safe direction.
         key = (broker_account_name, symbol)
+        if key in self.__dict__.get("_oco_exit_fill_pending", {}):
+            return True
         # Phase A EOD OCO transition: once 16:00 has released this position for the day, the
         # RTH OCO is dead (session=NORMAL can't fill in EH) — never stand down again today,
         # so the software EH-limit ladder owns the exit even if a stale broker read still
@@ -8734,6 +8818,7 @@ class OmsRiskService:
         refresh -> confirmations age out -> the ladder resumes. Only symbols the broker confirms
         have BOTH exit legs WORKING count as armed.
         """
+        await self._page_aged_pending_oco_exit_fills()
         if not bool(getattr(self.settings, "oms_native_oco_stand_down_enabled", False)):
             self._native_oco_armed_confirmed_at.clear()
             getattr(self, "_native_oco_resolving", {}).clear()
@@ -8807,7 +8892,15 @@ class OmsRiskService:
         if bool(getattr(self.settings, "oms_native_oco_resolve_flat_reconcile_enabled", False)):
             resolving_now = getattr(self, "_native_oco_resolving", {})
             resolving_by_acct: dict[str, list[str]] = {}
-            for (acct_name, sym) in list(resolving_now):
+            pending_fills = self.__dict__.get("_oco_exit_fill_pending", {})
+            for (acct_name, sym) in set(resolving_now) | set(pending_fills):
+                pending = pending_fills.get((acct_name, sym))
+                if pending is not None and (
+                    pending.paged
+                    or (utcnow() - pending.last_attempt).total_seconds()
+                    < self._OCO_EXIT_FILL_RETRY_SECONDS
+                ):
+                    continue
                 resolving_by_acct.setdefault(acct_name, []).append(sym)
             resolved_fn = getattr(adapter, "fetch_oco_resolved_by_fill_symbols", None)
             if resolved_fn is not None:
@@ -8823,9 +8916,23 @@ class OmsRiskService:
                             acct_name,
                         )
                         continue
-                    for sym in filled:
-                        await self._close_resolved_oco_managed_row(acct_name, sym)
-                        self._native_oco_resolving.pop((acct_name, sym), None)
+                    retry_syms = {
+                        sym for (pending_acct, sym) in pending_fills if pending_acct == acct_name
+                    }
+                    for sym in set(filled) | retry_syms:
+                        pending = pending_fills.get((acct_name, sym))
+                        if pending is not None and (
+                            pending.paged
+                            or (utcnow() - pending.last_attempt).total_seconds()
+                            < self._OCO_EXIT_FILL_RETRY_SECONDS
+                        ):
+                            continue
+                        closed = await self._close_resolved_oco_managed_row(
+                            acct_name, sym,
+                            expected_row_id=pending.row_id if pending is not None else None,
+                        )
+                        if closed:
+                            self._native_oco_resolving.pop((acct_name, sym), None)
 
     async def _reconcile_after_intent(self, broker_account_name: str) -> None:
         """Best-effort post-intent broker→DB reconcile (Fix 3b).
