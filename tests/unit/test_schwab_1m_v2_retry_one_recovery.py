@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 
@@ -67,6 +69,47 @@ def test_unreadable_lxeh_book_keeps_unknown_owner() -> None:
 
     assert state.flip_owner_phase == "unknown"
     assert strategy.unknown_flip_owner_opportunities() == {"LXEH": OPPORTUNITY}
+    assert not any(not active for _symbol, _segment, active, _reason in identities)
+
+
+@pytest.mark.parametrize(
+    ("symbol", "evidence"),
+    [
+        ("FTFT", "resting_active"),
+        ("VSA", "webull_resting_active"),
+        ("FTFT", "schwab_fill"),
+        ("VSA", "webull_fill"),
+        ("FTFT", "position_id"),
+    ],
+)
+def test_ambiguous_removed_symbol_stays_unknown_on_readd(
+    symbol: str, evidence: str
+) -> None:
+    strategy, clock, identities, _owners = _strategy()
+    state = strategy.watchlist_state(symbol)
+    state.fanout_segment_id = OPPORTUNITY
+    state.flip_owner_opportunity_id = OPPORTUNITY
+    state.flip_owner_phase = "unknown"
+    state.flip_owner_first_rest_placed = False
+    state.flip_owner_evidence_readable = True
+    state.flip_owner_evidence_at_ms = clock[0]
+    if evidence == "resting_active":
+        state.resting_active = True
+    elif evidence == "webull_resting_active":
+        state.webull_resting_active = True
+    elif evidence == "schwab_fill":
+        state.flip_owner_fill_accounts.add("live:schwab_1m_v2")
+    elif evidence == "webull_fill":
+        state.flip_owner_fill_accounts.add("live:orb")
+    else:
+        state.flip_owner_position_ids["live:orb"] = "owned-position"
+
+    strategy.release_and_drop_symbol(symbol)
+    readded = strategy.watchlist_state(symbol)
+
+    assert readded is state
+    assert readded.flip_owner_phase == "unknown"
+    assert strategy._strict_first_rest_admitted(readded, slot="first") is False
     assert not any(not active for _symbol, _segment, active, _reason in identities)
 
 

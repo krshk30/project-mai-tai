@@ -2521,11 +2521,13 @@ class SchwabV2Strategy:
         if self._flip_owned_first_entry_enabled and (
             state.flip_owner_phase != "idle" or state.fanout_segment_id
         ):
-            if state.resting_active or state.webull_resting_active:
+            had_working_resting_order = state.resting_active or state.webull_resting_active
+            if had_working_resting_order:
                 self._queue_resting_cancel(state, reason=reason)
             released = self._release_arm(state, reason)
             if (
                 not state.flip_owner_first_rest_placed
+                and not had_working_resting_order
                 and not state.resting_active
                 and not state.webull_resting_active
                 and not state.cw_v2_emit_claimed
