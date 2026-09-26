@@ -20,7 +20,9 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, ExitPairReleaseResult
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition, SystemIncident, TradeIntent
+from project_mai_tai.db.models import (
+    BrokerAccount, BrokerOrder, Fill, OmsManagedPosition, Strategy, SystemIncident, TradeIntent,
+)
 from project_mai_tai.events import (
     QuoteTickEvent,
     QuoteTickPayload,
@@ -562,6 +564,52 @@ async def test_oco_fill_signal_without_child_record_stands_down_and_pages() -> N
         incidents = session.scalars(select(SystemIncident)).all()
     assert len(incidents) == 1
     assert incidents[0].payload["source"] == "oco_exit_fill_unrecorded"
+
+
+@pytest.mark.asyncio
+async def test_oco_fill_signal_with_entry_order_records_child_and_closes_promptly() -> None:
+    result = ExitPairReleaseResult(
+        outcome="resolved_by_fill",
+        reports=(_pair_report("filled"), _pair_report("cancelled")),
+    )
+    adapter = _PairStateAdapter(result)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter, release=True)
+    _arm(svc, sf, entry=10.0, qty=100)
+    with sf() as session:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == ACCT))
+        assert strategy is not None and account is not None
+        intent = TradeIntent(
+            strategy_id=strategy.id, broker_account_id=account.id,
+            symbol=SYM, side="buy", intent_type="open", quantity=Decimal("100"),
+            reason="ATR Flip", status="filled", payload={},
+        )
+        session.add(intent)
+        session.flush()
+        session.add(BrokerOrder(
+            intent_id=intent.id, strategy_id=strategy.id, broker_account_id=account.id,
+            client_order_id="schwab_1m_v2-VSME-open-episode-control",
+            broker_order_id="ENTRY-ORDER-CONTROL", symbol=SYM, side="buy",
+            order_type="market", time_in_force="day", quantity=Decimal("100"),
+            status="filled", payload={},
+        ))
+        session.commit()
+    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    _quote(svc, bid=9.40)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    assert adapter.release_calls == [(ACCT, SYM, "protect-base")]
+    assert adapter.submitted == []
+    assert _sell_intents(sf) == []
+    row = _row(sf)
+    assert row is not None and row.status == "closed" and row.current_quantity == 0
+    with sf() as session:
+        fills = session.scalars(select(Fill).where(Fill.symbol == SYM, Fill.side == "sell")).all()
+        orders = session.scalars(select(BrokerOrder).where(BrokerOrder.side == "sell")).all()
+    assert len(fills) == 1 and fills[0].broker_fill_id == "WB-T1:100"
+    assert len(orders) == 1 and orders[0].broker_order_id == "WB-T1"
 
 
 @pytest.mark.asyncio
