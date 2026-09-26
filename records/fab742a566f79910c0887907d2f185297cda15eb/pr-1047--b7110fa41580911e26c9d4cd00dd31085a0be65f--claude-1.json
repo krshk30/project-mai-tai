@@ -1,0 +1,9 @@
+{
+  "pr_number": 1047,
+  "range_base": "b7110fa41580911e26c9d4cd00dd31085a0be65f",
+  "range_head": "fab742a566f79910c0887907d2f185297cda15eb",
+  "reviewed_at": "2026-09-26T23:48:01Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "B8 16:00 handover guards, re-pin after the rebase onto b7110fa4 (#1046 merged). git range-diff 063e0958..c136b633 vs b7110fa4..fab742a5: commit 2 identical (=); commit 1 differs only by the conflict resolution at the new-arm site (~L3913-3919): both clears kept - #1046's _oco_exit_fill_pending pop and this PR's _v2_native_oco_high_bid pop - so a replacement position starts with neither a stale child-fill hold nor a stale peak. No other hunk changed. At head: test_v2_eod_oco_transition + test_oms_native_oco_stand_down + test_oms_resolved_oco_fill_required + test_oms_risk_service = 145/145; ruff clean. All findings of my c136b633 review carry (recorder records during the resolving grace; young-grace guard; floor carry; six MUST-NOT-BREAK items; mutations RED). Flag OMS_V2_EOD_OCO_TRANSITION_ENABLED=true approved for the batch deploy; not deployed by this pin."
+}
