@@ -146,7 +146,7 @@ async def test_weto_unanswered_child_fetch_never_closes_row_and_pages_once() -> 
 
 
 @pytest.mark.asyncio
-async def test_resolved_fill_poll_keeps_ladder_held_when_detail_fetch_fails() -> None:
+async def test_unscoped_resolved_signal_cannot_hold_a_newer_position() -> None:
     service, sessions, row_id = _service_with_weto()
     service._managed_v2_symbols.add((ACCOUNT, SYMBOL))
     service._native_oco_resolving[(ACCOUNT, SYMBOL)] = utcnow() - timedelta(seconds=120)
@@ -172,7 +172,8 @@ async def test_resolved_fill_poll_keeps_ladder_held_when_detail_fetch_fails() ->
         row = session.get(OmsManagedPosition, UUID(row_id))
     assert row is not None and row.status == "open"
     assert (ACCOUNT, SYMBOL) in service._native_oco_resolving
-    assert service._native_oco_stand_down_active(ACCOUNT, SYMBOL) is True
+    assert (ACCOUNT, SYMBOL) not in service._oco_exit_fill_pending
+    assert service._native_oco_stand_down_active(ACCOUNT, SYMBOL) is False
 
 
 @pytest.mark.asyncio
@@ -359,7 +360,7 @@ async def test_weto_resolved_answer_without_durable_fill_keeps_row_open() -> Non
     assert row is not None and row.status == "open" and row.current_quantity == 1
     assert fills == []
     assert len(incidents) == 1
-    assert incidents[0].payload["reason"] == "child_fill_not_durable"
+    assert incidents[0].payload["reason"] == "child_attribution_refused"
 
 
 @pytest.mark.asyncio
@@ -485,4 +486,4 @@ async def test_weto_existing_fill_with_wrong_broker_order_id_keeps_row_open() ->
         incidents = session.scalars(select(SystemIncident)).all()
     assert row is not None and row.status == "open"
     assert len(incidents) == 1
-    assert incidents[0].payload["reason"] == "child_fill_not_durable"
+    assert incidents[0].payload["reason"] == "child_attribution_refused"
