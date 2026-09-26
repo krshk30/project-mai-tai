@@ -44,12 +44,15 @@ def _make_sf() -> sessionmaker:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _svc(sf, *, transition: bool = True, stand_down: bool = True) -> OmsRiskService:
+def _svc(
+    sf, *, transition: bool = True, stand_down: bool = True, floor: bool = False
+) -> OmsRiskService:
     settings = Settings(
         oms_v2_exit_management_enabled=True,
         strategy_schwab_1m_v2_confirmed_window_enabled=True,
         oms_native_oco_stand_down_enabled=stand_down,
         oms_v2_eod_oco_transition_enabled=transition,
+        oms_v2_cw_floor_exit_enabled=floor,
     )
     svc = OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,
@@ -159,8 +162,7 @@ async def test_recent_155950_oco_resolution_is_not_released_at_1600():
 @pytest.mark.asyncio
 async def test_apus_peak_during_stand_down_arms_floor_at_handover():
     sf = _make_sf()
-    svc = _svc(sf)
-    svc._cw_floor_exit_enabled = True
+    svc = _svc(sf, floor=True)
     _open_apus_row(sf)
     _arm_managed(svc)
     svc._latest_quotes_by_symbol[SYM] = {
@@ -191,8 +193,7 @@ async def test_handover_does_not_arm_floor_without_fresh_target_cross(
     bid: float, quote_age_seconds: int
 ):
     sf = _make_sf()
-    svc = _svc(sf)
-    svc._cw_floor_exit_enabled = True
+    svc = _svc(sf, floor=True)
     _open_apus_row(sf)
     _arm_managed(svc)
     svc._latest_quotes_by_symbol[SYM] = {
@@ -210,6 +211,37 @@ async def test_handover_does_not_arm_floor_without_fresh_target_cross(
             session, broker_account_name=ACCT, symbol=SYM
         )
         assert row is not None and row.floor_price is None
+
+
+@pytest.mark.asyncio
+async def test_resolving_grace_peak_arms_floor_when_handover_follows():
+    sf = _make_sf()
+    svc = _svc(sf, floor=True)
+    _open_apus_row(sf)
+    _arm_managed(svc)
+    # The 16:00:05 sync moves the DAY bracket into resolving before the 16:00:44 quote.
+    svc._native_oco_armed_confirmed_at.pop((ACCT, SYM))
+    svc._native_oco_resolving[(ACCT, SYM)] = datetime.now(timezone.utc) - timedelta(seconds=39)
+    assert svc._native_oco_stand_down_active(ACCT, SYM) is True
+    svc._latest_quotes_by_symbol[SYM] = {
+        "bid": 5.48,
+        "received_at": datetime.now(timezone.utc),
+    }
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    assert svc._v2_native_oco_high_bid[(ACCT, SYM)] == 5.48
+    # At 16:01:35 the grace has expired, so the held share transfers to the EH ladder.
+    svc._native_oco_resolving[(ACCT, SYM)] -= timedelta(seconds=91)
+    _force_due(svc)
+    await svc._v2_eod_oco_transition()
+
+    assert (ACCT, SYM) in svc._cw_floor_armed
+    with sf() as session:
+        row = svc.store.get_open_managed_position(
+            session, broker_account_name=ACCT, symbol=SYM
+        )
+        assert row is not None and row.floor_price is not None
+        assert row.floor_price >= Decimal("5.2122")
 
 
 @pytest.mark.asyncio

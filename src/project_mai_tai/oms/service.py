@@ -8743,14 +8743,7 @@ class OmsRiskService:
         ):
             return
         key = (acct, symbol)
-        confirmed_at = self._native_oco_armed_confirmed_at.get(key)
-        if confirmed_at is None:
-            return  # a resolving/missing bracket is not proof that this quote belongs to it
-        max_confirm_age = float(
-            getattr(self.settings, "oms_native_oco_confirmation_max_age_seconds", 30)
-        )
-        if (utcnow() - confirmed_at).total_seconds() > max_confirm_age:
-            return
+        # Called only after stand-down returned True: armed and resolving grace both own the exit.
         received_at = quote.get("received_at")
         max_quote_age_ms = float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000))
         if not isinstance(received_at, datetime):
