@@ -8021,15 +8021,6 @@ class OmsRiskService:
             )
         if detail is _EXIT_FETCH_FAILED or detail is None:
             pending = self.__dict__.get("_oco_exit_fill_pending", {}).get((acct, symbol))
-            if expected_row_id is None and pending is None:
-                await self._page_oco_exit_fill_unrecorded(
-                    acct, symbol,
-                    reason=(
-                        "unscoped_child_read_failed"
-                        if detail is _EXIT_FETCH_FAILED else "no_child_fill_detail"
-                    ),
-                )
-                return False
             await self._hold_unrecorded_oco_exit_fill(
                 acct, symbol,
                 expected_row_id=expected_row_id or (pending.row_id if pending else None),
@@ -8161,37 +8152,10 @@ class OmsRiskService:
     async def _close_broker_flat_phantom_managed_row(
         self, acct: str, symbol: str, *, expected_row_id: str
     ) -> bool:
-        """Clear a no-bid phantom row, without claiming a broker child execution.
-
-        The caller already proved broker-flat after the entry grace. This is not the
-        resolved-by-fill path, and the row identity must survive the broker await.
-        """
-        def _close(session: Session) -> bool:
-            row = self.store.get_open_managed_position(
-                session, broker_account_name=acct, symbol=symbol
-            )
-            if row is None or str(row.id) != expected_row_id:
-                return False
-            self.store.close_managed_position(session, row)
-            self._close_v2_exit_reject_alarm_incident(session, (acct, symbol))
-            return True
-
-        if not await self._run_db(_close, commit=True):
-            self.logger.warning(
-                "[OMS-V2-PHANTOM-FLAT-REFUSED] sym=%s acct=%s expected_row=%s "
-                "reason=position_replaced_during_broker_await",
-                symbol, acct, expected_row_id,
-            )
-            return False
-        key = (acct, symbol)
-        getattr(self, "_native_oco_resolving", {}).pop(key, None)
-        self._managed_v2_symbols.discard(key)
-        self._clear_cw_flip_pending(key)
-        self._cw_floor_armed.discard(key)
-        self._v2_exit_end_episode(key)
-        self._clear_exit_reservation_release(acct, symbol)
-        self._a2_clear(acct, symbol)
-        return True
+        """A flat positions read cannot substitute for this episode's child execution."""
+        return await self._close_resolved_oco_managed_row(
+            acct, symbol, expected_row_id=expected_row_id
+        )
 
     async def _emit_v2_exit_on_loop(
         self,
@@ -10778,11 +10742,11 @@ class OmsRiskService:
                 # No bid. Two VERY different situations wear the same face here, and the old code
                 # treated both as the naked one:
                 #   (a) we genuinely hold it and the AH book is empty  -> NAKED. Stay loud, retry.
-                #   (b) the broker holds NOTHING and the row is a PHANTOM -> nothing to flatten.
+                #   (b) the broker holds NOTHING and the row may be a PHANTOM.
                 # Live 2026-07-27: two phantom QBTX rows (hand-closed earlier) produced 58 ERROR
                 # lines in four minutes, every 15s, and cleared nothing — a human had to delete the
-                # rows. The flatten cannot price a close for stock that does not exist, so it can
-                # never make progress; it just pages forever and drowns the real signal.
+                # rows. A flat positions read is not a child-fill record, so (b) can close
+                # only through the durable child-fill path; otherwise hold and page.
                 #
                 # Distinguishing them needs no quote: ASK THE BROKER. `_broker_symbol_is_flat` is
                 # the same positive-confirmation helper the reject-driven reconcile already uses to
@@ -10804,7 +10768,7 @@ class OmsRiskService:
                     if closed:
                         self.logger.info(
                             "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID but the broker "
-                            "confirms FLAT -> phantom row, reconciled away (nothing to flatten)",
+                            "confirms FLAT and its child fill was recorded -> row closed",
                             acct, symbol, snapshot.current_quantity,
                         )
                     continue

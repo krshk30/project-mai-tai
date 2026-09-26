@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import OmsManagedPosition, TradeIntent
+from project_mai_tai.db.models import OmsManagedPosition, SystemIncident, TradeIntent
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 
@@ -218,8 +218,8 @@ def _flat_says(svc, verdict):
 
 
 @pytest.mark.asyncio
-async def test_no_bid_but_broker_flat_reconciles_the_phantom_row() -> None:
-    """THE FIX: a row the broker does not back is cleared instead of paging forever."""
+async def test_no_bid_broker_flat_without_child_fill_holds_and_pages() -> None:
+    """Flat positions alone cannot authorize an unpaired close of a managed episode."""
     sf = _make_sf()
     svc = _svc(sf)
     _arm(svc, sf)
@@ -227,10 +227,15 @@ async def test_no_bid_but_broker_flat_reconciles_the_phantom_row() -> None:
     _flat_says(svc, True)                       # broker positively confirms flat
     await svc._v2_overnight_flatten()
     row = _row(sf)
-    assert row.current_quantity == 0            # reconciled away
-    assert row.status == "closed"
-    assert _sell_intents(sf) == []              # and NOT by selling anything
-    assert (ACCT, SYM) not in svc._managed_v2_symbols
+    assert row.current_quantity == 100
+    assert row.status == "open"
+    assert _sell_intents(sf) == []
+    assert (ACCT, SYM) in svc._managed_v2_symbols
+    assert svc._oco_exit_fill_pending[(ACCT, SYM)].row_id == str(row.id)
+    with sf() as session:
+        incidents = session.scalars(select(SystemIncident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].payload["source"] == "oco_exit_fill_unrecorded"
 
 
 @pytest.mark.asyncio

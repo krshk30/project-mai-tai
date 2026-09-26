@@ -49,7 +49,12 @@ def _service_with_weto():
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     service = OmsRiskService(
-        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        settings=Settings(
+            redis_stream_prefix="test", oms_adapter="simulated",
+            oms_native_oco_stand_down_enabled=True,
+            oms_native_oco_resolve_flat_reconcile_enabled=True,
+            oms_record_native_oco_exit_fills_enabled=True,
+        ),
         redis_client=_Redis(),
         session_factory=sessions,
     )
@@ -146,10 +151,18 @@ async def test_weto_unanswered_child_fetch_never_closes_row_and_pages_once() -> 
 
 
 @pytest.mark.asyncio
-async def test_unscoped_resolved_signal_cannot_hold_a_newer_position() -> None:
+async def test_unscoped_schwab_refresh_read_failure_holds_the_open_row() -> None:
     service, sessions, row_id = _service_with_weto()
-    service._managed_v2_symbols.add((ACCOUNT, SYMBOL))
-    service._native_oco_resolving[(ACCOUNT, SYMBOL)] = utcnow() - timedelta(seconds=120)
+    schwab_acct = "live:schwab_1m_v2"
+    with sessions() as session:
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == ACCOUNT))
+        row = session.get(OmsManagedPosition, UUID(row_id))
+        assert account is not None and row is not None
+        account.name = schwab_acct
+        row.broker_account_name = schwab_acct
+        session.commit()
+    service._managed_v2_symbols.add((schwab_acct, SYMBOL))
+    service._native_oco_resolving[(schwab_acct, SYMBOL)] = utcnow() - timedelta(seconds=120)
 
     async def failed_fetch(*_args, **_kwargs):
         return _EXIT_FETCH_FAILED
@@ -166,14 +179,22 @@ async def test_unscoped_resolved_signal_cannot_hold_a_newer_position() -> None:
     service.broker_adapter.fetch_armed_native_oco_symbols = armed
     service.broker_adapter.fetch_oco_resolved_by_fill_symbols = resolved
 
-    await service._refresh_native_oco_armed_state([ACCOUNT])
+    await service._refresh_native_oco_armed_state([schwab_acct])
+
+    service.settings.oms_v2_exit_management_enabled = True
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "bid": 1.50, "ask": 1.51, "received_at": utcnow(),
+    }
+    await service._evaluate_v2_managed_exit(schwab_acct, SYMBOL)
 
     with sessions() as session:
         row = session.get(OmsManagedPosition, UUID(row_id))
+        sells = session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all()
     assert row is not None and row.status == "open"
-    assert (ACCOUNT, SYMBOL) in service._native_oco_resolving
-    assert (ACCOUNT, SYMBOL) not in service._oco_exit_fill_pending
-    assert service._native_oco_stand_down_active(ACCOUNT, SYMBOL) is False
+    assert sells == []
+    assert (schwab_acct, SYMBOL) in service._native_oco_resolving
+    assert service._oco_exit_fill_pending[(schwab_acct, SYMBOL)].row_id == row_id
+    assert service._native_oco_stand_down_active(schwab_acct, SYMBOL) is True
 
 
 @pytest.mark.asyncio
@@ -191,6 +212,34 @@ async def test_pending_child_fill_hold_survives_eod_handover_until_attributed() 
     service._v2_eod_oco_transitioned.add((service._session_day_et(), ACCOUNT, SYMBOL))
 
     assert service._native_oco_stand_down_active(ACCOUNT, SYMBOL) is True
+
+
+@pytest.mark.asyncio
+async def test_pending_child_fill_blocks_the_real_hard_stop_ladder() -> None:
+    service, sessions, row_id = _service_with_weto()
+    service.settings.oms_v2_exit_management_enabled = True
+    service._managed_v2_symbols.add((ACCOUNT, SYMBOL))
+
+    async def failed_fetch(*_args, **_kwargs):
+        return _EXIT_FETCH_FAILED
+
+    service._fetch_oco_exit_detail = failed_fetch
+    assert await service._close_resolved_oco_managed_row(
+        ACCOUNT, SYMBOL, expected_row_id=row_id
+    ) is False
+    service._latest_quotes_by_symbol[SYMBOL] = {
+        "bid": 1.50,
+        "ask": 1.51,
+        "received_at": utcnow(),
+    }
+
+    await service._evaluate_v2_managed_exit(ACCOUNT, SYMBOL)
+
+    with sessions() as session:
+        sells = session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all()
+        row = session.get(OmsManagedPosition, UUID(row_id))
+    assert sells == []
+    assert row is not None and row.status == "open" and row.current_quantity == 1
 
 
 @pytest.mark.asyncio
