@@ -803,6 +803,7 @@ class OmsRiskService:
         # harmless, but logs a reject on every OCO resolution). Cleared when the position
         # reconciles out of _managed_v2_symbols, or after the grace backstop.
         self._native_oco_resolving: dict[tuple[str, str], datetime] = {}
+        self._v2_native_oco_high_bid: dict[tuple[str, str], float] = {}
         self._latest_trades_by_symbol: dict[str, dict[str, object]] = {}
         # Track-2 Phase-2 Slice-3: OMS-managed v2 exit ladder. `_managed_v2_symbols`
         # is the hot-path guard — a quote only opens a session/evaluates when its
@@ -3912,6 +3913,9 @@ class OmsRiskService:
                 config_name="make_v2_variant",
             )
             self.__dict__.get("_oco_exit_fill_pending", {}).pop((broker_account_name, symbol), None)
+            self.__dict__.get("_v2_native_oco_high_bid", {}).pop(
+                (broker_account_name, symbol), None
+            )
             self._managed_v2_symbols.add((broker_account_name, symbol))  # slice-3: arm quote-path eval
             # P0.2 SCHWAB settlement anchor. Instrumentation must NEVER be load-bearing on the
             # live fill path, so this is guarded: a duck-typed caller (tests call this hook with a
@@ -5969,6 +5973,7 @@ class OmsRiskService:
             # against the same shares -- the NXTC oversell, merely relocated. Fail-open
             # lives in the predicate: anything short of fresh broker confirmation runs
             # the ladder instead of skipping it.
+            self._observe_v2_native_oco_high_bid(acct, symbol, quote)
             return
         if confirmation is None:
             if not quote:
@@ -8727,6 +8732,37 @@ class OmsRiskService:
         # treats a raised timeout as "proceed to fire the stop".
         return await self._run_db(_unit, commit=False)
 
+    def _observe_v2_native_oco_high_bid(
+        self, acct: str, symbol: str, quote: dict[str, object] | None
+    ) -> None:
+        if not (
+            bool(getattr(self.settings, "oms_v2_eod_oco_transition_enabled", False))
+            and self._cw_exit_enabled
+            and self._cw_floor_exit_enabled
+            and quote
+        ):
+            return
+        key = (acct, symbol)
+        confirmed_at = self._native_oco_armed_confirmed_at.get(key)
+        if confirmed_at is None:
+            return  # a resolving/missing bracket is not proof that this quote belongs to it
+        max_confirm_age = float(
+            getattr(self.settings, "oms_native_oco_confirmation_max_age_seconds", 30)
+        )
+        if (utcnow() - confirmed_at).total_seconds() > max_confirm_age:
+            return
+        received_at = quote.get("received_at")
+        max_quote_age_ms = float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000))
+        if not isinstance(received_at, datetime):
+            return
+        quote_age_ms = (utcnow() - received_at).total_seconds() * 1000.0
+        if not 0 <= quote_age_ms <= max_quote_age_ms:
+            return
+        bid = float(quote.get("bid") or 0.0)
+        if bid > 0:
+            peaks = self.__dict__.setdefault("_v2_native_oco_high_bid", {})
+            peaks[key] = max(peaks.get(key, 0.0), bid)
+
     def _native_oco_stand_down_active(self, broker_account_name: str, symbol: str) -> bool:
         """True only when a broker-native OCO bracket is CONFIRMED armed for this position.
 
@@ -10624,6 +10660,55 @@ class OmsRiskService:
         mm = int(getattr(self.settings, "oms_v2_eod_oco_transition_minute_et", 0))
         return (et.hour, et.minute) >= (hh, mm)
 
+    async def _carry_v2_native_oco_floor_at_handover(self, acct: str, symbol: str) -> None:
+        if not (self._cw_exit_enabled and self._cw_floor_exit_enabled):
+            return
+        key = (acct, symbol)
+        peak_bid = self.__dict__.get("_v2_native_oco_high_bid", {}).get(key, 0.0)
+        if peak_bid <= 0:
+            return
+        try:
+            snapshot = await self._run_db(
+                lambda session: self._read_v2_managed_snapshot(
+                    session, acct, symbol, close_on_fill=True
+                ),
+                commit=False,
+            )
+            if snapshot is None or peak_bid < snapshot.entry_price * (
+                1.0 + self._cw_target_pct / 100.0
+            ):
+                return
+            position = self._hydrate_v2_position(snapshot)
+            position.update_price(peak_bid)
+            fixed_floor = snapshot.entry_price * (1.0 + self._cw_floor_pct / 100.0)
+            position.floor_price = max(position.floor_price, fixed_floor)
+            position.floor_pct = max(position.floor_pct, self._cw_floor_pct)
+
+            def _persist(session: Session) -> bool:
+                row = self.store.get_open_managed_position(
+                    session, broker_account_name=acct, symbol=symbol
+                )
+                if row is None or str(row.id) != snapshot.managed_row_id:
+                    return False
+                self.store.update_managed_position_from_position(
+                    session, row, position, write_quantity=False
+                )
+                return True
+
+            if await self._run_db(_persist, commit=True):
+                self._cw_floor_armed.add(key)
+                self.logger.info(
+                    "[OMS-V2-EOD-FLOOR-CARRY] %s %s row=%s peak_bid=%.4f floor=%.4f",
+                    acct, symbol, snapshot.managed_row_id, peak_bid, position.floor_price,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a failed floor write cannot keep an expired OCO armed
+            self.logger.exception(
+                "[OMS-V2-EOD-FLOOR-CARRY] %s %s outcome=FAILED; releasing expired OCO",
+                acct, symbol,
+            )
+
     async def _v2_eod_oco_transition(self) -> None:
         """Phase A EOD OCO cleanup (docs/premarket-eod-exit-design.md; decision A = KEEP MANAGING).
 
@@ -10655,11 +10740,25 @@ class OmsRiskService:
         session_day = self._session_day_et()
         armed = getattr(self, "_native_oco_armed_confirmed_at", {})
         resolving = getattr(self, "_native_oco_resolving", {})
+        now = utcnow()
+        grace_seconds = float(
+            getattr(self.settings, "oms_native_oco_resolve_grace_seconds", 90)
+        )
         for acct, symbol in list(self._managed_v2_symbols):
             key = (session_day, acct, symbol)
             if key in self._v2_eod_oco_transitioned:
                 continue
+            resolved_at = resolving.get((acct, symbol))
+            if resolved_at is not None and (now - resolved_at).total_seconds() <= grace_seconds:
+                self.logger.info(
+                    "[OMS-V2-EOD-OCO-TRANSITION] %s %s outcome=RESOLUTION_GRACE "
+                    "age_s=%.1f grace_s=%.1f; waiting for the broker child fill",
+                    acct, symbol, (now - resolved_at).total_seconds(), grace_seconds,
+                )
+                continue
+            await self._carry_v2_native_oco_floor_at_handover(acct, symbol)
             self._v2_eod_oco_transitioned.add(key)  # claim first: fire once per position per day
+            self.__dict__.get("_v2_native_oco_high_bid", {}).pop((acct, symbol), None)
             # Drop any live broker-armed confirmation / resolution-grace entry so the ladder is not
             # deferred waiting for either to lapse. The stand-down short-circuit (keyed on this same
             # latch) is the durable guard; these pops just avoid stale log churn from the sync refresh.
