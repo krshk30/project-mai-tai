@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +38,7 @@ def _fake_curl(bin_dir: Path, *, exit_code: int = 0) -> None:
     curl.write_text(
         "#!/usr/bin/env bash\n"
         'printf "%s" "$*" > "${FAKE_CURL_ARGS:-/dev/null}"\n'
+        'cat > "${FAKE_CURL_BODY:-/dev/null}"\n'
         f"if [[ {exit_code} -ne 0 && \" $* \" == *\" --fail-with-body \"* ]]; then\n"
         f"  exit {exit_code}\n"
         "fi\n"
@@ -65,6 +67,8 @@ def _run(
         "PATH": f"{_shell_path(tmp_path)}:/usr/bin:/bin",
         "EOD_OUT_DIR": _shell_path(out),
         "EOD_PYTHON_BIN": _shell_path(fake_python),
+        "EOD_LOW_ALERT_PYTHON": _shell_path(Path(sys.executable)),
+        "EOD_LOW_ALERT_SCRIPT": _shell_path(REPO_ROOT / "ops" / "health" / "low_priority_alerts.py"),
         "EOD_CURL_BIN": _shell_path(tmp_path / "curl"),
         "EOD_ENV_FILE": _shell_path(tmp_path / "missing.env"),
         "MAI_TAI_NTFY_URL": "https://ntfy.invalid/test",
@@ -74,6 +78,8 @@ def _run(
         "MAI_TAI_EOD_TEST_ETDOW": str(dow),
         "MAI_TAI_EOD_TEST_STAMP": "fixed",
         "FAKE_CURL_ARGS": _shell_path(tmp_path / "curl.args"),
+        "FAKE_CURL_BODY": _shell_path(tmp_path / "curl.body"),
+        "MAI_TAI_LOW_ALERT_SPOOL": _shell_path(tmp_path / "spool"),
     }
     command = [_bash(), _shell_path(SCRIPT)] + (["--force"] if force else [])
     return subprocess.run(
@@ -99,7 +105,7 @@ def test_crashed_report_does_not_latch_the_day_and_next_run_retries(tmp_path) ->
     assert first.returncode != 0
     assert not canonical.exists()
     assert not (tmp_path / "out" / "eod_2026-08-28.notified").exists()
-    assert "eod_failed_2026-08-28" in (tmp_path / "curl.args").read_text(encoding="utf-8")
+    assert "eod_failed_2026-08-28" in (tmp_path / "curl.body").read_text(encoding="utf-8")
 
     second = _run(tmp_path, complete=True)
     assert second.returncode == 0
@@ -144,6 +150,8 @@ def test_notification_http_failure_is_not_silent(tmp_path) -> None:
         "PATH": f"{_shell_path(tmp_path)}:/usr/bin:/bin",
         "EOD_OUT_DIR": _shell_path(out),
         "EOD_PYTHON_BIN": _shell_path(fake_python),
+        "EOD_LOW_ALERT_PYTHON": _shell_path(Path(sys.executable)),
+        "EOD_LOW_ALERT_SCRIPT": _shell_path(REPO_ROOT / "ops" / "health" / "low_priority_alerts.py"),
         "EOD_CURL_BIN": _shell_path(tmp_path / "curl"),
         "EOD_ENV_FILE": _shell_path(tmp_path / "missing.env"),
         "MAI_TAI_NTFY_URL": "https://ntfy.invalid/test",
@@ -151,6 +159,7 @@ def test_notification_http_failure_is_not_silent(tmp_path) -> None:
         "MAI_TAI_EOD_TEST_DAY": "2026-08-28",
         "MAI_TAI_EOD_TEST_ETMIN": "1086",
         "MAI_TAI_EOD_TEST_ETDOW": "5",
+        "MAI_TAI_LOW_ALERT_SPOOL": _shell_path(tmp_path / "spool"),
     }
     result = subprocess.run(
         [_bash(), _shell_path(SCRIPT)],
