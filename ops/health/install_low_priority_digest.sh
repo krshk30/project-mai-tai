@@ -24,7 +24,13 @@ digest_sha=$(sha256sum "$digest" | awk '{print $1}')
 log=${ALERT_SPLIT_DIGEST_LOG:-/var/log/project-mai-tai/low-priority-digest.log}
 curl_bin=${ALERT_SPLIT_CURL:-curl}
 low_url='https://ntfy.sh/mai-tai-routine-112964cc8f26787132a29538'
-line="0 0,1 * * * [ \"\$(TZ=America/New_York date +\\%H\\%M)\" = 2000 ] || exit 0; if [ \"\$(sha256sum $router 2>/dev/null | cut -d' ' -f1)\" != \"$router_sha\" ]; then reason=$router; elif [ \"\$(sha256sum $digest 2>/dev/null | cut -d' ' -f1)\" != \"$digest_sha\" ]; then reason=$digest; else reason=; fi; if [ -n \"\$reason\" ]; then echo \"\$(date) digest guard refused: \$reason\" >> $log; $curl_bin -sS --fail-with-body --connect-timeout 10 --max-time 30 -H 'Title: Mai Tai digest guard refused' -H 'Priority: low' --data-binary \"digest guard refused: \$reason\" $low_url >> $log 2>&1; else $digest >> $log 2>&1; fi"
+line="0 0,1 * * * r='$router'; d='$digest'; l='$log'; "
+line+="[ \"\$(TZ=America/New_York date +\\%H\\%M)\" = 2000 ] || exit 0; "
+line+="if [ \"\$(sha256sum \"\$r\" 2>/dev/null | cut -d' ' -f1)\" != '$router_sha' ]; then f=\$r; "
+line+="elif [ \"\$(sha256sum \"\$d\" 2>/dev/null | cut -d' ' -f1)\" != '$digest_sha' ]; then f=\$d; else f=; fi; "
+line+="if [ -n \"\$f\" ]; then echo \"\$(date) digest guard refused: \$f\" >> \"\$l\"; "
+line+="$curl_bin -sS --fail-with-body --connect-timeout 10 --max-time 30 -H 'Title: Mai Tai digest guard refused' -H 'Priority: low' --data-binary \"digest guard refused: \$f\" $low_url >> \"\$l\" 2>&1; "
+line+="else \"\$d\" >> \"\$l\" 2>&1; fi"
 if [[ ${1:-} == --print-cron ]]; then
   printf '%s\n%s\n%s\n' "$begin" "$line" "$end"
   exit 0
