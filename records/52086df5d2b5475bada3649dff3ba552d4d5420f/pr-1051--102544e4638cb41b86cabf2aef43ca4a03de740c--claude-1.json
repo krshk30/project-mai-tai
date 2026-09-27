@@ -1,0 +1,9 @@
+{
+  "pr_number": 1051,
+  "range_base": "102544e4638cb41b86cabf2aef43ca4a03de740c",
+  "range_head": "52086df5d2b5475bada3649dff3ba552d4d5420f",
+  "reviewed_at": "2026-09-27T15:28:07Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "B10 follow-up: the digest cron command refactored into shell variables so root crontab accepts it (the 1,276-char line was refused). Diff limited to install_low_priority_digest.sh (line assembly) + one test asserting the printed cron line <= 1000 chars. Logic byte-equivalent: same ET 20:00 guard, same two sha guards, same refusal log line + ONE low-priority notice, same digest invocation. Verified at head: --print-cron assembles a single line of 885 chars with the production paths; guard-refusal mutation -> RED (test_digest_guard_refusal_logs_and_sends_one_low_alert); 8/8 tests; validate green. Not installed by this pin."
+}
