@@ -16,6 +16,8 @@ if [ -r "$ENV_FILE" ]; then
   . "$ENV_FILE"
 fi
 NTFY_URL=${MAI_TAI_NTFY_URL:-}
+LOW_ALERT_SCRIPT=${EOD_LOW_ALERT_SCRIPT:-/home/trader/project-mai-tai/ops/health/low_priority_alerts.py}
+LOW_ALERT_PYTHON=${EOD_LOW_ALERT_PYTHON:-$PYTHON_BIN}
 
 if [ "${MAI_TAI_EOD_TEST_MODE:-0}" = "1" ]; then
   DAY=${MAI_TAI_EOD_TEST_DAY:?test day required}
@@ -102,16 +104,12 @@ fi
   echo "$V"
 } >> "$LOG_FILE"
 
-if [ -z "$NTFY_URL" ]; then
-  echo "ntfy push failed: MAI_TAI_NTFY_URL is unset" >> "$LOG_FILE"
-  exit 1
-fi
-"$CURL_BIN" -sS --fail-with-body -m 20 -H "Title: v2 end-of-session counts $DAY" \
-     -H "Priority: default" -d "$V
+printf '%s' "$V
 
 Full report: $DISPLAY_REPORT
-These are RESULTS from the post-16:00 reporting run. Mid-session readings are not." \
-     "$NTFY_URL" >/dev/null || {
+These are RESULTS from the post-16:00 reporting run. Mid-session readings are not." |
+  MAI_TAI_LOW_ALERT_CURL="$CURL_BIN" "$LOW_ALERT_PYTHON" "$LOW_ALERT_SCRIPT" \
+    --sender eod --title "v2 end-of-session counts $DAY" >/dev/null || {
        echo "ntfy push failed" >> "$LOG_FILE"
        exit 1
      }

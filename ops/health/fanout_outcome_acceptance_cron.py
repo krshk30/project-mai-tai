@@ -19,7 +19,7 @@ import hashlib
 import importlib.util
 import os
 from pathlib import Path
-import subprocess
+import subprocess  # noqa: F401 - shared module is the transport test seam
 import sys
 from types import ModuleType
 from typing import Callable, Sequence
@@ -31,7 +31,7 @@ COULD_NOT_TELL = 2
 SESSION_SLICE_START = time(0, 0)
 EASTERN_TZ = ZoneInfo("America/New_York")
 DEFAULT_OUT_DIR = Path("/home/trader/fanout_outcome_acceptance")
-DEFAULT_NTFY_URL = "https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
+DEFAULT_NTFY_URL = "https://ntfy.sh/mai-tai-routine-112964cc8f26787132a29538"
 HISTORY_MAX_BYTES = 5_000_000
 
 
@@ -211,27 +211,15 @@ def _denominator_contract(lines: Sequence[str]) -> tuple[bool, str]:
 
 
 def send_notification(title: str, body: str, *, url: str = DEFAULT_NTFY_URL) -> bool:
-    result = subprocess.run(
-        [
-            "curl",
-            "-sS",
-            "--fail-with-body",
-            "--max-time",
-            "20",
-            "-H",
-            f"Title: {title}",
-            "-H",
-            "Priority: high",
-            "-d",
-            body,
-            url,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=25,
-        check=False,
-    )
-    return result.returncode == 0
+    # The helper keeps the original title/body and records successful low-topic sends for
+    # the 20:00 ET digest. Load it by path so this script also works under -I.
+    import runpy
+
+    router = Path(__file__).with_name("low_priority_alerts.py")
+    if not router.exists():
+        router = Path("/home/trader/project-mai-tai/ops/health/low_priority_alerts.py")
+    send_low = runpy.run_path(str(router))["send_low"]
+    return send_low("d6-outcome", title, body, url=url)
 
 
 def run_once(

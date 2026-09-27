@@ -9,7 +9,7 @@ LOG="$OUT/watch.log"
 SEEN="$OUT/paged.seen"
 CHECK=/home/trader/project-mai-tai/ops/health/reject_classes.py
 PYTHON=/home/trader/project-mai-tai/.venv/bin/python
-NTFY="https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
+LOW_ALERT=/home/trader/project-mai-tai/ops/health/low_priority_alerts.py
 mkdir -p "$OUT"
 touch "$SEEN"
 DAY=$(TZ=America/New_York date +%F)
@@ -39,9 +39,10 @@ STDERR=$(cat "$OUT/stderr.last" 2>/dev/null)
 if [[ "$RC" -ne 0 ]] || ! grep -q "^VERDICT reject_alarm" <<<"$REPORT"; then
   if ! grep -qx "broken:$DAY" "$SEEN"; then
     echo "broken:$DAY" >>"$SEEN"
-    curl -s -m 20 -H "Title: A7 reject alarm BROKEN" -H "Priority: high" \
-      -d "rc=$RC -- no verdict produced, so it is NOT reporting clean.
-$(tail -4 <<<"$STDERR")" "$NTFY" >/dev/null
+    printf '%s' "rc=$RC -- no verdict produced, so it is NOT reporting clean.
+$(tail -4 <<<"$STDERR")" | "$PYTHON" "$LOW_ALERT" \
+      --sender reject-watch --title "A7 reject alarm BROKEN" >/dev/null \
+      || echo "  ntfy push failed" >>"$LOG"
   fi
   exit 0
 fi
@@ -50,17 +51,17 @@ grep "^PAGE " <<<"$REPORT" | while IFS= read -r line; do
   sig=$(md5sum <<<"$line" | cut -c1-12)
   grep -qx "$DAY:$sig" "$SEEN" && continue
   echo "$DAY:$sig" >>"$SEEN"
-  curl -s -m 20 -H "Title: Intent refusal class - our defect" -H "Priority: default" \
-    -d "${line#PAGE }
+  printf '%s' "${line#PAGE }
 
-Full report: $OUT/STATUS.txt" "$NTFY" >/dev/null \
+Full report: $OUT/STATUS.txt" | "$PYTHON" "$LOW_ALERT" \
+    --sender reject-watch --title "Intent refusal class - our defect" >/dev/null \
     || echo "  ntfy push failed" >>"$LOG"
 done
 
 if [[ "$SELFTEST" -eq 1 ]]; then
-  curl -s -m 20 -H "Title: A7 reject alarm SELFTEST" \
-    -d "selftest $(TZ=America/New_York date '+%H:%M:%S ET')
-$(grep '^VERDICT' <<<"$REPORT")" "$NTFY" >/dev/null
+  printf '%s' "selftest $(TZ=America/New_York date '+%H:%M:%S ET')
+$(grep '^VERDICT' <<<"$REPORT")" | "$PYTHON" "$LOW_ALERT" \
+    --sender reject-watch --title "A7 reject alarm SELFTEST" >/dev/null
   echo "SELFTEST pushed"
 fi
 exit 0

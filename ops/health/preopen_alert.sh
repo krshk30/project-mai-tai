@@ -9,6 +9,8 @@ FILE="${3:-}"
 OUT="${PREOPEN_ALERT_OUT:-/home/trader/preopen_out}"
 URL="${PREOPEN_ALERT_URL:-https://ntfy.sh/mai-tai-preopen-28806a5a97b7}"
 CURL="${PREOPEN_ALERT_CURL:-curl}"
+LOW_ALERT_PYTHON="${PREOPEN_LOW_ALERT_PYTHON:-/home/trader/project-mai-tai/.venv/bin/python}"
+LOW_ALERT_SCRIPT="${PREOPEN_LOW_ALERT_SCRIPT:-/home/trader/project-mai-tai/ops/health/low_priority_alerts.py}"
 STAMP=$(date '+%F %H:%M:%S %Z')
 mkdir -p "$OUT"
 
@@ -37,9 +39,18 @@ case "$LEVEL" in
     ;;
 esac
 
-if "$CURL" -sS --fail-with-body --connect-timeout 10 --max-time 30 \
-  -H "Title: $TITLE" -H "Priority: $PRIORITY" -H "Tags: $TAGS" -d "$BODY" "$URL" \
-  >/dev/null 2>>"$OUT/alert.log"; then
+if [[ "$VERDICT" == SEED-EXPOSURE* ]]; then
+  printf '%s' "$BODY" | "$LOW_ALERT_PYTHON" "$LOW_ALERT_SCRIPT" \
+    --sender seed-exposure --title "$TITLE" --tags "$TAGS" \
+    >/dev/null 2>>"$OUT/alert.log"
+  DELIVERED=$?
+else
+  "$CURL" -sS --fail-with-body --connect-timeout 10 --max-time 30 \
+    -H "Title: $TITLE" -H "Priority: $PRIORITY" -H "Tags: $TAGS" -d "$BODY" "$URL" \
+    >/dev/null 2>>"$OUT/alert.log"
+  DELIVERED=$?
+fi
+if [[ "$DELIVERED" -eq 0 ]]; then
   echo "$STAMP  DELIVERED[$LEVEL] $VERDICT" >> "$OUT/alert.log"
   exit 0
 fi
