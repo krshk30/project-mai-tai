@@ -257,6 +257,7 @@ class SymbolState:
     # ⛔ A slot stays consumed after its position EXITS — an exit does not refill it.
     cw_resting_taken: bool = False              # the resting slot for THIS cross is used
     cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
+    cw_seed_cap_watch_start_ms: int = 0         # nonzero only when the cap, not an entry, took both slots
     cw_resting_suppressed_segment_id: int = 0   # SLOT2 marker dedupe; policy remains cw_resting_taken
     cw_resting_suppressed_bars: int = 0         # eligible bars suppressed by the consumed slot
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
@@ -1944,6 +1945,7 @@ class SchwabV2Strategy:
         """
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
+        state.cw_seed_cap_watch_start_ms = 0
         state.cw_resting_suppressed_segment_id = 0
         state.cw_resting_suppressed_bars = 0
 
@@ -1962,6 +1964,10 @@ class SchwabV2Strategy:
                 or state.flip_owner_position_entry_ms
                 or state.flip_owner_open_positions
                 or state.flip_owner_first_rest_placed
+                or state.position_qty_held
+                or state.resting_active
+                or state.webull_resting_active
+                or state.cw_v2_emit_claimed
             )
             if contradictory_owner_state:
                 self._set_flip_owner_unknown(
@@ -1969,7 +1975,20 @@ class SchwabV2Strategy:
                     reason="sell_flip_idle_owner_contains_evidence",
                 )
                 return
-            self._clear_cw_slot_claims(state)
+            # A replayed SELL can arrive just after a same-session re-add even though its BAR
+            # opened before watch-start. Only a cap-only claim and a newly observed bar may
+            # release the slots; fill/stop-out claims have their own owner-retirement path.
+            sell_bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+            if (
+                state.cw_seed_cap_watch_start_ms > 0
+                and sell_bar_ms > state.cw_seed_cap_watch_start_ms
+            ):
+                self._clear_cw_slot_claims(state)
+            else:
+                # This observation segment ended even if a fill-owned or pre-watch slot claim
+                # remains consumed; reset diagnostics without granting another entry.
+                state.cw_resting_suppressed_segment_id = 0
+                state.cw_resting_suppressed_bars = 0
             return
         if not self._flip_owner_evidence_fresh(state):
             self._set_flip_owner_unknown(
@@ -2645,6 +2664,8 @@ class SchwabV2Strategy:
         # intentional under operator reading A: the Webull fill consumes its venue-local fan-out
         # claim and never consumes v2's resting/reclaim slot. Cross-venue 2x exposure is the paired
         # broker experiment, not duplicate exposure for this counter.
+        if prev_held == 0 and state.position_qty_held > 0:
+            state.cw_seed_cap_watch_start_ms = 0
         if prev_held == 0 and state.position_qty_held > 0 and not state.cw_reclaim_taken:
             # ⛔⭐⭐ CLAIM ON FILL — and the slot decides WHICH claim.
             # The original inference was "the reactive path claims cw_reclaim_taken at EMIT, so a
@@ -4354,6 +4375,7 @@ class SchwabV2Strategy:
 
         state.cw_v2_emit_claimed = True
         state.cw_v2_emit_ms = now_ms
+        state.cw_seed_cap_watch_start_ms = 0
         state.cw_entries_this_flip += 1     # retained for labelling (cw_entry_n); NOT the cap
         state.cw_reclaim_taken = True       # the reactive path owns the reclaim slot for this cross
         state.last_entry_price = px
@@ -4580,6 +4602,7 @@ class SchwabV2Strategy:
         offset_pct = self._resting_offset_pct_value()
         limit = trigger * (1.0 + band_pct / 100.0)
         state.resting_active = True
+        state.cw_seed_cap_watch_start_ms = 0
         state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel
         state.last_resting_placed_slot = slot
         state.resting_level = line
