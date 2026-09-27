@@ -73,7 +73,7 @@ def test_digest_lists_all_senders_once_at_2000_et(monkeypatch, tmp_path) -> None
     assert len(calls) == 1
     command, body = calls[0]
     assert command[-1] == alerts.DIGEST_URL
-    assert "Priority: low" in command
+    assert "Priority: default" in command
     assert "seed-exposure: count=2 last=last" in body
     assert "reject-watch: count=1 last=PMAX" in body
     assert "d6-outcome: count=0 last=(none)" in body
