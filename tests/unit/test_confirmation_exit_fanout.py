@@ -1000,6 +1000,12 @@ async def test_webull_pair_is_not_released_outside_rth_and_schwab_still_closes(
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
+    service._market_is_fillable = lambda now=None: True
+
+    async def no_filled_child(*_args, **_kwargs):
+        return None
+
+    adapter.fetch_oco_exit_fill = no_filled_child
     service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
     await _arm_decision(service)
 

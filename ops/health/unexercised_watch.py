@@ -369,7 +369,8 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "and payload->>'source' in "
         "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved',"
         "'oms_v2_confirmation_exit_reprotected','oms_v2_webull_uncovered_share',"
-        "'schwab_opening_policy_reject','oco_exit_fill_unrecorded') "
+        "'schwab_opening_policy_reject','oco_exit_fill_unrecorded',"
+        "'webull_eh_ladder_unsold') "
         "order by opened_at, id"
     )
     incidents: list[dict[str, str]] = []
@@ -505,6 +506,15 @@ def _run_inc1_pager_unlocked(
                     f"reason={incident.get('reason') or 'UNKNOWN'}\n"
                     "The managed row remains open. Check the exact child execution and protection; "
                     "do not infer flatness from the shared account position."
+                )
+            elif incident.get("source") == "webull_eh_ladder_unsold":
+                body = (
+                    "An extended-hours Webull limit exit remains unsold at 20:00 ET.\n"
+                    f"account={incident.get('account') or 'UNKNOWN'} "
+                    f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
+                    f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'} "
+                    f"exit_tag={incident.get('exit_tag') or 'UNKNOWN'}\n"
+                    "Trading is closed; check the broker position and protection before the next open."
                 )
             else:
                 body = (

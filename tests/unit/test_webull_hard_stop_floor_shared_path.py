@@ -11,7 +11,7 @@ Webull row and a broker that answers like Webull did.
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -182,6 +182,7 @@ async def test_floor_on_webull_uses_the_same_routine(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_APUS_after_hours_floor_releases_pair_then_uses_marketable_limit(monkeypatch) -> None:
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    monkeypatch.setattr(service_module, "_extended_hours_session", lambda now=None: "PM")
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
@@ -212,6 +213,7 @@ async def test_APUS_after_hours_floor_releases_pair_then_uses_marketable_limit(m
 @pytest.mark.asyncio
 async def test_1955_flatten_closes_both_accounts_but_releases_only_webull_pair(monkeypatch) -> None:
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    monkeypatch.setattr(service_module, "_extended_hours_session", lambda now=None: "PM")
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
@@ -279,6 +281,58 @@ async def test_eh_floor_retries_after_unfilled_limit_expires_even_if_bid_recover
 
     await service._retry_webull_eh_ladder_pending()
     assert len([r for r in adapter.submitted if "CW_FLOOR" in r.reason]) == 2
+
+
+@pytest.mark.asyncio
+async def test_eh_limit_unsold_at_2000_pages_once_for_the_open_row(monkeypatch) -> None:
+    service, sf = _service(fanout=True, adapter=_FanoutAdapter())
+    service.logger = _CapturedLogger()
+    with sf() as session:
+        row = service.store.get_open_managed_position(
+            session, broker_account_name=WEBULL, symbol=SYMBOL
+        )
+        assert row is not None
+        row_id = str(row.id)
+    monkeypatch.setattr(service_module, "utcnow", lambda: datetime(2026, 9, 26, 0, 0, tzinfo=UTC))
+    service._webull_eh_ladder_pending = {
+        (WEBULL, SYMBOL): (service._session_day_et(), row_id, "CW_FLOOR", 10.10)
+    }
+    service._market_is_fillable = lambda now=None: False
+
+    await service._retry_webull_eh_ladder_pending()
+    await service._retry_webull_eh_ladder_pending()
+
+    incidents = [
+        incident for incident in _incidents(sf)
+        if incident.get("source") == "webull_eh_ladder_unsold"
+    ]
+    assert len(incidents) == 1
+    assert incidents[0]["managed_row_id"] == row_id
+    assert incidents[0]["exit_tag"] == "CW_FLOOR"
+    assert "status=PAGE" in "\n".join(service.logger.lines)
+
+
+@pytest.mark.asyncio
+async def test_eh_limit_filled_before_2000_does_not_page(monkeypatch) -> None:
+    service, sf = _service(fanout=True, adapter=_FanoutAdapter())
+    service.logger = _CapturedLogger()
+    with sf() as session:
+        row = service.store.get_open_managed_position(
+            session, broker_account_name=WEBULL, symbol=SYMBOL
+        )
+        assert row is not None
+        row_id = str(row.id)
+        row.status = "closed"
+        session.commit()
+    monkeypatch.setattr(service_module, "utcnow", lambda: datetime(2026, 9, 26, 0, 0, tzinfo=UTC))
+    service._webull_eh_ladder_pending = {
+        (WEBULL, SYMBOL): (service._session_day_et(), row_id, "CW_FLOOR", 10.10)
+    }
+    service._market_is_fillable = lambda now=None: False
+
+    await service._retry_webull_eh_ladder_pending()
+
+    assert not [i for i in _incidents(sf) if i.get("source") == "webull_eh_ladder_unsold"]
 
 
 @pytest.mark.asyncio

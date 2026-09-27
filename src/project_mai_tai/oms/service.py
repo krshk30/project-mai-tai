@@ -651,6 +651,7 @@ class OmsRiskService:
     # pages, WHATEVER routine left it that way. Not cuttable; independent of every exit path.
     _WEBULL_UNCOVERED_PAGE_SECONDS = 30.0
     _WEBULL_UNCOVERED_INCIDENT_SOURCE = "oms_v2_webull_uncovered_share"
+    _WEBULL_EH_UNSOLD_INCIDENT_SOURCE = "webull_eh_ladder_unsold"
     _WEBULL_PROTECT_STATE_KEY = "webull_protect_state"
     # #4 (2026-09-22): a software hard stop / floor on Webull runs on the shared cancel-then-sell
     # routine. A refused run ends re-protected or paged; the NEXT quote may try again, but not
@@ -4709,6 +4710,10 @@ class OmsRiskService:
             if pending_day != day:
                 pending.pop(key, None)
                 continue
+            if not self._market_is_fillable() and utcnow().astimezone(SESSION_TZ).hour >= 20:
+                acct, symbol = key
+                await self._page_webull_eh_ladder_unsold(acct, symbol, row_id=row_id, tag=tag)
+                continue
             if not self._market_is_fillable() or _is_regular_market_session():
                 continue
             acct, symbol = key
@@ -4739,6 +4744,56 @@ class OmsRiskService:
                 continue
             await self._webull_cw_exit_on_shared_path(
                 acct, symbol, tag=tag, ref=ref, bid=bid, expected_row_id=row_id,
+            )
+
+    async def _page_webull_eh_ladder_unsold(
+        self, acct: str, symbol: str, *, row_id: str, tag: str
+    ) -> None:
+        def _write(session: Session) -> bool:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != row_id:
+                return False
+            incidents = session.scalars(
+                select(SystemIncident).where(SystemIncident.service_name == SERVICE_NAME)
+            ).all()
+            if any(
+                isinstance(incident.payload, dict)
+                and incident.payload.get("source") == self._WEBULL_EH_UNSOLD_INCIDENT_SOURCE
+                and incident.payload.get("managed_row_id") == row_id
+                for incident in incidents
+            ):
+                return False
+            session.add(
+                SystemIncident(
+                    service_name=SERVICE_NAME,
+                    severity="critical",
+                    title=f"EH EXIT UNSOLD: {symbol} on {acct} at 20:00; check now"[:255],
+                    status="open",
+                    payload={
+                        "source": self._WEBULL_EH_UNSOLD_INCIDENT_SOURCE,
+                        "broker_account_name": acct,
+                        "symbol": symbol,
+                        "managed_row_id": row_id,
+                        "exit_tag": tag,
+                        "reason": "market_closed_with_unfilled_eh_limit",
+                    },
+                    opened_at=utcnow(),
+                )
+            )
+            return True
+
+        try:
+            if await self._run_db(_write, commit=True):
+                self.logger.error(
+                    "[OMS-WEBULL-EH-LADDER-UNSOLD] sym=%s acct=%s row=%s exit=%s status=PAGE",
+                    symbol, acct, row_id, tag,
+                )
+        except Exception:  # noqa: BLE001 - retry the durable page on the next sweep
+            self.logger.exception(
+                "[OMS-WEBULL-EH-LADDER-UNSOLD] sym=%s acct=%s row=%s status=PAGE_FAILED",
+                symbol, acct, row_id,
             )
 
     async def _webull_cancel_then_sell(
