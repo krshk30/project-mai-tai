@@ -66,7 +66,8 @@ def test_digest_lists_all_senders_once_at_2000_et(monkeypatch, tmp_path) -> None
             ]
         ) + "\n"
     )
-    assert not alerts.send_digest(now.replace(hour=19, minute=59))
+    assert alerts.send_digest(now.replace(hour=19, minute=59))
+    assert calls == []
     assert alerts.send_digest(now)
     assert alerts.send_digest(now)
     assert len(calls) == 1
