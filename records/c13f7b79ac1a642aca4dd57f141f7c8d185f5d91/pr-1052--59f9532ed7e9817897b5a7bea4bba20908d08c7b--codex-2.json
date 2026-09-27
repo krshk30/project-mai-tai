@@ -1,0 +1,9 @@
+{
+  "pr_number": 1052,
+  "range_base": "59f9532ed7e9817897b5a7bea4bba20908d08c7b",
+  "range_head": "c13f7b79ac1a642aca4dd57f141f7c8d185f5d91",
+  "reviewed_at": "2026-09-27T16:08:10Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Docs-only handoff close-out after bounded correction. Corrected board now has required Evidence/Owner/Next action columns and pure status values; PMAX Massive-seed result marked unresolved with the conflicting journal evidence and older report identified; digest install corrected to box sudo-journal 11:37:36 ET and first digest count left unmeasured. Production read independently: checkout clean at 59f9532e, running OMS 890812 strategy 890823 v2 893226 at prior runtime 91a57a15 with NRestarts=0, target process flags, Monday preopen SHA/PID pins, fresh flat accounts, 0 open live broker orders, latest reconciler 0/0, alembic 20260916_0021. Handoff-log append-only +46/-0; manifest byte-identical to freshly regenerated 64/64 with 0 duplicate/malformed; both freeze ACKs present. No runtime changes in PR; Sunday restart evidence remains 7/9 pending Monday session data."
+}
