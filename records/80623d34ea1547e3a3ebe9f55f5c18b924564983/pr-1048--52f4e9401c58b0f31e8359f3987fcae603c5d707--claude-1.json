@@ -1,0 +1,9 @@
+{
+  "pr_number": 1048,
+  "range_base": "52f4e9401c58b0f31e8359f3987fcae603c5d707",
+  "range_head": "80623d34ea1547e3a3ebe9f55f5c18b924564983",
+  "reviewed_at": "2026-09-27T00:27:55Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "B7 after-hours Webull ladder exits, re-pin of 80623d34 after the validate failure on b617c9c9. git range-diff: the four reviewed commits (c2b5300, ce865f8, 6553d1a, b617c9c) are byte-identical; one new commit (+35/-17, oms/service.py only) splits the single _webull_cancel_then_sell call in _webull_cw_exit_on_shared_path into two branches with LITERAL reasons ('V2_OVERNIGHT_FLATTEN' / f'oms_v2_managed_exit:{tag}') so tests/unit/test_exit_reservation_release.py::test_every_emitted_managed_exit_reason_is_explicitly_classified can classify both (the AST guard failed on the IfExp in CI run 36281520721: 1 failed / 4356 passed). At head: that guard test + shared-path + fanout + overnight-flatten = 136/136; ruff clean; CI validate PASS on both Linux runs incl. the full unit suite. All findings of my b617c9c9 review carry: T1 deterministic session pins, T2 confirmation-exit control pinned (mutant RED), S1 20:00 webull_eh_ladder_unsold page (disable -> RED), EH guard / bid-buffer / fresh-pair-read mutations RED; Schwab untouched; confirmation exit still refused after hours; GIPR double-cancel fixed. Superseded record for b617c9c9 removed in this same commit. Not deployed."
+}
