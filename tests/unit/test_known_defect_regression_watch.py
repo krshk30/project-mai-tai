@@ -383,6 +383,49 @@ def test_fresh_sell_without_suppression_is_guard_working() -> None:
     assert (result.evaluated, result.guard_working, result.recurrence) == (1, 1, 0)
 
 
+def test_whlr_pre_watch_sell_is_not_a_fresh_slotclear_exercise() -> None:
+    observed = watch.parse_log_lines(
+        [
+            "2026-09-25 15:24:25,963 INFO x [V2-CW-SEED-CAP] WHLR reconstructed "
+            "armed segment capped - arm_bar_ts=1790339880000 "
+            "watch_start=1790349865937 stage=db-seed",
+            "2026-09-25 15:24:27,190 INFO x [V2-ATR-PROBE] sym=WHLR "
+            "ts_ms=1790349780000 state=short flip=SELL fired_seg=false",
+            "2026-09-25 15:25:03,177 INFO x [V2-ATR-PROBE] sym=WHLR "
+            "ts_ms=1790349840000 state=long flip=BUY fired_seg=true",
+        ],
+        since=datetime(2026, 9, 25, 15, 24, tzinfo=UTC),
+        until=datetime(2026, 9, 25, 15, 26, tzinfo=UTC),
+    )
+
+    result = watch.evaluate_fresh_sell_slot_clear(observed)
+
+    assert result.verdict == watch.UNEXERCISED
+    assert (result.evaluated, result.guard_working, result.recurrence) == (0, 0, 0)
+    assert "pre_watch_capped=1" in result.detail
+
+
+def test_live_sell_after_watch_still_reports_a_consumed_first_slot() -> None:
+    observed = watch.parse_log_lines(
+        [
+            "2026-09-25 15:24:25,963 INFO x [V2-CW-SEED-CAP] FRESH reconstructed "
+            "armed segment capped - arm_bar_ts=1790339880000 "
+            "watch_start=1790349865937 stage=db-seed",
+            "2026-09-25 15:26:03,000 INFO x [V2-ATR-PROBE] sym=FRESH "
+            "ts_ms=1790349900000 state=short flip=SELL fired_seg=false",
+            "2026-09-25 15:27:03,000 INFO x [V2-RESTING-SLOT-CONSUMED] FRESH "
+            "segment_id=0 reason=first_slot_already_consumed",
+        ],
+        since=datetime(2026, 9, 25, 15, 24, tzinfo=UTC),
+        until=datetime(2026, 9, 25, 15, 28, tzinfo=UTC),
+    )
+
+    result = watch.evaluate_fresh_sell_slot_clear(observed)
+
+    assert result.verdict == watch.RECURRENCE
+    assert result.recurrence == 1
+
+
 def test_slot_consumed_after_a_real_entry_is_benign() -> None:
     result = watch.evaluate_fresh_sell_slot_clear(
         lines(
@@ -1019,6 +1062,31 @@ def test_recurrence_pages_once_failed_delivery_retries_and_recovery_rearms(tmp_p
         bad, now=NOW, state_path=state, status_path=status, no_page=False, page_fn=page
     )
     assert len(attempts) == 3, "a cleared episode must re-arm"
+
+
+def test_page_attempt_logs_row_kind_and_delivery_result(tmp_path, capsys) -> None:
+    state = tmp_path / "state.json"
+    status = tmp_path / "STATUS.txt"
+    outcomes = iter((False, True))
+
+    def page(_title: str, _body: str) -> bool:
+        return next(outcomes)
+
+    row = [reading("SLOTCLEAR1", watch.RECURRENCE)]
+    watch._run_watch(
+        row, now=NOW, state_path=state, status_path=status, no_page=False, page_fn=page
+    )
+    watch._run_watch(
+        row, now=NOW, state_path=state, status_path=status, no_page=False, page_fn=page
+    )
+    watch._run_watch(
+        row, now=NOW, state_path=state, status_path=status, no_page=False, page_fn=page
+    )
+
+    assert capsys.readouterr().out.splitlines() == [
+        "[KNOWN-DEFECT-PAGED] row=SLOTCLEAR1 kind=recurrence delivered=0",
+        "[KNOWN-DEFECT-PAGED] row=SLOTCLEAR1 kind=recurrence delivered=1",
+    ]
 
 
 def test_state_is_durable_before_page_is_attempted(tmp_path, monkeypatch) -> None:

@@ -94,9 +94,11 @@ class Reading:
 class _SellEpisode:
     symbol: str
     at: datetime
+    bar_ts_ms: int
     filled: bool = False
     recurred: bool = False
     consumed_after_fill: bool = False
+    pre_watch_capped: bool = False
 
 
 CATALOG: tuple[RegressionSpec, ...] = (
@@ -128,8 +130,8 @@ CATALOG: tuple[RegressionSpec, ...] = (
         "SLOTCLEAR1",
         "a fresh SELL leaves the reconstructed first-entry slot consumed",
         "ARMED",
-        "fleet-wide V2-ATR-PROBE SELL lines joined to owner fills and slot-consumed refusals",
-        "a fresh SELL has no refusal, or the refusal follows a real owner fill",
+        "V2-ATR-PROBE SELL lines joined to seed-cap watch-start, owner fills and slot refusals",
+        "a post-watch-start SELL has no refusal, or the refusal follows a real owner fill",
         "first_slot_already_consumed appears after a fresh SELL and before any owner fill",
     ),
     RegressionSpec(
@@ -292,6 +294,9 @@ _CONFIRMATION_REPROTECTED = re.compile(
     r"\bprotected=1\b"
 )
 _ATR_SELL = re.compile(r"\[V2-ATR-PROBE\]\s+sym=([^ ]+)\s+ts_ms=(\d+).*\bflip=SELL\b")
+_SEED_CAP_WATCH_START = re.compile(
+    r"\[V2-CW-SEED-CAP\]\s+([^ ]+)\s+reconstructed .*\bwatch_start=(\d+)"
+)
 _FLIP_OWNER_FILL = re.compile(r"\[V2-FLIP-OWNER-FILL\]\s+([^ ]+)\b")
 _SLOT_CONSUMED = re.compile(
     r"\[V2-RESTING-SLOT-CONSUMED\]\s+([^ ]+).*"
@@ -498,13 +503,22 @@ def evaluate_owner_roll(lines: Sequence[TimedLine], *, now: datetime, market_day
 def evaluate_fresh_sell_slot_clear(lines: Sequence[TimedLine]) -> Reading:
     episodes: list[_SellEpisode] = []
     current: dict[str, _SellEpisode] = {}
+    watch_starts: dict[str, int] = {}
     for line in lines:
+        if match := _SEED_CAP_WATCH_START.search(line.text):
+            symbol, watch_start = match.group(1), int(match.group(2))
+            watch_starts[symbol] = watch_start
+            if episode := current.get(symbol):
+                episode.pre_watch_capped |= episode.bar_ts_ms <= watch_start
+            continue
         if match := _ATR_SELL.search(line.text):
-            bar_at = datetime.fromtimestamp(int(match.group(2)) / 1000, UTC)
+            bar_ts_ms = int(match.group(2))
+            bar_at = datetime.fromtimestamp(bar_ts_ms / 1000, UTC)
             age_seconds = (line.at - bar_at).total_seconds()
             if not 0 <= age_seconds <= FRESH_SELL_MAX_BAR_AGE_SECONDS:
                 continue
-            episode = _SellEpisode(symbol=match.group(1), at=line.at)
+            episode = _SellEpisode(symbol=match.group(1), at=line.at, bar_ts_ms=bar_ts_ms)
+            episode.pre_watch_capped = bar_ts_ms <= watch_starts.get(episode.symbol, 0)
             episodes.append(episode)
             current[episode.symbol] = episode
             continue
@@ -514,23 +528,28 @@ def evaluate_fresh_sell_slot_clear(lines: Sequence[TimedLine]) -> Reading:
             continue
         if match := _SLOT_CONSUMED.search(line.text):
             if episode := current.get(match.group(1)):
+                if episode.pre_watch_capped:
+                    continue
                 if episode.filled:
                     episode.consumed_after_fill = True
                 else:
                     episode.recurred = True
 
-    recurred = [episode for episode in episodes if episode.recurred]
-    consumed_after_fill = sum(episode.consumed_after_fill for episode in episodes)
+    eligible = [episode for episode in episodes if not episode.pre_watch_capped]
+    recurred = [episode for episode in eligible if episode.recurred]
+    consumed_after_fill = sum(episode.consumed_after_fill for episode in eligible)
+    pre_watch_capped = sum(episode.pre_watch_capped for episode in episodes)
     recurrence_detail = ",".join(
         f"{episode.symbol}@{episode.at.isoformat()}" for episode in recurred
     )
     return _reading(
         "SLOTCLEAR1",
-        evaluated=len(episodes),
-        guard_working=len(episodes) - len(recurred),
+        evaluated=len(eligible),
+        guard_working=len(eligible) - len(recurred),
         recurrence=len(recurred),
         detail=(
-            f"fresh_sells={len(episodes)} clean={len(episodes) - len(recurred)} "
+            f"fresh_sells={len(eligible)} clean={len(eligible) - len(recurred)} "
+            f"pre_watch_capped={pre_watch_capped} "
             f"consumed_after_fill={consumed_after_fill} "
             f"recurred={recurrence_detail or 'none'}"
         ),
@@ -1347,7 +1366,12 @@ def _run_watch(
                 f"The known-defect watch could not evaluate {row.key}. This is not a clean zero.\n"
                 f"{spec.title}\n{row.detail}"
             )
-        if page_fn(title, body):
+        delivered_now = page_fn(title, body)
+        print(
+            f"[KNOWN-DEFECT-PAGED] row={row.key} kind={state[row.key]['alert_kind']} "
+            f"delivered={int(delivered_now)}"
+        )
+        if delivered_now:
             state[row.key]["delivered"] = True
     delivery._write_state(state_path, state)
     return 2 if any(row.verdict in {RECURRENCE, COULD_NOT_TELL} for row in readings) else 0

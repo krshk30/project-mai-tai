@@ -114,6 +114,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     STRATEGY_CODE,
     SchwabV2IntentEmitter,
     SchwabV2Strategy,
+    SymbolState,
     session_start_ts_ms,
 )
 
@@ -3807,6 +3808,29 @@ class SchwabV2BotService:
         """
         return self._watch_start_ms.get(symbol, self.strategy._boot_ms)
 
+    @staticmethod
+    def _consume_reconstructed_slots(st: SymbolState, watch_start: int) -> None:
+        # A prior fill/emit/owner must never be relabelled as a cap-only slot claim.
+        cap_only = bool(
+            isinstance(st, SymbolState)
+            and not st.cw_resting_taken
+            and not st.cw_reclaim_taken
+            and st.flip_owner_phase == "idle"
+            and not st.flip_owner_opportunity_id
+            and not st.fanout_segment_id
+            and not st.flip_owner_fill_accounts
+            and not st.flip_owner_position_ids
+            and not st.flip_owner_open_positions
+            and not st.flip_owner_first_rest_placed
+            and not st.position_qty_held
+            and not st.resting_active
+            and not st.webull_resting_active
+            and not st.cw_v2_emit_claimed
+        )
+        st.cw_resting_taken = True
+        st.cw_reclaim_taken = True
+        st.cw_seed_cap_watch_start_ms = watch_start if cap_only else 0
+
     def _cap_reconstructed_segment(self, symbol: str, *, stage: str) -> None:
         """P1.3: mark a RECONSTRUCTED armed segment as USED, so v2 can only enter on a flip we
         actually WATCHED HAPPEN. Fail-closed: costs at most one legit first-entry.
@@ -3886,8 +3910,7 @@ class SchwabV2BotService:
             # resting_taken=1 / reclaim_taken=0 skipped this branch and left the reactive path open).
             and (not st.cw_resting_taken or not st.cw_reclaim_taken)
         ):
-            st.cw_resting_taken = True
-            st.cw_reclaim_taken = True
+            self._consume_reconstructed_slots(st, watch_start)
             logger.info(
                 "[V2-CW-SEED-CAP] %s reconstructed SHORT segment capped — the SELL flip predates "
                 "our watch (resting_taken=1, reclaim_taken=1, sell_flip_bar_ts=%d, watch_start=%d, "
@@ -3919,10 +3942,9 @@ class SchwabV2BotService:
             # reactive path emitted a Schwab BUY intent through the "capped" segment (09:47:05,
             # 10:01:14, 11:25:11 ET, each n=3 = the cap's counter 2, +1 at emit; two reclaim
             # rests placed through it too). All Schwab-rejected — emissions, not fills. The
-            # APLX/SNDG chase shape this function exists to prevent. Consume the slots the live paths read; both reset at the next SELL
-            # flip, which is exactly the operator's "wait for a fresh flip" rule.
-            st.cw_resting_taken = True
-            st.cw_reclaim_taken = True
+            # APLX/SNDG chase shape this function exists to prevent. Consume the slots the live
+            # paths read; a SELL bar opened after watch-start can release a cap-only claim.
+            self._consume_reconstructed_slots(st, watch_start)
             logger.info(
                 "[V2-CW-SEED-CAP] %s reconstructed armed segment capped — the flip predates our "
                 "watch (entries->%d, resting_taken=1, reclaim_taken=1, arm_bar_ts=%d, "

@@ -59,7 +59,7 @@ def _signal(flip: str | None = None, *, state: str = "short") -> dict[str, objec
     }
 
 
-def _settings(*, strict: bool, dual: bool = False) -> Settings:
+def _settings(*, strict: bool, dual: bool = False, retry_one: bool = False) -> Settings:
     return Settings(
         strategy_schwab_1m_v2_confirmed_window_enabled=True,
         strategy_schwab_1m_v2_cw_v2_enabled=True,
@@ -69,20 +69,22 @@ def _settings(*, strict: bool, dual: bool = False) -> Settings:
         strategy_schwab_1m_v2_dual_broker_fanout_enabled=dual,
         strategy_schwab_1m_v2_webull_resting_mirror_enabled=dual,
         strategy_schwab_1m_v2_flip_owned_first_entry_enabled=strict,
+        strategy_schwab_1m_v2_retry_one_enabled=retry_one,
         strategy_schwab_1m_v2_account_name=PRIMARY,
         strategy_schwab_1m_v2_webull_account_name=WEBULL,
     )
 
 
 def _strategy(
-    *, strict: bool = True, dual: bool = False
+    *, strict: bool = True, dual: bool = False, retry_one: bool = False,
+    restored_retry_closes: int = 0,
 ) -> tuple[
     SchwabV2Strategy,
     list[int],
     list[tuple[str, int, bool, str]],
     list[tuple[FlipEntryOwnershipRecord, bool, str]],
 ]:
-    strategy = SchwabV2Strategy(_settings(strict=strict, dual=dual))
+    strategy = SchwabV2Strategy(_settings(strict=strict, dual=dual, retry_one=retry_one))
     clock = [NOW_MS]
     strategy._now_ms = lambda: clock[0]
     strategy._resting_in_window = lambda now=None: True
@@ -99,6 +101,7 @@ def _strategy(
     strategy.configure_flip_entry_ownership(
         lambda record, active, reason: owner_writes.append((record, active, reason)),
         restore_readable=True,
+        restored_retry_budgets={"FRESH": restored_retry_closes},
     )
     return strategy, clock, identity_writes, owner_writes
 
@@ -216,6 +219,8 @@ def test_seed_cap_still_suppresses_first_rest_before_a_fresh_sell() -> None:
 def test_fresh_sell_releases_ownerless_seed_cap_and_places_first_rest() -> None:
     strategy, clock, _identity_writes, _owner_writes = _strategy()
     state = _seed_cap(strategy, clock, "TNON")
+    clock[0] += 60_000
+    state.bars.append(_bar(clock[0]))
     _book(strategy, clock, "TNON")
 
     strategy._cw_v2_track(state, _signal("SELL", state="short"))
@@ -241,6 +246,113 @@ def test_fresh_sell_does_not_clear_contradictory_idle_owner_state() -> None:
     assert state.cw_resting_taken is True
     assert state.cw_reclaim_taken is True
     strategy._cw_v2_resting_track(state, _signal(state="short"))
+    assert strategy.drain_pending_intents() == []
+
+
+def test_whlr_readd_does_not_reopen_flips_whose_bars_started_before_watch() -> None:
+    """WHLR 09-25: delivery after re-add does not make the bar's open observable."""
+    from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+
+    watch_start = 1790349865937  # 15:24:25.937Z
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    clock[0] = watch_start
+    state = strategy.watchlist_state("WHLR")
+    state.bars.append(_bar(1790339880000))
+    state.cw_armed = True
+    state.cw_arm_bar_ts = 1790339880000
+    strategy._cw_armed_segment_safety_enabled = True
+    strategy._boot_ms = watch_start - 24 * 60 * 60_000
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy = strategy
+    bot._watch_start_ms = {"WHLR": watch_start}
+    bot._cap_reconstructed_segment("WHLR", stage="db-seed")
+    assert (state.cw_resting_taken, state.cw_reclaim_taken) == (True, True)
+
+    # SELL bar opened at 15:23Z, before the 15:24:25Z re-add.
+    clock[0] = 1790349867190
+    state.bars.append(_bar(1790349780000))
+    state.atr_state = "short"
+    state.atr_short_flip_bar_ts = 1790349780000
+    _book(strategy, clock, "WHLR")
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+    assert (state.cw_resting_taken, state.cw_reclaim_taken) == (True, True)
+    bot._cap_reconstructed_segment("WHLR", stage="streamer-warmup")
+    assert (state.cw_resting_taken, state.cw_reclaim_taken) == (True, True)
+
+    # BUY was delivered at 15:25:03Z, but its bar opened at 15:24:00Z.
+    clock[0] = 1790349903177
+    state.bars.append(_bar(1790349840000))
+    strategy._cw_v2_track(state, _signal("BUY", state="long"))
+    assert (state.cw_resting_taken, state.cw_reclaim_taken) == (True, True)
+    assert state.flip_owner_opportunity_id == 0
+    assert strategy.drain_pending_intents() == []
+
+
+def test_seed_cap_sell_bar_opening_at_watch_start_stays_capped() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _seed_cap(strategy, clock, "BOUNDARY")
+    _book(strategy, clock, "BOUNDARY")
+
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+
+    assert (state.cw_resting_taken, state.cw_reclaim_taken) == (True, True)
+    assert state.cw_seed_cap_watch_start_ms == clock[0]
+
+
+@pytest.mark.parametrize("restored_retry_closes", [0, 2])
+def test_seed_cap_releases_only_after_a_sell_bar_opened_after_watch(
+    restored_retry_closes: int,
+) -> None:
+    from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+
+    watch_start = 1790349865937
+    strategy, clock, _identity_writes, _owner_writes = _strategy(
+        retry_one=True, restored_retry_closes=restored_retry_closes
+    )
+    clock[0] = watch_start
+    state = strategy.watchlist_state("FRESH")
+    state.bars.append(_bar(1790349780000))
+    state.atr_state = "short"
+    state.atr_short_flip_bar_ts = 1790349780000
+    strategy._cw_armed_segment_safety_enabled = True
+    strategy._boot_ms = watch_start - 24 * 60 * 60_000
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy = strategy
+    bot._watch_start_ms = {"FRESH": watch_start}
+    bot._cap_reconstructed_segment("FRESH", stage="db-seed")
+    assert (state.cw_resting_taken, state.cw_reclaim_taken) == (True, True)
+    assert state.retry_one_closes_today == restored_retry_closes
+
+    clock[0] = 1790349963000
+    state.bars.append(_bar(1790349900000))  # 15:25Z opens after the re-add.
+    state.atr_short_flip_bar_ts = 1790349900000
+    _book(strategy, clock, "FRESH")
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+    assert (state.cw_resting_taken, state.cw_reclaim_taken) == (False, False)
+
+    strategy._cw_v2_resting_track(state, _signal(state="short"))
+    intents = strategy.drain_pending_intents()
+    if restored_retry_closes == 0:
+        assert len(intents) == 1
+        assert intents[0].metadata["cw_entry_slot"] == "first"
+        assert int(intents[0].metadata["fanout_segment_id"]) > 0
+    else:
+        assert intents == []
+    assert state.retry_one_closes_today == restored_retry_closes
+
+
+def test_idle_sell_does_not_clear_a_non_seed_cap_slot_claim() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = strategy.watchlist_state("FILLED")
+    state.bars.append(_bar(clock[0]))
+    state.cw_resting_taken = True
+    state.cw_reclaim_taken = True
+    state.position_qty_held = 0  # the stop-out has closed; its slot claim survives flatness
+    _book(strategy, clock, "FILLED")
+
+    strategy._cw_v2_track(state, _signal("SELL", state="short"))
+
+    assert (state.cw_resting_taken, state.cw_reclaim_taken) == (True, True)
     assert strategy.drain_pending_intents() == []
 
 
