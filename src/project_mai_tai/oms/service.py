@@ -4670,24 +4670,42 @@ class OmsRiskService:
             )
         inflight.add(key)
         try:
-            flatten = tag == "V2_OVERNIGHT_FLATTEN"
-            outcome = await self._webull_cancel_then_sell(
-                acct,
-                symbol,
-                exit_tag=tag,
-                reason="V2_OVERNIGHT_FLATTEN" if flatten else f"oms_v2_managed_exit:{tag}",
-                kind="OVERNIGHT_FLATTEN" if flatten else "HARD",
-                reference_bid=bid,
-                expected_row_id=expected_row_id,
-                expires_at=utcnow() + timedelta(seconds=self._CONFIRMATION_EXIT_EXPIRY_SECONDS),
-                decision=_ConfirmationFanoutDecision(
-                    symbol=symbol,
-                    source_fill_id=f"{tag}:{expected_row_id}",
-                    accounts=(acct,),
+            if tag == "V2_OVERNIGHT_FLATTEN":
+                outcome = await self._webull_cancel_then_sell(
+                    acct,
+                    symbol,
                     exit_tag=tag,
-                ),
-                reference_price=ref,
-            )
+                    reason="V2_OVERNIGHT_FLATTEN",
+                    kind="OVERNIGHT_FLATTEN",
+                    reference_bid=bid,
+                    expected_row_id=expected_row_id,
+                    expires_at=utcnow() + timedelta(seconds=self._CONFIRMATION_EXIT_EXPIRY_SECONDS),
+                    decision=_ConfirmationFanoutDecision(
+                        symbol=symbol,
+                        source_fill_id=f"{tag}:{expected_row_id}",
+                        accounts=(acct,),
+                        exit_tag=tag,
+                    ),
+                    reference_price=ref,
+                )
+            else:
+                outcome = await self._webull_cancel_then_sell(
+                    acct,
+                    symbol,
+                    exit_tag=tag,
+                    reason=f"oms_v2_managed_exit:{tag}",
+                    kind="HARD",
+                    reference_bid=bid,
+                    expected_row_id=expected_row_id,
+                    expires_at=utcnow() + timedelta(seconds=self._CONFIRMATION_EXIT_EXPIRY_SECONDS),
+                    decision=_ConfirmationFanoutDecision(
+                        symbol=symbol,
+                        source_fill_id=f"{tag}:{expected_row_id}",
+                        accounts=(acct,),
+                        exit_tag=tag,
+                    ),
+                    reference_price=ref,
+                )
         finally:
             inflight.discard(key)
         if outcome in {"closed", "close_submitted", "resolved_by_fill", "flat", "no_open_row"}:
