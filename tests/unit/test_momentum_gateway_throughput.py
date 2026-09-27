@@ -10,17 +10,20 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import time
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from project_mai_tai.backtest import momentum_gateway_throughput as throughput
 from project_mai_tai.backtest.momentum_gateway_throughput import (
     _gather_fail_fast,
     _flat_file_key,
     _missed_snapshot_cycles,
     _paced_replay,
     evaluate_replay,
+    ExistingWorkResult,
     PolicyLogCounter,
     measured_or_unmeasured,
     MassiveFlatFileClient,
@@ -28,9 +31,11 @@ from project_mai_tai.backtest.momentum_gateway_throughput import (
     population_report,
     replay_abort_reason,
     ReplayAborted,
+    ReplayAccessEvidence,
     require_replay_access,
     require_replay_niceness,
     run_guarded_replays,
+    run_replay_once,
     summarize_massive_flat_file,
     verdict_exit_code,
 )
@@ -451,6 +456,123 @@ def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> N
     assert int(result["would_block_drops"]) > 0
     assert float(result["offer_elapsed_ms"]) < 2_000.0
     assert float(result["socket_send_elapsed_p99_ms"]) < 50.0
+
+
+def test_module_entry_can_spawn_a_real_separate_consumer() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "project_mai_tai.backtest.momentum_gateway_throughput",
+            "spawn-smoke",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=20,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "spawn_smoke=PASS child_pid=" in completed.stdout
+
+
+def test_suite_refuses_failed_spawn_before_starting_a_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def baseline_must_not_start(_args: object) -> int:
+        pytest.fail("replay started after the consumer spawn check failed")
+
+    monkeypatch.setattr(
+        throughput,
+        "verify_consumer_spawn",
+        lambda: (_ for _ in ()).throw(EOFError("/<stdin> cannot be reopened")),
+    )
+    monkeypatch.setattr(throughput, "_suite_command_async", baseline_must_not_start)
+    args = throughput.build_parser().parse_args(
+        [
+            "replay-suite",
+            "--tape",
+            str(tmp_path / "peak.jsonl.gz"),
+            "--output-dir",
+            str(tmp_path / "replay"),
+            "--gateway-pid",
+            "123",
+        ]
+    )
+
+    assert args.redis_url is None
+    assert args.run(args) == 2
+    aborted = json.loads((args.output_dir / "replay-aborted.json").read_text())
+    assert aborted["verdict"] == "UNMEASURED"
+    assert "before baseline" in aborted["abort_reason"]
+
+
+@pytest.mark.asyncio
+async def test_replay_result_path_accepts_and_records_offer_schedule_delay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tape = tmp_path / "peak.jsonl.gz"
+    with gzip.open(tape, "wt", encoding="utf-8") as handle:
+        for source_ns in (0, 1_000_000):
+            handle.write(
+                json.dumps(
+                    {
+                        "source_ns": source_ns,
+                        "frame": {"ev": "T", "sym": "AEMD", "t": source_ns},
+                    }
+                )
+                + "\n"
+            )
+
+    async def sample_work(*_args: object, **kwargs: object) -> ExistingWorkResult:
+        return ExistingWorkResult(
+            duration_seconds=0.1,
+            snapshot_count=2,
+            snapshot_p99_ms=5_000.0,
+            missed_snapshot_cycles=0,
+            quote_count=2,
+            quote_latency_p99_ms=10.0,
+            active_symbols=1,
+            heartbeat_active_symbols=1,
+            quote_latency_status="MEASURED",
+            raw_samples=str(kwargs["output_path"]),
+        )
+
+    async def sample_cpu(
+        pids: dict[str, int], *, duration_seconds: float, output_path: Path
+    ) -> dict[str, dict[str, float | int]]:
+        await asyncio.sleep(duration_seconds)
+        return {
+            name: {"peak_cpu_pct_one_cpu": 1.0, "peak_rss_bytes": 1_024}
+            for name in pids
+        }
+
+    monkeypatch.setattr(throughput, "require_replay_niceness", lambda: None)
+    monkeypatch.setattr(throughput, "sample_existing_work", sample_work)
+    monkeypatch.setattr(throughput, "sample_processes", sample_cpu)
+    access = ReplayAccessEvidence(
+        checked_at_utc="2026-09-23T20:18:00+00:00",
+        branch="FLAT_16_05_TO_20_ET",
+        detail="test flatness proof",
+    )
+
+    result = await run_replay_once(
+        redis=None,  # type: ignore[arg-type]
+        tape_path=tape,
+        output_dir=tmp_path,
+        policy_counter=type("Counter", (), {"read": lambda _self: 0})(),
+        gateway_pid=1,
+        speed=1.0,
+        consumer="active",
+        baseline_seconds=0.1,
+        access_checker=lambda: access,
+    )
+
+    assert result.input_frames == 2
+    assert result.consumer_pid != result.producer_pid
+    assert result.producer_offer_schedule_delay_p99_ms >= 0.0
+    assert result.replay_access == access
 
 
 def _flat_preflight_result(returncode: int = 0) -> subprocess.CompletedProcess[str]:

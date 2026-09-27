@@ -26,6 +26,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import tempfile
 import time as clock
 from typing import Awaitable, Callable, Mapping, Sequence, TypeVar
 from urllib.parse import quote
@@ -1016,9 +1017,6 @@ async def run_replay_once(
         missed_snapshot_cycles=during.missed_snapshot_cycles,
         socket_would_block_drops=writer_counters.would_block_drops,
         producer_offer_elapsed_ms=offer_elapsed_ms,
-        producer_offer_schedule_delay_p99_ms=(
-            replay_result.offer_schedule_delay_p99_ms
-        ),
         active_offer_elapsed_ms=active_offer_elapsed_ms,
     )
     return ReplayResult(
@@ -1038,6 +1036,9 @@ async def run_replay_once(
         handoff_p99_ms=handoff_p99_ms,
         handoff_max_ms=max(lags) if lags else None,
         producer_offer_elapsed_ms=offer_elapsed_ms,
+        producer_offer_schedule_delay_p99_ms=(
+            replay_result.offer_schedule_delay_p99_ms
+        ),
         producer_cpu_peak_pct_one_cpu=producer_cpu_peak,
         producer_peak_rss_bytes=int(cpu["producer"]["peak_rss_bytes"]),
         consumer_cpu_peak_pct_one_cpu=float(cpu["consumer"]["peak_cpu_pct_one_cpu"]),
@@ -1216,9 +1217,12 @@ def _fetch_population_command(args: argparse.Namespace) -> int:
 
 
 async def _suite_command_async(args: argparse.Namespace) -> int:
+    redis_url = args.redis_url or os.environ.get("MAI_TAI_REDIS_URL")
+    if not redis_url:
+        raise ReplayAborted("MAI_TAI_REDIS_URL is missing")
     output_dir: Path = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    redis = Redis.from_url(args.redis_url, decode_responses=True)
+    redis = Redis.from_url(redis_url, decode_responses=True)
     policy_counter = PolicyLogCounter(args.policy_log)
     try:
         initial_access = require_replay_access()
@@ -1282,12 +1286,45 @@ async def _suite_command_async(args: argparse.Namespace) -> int:
 
 def _suite_command(args: argparse.Namespace) -> int:
     try:
+        consumer_pid = verify_consumer_spawn()
+    except (EOFError, OSError, RuntimeError) as exc:
+        report = {
+            "verdict": "UNMEASURED",
+            "abort_reason": f"separate consumer spawn check failed before baseline: {exc}",
+        }
+        _write_json(args.output_dir / "replay-aborted.json", report)
+        print(json.dumps(report, sort_keys=True))
+        return verdict_exit_code("UNMEASURED")
+    print(f"spawn_smoke=PASS child_pid={consumer_pid}")
+    try:
         return asyncio.run(_suite_command_async(args))
     except ReplayAborted as exc:
         report = {"verdict": "UNMEASURED", "abort_reason": str(exc)}
         _write_json(args.output_dir / "replay-aborted.json", report)
         print(json.dumps(report, sort_keys=True))
         return verdict_exit_code("UNMEASURED")
+
+
+def verify_consumer_spawn() -> int:
+    with tempfile.TemporaryDirectory(prefix="momentum-spawn-smoke-") as directory:
+        consumer = CrossProcessPaperConsumer(
+            mode="active",
+            raw_samples_path=Path(directory) / "consumer.jsonl",
+        )
+        try:
+            child_pid = consumer.start()
+            result = consumer.stop()
+        finally:
+            consumer.close()
+    if child_pid == os.getpid() or result.consumer_pid != child_pid:
+        raise RuntimeError("consumer did not run in a separate process")
+    return child_pid
+
+
+def _spawn_smoke_command(_args: argparse.Namespace) -> int:
+    child_pid = verify_consumer_spawn()
+    print(f"spawn_smoke=PASS child_pid={child_pid}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1318,7 +1355,7 @@ def build_parser() -> argparse.ArgumentParser:
     suite = subparsers.add_parser("replay-suite")
     suite.add_argument("--tape", type=Path, required=True)
     suite.add_argument("--output-dir", type=Path, required=True)
-    suite.add_argument("--redis-url", required=True)
+    suite.add_argument("--redis-url")
     suite.add_argument("--gateway-pid", type=int, required=True)
     suite.add_argument(
         "--policy-log", type=Path, default=Path("/var/log/project-mai-tai/market-data.log")
@@ -1326,6 +1363,9 @@ def build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--baseline-seconds", type=float, default=600)
     suite.add_argument("--quote-precheck-seconds", type=float, default=120)
     suite.set_defaults(run=_suite_command)
+
+    smoke = subparsers.add_parser("spawn-smoke")
+    smoke.set_defaults(run=_spawn_smoke_command)
     return parser
 
 

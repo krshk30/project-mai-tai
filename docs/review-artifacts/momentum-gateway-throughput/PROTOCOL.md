@@ -166,3 +166,20 @@ default-off draft runtime so the replay grades the same queue and socket writer 
 
 The Redis observer starts `XREAD` offsets at `$` and only calls `XREAD`/`XREVRANGE`. It never
 publishes, trims, acknowledges, joins a consumer group, or changes either observed stream.
+
+## Repeated load-abort investigation (2026-09-27)
+
+The 2026-09-22 and 2026-09-23 attempts stopped during their baselines at one-minute host loads
+3.639 and 3.697. Each followed a five-minute cron fan-out, but that timing alone does not identify
+the process responsible. Before another replay, run the standalone, read-only
+`project_mai_tai.backtest.momentum_load_census` CLI as a detached `Nice=10` one-shot across the
+same weekday close window. Retain its per-second load/process samples and summary, then inspect
+which processes consumed CPU around any load rise. Its one-second sampling can miss very short
+processes and cannot prove causality by itself. It is not a replay, cannot populate the result
+table, and does not relax the 3.5 abort limit or justify disabling production watches.
+
+The replay CLI is launched with `python -m project_mai_tai.backtest.momentum_gateway_throughput`
+from the pinned separate source checkout. It reads `MAI_TAI_REDIS_URL` from the existing process
+environment if `--redis-url` is omitted, so the URL is not placed in the process arguments. Its
+`spawn-smoke` command and the suite's pre-baseline spawn check prove that the separate consumer
+can start before a ten-minute baseline is spent; stdin-based launchers are not supported.

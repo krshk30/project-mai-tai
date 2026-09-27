@@ -43,6 +43,10 @@ LAUNCHED_NOT_IMPORTED: dict[str, str] = {
     "project_mai_tai.backtest.momentum_gateway_throughput": (
         "measured by the Step 2 protocol; not wired; launched after hours with python -m"
     ),
+    "project_mai_tai.backtest.momentum_load_census": (
+        "read-only Step 2 load attribution before a replay; launched with python -m, "
+        "not imported by a runtime service"
+    ),
     "project_mai_tai.backtest.pre0700_shadow": (
         "read-only after-close PRE07 study; launched with python -m and referenced from docs/"
     ),
