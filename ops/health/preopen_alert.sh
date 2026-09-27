@@ -39,7 +39,7 @@ case "$LEVEL" in
     ;;
 esac
 
-if [[ "$VERDICT" == SEED-EXPOSURE* ]]; then
+if [[ "$VERDICT" == SEED-EXPOSURE* && "$LEVEL" != RED && "$LEVEL" != ERROR ]]; then
   printf '%s' "$BODY" | "$LOW_ALERT_PYTHON" "$LOW_ALERT_SCRIPT" \
     --sender seed-exposure --title "$TITLE" --tags "$TAGS" \
     >/dev/null 2>>"$OUT/alert.log"

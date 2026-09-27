@@ -13,7 +13,9 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
-def _run(tmp_path: Path, rows: str, *, curl_exit: int = 0) -> subprocess.CompletedProcess[str]:
+def _run(
+    tmp_path: Path, rows: str, *, curl_exit: int = 0, default_url: bool = False,
+) -> subprocess.CompletedProcess[str]:
     calls = tmp_path / "curl.calls"
     fake_curl = tmp_path / "curl.sh"
     _write_executable(
@@ -28,6 +30,8 @@ def _run(tmp_path: Path, rows: str, *, curl_exit: int = 0) -> subprocess.Complet
         "RECONCILE_ALERT_TEST_MODE": "1",
         "RECONCILE_ALERT_ROWS": rows,
     }
+    if default_url:
+        env.pop("RECONCILE_ALERT_NTFY_URL")
     return subprocess.run(
         ["bash", str(WRAPPER)],
         check=False,
@@ -78,6 +82,17 @@ def test_failed_delivery_retries_instead_of_consuming_the_transition(tmp_path: P
     _run(tmp_path, row)
     assert _calls(tmp_path).count("CALL") == 2
     assert active.read_text(encoding="utf-8").strip() == "position-quantity:live:schwab_1m_v2:X"
+
+
+def test_reconciler_critical_keeps_literal_urgent_preopen_route(tmp_path: Path) -> None:
+    row = (
+        "position-quantity:live:orb:TNON|position_quantity_mismatch|TNON|"
+        "Owned mismatch|live:orb|broker_missing_owned_position|0|1|1"
+    )
+    assert _run(tmp_path, row, default_url=True).returncode == 0
+    calls = _calls(tmp_path)
+    assert "Priority: urgent" in calls
+    assert "https://ntfy.sh/mai-tai-preopen-28806a5a97b7" in calls
 
 
 def test_wrapper_has_no_manual_position_or_protected_symbol_escape_hatch() -> None:

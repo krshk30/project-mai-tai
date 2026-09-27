@@ -21,7 +21,10 @@ digest_sha=$(sha256sum "$digest" | awk '{print $1}')
 [[ $router_sha =~ ^[a-f0-9]{64}$ && $digest_sha =~ ^[a-f0-9]{64}$ ]] ||
   { echo "REFUSED: could not hash alert routing sources" >&2; exit 1; }
 
-line="0 0,1 * * * [ \"\$(sha256sum $router | cut -d' ' -f1)\" = \"$router_sha\" ] && [ \"\$(sha256sum $digest | cut -d' ' -f1)\" = \"$digest_sha\" ] && $digest >> /var/log/project-mai-tai/low-priority-digest.log 2>&1"
+log=${ALERT_SPLIT_DIGEST_LOG:-/var/log/project-mai-tai/low-priority-digest.log}
+curl_bin=${ALERT_SPLIT_CURL:-curl}
+low_url='https://ntfy.sh/mai-tai-routine-112964cc8f26787132a29538'
+line="0 0,1 * * * [ \"\$(TZ=America/New_York date +\\%H\\%M)\" = 2000 ] || exit 0; if [ \"\$(sha256sum $router 2>/dev/null | cut -d' ' -f1)\" != \"$router_sha\" ]; then reason=$router; elif [ \"\$(sha256sum $digest 2>/dev/null | cut -d' ' -f1)\" != \"$digest_sha\" ]; then reason=$digest; else reason=; fi; if [ -n \"\$reason\" ]; then echo \"\$(date) digest guard refused: \$reason\" >> $log; $curl_bin -sS --fail-with-body --connect-timeout 10 --max-time 30 -H 'Title: Mai Tai digest guard refused' -H 'Priority: low' --data-binary \"digest guard refused: \$reason\" $low_url >> $log 2>&1; else $digest >> $log 2>&1; fi"
 if [[ ${1:-} == --print-cron ]]; then
   printf '%s\n%s\n%s\n' "$begin" "$line" "$end"
   exit 0
