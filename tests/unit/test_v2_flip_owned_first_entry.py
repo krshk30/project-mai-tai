@@ -299,6 +299,20 @@ def test_seed_cap_sell_bar_opening_at_watch_start_stays_capped() -> None:
     assert state.cw_seed_cap_watch_start_ms == clock[0]
 
 
+def test_post_watch_buy_does_not_release_seed_cap_without_sell() -> None:
+    strategy, clock, _identity_writes, _owner_writes = _strategy()
+    state = _seed_cap(strategy, clock, "BUYONLY")
+    clock[0] += 60_000
+    state.bars.append(_bar(clock[0]))
+    _book(strategy, clock, "BUYONLY")
+
+    strategy._cw_v2_track(state, _signal("BUY", state="long"))
+
+    assert (state.cw_resting_taken, state.cw_reclaim_taken) == (True, True)
+    assert state.cw_seed_cap_watch_start_ms == clock[0] - 60_000
+    assert strategy.drain_pending_intents() == []
+
+
 @pytest.mark.parametrize("restored_retry_closes", [0, 2])
 def test_seed_cap_releases_only_after_a_sell_bar_opened_after_watch(
     restored_retry_closes: int,
