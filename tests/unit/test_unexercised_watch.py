@@ -240,6 +240,7 @@ def test_inc1_reads_all_incident_types_from_the_same_pager_route(monkeypatch):
     assert "'oms_v2_webull_uncovered_share'" in statements[0]
     assert "'schwab_opening_policy_reject'" in statements[0]
     assert "'oco_exit_fill_unrecorded'" in statements[0]
+    assert "'webull_eh_ladder_unsold'" in statements[0]
 
 
 @pytest.mark.parametrize(
@@ -858,6 +859,31 @@ def test_uncovered_share_pages_once_with_account_symbol_cause_and_seconds(tmp_pa
     assert "account=live:orb symbol=GLND" in pages[0][1]
     assert "cause=pair_released_not_sold uncovered_seconds=31.0" in pages[0][1]
     assert "native protection was cancelled" not in pages[0][1]  # not the generic INC1 body
+
+
+def test_eh_unsold_incident_reaches_phone_once_with_actionable_context(tmp_path, monkeypatch):
+    row = json.loads(_inc1_row(source="webull_eh_ladder_unsold"))
+    row.update(
+        {
+            "title": "EH EXIT UNSOLD: APUS on live:orb at 20:00; check now",
+            "account": "live:orb",
+            "symbol": "APUS",
+            "managed_row_id": "row-apus",
+            "exit_tag": "CW_FLOOR",
+        }
+    )
+    pages: list[tuple[str, str]] = []
+    monkeypatch.setattr(uw, "_psql", lambda _sql: [json.dumps(row)])
+    monkeypatch.setattr(uw, "page", lambda title, body: pages.append((title, body)) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "INC1_STATUS.txt"
+
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+    assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+
+    assert len(pages) == 1
+    assert "unsold at 20:00 ET" in pages[0][1]
+    assert "account=live:orb symbol=APUS" in pages[0][1]
+    assert "managed_row_id=row-apus exit_tag=CW_FLOOR" in pages[0][1]
 
 
 def test_a_hard_stop_page_names_the_hard_stop_not_a_confirmation_exit(tmp_path, monkeypatch):
