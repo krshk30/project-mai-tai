@@ -34,6 +34,7 @@ LOG="$OUT/watch.log"
 STATUS="$OUT/STATUS.txt"          # always the latest full report -- this is where GREEN is read
 SEEN="$OUT/seen"                  # breach signatures already pushed
 LOW_ALERT=/home/trader/project-mai-tai/ops/health/low_priority_alerts.py
+NTFY_URL="https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
 mkdir -p "$OUT"; touch "$SEEN"
 
 STAMP=$(TZ=America/New_York date '+%F %H:%M:%S %Z')
@@ -54,8 +55,13 @@ if [ -f "$LOG" ] && [ "$(stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 5000000 ]
 fi
 
 push() {  # push <title-ascii> <priority> <body>
-  printf '%s' "$3" | "$PY" "$LOW_ALERT" --sender entry-fix --title "$1" >/dev/null \
-    || echo "$STAMP  ERROR: ntfy push failed for [$1]" >> "$LOG"
+  if [ "$1" = "V2 ENTRY CAP BREACHED" ] || [ "$1" = "P0a NOT HOLDING - KUST signature" ]; then
+    curl -s -m 20 -H "Title: $1" -H "Priority: $2" -d "$3" "$NTFY_URL" >/dev/null \
+      || echo "$STAMP  ERROR: ntfy push failed for [$1]" >> "$LOG"
+  else
+    printf '%s' "$3" | "$PY" "$LOW_ALERT" --sender entry-fix --title "$1" >/dev/null \
+      || echo "$STAMP  ERROR: ntfy push failed for [$1]" >> "$LOG"
+  fi
 }
 
 REPORT=$("$PY" "$CHECK" --day "$TODAY" 2>"$OUT/stderr.last")

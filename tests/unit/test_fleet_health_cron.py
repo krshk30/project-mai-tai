@@ -21,6 +21,7 @@ def _run_wrapper(
     curl_exit: int = 0,
     curl_status: int | None = None,
     mode: str = "full",
+    default_url: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     check = tmp_path / "check.sh"
     check_args = tmp_path / "check.args"
@@ -48,6 +49,8 @@ def _run_wrapper(
         "FLEET_HEALTH_TEST_MODE": "1",
         "FLEET_HEALTH_MODE": mode,
     }
+    if default_url:
+        env.pop("FLEET_HEALTH_NTFY_URL")
     return subprocess.run(
         ["bash", str(WRAPPER)],
         check=False,
@@ -118,6 +121,16 @@ SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=1
     assert "RED mai-tai service runtime: service-runtime:momentum-paper:restart-storm" in calls
     assert "strategy-bar-freshness" not in calls
     assert (tmp_path / "check.args").read_text(encoding="utf-8") == "--runtime-only"
+
+
+def test_fleet_live_money_keeps_literal_urgent_preopen_route(tmp_path: Path) -> None:
+    output = """VERDICT: RED stops-armed class=LIVE_MONEY naked
+SUMMARY: RED fleet-function-health checks=1 live_money_red=1
+"""
+    assert _run_wrapper(tmp_path, output, default_url=True).returncode == 0
+    calls = _call_log(tmp_path)
+    assert "Priority: urgent" in calls
+    assert "https://ntfy.sh/mai-tai-preopen-28806a5a97b7" in calls
 
 
 def test_existing_momentum_red_does_not_mask_a_later_oms_red(tmp_path: Path) -> None:

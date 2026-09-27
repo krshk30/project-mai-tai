@@ -35,6 +35,7 @@ OUT=/home/trader/bar_gap_watch
 LOG="$OUT/watch.log"
 STATE="$OUT/state"                 # <STATUS> <FIRST_SEEN_EPOCH> <PAGED> <REPAIR_AT>
 LOW_ALERT="$REPO/ops/health/low_priority_alerts.py"
+NTFY_URL="https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
 PAGE_AFTER_SECS=300
 mkdir -p "$OUT"
 
@@ -141,9 +142,15 @@ gap_page_due() {  # gap_page_due <level> <now> <first_seen> <paged> <halt> <self
 
 send_ntfy() {  # $1=title $2=priority $3=tags $4=body
   # Titles must be ASCII; an em-dash silently loses the push.
-  printf '%s' "$4" | "$REPO"/.venv/bin/python "$LOW_ALERT" \
-    --sender bar-gap --title "$1" --tags "$3" \
-    >/dev/null 2>>"$OUT/alert.log"
+  if [ "$2" = "urgent" ]; then
+    curl -sS --fail-with-body --connect-timeout 10 --max-time 30 \
+      -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
+      >/dev/null 2>>"$OUT/alert.log"
+  else
+    printf '%s' "$4" | "$REPO"/.venv/bin/python "$LOW_ALERT" \
+      --sender bar-gap --title "$1" --tags "$3" \
+      >/dev/null 2>>"$OUT/alert.log"
+  fi
 }
 
 echo "$STAMP  $VERDICT" >> "$LOG"
