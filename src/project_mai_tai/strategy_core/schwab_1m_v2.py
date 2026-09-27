@@ -1964,10 +1964,6 @@ class SchwabV2Strategy:
                 or state.flip_owner_position_entry_ms
                 or state.flip_owner_open_positions
                 or state.flip_owner_first_rest_placed
-                or state.position_qty_held
-                or state.resting_active
-                or state.webull_resting_active
-                or state.cw_v2_emit_claimed
             )
             if contradictory_owner_state:
                 self._set_flip_owner_unknown(
