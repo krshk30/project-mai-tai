@@ -100,6 +100,7 @@ def test_digest_install_plan_guards_both_sources_and_dst_candidates() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "0 0,1 * * *" in result.stdout
+    assert len(result.stdout.splitlines()[1]) <= 1000
     assert result.stdout.count("sha256sum") == 2
     assert "# BEGIN mai-tai-low-priority-digest" in result.stdout
     assert "# END mai-tai-low-priority-digest" in result.stdout
