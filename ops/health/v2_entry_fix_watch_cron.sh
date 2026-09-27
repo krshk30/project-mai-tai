@@ -56,7 +56,7 @@ fi
 
 push() {  # push <title-ascii> <priority> <body>
   if [ "$1" = "V2 ENTRY CAP BREACHED" ] || [ "$1" = "P0a NOT HOLDING - KUST signature" ]; then
-    curl -s -m 20 -H "Title: $1" -H "Priority: $2" -d "$3" "$NTFY_URL" >/dev/null \
+    curl -s -m 20 -H "Title: $1" -H "Priority: urgent" -d "$3" "$NTFY_URL" >/dev/null \
       || echo "$STAMP  ERROR: ntfy push failed for [$1]" >> "$LOG"
   else
     printf '%s' "$3" | "$PY" "$LOW_ALERT" --sender entry-fix --title "$1" >/dev/null \

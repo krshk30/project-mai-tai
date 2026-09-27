@@ -142,9 +142,9 @@ gap_page_due() {  # gap_page_due <level> <now> <first_seen> <paged> <halt> <self
 
 send_ntfy() {  # $1=title $2=priority $3=tags $4=body
   # Titles must be ASCII; an em-dash silently loses the push.
-  if [ "$2" = "urgent" ]; then
+  if [ "$1" = "RED v2 BAR HOLE" ]; then
     curl -sS --fail-with-body --connect-timeout 10 --max-time 30 \
-      -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "$NTFY_URL" \
+      -H "Title: $1" -H "Priority: urgent" -H "Tags: $3" -d "$4" "$NTFY_URL" \
       >/dev/null 2>>"$OUT/alert.log"
   else
     printf '%s' "$4" | "$REPO"/.venv/bin/python "$LOW_ALERT" \

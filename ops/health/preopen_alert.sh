@@ -45,6 +45,7 @@ if [[ "$VERDICT" == SEED-EXPOSURE* && "$LEVEL" != RED && "$LEVEL" != ERROR ]]; t
     >/dev/null 2>>"$OUT/alert.log"
   DELIVERED=$?
 else
+  if [[ "$LEVEL" == RED || "$LEVEL" == ERROR ]]; then PRIORITY=urgent; fi
   "$CURL" -sS --fail-with-body --connect-timeout 10 --max-time 30 \
     -H "Title: $TITLE" -H "Priority: $PRIORITY" -H "Tags: $TAGS" -d "$BODY" "$URL" \
     >/dev/null 2>>"$OUT/alert.log"

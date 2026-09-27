@@ -284,6 +284,8 @@ def _route_function(path: Path, name: str) -> str:
 
 
 def test_bar_gap_red_is_urgent_and_amber_stays_low(tmp_path) -> None:
+    watch_source = (OPS / "bar_gap_watch_cron.sh").read_text(encoding="utf-8")
+    assert 'if [ "$LEVEL" = "RED" ]; then TITLE="RED v2 BAR HOLE"; PRIORITY="urgent"' in watch_source
     python = tmp_path / ".venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
     python.symlink_to(sys.executable)
@@ -311,6 +313,7 @@ def test_bar_gap_red_is_urgent_and_amber_stays_low(tmp_path) -> None:
     }
     for title, priority, expected_url, expected_priority in (
         ("RED v2 BAR HOLE", "urgent", PREOPEN_URL, "urgent"),
+        ("RED v2 BAR HOLE", "low", PREOPEN_URL, "urgent"),
         ("AMBER v2 bar gap", "default", LOW_URL, "low"),
     ):
         result = subprocess.run(
@@ -325,6 +328,9 @@ def test_bar_gap_red_is_urgent_and_amber_stays_low(tmp_path) -> None:
 
 
 def test_entry_cap_and_p0a_red_are_urgent_other_entry_alert_stays_low(tmp_path) -> None:
+    watch_source = (OPS / "v2_entry_fix_watch_cron.sh").read_text(encoding="utf-8")
+    assert 'push "V2 ENTRY CAP BREACHED" "urgent"' in watch_source
+    assert 'push "P0a NOT HOLDING - KUST signature" "urgent"' in watch_source
     fake_curl = tmp_path / "curl"
     fake_curl.write_text(
         '#!/bin/bash\nprintf "%s\\n" "$@" > "$ROUTE_ARGS"\n'
@@ -350,7 +356,9 @@ def test_entry_cap_and_p0a_red_are_urgent_other_entry_alert_stays_low(tmp_path) 
     }
     for title, priority, expected_url, expected_priority in (
         ("V2 ENTRY CAP BREACHED", "urgent", PREOPEN_URL, "urgent"),
+        ("V2 ENTRY CAP BREACHED", "low", PREOPEN_URL, "urgent"),
         ("P0a NOT HOLDING - KUST signature", "urgent", PREOPEN_URL, "urgent"),
+        ("P0a NOT HOLDING - KUST signature", "low", PREOPEN_URL, "urgent"),
         ("V2 first live cross 2026-09-23", "default", LOW_URL, "low"),
     ):
         result = subprocess.run(
