@@ -22,11 +22,11 @@ deploy, and reviews this PR. The author never reviews.
 | | |
 |---|---|
 | box (checkout) | **`59f9532ed7e9817897b5a7bea4bba20908d08c7b`** clean, read 11:53 ET Sun |
-| running services | **oms 890812 · strategy 890823 (06:27 ET Sun) · v2 893226 (06:30 ET Sun)** = code of `91a57a15` (the #1048 merge). Later merges: #1049 (code, NOT live until a restart), #1050/#1051 (ops cron, INSTALLED 11:51 ET). Ritual step 4 must RUN `git diff --name-only 91a57a15 origin/main` |
+| running services | **oms 890812 · strategy 890823 (06:27 ET Sun) · v2 893226 (06:30 ET Sun)** = code of `91a57a15` (the #1048 merge). Later merges: #1049 (code, NOT live until a restart), #1050/#1051 (ops cron, INSTALLED 11:37:36 ET). Ritual step 4 must RUN `git diff --name-only 91a57a15 origin/main` |
 | gate pin | `/home/trader/preopen.sh`: `EXPECTED_DATE=2026-09-28` · `EXPECTED_SHA=59f9532e…` · `EXPECTED_PID=893226`. **Sunday restart evidence 7/9** (REST warmup + BOOT-HOLD need session data) — codex re-runs the gate before 07:00 Mon |
 | exposure | 11:52 ET: positions none, open orders 0, reconciler **0 critical** (WETO + MSGY stop fills written by codex on the operator's word; APUS 09-24 Webull share recorded as **operator-manual** close) |
 | **flags on v2 (from `/proc`)** | `GAP_HOLD_ENABLED=true` (corrected detector, **first live session Monday**) · `ENTRY_WINDOW_END 15:45` · `OMS_V2_EOD_OCO_TRANSITION_ENABLED=true` (16:00 handover) · `ATR_MASSIVE_SEED_ENABLED=false` (parity gate 98.05% < 99.5%, operator ruling pending) · `RETRY_ONE=true` · `RTH_EDGE_BRACKET=true` (never exercised) |
-| alerting | **Installed 11:51 ET:** six routine senders → low-priority topic `mai-tai-routine-…`; RED sub-alerts (bar-hole RED, seed-exposure RED, ENTRY CAP BREACHED / P0a) stay urgent; **20:00 ET digest daily** (first one Sun 20:00, zero-count) with sha guards that page on refusal; INC1 watch copy + crontab guards re-pinned; new pager sources: `schwab_opening_policy_reject`, `oco_exit_fill_unrecorded`, `webull_eh_ladder_unsold` |
+| alerting | **Installed 11:37:36 ET (sudo journal):** six routine senders → low-priority topic `mai-tai-routine-…`; RED sub-alerts (bar-hole RED, seed-exposure RED, ENTRY CAP BREACHED / P0a) stay urgent; **20:00 ET digest daily** (first one Sun 20:00; its count is not yet known) with sha guards that page on refusal; INC1 watch copy + crontab guards re-pinned; new pager sources: `schwab_opening_policy_reject`, `oco_exit_fill_unrecorded`, `webull_eh_ladder_unsold` |
 | merges 09-24→09-27 | #1043 GAPHOLD age-from-close · #1044 policy rejects logged/cached/paged · #1045 LXEH storm · #1046 durable child fill before row close · #1047 16:00 handover guards · #1048 after-hours Webull ladder exits (bid-buffer limit) · #1049 seed-cap slot ownership · #1050/#1051 alert split + digest. Closed by ruling (no docs): #1036 #1037 #1039 |
 | deploys | **09-24 09:04 ET** v2-only, GAP_HOLD off (rollback) · **09-26 19:02 ET** v2-only `063e0958` (#1043 #1045) · **09-27 06:27/06:30 ET** oms+strategy+v2 `91a57a15` + three env changes (operator's Sunday time-gate exception, Schwab positions 503 Sat 20:26–23:03 cleared first) |
 | migration | `alembic_version = 20260916_0021`, unchanged |
@@ -47,30 +47,30 @@ deploy, and reviews this PR. The author never reviews.
 | **#1049 (merged, NOT live)** | needs a weekday restart after 18:00; then the first same-session re-add | codex deploy · claude-1 read |
 
 ## Open decisions (operator)
-1. **B4 Massive ATR seed** — reproduces the chart on PMAX (line 1.7842 @10:33, SELL 11:09 vs 1.2077/11:52 unseeded); parity gate 98.05% < 99.5%. Enable at 98% or keep the gate.
+1. **B4 Massive ATR seed — PMAX result UNRESOLVED.** Two codex-2 runs disagree: the 09-26 journal FINDING reports a seeded 10:33 line of 1.35957 and first SELL 11:52; the later message to the operator reported 1.7842 / 11:09 (the chart). `replay-30.md` is dated 09-16 and contains no PMAX 09-24 replay, so neither number is established; codex-2 must publish the actual replay path/parameters before any ruling. The 30-session parity failure (98.05% < 99.5%) stands independently and keeps the flag off.
 2. **B11 rebuilt-arm entries** — codex builds the per-trip classifier (option 3, sent); then the ruling: valid / invalid / mixed.
 3. **Refusal response table** — count fixed (event_source client 40 vs broker 506 since 09-10), week gathered; build or drop (my view: drop).
 4. Weekdays-only digest (currently daily) — follow-up if wanted.
 
 ## Board (Sun 11:53 ET) — statuses per the operator's vocabulary
-| # | Item | Status | Owner | Next |
-|---|---|---|---|---|
-| 1 | GAPHOLD fix #1043, flag on | TO BE EXERCISED | claude-1 | Mon 07:00 |
-| 2 | Policy rejects + cache #1044 | TO BE EXERCISED | claude-1 | first policy-blocked name |
-| 3 | LXEH storm #1045 | TO BE EXERCISED | claude-1 | Mon overnight |
-| 4 | Child fill before close #1046 | TO BE EXERCISED | claude-1 | first Webull stop fill |
-| 5 | 16:00 handover #1047 | TO BE EXERCISED | claude-1 | 16:00 Mon if held |
-| 6 | After-hours Webull exits #1048 | TO BE EXERCISED | claude-1 | first share past 16:00 |
-| 7 | Entry cutoff 15:45 | TO BE EXERCISED | claude-1 | 15:45 Mon |
-| 8 | Pre-open gate 9/9 | IN PROGRESS | codex | before 07:00 Mon |
-| 9 | Pager delivery of new sources | TO BE EXERCISED | codex | first real incident |
-| 10 | 09-18 naked-leg cures (#1014, LC1) | TO BE EXERCISED | claude-1 | until an uncancellable pair meets the fix |
-| 11 | Pass mark 5 clean sessions | TO BE EXERCISED 1/5 | claude-1 | Mon close |
-| 13 | This close-out | IN PROGRESS | claude-1 → codex reviews/promotes | — |
-| 14 | SLOTCLEAR1 seed-cap ownership #1049 | TO BE EXERCISED (not live) | codex restart / claude-1 read | weekday restart |
-| 15 | Momentum gateway #1029 | IN PROGRESS | codex | finish the measurement |
-| 16 | Alert routing + digest #1050/#1051 | TO BE EXERCISED | claude-1 | Sun 20:00 digest; Mon traffic |
-| 18 | Rebuilt-arm entries per-trip (B11) | IN PROGRESS | codex measure / claude-1 review | then the ruling |
+| # | Item | Status | Evidence | Owner | Next action |
+|---|---|---|---|---|---|
+| 1 | GAPHOLD fix #1043, flag on | TO BE EXERCISED | live on v2 893226; never run live with the flag on | claude-1 | Mon 07:00 skip once/name; no detect on healthy cadence |
+| 2 | Policy rejects + cache #1044 | TO BE EXERCISED | live; cache had 0 rows vs 8 policy rejects last week | claude-1 | first policy-blocked name: log, cache row, retry dropped, one page |
+| 3 | LXEH storm #1045 | TO BE EXERCISED | live | claude-1 | Mon overnight count |
+| 4 | Child fill before close #1046 | TO BE EXERCISED | live | claude-1 | first Webull stop fill recorded before the row closes |
+| 5 | 16:00 handover #1047, flag on | TO BE EXERCISED | live | claude-1 | 16:00 Mon if anything is held |
+| 6 | After-hours Webull exits #1048 | TO BE EXERCISED | live | claude-1 | first Webull share held past 16:00 |
+| 7 | Entry cutoff 15:45 | TO BE EXERCISED | live on v2 | claude-1 | 15:45:0x window close, zero fills after |
+| 8 | Pre-open gate 9/9 | IN PROGRESS | Sunday evidence 7/9; pin 09-28 / 59f9532e / PID 893226 | codex | run before 07:00 Mon |
+| 9 | Pager delivery of new sources | TO BE EXERCISED | installed copy matches repo | codex | first real incident |
+| 10 | 09-18 naked-leg cures (#1014, LC1) | TO BE EXERCISED | hard case 0 since 09-19; normal path 32 released / 4 reprotected | claude-1 | until an uncancellable pair meets the fix |
+| 11 | Pass mark 5 clean Webull-exit sessions | TO BE EXERCISED | 1 of 5 (09-25); 09-24 gap reset the count | claude-1 | count Mon at close |
+| 13 | This close-out (#1052) | IN PROGRESS | freeze acked by both agents; manifest 64/64 byte-identical | codex | review the corrected head, pin, merge, promote |
+| 14 | SLOTCLEAR1 seed-cap ownership #1049 | TO BE EXERCISED | merged 793f35f9; NOT live (services predate it) | codex restart / claude-1 read | weekday restart after 18:00, then the first same-session re-add |
+| 15 | Momentum gateway #1029 | IN PROGRESS | draft; measurement incomplete | codex | finish the measurement |
+| 16 | Alert routing + digest #1050/#1051 | TO BE EXERCISED | installed 11:37:36 ET, guards match; digest count unknown | claude-1 | Sun 20:00 digest once; Mon low topic + RED sub-alerts urgent |
+| 18 | Rebuilt-arm entries per-trip (B11) | IN PROGRESS | unblocked by #1049's merge; not started | codex measure / claude-1 review | then the operator's ruling |
 
 Removed by ruling: dead-code removals (ATR re-arm, A2 backoff, TIMESALE, bracket realign), dark-flag enablement
 (stand-down re-arm, RECLAIM1, EOD1601), ORB paper ATR gate, QUICK-FAIL, chase-down rule, sub-$1 Webull qty

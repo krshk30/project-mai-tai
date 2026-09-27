@@ -4447,5 +4447,5 @@ The regression watch's SLOTCLEAR1 row had paged a real recurrence Friday (delive
 (#1049, option A: seed-cap slot ownership, SELL-only release, no rule change) pinned and merged, not live; the WHLR
 "missed +5%" attribution was corrected (a BUY flip places nothing in flip-owned mode). B10 (#1050/#1051): six routine
 senders to a low topic, RED sub-alerts carved back to urgent on the operator's ruling, a 20:00 digest whose sha guards
-page on refusal; installed 11:51 ET. B11 (per-trip rebuilt-arm classification, option 3) sent to codex. Sub-$1 Webull
+page on refusal; installed 11:37:36 ET. B11 (per-trip rebuilt-arm classification, option 3) sent to codex. Sub-$1 Webull
 100-share minimum: leave until stable. Close-out at 12:05 ET.
