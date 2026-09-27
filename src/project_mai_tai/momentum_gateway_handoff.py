@@ -265,16 +265,20 @@ class CrossProcessPaperConsumer:
 
     def stop(self, *, timeout_seconds: float = 10.0) -> ConsumerProcessResult:
         self._stop_event.set()
+        if not self._control.poll(timeout_seconds):
+            self._process.terminate()
+            self._process.join(timeout=2)
+            raise RuntimeError(
+                f"separate Momentum consumer exited {self._process.exitcode} without a result"
+            )
+        # The lag vector can exceed the pipe buffer at peak minute volume.
+        # Drain it before joining, or the child blocks in send while we wait.
+        result = self._control.recv()
         self._process.join(timeout_seconds)
         if self._process.is_alive():
             self._process.terminate()
             self._process.join(timeout=2)
             raise RuntimeError("separate Momentum consumer did not stop")
-        if not self._control.poll(1):
-            raise RuntimeError(
-                f"separate Momentum consumer exited {self._process.exitcode} without a result"
-            )
-        result = self._control.recv()
         if result.get("kind") != "result":
             raise RuntimeError(f"separate Momentum consumer failed: {result}")
         return ConsumerProcessResult(

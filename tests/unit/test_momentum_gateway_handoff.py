@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import time
@@ -19,6 +20,19 @@ from project_mai_tai.momentum_gateway_handoff import (
     ParsedTradeFrame,
     UnixDatagramPaperReceiver,
 )
+
+
+def _send_peak_minute_lag_result(stop_event, control) -> None:
+    stop_event.wait()
+    control.send(
+        {
+            "kind": "result",
+            "pid": os.getpid(),
+            "consumed_frames": 100_000,
+            "handoff_lags_ms": [1.0] * 100_000,
+        }
+    )
+    control.close()
 
 
 def test_parser_keeps_only_massive_trade_events() -> None:
@@ -169,4 +183,28 @@ async def test_dead_cross_process_consumer_raises_socket_drop_counter(tmp_path: 
     finally:
         if producer_socket is not None:
             producer_socket.close()
+        consumer.close()
+
+
+def test_consumer_drains_peak_minute_result_before_joining(tmp_path: Path) -> None:
+    consumer = CrossProcessPaperConsumer(
+        mode="active",
+        raw_samples_path=tmp_path / "large-result.jsonl",
+    )
+    context = multiprocessing.get_context("spawn")
+    consumer._process = context.Process(
+        target=_send_peak_minute_lag_result,
+        args=(consumer._stop_event, consumer._child_control),
+    )
+    try:
+        consumer._process.start()
+        consumer._child_control.close()
+        consumer._consumer_pid = consumer._process.pid
+
+        result = consumer.stop(timeout_seconds=5)
+
+        assert result.consumer_pid != os.getpid()
+        assert result.consumed_frames == 100_000
+        assert len(result.handoff_lags_ms) == 100_000
+    finally:
         consumer.close()
