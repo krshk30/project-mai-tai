@@ -34,11 +34,13 @@ def _spool() -> Path:
     return path
 
 
-def _send(url: str, title: str, body: str, tags: str = "") -> bool:
+def _send(
+    url: str, title: str, body: str, tags: str = "", *, priority: str = "low",
+) -> bool:
     command = [
         os.environ.get("MAI_TAI_LOW_ALERT_CURL", "curl"),
         "-sS", "--fail-with-body", "--connect-timeout", "10", "--max-time", "30",
-        "-H", f"Title: {title}", "-H", "Priority: low",
+        "-H", f"Title: {title}", "-H", f"Priority: {priority}",
     ]
     if tags:
         command += ["-H", f"Tags: {tags}"]
@@ -110,7 +112,10 @@ def send_digest(now: datetime | None = None) -> bool:
         marker = spool / f"{day}.digested"
         if marker.exists():
             return True
-        if not _send(DIGEST_URL, f"Mai Tai routine digest {day}", digest_body(day, spool)):
+        if not _send(
+            DIGEST_URL, f"Mai Tai routine digest {day}", digest_body(day, spool),
+            priority="default",
+        ):
             return False
         marker.touch(mode=0o600)
         return True
