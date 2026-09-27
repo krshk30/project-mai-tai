@@ -4403,3 +4403,49 @@ protocol's frozen 3.5 ceiling; zero frames, no valid replay. It retries only fro
 **Corrections owed to the record (`claude-1`):** BENF's cause, twice wrong before right; the buffer rows mislabelled; QUICK-FAIL's
 numbers withdrawn; RETRY-ONE first set off against the operator's standing rule; "expect 2" on 09-22 was 8; the `resolved_by_fill`
 ending that does not record the fill is in the path `claude-1` built.
+
+## 2026-09-24 → 09-27 — the weekend: a unit error held every name, a batch of eight went out in one Sunday restart, and the board got its rules
+
+**Thursday 09-24.** GAPHOLD (#1038, `claude-1`'s spec) held every watchlist name ~95% of the morning: the detector measured
+bar age from the bar's START stamp, so a healthy 1-min stream read 60–120 s old and the 90 s threshold tripped every
+minute at :30, resetting ATR state on each hold — 0 flips, 0 rests. The operator had `codex-2` turn the flag off at
+09:04 ET. Root cause was the spec (the number came from `[V2-ATR-BAR-GAP]`, a bar-to-bar unit); the fixture was the
+healthy state. `claude-1` wrote a RED contract (three tests), `codex-2` built #1043 (age from close, session-start skip,
+trades-only prints — validated on the box: 603 tape-minutes, 1 miss). The contract commit made the PR unpinnable
+(reviewer in range) and codex re-landed it; pinned @20608383, merged.
+
+The same afternoon the operator asked why PMAX had no resting order. `claude-1` answered from the strategy log
+("2 sh Schwab + bracket"); the wire said Schwab had **rejected** it twice by policy and only the Webull 1-share leg was
+in. The OMS log carried zero reject lines, the ineligible cache 0 rows. The operator's rules followed and are in the
+handoff head: never ask him to trace, validate across everything, a fix ships enabled, no doc — build it.
+APUS filled 15:54:58 and held past the close with dead brackets on both brokers; the Schwab handover (#532) was a dark
+flag, the Webull floor exit was refused by `claude-1`'s own #1032 routing through the confirmation-exit block; the operator
+hand-sold the Webull share. Batch 09-24 v2 (B1–B8) went to codex with MUST-NOT-BREAK lists.
+
+**Friday 09-25.** Six round trips, −5.4 pp; four of six Webull-only on policy-blocked names (INLF 25 rejects, MSGY 12,
+TDIC 5). The four losers were all chase entries (line repriced down 5–22× before the fill) — the 09-22 TREND1 class,
+suspended by the operator, not reopened. APUS was manually stopped from the scanner page at 10:06 ET, which is why its
+11:10 flip was not taken. MSGY's native stop fill went unrecorded (the fifth case).
+
+**Saturday 09-26.** Reviews: #1045 pinned; #1044 (policy rejects) FAILED on an unisolated cache write inside the poll
+session, fixed with a savepoint and proven by a flush-level probe, pinned; #1046 (durable child fill) sent back for the
+unscoped Schwab lane and the overnight no-bid path, then pinned; #1047 (16:00 handover) sent back for a recorder blind
+during the resolving grace it created, then pinned, rebased after #1046, re-pinned (the superseded record had to be
+deleted — CI COULD_NOT_TELL). #1048 (after-hours Webull ladder exits, marketable bid-buffer limit) reviewed twice
+(clock-dependent tests, an unpinnable confirmation-exit control, a 20:00 unsold page) and a full-suite classifier guard
+failure, then pinned @80623d34. Ledger: WETO and MSGY stop fills written on the operator's word; APUS recorded as manual.
+`codex-2` deployed #1043+#1045 to v2 at 19:02 ET. The Sunday deploy was refused Saturday night: Schwab's positions
+endpoint returned 503 from 20:26 ET (70 consecutive) — the flat check could not be proven; correct refusal.
+
+**Sunday 09-27.** Schwab recovered 23:03 ET Sat. On the operator's explicit Sunday exception, `codex-2` deployed
+`91a57a15` at 06:27/06:30 ET with `EOD_OCO_TRANSITION=true` and `ENTRY_WINDOW_END 15:45`; `claude-1` had shipped
+GAP_HOLD false out of caution and the operator reversed it ("why deploy a fix disabled?") — a v2-only restart put it on.
+He then asked how many fixes sit behind disabled flags: 31 of 112, six unruled; three investigated (ATR re-arm dead
+under CW-v2; A2 backoff superseded since 08-17; TIMESALE never served by Schwab), two interrupted; ruling: enable none,
+point out matching incidents. The operator's thirteen old TO-EXERCISE rows were swept on box evidence: ten closed.
+The regression watch's SLOTCLEAR1 row had paged a real recurrence Friday (delivered, missed in the volume) — B9
+(#1049, option A: seed-cap slot ownership, SELL-only release, no rule change) pinned and merged, not live; the WHLR
+"missed +5%" attribution was corrected (a BUY flip places nothing in flip-owned mode). B10 (#1050/#1051): six routine
+senders to a low topic, RED sub-alerts carved back to urgent on the operator's ruling, a 20:00 digest whose sha guards
+page on refusal; installed 11:51 ET. B11 (per-trip rebuilt-arm classification, option 3) sent to codex. Sub-$1 Webull
+100-share minimum: leave until stable. Close-out at 12:05 ET.
