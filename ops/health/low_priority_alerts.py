@@ -100,7 +100,7 @@ def digest_body(day: str, spool: Path) -> str:
 def send_digest(now: datetime | None = None) -> bool:
     now = (now or datetime.now(ET)).astimezone(ET)
     if (now.hour, now.minute) != (20, 0):
-        return False
+        return True
     spool = _spool()
     day = now.date().isoformat()
     lock = spool / ".digest.lock"
