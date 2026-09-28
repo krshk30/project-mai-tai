@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import signal
 import time
@@ -523,6 +524,10 @@ class SchwabV2BotService:
         ) and bool(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", False)
         )
+        # LEVELONE is a delta stream: trade records often omit an unchanged ask.
+        # Use only a recently received streamed ask for the pre-market cross.
+        self._eh_stream_ask_by_symbol: dict[str, tuple[float, int]] = {}
+        self._eh_stream_ask_max_age_ms = 10_000
         self._gap_hold_detect_seconds = max(
             0.001,
             float(
@@ -825,6 +830,7 @@ class SchwabV2BotService:
         self.streamer = SchwabV2Streamer(
             self.settings,
             on_chart_bar=self._handle_bar_from_streamer,
+            on_disconnect=self._clear_eh_stream_asks_on_disconnect,
             on_tick=self._stream_tick_callback(),
         )
         if self._eh_stream_cross_enabled and not bool(
@@ -3223,6 +3229,8 @@ class SchwabV2BotService:
         # ⛔ Captured HERE, before `self._watchlist` is reassigned below — computing it after the
         # reassignment yields the empty set and the B19 release silently never runs.
         departed_symbols = self._watchlist - selected
+        for sym in new_symbols | departed_symbols:
+            self._eh_stream_ask_by_symbol.pop(sym, None)
         # ⭐ Stamp WHEN we started watching each symbol. This is the reference
         # `_cap_reconstructed_segment` uses to decide whether an armed segment was observed LIVE or
         # merely reconstructed from warmup history — see that method for the full rationale.
@@ -4708,6 +4716,21 @@ class SchwabV2BotService:
         await self._emit_webull_fanout_legs()
 
     async def _handle_stream_tick(self, tick: SchwabTick) -> None:
+        if self._eh_stream_cross_enabled and tick.service == "LEVELONE_EQUITIES":
+            raw_ask = tick.raw.get("2")
+            if raw_ask is not None:
+                symbol = str(tick.symbol).upper()
+                try:
+                    ask = float(raw_ask)
+                except (TypeError, ValueError, OverflowError):
+                    self._eh_stream_ask_by_symbol.pop(symbol, None)
+                else:
+                    if math.isfinite(ask) and ask > 0:
+                        self._eh_stream_ask_by_symbol[symbol] = (
+                            ask, self.strategy._now_ms()
+                        )
+                    else:
+                        self._eh_stream_ask_by_symbol.pop(symbol, None)
         if (
             self._gap_hold_enabled
             and tick.kind == "trade"
@@ -4735,6 +4758,9 @@ class SchwabV2BotService:
             return self._handle_stream_tick
         return self.tick_writer.on_tick if self.tick_writer is not None else None
 
+    async def _clear_eh_stream_asks_on_disconnect(self) -> None:
+        self._eh_stream_ask_by_symbol.clear()
+
     def _offer_stream_trade_to_eh_rest(self, tick: SchwabTick) -> None:
         """PRE-MARKET ONLY. Hand one streamed print to the strategy's EH soft-rest cross check and
         emit what it returns through the SAME path a REST quote uses (`_maybe_emit`: entry window,
@@ -4747,12 +4773,19 @@ class SchwabV2BotService:
         queued_legs = self.strategy._pending_webull_fanout_intents
         queued_before = len(queued_legs)
         try:
-            trade_ms = int(tick.raw.get("35") or 0)
-            if trade_ms <= 0 or trade_ms != int(tick.event_ts_ms):
+            trade_ms = int(tick.event_ts_ms)
+            if trade_ms <= 0 or int(tick.raw.get("35") or 0) != trade_ms:
                 return
+            ask_entry = self._eh_stream_ask_by_symbol.get(str(tick.symbol).upper())
+            now_ms = self.strategy._now_ms()
+            ask = (
+                ask_entry[0]
+                if ask_entry is not None and 0 <= now_ms - ask_entry[1] <= self._eh_stream_ask_max_age_ms
+                else None
+            )
             draft = self.strategy.on_stream_trade(
                 str(tick.symbol).upper(), float(tick.price or 0.0), trade_ms,
-                ask_price=tick.raw.get("2"),
+                ask_price=ask,
             )
         except Exception:
             del queued_legs[queued_before:]

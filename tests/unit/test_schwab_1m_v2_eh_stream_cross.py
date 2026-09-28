@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,7 @@ import pytest
 
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.market_data.schwab_v2_streamer import SchwabTick, SchwabV2Streamer
+from project_mai_tai.services import schwab_1m_v2_bot as bot_module
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
@@ -148,6 +150,15 @@ def test_missing_or_out_of_band_ask_does_not_take_the_latch() -> None:
     assert st.resting_flip_ms == 0
 
 
+def test_ask_exactly_at_cap_is_eligible() -> None:
+    strat = SchwabV2Strategy(_settings())
+    st = _armed_clro(strat)
+    _at(strat, PRINT_2_RCV)
+    cap = st.resting_trigger * (1 + strat._resting_band_pct_value() / 100)
+    assert strat.on_stream_trade("CLRO", 5.5689, PRINT_2_TS, ask_price=cap) is not None
+    assert st.position_qty == 0
+
+
 # ------------------------------------------------------------------ scope: pre-market only
 @pytest.mark.parametrize(
     ("now_ms", "emits"),
@@ -273,6 +284,11 @@ def _trade(price: float, ts: int, *, ask: float = 5.57) -> SchwabTick:
                       {"3": price, "35": ts, "2": ask}, f"t{ts}", price=price)
 
 
+async def _send_levelone(bot: SchwabV2BotService, content: dict, received_ms: int) -> None:
+    for tick in SchwabV2Streamer._extract_level_one_ticks(content, received_ms):
+        await bot._handle_stream_tick(tick)
+
+
 @pytest.mark.asyncio
 async def test_levelone_recycled_last_without_field_35_never_enters(monkeypatch) -> None:
     """Exercise the real parser: a quote update can synthesize a trade at message time."""
@@ -291,18 +307,157 @@ async def test_levelone_recycled_last_without_field_35_never_enters(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_recycled_last_is_refused_even_with_a_fresh_remembered_ask(monkeypatch) -> None:
+    """Field 35 is required even when every other entry precondition is satisfied."""
+    bot, _written, emitted = _bot(monkeypatch)
+    st = _armed_clro(bot.strategy)
+    _at(bot.strategy, PRINT_2_RCV)
+    await _send_levelone(bot, {"0": "CLRO", "2": 5.55}, PRINT_2_RCV - 100)
+    assert bot._eh_stream_ask_by_symbol["CLRO"][0] == 5.55
+    # A LEVELONE quote delta can carry recycled field 3 without a new trade time.
+    await _send_levelone(bot, {"0": "CLRO", "1": 5.52, "3": 5.5689}, PRINT_2_RCV)
+    await asyncio.sleep(0)
+    assert emitted == [] and st.resting_flip_ms == 0
+
+
+@pytest.mark.asyncio
+async def test_trade_delta_uses_fresh_remembered_ask_once(monkeypatch) -> None:
+    bot, _written, emitted = _bot(monkeypatch)
+    st = _armed_clro(bot.strategy)
+    _at(bot.strategy, PRINT_2_RCV)
+    await _send_levelone(bot, {"0": "CLRO", "2": 5.55}, PRINT_2_RCV - 100)
+    # Production-shaped trade: field 2 is absent because the ask did not change.
+    trade = {"0": "CLRO", "1": 5.52, "3": 5.5689, "35": PRINT_2_TS}
+    await _send_levelone(bot, trade, PRINT_2_RCV)
+    await _send_levelone(bot, trade, PRINT_2_RCV)
+    await asyncio.sleep(0)
+    assert len(emitted) == 1 and st.resting_flip_ms == PRINT_2_RCV
+    assert st.position_qty == 0 and st.position_qty_held == 0
+
+
+@pytest.mark.asyncio
+async def test_remembered_ask_is_fresh_through_ten_seconds(monkeypatch) -> None:
+    bot, _written, emitted = _bot(monkeypatch)
+    _armed_clro(bot.strategy)
+    _at(bot.strategy, PRINT_2_RCV - 10_000)
+    await _send_levelone(bot, {"0": "CLRO", "2": 5.55}, PRINT_2_RCV - 10_000)
+    _at(bot.strategy, PRINT_2_RCV)
+    await _send_levelone(bot, {"0": "CLRO", "3": 5.5689, "35": PRINT_2_TS}, PRINT_2_RCV)
+    await asyncio.sleep(0)
+    assert len(emitted) == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_remembered_ask_logs_skip_without_latch(monkeypatch, caplog) -> None:
+    bot, _written, emitted = _bot(monkeypatch)
+    st = _armed_clro(bot.strategy)
+    _at(bot.strategy, PRINT_2_RCV - 10_001)
+    await _send_levelone(bot, {"0": "CLRO", "2": 5.55}, PRINT_2_RCV - 10_001)
+    _at(bot.strategy, PRINT_2_RCV)
+    with caplog.at_level(logging.INFO):
+        await _send_levelone(
+            bot, {"0": "CLRO", "3": 5.5689, "35": PRINT_2_TS}, PRINT_2_RCV
+        )
+    assert emitted == [] and st.resting_flip_ms == 0
+    assert "reason=no_fresh_ask" in caplog.text and "latch_taken=0" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_remembered_ask_past_cap_does_not_burn_latch(monkeypatch, caplog) -> None:
+    bot, _written, emitted = _bot(monkeypatch)
+    st = _armed_clro(bot.strategy)
+    _at(bot.strategy, PRINT_2_RCV)
+    await _send_levelone(bot, {"0": "CLRO", "2": 5.59}, PRINT_2_RCV - 100)
+    with caplog.at_level(logging.INFO):
+        await _send_levelone(
+            bot, {"0": "CLRO", "3": 5.5689, "35": PRINT_2_TS}, PRINT_2_RCV
+        )
+    assert emitted == [] and st.resting_flip_ms == 0
+    assert "reason=ask_past_band" in caplog.text and "latch_taken=0" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_timesale_print_never_reaches_the_rest(monkeypatch) -> None:
+    bot, _written, emitted = _bot(monkeypatch)
+    st = _armed_clro(bot.strategy)
+    _at(bot.strategy, PRINT_2_RCV)
+    tick = SchwabV2Streamer._extract_timesale_tick(
+        {"0": "CLRO", "1": PRINT_2_TS, "2": 5.5689}, PRINT_2_RCV
+    )
+    assert tick is not None
+    await bot._handle_stream_tick(tick)
+    await asyncio.sleep(0)
+    assert emitted == [] and st.resting_flip_ms == 0
+
+
+@pytest.mark.asyncio
+async def test_timesale_service_is_excluded_even_if_payload_has_field_35(monkeypatch) -> None:
+    """The service identity itself, not only LEVELONE's field shape, gates entry."""
+    bot, _written, emitted = _bot(monkeypatch)
+    st = _armed_clro(bot.strategy)
+    _at(bot.strategy, PRINT_2_RCV)
+    bot._eh_stream_ask_by_symbol["CLRO"] = (5.55, PRINT_2_RCV)
+    tick = SchwabTick(
+        "trade", "TIMESALE_EQUITY", "CLRO", PRINT_2_TS,
+        {"3": 5.5689, "35": PRINT_2_TS}, "cross-service", price=5.5689,
+    )
+    await bot._handle_stream_tick(tick)
+    await asyncio.sleep(0)
+    assert emitted == [] and st.resting_flip_ms == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_disconnect_clears_remembered_asks(monkeypatch, caplog) -> None:
+    bot, _written, emitted = _bot(monkeypatch)
+    st = _armed_clro(bot.strategy)
+    _at(bot.strategy, PRINT_2_RCV)
+    await _send_levelone(bot, {"0": "CLRO", "2": 5.55}, PRINT_2_RCV - 100)
+    assert "CLRO" in bot._eh_stream_ask_by_symbol
+    await bot._clear_eh_stream_asks_on_disconnect()
+    assert bot._eh_stream_ask_by_symbol == {}
+    with caplog.at_level(logging.INFO):
+        await _send_levelone(bot, {"0": "CLRO", "3": 5.5689, "35": PRINT_2_TS}, PRINT_2_RCV)
+    assert emitted == [] and st.resting_flip_ms == 0
+    assert "reason=no_fresh_ask" in caplog.text
+
+
+def test_watchlist_departure_and_readd_clear_remembered_ask(monkeypatch) -> None:
+    bot, _written, _emitted = _bot(monkeypatch)
+    bot._watchlist = {"CLRO"}
+    bot._eh_stream_ask_by_symbol["CLRO"] = (5.55, PRINT_2_RCV)
+    symbols = ["OTHER"]
+    monkeypatch.setattr(bot_module.StrategyStateSnapshotEvent, "model_validate_json", lambda _: object())
+    monkeypatch.setattr(bot, "_strategy_state_event_is_current", lambda _: True)
+    monkeypatch.setattr(bot, "_extract_confirmed_symbols", lambda _: symbols)
+    monkeypatch.setattr(bot, "_protected_symbols", lambda: set())
+    monkeypatch.setattr(bot, "_schwab_ineligible_symbols", lambda: set())
+    monkeypatch.setattr(bot, "_try_complete_boot_state_restoration", lambda *a, **k: None)
+    monkeypatch.setattr(bot, "_push_desired_symbols", lambda: None)
+    monkeypatch.setattr(bot.strategy, "release_and_drop_symbol", lambda _: None)
+    bot._apply_strategy_state_event({"data": "{}"}, max_watchlist=2)
+    assert "CLRO" not in bot._eh_stream_ask_by_symbol
+    # A still-subscribed held symbol can receive a quote while off-watchlist.
+    bot._eh_stream_ask_by_symbol["CLRO"] = (5.55, PRINT_2_RCV)
+    symbols[:] = ["CLRO"]
+    bot._apply_strategy_state_event({"data": "{}"}, max_watchlist=2)
+    assert "CLRO" not in bot._eh_stream_ask_by_symbol
+
+
+@pytest.mark.asyncio
 async def test_bot_routes_the_clro_print_and_still_captures_it(monkeypatch) -> None:
     bot, written, emitted = _bot(monkeypatch)
     _armed_clro(bot.strategy)
     _at(bot.strategy, PRINT_1_RCV)
-    await bot._handle_stream_tick(_trade(5.59, PRINT_1_TS, ask=5.59))
+    await _send_levelone(bot, {"0": "CLRO", "1": 5.55, "2": 5.59, "3": 5.59,
+                               "4": 100, "5": 500, "35": PRINT_1_TS}, PRINT_1_RCV)
     assert emitted == [] and bot.strategy._symbol_states["CLRO"].resting_flip_ms == 0
-    assert len(written) == 1                              # capture unchanged
+    assert len(written) == 2                              # trade + quote capture unchanged
     _at(bot.strategy, PRINT_2_RCV)
-    await bot._handle_stream_tick(_trade(5.5689, PRINT_2_TS))
+    await _send_levelone(bot, {"0": "CLRO", "1": 5.52, "2": 5.55, "3": 5.5689,
+                               "4": 5400, "9": 2, "35": PRINT_2_TS}, PRINT_2_RCV)
     await asyncio.sleep(0)
     assert len(emitted) == 1 and emitted[0].metadata["eh_cross_source"] == "stream_trade"
-    assert len(written) == 2
+    assert len(written) == 4
 
 
 @pytest.mark.asyncio
