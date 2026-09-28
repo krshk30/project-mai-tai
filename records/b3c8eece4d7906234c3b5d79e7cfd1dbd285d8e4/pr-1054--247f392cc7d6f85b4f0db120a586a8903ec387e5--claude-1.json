@@ -1,0 +1,9 @@
+{
+  "pr_number": 1054,
+  "range_base": "247f392cc7d6f85b4f0db120a586a8903ec387e5",
+  "range_head": "b3c8eece4d7906234c3b5d79e7cfd1dbd285d8e4",
+  "reviewed_at": "2026-09-28T14:05:08Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "EH1 pre-market stream cross, 2 codex-2 commits. Verified: 09:30 ET wall-clock refusal (RTH/post unchanged; never reaches _fanout_rth_resting_cross/_cw_v2_quote); field-35 trade-time guard; remembered LEVELONE ask (10 s, cleared on disconnect + watchlist churn) addressing 36.4% in-record-ask coverage measured on the box 09-28; ask>cap skip without latch; no_fresh_ask skip log; emit off the stream loop with 3 s timeout + session re-check; leg-queue suffix only. 43/43; RED on base 39F/4P. My mutations killed 16/18: 09:30 guard, ask>cap skip, ask>=cap, field-35, never-emit, inline await, emit session check, steal legs, TIMESALE, in-record-ask-only, ask freshness, age <= vs <, no clear on disconnect, no clear on churn, silent skip. Survivors: disconnect kwarg wiring in run() (bounded by the 10 s freshness) and the latch pre-check (orders equivalent, log noise only). Full tests/unit 47F/4372P vs base 47F/4329P, identical FAILED names. ruff clean."
+}
