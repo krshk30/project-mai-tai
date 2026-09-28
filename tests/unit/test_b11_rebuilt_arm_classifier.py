@@ -45,7 +45,7 @@ def test_same_timestamp_order_is_causal_for_readd_churn() -> None:
             _line(at, f"[V2-CW-ARM] GYGY armed bar_ts={bar + 1} trig=2.10"),
         ]
     )
-    assert [arm.classification for arm in arms] == ["LIVE", "REBUILT"]
+    assert [arm.classification for arm in arms] == ["LIVE", "UNKNOWN"]
 
 
 def test_ambiguous_direct_join_and_disarmed_place_are_unknown() -> None:
@@ -68,3 +68,19 @@ def test_age_boundaries_are_explicit() -> None:
     assert classify_age(at, _ms(at - timedelta(seconds=120)))[1] == "LIVE"
     assert classify_age(at, _ms(at - timedelta(seconds=300)))[1] == "UNKNOWN"
     assert classify_age(at, _ms(at - timedelta(seconds=301)))[1] == "REBUILT"
+
+
+def test_inferred_join_does_not_cross_session_or_seed_gap() -> None:
+    at = datetime(2026, 9, 25, 20, 0, tzinfo=UTC)
+    bar = _ms(at - timedelta(seconds=60))
+    arms, places = parse_events(
+        [
+            _line(at, f"[V2-CW-ARM] GYGY armed bar_ts={bar} trig=2.00"),
+            _line(at + timedelta(seconds=1), "[V2-DB-SEED-GAP] GYGY dropped 10 of 250 seed bars"),
+            _line(at + timedelta(seconds=2), "[V2-RESTING-PLACE] GYGY slot=first trigger=2.00"),
+            _line(at + timedelta(days=1), f"[V2-CW-ARM] GYGY armed bar_ts={bar + 86400000} trig=2.00"),
+            _line(at + timedelta(days=2), "[V2-RESTING-PLACE] GYGY slot=first trigger=2.00"),
+        ]
+    )
+    assert len(arms) == 2
+    assert [place.join_method for place in places] == ["UNKNOWN", "UNKNOWN"]

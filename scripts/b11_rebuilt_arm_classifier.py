@@ -13,9 +13,10 @@ import csv
 import gzip
 import re
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Iterator
+from zoneinfo import ZoneInfo
 
 
 _TS = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:[,.](\d{1,6}))?")
@@ -26,6 +27,8 @@ _SEED_CAP = re.compile(
     r"\[V2-CW-SEED-CAP\]\s+(\S+)\s+reconstructed.*arm_bar_ts=(\d+)"
 )
 _DB_SEED_GAP = re.compile(r"\[V2-DB-SEED-GAP\]\s+(\S+)\s+dropped\s+")
+_STREAMER_DRAIN = re.compile(r"\[V2-STREAMER-DRAIN\]\s+replayed\s+\d+\s+buffered bars for\s+(\S+)")
+_ET = ZoneInfo("America/New_York")
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,13 @@ def classify_age(emitted_at: datetime, bar_ts_ms: int) -> tuple[float, str]:
     return age_s, "UNKNOWN"
 
 
+def _session_key(at: datetime) -> str:
+    et = at.astimezone(_ET)
+    if et.hour < 4:
+        et -= timedelta(days=1)
+    return et.date().isoformat()
+
+
 def parse_events(lines: Iterable[str]) -> tuple[list[Arm], list[Placement]]:
     """Preserve causal read order, including equal-timestamp seed/cap lines."""
 
@@ -86,15 +96,20 @@ def parse_events(lines: Iterable[str]) -> tuple[list[Arm], list[Placement]]:
             raise ValueError(f"log lines out of time order at source line {line_number}")
         last_at = at
         if match := _DB_SEED_GAP.search(line):
-            seed_gap_at[match.group(1)] = at
+            symbol = match.group(1)
+            seed_gap_at[symbol] = at
+            active.pop(symbol, None)
+        if match := _STREAMER_DRAIN.search(line):
+            active.pop(match.group(1), None)
         if match := _ARM.search(line):
             symbol, raw_bar_ts = match.groups()
             bar_ts_ms = int(raw_bar_ts)
             age_s, label = classify_age(at, bar_ts_ms)
-            # A preceding same-second seed marker is evidence, not a text sort tie.
+            # A seed gap establishes churn, not proof that a near-age arm was replayed.
             seed_at = seed_gap_at.get(symbol)
             if seed_at is not None and 0 <= (at - seed_at).total_seconds() <= 1:
-                label = "REBUILT"
+                if label == "LIVE":
+                    label = "UNKNOWN"
             arms.append(Arm(symbol, at, bar_ts_ms, line_number, age_s, label))
             active[symbol] = len(arms) - 1
         if match := _SEED_CAP.search(line):
@@ -113,6 +128,8 @@ def parse_events(lines: Iterable[str]) -> tuple[list[Arm], list[Placement]]:
             symbol, slot = match.groups()
             index = active.get(symbol)
             arm = arms[index] if index is not None else None
+            if arm is not None and _session_key(arm.emitted_at) != _session_key(at):
+                arm = None
             places.append(
                 Placement(
                     symbol, at, slot, line_number,
