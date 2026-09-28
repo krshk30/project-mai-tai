@@ -231,6 +231,27 @@ async def test_clro_premarket_webull_and_schwab_both_refuse_past_half_percent(eh
 
 
 @pytest.mark.asyncio
+async def test_schwab_abandon_does_not_suppress_later_in_band_webull_leg(eh):
+    service = _oms(**{_FLAG: True}, oms_v2_eh_entry_enabled=True)
+    _set_quote(service, "CLRO", ask=5.56, bid=5.55)
+    primary = await service.process_trade_intent(
+        _v2_open(
+            _eh_resting_meta(resting_level="5.5284", entry_price="5.5284"),
+            symbol="CLRO",
+        )
+    )
+    assert primary[-1].payload.reason == "ASK_PAST_BAND"
+    assert _stored_order(service) is None
+
+    _set_quote(service, "CLRO", ask=5.55, bid=5.54)
+    mirror = await service.process_trade_intent(
+        _v2_open(_eh_webull_fanout_meta(level="5.5284"), symbol="CLRO")
+    )
+    assert mirror[-1].payload.status == "filled"
+    assert _stored_order(service).payload["limit_price"] == "5.55"
+
+
+@pytest.mark.asyncio
 async def test_dcoy_premarket_webull_and_schwab_use_same_ask_limit(eh):
     # DCOY 09-23: 4.32 ask is within the 4.3148 * 1.005 = 4.3364 cap.
     for metadata in (
