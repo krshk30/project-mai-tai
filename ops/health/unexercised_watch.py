@@ -29,8 +29,10 @@ import tempfile
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 NTFY_URL = "https://ntfy.sh/mai-tai-preopen-28806a5a97b7"
@@ -54,6 +56,13 @@ BLIND_DAYS_BEFORE_PAGE = 3
 # Reserved state key for the watcher's own bookkeeping. Never a condition name.
 WATCH_META_KEY = "__watch__"
 INC1_QUERY_META_KEY = "__query__"
+INC1_CLOSE_SOURCES = {
+    "oms_v2_webull_uncovered_share",
+    "schwab_opening_policy_reject",
+    "oms_webull_protect_handle_lost",
+}
+INC1_AUX_SOURCE = "oms_webull_protect_handle_lost"
+INC1_POSITION_FRESH_SECONDS = 120
 
 
 @dataclass
@@ -147,6 +156,16 @@ def _log_lines(path: Path, marker: str) -> list[str]:
 _ET = ZoneInfo("America/New_York")
 _SESSION_OPEN_MIN = 4 * 60        # 04:00 ET
 _SESSION_CLOSE_MIN = 20 * 60      # 20:00 ET
+
+
+def _in_pager_hours(now: datetime) -> bool:
+    local = now.astimezone(_ET)
+    minute = local.hour * 60 + local.minute
+    return local.weekday() < 5 and 7 * 60 <= minute <= 20 * 60
+
+
+def _watch_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _in_extended_session(at: datetime) -> bool:
@@ -348,7 +367,7 @@ def page(title: str, body: str, *, runner=subprocess.run) -> bool:
 
 
 def _inc1_open_incidents() -> list[dict[str, str]]:
-    """Read open incidents from the one proven uncovered-position paging route."""
+    """Read INC1 incidents and the separately tracked HDL1 close candidate."""
     rows = _psql(
         "select json_build_object("
         "'id', id::text, 'title', title, 'opened_at', opened_at, "
@@ -370,7 +389,7 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved',"
         "'oms_v2_confirmation_exit_reprotected','oms_v2_webull_uncovered_share',"
         "'schwab_opening_policy_reject','oco_exit_fill_unrecorded',"
-        "'webull_eh_ladder_unsold') "
+        "'webull_eh_ladder_unsold','oms_webull_protect_handle_lost') "
         "order by opened_at, id"
     )
     incidents: list[dict[str, str]] = []
@@ -382,13 +401,161 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
     return incidents
 
 
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _inc1_resolution_facts(incident: dict[str, str]) -> dict:
+    source = incident["source"]
+    account = incident.get("account", "") if source == "oms_v2_webull_uncovered_share" else "live:orb"
+    symbol = incident.get("symbol", "")
+    if not account or not symbol:
+        raise RuntimeError("incident has no account or symbol")
+    row_id = incident.get("managed_row_id", "")
+    rows = _psql(
+        "select json_build_object("
+        "'account', b.name, 'symbol', p.symbol, 'quantity', p.quantity::text, "
+        "'source_updated_at', p.source_updated_at, 'updated_at', p.updated_at, "
+        "'managed_row_status', m.status, 'managed_row_quantity', m.current_quantity, "
+        "'managed_row_account', m.broker_account_name, 'managed_row_symbol', m.symbol, "
+        "'open_managed_rows', (select count(*) from oms_managed_positions o "
+        "where o.broker_account_name = b.name and o.symbol = " + _sql_literal(symbol) +
+        " and o.status = 'open'))::text "
+        "from broker_accounts b "
+        "left join account_positions p on p.broker_account_id = b.id "
+        "and p.symbol = " + _sql_literal(symbol) + " "
+        "left join oms_managed_positions m on m.id::text = " + _sql_literal(row_id) + " "
+        "where b.name = " + _sql_literal(account)
+    )
+    if len(rows) != 1:
+        raise RuntimeError("broker account read absent or ambiguous")
+    facts = json.loads(rows[0])
+    if not isinstance(facts, dict):
+        raise RuntimeError("broker resolution facts malformed")
+    return facts
+
+
+def _inc1_resolution_decision(
+    incident: dict[str, str], facts: dict, now: datetime
+) -> tuple[str | None, str]:
+    source = incident.get("source", "")
+    if source not in INC1_CLOSE_SOURCES:
+        return None, "source_not_auto_closable"
+    expected_incident_account = (
+        "live:schwab_1m_v2" if source == "schwab_opening_policy_reject" else "live:orb"
+    )
+    if incident.get("account") != expected_incident_account:
+        return None, "incident_account_mismatched"
+    account = incident.get("account", "") if source == "oms_v2_webull_uncovered_share" else "live:orb"
+    symbol = incident.get("symbol", "")
+    if not account or not symbol or facts.get("account") != account or facts.get("symbol") != symbol:
+        return None, "broker_position_row_missing_or_mismatched"
+    try:
+        quantity = Decimal(str(facts["quantity"]))
+        source_at = datetime.fromisoformat(str(facts["source_updated_at"]))
+        updated_at = datetime.fromisoformat(str(facts["updated_at"]))
+        ages = ((now - stamp).total_seconds() for stamp in (source_at, updated_at))
+        if any(age < -5 or age > INC1_POSITION_FRESH_SECONDS for age in ages):
+            return None, "broker_position_read_stale"
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return None, "broker_position_read_unreadable"
+    if quantity != 0:
+        return None, "broker_position_still_held"
+    if source == "oms_v2_webull_uncovered_share":
+        if not incident.get("managed_row_id"):
+            return None, "managed_row_id_missing"
+        if (
+            facts.get("managed_row_status") != "closed"
+            or facts.get("managed_row_quantity") != 0
+            or facts.get("managed_row_account") != account
+            or facts.get("managed_row_symbol") != symbol
+        ):
+            return None, "exact_managed_row_not_closed"
+        return "exact_row_closed_and_broker_flat", "verified"
+    if source == "schwab_opening_policy_reject":
+        try:
+            session_date = date.fromisoformat(incident["session_date"])
+        except (KeyError, ValueError):
+            return None, "session_date_unreadable"
+        local = now.astimezone(_ET)
+        if local.date() < session_date or (
+            local.date() == session_date and local.hour * 60 + local.minute < 20 * 60
+        ):
+            return None, "session_not_ended"
+    if facts.get("open_managed_rows") != 0:
+        return None, "webull_managed_position_still_open_or_unreadable"
+    if source == "schwab_opening_policy_reject":
+        return "session_ended_no_webull_exposure", "verified"
+    if source == INC1_AUX_SOURCE:
+        return "hdl1_no_position_or_open_row", "verified"
+    return None, "source_not_auto_closable"
+
+
+def _inc1_commit_close(incident: dict[str, str], reason: str, now: datetime) -> bool:
+    """Recheck the broker and row predicates in the closing UPDATE, not only in Python."""
+    incident_id = str(UUID(incident["id"]))
+    source = incident["source"]
+    if source not in INC1_CLOSE_SOURCES:
+        raise ValueError("source not auto-closable")
+    expected_incident_account = (
+        "live:schwab_1m_v2" if source == "schwab_opening_policy_reject" else "live:orb"
+    )
+    if incident["account"] != expected_incident_account:
+        raise ValueError("incident account mismatched")
+    account = incident["account"] if source == "oms_v2_webull_uncovered_share" else "live:orb"
+    symbol = incident["symbol"]
+    at = _sql_literal(now.astimezone(UTC).isoformat()) + "::timestamptz"
+    if source == "oms_v2_webull_uncovered_share":
+        row_evidence = "exact_managed_row_closed_quantity_zero"
+        source_guard = (
+            "exists (select 1 from oms_managed_positions m where m.id::text = "
+            "i.payload->>'managed_row_id' and m.status = 'closed' and m.current_quantity = 0 "
+            "and m.broker_account_name = b.name and m.symbol = p.symbol)"
+        )
+    else:
+        row_evidence = "no_open_webull_managed_row"
+        source_guard = (
+            "not exists (select 1 from oms_managed_positions m where "
+            "m.broker_account_name = b.name and m.symbol = p.symbol and m.status = 'open')"
+        )
+    if source == "schwab_opening_policy_reject":
+        session_date = date.fromisoformat(incident["session_date"]).isoformat()
+        local = f"timezone('America/New_York', {at})"
+        source_guard += (
+            f" and (({local}::date > date '{session_date}') or "
+            f"({local}::date = date '{session_date}' and {local}::time >= time '20:00'))"
+        )
+    rows = _psql(
+        "update system_incidents i set status = 'closed', closed_at = now(), "
+        "payload = (i.payload::jsonb || jsonb_build_object('inc1_auto_close', "
+        "jsonb_build_object('reason', " + _sql_literal(reason) + ", 'checked_at_utc', "
+        + at + ", 'account', b.name, 'symbol', p.symbol, "
+        "'broker_quantity', p.quantity::text, 'broker_source_updated_at', p.source_updated_at, "
+        "'broker_updated_at', p.updated_at, 'managed_row_id', i.payload->>'managed_row_id', "
+        "'managed_row_evidence', " + _sql_literal(row_evidence) + ")))::json "
+        "from broker_accounts b join account_positions p on p.broker_account_id = b.id "
+        "where i.id = " + _sql_literal(incident_id) + "::uuid and i.status != 'closed' "
+        "and i.payload->>'source' = " + _sql_literal(source) + " "
+        "and i.payload->>'broker_account_name' = " + _sql_literal(incident["account"]) + " "
+        "and i.payload->>'symbol' = " + _sql_literal(symbol) + " "
+        "and b.name = " + _sql_literal(account) + " and p.symbol = " + _sql_literal(symbol) + " "
+        f"and p.quantity = 0 and p.source_updated_at between {at} "
+        f"- interval '{INC1_POSITION_FRESH_SECONDS} seconds' "
+        f"and {at} + interval '5 seconds' and p.updated_at between "
+        f"{at} - interval '{INC1_POSITION_FRESH_SECONDS} seconds' "
+        f"and {at} + interval '5 seconds' "
+        "and " + source_guard + " returning i.id::text"
+    )
+    return rows == [incident_id]
+
+
 def _run_inc1_pager_unlocked(
     *, state_path: Path, status_path: Path, no_page: bool, now: datetime
 ) -> int:
     """Page every open INC1 incident once, retrying until ntfy confirms delivery."""
     state, memory_lost = _load_state(state_path)
     try:
-        incidents = _inc1_open_incidents()
+        candidates = _inc1_open_incidents()
     except Exception as exc:  # noqa: BLE001 - a failed read is never an empty incident list
         detail = f"{type(exc).__name__}: {exc}"
         query_state = dict(state.get(INC1_QUERY_META_KEY, {}))
@@ -424,6 +591,44 @@ def _run_inc1_pager_unlocked(
         "detail": "",
         "delivered": False,
     }
+    incidents: list[dict[str, str]] = []
+    close_held: list[str] = []
+    closed_now = 0
+    aux_open = 0
+    for incident in candidates:
+        source = incident.get("source", "")
+        if source in INC1_CLOSE_SOURCES:
+            try:
+                facts = _inc1_resolution_facts(incident)
+                reason, detail = _inc1_resolution_decision(incident, facts, now)
+                if reason and not no_page and _inc1_commit_close(incident, reason, now):
+                    incident_id = incident["id"]
+                    state[incident_id] = {
+                        **state.get(incident_id, {}),
+                        **incident,
+                        "closed": True,
+                        "closed_at": now.isoformat(),
+                        "close_reason": reason,
+                    }
+                    closed_now += 1
+                    print(
+                        f"[INC1-CLOSE] id={incident_id} reason={reason} "
+                        f"account={facts['account']} symbol={facts['symbol']} "
+                        f"broker_quantity={facts['quantity']} "
+                        f"broker_source_updated_at={facts['source_updated_at']} "
+                        f"managed_row_id={incident.get('managed_row_id') or '-'}"
+                    )
+                    continue
+                if reason:
+                    detail = "dry_run_no_close" if no_page else "evidence_changed_before_close"
+                close_held.append(f"{incident['id']}:{detail}")
+            except Exception as exc:  # noqa: BLE001 - never close on unreadable evidence
+                close_held.append(f"{incident['id']}:COULD_NOT_TELL:{type(exc).__name__}:{exc}")
+        if source == INC1_AUX_SOURCE:
+            aux_open += 1
+        else:
+            incidents.append(incident)
+
     pending: list[tuple[str, str, str]] = []
     for incident in incidents:
         incident_id = incident["id"]
@@ -542,13 +747,15 @@ def _run_inc1_pager_unlocked(
     delivered_total = sum(
         bool(state.get(incident["id"], {}).get("delivered", False)) for incident in incidents
     )
-    verdict = "OPEN_UNCOVERED" if incidents else "NO_OPEN_INCIDENT"
+    verdict = "OPEN_UNCOVERED" if incidents else "OPEN_AUX_INCIDENT" if aux_open else "NO_OPEN_INCIDENT"
+    health = "COULD_NOT_TELL" if memory_lost else "GREEN" if not incidents and not aux_open else "OPEN"
     if memory_lost:
         verdict += "_STATE_REBUILT"
     line = (
         f"[INC1-PAGER] run_at={now.isoformat()} verdict={verdict} "
         f"open={len(incidents)} delivered={delivered_total} pending={len(incidents) - delivered_total} "
-        f"delivered_now={delivered_now}"
+        f"delivered_now={delivered_now} closed_now={closed_now} aux_open={aux_open} health={health} "
+        f"close_held={','.join(close_held) if close_held else '-'}"
     )
     status_path.write_text(line + "\n", encoding="utf-8")
     print(line)
@@ -620,14 +827,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--state")
     ap.add_argument("--status")
     ap.add_argument("--no-page", action="store_true", help="evaluate and write status, send nothing")
+    ap.add_argument("--cron", action="store_true", help="enforce the weekday 07:00-20:00 ET pager window")
     args = ap.parse_args(argv)
+
+    now = _watch_now()
+    if args.cron and not _in_pager_hours(now):
+        print(f"[WATCH-HOURS] run_at={now.isoformat()} verdict=OUT_OF_WINDOW")
+        return 0
 
     if args.inc1:
         return _run_inc1_pager(
             state_path=Path(args.state or INC1_STATE_PATH),
             status_path=Path(args.status or INC1_STATUS_PATH),
             no_page=args.no_page,
-            now=datetime.now(UTC),
+            now=now,
         )
 
     state_path = Path(args.state or STATE_PATH)
@@ -635,7 +848,6 @@ def main(argv: list[str] | None = None) -> int:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state, memory_lost = _load_state(state_path)
 
-    now = datetime.now(UTC)
     readings: list[Reading] = []
     pending: list[tuple[str, str, str, str]] = []   # (condition, kind, title, body)
     for name, fn in CONDITIONS.items():
