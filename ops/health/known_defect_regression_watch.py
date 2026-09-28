@@ -36,6 +36,8 @@ WEBULL_429_BURST_SECONDS = 60
 FRESH_SELL_MAX_BAR_AGE_SECONDS = 180
 LIQUIDITY_PULL_BARS = 3
 LIVE_ACCOUNTS = ("live:schwab_1m_v2", "live:orb")
+EXITDONE_REPEAT_PAGE_MINUTES = 15
+EXITDONE_PAGE_LIST_LIMIT = 8
 
 RECURRENCE = "RECURRENCE"
 GUARD_WORKING = "GUARD_WORKING"
@@ -88,6 +90,19 @@ class Reading:
     recurrence: int
     recurred: bool
     detail: str
+    instances: tuple[ExitInstance, ...] = ()
+
+
+@dataclass(frozen=True)
+class ExitInstance:
+    account: str
+    source_fill_id: str
+    symbol: str
+    fired_at: str
+
+    @property
+    def key(self) -> str:
+        return f"{self.account}:{self.source_fill_id}"
 
 
 @dataclass
@@ -287,10 +302,10 @@ _SESSION_ROLL_SYMBOLS = re.compile(
 _SEED_CENSUS = re.compile(r"\[V2-DB-SEED-GAP-CENSUS\] truncations=(\d+) of (\d+)")
 _BROKER_CENSUS_WEBULL = re.compile(r"live:orb: ok=(\d+) failed=(\d+) consecutive_now=(\d+)")
 _CONFIRMATION_FIRED = re.compile(
-    r"\[OMS-V2-CONFIRMATION-EXIT-FIRED\].*\bacct=([^ ]+)\s+fill_id=([^ ]+)"
+    r"\[OMS-V2-CONFIRMATION-EXIT-FIRED\]\s+sym=([^ ]+)\s+acct=([^ ]+)\s+fill_id=([^ ]+)"
 )
 _CONFIRMATION_REPROTECTED = re.compile(
-    r"\[OMS-V2-CONFIRMATION-EXIT-REPROTECTED\].*\bacct=([^ ]+)\s+fill_id=([^ ]+).*"
+    r"\[OMS-V2-CONFIRMATION-EXIT-REPROTECTED\]\s+sym=([^ ]+)\s+acct=([^ ]+)\s+fill_id=([^ ]+).*"
     r"\bprotected=1\b"
 )
 _ATR_SELL = re.compile(r"\[V2-ATR-PROBE\]\s+sym=([^ ]+)\s+ts_ms=(\d+).*\bflip=SELL\b")
@@ -348,6 +363,7 @@ def _reading(
     recurrence: int,
     detail: str,
     unknown: bool = False,
+    instances: tuple[ExitInstance, ...] = (),
 ) -> Reading:
     if recurrence > 0:
         verdict = RECURRENCE
@@ -359,7 +375,7 @@ def _reading(
         verdict = GUARD_WORKING
     else:
         verdict = OBSERVED_CLEAN
-    return Reading(key, verdict, evaluated, guard_working, recurrence, recurrence > 0, detail)
+    return Reading(key, verdict, evaluated, guard_working, recurrence, recurrence > 0, detail, instances)
 
 
 def evaluate_boot(lines: Sequence[TimedLine], *, now: datetime) -> Reading:
@@ -656,36 +672,81 @@ def evaluate_webull_429(lines: Sequence[TimedLine]) -> Reading:
 
 
 def evaluate_confirmation_exit_done(
-    lines: Sequence[TimedLine], metrics: Mapping[str, int], *, logs_readable: bool = True
+    lines: Sequence[TimedLine], metrics: Mapping[str, object], *, logs_readable: bool = True
 ) -> Reading:
     accounts = {
         "live:schwab_1m_v2": "schwab",
         "live:orb": "webull",
     }
-    fired = {account: set() for account in accounts}
-    reprotected = {account: set() for account in accounts}
+    fired: dict[str, dict[str, ExitInstance]] = {account: {} for account in accounts}
+    reprotected: dict[str, set[tuple[str, str]]] = {account: set() for account in accounts}
+    collided = False
+    malformed = False
     for line in lines:
+        fired_marker = "[OMS-V2-CONFIRMATION-EXIT-FIRED]" in line.text
+        reprotected_marker = "[OMS-V2-CONFIRMATION-EXIT-REPROTECTED]" in line.text
         if match := _CONFIRMATION_FIRED.search(line.text):
-            if match.group(1) in fired:
-                fired[match.group(1)].add(match.group(2))
+            symbol, account, source_fill_id = match.groups()
+            if source_fill_id == "-":
+                malformed = True
+            if account in fired:
+                prior = fired[account].get(source_fill_id)
+                if prior is not None and prior.symbol != symbol:
+                    collided = True
+                elif prior is None:
+                    fired[account][source_fill_id] = ExitInstance(
+                        account, source_fill_id, symbol, line.at.isoformat()
+                    )
+        elif fired_marker:
+            malformed = True
         if match := _CONFIRMATION_REPROTECTED.search(line.text):
-            if match.group(1) in reprotected:
-                reprotected[match.group(1)].add(match.group(2))
+            symbol, account, source_fill_id = match.groups()
+            if source_fill_id == "-":
+                malformed = True
+            if account in reprotected:
+                reprotected[account].add((symbol, source_fill_id))
+        elif reprotected_marker:
+            malformed = True
     sold = {
-        account: metrics[f"confirmation_exit_sold_orders_{suffix}"]
+        account: {
+            (item["symbol"], item["source_fill_id"])
+            for item in metrics[f"confirmation_exit_sold_pairs_{suffix}"]
+        }
         for account, suffix in accounts.items()
     }
-    gaps = {
-        account: max(0, len(fired[account]) - sold[account] - len(reprotected[account]))
+    if collided or malformed or not logs_readable or any(
+        metrics[f"confirmation_exit_unattributed_sold_{suffix}"] for suffix in accounts.values()
+    ):
+        return unknown_reading(
+            "EXITDONE1",
+            "confirmation exit IDs cannot be paired: malformed or colliding OMS marker, "
+            "unreadable logs, or sold order lacks confirmation_source_fill_id",
+        )
+    missing = {
+        account: {
+            source_fill_id for source_fill_id, instance in fired[account].items()
+            if (instance.symbol, source_fill_id) not in sold[account]
+            and (instance.symbol, source_fill_id) not in reprotected[account]
+        }
         for account in accounts
     }
     evaluated = sum(len(values) for values in fired.values())
-    recurrence = sum(gaps.values())
+    recurrence = sum(len(values) for values in missing.values())
     guard_working = max(0, evaluated - recurrence)
     detail = "; ".join(
-        f"{account}: fired={len(fired[account])} sold={sold[account]} "
-        f"reprotected={len(reprotected[account])} gap={gaps[account]}"
+        f"{account}: fired={len(fired[account])} sold={len(sold[account])} "
+        f"reprotected={len(reprotected[account])} gap={len(missing[account])}"
         for account in accounts
+    )
+    instances = tuple(
+        sorted(
+            (
+                fired[account][source_fill_id]
+                for account in accounts
+                for source_fill_id in missing[account]
+            ),
+            key=lambda item: (item.fired_at, item.key),
+        )
     )
     return _reading(
         "EXITDONE1",
@@ -693,7 +754,7 @@ def evaluate_confirmation_exit_done(
         guard_working=guard_working,
         recurrence=recurrence,
         detail=detail,
-        unknown=not logs_readable,
+        instances=instances,
     )
 
 
@@ -882,6 +943,12 @@ def validate_readings(readings: Sequence[Reading]) -> list[Reading]:
             raise RuntimeError(f"{row.key}.recurred disagrees with recurrence count")
         if (row.verdict == RECURRENCE) != row.recurred:
             raise RuntimeError(f"{row.key}.verdict disagrees with recurred")
+        if row.key == "EXITDONE1" and row.verdict == RECURRENCE:
+            keys = [instance.key for instance in row.instances]
+            if len(keys) != row.recurrence or len(set(keys)) != len(keys):
+                raise RuntimeError("EXITDONE1 recurrence requires unique per-exit IDs")
+        elif row.instances:
+            raise RuntimeError(f"{row.key} cannot carry per-exit IDs")
 
         mode = SPEC_BY_KEY[row.key].mode
         allowed = armed_verdicts if mode == "ARMED" else {mode}
@@ -959,7 +1026,8 @@ classified_reject_episodes AS (
     FROM reject_episodes e
 ),
 confirmation_exit_sold_orders AS (
-    SELECT DISTINCT bo.id, ba.name AS account
+    SELECT DISTINCT bo.id, ba.name AS account, bo.symbol,
+           ti.payload->'metadata'->>'confirmation_source_fill_id' AS source_fill_id
     FROM broker_orders bo
     JOIN trade_intents ti ON ti.id = bo.intent_id
     JOIN broker_accounts ba ON ba.id = bo.broker_account_id
@@ -1010,6 +1078,22 @@ counts AS (
        WHERE account='live:schwab_1m_v2')::int AS confirmation_exit_sold_orders_schwab,
       (SELECT count(*) FROM confirmation_exit_sold_orders
        WHERE account='live:orb')::int AS confirmation_exit_sold_orders_webull,
+      coalesce((SELECT jsonb_agg(DISTINCT jsonb_build_object(
+                    'symbol', symbol, 'source_fill_id', source_fill_id))
+                FROM confirmation_exit_sold_orders
+                WHERE account='live:schwab_1m_v2' AND source_fill_id IS NOT NULL),
+               '[]'::jsonb) AS confirmation_exit_sold_pairs_schwab,
+      coalesce((SELECT jsonb_agg(DISTINCT jsonb_build_object(
+                    'symbol', symbol, 'source_fill_id', source_fill_id))
+                FROM confirmation_exit_sold_orders
+                WHERE account='live:orb' AND source_fill_id IS NOT NULL),
+               '[]'::jsonb) AS confirmation_exit_sold_pairs_webull,
+      (SELECT count(*) FROM confirmation_exit_sold_orders
+       WHERE account='live:schwab_1m_v2' AND source_fill_id IS NULL)::int
+        AS confirmation_exit_unattributed_sold_schwab,
+      (SELECT count(*) FROM confirmation_exit_sold_orders
+       WHERE account='live:orb' AND source_fill_id IS NULL)::int
+        AS confirmation_exit_unattributed_sold_webull,
       (SELECT count(*) FROM owned WHERE account='live:schwab_1m_v2')::int
         AS owned_open_rows_schwab,
       (SELECT count(*) FROM owned WHERE account='live:orb')::int AS owned_open_rows_webull,
@@ -1039,6 +1123,10 @@ SELECT json_build_object(
     'late_close_reject_orders_webull', late_close_reject_orders_webull,
     'confirmation_exit_sold_orders_schwab', confirmation_exit_sold_orders_schwab,
     'confirmation_exit_sold_orders_webull', confirmation_exit_sold_orders_webull,
+    'confirmation_exit_sold_pairs_schwab', confirmation_exit_sold_pairs_schwab,
+    'confirmation_exit_sold_pairs_webull', confirmation_exit_sold_pairs_webull,
+    'confirmation_exit_unattributed_sold_schwab', confirmation_exit_unattributed_sold_schwab,
+    'confirmation_exit_unattributed_sold_webull', confirmation_exit_unattributed_sold_webull,
     'owned_open_rows_schwab', owned_open_rows_schwab,
     'owned_open_rows_webull', owned_open_rows_webull,
     'owned_fresh_rows_schwab', owned_fresh_rows_schwab,
@@ -1050,7 +1138,7 @@ ROLLBACK;
 """.replace(_LATE_CLOSE_GUARD_MAX_REJECTS_TOKEN, str(LATE_CLOSE_GUARD_MAX_REJECTS))
 
 
-def _query_database(since: datetime) -> dict[str, int]:
+def _query_database(since: datetime) -> dict[str, object]:
     command = [
         "sudo",
         "-n",
@@ -1088,6 +1176,10 @@ def _query_database(since: datetime) -> dict[str, int]:
         "late_close_reject_orders_webull",
         "confirmation_exit_sold_orders_schwab",
         "confirmation_exit_sold_orders_webull",
+        "confirmation_exit_sold_pairs_schwab",
+        "confirmation_exit_sold_pairs_webull",
+        "confirmation_exit_unattributed_sold_schwab",
+        "confirmation_exit_unattributed_sold_webull",
         "owned_open_rows_schwab",
         "owned_open_rows_webull",
         "owned_fresh_rows_schwab",
@@ -1095,8 +1187,19 @@ def _query_database(since: datetime) -> dict[str, int]:
         "virtual_zero_held_rows_schwab",
         "virtual_zero_held_rows_webull",
     }
+    list_keys = {"confirmation_exit_sold_pairs_schwab", "confirmation_exit_sold_pairs_webull"}
     if set(parsed) != expected or any(
-        type(parsed[key]) is not int or parsed[key] < 0 for key in expected
+        type(parsed[key]) is not int or parsed[key] < 0 for key in expected - list_keys
+    ) or any(
+        not isinstance(parsed[key], list)
+        or any(
+            not isinstance(value, dict)
+            or set(value) != {"symbol", "source_fill_id"}
+            or any(not isinstance(value[field], str) or not value[field]
+                   for field in ("symbol", "source_fill_id"))
+            for value in parsed[key]
+        )
+        for key in list_keys
     ):
         raise RuntimeError("database metric set or value types are invalid")
     return parsed
@@ -1294,6 +1397,92 @@ def render(readings: Sequence[Reading], *, now: datetime) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _exitdone_id_memory_valid(prior: Mapping[str, object]) -> bool:
+    delivered = prior.get("delivered_instance_ids", [])
+    pending = prior.get("pending_instances", {})
+    last_raw = prior.get("last_id_page_at")
+    try:
+        if last_raw is not None:
+            last_page = datetime.fromisoformat(last_raw)
+            if last_page.tzinfo is None:
+                return False
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(delivered, list)
+        and all(isinstance(value, str) and value for value in delivered)
+        and isinstance(pending, dict)
+        and isinstance(prior.get("session_seen_ids", []), list)
+        and all(isinstance(value, str) for value in prior.get("session_seen_ids", []))
+        and all(
+            isinstance(key, str)
+            and isinstance(value, dict)
+            and {"account", "source_fill_id", "symbol", "fired_at"} <= set(value)
+            and all(isinstance(value[field], str) for field in
+                    ("account", "source_fill_id", "symbol", "fired_at"))
+            and key == f"{value['account']}:{value['source_fill_id']}"
+            for key, value in pending.items()
+        )
+    )
+
+
+def _exitdone_state(
+    prior: Mapping[str, object], row: Reading, *, now: datetime, memory_lost: bool
+) -> tuple[dict[str, object], list[ExitInstance]]:
+    current = {instance.key: instance for instance in row.instances}
+    delivered = set(prior.get("delivered_instance_ids", []))
+    pending = dict(prior.get("pending_instances", {}))
+    pending = {key: value for key, value in pending.items() if key not in delivered}
+    suppress = bool(prior.get("suppress_until_clear", False)) or memory_lost
+    if row.verdict not in {RECURRENCE, COULD_NOT_TELL}:
+        suppress = False
+        pending.clear()
+
+    # Old state knows only that *some* recurrence was paged. Never replay its
+    # present IDs as new merely because the state schema has been upgraded.
+    if "delivered_instance_ids" not in prior and prior.get("alert_kind") == "recurrence":
+        if prior.get("delivered"):
+            delivered.update(current)
+            print(f"[KNOWN-DEFECT-ID-BASELINE] row=EXITDONE1 count={len(current)}")
+    if memory_lost:
+        delivered.update(current)
+        pending.clear()
+    elif not suppress:
+        for key, instance in current.items():
+            if key not in delivered:
+                pending[key] = asdict(instance)
+
+    scope = session_anchor(now).isoformat()
+    session_seen = set(prior.get("session_seen_ids", [])) if prior.get("session_scope") == scope else set()
+    session_seen.update(current)
+    last_raw = prior.get("last_id_page_at")
+    last_page = datetime.fromisoformat(last_raw) if isinstance(last_raw, str) else None
+    throttle_ok = (
+        last_page is None
+        or now - last_page >= timedelta(minutes=EXITDONE_REPEAT_PAGE_MINUTES)
+    )
+    pageable = (
+        [ExitInstance(**value) for value in pending.values()]
+        if row.verdict == RECURRENCE and not suppress and throttle_ok
+        else []
+    )
+    pageable.sort(key=lambda instance: (instance.fired_at, instance.key))
+    saved = {
+        **asdict(row),
+        "alert_kind": "recurrence" if row.verdict == RECURRENCE else
+        "could_not_tell" if row.verdict == COULD_NOT_TELL else "",
+        "delivered": bool(current) and set(current) <= delivered and not pending,
+        "delivered_instance_ids": sorted(delivered),
+        "pending_instances": pending,
+        "session_scope": scope,
+        "session_seen_ids": sorted(session_seen),
+        "last_id_page_at": last_raw,
+        "suppress_until_clear": suppress,
+        "last_run_at": now.isoformat(),
+    }
+    return saved, pageable
+
+
 def _run_watch(
     readings: Sequence[Reading],
     *,
@@ -1306,9 +1495,29 @@ def _run_watch(
     state_path.parent.mkdir(parents=True, exist_ok=True)
     status_path.parent.mkdir(parents=True, exist_ok=True)
     state, memory_lost = delivery._load_state(state_path)
+    prior_exit = state.get("EXITDONE1", {})
+    if "EXITDONE1" in state and (
+        not isinstance(prior_exit, dict) or not _exitdone_id_memory_valid(prior_exit)
+    ):
+        state, memory_lost = {}, True
     pending: list[Reading] = []
+    pending_exitdone: list[ExitInstance] = []
     for row in readings:
         prior = state.get(row.key, {}) if isinstance(state.get(row.key), dict) else {}
+        if row.key == "EXITDONE1":
+            saved, pageable = _exitdone_state(prior, row, now=now, memory_lost=memory_lost)
+            if row.verdict == COULD_NOT_TELL:
+                delivered_unknown = (
+                    bool(prior.get("delivered", False))
+                    if prior.get("alert_kind") == "could_not_tell" else False
+                )
+                saved["delivered"] = delivered_unknown or memory_lost
+                if not saved["delivered"] and not no_page:
+                    pending.append(row)
+            state[row.key] = saved
+            if not no_page:
+                pending_exitdone = pageable
+            continue
         alert_kind = (
             "recurrence"
             if row.verdict == RECURRENCE
@@ -1322,8 +1531,10 @@ def _run_watch(
             # We cannot know whether an existing condition was already announced. Bias to silence
             # and page STATE LOST instead; the condition re-arms only after its verdict clears.
             delivered = True
+        legacy_row_state = asdict(row)
+        legacy_row_state.pop("instances")
         state[row.key] = {
-            **asdict(row),
+            **legacy_row_state,
             "alert_kind": alert_kind,
             "delivered": delivered,
             "last_run_at": now.isoformat(),
@@ -1373,6 +1584,37 @@ def _run_watch(
         )
         if delivered_now:
             state[row.key]["delivered"] = True
+    if pending_exitdone and not memory_lost:
+        shown = pending_exitdone[-EXITDONE_PAGE_LIST_LIMIT:]
+        omitted = len(pending_exitdone) - len(shown)
+        lines = [
+            f"{item.symbol} {item.account} {item.fired_at} id={item.source_fill_id}"
+            for item in shown
+        ]
+        if omitted:
+            lines.insert(0, f"... {omitted} earlier new IDs omitted")
+        session_count = len(state["EXITDONE1"]["session_seen_ids"])
+        delivered_now = page_fn(
+            f"REGRESSION EXITDONE1 - {len(pending_exitdone)} new dropped exits",
+            "Known confirmation exits without an attributed sell or reprotection.\n"
+            f"session={state['EXITDONE1']['session_scope']} "
+            f"running_count={session_count} new_ids={len(pending_exitdone)}\n"
+            + "\n".join(lines),
+        )
+        print(
+            f"[KNOWN-DEFECT-PAGED] row=EXITDONE1 kind=recurrence "
+            f"delivered={int(delivered_now)} new_ids={len(pending_exitdone)}"
+        )
+        if delivered_now:
+            saved = state["EXITDONE1"]
+            delivered_ids = set(saved["delivered_instance_ids"])
+            pending_map = saved["pending_instances"]
+            for instance in pending_exitdone:
+                delivered_ids.add(instance.key)
+                pending_map.pop(instance.key, None)
+            saved["delivered_instance_ids"] = sorted(delivered_ids)
+            saved["delivered"] = not pending_map
+            saved["last_id_page_at"] = now.isoformat()
     delivery._write_state(state_path, state)
     return 2 if any(row.verdict in {RECURRENCE, COULD_NOT_TELL} for row in readings) else 0
 
