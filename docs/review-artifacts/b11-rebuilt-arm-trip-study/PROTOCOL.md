@@ -78,3 +78,38 @@ fragile. Missing bar/log/intent/fill evidence is a measured coverage gap, not
 a zero or a losing trade. A trip-list CSV must include row and intent IDs,
 account, symbol, arm and placement times, join method, class/subclass, era,
 fill IDs, VWAPs, and any exclusion reason for independent review.
+
+## Amendment 1: resting-buy provenance (2026-09-28, before outcome read)
+
+The operator chose the resting buy that produced the filled entry as the causal
+unit. The original ARM attribution above is superseded for entry
+classification, not silently reinterpreted: in flip-owned mode a first-slot
+rest may be placed and filled before `[V2-CW-ARM]` exists. Its later ARM cannot
+cause that earlier fill. The preliminary log/intent presence census found 95
+of 119 Schwab and 130 of 167 Webull filled first-slot intents since 09-01
+with `cw_arm_bar_ts=0`; all had `fanout_segment_id`. No per-trip returns or
+fill-derived outcomes were examined before this amendment.
+
+- Join each filled entry to its own resting-buy placement (`[V2-RESTING-PLACE]`
+  or `[V2-RESTING-EH-ARM]`) by intent/order identity and segment ID. A fan-out
+  pair is one opportunity with two separately labelled account legs. A later
+  ARM is corroborating context only, never the primary join for a first-slot
+  rest. If a unique causal placement cannot be established, classify UNKNOWN.
+- Trace that placement to the SHORT segment, its qualifying short bars, and
+  the trail line that set the resting trigger. Preserve log receive/write
+  order for same-timestamp seed, drain, add, trail, and placement events.
+  A matching symbol-day or a later ARM alone is insufficient.
+- LIVE requires positive evidence that every contributing short bar and trail
+  was observed in real time after that watch start, with no warmup, replay,
+  seed, or rehydration context. REBUILT applies when any contributing bar or
+  trail came from pre-watch history, DB seed, warmup, streamer drain/replay,
+  or restart/re-add rehydration. Missing coverage, ambiguous segment identity,
+  conflicting evidence, or unverifiable watch-start timing is UNKNOWN, never
+  binned by a timestamp heuristic alone. The earlier ARM-age thresholds remain
+  descriptive ARM metadata only, not the entry classifier.
+- Subclass a REBUILT rest as pre-watch flip/seed-capped or same-session re-add
+  only with causal watch-start and segment evidence; otherwise its subclass is
+  UNKNOWN. Preserve the preregistered fill-only outcomes, #993 and verified
+  #1049 production-activation splits, holdout, denominators at every stage,
+  median-first reporting, drop-one-by-name sensitivity, and unpooled legs.
+  WHLR 09-25 and GYGY re-add sequences remain ordering controls.
