@@ -15,6 +15,66 @@
 
 ---
 
+## 2026-09-28 — a CLRO miss became three fixes, the roles were reset, and one evening deploy
+
+**Morning.** Pre-open gate 9/9 at 06:50 ET. GAPHOLD's first live day passed: one `no_live_bar_this_session` skip
+at 07:00, then a real detect at 09:42:46 when CLRO resumed from a 5-minute LULD-shape pause (Massive: last print
+09:37:46.004, next 09:42:46.004). CLRO's 07:24 ATR flip was **missed**. The pre-market soft rest (trigger 5.5590)
+only sees 5 s REST quote polls, and the tape printed 5.59 at 07:24:58.121 and 5.5689 at 07:24:59.992.
+
+**The roles, reset.** claude-1 wrote the fix itself (#1053). The operator: "when I say send it to Codex, that
+means codex builds … you are the reviewer." #1053 was closed. Codex's review of it found three real defects:
+- a recycled last price could be read as a trade (field 35 missing);
+- a cap-abandoned first spike burned the one-shot latch, so CLRO would still have been missed;
+- the emit blocked the stream loop.
+
+Codex rebuilt the fix as **#1054**. claude-1 requested changes once: only 36.4% of pre-market LEVELONE trade
+records carry an ask, so ~64% of prints were silently skipped, and the field-35 guard mutation survived. Codex
+added a remembered 10 s ask and a skip log; claude-1 pinned it. The standing rule is now
+"codex builds, claude reviews".
+
+**Row 21 → #1055.** The same CLRO cross showed the brokers pricing differently. Schwab abandoned
+(cap 5.5560, +0.5%) while the Webull fan-out leg went through the reactive EH pricer (+1% +0.3% buffer) and
+filled at 5.56. A month's sweep: 30 pre-market crosses on 21 stocks, 4 with Schwab refused / Webull priced
+(BIAF +1.93, IPDN −1.44, CLRO −0.13, TNMG unfilled). The operator approved aligning Webull to 0.5%
+pre-market (#1055, pinned).
+
+**Old board validated** (28 rows, three parallel read-only checks):
+- 5 closed.
+- The "seven bare Schwab legs" were really Webull legs, 09-15..09-18, all exited.
+- Pass mark 2 of 5.
+- B11 had not started.
+- The operator dropped C5–C7 and closed C1/C4.
+- Live money is now B11, BAND1 and PAGEGAP.
+
+**Studies.**
+- The momentum cutoff was bucketed three ways: no clean gradient, and faded re-entries at 30–40% were the BEST
+  bucket (80% winners). The operator dropped it; 30% stays.
+- BAND1 (#1057): 0 of 12 candidates is a proven band-miss winner (CLRO max bid 5.78 < +5% 5.8338). The band is
+  unchanged.
+- B11: the causal unit was changed to the resting buy's provenance (first-slot fills precede the ARM in
+  flip-owned mode), committed at 17:56 before any outcome was read.
+- #1029 Momentum: the load census peaked at 3.48 (control plane top CPU), so the replay moves overnight with the
+  limit unchanged.
+
+**Live day.**
+- #1044 exercised: NAMI refused by the Schwab policy at 13:35; 7 later Schwab intents were dropped from the cache;
+  the Webull leg continued; EGG and NAMI paged.
+- CLRO traded twice: 08:51 Webull 5.56 → 5.5528 (confirmation exit), and 12:42 → 13:12 CW_FLIP on both legs
+  (Schwab −2.33%, Webull −1.98%).
+
+**Evening.** The operator GO'd `8f69a08a`.
+- codex-2 stalled 18:11–18:39 mid-prep (no box change), then OMS+strategy restarted 18:39:55 and v2 18:42:25.
+- claude-1 verified the SHA, flags, 0 NRestarts and 0 tracebacks at 18:43.
+- PAGEGAP #1056 was pinned by claude-1 and merged 18:45:57; the box went to `3141bbd5` (ops-only).
+- preopen.sh was re-pinned for 09-29.
+- BOOT-HOLD stays held off-session, so warmup/release/bar continuity are Tuesday checks.
+- New: the INC1 pager only runs 07:00–17:59 ET. The operator OK'd extending it to 20:00 (DST-proof) together
+  with the INC1 auto-close.
+
+**Close-out deferred.** freeze → manifest → promote waits for Tuesday morning so codex's overnight B11/replay
+journal lands in this batch. This PR carries the state now; the manifest is added before it merges.
+
 ## 2026-09-08 — a P1 found on the operator's own screens, the dashboard made truthful, and the paper-only rule reversed
 
 Batch `2026-09-08-rej1-fixed-and-reclaim-retired`, integrator `claude-1`, reviewer `codex-2`.
