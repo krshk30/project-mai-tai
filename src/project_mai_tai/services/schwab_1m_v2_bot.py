@@ -514,6 +514,14 @@ class SchwabV2BotService:
         self._gap_hold_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_gap_hold_enabled", False)
         )
+        # PRE-MARKET stream cross (CLRO 2026-09-28): route streamed trade prints to the strategy's
+        # EH soft-rest cross check. Needs the EH resting entry on; the prints themselves only arrive
+        # while tick capture is on (the streamer subscribes LEVELONE behind that flag).
+        self._eh_stream_cross_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_eh_resting_stream_cross_enabled", False)
+        ) and bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", False)
+        )
         self._gap_hold_detect_seconds = max(
             0.001,
             float(
@@ -815,12 +823,17 @@ class SchwabV2BotService:
         self.streamer = SchwabV2Streamer(
             self.settings,
             on_chart_bar=self._handle_bar_from_streamer,
-            on_tick=(
-                self._handle_stream_tick
-                if self._gap_hold_enabled
-                else (self.tick_writer.on_tick if self.tick_writer is not None else None)
-            ),
+            on_tick=self._stream_tick_callback(),
         )
+        if self._eh_stream_cross_enabled and not bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_tick_capture_enabled", False)
+        ):
+            logger.warning(
+                "[V2-RESTING-EH-STREAM-INERT] eh stream cross is ON but tick capture is OFF — the "
+                "streamer subscribes no LEVELONE prints, so the pre-market soft rest still sees "
+                "only the %ss REST quote poll",
+                getattr(self.settings, "strategy_schwab_1m_v2_quote_poll_interval_seconds", "?"),
+            )
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -4696,8 +4709,38 @@ class SchwabV2BotService:
                 int(tick.event_ts_ms),
                 self._gap_last_print_at_ms.get(normalized, 0),
             )
+        if self._eh_stream_cross_enabled and tick.kind == "trade" and tick.price:
+            await self._offer_stream_trade_to_eh_rest(tick)
         if self.tick_writer is not None:
             await self.tick_writer.on_tick(tick)
+
+    def _stream_tick_callback(self):  # type: ignore[no-untyped-def]
+        """The streamer's per-tick callback. GAPHOLD's print clock and the pre-market stream cross
+        both need the ticks, so either flag routes them through `_handle_stream_tick` (which still
+        hands every tick to the writer); with both off it is the writer alone, as before."""
+        if self._gap_hold_enabled or self._eh_stream_cross_enabled:
+            return self._handle_stream_tick
+        return self.tick_writer.on_tick if self.tick_writer is not None else None
+
+    async def _offer_stream_trade_to_eh_rest(self, tick: SchwabTick) -> None:
+        """PRE-MARKET ONLY. Hand one streamed print to the strategy's EH soft-rest cross check and
+        emit what it returns through the SAME path a REST quote uses (`_maybe_emit`: entry window,
+        ATR-only belt, EH routing; then the Webull fan-out legs). A failure here is logged and never
+        stops the tick from being captured."""
+        try:
+            draft = self.strategy.on_stream_trade(
+                str(tick.symbol).upper(), float(tick.price or 0.0), int(tick.event_ts_ms)
+            )
+        except Exception:
+            logger.exception("schwab_1m_v2 on_stream_trade failed for %s", tick.symbol)
+            return
+        if draft is None:
+            return
+        try:
+            await self._maybe_emit(draft)
+            await self._emit_webull_fanout_legs()
+        except Exception:
+            logger.exception("schwab_1m_v2 stream-cross emit failed for %s", tick.symbol)
 
     async def _evaluate_gap_holds(self, now: datetime | None = None) -> list[str]:
         if not self._gap_hold_enabled:

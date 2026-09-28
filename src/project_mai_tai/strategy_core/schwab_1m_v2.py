@@ -816,6 +816,15 @@ class SchwabV2Strategy:
         self._eh_resting_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", False)
         )
+        # PRE-MARKET stream cross (CLRO 2026-09-28): streamed prints also reach the EH soft-rest
+        # cross check, so a print shorter than the 5 s REST quote poll is not missed. See on_stream_trade.
+        self._eh_stream_cross_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_eh_resting_stream_cross_enabled", False)
+        )
+        self._eh_stream_print_max_age_ms = max(
+            1,
+            int(getattr(self.settings, "strategy_schwab_1m_v2_eh_resting_stream_print_max_age_ms", 3000)),
+        )
         self._pending_intents: list[TradeIntentDraft] = []
         # Dual-broker FAN-OUT (docs/per-broker-eligibility-webull-fallback-design.md). When ON, every
         # up-cross also produces a SECOND Webull MARKET-at-cross buy-open leg (reactive + EH-resting
@@ -3008,6 +3017,69 @@ class SchwabV2Strategy:
         # No-op (returns None) when hold-confirm is off — atr_hold_pending is never set.
         hold_draft = self._resolve_hold_on_bar(state)
         return eval_draft or hold_draft
+
+    def on_stream_trade(
+        self, symbol: str, price: float, event_ts_ms: int
+    ) -> TradeIntentDraft | None:
+        """PRE-MARKET ONLY: offer one STREAMED trade print to the EH soft-rest cross check.
+
+        CLRO 2026-09-28: the soft rest (trigger 5.559) was armed 07:20 ET; the tape printed 5.59 at
+        07:24:58.121 and 5.5689 at 07:24:59.992, and v2 RECEIVED the 5.59 update at 07:24:58.491 —
+        but `on_quote` is fed only by the 5 s REST quote poll, so the cross check never saw a price
+        at or above the trigger, the flip bar closed, and the rest was disarmed `flip_no_fill_soft_rest`.
+
+        This does NOT add a second trigger. It builds a print-only Quote and calls the SAME
+        `_eh_resting_cross_check`, so every guard is the one the REST path already obeys: EH flag +
+        CW-v2, boot hold, EH session, soft rest armed, flat, the one-shot `resting_flip_ms` latch
+        (a REST quote and a stream print can never both emit), the bar-age bound, px >= trigger. The
+        OMS still re-prices off its OWN fresh ask and abandons past the band cap (no chase).
+
+        ⛔ Scope, by operator ruling: before 09:30 ET only. It never calls `_cw_v2_quote` or
+        `_fanout_rth_resting_cross`, never writes `state.last_quote`, and never creates a symbol state
+        (a print for a name we are not watching is ignored)."""
+        if not (self._eh_stream_cross_enabled and self._eh_resting_enabled and self._cw_v2_enabled):
+            return None
+        state = self._symbol_states.get(str(symbol).upper())
+        if state is None or not state.resting_active:
+            return None
+        if self._gap_hold_enabled and state.gap_hold_active:
+            return None
+        now_ms = self._now_ms()
+        et = datetime.fromtimestamp(now_ms / 1000.0, UTC).astimezone(EASTERN_TZ)
+        if et.hour * 60 + et.minute >= 9 * 60 + 30:        # pre-market only; RTH/post never
+            return None
+        try:
+            px = float(price)
+            print_ms = int(event_ts_ms)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if px <= 0.0 or print_ms <= 0:
+            return None
+        age_ms = now_ms - print_ms
+        if age_ms > self._eh_stream_print_max_age_ms or age_ms < -self._eh_stream_print_max_age_ms:
+            return None
+        quote = Quote(
+            symbol=state.symbol,
+            bid_price=0.0,
+            ask_price=0.0,
+            last_price=px,
+            quote_time_ms=print_ms,
+            trade_time_ms=print_ms,
+        )
+        draft = self._eh_resting_cross_check(state, quote)
+        if draft is None:
+            return None
+        draft.metadata["eh_cross_source"] = "stream_trade"
+        draft.metadata["eh_cross_print_ts_ms"] = str(print_ms)
+        logger.info(
+            "[V2-RESTING-EH-CROSS-STREAM] %s px=%.4f print_ts_ms=%d print_age_ms=%d "
+            "-> cross taken from the streamed print (REST poll had not seen it)",
+            state.symbol,
+            px,
+            print_ms,
+            age_ms,
+        )
+        return draft
 
     def on_quote(self, symbol: str, quote: Quote) -> TradeIntentDraft | None:
         # v1.32 base: quotes update freshness but never fire entries. Hold-
