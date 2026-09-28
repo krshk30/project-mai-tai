@@ -1878,8 +1878,10 @@ class OmsRiskService:
 
             # P-B1: re-price the v2 REACTIVE entry as a marketable, max-cross-capped EH-LIMIT off the
             # OMS's own fresh ask (flag-gated OFF; no-op / byte-identical when off or non-v2-EH-reactive
-            # -> the bot's plain limit-at-ask stands). Mutually exclusive with the bracket above (that is
-            # RTH-only, this is EH-only). Returns a rejected event (abandon) which short-circuits before
+            # -> the bot's plain limit-at-ask stands). The pre-market eh_resting Webull mirror now
+            # joins its primary in P-B2; PM mirrors and genuinely reactive entries remain here.
+            # Mutually exclusive with the bracket above (that is RTH-only, this is EH-only).
+            # Returns a rejected event (abandon) which short-circuits before
             # any submit — the conservative "no fill beats a bad thin-pre-market fill" bias.
             eh_abandon_event = self._apply_v2_eh_reactive_entry(
                 session=session, event=event, intent=intent
@@ -1898,10 +1900,9 @@ class OmsRiskService:
                 await self._publish_order_event(eh_abandon_event)
                 return [*pre_submit_events, eh_abandon_event]
 
-            # P-B2: band-cap the v2 EH RESTING entry (the software-emulated marketable EH-LIMIT the strategy
-            # emits on the ATR up-cross, tagged eh_resting=true) off the OMS's own fresh ask -> min(ask,
-            # level*(1+band)); ASK past the band or no fresh ask -> ABANDON. Flag-gated OFF / EH-only /
-            # mutually exclusive with the reactive builder (that excludes resting_entry) and the RTH-only
+            # P-B2: band-cap the v2 EH RESTING primary and its pre-market Webull fan-out leg off the
+            # OMS's own fresh ask -> min(ask, level*(1+band)); ASK past the band or no fresh ask ->
+            # ABANDON. Flag-gated OFF / EH-only / mutually exclusive with the reactive builder and RTH-only
             # OCO bracket. No-op / byte-identical when off or not a v2 EH resting open.
             resting_eh_abandon_event = self._apply_v2_eh_resting_entry(
                 session=session, event=event, intent=intent
@@ -12600,11 +12601,25 @@ class OmsRiskService:
         )
         return None
 
+    def _v2_premarket_resting_fanout_applies(self, event: TradeIntentEvent) -> bool:
+        """Only Webull's pre-market mirror of a v2 EH software rest shares its primary's band."""
+        if not bool(getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", False)):
+            return False
+        p = event.payload
+        md = p.metadata
+        return (
+            p.strategy_code == "schwab_1m_v2"
+            and p.intent_type == "open"
+            and p.side == "buy"
+            and str(md.get("fanout_leg", "")) == "webull"
+            and str(md.get("fanout_source", "")) == "eh_resting"
+            and _extended_hours_session() == "AM"
+        )
+
     def _v2_eh_reactive_entry_applies(self, event: TradeIntentEvent) -> bool:
         """Gate for the EH reactive-entry marketable-limit enhancement (P-B1). Only the flag-on v2
-        REACTIVE buy-open in extended hours qualifies. The RESTING entry (metadata resting_entry=true)
-        is EXCLUDED — it is P-B2 and is drained on a path that never reaches this builder. Everything
-        else (RTH, non-v2, sells, closes, flag-off) is a no-op -> byte-identical."""
+        REACTIVE buy-open in extended hours qualifies. The resting primary and its pre-market Webull
+        mirror use P-B2 instead. The post-market mirror retains this reactive path unchanged."""
         if not bool(getattr(self.settings, "oms_v2_eh_entry_enabled", False)):
             return False
         p = event.payload
@@ -12614,6 +12629,7 @@ class OmsRiskService:
             and p.intent_type == "open"
             and p.side == "buy"
             and str(md.get("resting_entry", "")).lower() != "true"
+            and not self._v2_premarket_resting_fanout_applies(event)
             and not _is_regular_market_session()
         )
 
@@ -12730,22 +12746,28 @@ class OmsRiskService:
         return self._build_rejected_event(event, intent.id, reason=reason_code)
 
     def _band_capped_marketable_limit(
-        self, *, symbol: str, level: float, band_pct: float, max_age_ms: int
+        self, *, symbol: str, level: float, band_pct: float, max_age_ms: int,
+        exact_cap_boundary: bool = False,
     ) -> tuple[str, float, float] | tuple[None, str, str]:
         """ONE implementation of the band-capped marketable buy limit, shared by the EH resting
         entry (P-B2, deployed 2026-07) and the RTH reactive entry (2026-08-10).
 
         Returns `(limit_str, ask, cap)` to proceed, or `(None, reason_code, reason_detail)` to
-        abandon. ⛔ Extracted VERBATIM from `_apply_v2_eh_resting_entry` — the EH path's arithmetic,
-        rounding and abandon reasons are unchanged, and its tests still pin them. A second
-        implementation would be free to drift; **any RTH-vs-EH difference must be deliberate and
-        stated at the call site**, not an accident of copy-paste.
+        abandon. The legacy float arithmetic remains the default for RTH and PM callers.
+        `exact_cap_boundary` fixes the pre-market ask==cap float edge while retaining this single
+        pricing implementation for both resting legs.
         """
-        cap = level * (1.0 + band_pct / 100.0)
+        # Pre-market rests compare decimal quotes against a decimal cap so ask == cap is admitted.
+        # Keep the legacy float comparison for RTH and PM callers, whose behavior is out of scope.
+        cap_decimal = (
+            Decimal(str(level)) * (Decimal("1") + Decimal(str(band_pct)) / Decimal("100"))
+            if exact_cap_boundary else None
+        )
+        cap = float(cap_decimal) if cap_decimal is not None else level * (1.0 + band_pct / 100.0)
         ask = self._fresh_ask(symbol, max_age_ms)
         if ask is None:
             return (None, "NO_FRESH_QUOTE", f"no fresh ask within {max_age_ms}ms for {symbol}")
-        if ask > cap:
+        if (Decimal(str(ask)) > cap_decimal if cap_decimal is not None else ask > cap):
             # The ask has gapped past the band -> prefer NO fill to chasing (no-chase).
             return (None, "ASK_PAST_BAND",
                     f"ask {ask:.4f} past band cap {cap:.4f} (level {level:.4f} +{band_pct}%) "
@@ -12757,7 +12779,7 @@ class OmsRiskService:
         # do NOT read it as the price cap: a mutation deleting it leaves every test green, while
         # deleting the ASK_PAST_BAND abandon fails 3 and widening the band fails 6. **Mutate the
         # abandon, not the min, when checking that the ceiling is still protected.**
-        limit = min(Decimal(str(ask)), Decimal(str(cap)))
+        limit = min(Decimal(str(ask)), cap_decimal if cap_decimal is not None else Decimal(str(cap)))
         # ROUND_DOWN so tick-alignment can never push the limit back above the band cap.
         return (format(limit.quantize(tick, rounding=ROUND_DOWN), "f"), ask, cap)
 
@@ -12973,11 +12995,11 @@ class OmsRiskService:
         return None
 
     def _v2_eh_resting_entry_applies(self, event: TradeIntentEvent) -> bool:
-        """Gate for the EH RESTING-entry band-cap re-price (P-B2). Only the flag-on v2 EH resting open
-        (metadata eh_resting=true) qualifies. The strategy software-emulates the resting cross in EH and
-        emits a MARKETABLE open tagged eh_resting; this builder re-prices it off the OMS's OWN fresh ask
-        and band-caps it. RTH / flag-off / non-v2 / the reactive entry / the RTH broker STOP_LIMIT are all
-        no-ops -> byte-identical. Shares one env switch with the strategy (like confirmed_window_enabled)."""
+        """Band-cap the EH resting primary and its pre-market-only Webull fan-out mirror.
+
+        The mirror has fanout_source=eh_resting but no eh_resting tag. Post-market fan-out and
+        genuinely reactive EH opens keep their existing route; RTH never enters this pricer.
+        """
         if not bool(getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", False)):
             return False
         p = event.payload
@@ -12986,7 +13008,10 @@ class OmsRiskService:
             p.strategy_code == "schwab_1m_v2"
             and p.intent_type == "open"
             and p.side == "buy"
-            and str(md.get("eh_resting", "")).lower() == "true"
+            and (
+                str(md.get("eh_resting", "")).lower() == "true"
+                or self._v2_premarket_resting_fanout_applies(event)
+            )
             and not _is_regular_market_session()
         )
 
@@ -13035,12 +13060,11 @@ class OmsRiskService:
         except (KeyError, TypeError, ValueError):
             band_pct = float(getattr(self.settings, "oms_v2_eh_resting_entry_band_pct", 0.5))
         max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
-        # ⛔ Arithmetic EXTRACTED to `_band_capped_marketable_limit` (2026-08-10) so the RTH reactive
-        # limit shares ONE implementation with this one. Behaviour here is unchanged — same cap, same
-        # ask, same ROUND_DOWN tick alignment, same two abandon reasons — and this path's tests still
-        # pin it. Reuse beats a second implementation that is free to drift.
+        # The RTH reactive limit shares this helper. Only the AM resting call uses decimal cap
+        # comparison, so an ask exactly at the band boundary is not lost to float rounding.
         limit_s, ask, cap = self._band_capped_marketable_limit(
-            symbol=symbol, level=level, band_pct=band_pct, max_age_ms=max_age_ms
+            symbol=symbol, level=level, band_pct=band_pct, max_age_ms=max_age_ms,
+            exact_cap_boundary=session_code == "AM",
         )
         if limit_s is None:
             reason_code, reason_detail = ask, cap
