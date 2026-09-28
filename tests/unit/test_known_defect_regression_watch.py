@@ -44,7 +44,7 @@ def reading(key: str, verdict: str) -> object:
     )
 
 
-def database_metrics(**overrides: int) -> dict[str, int]:
+def database_metrics(**overrides: object) -> dict[str, object]:
     result = {
         "managed_exit_orders_schwab": 0,
         "managed_exit_orders_webull": 0,
@@ -58,6 +58,10 @@ def database_metrics(**overrides: int) -> dict[str, int]:
         "late_close_reject_orders_webull": 0,
         "confirmation_exit_sold_orders_schwab": 0,
         "confirmation_exit_sold_orders_webull": 0,
+        "confirmation_exit_sold_pairs_schwab": [],
+        "confirmation_exit_sold_pairs_webull": [],
+        "confirmation_exit_unattributed_sold_schwab": 0,
+        "confirmation_exit_unattributed_sold_webull": 0,
         "owned_open_rows_schwab": 0,
         "owned_open_rows_webull": 0,
         "owned_fresh_rows_schwab": 0,
@@ -623,11 +627,313 @@ def test_exitdone_counts_real_sell_fills_and_explicit_reprotection() -> None:
                 "fill_id=protected protected=1 reason=close_refused missing_legs=target,stop",
             ),
         ),
-        database_metrics(confirmation_exit_sold_orders_webull=1),
+        database_metrics(
+            confirmation_exit_sold_orders_webull=1,
+            confirmation_exit_sold_pairs_webull=[
+                {"symbol": "SOLD", "source_fill_id": "sold"}
+            ],
+        ),
     )
 
     assert result.verdict == watch.GUARD_WORKING
     assert (result.evaluated, result.guard_working, result.recurrence) == (2, 2, 0)
+
+
+def _exitdone_instance(source_fill_id: str, symbol: str, at: datetime) -> object:
+    return watch.ExitInstance("live:orb", source_fill_id, symbol, at.isoformat())
+
+
+def _exitdone_reading(*instances: object) -> object:
+    return watch.Reading(
+        "EXITDONE1",
+        watch.RECURRENCE if instances else watch.GUARD_WORKING,
+        len(instances) or 1,
+        0 if instances else 1,
+        len(instances),
+        bool(instances),
+        "exact fired-minus-sold-minus-reprotected IDs",
+        tuple(instances),
+    )
+
+
+def test_exitdone_0921_pairs_exact_webull_ids_not_an_aggregate_sell_count() -> None:
+    at = datetime(2026, 9, 21, 14, 18, tzinfo=UTC)
+    fired = [
+        ("GLND", "24a85e79-83d5-4c26-abf6-72d33a5c555b"),
+        ("NCPL", "9957bbee-54dc-49b2-8419-368fb35fe5d5"),
+        ("GRML", "7196cfa4-89de-4b23-8491-5a26a3d5fa26"),
+        ("NCPL", "a3908d6b-3fba-4d36-9c04-107f047cc9ac"),
+        ("GLND", "373c60d6-7c80-416a-a405-9e8dc40bb1d2"),
+        ("NCPL", "04438ac4-3071-49d4-bddc-f31155f4b482"),
+    ]
+    evidence = [
+        watch.TimedLine(
+            at + timedelta(minutes=index),
+            "[OMS-V2-CONFIRMATION-EXIT-FIRED] "
+            f"sym={symbol} acct=live:orb fill_id={fill_id} "
+            "status=PENDING_EXECUTABLE_BID",
+        )
+        for index, (symbol, fill_id) in enumerate(fired)
+    ]
+    evidence.append(
+        watch.TimedLine(
+            at + timedelta(minutes=7),
+            "[OMS-V2-CONFIRMATION-EXIT-REPROTECTED] sym=NCPL acct=live:orb "
+            f"fill_id={fired[1][1]} protected=1 reason=release_unanswerable",
+        )
+    )
+    result = watch.evaluate_confirmation_exit_done(
+        evidence,
+        database_metrics(
+            confirmation_exit_sold_orders_webull=1,
+            confirmation_exit_sold_pairs_webull=[
+                {"symbol": fired[5][0], "source_fill_id": fired[5][1]}
+            ],
+        ),
+    )
+    assert result.verdict == watch.RECURRENCE
+    assert result.recurrence == 4
+    assert {item.source_fill_id for item in result.instances} == {
+        fired[index][1] for index in (0, 2, 3, 4)
+    }
+
+
+def test_exitdone_unattributed_sell_is_unknown_not_a_fabricated_missing_id() -> None:
+    result = watch.evaluate_confirmation_exit_done(
+        [
+            watch.TimedLine(
+                datetime(2026, 9, 21, 14, 18, tzinfo=UTC),
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=GLND acct=live:orb fill_id=id-a",
+            )
+        ],
+        database_metrics(confirmation_exit_unattributed_sold_webull=1),
+    )
+    assert result.verdict == watch.COULD_NOT_TELL
+    assert result.instances == ()
+
+
+def test_exitdone_wrong_symbol_sell_with_same_source_id_does_not_clear_gap() -> None:
+    at = datetime(2026, 9, 21, 14, 18, tzinfo=UTC)
+    result = watch.evaluate_confirmation_exit_done(
+        [
+            watch.TimedLine(
+                at,
+                "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=GLND acct=live:orb fill_id=id-a",
+            )
+        ],
+        database_metrics(
+            confirmation_exit_sold_orders_webull=1,
+            confirmation_exit_sold_pairs_webull=[
+                {"symbol": "NCPL", "source_fill_id": "id-a"}
+            ],
+        ),
+    )
+    assert result.verdict == watch.RECURRENCE
+    assert [item.symbol for item in result.instances] == ["GLND"]
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=GLND acct=live:orb status=PENDING",
+        "[OMS-V2-CONFIRMATION-EXIT-REPROTECTED] sym=GLND acct=live:orb protected=1",
+        "[OMS-V2-CONFIRMATION-EXIT-FIRED] sym=GLND acct=live:orb fill_id=-",
+    ],
+)
+def test_exitdone_malformed_id_marker_is_unknown(marker: str) -> None:
+    row = watch.evaluate_confirmation_exit_done(
+        [watch.TimedLine(datetime(2026, 9, 21, 14, 18, tzinfo=UTC), marker)],
+        database_metrics(),
+    )
+    assert row.verdict == watch.COULD_NOT_TELL
+    assert row.instances == ()
+
+
+def test_exitdone_0921_four_new_ids_page_across_the_session(tmp_path) -> None:
+    state = tmp_path / "state.json"
+    status = tmp_path / "STATUS.txt"
+    times = [
+        datetime(2026, 9, 21, 14, 20, tzinfo=UTC),
+        datetime(2026, 9, 21, 14, 40, tzinfo=UTC),
+        datetime(2026, 9, 21, 18, 0, tzinfo=UTC),
+        datetime(2026, 9, 21, 18, 25, tzinfo=UTC),
+    ]
+    instances = [
+        _exitdone_instance("24a85e79-83d5-4c26-abf6-72d33a5c555b", "GLND", times[0]),
+        _exitdone_instance("7196cfa4-89de-4b23-8491-5a26a3d5fa26", "GRML", times[1]),
+        _exitdone_instance("a3908d6b-3fba-4d36-9c04-107f047cc9ac", "NCPL", times[2]),
+        _exitdone_instance("373c60d6-7c80-416a-a405-9e8dc40bb1d2", "GLND", times[3]),
+    ]
+    pages: list[tuple[str, str]] = []
+    for index, now in enumerate(times):
+        watch._run_watch(
+            [_exitdone_reading(*instances[: index + 1])],
+            now=now,
+            state_path=state,
+            status_path=status,
+            no_page=False,
+            page_fn=lambda title, body: pages.append((title, body)) or True,
+        )
+    assert len(pages) == 4
+    for index, (_, body) in enumerate(pages):
+        assert f"running_count={index + 1}" in body
+        assert instances[index].source_fill_id in body
+        assert instances[index].symbol in body
+        assert instances[index].account in body
+    saved = watch.json.loads(state.read_text())["EXITDONE1"]
+    assert len(saved["delivered_instance_ids"]) == 4
+
+
+def test_exitdone_flat_count_new_id_pages_after_throttle_without_repeating_old_id(tmp_path) -> None:
+    state = tmp_path / "state.json"
+    status = tmp_path / "STATUS.txt"
+    at = datetime(2026, 9, 21, 14, 20, tzinfo=UTC)
+    old = _exitdone_instance("old-fill", "GLND", at)
+    new = _exitdone_instance("new-fill", "GRML", at + timedelta(minutes=5))
+    pages: list[str] = []
+    for now, instance, expected_pages in (
+        (at, old, 1),
+        (at + timedelta(minutes=5), new, 1),
+        (at + timedelta(minutes=16), new, 2),
+        (at + timedelta(minutes=32), new, 2),
+    ):
+        watch._run_watch(
+            [_exitdone_reading(instance)], now=now,
+            state_path=state, status_path=status, no_page=False,
+            page_fn=lambda _title, body: pages.append(body) or True,
+        )
+        assert len(pages) == expected_pages
+    assert len(pages) == 2
+    assert "id=old-fill" in pages[0]
+    assert "id=new-fill" in pages[1]
+    assert "running_count=2" in pages[1]
+
+
+def test_exitdone_batches_new_ids_and_does_not_replay_on_restart(tmp_path) -> None:
+    state = tmp_path / "state.json"
+    status = tmp_path / "STATUS.txt"
+    at = datetime(2026, 9, 21, 14, 20, tzinfo=UTC)
+    instances = tuple(_exitdone_instance(f"id-{index}", f"S{index}", at) for index in range(10))
+    pages: list[str] = []
+    for now in (at, at + timedelta(minutes=20)):
+        watch._run_watch(
+            [_exitdone_reading(*instances)], now=now,
+            state_path=state, status_path=status, no_page=False,
+            page_fn=lambda _title, body: pages.append(body) or True,
+        )
+    assert len(pages) == 1
+    assert "new_ids=10" in pages[0]
+    assert "... 2 earlier new IDs omitted" in pages[0]
+    assert "id=id-9" in pages[0]
+    assert "id=id-0" not in pages[0]
+    assert len(watch.json.loads(state.read_text())["EXITDONE1"]["delivered_instance_ids"]) == 10
+
+
+def test_exitdone_lost_state_suppresses_ids_until_clean_then_rearms(tmp_path) -> None:
+    state = tmp_path / "state.json"
+    status = tmp_path / "STATUS.txt"
+    state.write_text("{truncated", encoding="utf-8")
+    at = datetime(2026, 9, 21, 14, 20, tzinfo=UTC)
+    first = _exitdone_instance("first", "GLND", at)
+    second = _exitdone_instance("second", "GRML", at + timedelta(minutes=20))
+    pages: list[str] = []
+    for now, row in (
+        (at, _exitdone_reading(first)),
+        (at + timedelta(minutes=20), _exitdone_reading(first, second)),
+        (at + timedelta(minutes=21), _exitdone_reading()),
+        (at + timedelta(minutes=40), _exitdone_reading(second)),
+    ):
+        watch._run_watch(
+            [row], now=now, state_path=state, status_path=status, no_page=False,
+            page_fn=lambda title, _body: pages.append(title) or True,
+        )
+    assert pages == [
+        "STATE LOST - known defect regression watch",
+        "REGRESSION EXITDONE1 - 1 new dropped exits",
+    ]
+
+
+def test_exitdone_migrates_legacy_delivered_state_without_replaying_old_ids(tmp_path) -> None:
+    state = tmp_path / "state.json"
+    status = tmp_path / "STATUS.txt"
+    at = datetime(2026, 9, 21, 14, 20, tzinfo=UTC)
+    old = _exitdone_instance("old-fill", "GLND", at)
+    new = _exitdone_instance("new-fill", "GRML", at + timedelta(minutes=20))
+    state.write_text(
+        watch.json.dumps({
+            "EXITDONE1": {
+                "alert_kind": "recurrence", "delivered": True,
+                "recurrence": 1, "last_run_at": at.isoformat(),
+            }
+        }),
+        encoding="utf-8",
+    )
+    pages: list[str] = []
+    for now, row in (
+        (at, _exitdone_reading(old)),
+        (at + timedelta(minutes=20), _exitdone_reading(old, new)),
+    ):
+        watch._run_watch(
+            [row], now=now, state_path=state, status_path=status, no_page=False,
+            page_fn=lambda title, _body: pages.append(title) or True,
+        )
+    assert pages == ["REGRESSION EXITDONE1 - 1 new dropped exits"]
+    saved = watch.json.loads(state.read_text())["EXITDONE1"]
+    assert saved["delivered_instance_ids"] == ["live:orb:new-fill", "live:orb:old-fill"]
+
+
+def test_exitdone_malformed_id_memory_pages_state_loss_not_historical_ids(tmp_path) -> None:
+    state = tmp_path / "state.json"
+    status = tmp_path / "STATUS.txt"
+    at = datetime(2026, 9, 21, 14, 20, tzinfo=UTC)
+    state.write_text(
+        watch.json.dumps({"EXITDONE1": {"delivered_instance_ids": "bad"}}),
+        encoding="utf-8",
+    )
+    pages: list[str] = []
+    watch._run_watch(
+        [_exitdone_reading(_exitdone_instance("old-fill", "GLND", at))],
+        now=at, state_path=state, status_path=status, no_page=False,
+        page_fn=lambda title, _body: pages.append(title) or True,
+    )
+    assert pages == ["STATE LOST - known defect regression watch"]
+
+
+def test_exitdone_delivered_id_stays_silent_after_session_roll(tmp_path) -> None:
+    state = tmp_path / "state.json"
+    status = tmp_path / "STATUS.txt"
+    at = datetime(2026, 9, 21, 14, 20, tzinfo=UTC)
+    instance = _exitdone_instance("same-fill", "GLND", at)
+    pages: list[str] = []
+    for now in (at, at + timedelta(days=1)):
+        watch._run_watch(
+            [_exitdone_reading(instance)], now=now,
+            state_path=state, status_path=status, no_page=False,
+            page_fn=lambda title, _body: pages.append(title) or True,
+        )
+    assert pages == ["REGRESSION EXITDONE1 - 1 new dropped exits"]
+
+
+def test_exitdone_could_not_tell_still_pages_once_then_rearms_on_evidence(tmp_path) -> None:
+    state = tmp_path / "state.json"
+    status = tmp_path / "STATUS.txt"
+    at = datetime(2026, 9, 21, 14, 20, tzinfo=UTC)
+    unknown = watch.unknown_reading("EXITDONE1", "OMS log unreadable")
+    instance = _exitdone_instance("new-fill", "GLND", at + timedelta(minutes=20))
+    pages: list[str] = []
+    for now, row in (
+        (at, unknown),
+        (at + timedelta(minutes=5), unknown),
+        (at + timedelta(minutes=20), _exitdone_reading(instance)),
+    ):
+        watch._run_watch(
+            [row], now=now, state_path=state, status_path=status, no_page=False,
+            page_fn=lambda title, _body: pages.append(title) or True,
+        )
+    assert pages == [
+        "CANNOT TELL EXITDONE1 - regression watch is blind",
+        "REGRESSION EXITDONE1 - 1 new dropped exits",
+    ]
 
 
 def test_confirmed_exit_release_markers_stay_bound_to_their_account() -> None:
@@ -1106,6 +1412,7 @@ def test_state_is_durable_before_page_is_attempted(tmp_path, monkeypatch) -> Non
         no_page=False,
         page_fn=assert_state_exists,
     )
+    assert "instances" not in watch.json.loads(state.read_text())["BOOT1"]
 
 
 def test_corrupt_state_pages_state_loss_without_replaying_recurrence(tmp_path) -> None:
