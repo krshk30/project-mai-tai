@@ -613,6 +613,16 @@ class Settings(BaseSettings):
     # 09:30 and no EH emulation runs. ⚠ Not yet attended-tested live; enable only after an after-hours
     # validation of the Webull/Schwab EH fill.
     strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled: bool = False
+    # PRE-MARKET ONLY (operator 2026-09-28, CLRO 07:24 ET). The EH soft rest above watches REST quote
+    # polls taken every `quote_poll_interval_seconds` (5 s), so a print through the trigger that lasts
+    # less than one poll gap is never seen. ON => each STREAMED trade print (LEVELONE, arrives only
+    # while `tick_capture_enabled` is on) is also offered to the SAME `_eh_resting_cross_check`, with
+    # every guard unchanged (one-shot, bar freshness, flat, boot/gap hold; the OMS still band-caps off
+    # its own ask). Before 09:30 ET only — RTH and post-market never read it. OFF => byte-identical.
+    strategy_schwab_1m_v2_eh_resting_stream_cross_enabled: bool = True
+    # A streamed print older than this (trade time vs wall clock) is ignored — rejects the snapshot
+    # Schwab replays on subscribe and anything that sat in a backlog.
+    strategy_schwab_1m_v2_eh_resting_stream_print_max_age_ms: int = 3000
     # Fallback slippage-cap band for the EH resting entry, used only when the intent carries no
     # `resting_band_pct` (the strategy passes its own band in metadata as the single source of truth; this
     # is the belt so the OMS can never over-pay). % of the resting level.

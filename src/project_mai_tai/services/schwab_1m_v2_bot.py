@@ -115,6 +115,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SchwabV2IntentEmitter,
     SchwabV2Strategy,
     SymbolState,
+    TradeIntentDraft,
     session_start_ts_ms,
 )
 
@@ -514,6 +515,14 @@ class SchwabV2BotService:
         self._gap_hold_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_gap_hold_enabled", False)
         )
+        # PRE-MARKET stream cross (CLRO 2026-09-28): route streamed trade prints to the strategy's
+        # EH soft-rest cross check. Needs the EH resting entry on; the prints themselves only arrive
+        # while tick capture is on (the streamer subscribes LEVELONE behind that flag).
+        self._eh_stream_cross_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_eh_resting_stream_cross_enabled", False)
+        ) and bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", False)
+        )
         self._gap_hold_detect_seconds = max(
             0.001,
             float(
@@ -573,6 +582,7 @@ class SchwabV2BotService:
         # name -> task, populated in run(); watched by _task_liveness_loop so a
         # task that ends unexpectedly (v2's silent-death risk) is surfaced loudly.
         self._tasks: dict[str, asyncio.Task] = {}
+        self._eh_stream_emit_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def enabled(self) -> bool:
@@ -815,12 +825,17 @@ class SchwabV2BotService:
         self.streamer = SchwabV2Streamer(
             self.settings,
             on_chart_bar=self._handle_bar_from_streamer,
-            on_tick=(
-                self._handle_stream_tick
-                if self._gap_hold_enabled
-                else (self.tick_writer.on_tick if self.tick_writer is not None else None)
-            ),
+            on_tick=self._stream_tick_callback(),
         )
+        if self._eh_stream_cross_enabled and not bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_tick_capture_enabled", False)
+        ):
+            logger.warning(
+                "[V2-RESTING-EH-STREAM-INERT] eh stream cross is ON but tick capture is OFF — the "
+                "streamer subscribes no LEVELONE prints, so the pre-market soft rest still sees "
+                "only the %ss REST quote poll",
+                getattr(self.settings, "strategy_schwab_1m_v2_quote_poll_interval_seconds", "?"),
+            )
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -874,6 +889,13 @@ class SchwabV2BotService:
             for task in self._tasks.values():
                 task.cancel()
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+            if self._eh_stream_emit_tasks:
+                _, pending = await asyncio.wait(self._eh_stream_emit_tasks, timeout=3.0)
+                if pending:
+                    logger.error("schwab_1m_v2 cancelling %d unfinished EH stream emits", len(pending))
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
             if self.streamer is not None:
                 await self.streamer.stop()
             if self.tick_writer is not None:
@@ -4696,8 +4718,83 @@ class SchwabV2BotService:
                 int(tick.event_ts_ms),
                 self._gap_last_print_at_ms.get(normalized, 0),
             )
+        if self._eh_stream_cross_enabled and tick.kind == "trade" and tick.price:
+            self._offer_stream_trade_to_eh_rest(tick)
         if self.tick_writer is not None:
             await self.tick_writer.on_tick(tick)
+
+    def _stream_tick_callback(self):  # type: ignore[no-untyped-def]
+        """The streamer's per-tick callback. GAPHOLD's print clock and the pre-market stream cross
+        both need the ticks, so either active source routes through `_handle_stream_tick` (which
+        still hands every tick to the writer). With capture off, the new flag cannot install a
+        callback that would accidentally activate a separate TIMESALE subscription."""
+        if self._gap_hold_enabled or (
+            self._eh_stream_cross_enabled
+            and bool(getattr(self.settings, "strategy_schwab_1m_v2_tick_capture_enabled", False))
+        ):
+            return self._handle_stream_tick
+        return self.tick_writer.on_tick if self.tick_writer is not None else None
+
+    def _offer_stream_trade_to_eh_rest(self, tick: SchwabTick) -> None:
+        """PRE-MARKET ONLY. Hand one streamed print to the strategy's EH soft-rest cross check and
+        emit what it returns through the SAME path a REST quote uses (`_maybe_emit`: entry window,
+        ATR-only belt, EH routing; then the Webull fan-out legs). A failure here is logged and never
+        stops the tick from being captured."""
+        # LEVELONE can repeat field 3 (last) on a quote update. Without field 35 the parser
+        # labels that update a trade at the message time; it is not an entry-grade print.
+        if tick.service != "LEVELONE_EQUITIES":
+            return
+        queued_legs = self.strategy._pending_webull_fanout_intents
+        queued_before = len(queued_legs)
+        try:
+            trade_ms = int(tick.raw.get("35") or 0)
+            if trade_ms <= 0 or trade_ms != int(tick.event_ts_ms):
+                return
+            draft = self.strategy.on_stream_trade(
+                str(tick.symbol).upper(), float(tick.price or 0.0), trade_ms,
+                ask_price=tick.raw.get("2"),
+            )
+        except Exception:
+            del queued_legs[queued_before:]
+            logger.exception("schwab_1m_v2 on_stream_trade failed for %s", tick.symbol)
+            return
+        if draft is None:
+            return
+        # Only this cross's suffix is moved. Other callbacks may already have queued a leg
+        # before yielding on their own emit; do not steal it from the shared strategy queue.
+        legs = queued_legs[queued_before:]
+        del queued_legs[queued_before:]
+        try:
+            task = asyncio.create_task(self._emit_eh_stream_draft(draft, legs))
+        except Exception:
+            logger.exception("schwab_1m_v2 stream-cross scheduling failed for %s", tick.symbol)
+            return
+        self._eh_stream_emit_tasks.add(task)
+        task.add_done_callback(self._eh_stream_emit_tasks.discard)
+
+    async def _emit_eh_stream_draft(
+        self, draft: TradeIntentDraft, legs: list[TradeIntentDraft]
+    ) -> None:
+        try:
+            now_et = datetime.fromtimestamp(
+                self.strategy._now_ms() / 1000.0, UTC
+            ).astimezone(EASTERN_TZ)
+            minutes = now_et.hour * 60 + now_et.minute
+            if not 7 * 60 <= minutes < 9 * 60 + 30:
+                logger.warning(
+                    "schwab_1m_v2 EH stream-cross emit expired at session boundary for %s",
+                    draft.symbol,
+                )
+                return
+            # The receive loop must never wait for Redis or a broker-leg emitter. An ambiguous
+            # timeout keeps the one-shot latch taken; it cannot create a duplicate retry.
+            async with asyncio.timeout(3.0):
+                await self._maybe_emit(draft)
+                await self._emit_webull_fanout_legs(legs=legs)
+        except TimeoutError:
+            logger.error("schwab_1m_v2 EH stream-cross emit timed out for %s", draft.symbol)
+        except Exception:
+            logger.exception("schwab_1m_v2 stream-cross emit failed for %s", draft.symbol)
 
     async def _evaluate_gap_holds(self, now: datetime | None = None) -> list[str]:
         if not self._gap_hold_enabled:
@@ -5031,15 +5128,18 @@ class SchwabV2BotService:
             return "could_not_tell"
         return "queued"
 
-    async def _emit_webull_fanout_legs(self) -> None:
+    async def _emit_webull_fanout_legs(
+        self, *, legs: list[TradeIntentDraft] | None = None
+    ) -> None:
         """Dual-broker fan-out: drain the strategy's queued Webull leg drafts and emit each through
         the SECOND (Webull) emitter — same entry-window gate + EH-routing as the primary — skipping
         Webull-ineligible names. Always drains (to clear the queue) even when the emitter is unset.
         No-op unless fan-out is on (nothing is queued)."""
-        drain = getattr(self.strategy, "drain_webull_fanout_intents", None)
-        if not callable(drain):
-            return
-        legs = drain()
+        if legs is None:
+            drain = getattr(self.strategy, "drain_webull_fanout_intents", None)
+            if not callable(drain):
+                return
+            legs = drain()
         if not legs:
             return
         if self.webull_intent_emitter is None:
