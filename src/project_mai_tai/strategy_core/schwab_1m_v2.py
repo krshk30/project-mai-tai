@@ -3059,14 +3059,19 @@ class SchwabV2Strategy:
         age_ms = now_ms - print_ms
         if age_ms > self._eh_stream_print_max_age_ms or age_ms < -self._eh_stream_print_max_age_ms:
             return None
+        trigger = self._active_resting_trigger(state)
+        if trigger <= 0.0 or px < trigger or state.resting_flip_ms:
+            return None
         try:
             ask = float(ask_price) if ask_price is not None else 0.0
         except (TypeError, ValueError, OverflowError):
-            return None
+            ask = 0.0
         if not math.isfinite(ask) or ask <= 0.0:
-            return None
-        trigger = self._active_resting_trigger(state)
-        if trigger <= 0.0 or px < trigger:
+            logger.info(
+                "[V2-RESTING-EH-STREAM-SKIP] %s reason=no_fresh_ask "
+                "trigger=%.4f px=%.4f latch_taken=0",
+                state.symbol, trigger, px,
+            )
             return None
         cap = trigger * (1.0 + self._resting_band_pct_value() / 100.0)
         if ask > cap:
