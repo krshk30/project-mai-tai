@@ -1,0 +1,9 @@
+{
+  "pr_number": 1056,
+  "range_base": "8f69a08a986cf921257f9f339ad70009ca9ab0b6",
+  "range_head": "739a85918e51d27494075a49dfa7ccef9925852e",
+  "reviewed_at": "2026-09-28T21:46:28Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "PAGEGAP (operator ruling 09-28: per-exit-ID): EXITDONE1 pages each dropped confirmation exit by account:source_fill_id; sold pairs matched on (symbol, source_fill_id); delivered ids persisted; 15-min throttle with batched listing; legacy state baselines current ids (no replay); invalid EXITDONE1 state -> memory-lost STATE LOST path; COULD_NOT_TELL on malformed/colliding markers or unattributed sells. Verified on box: 56/56 confirmation-exit sells since 09-10 carry confirmation_source_fill_id (no false COULD_NOT_TELL). 145/145 targeted; RED on base 15F. Mutations killed 7/9: re-page delivered, throttle clock, no throttle, count-only sold match, legacy replay, unattributed ignored, first-instance-only. Survivors equivalent: memory-lost id baseline (suppress_until_clear still blocks the next run), pending not cleared after page (filtered by delivered next run). Other rows keep once-per-verdict by design (per-ID is EXITDONE1-only). Full tests/unit 47F/4395P vs base 47F/4381P identical FAILED names; ruff clean."
+}
