@@ -1,0 +1,9 @@
+{
+  "pr_number": 1055,
+  "range_base": "3a5cd9639df1fab420314c34fedd2e3109837def",
+  "range_head": "9aff361aeefcc8cef9e9f40d30d1070581779ef0",
+  "reviewed_at": "2026-09-28T15:32:44Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "PMCAP1 (operator-approved 09-28): pre-market Webull eh_resting fan-out leg priced by the Schwab 0.5% band via _band_capped_marketable_limit; 2 codex-2 commits. Verified vs production payloads: live:orb eh_resting intents carry fanout_leg=webull + fanout_source=eh_resting, level falls back to entry_price (= Schwab trigger, CLRO 5.5284), band falls back to 0.5 when absent. AM-only gate; PM mirror + reactive opens keep the 1% route; RTH untouched. 55/55 targeted; RED on base 6F. Mutations killed 9/12: reactive-gate exclusion, resting-gate inclusion, PM leak, AM float boundary, decimal >=, drop ASK_PAST_BAND. Survivors (follow-up tests, not blocking): fanout_source check (only matters for a pre-market reactive fan-out leg, impossible while flip-owned mode is on), fanout_leg check (redundant in practice), decimal boundary for RTH/PM callers (exact float tie only). Full tests/unit 47F/4381P vs base 47F/4372P, identical FAILED names; ruff clean."
+}
