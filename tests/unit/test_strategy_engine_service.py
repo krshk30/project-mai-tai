@@ -2768,6 +2768,21 @@ def test_bot_runtime_clears_ghost_position_on_no_position_reject() -> None:
     assert "ASTC" not in bot.pending_close_symbols
 
 
+def test_bot_runtime_unreadable_broker_position_keeps_sell_retryable() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.positions.open_position("ASTC", 5.31, quantity=10, path="P1_MACD_CROSS")
+    bot.pending_close_symbols.add("ASTC")
+
+    bot.apply_order_status(
+        symbol="ASTC", intent_type="close", status="rejected",
+        reason="broker_position_unreadable",
+    )
+
+    assert bot.positions.get_position("ASTC") is not None
+    assert "ASTC" not in bot.pending_close_symbols
+
+
 def test_bot_runtime_clears_ghost_position_on_no_strategy_position_reject() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_30s"]
