@@ -63,6 +63,7 @@ INC1_CLOSE_SOURCES = {
 }
 INC1_AUX_SOURCE = "oms_webull_protect_handle_lost"
 INC1_POSITION_FRESH_SECONDS = 120
+INC1_CLOSE_CONFIRM_SECONDS = 55
 
 
 @dataclass
@@ -549,6 +550,32 @@ def _inc1_commit_close(incident: dict[str, str], reason: str, now: datetime) -> 
     return rows == [incident_id]
 
 
+def _inc1_close_confirmation(
+    prior: dict, facts: dict, now: datetime
+) -> tuple[bool, dict[str, str], str]:
+    """Require a second broker sync before trusting a flat position read."""
+    source_at = datetime.fromisoformat(str(facts["source_updated_at"]))
+    candidate = prior.get("close_candidate")
+    if isinstance(candidate, dict):
+        try:
+            first_at = datetime.fromisoformat(str(candidate["first_verified_at"]))
+            first_source_at = datetime.fromisoformat(str(candidate["broker_source_updated_at"]))
+            elapsed = (now - first_at).total_seconds()
+            if 0 <= elapsed and source_at > first_source_at:
+                if elapsed >= INC1_CLOSE_CONFIRM_SECONDS:
+                    return True, candidate, "second_verified_broker_read"
+                return False, candidate, "awaiting_confirmation_interval"
+            if 0 <= elapsed and source_at == first_source_at:
+                return False, candidate, "awaiting_newer_broker_read"
+        except (KeyError, TypeError, ValueError):
+            pass
+    new_candidate = {
+        "first_verified_at": now.isoformat(),
+        "broker_source_updated_at": source_at.isoformat(),
+    }
+    return False, new_candidate, "awaiting_second_verified_read"
+
+
 def _run_inc1_pager_unlocked(
     *, state_path: Path, status_path: Path, no_page: bool, now: datetime
 ) -> int:
@@ -598,31 +625,45 @@ def _run_inc1_pager_unlocked(
     for incident in candidates:
         source = incident.get("source", "")
         if source in INC1_CLOSE_SOURCES:
+            incident_id = incident["id"]
+            prior = dict(state.get(incident_id, {}))
             try:
                 facts = _inc1_resolution_facts(incident)
                 reason, detail = _inc1_resolution_decision(incident, facts, now)
-                if reason and not no_page and _inc1_commit_close(incident, reason, now):
-                    incident_id = incident["id"]
-                    state[incident_id] = {
-                        **state.get(incident_id, {}),
-                        **incident,
-                        "closed": True,
-                        "closed_at": now.isoformat(),
-                        "close_reason": reason,
-                    }
-                    closed_now += 1
-                    print(
-                        f"[INC1-CLOSE] id={incident_id} reason={reason} "
-                        f"account={facts['account']} symbol={facts['symbol']} "
-                        f"broker_quantity={facts['quantity']} "
-                        f"broker_source_updated_at={facts['source_updated_at']} "
-                        f"managed_row_id={incident.get('managed_row_id') or '-'}"
-                    )
-                    continue
-                if reason:
-                    detail = "dry_run_no_close" if no_page else "evidence_changed_before_close"
+                if reason and not no_page:
+                    ready, candidate, detail = _inc1_close_confirmation(prior, facts, now)
+                    if ready and _inc1_commit_close(incident, reason, now):
+                        state[incident_id] = {
+                            **prior,
+                            **incident,
+                            "closed": True,
+                            "closed_at": now.isoformat(),
+                            "close_reason": reason,
+                        }
+                        state[incident_id].pop("close_candidate", None)
+                        closed_now += 1
+                        print(
+                            f"[INC1-CLOSE] id={incident_id} reason={reason} "
+                            f"account={facts['account']} symbol={facts['symbol']} "
+                            f"broker_quantity={facts['quantity']} "
+                            f"broker_source_updated_at={facts['source_updated_at']} "
+                            f"managed_row_id={incident.get('managed_row_id') or '-'}"
+                        )
+                        continue
+                    if ready:
+                        detail = "evidence_changed_before_close"
+                        prior.pop("close_candidate", None)
+                    else:
+                        prior["close_candidate"] = candidate
+                else:
+                    prior.pop("close_candidate", None)
+                    if reason:
+                        detail = "dry_run_no_close"
+                state[incident_id] = prior
                 close_held.append(f"{incident['id']}:{detail}")
             except Exception as exc:  # noqa: BLE001 - never close on unreadable evidence
+                prior.pop("close_candidate", None)
+                state[incident_id] = prior
                 close_held.append(f"{incident['id']}:COULD_NOT_TELL:{type(exc).__name__}:{exc}")
         if source == INC1_AUX_SOURCE:
             aux_open += 1
@@ -635,6 +676,7 @@ def _run_inc1_pager_unlocked(
         prior = dict(state.get(incident_id, {}))
         delivered = bool(prior.get("delivered", False))
         state[incident_id] = {
+            **prior,
             **incident,
             "delivered": delivered,
             "last_seen_at": now.isoformat(),
