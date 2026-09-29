@@ -1,15 +1,9 @@
-"""v2 EOD OCO transition (Phase A, docs/premarket-eod-exit-design.md; decision A = KEEP MANAGING).
-
-At 16:00 ET the native OCO exit legs expire with the RTH close (session=NORMAL + duration=DAY), so
-for every OMS-managed v2 position still open the OMS releases the native-OCO stand-down for the rest
-of the day and lets the software +2%/−5% EH-limit ladder own the exit. Asserts on STATE (the day-scoped
-latch + the stand-down predicate flipping to False), never on log narration. Mirrors
-test_v2_overnight_flatten.py. The transition places/cancels NO broker order — the RTH OCO auto-expires.
-"""
+"""At 16:00, the current row's broker exit legs must be confirmed gone before software sells."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -18,10 +12,17 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
+from project_mai_tai.broker_adapters.protocols import ExitPairReleaseResult
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition
+from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition, SystemIncident, TradeIntent
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
+from tests.unit.test_confirmation_exit_fanout import (
+    SYMBOL as WEBULL_SYMBOL,
+    WEBULL,
+    _FanoutAdapter,
+    _service as _webull_service,
+)
 
 _ET = ZoneInfo("America/New_York")
 ACCT = "paper:schwab_1m_v2"
@@ -80,6 +81,13 @@ def _force_due(svc, due: bool = True) -> None:
     svc._v2_eod_oco_transition_due = lambda now=None: due
 
 
+def _confirmed_release(svc) -> None:
+    async def release(*_args, **_kwargs):
+        return "released"
+
+    svc._release_native_oco_for_cw_flip = release
+
+
 def _open_apus_row(sf, *, symbol: str = SYM) -> None:
     with sf() as session:
         session.add(
@@ -127,7 +135,9 @@ def test_due_check_respects_settings():
 async def test_transition_releases_stand_down():
     sf = _make_sf()
     svc = _svc(sf)
+    _open_apus_row(sf)
     _arm_managed(svc)
+    _confirmed_release(svc)
     assert svc._native_oco_stand_down_active(ACCT, SYM) is True   # OCO armed => ladder deferred
     _force_due(svc)
     await svc._v2_eod_oco_transition()
@@ -139,9 +149,166 @@ async def test_transition_releases_stand_down():
 
 
 @pytest.mark.asyncio
-async def test_recent_155950_oco_resolution_is_not_released_at_1600():
-    svc = _svc(_make_sf())
+async def test_working_or_unreadable_leg_blocks_1600_and_1955_until_confirmed():
+    sf = _make_sf()
+    svc = _svc(sf)
+    svc.logger = __import__("logging").getLogger("card10-eod-test")
+    _open_apus_row(sf)
     _arm_managed(svc)
+    _force_due(svc)
+    svc.settings.oms_v2_overnight_flatten_enabled = True
+    svc._v2_overnight_flatten_due = lambda now=None: True
+    svc._latest_quotes_by_symbol[SYM] = {
+        "bid": 5.50, "ask": 5.51, "received_at": datetime.now(timezone.utc),
+    }
+    releases = ["reserved", "released"]
+
+    async def release(*_args, **_kwargs):
+        return releases.pop(0) if releases else "released"
+
+    svc._release_native_oco_for_cw_flip = release
+    await svc._v2_eod_oco_transition()
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    await svc._v2_overnight_flatten()
+    with sf() as session:
+        assert session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all() == []
+        incidents = session.scalars(select(SystemIncident)).all()
+        assert {i.payload["source"] for i in incidents} == {
+            "oms_v2_exit_release_unresolved", "oms_v2_overnight_flatten_blocked",
+        }
+        assert all(i.status == "open" and i.severity == "critical" for i in incidents)
+    assert (svc._session_day_et(), ACCT, SYM) not in svc._v2_eod_oco_transitioned
+
+    svc.__dict__.get("_v2_eod_oco_last_try", {}).clear()
+    await svc._v2_eod_oco_transition()
+    assert (svc._session_day_et(), ACCT, SYM) in svc._v2_eod_oco_transitioned
+    with sf() as session:
+        assert all(i.status == "closed" for i in session.scalars(select(SystemIncident)).all())
+    await svc._v2_overnight_flatten()
+    with sf() as session:
+        intents = session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all()
+        assert len(intents) == 1
+        assert intents[0].reason == "V2_OVERNIGHT_FLATTEN"
+
+
+@pytest.mark.asyncio
+async def test_missing_exit_pair_handle_is_unknown_not_permission_to_sell():
+    sf = _make_sf()
+    svc = _svc(sf)
+    _open_apus_row(sf)
+    _arm_managed(svc)
+    _force_due(svc)
+    svc._latest_quotes_by_symbol[SYM] = {
+        "bid": 5.50, "ask": 5.51, "received_at": datetime.now(timezone.utc),
+    }
+
+    await svc._v2_eod_oco_transition()
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    with sf() as session:
+        assert session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all() == []
+        incident = session.scalars(select(SystemIncident)).one()
+        assert incident.status == "open"
+        assert incident.payload["risk_state"] == "protection_unknown"
+
+
+@pytest.mark.asyncio
+async def test_direct_exit_emitter_cannot_bypass_unconfirmed_handover():
+    sf = _make_sf()
+    svc = _svc(sf)
+    _open_apus_row(sf)
+    _arm_managed(svc)
+    _force_due(svc)
+
+    with sf() as session:
+        snapshot = svc._read_v2_managed_snapshot(session, ACCT, SYM, True)
+    assert snapshot is not None
+    position = svc._hydrate_v2_position(snapshot)
+    result = await svc._emit_v2_exit_on_loop(
+        ACCT, SYM, position, snapshot.entry_price, kind="HARD",
+        reference_price=5.50, reason="oms_v2_managed_exit:CW_TARGET",
+        bid=5.50, close_on_fill=True,
+    )
+
+    assert result == "eod_handover_unconfirmed"
+    with sf() as session:
+        assert session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all() == []
+
+
+@pytest.mark.asyncio
+async def test_webull_handover_requires_strict_second_broker_read():
+    adapter = _FanoutAdapter()
+    svc, sf = _webull_service(fanout=True, adapter=adapter)
+    svc.settings.oms_v2_eod_oco_transition_enabled = True
+    svc._v2_eod_oco_transition_due = lambda now=None: True
+    svc._managed_v2_symbols = {(WEBULL, WEBULL_SYMBOL)}
+    svc._webull_protect_base[(WEBULL, WEBULL_SYMBOL)] = "known-protect-base"
+    reads = ["unanswerable", "released"]
+
+    async def strict_read(**_kwargs):
+        return ExitPairReleaseResult(outcome=reads.pop(0))
+
+    adapter.confirm_exit_pair_terminal = strict_read
+    await svc._v2_eod_oco_transition()
+    assert len(adapter.cancel_pair_calls) == 1
+    assert (svc._session_day_et(), WEBULL, WEBULL_SYMBOL) not in svc._v2_eod_oco_transitioned
+    with sf() as session:
+        incident = session.scalars(select(SystemIncident)).one()
+        assert incident.status == "open"
+
+    svc.__dict__.get("_v2_eod_oco_last_try", {}).clear()
+    await svc._v2_eod_oco_transition()
+    assert len(adapter.cancel_pair_calls) == 2
+    assert (svc._session_day_et(), WEBULL, WEBULL_SYMBOL) in svc._v2_eod_oco_transitioned
+
+
+@pytest.mark.asyncio
+async def test_handover_for_old_row_cannot_unlock_replacement_position():
+    sf = _make_sf()
+    svc = _svc(sf)
+    _open_apus_row(sf)
+    _arm_managed(svc)
+    _force_due(svc)
+    with sf() as session:
+        old_row = svc.store.get_open_managed_position(
+            session, broker_account_name=ACCT, symbol=SYM
+        )
+        assert old_row is not None
+        old_id = str(old_row.id)
+
+    async def release(*_args, **_kwargs):
+        with sf() as session:
+            row = svc.store.get_open_managed_position(
+                session, broker_account_name=ACCT, symbol=SYM
+            )
+            assert row is not None
+            # The table has a unique (account,symbol) key, so represent the replacement
+            # episode by changing the row UUID during the broker await.
+            row.id = uuid4()
+            row.entry_price = Decimal("6.00")
+            session.commit()
+        return "released"
+
+    svc._release_native_oco_for_cw_flip = release
+    await svc._v2_eod_oco_transition()
+
+    key = (svc._session_day_et(), ACCT, SYM)
+    assert key not in svc._v2_eod_oco_transitioned
+    assert svc._v2_eod_oco_transition_rows.get(key) is None
+    with sf() as session:
+        current = svc.store.get_open_managed_position(
+            session, broker_account_name=ACCT, symbol=SYM
+        )
+        assert current is not None and str(current.id) != old_id
+
+
+@pytest.mark.asyncio
+async def test_recent_155950_oco_resolution_is_not_released_at_1600():
+    sf = _make_sf()
+    svc = _svc(sf)
+    _open_apus_row(sf)
+    _arm_managed(svc)
+    _confirmed_release(svc)
     svc._native_oco_resolving[(ACCT, SYM)] = datetime.now(timezone.utc) - timedelta(
         seconds=10
     )
@@ -165,6 +332,8 @@ async def test_apus_peak_during_stand_down_arms_floor_at_handover():
     svc = _svc(sf, floor=True)
     _open_apus_row(sf)
     _arm_managed(svc)
+    _confirmed_release(svc)
+    _force_due(svc, False)
     svc._latest_quotes_by_symbol[SYM] = {
         "bid": 5.48,
         "received_at": datetime.now(timezone.utc),
@@ -196,6 +365,8 @@ async def test_handover_does_not_arm_floor_without_fresh_target_cross(
     svc = _svc(sf, floor=True)
     _open_apus_row(sf)
     _arm_managed(svc)
+    _confirmed_release(svc)
+    _force_due(svc, False)
     svc._latest_quotes_by_symbol[SYM] = {
         "bid": bid,
         "received_at": datetime.now(timezone.utc) - timedelta(seconds=quote_age_seconds),
@@ -219,6 +390,8 @@ async def test_resolving_grace_peak_arms_floor_when_handover_follows():
     svc = _svc(sf, floor=True)
     _open_apus_row(sf)
     _arm_managed(svc)
+    _confirmed_release(svc)
+    _force_due(svc, False)
     # The 16:00:05 sync moves the DAY bracket into resolving before the 16:00:44 quote.
     svc._native_oco_armed_confirmed_at.pop((ACCT, SYM))
     svc._native_oco_resolving[(ACCT, SYM)] = datetime.now(timezone.utc) - timedelta(seconds=39)
@@ -248,7 +421,9 @@ async def test_resolving_grace_peak_arms_floor_when_handover_follows():
 async def test_transition_is_idempotent_per_day():
     sf = _make_sf()
     svc = _svc(sf)
+    _open_apus_row(sf)
     _arm_managed(svc)
+    _confirmed_release(svc)
     _force_due(svc)
     await svc._v2_eod_oco_transition()
     assert len(svc._v2_eod_oco_transitioned) == 1

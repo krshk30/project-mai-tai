@@ -1102,18 +1102,19 @@ async def test_a_pre_send_guard_stops_the_webull_exit_before_any_release(
 @pytest.mark.parametrize(
     ("reason", "released"),
     [
-        pytest.param("oms_v2_managed_exit:CW_TARGET", False, id="profit-target-may-not-cancel-a-stop"),
+        pytest.param("oms_v2_managed_exit:CW_TARGET", True, id="unconfirmed-rth-target-cancels-and-confirms-pair"),
         pytest.param("oms_v2_managed_exit:SCALE_PCT2", False, id="scale-out-may-not-cancel-a-stop"),
         # CONTROL + the next call site: the hard stop (YMAT 2026-09-09) IS allowed through.
         pytest.param("oms_v2_managed_exit:CW_HARD_STOP", True, id="control-hard-stop-releases"),
     ],
 )
 @pytest.mark.asyncio
-async def test_shared_routine_takes_the_pair_back_only_for_a_protective_exit(
+async def test_shared_routine_takes_pair_back_for_full_close_not_scale_out(
     monkeypatch, reason: str, released: bool
 ) -> None:
-    # The routine forwards its caller's `reason`. The resting pair IS the profit-taking exit, so a
-    # future call site must not be able to cancel a broker stop for a target or a scale-out.
+    # A confirmed RTH bracket owns its target upstream and never calls this routine. If the
+    # bracket is unconfirmed, a software full target may cancel and verify it before selling;
+    # scale-outs still cannot take a protective pair back.
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)

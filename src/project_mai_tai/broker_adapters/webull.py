@@ -320,6 +320,39 @@ class WebullBrokerAdapter:
             return ExitPairReleaseResult(outcome="unanswerable", reports=reports)
         return ExitPairReleaseResult(outcome="reserved", reports=reports)
 
+    async def confirm_exit_pair_terminal(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str
+    ) -> ExitPairReleaseResult:
+        """Freshly read both children; a cancel acknowledgement is not handover evidence."""
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None:
+            return ExitPairReleaseResult(outcome="unanswerable")
+        coids = self.exit_pair_leg_client_order_ids(base_client_order_id)
+        if len(coids) != 2:
+            return ExitPairReleaseResult(outcome="unanswerable")
+        reports = []
+        for coid in coids:
+            request = OrderRequest(
+                client_order_id=coid, broker_account_name=broker_account_name,
+                strategy_code="", symbol=symbol, side="sell", intent_type="cancel",
+                quantity=Decimal("0"), reason="confirm EOD exit-pair release",
+                metadata={"eod_exit_pair_confirmation": "true"},
+            )
+            reports.append(await self._confirm_cancel_order(account, request))
+        filled = [report for report in reports if report.event_type == "filled"]
+        if len(filled) == 1:
+            return ExitPairReleaseResult(outcome="resolved_by_fill", reports=tuple(reports))
+        if len(filled) > 1:
+            return ExitPairReleaseResult(outcome="unanswerable", reports=tuple(reports))
+        if all(
+            report.event_type == "cancelled"
+            and report.origin == "broker"
+            and report.metadata.get("cancel_outcome") in {"confirmed", "already_absent"}
+            for report in reports
+        ):
+            return ExitPairReleaseResult(outcome="released", reports=tuple(reports))
+        return ExitPairReleaseResult(outcome="unanswerable", reports=tuple(reports))
+
     def _submit_exit_pair_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
     ) -> list[ExecutionReport]:
