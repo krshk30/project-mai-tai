@@ -7,6 +7,7 @@ import json
 import logging
 import signal
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.db.session import build_timed_session_factory
@@ -23,8 +24,9 @@ from project_mai_tai.orb_schwab_order_route import (
     build_orb_schwab_reprice_intent,
     publish_orb_schwab_intent,
 )
-from project_mai_tai.services.orb_app import OrbService
+from project_mai_tai.services.orb_app import OrbService, _normalize_trade_ts_ns
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
+from project_mai_tai.strategy_core.orb_schwab_bracket import build_orb_schwab_bracket_metadata
 from project_mai_tai.strategy_core.orb_schwab_open import OrbSchwabOpeningOrder
 
 _SERVICE = "orb-schwab"
@@ -42,6 +44,14 @@ class OrbSchwabService(OrbService):
         self._reclaim_mode = False
         self._opening_orders: dict[str, OrbSchwabOpeningOrder] = {}
         self._closed_bars: list[tuple[str, OrbBar, datetime]] = []
+        if self.settings.orb_schwab_observe_enabled and self.settings.orb_live_schwab_orders_enabled:
+            raise ValueError("ORB observation and live sending cannot be enabled together")
+        self._observe_only = self.settings.orb_schwab_observe_enabled
+        self._observe_status_at: datetime | None = None
+        self._observe_macd_minute: dict[str, datetime] = {}
+        self._observe_plan_at: dict[str, datetime] = {}
+        self._observe_crosses: set[tuple[str, str, str]] = set()
+        self._observe_seen_bars: dict[str, set[datetime]] = {}
 
     def _maybe_roll_session(self, now: datetime | None = None) -> None:
         current = now or datetime.now(UTC)
@@ -52,11 +62,22 @@ class OrbSchwabService(OrbService):
         self._session_date = today
         self._scanner_session_start = anchor
         self._opening_orders.clear()
+        self._closed_bars.clear()
         self._aggregators.clear()
         self._states.clear()
+        self._observe_macd_minute.clear()
+        self._observe_plan_at.clear()
+        self._observe_crosses.clear()
+        self._observe_seen_bars.clear()
+        self._observe_status_at = None
 
     async def _sync_gateway_subscription(self, symbols: list[str]) -> None:
         desired = sorted({str(symbol).upper() for symbol in symbols if str(symbol).strip()})
+        if self._observe_only:
+            # Observe only feeds other consumers already requested. No warm-up or
+            # gateway owner changes are caused by the rehearsal.
+            self._last_gateway_symbols = desired
+            return
         if desired == self._last_gateway_symbols:
             return
         event = MarketDataSubscriptionEvent(
@@ -81,6 +102,12 @@ class OrbSchwabService(OrbService):
             event = json.loads(raw)
         except (ValueError, TypeError):
             return
+        if not isinstance(event, dict):
+            return
+        if not isinstance(event.get("payload"), dict):
+            return
+        if self._observe_only:
+            self._observe_trade_cross(event)
         if event.get("event_type") == "quote_tick":
             symbol = str((event.get("payload") or {}).get("symbol", "")).upper()
             if symbol not in self._last_gateway_symbols:
@@ -109,6 +136,98 @@ class OrbSchwabService(OrbService):
     def _processing_time() -> datetime:
         return datetime.now(UTC)
 
+    def _record_observation(self, kind: str, **fields: object) -> None:
+        logger.info(
+            "[ORB-SCHWAB-OBSERVE] %s",
+            json.dumps(
+                {"kind": kind, "at": self._processing_time().isoformat(),
+                 "broker_orders_sent": 0, "fill_status": "UNMEASURED", **fields},
+                sort_keys=True,
+            ),
+        )
+
+    def _observe_trade_cross(self, event: dict) -> None:
+        if event.get("event_type") != "trade_tick":
+            return
+        payload = event.get("payload") or {}
+        symbol = str(payload.get("symbol", "")).upper()
+        order = self._opening_orders.get(symbol)
+        planned_at = self._observe_plan_at.get(symbol)
+        if order is None or not order.placed or order.cancelled or planned_at is None:
+            return
+        try:
+            price = Decimal(str(payload["price"]))
+            timestamp_ns = _normalize_trade_ts_ns(payload.get("timestamp_ns"))
+            if not timestamp_ns or not price.is_finite() or price <= 0:
+                return
+            traded_at = datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC)
+        except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError, OSError):
+            return
+        opening = self._session_open_utc()
+        now = self._processing_time()
+        if not (
+            opening <= traded_at < opening + timedelta(minutes=30)
+            and traded_at >= planned_at
+            and timedelta(0) <= now - traded_at <= timedelta(seconds=5)
+        ):
+            return
+        plan = build_orb_schwab_bracket_metadata(order.last_requested_level)
+        if price < Decimal(plan["stop_price"]):
+            return
+        relation = "above_cap" if price > Decimal(plan["limit_price"]) else "within_cap"
+        key = (symbol, plan["stop_price"], relation)
+        if key in self._observe_crosses:
+            return
+        self._observe_crosses.add(key)
+        self._record_observation(
+            "price_cross_only", symbol=symbol, trade_at=traded_at.isoformat(),
+            trade_price=str(price), trigger=plan["stop_price"], cap=plan["limit_price"],
+            relation=relation, execution="NOT_TESTED", size=payload.get("size"),
+        )
+
+    async def _observe_working_plans(self, now: datetime) -> None:
+        if not self._observe_only:
+            return
+        opening = self._session_open_utc()
+        if now >= opening:
+            minute = now.replace(second=0, microsecond=0)
+            for symbol, order in self._opening_orders.items():
+                if not order.placed or order.cancelled:
+                    continue
+                if self._observe_macd_minute.get(symbol) == minute:
+                    continue
+                self._observe_macd_minute[symbol] = minute
+                if now >= opening + timedelta(minutes=30):
+                    allowed, reason, histogram = False, "entry_window_ended", None
+                else:
+                    allowed, reason, histogram = await asyncio.to_thread(
+                        schwab_completed_bar_macd_gate, self.session_factory, symbol, now
+                    )
+                if not allowed:
+                    order.cancelled = True
+                self._record_observation(
+                    "working_plan_check", symbol=symbol, macd_allowed=allowed,
+                    macd_histogram=histogram, reason=reason,
+                    proposed_action="keep_if_unfilled" if allowed else "cancel_if_still_unfilled",
+                )
+        if self._observe_status_at is None or now - self._observe_status_at >= timedelta(minutes=1):
+            self._observe_status_at = now
+            expected = [opening - timedelta(minutes=5 - index) for index in range(5)]
+            self._record_observation(
+                "coverage", candidates=sorted(self._universe),
+                proposed_orders=sum(order.placed for order in self._opening_orders.values()),
+                price_cross_records=len(self._observe_crosses),
+                missing_closed_range_minutes={
+                    symbol: [
+                        minute.isoformat() for minute in expected
+                        if minute + timedelta(minutes=1) <= now
+                        and minute not in self._observe_seen_bars.get(symbol, set())
+                    ]
+                    for symbol in sorted(self._universe)
+                },
+                source="existing_gateway_feeds_only", broker_checks="NOT_EXERCISED",
+            )
+
     async def _process_closed_bars(self) -> None:
         while self._closed_bars:
             symbol, bar, _observed_at = self._closed_bars.pop(0)
@@ -116,11 +235,18 @@ class OrbSchwabService(OrbService):
             first = opening - timedelta(minutes=5)
             if not first <= bar.timestamp < opening:
                 continue
+            if self._observe_only:
+                self._observe_seen_bars.setdefault(symbol, set()).add(bar.timestamp)
             order = self._opening_orders.setdefault(symbol, OrbSchwabOpeningOrder(opening))
             if bar.timestamp < first + timedelta(minutes=2):
                 order.bars.setdefault(bar.timestamp, bar)
+                if self._observe_only:
+                    self._record_observation(
+                        "range_bar", symbol=symbol, bar_at=bar.timestamp.isoformat(),
+                        high=bar.high, qualified_high=bar.breakout_high,
+                    )
                 continue
-            allowed, reason, _histogram = await asyncio.to_thread(
+            allowed, reason, histogram = await asyncio.to_thread(
                 schwab_completed_bar_macd_gate,
                 self.session_factory,
                 symbol,
@@ -132,6 +258,25 @@ class OrbSchwabService(OrbService):
                 macd_allowed=allowed,
                 macd_reason=reason,
             )
+            if self._observe_only:
+                prices = (
+                    build_orb_schwab_bracket_metadata(action.level)
+                    if action is not None and action.level is not None else None
+                )
+                if action is not None and action.kind in {"place", "reprice"}:
+                    self._observe_plan_at[symbol] = self._processing_time()
+                self._record_observation(
+                    "decision", symbol=symbol, bar_at=bar.timestamp.isoformat(),
+                    high=bar.high, qualified_high=bar.breakout_high,
+                    range_bars_seen=len(order.bars), range_bars_required=int(
+                        (bar.timestamp - first).total_seconds() / 60
+                    ) + 1,
+                    macd_allowed=allowed, macd_reason=reason, macd_histogram=histogram,
+                    proposed_action=action.kind if action is not None else "none",
+                    decision_reason=action.reason if action is not None else "no_action",
+                    prices=prices, quantity=2, execution="NOT_TESTED",
+                )
+                continue
             if action is None:
                 continue
             if action.kind == "place":
@@ -147,13 +292,20 @@ class OrbSchwabService(OrbService):
             )
 
     async def run(self) -> None:
-        if not self.settings.orb_live_schwab_orders_enabled or not self.settings.orb_enabled:
+        if not self.settings.orb_enabled or not (
+            self.settings.orb_live_schwab_orders_enabled or self._observe_only
+        ):
             logger.info("[ORB-SCHWAB] disabled")
             return
         if self.session_factory is None:
             self.session_factory = build_timed_session_factory(
                 self.settings, service="orb-schwab", profile="fast"
             )
+        logger.info(
+            "[ORB-SCHWAB] mode=%s live_sending=%s",
+            "OBSERVE_ONLY" if self._observe_only else "LIVE",
+            self.settings.orb_live_schwab_orders_enabled,
+        )
         try:
             while True:
                 self._maybe_roll_session()
@@ -168,6 +320,7 @@ class OrbSchwabService(OrbService):
                     self._last_universe_refresh_at = now
                 processed = await self._drain_market_data()
                 await self._process_closed_bars()
+                await self._observe_working_plans(self._processing_time())
                 if processed == 0:
                     await asyncio.sleep(1)
         finally:
