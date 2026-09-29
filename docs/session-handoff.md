@@ -10,6 +10,7 @@ freeze → manifest → promote runs **Tuesday morning**, and this PR gets the m
 env/config only when the operator asks. The author never reviews.
 
 > ⛔⭐⭐⭐ **OPERATOR'S STANDING LINES (all live).**
+> - ⛔⭐⭐⭐⭐ **(09-29) RULE #1 — both agents: before reporting ANY failure, or suggesting/recommending anything, READ THE CODE AND THE DESIGN and CALL IT: REAL FAILURE (the design was violated; show it), EXPECTED BY DESIGN (say so; the check is the defect), or UNKNOWN (name what's missing). Never relay a tool's FAIL raw; never "suggest" in place of a call.** Trigger: the 09-29 06:24 gate rc=1 bar-continuity row reported as a failure by both agents though the REST backfill covers restart gaps by design.
 > - (09-23) A fix ships with its flag ENABLED so it can be validated.
 > - (09-27) "No dark flag gets enabled without my ruling. No rule change unless I approve it."
 > - (09-27) "Never ask me to trace or add logs; you have every source."
