@@ -1,28 +1,25 @@
-# One combined observe-only installation
+# One combined after-hours installation (ORB observe-only)
 
-Updated for the operator's 2026-09-29 scope ruling: include #1065 and #1067; drop the watch install.
+Updated for the operator's 2026-09-29 scope ruling: include #1065, #1066, and #1067; drop the watch install.
 This is a plan, NOT a deployment record or an authorization.
 No production flag, file, order, subscription, or service was changed while preparing it.
 
 ## Exact revision and scope
 
-**MERGE HOLD: FINAL DEPLOY SHA NOT YET ASSIGNED.** The old 90106fb4 approval request is superseded.
-Current main: **eeaa4a7d2d6192125286f281076b72fb9bd497eb**, after rebase-merging independently pinned
-#1065 b6a0ddd6 onto 90106fb4. This is NOT the complete installation candidate: #1067 is not merged.
-PR #1064 was rebase-merged from independently pinned 442b492b on unchanged base fc68b238.
-It is approved for observation only; the live-order flag must remain OFF.
+**EXACT INSTALL CANDIDATE: ba3ebf59144534ed35642de5757564fc2945c90c. NO OPERATOR GO YET.**
+The old 90106fb4 approval request is superseded. #1067 was rebase-merged from independently
+pinned head 1f4781af onto 059b261a; #1066 was rebase-merged from independently pinned head
+0ab525c2 onto that same base, without changing either reviewed PR head. #1064 remains approved
+for observation only; the ORB live-order flag must remain OFF.
+This planning copy is not part of the install candidate and must not be pulled to the box.
 
 The final scope includes #1060 (Momentum Option A/shared gateway), #1061 (restart-evidence
-checker), #1064 (ORB), #1065 (LIVE per-SELL-cycle RETRY-ONE), #1067 (90-second ORB evidence grace),
-and already-installed PAGEGAP. #1059 source is present in main, but its installed watch and
-auto-close behavior stay HELD until WBREAD1. #1066 / Card 10 is explicitly EXCLUDED.
-
-#1067's pin covered 3be48c4f against 90106fb4. Moving main for #1065 required rebasing #1067;
-its original patch is unchanged by range-diff, but the pin does NOT transfer to a new head/base.
-These operator-requested plan corrections are included for fresh review. STOP before merging
-#1067 until its new exact head/base is pinned and CI passes. After that merge, record the actual
-full main SHA in the final execution-plan copy and request operator GO for that exact revision.
-Never install the intermediate main or substitute a later commit under an earlier GO.
+checker), #1064 (ORB observation), #1065 (LIVE per-SELL-cycle RETRY-ONE), #1066 (LIVE Card 10
+OMS exits), #1067 (90-second ORB evidence grace), and already-installed PAGEGAP. #1059 source
+is present in main, but its installed watch and auto-close behavior stay HELD until WBREAD1.
+Only the ORB observer is observe-only; #1065 and #1066 change enabled live trading behavior.
+Request a separate operator GO for this exact SHA and the full scope below. Never install a
+substitute revision or partial service set under that GO.
 
 ## What restarts
 
@@ -34,7 +31,7 @@ preflight and record the new PID, start time, revision and restart count after e
 | --- | --- | --- |
 | market-data | 2202865 | Restart for #1060 shared gateway changes |
 | momentum-paper | 2704889 | Restart onto Option A after gateway is healthy |
-| oms | 1328348 | Restart to load #1064 routes with live ORB OFF |
+| oms | 1328348 | Restart to load #1064 routes and #1066 Card 10 with live ORB OFF; floor flag OFF |
 | strategy | 1359274 | Stop/start companion required by scoped gateway/OMS deployment |
 | orb | 2051823 | Restart existing broker-disconnected paper observer; #1064 changes its high filter |
 | orb-schwab | 0, inactive | Install/start separate OBSERVE_ONLY service |
@@ -43,6 +40,12 @@ preflight and record the new PID, start time, revision and restart count after e
 The paper ORB high now ignores individual prints below 100 shares. That does not change the
 proposed native order size of TWO shares. ORB native sending is OFF throughout rehearsal.
 This is NOT an observation-only change to v2: #1065 changes its enabled RETRY-ONE rule.
+Nor is the OMS restart observation-only: #1066 routes all Webull software full closes
+(CW_TARGET, CW_HARD_STOP, CW_FLOOR, CW_FLIP) through the shared cancel-then-sell path. At 16:00
+it cancels both brokers' RTH exit legs and confirms they are gone before releasing software
+exits; an unconfirmed release stays stood down and pages via oms_v2_exit_release_unresolved.
+At 19:55 the overnight flatten still submits even if an old leg is unconfirmed. A
+shares-unavailable refusal creates oms_v2_overnight_flatten_blocked.
 Read-only /proc inspection confirmed MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true on PID
 1329729. Preserve and verify that same value in the new v2 process; do not toggle it.
 No blanket target restart, schema migration, manual live trade, or attended broker test is included.
@@ -88,8 +91,19 @@ No blanket target restart, schema migration, manual live trade, or attended brok
   existing Momentum installer unconditionally migrates; do not invoke it blindly merely to
   restart an already-installed service. Use the reviewed unit/runtime without migrations.
 - Start/restart only the listed units, checking gateway owner restoration and fresh heartbeat
-  before Momentum starts. Preserve polygon_30s=false and every unrelated flag. Install the
+  before Momentum starts. Preserve polygon_30s=false and every flag other than the two ORB
+  flags below and the Card 10 floor flag below. Install the
   separate orb-schwab unit explicitly; it is not silently added to the live service target.
+- Back up /etc/project-mai-tai/project-mai-tai.env, then set exactly
+  MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED=false BEFORE restarting OMS. No +2% floor ride remains;
+  the operator-confirmed card keeps +5% target, -8% hard stop, confirmation exit and ATR
+  sell-flip in every session. In the NEW OMS /proc environ verify
+  MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED=false,
+  MAI_TAI_OMS_V2_CW_TARGET_PCT=5.0,
+  MAI_TAI_OMS_V2_CW_HARD_STOP_PCT=8.0,
+  MAI_TAI_OMS_V2_EOD_OCO_TRANSITION_ENABLED=true, and
+  MAI_TAI_OMS_V2_OVERNIGHT_FLATTEN_ENABLED=true. Absent or contradictory running-process
+  evidence stops the rollout; an env-file value alone is not proof.
 - Set exactly MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED=true and
   MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED=false. Preserve MAI_TAI_ORB_ENABLED=true and
   MAI_TAI_MOMENTUM_PAPER_ENABLED=true (both observed in the fleet env). Confirm the two new
@@ -100,12 +114,20 @@ No blanket target restart, schema migration, manual live trade, or attended brok
   observer. Momentum remains paper-only with its 16-symbol cap and no direct Massive socket.
   Confirm gateway conditions metadata, scanner/v2 union preservation, snapshot cadence,
   service health, tracebacks/restarts, and unchanged PIDs for units outside the plan.
+- Verify Card 10 on both brokers: RTH native OCO stand-down remains until broker-confirmed
+  cancel at 16:00; pre-market and after-hours software target/stop/flip use +5%/-8% without
+  a floor ride; Webull full closes use the shared tracked path; 19:55 overnight flatten stays
+  enabled. These checks establish configuration and routing, not an unexercised live exit.
 - **NO INC1 WATCH INSTALL.** Do not run install_unexercised_watch.sh, replace the installed
   copy, edit either root cron guard, or activate #1059 auto-close. The installed watch remains
   /home/trader/unexercised_watch/watch.py at SHA256
   45df60c60fe55af89406d20c29de277a44634d6bc6308586a4e0b62e718b8272, independently read here.
   Verify that hash and both existing cron guards are unchanged, read-only. Observation opens
   no incidents. New ORB-source phone delivery remains a separate activation prerequisite.
+  **Operator-accepted gap:** #1066 writes an oms_v2_overnight_flatten_blocked incident if a
+  19:55 sell is refused for unavailable shares, but the installed watch cannot page that new
+  source until WBREAD1 and the watch reinstall. Do not claim 19:55 phone coverage tonight.
+  The 16:00 unconfirmed-release source oms_v2_exit_release_unresolved already pages.
 - Report the new v2 PID/start time and the exact /proc line
   MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true. Inspect REST warmup, literal BOOT-HOLD
   release and bar evidence; an off-session path not exercised is UNEXERCISED, never PASS.
@@ -133,9 +155,17 @@ perform an automatic trading-service rollback. #1065 writes schema-v2 per-cycle 
 the prior retry-budget reader accepts only schema v1. A v2 downgrade must account for that
 durable state and its fail-closed restore behavior; never delete budget history to force entry
 admission. Get a reviewed rollback/state plan rather than treating a binary rollback as proven
-normal operation. No pager rollback is part of this window because no pager change is authorized.
+normal operation. A Card 10 rollback also needs the recorded OMS revision and floor-flag backup;
+do not flip the floor flag independently during live holdings. No pager rollback is part of this
+window because no pager change is authorized.
 
 ## Tomorrow's evidence, not trades
+
+On the first live SELL flip, inspect #1065 reset_new_segment and the new v2 PID. On the first
+Card 10 software exit, verify +5% target / -8% stop / flip with no FLOOR-ARMED line, including
+broker order and fill evidence rather than an intent alone. The first held-past-16:00 position
+must show broker-confirmed cancellation before software exit. Inspect the 19:55 flatten only
+if a share is actually held. Until each event occurs, its live behavior is UNEXERCISED.
 
 On 2026-09-30 examine 09:25-10:00 ET observation records, after verifying the approved install
 actually occurred and the live flag is still OFF. Report candidates and source-bar coverage,
@@ -144,6 +174,6 @@ conditional exits, pending/expired/missing-data counts, denominators and raw pat
 /var/log/project-mai-tai/orb-schwab.log; observation crosses are NOT broker fills or P&L.
 No candidates/signals or an uninstalled observer means NOT VALIDATED, not a successful test.
 
-Still required before activation: independently reviewed grace fix, attended authorized
+Still required before ORB activation: a live observation of the merged grace fix, attended authorized
 Schwab place/reprice/cancel, early-close support, proven phone delivery for all new ORB INC1
 sources, partial-fill/held-symbol coverage checks, and a separate activation decision.
