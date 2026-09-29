@@ -30,6 +30,7 @@ UNIT_PREFIX = "project-mai-tai-"
 V2_SERVICE = "schwab-1m-v2"
 V2_STRATEGY_CODE = "schwab_1m_v2"
 REST_WARMUP_FRESH_AGE_SECONDS = 300
+PERSIST_BAR_AGE_LIMIT_SECONDS = 300
 BOOT_WARMUP_FALLBACK_BOUND_SECONDS = 369
 # A bar series counts as live at the v2 stop when its last bar before the stop started within
 # this many seconds of it. Bars persist ~60 s after their start, so a stop mid-bar leaves the
@@ -54,8 +55,14 @@ DEFAULT_SERVICES = (
     "tv-alerts",
 )
 INTENTIONALLY_INACTIVE_SERVICES = frozenset({"tv-alerts"})
-LOG_TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d{3}")
+LOG_TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})")
 FIELD = re.compile(r"\b([a-z_]+)=([^ ]+)")
+WATCHLIST_UPDATE = re.compile(r"schwab_1m_v2 watchlist updated count=(\d+) sample=([^ ]*)")
+FRESH_WARMUP = re.compile(
+    r"\[V2-(?:REST|STREAMER)-WARMED\].* for ([A-Z0-9.\-^]+) "
+    r"\(bar_age_seconds=([0-9.]+) "
+)
+SAFE_SYMBOL = re.compile(r"[A-Z0-9.\-^]{1,16}\Z")
 
 
 class EvidenceUnknown(RuntimeError):
@@ -172,7 +179,7 @@ def parse_log_files(
         for line in lines:
             match = LOG_TIMESTAMP.match(line)
             if match is not None:
-                preceding = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(
+                preceding = datetime.strptime(match.group(1).split(",", 1)[0], "%Y-%m-%d %H:%M:%S").replace(
                     tzinfo=UTC
                 )
                 if preceding >= since:
@@ -238,7 +245,7 @@ def _timestamped_lines_after(
             match = LOG_TIMESTAMP.match(line)
             if match is None:
                 continue
-            stamp = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+            stamp = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S,%f").replace(tzinfo=UTC)
             if stamp >= since:
                 rows.append((stamp, line))
     return sorted(rows)
@@ -296,6 +303,36 @@ def _flat_counts(runner: Runner) -> tuple[int, int, int]:
         return tuple(int(value) for value in fields)  # type: ignore[return-value]
     except ValueError as exc:
         raise EvidenceUnknown("flat-state query returned a non-numeric count") from exc
+
+
+def _latest_v2_watchlist(runner: Runner, *, now: datetime) -> tuple[datetime, tuple[str, ...]]:
+    raw = runner(
+        ["redis-cli", "--raw", "XREVRANGE", "mai_tai:strategy-state-isolated", "+", "-", "COUNT", "80"]
+    )
+    for line in raw.splitlines():
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("source_service") != "schwab-1m-v2":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("watchlist"), list):
+            raise EvidenceUnknown("latest v2 state has no complete watchlist")
+        produced = _parse_utc(str(event.get("produced_at", "")), label="v2 state")
+        age = (now - produced).total_seconds()
+        if not 0 <= age <= 30:
+            raise EvidenceUnknown(f"latest v2 watchlist state age={age:.1f}s is not fresh")
+        if any(
+            not isinstance(symbol, str) or not SAFE_SYMBOL.fullmatch(symbol)
+            for symbol in payload["watchlist"]
+        ):
+            raise EvidenceUnknown("latest v2 watchlist has an invalid symbol")
+        symbols = tuple(sorted(set(payload["watchlist"])))
+        return produced, symbols
+    raise EvidenceUnknown("no v2 state in recent isolated-state stream entries")
 
 
 def _migration_evidence(
@@ -373,6 +410,29 @@ class BarContinuity:
     live_floor_utc: datetime
     pending_symbols: tuple[str, ...] = ()
     gap_results: tuple["RestartGapResult", ...] = ()
+
+
+@dataclass(frozen=True)
+class BackfillSymbolResult:
+    symbol: str
+    watched_at_stop: bool
+    start_utc: datetime
+    first_post_utc: datetime | None
+    filled_minutes: tuple[datetime, ...]
+    missing_print_minutes: tuple[datetime, ...]
+    quiet_minutes: tuple[datetime, ...]
+    verdict: str
+    reason: str = ""
+    unverified_minutes: tuple[datetime, ...] = ()
+
+
+@dataclass(frozen=True)
+class BackfillContinuity:
+    watched_at_stop: tuple[str, ...]
+    added_after_restart: tuple[str, ...]
+    symbols: tuple[BackfillSymbolResult, ...]
+    verdict: str
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -675,6 +735,243 @@ def _format_restart_gap(result: RestartGapResult) -> str:
     )
 
 
+def _watchlist_updates(
+    lines: Sequence[tuple[datetime, str]], *, through: datetime | None = None
+) -> list[tuple[datetime, frozenset[str]]]:
+    updates: list[tuple[datetime, frozenset[str]]] = []
+    for stamp, line in lines:
+        if through is not None and stamp > through:
+            continue
+        match = WATCHLIST_UPDATE.search(line)
+        if match is None:
+            continue
+        count = int(match.group(1))
+        sample = frozenset(symbol for symbol in match.group(2).split(",") if symbol)
+        if count > 5 or len(sample) != count or any(not SAFE_SYMBOL.fullmatch(s) for s in sample):
+            raise EvidenceUnknown(
+                f"watchlist update at {format_moment(stamp)} has only a partial/invalid sample "
+                f"({len(sample)}/{count}); cannot establish the watched population"
+            )
+        updates.append((stamp, sample))
+    return updates
+
+
+def _symbol_bar_rows(
+    symbol: str, session_day: str, runner: Runner
+) -> tuple[tuple[datetime, datetime, datetime], ...]:
+    if SAFE_SYMBOL.fullmatch(symbol) is None:
+        raise EvidenceUnknown(f"invalid bar-continuity symbol {symbol!r}")
+    raw = _psql(
+        "SELECT bar_time, created_at, updated_at FROM strategy_bar_history "
+        f"WHERE strategy_code='{V2_STRATEGY_CODE}' AND interval_secs=60 "
+        f"AND symbol='{symbol}' "
+        f"AND (bar_time AT TIME ZONE 'America/New_York')::date=DATE '{session_day}' "
+        "AND (bar_time AT TIME ZONE 'America/New_York')::time >= TIME '04:00' "
+        "AND (bar_time AT TIME ZONE 'America/New_York')::time < TIME '20:00' "
+        "ORDER BY bar_time;",
+        runner,
+    )
+    rows: list[tuple[datetime, datetime, datetime]] = []
+    for line in raw.splitlines():
+        fields = line.split("|")
+        if len(fields) != 3:
+            raise EvidenceUnknown(f"malformed bar row for {symbol}: {line!r}")
+        bar, created, updated = (
+            _parse_utc(value, label=f"{symbol} {label}")
+            for value, label in zip(fields, ("bar", "created", "updated"), strict=True)
+        )
+        if bar.second or bar.microsecond or (rows and bar <= rows[-1][0]):
+            raise EvidenceUnknown(f"unordered/non-minute bar history for {symbol}")
+        rows.append((bar, created, updated))
+    return tuple(rows)
+
+
+def _grade_backfill_symbol(
+    symbol: str,
+    *,
+    watched_at_stop: bool,
+    start_utc: datetime,
+    restart_utc: datetime,
+    first_live_utc: datetime | None,
+    rows: Sequence[tuple[datetime, datetime, datetime]],
+    fetcher: AggregateFetcher,
+    first_live_seen_utc: datetime | None = None,
+) -> BackfillSymbolResult:
+    prior = max((bar for bar, _, _ in rows if bar < restart_utc), default=None)
+    start = prior + timedelta(minutes=1) if watched_at_stop and prior else start_utc.replace(
+        second=0, microsecond=0
+    )
+    if watched_at_stop and prior is None:
+        return BackfillSymbolResult(
+            symbol, True, start_utc, None, (), (), (), "COULD_NOT_TELL",
+            "no pre-restart bar for a watched-at-stop symbol",
+        )
+    # A historical REST replay can be created after restart. Only the fresh warmup marker
+    # identifies the current-time bar that ends the recovery window.
+    first_post = first_live_utc
+    current_floor = max(restart_utc, start_utc).replace(second=0, microsecond=0)
+    current_row = next((row for row in rows if row[0] == first_post), None)
+    if (
+        first_post is None
+        or first_post < current_floor
+        or current_row is None
+        or max(current_row[1], current_row[2]) < restart_utc
+    ):
+        return BackfillSymbolResult(
+            symbol, watched_at_stop, start, None, (), (), (), "COULD_NOT_TELL",
+            "no fresh post-restart warmup bar in persisted strategy history",
+        )
+    end = first_post - timedelta(minutes=1)
+    expected: list[datetime] = []
+    minute = start
+    while minute <= end:
+        expected.append(minute)
+        minute += timedelta(minutes=1)
+    present = {bar for bar, _, _ in rows}
+    filled = tuple(minute for minute in expected if minute in present)
+    absent = tuple(minute for minute in expected if minute not in present)
+    if not absent:
+        return BackfillSymbolResult(
+            symbol, watched_at_stop, start, first_post, filled, (), (), "PASS"
+        )
+    try:
+        aggregates = tuple(fetcher(symbol, absent[0], absent[-1]))
+        counts = {item.timestamp_utc.astimezone(UTC): item.transactions for item in aggregates}
+        if len(counts) != len(aggregates) or set(counts) - set(expected):
+            raise AggregateSourceUnknown("independent tape returned duplicate/out-of-window minutes")
+    except AggregateSourceUnknown as exc:
+        return BackfillSymbolResult(
+            symbol, watched_at_stop, start, first_post, filled, (), (), "COULD_NOT_TELL",
+            str(exc),
+        )
+    seen = first_live_seen_utc or first_post
+    printed = tuple(
+        minute for minute in absent
+        if counts.get(minute, 0) > 0
+        and (seen - minute).total_seconds() <= PERSIST_BAR_AGE_LIMIT_SECONDS
+    )
+    unverified = tuple(
+        minute for minute in absent
+        if counts.get(minute, 0) > 0
+        and (seen - minute).total_seconds() > PERSIST_BAR_AGE_LIMIT_SECONDS
+    )
+    quiet = tuple(minute for minute in absent if counts.get(minute, 0) == 0)
+    verdict = (
+        "MISSING_PRINTED_MINUTE" if printed else "COULD_NOT_TELL" if unverified else "PASS"
+    )
+    return BackfillSymbolResult(
+        symbol, watched_at_stop, start, first_post, filled, printed, quiet,
+        verdict,
+        "older REST replay may exist only in strategy memory" if unverified else "",
+        unverified,
+    )
+
+
+def _fresh_warmup_minutes(
+    lines: Sequence[tuple[datetime, str]],
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    result: dict[str, list[tuple[datetime, datetime]]] = {}
+    for stamp, line in lines:
+        match = FRESH_WARMUP.search(line)
+        if match is None:
+            continue
+        age = float(match.group(2))
+        if not 0 <= age <= REST_WARMUP_FRESH_AGE_SECONDS:
+            raise EvidenceUnknown(f"invalid fresh warmup age for {match.group(1)}: {age}")
+        bar = (stamp - timedelta(seconds=age) + timedelta(milliseconds=500)).replace(
+            second=0, microsecond=0
+        )
+        result.setdefault(match.group(1), []).append((stamp, bar))
+    return result
+
+
+def _rest_backfill_continuity(
+    runner: Runner,
+    restart: datetime,
+    stopped: datetime,
+    post_lines: Sequence[tuple[datetime, str]],
+    before: dict,
+    *,
+    aggregate_fetcher: AggregateFetcher | None = None,
+) -> BackfillContinuity:
+    session_start = datetime.combine(restart.astimezone(ET).date(), time(4), ET).astimezone(UTC)
+    session_end = datetime.combine(restart.astimezone(ET).date(), time(20), ET).astimezone(UTC)
+    post_lines = [row for row in post_lines if row[0] < session_end]
+    pre_files = _log_files(V2_SERVICE, runner, since=session_start)
+    pre_lines = [
+        row for row in _timestamped_lines_after(pre_files, since=session_start)
+        if row[0] < stopped
+    ]
+    snapshot_watchlist = before.get("v2_watchlist")
+    if snapshot_watchlist is not None:
+        produced = _parse_utc(
+            str(snapshot_watchlist["produced_at_utc"]), label="snapshot v2 watchlist"
+        )
+        if produced > stopped:
+            raise EvidenceUnknown("snapshot watchlist was produced after v2 stopped")
+        later_lines = [
+            row for row in pre_lines
+            if row[0] > produced and WATCHLIST_UPDATE.search(row[1])
+        ]
+        later_updates = _watchlist_updates(later_lines[-1:])
+        watched = (
+            later_updates[-1][1]
+            if later_updates
+            else frozenset(snapshot_watchlist["symbols"])
+        )
+    else:
+        pre_updates = _watchlist_updates(
+            [row for row in pre_lines if WATCHLIST_UPDATE.search(row[1])][-1:]
+        )
+        if not pre_updates:
+            return BackfillContinuity((), (), (), "COULD_NOT_TELL", "no pre-stop watchlist state")
+        watched = pre_updates[-1][1]
+    post_updates = _watchlist_updates(post_lines)
+    warmup_minutes = _fresh_warmup_minutes(post_lines)
+    added_at: dict[str, datetime] = {}
+    prior_set: frozenset[str] = frozenset()
+    for stamp, selected in post_updates:
+        for symbol in selected - prior_set:
+            added_at[symbol] = stamp
+        prior_set = selected
+    added = set(added_at)
+    if not watched and not added:
+        return BackfillContinuity((), (), (), "N/A", "nothing watched at stop or added after restart")
+    if watched and not post_updates:
+        return BackfillContinuity(
+            tuple(sorted(watched)), (), (), "COULD_NOT_TELL", "no post-restart watchlist state"
+        )
+    fetcher = aggregate_fetcher or _massive_gap_fetcher(runner)
+    results: list[BackfillSymbolResult] = []
+    session_day = restart.astimezone(ET).date().isoformat()
+    for symbol in sorted(watched | added):
+        start = stopped if symbol in watched else added_at[symbol]
+        warmups = [
+            (stamp, bar) for stamp, bar in warmup_minutes.get(symbol, ())
+            if stamp >= (restart if symbol in watched else start)
+        ]
+        results.append(
+            _grade_backfill_symbol(
+                symbol,
+                watched_at_stop=symbol in watched,
+                start_utc=start,
+                restart_utc=restart,
+                first_live_utc=warmups[0][1] if warmups else None,
+                rows=_symbol_bar_rows(symbol, session_day, runner),
+                fetcher=fetcher,
+                first_live_seen_utc=warmups[0][0] if warmups else None,
+            )
+        )
+    verdict = (
+        "MISSING_PRINTED_MINUTE"
+        if any(row.verdict == "MISSING_PRINTED_MINUTE" for row in results)
+        else "COULD_NOT_TELL"
+        if any(row.verdict == "COULD_NOT_TELL" for row in results)
+        else "PASS"
+    )
+    return BackfillContinuity(tuple(sorted(watched)), tuple(sorted(added)), tuple(results), verdict)
+
+
 def _restart_inside_bar_session(restart: datetime) -> bool:
     return is_fillable_et_session(restart, 4, 20)
 
@@ -683,12 +980,17 @@ def snapshot(path: Path, runner: Runner = run_checked) -> bool:
     captured = datetime.now(UTC)
     accounts_found, managed_open, positions_nonzero = _flat_counts(runner)
     migration_head, _, _, _ = _migration_evidence(runner, columns=[], constraints=[])
+    watchlist_at, watchlist_symbols = _latest_v2_watchlist(runner, now=captured)
     flat = accounts_found == len(LIVE_ACCOUNTS) and managed_open == 0 and positions_nonzero == 0
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "captured_at_utc": captured.isoformat(),
         "captured_at_et": captured.astimezone(ET).isoformat(),
         "alembic_version": migration_head,
+        "v2_watchlist": {
+            "produced_at_utc": watchlist_at.isoformat(),
+            "symbols": list(watchlist_symbols),
+        },
         "live_exposure": {
             "accounts_found": accounts_found,
             "accounts_expected": len(LIVE_ACCOUNTS),
@@ -716,8 +1018,18 @@ def _load_snapshot(path: Path) -> dict:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise EvidenceUnknown(f"could not read snapshot {path}: {exc}") from exc
-    if payload.get("schema_version") != 2 or not isinstance(payload.get("services"), dict):
+    if payload.get("schema_version") not in {2, 3} or not isinstance(payload.get("services"), dict):
         raise EvidenceUnknown(f"snapshot {path} has an unsupported shape")
+    if payload["schema_version"] == 3:
+        watchlist = payload.get("v2_watchlist")
+        if not isinstance(watchlist, dict) or not isinstance(watchlist.get("symbols"), list):
+            raise EvidenceUnknown(f"snapshot {path} has no v2 watchlist")
+        _parse_utc(str(watchlist.get("produced_at_utc", "")), label="snapshot v2 watchlist")
+        if any(
+            not isinstance(symbol, str) or not SAFE_SYMBOL.fullmatch(symbol)
+            for symbol in watchlist["symbols"]
+        ):
+            raise EvidenceUnknown(f"snapshot {path} has invalid v2 watchlist symbols")
     missing_services = set(DEFAULT_SERVICES) - set(payload["services"])
     exposure = payload.get("live_exposure")
     if missing_services or not isinstance(exposure, dict) or not payload.get("alembic_version"):
@@ -1029,54 +1341,46 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
 
     bars = _bar_continuity(runner, v2_start)
     restart_inside_bar_session = _restart_inside_bar_session(v2_start)
-    gap_holes = [result for result in bars.gap_results if result.verdict == "HOLE"]
-    gap_unknowns = [result for result in bars.gap_results if result.verdict == "COULD_NOT_TELL"]
-    classified_gaps = len(bars.gap_results)
-    gap_population_complete = classified_gaps == bars.spanning
-    pending = restart_inside_bar_session and bool(bars.pending_symbols)
-    bar_ok = (
-        not gap_holes
-        and not gap_unknowns
-        and gap_population_complete
-        and not pending
-        and (not restart_inside_bar_session or bars.brackets > 0)
-    )
-    if not gap_population_complete:
+    if restart_inside_bar_session:
+        try:
+            backfill = _rest_backfill_continuity(
+                runner, v2_start, bars.stopped_at_utc, v2_lines, before
+            )
+        except EvidenceUnknown as exc:
+            backfill = BackfillContinuity((), (), (), "COULD_NOT_TELL", str(exc))
+    else:
+        backfill = BackfillContinuity((), (), (), "N/A_OFF_SESSION", "restart outside bar session")
+    if backfill.verdict == "MISSING_PRINTED_MINUTE":
+        missing = sum(len(item.missing_print_minutes) for item in backfill.symbols)
         failures.append(
-            "restart-spanning bar-gap population is not independently classified: "
-            f"{classified_gaps}/{bars.spanning}"
+            f"REST backfill coverage not proven for {missing} independently printed minute(s)"
         )
-    if gap_holes:
-        failures.append(
-            f"{len(gap_holes)} restart-spanning bar gap(s) contain independent eligible prints"
-        )
-    if gap_unknowns:
-        failures.append(
-            f"{len(gap_unknowns)} restart-spanning bar gap(s) could not be independently graded"
-        )
-    if pending:
-        failures.append(
-            "PENDING_NEXT_BAR for live-at-stop symbol(s): " + ",".join(bars.pending_symbols)
-        )
-    elif restart_inside_bar_session and bars.brackets == 0:
-        failures.append("no adjacent live-bar pair brackets the in-session v2 restart")
-    bar_status = (
-        "COULD_NOT_TELL"
-        if gap_unknowns
-        else "PENDING_NEXT_BAR"
-        if pending
-        else "PASS"
-        if bar_ok
-        else "FAIL"
-    )
-    if not restart_inside_bar_session and bars.brackets == 0:
-        bar_status = "N/A_OFF_SESSION"
+    elif backfill.verdict == "COULD_NOT_TELL":
+        failures.append(f"REST backfill continuity COULD_NOT_TELL: {backfill.reason or 'per-symbol evidence incomplete'}")
+    bar_status = "FAIL" if backfill.verdict == "MISSING_PRINTED_MINUTE" else backfill.verdict
+    per_symbol = "; ".join(
+        f"{item.symbol} status={item.verdict} watched_at_stop={int(item.watched_at_stop)} "
+        f"window={format_moment(item.start_utc)}.."
+        f"{format_moment(item.first_post_utc) if item.first_post_utc else '?'} "
+        f"filled={len(item.filled_minutes)}/"
+        f"{len(item.filled_minutes) + len(item.missing_print_minutes) + len(item.quiet_minutes) + len(item.unverified_minutes)} "
+        f"missing_printed={len(item.missing_print_minutes)} "
+        f"minutes={','.join(format_moment(minute) for minute in item.missing_print_minutes) or '-'} "
+        f"unverified_old={len(item.unverified_minutes)} "
+        f"quiet={len(item.quiet_minutes)} reason={item.reason or '-'}"
+        for item in backfill.symbols
+    ) or backfill.reason or "-"
     gap_detail = "; ".join(_format_restart_gap(result) for result in bars.gap_results)
     if not gap_detail:
         gap_detail = "independent restart-gap classifications=0/0"
     rows.append(
         (
             "Bar continuity",
+            f"watched_at_stop={len(backfill.watched_at_stop)} "
+            f"symbols={','.join(backfill.watched_at_stop) or '-'}; "
+            f"added_after_restart={len(backfill.added_after_restart)} "
+            f"symbols={','.join(backfill.added_after_restart) or '-'}; "
+            f"per_symbol={per_symbol}; persisted strategy_bar_history INFO: "
             f"session symbols={bars.symbols}; adjacent bar pairs={bars.pairs}; "
             f"gaps>90s={bars.gaps}/{bars.pairs}; "
             f"v2 stopped at {format_moment(bars.stopped_at_utc)}; "

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,7 +17,12 @@ from project_mai_tai.services.schwab_1m_v2_bot import (
 )
 
 
-MODULE_PATH = Path(__file__).resolve().parents[2] / "ops" / "health" / "v2_restart_evidence.py"
+MODULE_PATH = Path(
+    os.environ.get(
+        "V2_RESTART_EVIDENCE_MODULE",
+        str(Path(__file__).resolve().parents[2] / "ops" / "health" / "v2_restart_evidence.py"),
+    )
+)
 SPEC = importlib.util.spec_from_file_location("v2_restart_evidence", MODULE_PATH)
 vre = importlib.util.module_from_spec(SPEC)
 sys.modules["v2_restart_evidence"] = vre
@@ -341,6 +347,13 @@ def _report_fixture(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(vre, "_log_files", log_files)
     monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: _bars(3, 99, 2, 3, 0))
+    monkeypatch.setattr(
+        vre,
+        "_rest_backfill_continuity",
+        lambda runner, restart, stopped, lines, before: vre.BackfillContinuity(
+            ("TEST",), (), (), "PASS"
+        ),
+    )
     args = SimpleNamespace(
         snapshot=snapshot,
         restarted=[vre.V2_SERVICE],
@@ -517,15 +530,24 @@ def test_report_does_not_require_bar_brackets_outside_a_market_session(
     assert "| N/A_OFF_SESSION |" in output
 
 
-def test_report_requires_bar_brackets_during_a_weekday_market_session(
+def test_report_marks_no_watched_symbols_na_during_a_weekday_market_session(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     args, current, logs = _report_fixture(monkeypatch, tmp_path)
     _move_v2_report_start(current, logs, datetime(2026, 9, 14, 15, 11, tzinfo=UTC))
     monkeypatch.setattr(vre, "_bar_continuity", lambda runner, restart: _bars(0, 0, 0, 0, 0))
+    monkeypatch.setattr(
+        vre,
+        "_rest_backfill_continuity",
+        lambda runner, restart, stopped, lines, before: vre.BackfillContinuity(
+            (), (), (), "N/A", "nothing watched at stop or added after restart"
+        ),
+    )
 
-    assert vre.report(args, runner=lambda command: "") == 1
-    assert "no adjacent live-bar pair brackets the in-session v2 restart" in capsys.readouterr().out
+    assert vre.report(args, runner=lambda command: "") == 0
+    output = capsys.readouterr().out
+    assert "nothing watched at stop or added after restart" in output
+    assert "| N/A |" in output
 
 
 def test_report_fails_if_an_untouched_service_restarted(monkeypatch, tmp_path: Path) -> None:
@@ -661,12 +683,14 @@ def test_snapshot_records_pre_restart_flatness_denominators(monkeypatch, tmp_pat
         "_migration_evidence",
         lambda runner, columns, constraints: ("20260910_0020", 0, 0, []),
     )
+    monkeypatch.setattr(vre, "_latest_v2_watchlist", lambda runner, now: (now, ("TEST",)))
     target = tmp_path / "snapshot.json"
 
     assert vre.snapshot(target, runner=lambda command: "") is True
 
     payload = json.loads(target.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
+    assert payload["v2_watchlist"]["symbols"] == ["TEST"]
     assert payload["alembic_version"] == "20260910_0020"
     assert payload["live_exposure"] == {
         "accounts_found": 2,
@@ -674,6 +698,31 @@ def test_snapshot_records_pre_restart_flatness_denominators(monkeypatch, tmp_pat
         "open_managed_rows": 0,
         "nonzero_account_position_rows": 0,
     }
+
+
+def test_snapshot_watchlist_read_ignores_orb_and_requires_fresh_v2() -> None:
+    now = datetime(2026, 9, 28, 22, 40, tzinfo=UTC)
+    orb = json.dumps(
+        {"source_service": "orb", "produced_at": now.isoformat(), "payload": {"watchlist": ["ORB"]}}
+    )
+    v2 = json.dumps(
+        {
+            "source_service": "schwab-1m-v2",
+            "produced_at": (now - timedelta(seconds=5)).isoformat(),
+            "payload": {"watchlist": ["TEST", "ONFO", "TEST"]},
+        }
+    )
+    produced, symbols = vre._latest_v2_watchlist(lambda command: f"{orb}\n{v2}\n", now=now)
+    assert produced == now - timedelta(seconds=5)
+    assert symbols == ("ONFO", "TEST")
+    with pytest.raises(vre.EvidenceUnknown, match="not fresh"):
+        vre._latest_v2_watchlist(
+            lambda command: v2.replace(
+                (now - timedelta(seconds=5)).isoformat(),
+                (now - timedelta(seconds=31)).isoformat(),
+            ),
+            now=now,
+        )
 
 
 def test_snapshot_fails_immediately_when_a_live_account_is_not_flat(
@@ -697,6 +746,7 @@ def test_snapshot_fails_immediately_when_a_live_account_is_not_flat(
         "_migration_evidence",
         lambda runner, columns, constraints: ("20260910_0020", 0, 0, []),
     )
+    monkeypatch.setattr(vre, "_latest_v2_watchlist", lambda runner, now: (now, ()))
 
     assert vre.snapshot(tmp_path / "snapshot.json", runner=lambda command: "") is False
 
@@ -853,7 +903,7 @@ def test_report_passes_bar_continuity_when_only_excluded_pairs_bracket_the_resta
     assert "v2 stopped at 2026-09-10 20:25:00 EDT (2026-09-11 00:25:00 UTC)" in output
 
 
-def test_report_still_fails_a_gap_that_spans_the_restart_on_a_live_series(
+def test_persisted_gap_is_info_when_restart_coverage_is_not_at_issue(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     args, _, _ = _report_fixture(monkeypatch, tmp_path)
@@ -870,11 +920,11 @@ def test_report_still_fails_a_gap_that_spans_the_restart_on_a_live_series(
         lambda runner, restart: _bars(3, 99, 2, 3, 1, excluded=1, results=(gap,)),
     )
 
-    assert vre.report(args, runner=lambda command: "") == 1
+    assert vre.report(args, runner=lambda command: "") == 0
     output = capsys.readouterr().out
-    assert "1 restart-spanning bar gap(s) contain independent eligible prints" in output
+    assert "persisted strategy_bar_history INFO" in output
     assert "HOLE symbol=TEST" in output
-    assert "| Bar continuity |" in output and "| FAIL |" in output
+    assert "| Bar continuity |" in output and "| N/A_OFF_SESSION |" in output
 
 
 def test_mnov_restart_gap_passes_when_massive_has_the_identical_no_trade_minutes() -> None:
@@ -992,7 +1042,7 @@ def test_restart_gap_with_independent_eligible_prints_is_a_hole() -> None:
     }
 
 
-def test_restart_gap_source_429_is_could_not_tell_and_fails_the_report(
+def test_legacy_gap_source_429_is_info_off_session(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     result = vre.RestartGapResult(
@@ -1009,11 +1059,11 @@ def test_restart_gap_source_429_is_could_not_tell_and_fails_the_report(
         lambda runner, restart: _bars(1, 20, 1, 1, 1, results=(result,)),
     )
 
-    assert vre.report(args, runner=lambda command: "") == 1
+    assert vre.report(args, runner=lambda command: "") == 0
     output = capsys.readouterr().out
     assert "COULD_NOT_TELL symbol=RATE" in output
     assert "Massive HTTP 429" in output
-    assert "| COULD_NOT_TELL |" in output
+    assert "| N/A_OFF_SESSION |" in output
 
 
 def test_aggregate_source_failure_is_captured_for_the_exact_gap() -> None:
@@ -1043,12 +1093,19 @@ def test_bar_continuity_is_pending_until_a_later_bar_exists(
         "_bar_continuity",
         lambda runner, restart: _bars(1, 10, 0, 0, 0, pending=("WAIT",)),
     )
+    monkeypatch.setattr(
+        vre,
+        "_rest_backfill_continuity",
+        lambda runner, restart, stopped, lines, before: vre.BackfillContinuity(
+            ("WAIT",), (), (), "COULD_NOT_TELL", "no post-restart current bar"
+        ),
+    )
 
     assert vre.report(args, runner=lambda command: "") == 1
     output = capsys.readouterr().out
-    assert "PENDING_NEXT_BAR for live-at-stop symbol(s): WAIT" in output
+    assert "REST backfill continuity COULD_NOT_TELL: no post-restart current bar" in output
     assert "pending next bar=1 symbols=WAIT" in output
-    assert "| PENDING_NEXT_BAR |" in output
+    assert "| COULD_NOT_TELL |" in output
 
 
 def test_bar_continuity_query_marks_a_live_symbol_without_a_later_bar_pending() -> None:
@@ -1068,6 +1125,226 @@ def test_bar_continuity_query_marks_a_live_symbol_without_a_later_bar_pending() 
     assert bars.pending_symbols == ("WAIT",)
     assert bars.gap_results == ()
     assert len(sql) == 2
+
+
+def test_monday_no_watched_symbols_and_no_late_additions_is_na(monkeypatch) -> None:
+    restart = datetime(2026, 9, 28, 22, 42, 25, tzinfo=UTC)
+    pre = "2026-09-28 22:40:00,000 INFO schwab_1m_v2 watchlist updated count=0 sample= warmed=0"
+    monkeypatch.setattr(vre, "_log_files", lambda service, runner, since: [("v2.log", [pre])])
+
+    result = vre._rest_backfill_continuity(
+        lambda command: "", restart, restart, (), {"schema_version": 2}
+    )
+
+    assert result.verdict == "N/A"
+    assert result.watched_at_stop == result.added_after_restart == ()
+
+
+def _bar_row(minute: int, *, written_minute: int = 15):
+    bar = datetime(2026, 9, 28, 14, minute, tzinfo=UTC)
+    written = datetime(2026, 9, 28, 14, written_minute, 20, tzinfo=UTC)
+    return bar, written, written
+
+
+def test_mid_session_rest_fill_covers_each_minute_before_fresh_bar() -> None:
+    restart = datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC)
+    result = vre._grade_backfill_symbol(
+        "TEST",
+        watched_at_stop=True,
+        start_utc=restart,
+        restart_utc=restart,
+        first_live_utc=datetime(2026, 9, 28, 14, 15, tzinfo=UTC),
+        rows=(_bar_row(12, written_minute=12), _bar_row(13), _bar_row(14), _bar_row(15)),
+        fetcher=lambda *_: pytest.fail("a complete fill must not need an independent tape read"),
+    )
+
+    assert result.verdict == "PASS"
+    assert [minute.minute for minute in result.filled_minutes] == [13, 14]
+    assert result.missing_print_minutes == ()
+
+
+def test_rest_fill_missing_a_printed_minute_blocks_the_gate(monkeypatch, tmp_path: Path, capsys) -> None:
+    restart = datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC)
+    missing = datetime(2026, 9, 28, 14, 14, tzinfo=UTC)
+    result = vre._grade_backfill_symbol(
+        "TEST",
+        watched_at_stop=True,
+        start_utc=restart,
+        restart_utc=restart,
+        first_live_utc=datetime(2026, 9, 28, 14, 15, tzinfo=UTC),
+        rows=(_bar_row(12, written_minute=12), _bar_row(13), _bar_row(15)),
+        fetcher=lambda *_: (vre.MinuteAggregate(missing, 2),),
+    )
+    assert result.verdict == "MISSING_PRINTED_MINUTE"
+    assert result.missing_print_minutes == (missing,)
+
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    _move_v2_report_start(current, logs, restart)
+    monkeypatch.setattr(
+        vre,
+        "_rest_backfill_continuity",
+        lambda runner, started, stopped, lines, before: vre.BackfillContinuity(
+            ("TEST",), (), (result,), "MISSING_PRINTED_MINUTE"
+        ),
+    )
+    assert vre.report(args, runner=lambda command: "") == 1
+    output = capsys.readouterr().out
+    assert "REST backfill coverage not proven for 1 independently printed minute(s)" in output
+    assert "filled=1/2 missing_printed=1" in output
+    assert "minutes=2026-09-28 10:14:00 EDT" in output
+
+
+def test_unreadable_tape_is_unknown_not_a_clean_minute() -> None:
+    def unreadable(*_args):
+        raise vre.AggregateSourceUnknown("Massive HTTP 429")
+
+    result = vre._grade_backfill_symbol(
+        "TEST",
+        watched_at_stop=True,
+        start_utc=datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC),
+        restart_utc=datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC),
+        first_live_utc=datetime(2026, 9, 28, 14, 15, tzinfo=UTC),
+        rows=(_bar_row(12, written_minute=12), _bar_row(13), _bar_row(15)),
+        fetcher=unreadable,
+    )
+
+    assert result.verdict == "COULD_NOT_TELL"
+    assert "HTTP 429" in result.reason
+
+
+def test_old_rest_replay_not_persisted_is_unknown_not_a_proven_hole() -> None:
+    old_print = datetime(2026, 9, 28, 14, 13, tzinfo=UTC)
+    result = vre._grade_backfill_symbol(
+        "TEST",
+        watched_at_stop=True,
+        start_utc=datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC),
+        restart_utc=datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC),
+        first_live_utc=datetime(2026, 9, 28, 14, 50, tzinfo=UTC),
+        first_live_seen_utc=datetime(2026, 9, 28, 14, 50, 20, tzinfo=UTC),
+        rows=(_bar_row(12, written_minute=12), _bar_row(50, written_minute=50)),
+        fetcher=lambda *_: (vre.MinuteAggregate(old_print, 3),),
+    )
+    assert result.verdict == "COULD_NOT_TELL"
+    assert result.unverified_minutes == (old_print,)
+    assert result.missing_print_minutes == ()
+
+
+def test_historical_replay_row_cannot_end_the_coverage_window() -> None:
+    result = vre._grade_backfill_symbol(
+        "TEST",
+        watched_at_stop=True,
+        start_utc=datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC),
+        restart_utc=datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC),
+        first_live_utc=None,
+        rows=(_bar_row(12, written_minute=12), _bar_row(13)),
+        fetcher=lambda *_: (),
+    )
+
+    assert result.verdict == "COULD_NOT_TELL"
+    assert "fresh post-restart warmup" in result.reason
+
+
+def test_watched_at_stop_uses_fresh_rest_marker_not_historical_replay(monkeypatch) -> None:
+    restart = datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC)
+    marker_at = datetime(2026, 9, 28, 14, 15, 0, 500000, tzinfo=UTC)
+    post_lines = (
+        (
+            datetime(2026, 9, 28, 14, 12, 31, tzinfo=UTC),
+            "2026-09-28 14:12:31,000 INFO schwab_1m_v2 watchlist updated "
+            "count=1 sample=TEST warmed=0",
+        ),
+        (
+            marker_at,
+            "2026-09-28 14:15:00,500 INFO [V2-REST-WARMED] schwab_v2 REST "
+            "fresh-source warmup complete for TEST (bar_age_seconds=0.500 "
+            "bound_seconds=300 warmed=1/1)",
+        ),
+    )
+    monkeypatch.setattr(vre, "_log_files", lambda service, runner, since: [("v2.log", [])])
+    monkeypatch.setattr(
+        vre,
+        "_symbol_bar_rows",
+        lambda symbol, session, runner: (
+            _bar_row(12, written_minute=12),
+            _bar_row(13),
+            _bar_row(14),
+            _bar_row(15),
+        ),
+    )
+    result = vre._rest_backfill_continuity(
+        lambda command: "",
+        restart,
+        restart,
+        post_lines,
+        {
+            "schema_version": 3,
+            "v2_watchlist": {
+                "produced_at_utc": datetime(2026, 9, 28, 14, 12, tzinfo=UTC).isoformat(),
+                "symbols": ["TEST"],
+            },
+        },
+        aggregate_fetcher=lambda *_: pytest.fail("all minutes are covered"),
+    )
+    assert result.verdict == "PASS"
+    assert result.watched_at_stop == ("TEST",)
+    assert result.symbols[0].first_post_utc == datetime(2026, 9, 28, 14, 15, tzinfo=UTC)
+    assert [minute.minute for minute in result.symbols[0].filled_minutes] == [13, 14]
+
+
+def test_late_addition_without_current_bar_is_unknown_not_na(monkeypatch) -> None:
+    restart = datetime(2026, 9, 28, 22, 42, 25, tzinfo=UTC)
+    pre = "2026-09-28 22:40:00,000 INFO schwab_1m_v2 watchlist updated count=0 sample= warmed=0"
+    monkeypatch.setattr(vre, "_log_files", lambda service, runner, since: [("v2.log", [pre])])
+    monkeypatch.setattr(vre, "_symbol_bar_rows", lambda symbol, session, runner: ())
+    added = (
+        datetime(2026, 9, 28, 22, 58, tzinfo=UTC),
+        "2026-09-28 22:58:00,000 INFO schwab_1m_v2 watchlist updated "
+        "count=1 sample=ONFO warmed=0",
+    )
+    result = vre._rest_backfill_continuity(
+        lambda command: "", restart, restart, (added,), {"schema_version": 2},
+        aggregate_fetcher=lambda *_: (),
+    )
+    assert result.added_after_restart == ("ONFO",)
+    assert result.verdict == "COULD_NOT_TELL"
+    assert "no fresh post-restart warmup bar" in result.symbols[0].reason
+
+
+def test_late_addition_with_a_current_rest_bar_has_zero_gap_minutes(monkeypatch) -> None:
+    restart = datetime(2026, 9, 28, 22, 42, 25, tzinfo=UTC)
+    pre = "2026-09-28 22:40:00,000 INFO schwab_1m_v2 watchlist updated count=0 sample= warmed=0"
+    monkeypatch.setattr(vre, "_log_files", lambda service, runner, since: [("v2.log", [pre])])
+    monkeypatch.setattr(
+        vre,
+        "_symbol_bar_rows",
+        lambda symbol, session, runner: (
+            (
+                datetime(2026, 9, 28, 22, 58, tzinfo=UTC),
+                datetime(2026, 9, 28, 22, 58, 30, tzinfo=UTC),
+                datetime(2026, 9, 28, 22, 58, 30, tzinfo=UTC),
+            ),
+        ),
+    )
+    post_lines = (
+        (
+            datetime(2026, 9, 28, 22, 58, tzinfo=UTC),
+            "2026-09-28 22:58:00,000 INFO schwab_1m_v2 watchlist updated "
+            "count=1 sample=ONFO warmed=0",
+        ),
+        (
+            datetime(2026, 9, 28, 22, 58, 10, tzinfo=UTC),
+            "2026-09-28 22:58:10,000 INFO [V2-REST-WARMED] schwab_v2 REST "
+            "fresh-source warmup complete for ONFO (bar_age_seconds=10.000 "
+            "bound_seconds=300 warmed=1/1)",
+        ),
+    )
+    result = vre._rest_backfill_continuity(
+        lambda command: "", restart, restart, post_lines, {"schema_version": 2},
+        aggregate_fetcher=lambda *_: pytest.fail("zero gap minutes need no tape read"),
+    )
+    assert result.verdict == "PASS"
+    assert result.added_after_restart == ("ONFO",)
+    assert result.symbols[0].filled_minutes == ()
 
 
 def test_massive_http_429_is_not_an_empty_clean_tape(monkeypatch) -> None:
