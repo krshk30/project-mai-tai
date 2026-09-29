@@ -1,0 +1,9 @@
+{
+  "pr_number": 1059,
+  "range_base": "5ac2308e1c939ac1ba71e19acd299f290c7338c8",
+  "range_head": "83202e2c531a77441be539bc6d3ffa578c197439",
+  "reviewed_at": "2026-09-29T14:25:52Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1 review of 83202e2c (base 5ac2308e): 127 targeted tests pass; RED control 27 fail on base watch; 30 mutations, 28 killed (ET window 06:59/07:00/20:00/20:01 EDT+EST, weekday, freshness, qty, row status/qty, session-end Python+SQL, open rows, dry-run, account, SQL qty/row, aux route, exception, second-read interval/newer-stamp/first-read/reset/persist, installer */15, --cron, cron rollback, guard count); 2 minor survivors (SQL freshness interval text; candidate kept across an exception run) non-blocking. Box read-only: dry-run vs 5 real incidents all verified; EXPLAIN of 3 UPDATE shapes clean; predicates match 1 row each. Full suite: failed set = baseline + main-inherited momentum SIGTERM test (host Redis, fails identically on main). Install NOT approved by this pin: waits for WBREAD1 (Webull failed read -> flat) per operator."
+}
