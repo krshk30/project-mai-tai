@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
+from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
@@ -16,6 +17,24 @@ STRATEGY_CODE = "orb_schwab"
 SOURCE_SERVICE = "orb-schwab"
 QUANTITY = Decimal("2")
 _ET = ZoneInfo("America/New_York")
+
+
+def build_orb_schwab_exit_intent(settings: Settings, symbol: str, entry_id: str, fill_id: str, reason: str) -> TradeIntentEvent:
+    from project_mai_tai.orb_schwab_exits import ATR_REASON, BODY_REASON
+
+    if reason not in {BODY_REASON, ATR_REASON}:
+        raise ValueError("unknown ORB exit rule")
+    UUID(entry_id)
+    UUID(fill_id)
+    return TradeIntentEvent(
+        event_id=uuid5(NAMESPACE_URL, f"orb-schwab-exit:{entry_id}:{fill_id}:{reason}"),
+        source_service=SOURCE_SERVICE,
+        payload=TradeIntentPayload(
+            strategy_code=STRATEGY_CODE, broker_account_name=settings.strategy_schwab_1m_v2_account_name,
+            symbol=symbol.upper(), side="sell", quantity=QUANTITY, intent_type="close", reason=reason,
+            metadata={"orb_schwab_exit": "true", "entry_order_id": entry_id, "entry_fill_id": fill_id},
+        ),
+    )
 
 
 def build_orb_schwab_open_intent(
@@ -105,6 +124,26 @@ def orb_schwab_intent_refusal(
         or settings.provider_for_account(payload.broker_account_name) != "schwab"
     ):
         return "orb_schwab_wrong_account"
+    if payload.intent_type == "close":
+        from project_mai_tai.orb_schwab_exits import ATR_REASON, BODY_REASON
+
+        try:
+            UUID(payload.metadata["entry_order_id"])
+            UUID(payload.metadata["entry_fill_id"])
+        except (KeyError, ValueError, TypeError):
+            return "orb_schwab_exit_identity_missing"
+        if (
+            payload.side != "sell" or payload.quantity != QUANTITY
+            or payload.reason not in {BODY_REASON, ATR_REASON}
+            or payload.metadata.get("orb_schwab_exit") != "true"
+            or set(payload.metadata) != {"orb_schwab_exit", "entry_order_id", "entry_fill_id"}
+        ):
+            return "orb_schwab_unsupported_exit"
+        if now.tzinfo is None or now.astimezone(_ET).weekday() >= 5 or not (
+            time(9, 30) <= now.astimezone(_ET).time() < time(16)
+        ):
+            return "orb_schwab_outside_exit_window"
+        return None
     if payload.intent_type == "cancel":
         if payload.metadata.get("orb_schwab_reprice") == "true":
             if payload.side != "buy" or payload.quantity != 0 or now.tzinfo is None:

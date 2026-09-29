@@ -188,6 +188,36 @@ def _trade(at, price, symbol="CLRO"):
     })}
 
 
+@pytest.mark.parametrize("flag", ["orb_paper_atr_entry_gate_enabled", "orb_paper_four_red_delay_enabled"])
+def test_inactive_paper_entry_filters_cannot_be_silently_enabled_on_live_route(flag):
+    with pytest.raises(ValueError, match="Optional paper entry gates"):
+        OrbSchwabService(settings=Settings(orb_schwab_observe_enabled=True,
+                                           orb_running_high_enabled=True,
+                                           orb_resting_entry_enabled=True, **{flag: True}))
+
+
+def test_observer_exit_is_conditional_and_never_writes_or_publishes(monkeypatch, caplog):
+    from project_mai_tai.orb_schwab_exits import BODY_REASON
+
+    caplog.set_level(logging.INFO, logger="orb-schwab")
+    service, clock = _observer(monkeypatch)
+    clock[0] = OPEN - timedelta(minutes=5)
+    asyncio.run(service._sync_gateway_subscription(["CLRO"]))
+    _observe_bars(service, clock)
+    # A high/low swing followed by an in-cap cross gives a small forming body.
+    for seconds, price in ((0, 5.69), (2, 5.60), (5, 5.50), (10, 5.70)):
+        clock[0] = OPEN + timedelta(seconds=seconds)
+        service._handle_market_data(_trade(clock[0], price))
+    monkeypatch.setattr("project_mai_tai.services.orb_schwab_app.schwab_completed_atr_bars",
+                        lambda *_args: ([], "missing_last_closed_schwab_bar"))
+    asyncio.run(service._process_strategy_exits(clock[0]))
+    rows = [row for row in _observations(caplog) if row["kind"] == "conditional_exit"]
+    assert len(rows) == 1 and rows[0]["reason"] == BODY_REASON
+    assert rows[0]["fill_status"] == "UNMEASURED"
+    assert rows[0]["broker_orders_sent"] == 0
+    assert "NOT_A_BROKER_FILL" in rows[0]["assumption"]
+
+
 def test_observer_records_same_three_actions_with_sending_off(monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger="orb-schwab")
     service, clock = _observer(monkeypatch)

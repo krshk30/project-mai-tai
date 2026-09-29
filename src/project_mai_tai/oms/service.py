@@ -60,7 +60,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
-from project_mai_tai.oms.orb_schwab_eod import close_orb_schwab_before_close
+from project_mai_tai.oms.orb_schwab_eod import close_orb_schwab_before_close, close_orb_schwab_on_signal
 from project_mai_tai.orb_schwab_macd import schwab_completed_bar_macd_gate
 from project_mai_tai.orb_schwab_order_route import (
     build_orb_schwab_cancel_intent,
@@ -1488,6 +1488,13 @@ class OmsRiskService:
                     "[OMS-ORB-SCHWAB-REFUSED] symbol=%s account=%s reason=%s",
                     event.payload.symbol, event.payload.broker_account_name, refusal,
                 )
+                return []
+            if event.payload.intent_type == "close":
+                try:
+                    await close_orb_schwab_on_signal(self, event, clock=utcnow)
+                except (ValueError, KeyError, TypeError) as exc:
+                    self.logger.warning("[OMS-ORB-SCHWAB-EXIT-REFUSED] symbol=%s reason=%s",
+                                        event.payload.symbol, exc)
                 return []
             if event.payload.intent_type == "open" or (
                 event.payload.intent_type == "cancel"

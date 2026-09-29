@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -77,3 +78,36 @@ async def test_unknown_replace_never_claims_success(monkeypatch) -> None:
     monkeypatch.setattr(adapter, "_fetch_order", fetch)
     monkeypatch.setattr(adapter, "_authorized_request_json", request_json)
     assert await adapter.replace_bracket_order(request, "old") is None
+
+
+def test_orb_fill_time_comes_from_execution_legs_not_parent_entered_time():
+    adapter, request = _setup()
+    order = {"quantity": 2, "filledQuantity": 2, "enteredTime": "2026-09-29T13:28:00Z",
+             "orderActivityCollection": [{"executionLegs": [
+                 {"time": "2026-09-29T13:30:10Z", "quantity": 1, "price": 5.6},
+                 {"time": "2026-09-29T13:30:11Z", "quantity": 1, "price": 5.6},
+             ]}]}
+    report = adapter._execution_report_from_order(request=request, order=order,
+                                                  event_type="filled", broker_order_id="parent")
+    assert report.metadata["orb_entry_fill_time_source"] == "execution_leg"
+    assert report.metadata["orb_entry_first_fill_at"] == "2026-09-29T13:30:10+00:00"
+    assert report.reported_at == datetime(2026, 9, 29, 13, 28, tzinfo=UTC)  # other consumers unchanged
+
+
+def test_orb_missing_execution_time_is_unknown_not_order_entered_time():
+    adapter, request = _setup()
+    report = adapter._execution_report_from_order(
+        request=request, order={"quantity": 2, "filledQuantity": 2, "enteredTime": "2026-09-29T13:28:00Z"},
+        event_type="filled", broker_order_id="parent")
+    assert report.metadata["orb_entry_fill_time_source"] == "UNKNOWN"
+    assert report.metadata["orb_entry_first_fill_at"] == ""
+
+
+def test_other_strategy_fill_metadata_is_unchanged():
+    from dataclasses import replace
+
+    adapter, request = _setup()
+    request = replace(request, strategy_code="schwab_1m_v2")
+    report = adapter._execution_report_from_order(request=request,
+        order={"quantity": 2, "filledQuantity": 2}, event_type="filled", broker_order_id="parent")
+    assert report.metadata == request.metadata

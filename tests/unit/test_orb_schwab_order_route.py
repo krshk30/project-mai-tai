@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -18,6 +19,7 @@ from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.orb_schwab_order_route import (
     build_orb_schwab_cancel_intent,
+    build_orb_schwab_exit_intent,
     build_orb_schwab_open_intent,
     build_orb_schwab_reprice_intent,
     orb_schwab_intent_refusal,
@@ -806,3 +808,239 @@ def test_oms_control_loop_runs_eod_close_without_strategy_process(monkeypatch) -
 
     asyncio.run(run_once())
     assert [r.intent_type for r in broker.submitted] == ["open", "close"]
+
+
+def _strategy_exit_service(monkeypatch, *, atr=False):
+    from project_mai_tai.orb_schwab_exits import CONTEXT_KEY, OrbExitTape
+    from project_mai_tai.strategy_core.orb_intrabar import OrbBar
+
+    service, factory, broker, clock = _eod_service(monkeypatch)
+    opening = OPEN.replace(minute=30)
+    fill_at = opening + timedelta(seconds=10)
+    clock[0] = opening + timedelta(minutes=2, seconds=1)
+    tape = OrbExitTape(opening - timedelta(minutes=5))
+    for seconds, price in ((0, 10), (2, 11), (5, 9), (10, 11 if atr else 10.1)):
+        tape.trade(opening + timedelta(seconds=seconds), price, 100)
+    bars = [OrbBar(timestamp=opening - timedelta(minutes=8) + timedelta(minutes=i),
+                   open=10, high=10.1, low=9.9 if i < 9 else 8.8,
+                   close=10 if i < 9 else 8.9, volume=100) for i in range(10)]
+    with factory.begin() as session:
+        entry = session.scalar(select(BrokerOrder).where(BrokerOrder.side == "buy"))
+        entry.submitted_at = OPEN
+        fill = Fill(order_id=entry.id, strategy_id=entry.strategy_id,
+                    broker_account_id=entry.broker_account_id, broker_fill_id="EXACT-BUY-FILL",
+                    symbol="CLRO", side="buy", quantity=2, price=10.1, filled_at=fill_at,
+                    payload={"metadata": {"orb_entry_fill_time_source": "execution_leg",
+                                          "orb_entry_first_fill_at": fill_at.isoformat()}})
+        session.add(fill)
+        session.flush()
+        context = tape.evidence(str(fill.id), fill_at, clock[0], atr_bars=bars, atr_status="complete")
+        entry.payload = {**entry.payload, CONTEXT_KEY: context}
+        event = build_orb_schwab_exit_intent(service.settings, "CLRO", str(entry.id), str(fill.id), context["reason"])
+    service._latest_quotes_by_symbol["CLRO"] = {"received_at": clock[0], "bid": 9.8}
+    return service, factory, broker, clock, event
+
+
+@pytest.mark.parametrize("atr", [False, True])
+def test_strategy_exit_uses_same_protected_single_close_path_as_eod(monkeypatch, atr):
+    service, factory, broker, clock, event = _strategy_exit_service(monkeypatch, atr=atr)
+    monkeypatch.setattr("project_mai_tai.oms.service.schwab_completed_bar_macd_gate",
+                        lambda *_args: (False, "negative", -0.1))
+    asyncio.run(service.process_trade_intent(event))
+    asyncio.run(service.process_trade_intent(event))
+    clock[0] = clock[0].replace(hour=19, minute=55)
+    asyncio.run(service._orb_schwab_eod_close())
+    assert broker.sequence == ["parent", "positions", "release", "positions", "sell"]
+    assert [r.intent_type for r in broker.submitted] == ["open", "close"]
+    assert broker.submitted[-1].reason == event.payload.reason
+    assert broker.submitted[-1].metadata["orb_schwab_eod"] == "false"
+    with factory() as session:
+        assert session.scalar(select(VirtualPosition)).quantity == 0
+        assert len(session.scalars(select(Fill).where(Fill.side == "sell")).all()) == 1
+
+
+@pytest.mark.parametrize("problem", ["no_bid", "stale", "before_decision"])
+def test_strategy_exit_waits_for_fresh_post_decision_bid_without_taking_latch(monkeypatch, problem):
+    # An old quote must still be AFTER the decision to isolate quote age from
+    # the independent post-decision guard.
+    service, factory, broker, clock, event = _strategy_exit_service(monkeypatch, atr=problem != "stale")
+    quote = service._latest_quotes_by_symbol["CLRO"]
+    if problem == "no_bid":
+        quote["bid"] = 0
+    else:
+        quote["received_at"] = clock[0] - timedelta(seconds=6 if problem == "stale" else 2)
+    asyncio.run(service.process_trade_intent(event))
+    assert broker.sequence == []
+    with factory() as session:
+        assert "orb_schwab_eod_close" not in session.scalar(select(BrokerOrder)).payload
+    service._latest_quotes_by_symbol["CLRO"] = {"received_at": clock[0], "bid": 9.8}
+    asyncio.run(service.process_trade_intent(event))
+    assert broker.sequence[-1] == "sell"
+
+
+@pytest.mark.parametrize("problem", ["reason", "fill_time", "source", "wrong_fill"])
+def test_strategy_exit_recomputes_evidence_and_rejects_spoofed_request(monkeypatch, problem):
+    from uuid import uuid4
+    from project_mai_tai.orb_schwab_exits import ATR_REASON, CONTEXT_KEY
+
+    service, factory, broker, _clock, event = _strategy_exit_service(monkeypatch)
+    if problem == "reason":
+        event.payload.reason = ATR_REASON
+    elif problem == "wrong_fill":
+        event.payload.metadata["entry_fill_id"] = str(uuid4())
+    else:
+        with factory.begin() as session:
+            entry = session.scalar(select(BrokerOrder))
+            context = dict(entry.payload[CONTEXT_KEY])
+            context["body_source" if problem == "source" else "fill_at"] = "wrong"
+            entry.payload = {**entry.payload, CONTEXT_KEY: context}
+    asyncio.run(service.process_trade_intent(event))
+    assert broker.sequence == [] and len(broker.submitted) == 1
+
+
+def test_strategy_exit_partial_parent_keeps_protection_until_buy_is_fully_filled(monkeypatch):
+    service, factory, broker, _clock, event = _strategy_exit_service(monkeypatch)
+    with factory.begin() as session:
+        session.scalar(select(BrokerOrder)).status = "partially_filled"
+    asyncio.run(service.process_trade_intent(event))
+    assert broker.sequence == []
+    with factory.begin() as session:
+        entry = session.scalar(select(BrokerOrder))
+        assert "orb_schwab_eod_close" not in entry.payload
+        entry.status = "filled"
+    asyncio.run(service.process_trade_intent(event))
+    assert broker.sequence[-1] == "sell"
+
+
+def test_strategy_exit_unknown_post_is_not_retried_by_new_oms_or_eod(monkeypatch):
+    service, factory, broker, clock, event = _strategy_exit_service(monkeypatch)
+    broker.close_outcome = "unknown"
+    asyncio.run(service.process_trade_intent(event))
+    restarted = OmsRiskService(settings=service.settings, redis_client=_Redis(),
+                               session_factory=factory, broker_adapter=broker)
+    restarted._latest_quotes_by_symbol = service._latest_quotes_by_symbol
+    asyncio.run(restarted.process_trade_intent(event))
+    clock[0] = clock[0].replace(hour=19, minute=55)
+    asyncio.run(restarted._orb_schwab_eod_close())
+    assert [r.intent_type for r in broker.submitted] == ["open", "close"]
+    with factory() as session:
+        assert session.scalar(select(VirtualPosition)).quantity == 2
+        assert session.scalar(select(SystemIncident)) is not None
+
+
+@pytest.mark.parametrize("resolved", [False, True])
+def test_strategy_exit_never_sells_without_confirmed_pair_release(monkeypatch, resolved):
+    service, factory, broker, clock, event = _strategy_exit_service(monkeypatch)
+    broker.release_result = "resolved_by_fill" if resolved else "unanswerable"
+    if resolved:
+        broker.exit_detail = {"broker_order_id": "CHILD", "quantity": Decimal("2"),
+                             "price": Decimal("5.81"), "filled_at": clock[0]}
+    asyncio.run(service.process_trade_intent(event))
+    assert len(broker.submitted) == 1
+    with factory() as session:
+        assert session.scalar(select(VirtualPosition)).quantity == (0 if resolved else 2)
+
+
+def test_strategy_exit_flag_off_is_inert(monkeypatch):
+    service, _factory, broker, _clock, event = _strategy_exit_service(monkeypatch)
+    service.settings.orb_live_schwab_orders_enabled = False
+    asyncio.run(service.process_trade_intent(event))
+    assert broker.sequence == []
+
+
+def test_old_trip_cannot_close_new_position_and_producer_selects_only_latest(monkeypatch):
+    from project_mai_tai.orb_schwab_exits import open_entries
+
+    service, factory, broker, clock, event = _strategy_exit_service(monkeypatch)
+    with factory.begin() as session:
+        entry = session.scalar(select(BrokerOrder))
+        next_entry = BrokerOrder(strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
+                                 intent_id=entry.intent_id, client_order_id="NEXT-TRIP", symbol="CLRO",
+                                 side="buy", order_type="stop_limit", time_in_force="day",
+                                 quantity=2, status="filled", submitted_at=clock[0])
+        session.add(next_entry)
+        session.flush()
+        next_id = str(next_entry.id)
+    rows = open_entries(factory, ACCOUNT)
+    assert len(rows) == 1 and rows[0]["entry_id"] == next_id and rows[0]["fill_id"] is None
+    asyncio.run(service.process_trade_intent(event))
+    assert broker.sequence == []
+
+
+def test_live_producer_persists_fill_evidence_then_publishes_deterministic_exit(monkeypatch):
+    from project_mai_tai.orb_schwab_exits import CONTEXT_KEY
+    from project_mai_tai.services.orb_schwab_app import OrbSchwabService
+
+    oms, factory, broker, clock, event = _strategy_exit_service(monkeypatch)
+    with factory.begin() as session:
+        entry = session.scalar(select(BrokerOrder))
+        context = entry.payload[CONTEXT_KEY]
+    redis = _Redis()
+    producer = OrbSchwabService(settings=oms.settings, redis_client=redis, session_factory=factory)
+    monkeypatch.setattr(producer, "_processing_time", lambda: clock[0])
+    # The durable fill/body context also survives an ORB producer restart.
+    asyncio.run(producer._process_strategy_exits(clock[0]))
+    assert producer._exit_held_symbols == {"CLRO"}
+    assert producer._last_gateway_symbols == ["CLRO"]  # held, even absent from scanner
+    published = [row for row in redis.events if row["event_type"] == "trade_intent"]
+    assert len(published) == 1
+    emitted = TradeIntentEvent.model_validate(published[0])
+    assert emitted.event_id == event.event_id
+    assert emitted.payload.reason == context["reason"]
+    assert len(broker.submitted) == 1  # producer does not execute broker orders
+    asyncio.run(oms.process_trade_intent(emitted))
+    assert broker.sequence[-1] == "sell"
+
+
+def test_live_producer_missing_execution_time_never_fabricates_exit(monkeypatch):
+    from project_mai_tai.services.orb_schwab_app import OrbSchwabService
+    from project_mai_tai.orb_schwab_exits import CONTEXT_KEY
+
+    oms, factory, broker, clock, _event = _strategy_exit_service(monkeypatch)
+    with factory.begin() as session:
+        session.scalar(select(Fill)).payload = {}
+        entry = session.scalar(select(BrokerOrder))
+        entry.payload = {key: value for key, value in entry.payload.items() if key != CONTEXT_KEY}
+    redis = _Redis()
+    producer = OrbSchwabService(settings=oms.settings, redis_client=redis, session_factory=factory)
+    monkeypatch.setattr(producer, "_processing_time", lambda: clock[0])
+    asyncio.run(producer._process_strategy_exits(clock[0]))
+    assert all(row["event_type"] != "trade_intent" for row in redis.events)
+    assert len(broker.submitted) == 1
+    with factory() as session:
+        incident = session.scalar(select(SystemIncident))
+        assert incident.payload["native_protection"] == "not_cancelled"
+
+
+@pytest.mark.parametrize("atr", [False, True])
+def test_live_producer_builds_signal_from_real_fill_and_persisted_schwab_bars(monkeypatch, atr):
+    from project_mai_tai.db.models import StrategyBarHistory
+    from project_mai_tai.orb_schwab_exits import CONTEXT_KEY, OrbExitTape, decode_bar
+    from project_mai_tai.services.orb_schwab_app import OrbSchwabService
+
+    oms, factory, _broker, clock, event = _strategy_exit_service(monkeypatch, atr=atr)
+    with factory.begin() as session:
+        entry = session.scalar(select(BrokerOrder))
+        context = entry.payload[CONTEXT_KEY]
+        entry.payload = {key: value for key, value in entry.payload.items() if key != CONTEXT_KEY}
+        for row in context["atr_bars"]:
+            bar = decode_bar(row)
+            session.add(StrategyBarHistory(strategy_code="schwab_1m_v2", symbol="CLRO", interval_secs=60,
+                                          bar_time=bar.timestamp, open_price=bar.open, high_price=bar.high,
+                                          low_price=bar.low, close_price=bar.close, volume=int(bar.volume), source="live"))
+    redis = _Redis()
+    producer = OrbSchwabService(settings=oms.settings, redis_client=redis, session_factory=factory)
+    monkeypatch.setattr(producer, "_processing_time", lambda: clock[0])
+    fill_at = datetime.fromisoformat(context["fill_at"])
+    opening = fill_at.replace(second=0)
+    tape = OrbExitTape(opening - timedelta(minutes=5))
+    for seconds, price in ((0, 10), (2, 11), (5, 9), (10, 11 if atr else 10.1)):
+        tape.trade(opening + timedelta(seconds=seconds), price, 100)
+    producer._exit_tapes["CLRO"] = tape
+    asyncio.run(producer._process_strategy_exits(clock[0]))
+    with factory() as session:
+        saved = session.scalar(select(BrokerOrder)).payload[CONTEXT_KEY]
+        assert saved["reason"] == event.payload.reason
+        assert saved["fill_id"] == context["fill_id"]
+    published = [row for row in redis.events if row["event_type"] == "trade_intent"]
+    assert len(published) == 1 and published[0]["payload"]["reason"] == event.payload.reason

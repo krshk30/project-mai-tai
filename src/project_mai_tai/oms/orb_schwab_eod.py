@@ -13,9 +13,10 @@ from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.db.models import (
-    BrokerAccount, BrokerOrder, Strategy, SystemIncident, TradeIntent, VirtualPosition,
+    BrokerAccount, BrokerOrder, Fill, Strategy, SystemIncident, TradeIntent, VirtualPosition,
 )
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.orb_schwab_exits import CONTEXT_KEY, confirmed_entry_time, exit_signal
 
 if TYPE_CHECKING:
     from project_mai_tai.oms.service import OmsRiskService
@@ -103,7 +104,8 @@ async def _broker_quantity(service: OmsRiskService, target: _Target) -> Decimal:
 
 
 async def _attempt(
-    service: OmsRiskService, target: _Target, event_id: UUID, clock: Callable[[], datetime]
+    service: OmsRiskService, target: _Target, event_id: UUID, clock: Callable[[], datetime],
+    *, reason: str = "ORB_END_OF_DAY_CLOSE", start: time = _START,
 ) -> None:
     now = clock()
     event = TradeIntentEvent(
@@ -112,17 +114,18 @@ async def _attempt(
         payload=TradeIntentPayload(
             strategy_code="orb_schwab", broker_account_name=target.account,
             symbol=target.symbol, side="sell", intent_type="close", quantity=target.quantity,
-            reason="ORB_END_OF_DAY_CLOSE",
+            reason=reason,
             metadata={
-                "orb_schwab_eod": "true", "entry_order_id": str(target.entry_id),
+                "orb_schwab_eod": str(reason == "ORB_END_OF_DAY_CLOSE").lower(),
+                "entry_order_id": str(target.entry_id),
                 "entry_broker_order_id": target.broker_id,
                 "order_type": "market", "time_in_force": "day",
             },
         ),
     )
-    allowed, reason = service._evaluate_risk(event)
+    allowed, risk_reason = service._evaluate_risk(event)
     if not allowed:
-        raise ValueError(f"risk_refused:{reason}")
+        raise ValueError(f"risk_refused:{risk_reason}")
     def ownership_conflict(session):
         other_owner = session.scalar(select(VirtualPosition.id).where(
             VirtualPosition.broker_account_id == target.account_id,
@@ -171,7 +174,7 @@ async def _attempt(
     # Reread after confirmed cancellation; an earlier position read cannot size this sell.
     quantity = await _broker_quantity(service, target)
     now = clock()
-    if not _START <= now.astimezone(_ET).time() < _DEADLINE:
+    if not start <= now.astimezone(_ET).time() < _DEADLINE:
         raise ValueError("close_window_elapsed_after_release")
     event.payload.quantity = quantity
     request = OrderRequest(
@@ -205,7 +208,7 @@ async def _attempt(
         return intent.id
 
     intent_id = await service._run_db(prepare)
-    if not _START <= clock().astimezone(_ET).time() < _DEADLINE:
+    if not start <= clock().astimezone(_ET).time() < _DEADLINE:
         raise ValueError("close_window_elapsed_before_submit")
     reports = await service.broker_adapter.submit_order(request)
     if not reports or any(
@@ -235,6 +238,81 @@ async def _attempt(
         "[OMS-ORB-SCHWAB-EOD] symbol=%s parent=%s status=SUBMITTED qty=%s broker_id=%s",
         target.symbol, target.broker_id, quantity, reports[-1].broker_order_id,
     )
+
+
+async def close_orb_schwab_on_signal(
+    service: OmsRiskService, event: TradeIntentEvent, *, clock: Callable[[], datetime]
+) -> None:
+    """Body/ATR exits and EOD share the same durable, single-sell claim."""
+    if not service.settings.orb_live_schwab_orders_enabled:
+        return
+    now = clock()
+
+    def validate_and_claim(session):
+        entry = session.scalar(select(BrokerOrder).where(
+            BrokerOrder.id == UUID(event.payload.metadata["entry_order_id"]),
+        ).with_for_update())
+        if entry is None or entry.side != "buy" or entry.symbol != event.payload.symbol:
+            raise ValueError("exit_entry_identity_mismatch")
+        strategy = session.get(Strategy, entry.strategy_id)
+        account = session.get(BrokerAccount, entry.broker_account_id)
+        if strategy.code != "orb_schwab" or account.name != event.payload.broker_account_name:
+            raise ValueError("exit_account_or_strategy_mismatch")
+        latest_id = session.scalar(select(BrokerOrder.id).where(
+            BrokerOrder.strategy_id == entry.strategy_id,
+            BrokerOrder.broker_account_id == entry.broker_account_id,
+            BrokerOrder.symbol == entry.symbol, BrokerOrder.side == "buy",
+        ).order_by(BrokerOrder.submitted_at.desc(), BrokerOrder.id.desc()).limit(1))
+        if latest_id != entry.id:
+            raise ValueError("exit_is_for_an_older_trip")
+        fill = session.get(Fill, UUID(event.payload.metadata["entry_fill_id"]))
+        if (fill is None or fill.order_id != entry.id or fill.side != "buy" or not fill.broker_fill_id
+                or fill.quantity <= 0 or fill.symbol != entry.symbol
+                or fill.strategy_id != entry.strategy_id or fill.broker_account_id != entry.broker_account_id):
+            raise ValueError("exit_requires_exact_broker_buy_fill")
+        context = dict((entry.payload or {}).get(CONTEXT_KEY) or {})
+        fill_time = confirmed_entry_time(fill)
+        if fill_time is None or context.get("fill_id") != str(fill.id) or context.get("fill_at") != fill_time.isoformat():
+            raise ValueError("exit_context_fill_mismatch")
+        reason, decision_at = exit_signal(context, now)
+        if reason != event.payload.reason or decision_at is None:
+            raise ValueError("exit_rule_not_satisfied")
+        quote = service._latest_quotes_by_symbol.get(entry.symbol) or {}
+        quote_at = quote.get("received_at")
+        bid = Decimal(str(quote.get("bid", "0")))
+        if not (
+            isinstance(quote_at, datetime) and quote_at.tzinfo is not None
+            and quote_at >= decision_at and 0 <= (now - quote_at).total_seconds() <= 5
+            and bid.is_finite() and bid > 0
+        ):
+            # Do not consume the one-shot while waiting for an executable post-decision bid.
+            return None, None
+        position = service.store.get_virtual_position(
+            session, strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
+            symbol=entry.symbol,
+        )
+        if position is None or not 0 < position.quantity <= 2 or (entry.payload or {}).get(_STATE):
+            return None, None
+        if entry.status != "filled":
+            # Never release a partially filled parent's protection while its buy
+            # remainder can still execute. A later completed fill can retry.
+            return None, None
+        target = _Target(entry.id, entry.strategy_id, entry.broker_account_id, account.name,
+                         entry.symbol, entry.broker_order_id or "", entry.client_order_id, position.quantity)
+        event_id = uuid4()
+        entry.payload = {**(entry.payload or {}), _STATE: {
+            "phase": "checking", "event_id": str(event_id), "reason": reason, "updated_at": now.isoformat(),
+        }}
+        return target, event_id
+
+    target, event_id = await service._run_db(validate_and_claim)
+    if target is None:
+        return
+    try:
+        await _attempt(service, target, event_id, clock, reason=event.payload.reason, start=time(9, 30))
+    except Exception as exc:
+        await _finish(service, target, "needs_attention", clock())
+        await _incident(service, target, str(exc), clock())
 
 
 async def close_orb_schwab_before_close(
