@@ -75,6 +75,22 @@ pre-market (#1055, pinned).
 **Close-out deferred.** freeze → manifest → promote waits for Tuesday morning so codex's overnight B11/replay
 journal lands in this batch. This PR carries the state now; the manifest is added before it merges.
 
+**Later that evening.**
+- **B11 closed** (no rule change): of 286 first-slot fills, 207 were LIVE, 2 REBUILT (MYSZ/FTFT, before #993) and 77
+  UNKNOWN; **0 rebuilt fills after #993**. Rebuilt ARMS rarely become trades. The same report shows post-#993 LIVE
+  entries losing (medians about −1.5%), which is a strategy question, not B11.
+- **Momentum.** The operator stopped the measurement loop: after ~3 weeks of void replays and a census that peaked at
+  3.48 with no replay running, the box can't carry `T.*` through the live gateway. The operator chose **Option A**:
+  one Massive connection, candidates from the gateway's 5 s snapshots, capped per-symbol trades. #1029 was closed and
+  its replay cancelled before it started. Codex built draft #1060, which awaits two operator answers and review.
+- **Box cleanup,** after the operator asked what could go before resizing. The box is 4 vCPU / 8 GB with no swap and
+  was at 1.2 GB available. The leftover TradingView Chrome (164 days, no owner) was stopped. The idle polygon_30s paper
+  bot was switched off by env (verified that nothing live depended on it), strategy was restarted at 20:47 and the
+  pre-open gate re-pinned. By 05:21 ET: strategy RSS 2.54 → 1.89 GB, box available RAM 1.2 → 2.3 GB.
+- **Pager.** It runs only 07:00–17:59 ET; the operator OK'd 20:00 ET plus DST-proofing, bundled with the INC1
+  auto-close, and it went to codex.
+- **Overnight.** The v2 BOOT-HOLD released at 18:58 ET once a watchlist appeared; REST warmup is still Tuesday's check.
+
 ## 2026-09-08 — a P1 found on the operator's own screens, the dashboard made truthful, and the paper-only rule reversed
 
 Batch `2026-09-08-rej1-fixed-and-reclaim-retired`, integrator `claude-1`, reviewer `codex-2`.
