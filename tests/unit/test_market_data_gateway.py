@@ -11,7 +11,7 @@ from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
 from project_mai_tai.events import MarketDataSubscriptionEvent, MarketDataSubscriptionPayload
-from project_mai_tai.market_data.massive_provider import MassiveTradeStream
+from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider, MassiveTradeStream
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.market_data.models import HistoricalBarRecord, LiveBarRecord, SnapshotRecord, TradeTickRecord
 from project_mai_tai.settings import Settings
@@ -253,7 +253,8 @@ async def test_apply_subscription_event_replace_does_not_replay_warmup_when_symb
 
 
 @pytest.mark.asyncio
-async def test_apply_subscription_event_replace_only_warms_new_symbols() -> None:
+async def test_apply_subscription_event_replace_only_warms_new_symbols(caplog) -> None:
+    caplog.set_level("INFO")
     redis = FakeRedis()
     trade_stream = FakeTradeStream()
     service = MarketDataGatewayService(
@@ -287,6 +288,24 @@ async def test_apply_subscription_event_replace_only_warms_new_symbols() -> None
     assert len(warmup_events) == 2
     assert {event["payload"]["symbol"] for event in warmup_events} == {"ANNA"}
     assert {event["payload"]["interval_secs"] for event in warmup_events} == {30, 60}
+    assert "[MARKET-DATA-WARMUP-UNION-ADD] consumer=strategy-engine symbols=ANNA count=1" in caplog.text
+
+
+def test_historical_rest_audit_counts_only_actual_attempts(caplog) -> None:
+    class Client:
+        def list_aggs(self, *args, **kwargs):
+            return []
+
+    provider = MassiveSnapshotProvider(api_key="test")
+    provider._client = Client()
+    caplog.set_level("INFO")
+
+    provider.fetch_historical_bars("ANNA", interval_secs=30, lookback_calendar_days=1, limit=20)
+    assert caplog.text.count("[MARKET-DATA-HISTORICAL-REST-ATTEMPT] symbol=ANNA interval_s=30") == 1
+
+    provider._historical_failures[("ANNA", 30)] = time.monotonic() + 60
+    provider.fetch_historical_bars("ANNA", interval_secs=30, lookback_calendar_days=1, limit=20)
+    assert caplog.text.count("[MARKET-DATA-HISTORICAL-REST-ATTEMPT] symbol=ANNA interval_s=30") == 1
 
 
 def test_massive_trade_stream_accepts_and_normalizes_aggregate_callback() -> None:

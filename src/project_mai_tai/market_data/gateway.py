@@ -298,6 +298,10 @@ class MarketDataGatewayService:
         self._desired_symbols_by_consumer = candidate_owners
         self._active_symbols = next_symbols
         if added_symbols:
+            self.logger.info(
+                "[MARKET-DATA-WARMUP-UNION-ADD] consumer=%s symbols=%s count=%d",
+                consumer, ",".join(sorted(added_symbols)), len(added_symbols),
+            )
             await self._publish_historical_warmup(added_symbols)
         return set(self._active_symbols)
 

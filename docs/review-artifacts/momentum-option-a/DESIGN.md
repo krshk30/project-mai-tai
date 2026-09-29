@@ -16,6 +16,11 @@ and does not authorize a production restart, flag change, or live trading route.
   symbols (at most 32 active 30/60 events). Excess proposals are skipped and
   counted; expired candidates release their subscription, with at most one
   second of removal debounce.
+- The gateway's existing historical warm-up remains enabled for a symbol newly
+  added to the union, including a Momentum-added symbol. No Momentum-specific
+  isolation or shared warm-up rule change is made. The gateway logs the
+  consumer that caused a union addition and each actual historical REST
+  attempt; report 30/60-second attempts per session with raw log paths.
 - Gateway trade ticks now carry the SDK's condition codes and an explicit
   provenance bit. A trade tick from an older gateway, without that bit, is
   refused rather than treated as an eligible unconditioned print. The gateway
@@ -45,6 +50,10 @@ claim parity with the old detector or reuse #1029's replay verdict.
   second Massive connection, trade condition provenance is present, and the
   paper service has no broker route. A missing condition-provenance bit keeps
   paper results degraded, not silently gradable.
-- After deployment, run a 20-minute one-second load census at 16:05 ET and
-  compare with a no-Momentum control. The frozen 3.5 guard remains; an abort is
-  unmeasured, not a PASS. Do not run another whole-market replay.
+- Before deployment, collect the 07:00-09:40 ET Momentum-inactive control and
+  obtain review of the pre-registered live-trading slowdown thresholds in
+  `FIRST_SESSION_PROTOCOL.md`. In the first full active session, observe those
+  same clock hours with a light one-second sampler. A new live-trading slowdown
+  trigger stops only the paper service and sends a low-priority page. One-minute
+  load above 3.5 is logged as a warning, not a stop or a replay verdict. Do
+  not run another whole-market replay.
