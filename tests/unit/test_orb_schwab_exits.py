@@ -78,6 +78,52 @@ def test_missing_break_bar_keeps_bracket_even_with_a_later_atr_flip():
     assert exit_signal(evidence, NOW) == (None, None)
 
 
+@pytest.mark.parametrize("seconds,pending", [(3.5, True), (90, True), (91, False)])
+def test_break_bar_waits_90_seconds_from_its_close(seconds, pending):
+    now = OPEN + timedelta(minutes=1, seconds=seconds)
+    evidence = completed_bar_evidence("fill-1", FILL_AT, now, atr_bars=[],
+                                     atr_status="missing_last_closed_schwab_bar")
+    assert evidence["body_status"] == ("pending_break_bar" if pending else "missing_completed_schwab_break_bar")
+    assert exit_signal(evidence, now) == (None, None)
+
+
+def test_atr_pending_deadline_survives_minute_roll_and_context_reload():
+    import json
+
+    # Break body is known and >=45%; only the later ATR minute is missing.
+    bars = [replace(bar, close=10.1) if bar.timestamp == OPEN else bar for bar in _bars()[:-1]]
+    close = OPEN + timedelta(minutes=2)
+    prior = None
+    for seconds in (3.5, 61, 90, 91):
+        now = close + timedelta(seconds=seconds)
+        evidence = completed_bar_evidence("fill-1", FILL_AT, now, atr_bars=bars,
+                                         atr_status="missing_last_closed_schwab_bar", prior=prior)
+        assert evidence["atr_status"] == ("pending_last_closed_schwab_bar" if seconds <= 90
+                                           else "missing_completed_schwab_atr_bar")
+        assert (OPEN + timedelta(minutes=1)).isoformat() in evidence["atr_missing_minutes"]
+        assert evidence["reason"] is None
+        prior = json.loads(json.dumps(evidence))
+    # A newer bar arriving does not prove the earlier missing minute arrived.
+    newer = replace(bars[-1], timestamp=OPEN + timedelta(minutes=2))
+    evidence = completed_bar_evidence("fill-1", FILL_AT, now, atr_bars=[*bars, newer],
+                                     atr_status="complete", prior=prior)
+    assert evidence["atr_status"] == "missing_completed_schwab_atr_bar"
+    # Only the actual missing minute clears it; a new trip does not inherit it.
+    restored = [*bars, replace(bars[-1], timestamp=OPEN + timedelta(minutes=1)), newer]
+    recovered = completed_bar_evidence("fill-1", FILL_AT, now, atr_bars=restored,
+                                     atr_status="complete", prior=evidence)
+    assert recovered["atr_status"] == "complete" and recovered["atr_missing_minutes"] == []
+    fresh = completed_bar_evidence("fill-2", FILL_AT, now, atr_bars=[*bars, newer],
+                                 atr_status="complete", prior=evidence)
+    assert fresh["atr_status"] == "complete"
+
+
+def test_pending_body_cannot_sell_even_if_an_inconsistent_context_contains_ohlc():
+    evidence = _context()
+    evidence["body_status"] = "pending_break_bar"
+    assert exit_signal(evidence, NOW) == (None, None)
+
+
 def test_schwab_atr_reuses_exact_paper_5_35_wilders_math_on_completed_input():
     evidence = _context(final=10.1)
     assert compute_paper_atr_trail(_bars())[-1]["flip"] == "SELL"

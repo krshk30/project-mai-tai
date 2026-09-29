@@ -30,6 +30,10 @@ document authorizes activation automatically.
 A cancellation can race a fill. The live route must use Schwab's confirmed order state;
 it cannot assume that a cancellation request prevented the purchase.
 
+Missing Schwab bars get up to 90 seconds after their minute closes to arrive before an incident
+is opened. A bar arriving sooner is judged then; we never sell using a pending body. The native
+target and stop remain in place while waiting. An unreadable database is reported separately.
+
 The two early exit rules were missing from the earlier draft and are now included. The full
 [paper-versus-new-route comparison](RULE_COMPARISON.md) lists retained rules and intentional
 changes. The existing paper bot's exits have not been removed or changed.

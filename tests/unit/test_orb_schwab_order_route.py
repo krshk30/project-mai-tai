@@ -1088,7 +1088,8 @@ def test_held_at_break_close_449_sells_450_keeps_native_pair(monkeypatch, close,
     assert len(broker.release_calls) == int(sells)
 
 
-def test_normal_break_bar_write_latency_is_pending_not_an_incident(monkeypatch):
+@pytest.mark.parametrize("seconds", [3.5, 90])
+def test_normal_break_bar_write_latency_is_pending_not_an_incident(monkeypatch, seconds):
     from project_mai_tai.orb_schwab_exits import CONTEXT_KEY
     from project_mai_tai.services.orb_schwab_app import OrbSchwabService
     oms, factory, broker, clock, _event = _strategy_exit_service(monkeypatch)
@@ -1096,13 +1097,14 @@ def test_normal_break_bar_write_latency_is_pending_not_an_incident(monkeypatch):
         entry = session.scalar(select(BrokerOrder))
         entry.payload = {key: value for key, value in entry.payload.items() if key != CONTEXT_KEY}
     producer = OrbSchwabService(settings=oms.settings, redis_client=_Redis(), session_factory=factory)
-    clock[0] = OPEN.replace(minute=31, second=3)
+    clock[0] = OPEN.replace(minute=31) + timedelta(seconds=seconds)
     monkeypatch.setattr(producer, "_processing_time", lambda: clock[0])
     asyncio.run(producer._process_strategy_exits(clock[0]))
     with factory() as session:
         assert session.scalar(select(SystemIncident)) is None
         assert session.scalar(select(BrokerOrder)).payload[CONTEXT_KEY]["body_status"] == "pending_break_bar"
     assert broker.release_calls == []
+    assert not any(row["event_type"] == "trade_intent" for row in producer.redis.events)
 
 
 def test_missing_completed_break_bar_emits_incident_not_exit(monkeypatch):
@@ -1115,6 +1117,11 @@ def test_missing_completed_break_bar_emits_incident_not_exit(monkeypatch):
         entry.payload = {key: value for key, value in entry.payload.items() if key != CONTEXT_KEY}
     producer = OrbSchwabService(settings=oms.settings, redis_client=_Redis(), session_factory=factory)
     monkeypatch.setattr(producer, "_processing_time", lambda: clock[0])
+    clock[0] = OPEN.replace(minute=32, second=31)
+    asyncio.run(producer._process_strategy_exits(clock[0]))
+    # A fresh producer reloads the persisted context, but must not page again.
+    producer = OrbSchwabService(settings=oms.settings, redis_client=producer.redis, session_factory=factory)
+    clock[0] += timedelta(seconds=2)
     asyncio.run(producer._process_strategy_exits(clock[0]))
     assert not any(row["event_type"] == "trade_intent" for row in producer.redis.events)
     assert broker.release_calls == [] and len(broker.submitted) == 1
@@ -1122,6 +1129,83 @@ def test_missing_completed_break_bar_emits_incident_not_exit(monkeypatch):
         incident = session.scalar(select(SystemIncident))
         assert incident.payload["reason"] == "missing_completed_schwab_break_bar"
         assert incident.payload["native_protection"] == "not_cancelled"
+        assert len(session.scalars(select(SystemIncident)).all()) == 1
+
+
+def test_break_bar_arrives_at_3_5_seconds_body_decided_without_incident(monkeypatch):
+    from project_mai_tai.db.models import StrategyBarHistory
+    from project_mai_tai.orb_schwab_exits import BODY_REASON, CONTEXT_KEY
+    from project_mai_tai.services.orb_schwab_app import OrbSchwabService
+
+    oms, factory, broker, clock, _event = _strategy_exit_service(monkeypatch)
+    with factory.begin() as session:
+        entry = session.scalar(select(BrokerOrder))
+        rows = entry.payload[CONTEXT_KEY]["atr_bars"][:-1]
+        entry.payload = {key: value for key, value in entry.payload.items() if key != CONTEXT_KEY}
+    producer = OrbSchwabService(settings=oms.settings, redis_client=_Redis(), session_factory=factory)
+    monkeypatch.setattr(producer, "_processing_time", lambda: clock[0])
+    clock[0] = OPEN.replace(minute=31)
+    asyncio.run(producer._process_strategy_exits(clock[0]))
+    assert not any(row["event_type"] == "trade_intent" for row in producer.redis.events)
+    with factory.begin() as session:
+        for row in rows:
+            session.add(StrategyBarHistory(strategy_code="schwab_1m_v2", symbol="CLRO", interval_secs=60,
+                bar_time=datetime.fromisoformat(row["at"]), open_price=row["open"], high_price=row["high"],
+                low_price=row["low"], close_price=row["close"], volume=int(row["volume"]), source="live"))
+    clock[0] += timedelta(seconds=3.5)
+    asyncio.run(producer._process_strategy_exits(clock[0]))
+    with factory() as session:
+        assert session.scalar(select(SystemIncident)) is None
+        context = session.scalar(select(BrokerOrder)).payload[CONTEXT_KEY]
+        assert context["body_status"] == "complete" and context["reason"] == BODY_REASON
+    intents = [row for row in producer.redis.events if row["event_type"] == "trade_intent"]
+    assert len(intents) == 1 and intents[0]["payload"]["reason"] == BODY_REASON
+    # A proposed close is not a sale. The OMS still owns child-fill reconciliation.
+    assert broker.release_calls == [] and len(broker.submitted) == 1
+
+
+def test_unreadable_atr_is_not_hidden_by_pending_body(monkeypatch):
+    from project_mai_tai.orb_schwab_exits import completed_bar_evidence, save_context
+
+    _oms, factory, _broker, _clock, _event = _strategy_exit_service(monkeypatch)
+    with factory.begin() as session:
+        entry = session.scalar(select(BrokerOrder))
+        entry.payload = {}
+        entry_id = str(entry.id)
+        fill = session.scalar(select(Fill))
+        context = completed_bar_evidence(str(fill.id), OPEN.replace(minute=30, second=10),
+            OPEN.replace(minute=31, second=1), atr_bars=[], atr_status="schwab_bar_read_unavailable")
+    save_context(factory, entry_id, context)
+    with factory() as session:
+        assert session.scalar(select(SystemIncident)).payload["reason"] == "schwab_bar_read_unavailable"
+
+
+def test_missing_later_atr_bar_pages_once_at_91_seconds_after_reload(monkeypatch):
+    from project_mai_tai.orb_schwab_exits import CONTEXT_KEY, completed_bar_evidence, decode_bar, save_context
+
+    _oms, factory, broker, _clock, _event = _strategy_exit_service(monkeypatch, atr=True)
+    with factory.begin() as session:
+        entry = session.scalar(select(BrokerOrder))
+        initial = entry.payload[CONTEXT_KEY]
+        bars = [decode_bar(row) for row in initial["atr_bars"][:-1]]
+        entry.payload = {}
+        entry_id = str(entry.id)
+    close = OPEN.replace(minute=32)
+    for seconds in (3.5, 61, 90, 91, 93):
+        with factory() as session:
+            prior = session.scalar(select(BrokerOrder)).payload.get(CONTEXT_KEY)
+        now = close + timedelta(seconds=seconds)
+        context = completed_bar_evidence(initial["fill_id"], datetime.fromisoformat(initial["fill_at"]),
+            now, atr_bars=bars, atr_status="missing_last_closed_schwab_bar", prior=prior)
+        save_context(factory, entry_id, context)
+        assert context["reason"] is None
+        with factory() as session:
+            incidents = session.scalars(select(SystemIncident)).all()
+            assert len(incidents) == int(seconds > 90)
+            if incidents:
+                assert incidents[0].payload["reason"] == "missing_completed_schwab_atr_bar"
+                assert OPEN.replace(minute=31).isoformat() in incidents[0].payload["atr_overdue_minutes"]
+    assert broker.release_calls == [] and len(broker.submitted) == 1
 
 
 def _v2_open():
@@ -1183,6 +1267,26 @@ def test_flag_off_watchdog_does_no_query_and_emits_no_intent(monkeypatch):
     service.session_factory = forbidden
     asyncio.run(service._orb_schwab_watchdog())
     assert broker.submitted == [] and service.redis.events == []
+
+
+def test_flag_off_v2_skips_orb_db_collision_even_with_orb_owned_position(monkeypatch):
+    service, factory, broker = _service(monkeypatch, enabled=False)
+    service._reconcile_after_intent = lambda *_args: asyncio.sleep(0)
+    with factory.begin() as session:
+        strategy = service.store.ensure_strategy(session, "orb_schwab")
+        account = service.store.ensure_broker_account(session, ACCOUNT, provider="schwab", environment="live")
+        session.add(VirtualPosition(strategy_id=strategy.id, broker_account_id=account.id,
+                                    symbol="CLRO", quantity=2, average_price=5.5))
+    calls = []
+    original = service._orb_schwab_collision_reason
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(service, "_orb_schwab_collision_reason", spy)
+    result = asyncio.run(service.process_trade_intent(_v2_open()))
+    assert calls == []
+    assert [row.payload.status for row in result] == ["accepted"]
+    assert len(broker.submitted) == 1 and broker.submitted[0].strategy_code == "schwab_1m_v2"
 
 
 @pytest.mark.parametrize("seconds,allowed", [(14, True), (15, False), (30, False), (59, False)])
