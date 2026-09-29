@@ -1,0 +1,9 @@
+{
+  "pr_number": 1064,
+  "range_base": "fc68b2389a2e94f87db6183189a61f9b1ace15b3",
+  "range_head": "442b492b56bfd67af92a96e3b9c7001cd142edef",
+  "reviewed_at": "2026-09-29T20:43:31Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1 review of 442b492b (base fc68b238). Requirement card (operator-confirmed 09-29) MATCH: MACD hist>=0 on completed Schwab 1m (V2Indicators, full 07:00 series); break-bar body<45% judged on the COMPLETED Schwab bar after native target/stop child fills are attributed first; ATR SELL flip on completed Schwab bars (operator ruled source); +5/-8 bracket; 10:00 cancel; 15:55 close. Flag-OFF paths inert; observe mode publishes nothing and opens no incidents. 469 targeted pass; full suite FAILED set identical to main; CI validate pass. Mutations: 12/13 original + 7/8 new killed (survivor: flag condition on the v2 DB collision check, benign with flag OFF). Box evidence: 32/34 ORB candidates had 26 Schwab bars at 09:28. ACTIVATION BLOCKERS (live flag must stay OFF until fixed): (1) save_context opens a critical orb_schwab_exit_evidence incident when atr_status is missing_last_closed_schwab_bar or body is missing 3 s after close; RTH Schwab bar save lag p50 2.6 s, p95 3.3 s, p99 33 s, 1351/7220 over 3 s => near-certain false critical page each live trade; needs a grace >= p99 before paging; (2) attended Schwab place/reprice/cancel test, early close, EOD incident phone delivery; (3) watch reinstall for the new INC1 sources. Pin covers merge + observe-only install (live OFF per operator's staged plan)."
+}
