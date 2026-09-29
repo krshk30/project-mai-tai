@@ -1,0 +1,1348 @@
+{
+  "cutoff": "2026-09-28T23:38:31+00:00",
+  "log_counts": {
+    "arms": 1301,
+    "placements": 1487,
+    "probe": 67740,
+    "by_era": {
+      "pre_993": {
+        "arms": 607,
+        "placements": 807
+      },
+      "post_993_pre_1049": {
+        "arms": 694,
+        "placements": 680
+      }
+    }
+  },
+  "managed_rows": 327,
+  "buy_fills": 327,
+  "first_slot_buy_fills": 286,
+  "placement_matches": 281,
+  "fully_paired_exit_fills": 309,
+  "managed_row_matches": 323,
+  "overlapping_account_symbol_sessions": [
+    [
+      "2026-09-08",
+      "live:schwab_1m_v2",
+      "BNC"
+    ],
+    [
+      "2026-09-09",
+      "live:orb",
+      "YMAT"
+    ]
+  ],
+  "outcomes": 305,
+  "entry_stages": [
+    {
+      "account": "live:orb",
+      "era": "post_993_pre_1049",
+      "entry_slot": "first",
+      "intents": "641",
+      "orders": "500",
+      "fills": "82"
+    },
+    {
+      "account": "live:orb",
+      "era": "pre_993",
+      "entry_slot": "first",
+      "intents": "682",
+      "orders": "698",
+      "fills": "85"
+    },
+    {
+      "account": "live:orb",
+      "era": "pre_993",
+      "entry_slot": "reclaim",
+      "intents": "36",
+      "orders": "42",
+      "fills": "17"
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "era": "post_993_pre_1049",
+      "entry_slot": "first",
+      "intents": "587",
+      "orders": "598",
+      "fills": "65"
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "era": "pre_993",
+      "entry_slot": "first",
+      "intents": "673",
+      "orders": "442",
+      "fills": "54"
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "era": "pre_993",
+      "entry_slot": "reclaim",
+      "intents": "89",
+      "orders": "53",
+      "fills": "24"
+    }
+  ],
+  "groups": [
+    {
+      "era": "post_993_pre_1049",
+      "account": "live:orb",
+      "classification": "LIVE",
+      "filled_buy_legs": 78,
+      "rows_with_outcomes": 75,
+      "winners": 31,
+      "median_pct": -1.4880952380952381,
+      "sum_pct": -61.35131839427364,
+      "drop_one_by_name": {
+        "AEMD": [
+          -1.6725058391725058,
+          -76.41849058292735
+        ],
+        "AIFF": [
+          -1.4880952380952381,
+          -64.26738847342092
+        ],
+        "APUS": [
+          -1.4634720794792737,
+          -49.69941816027002
+        ],
+        "ARTL": [
+          -1.4880952380952381,
+          -62.151773456844744
+        ],
+        "AVAT": [
+          -1.4880952380952381,
+          -63.980209056683854
+        ],
+        "BENF": [
+          -1.4880952380952381,
+          -58.25325522207069
+        ],
+        "CLRO": [
+          -1.4880952380952381,
+          -59.2414259121801
+        ],
+        "DAIC": [
+          -1.5432098765432098,
+          -72.65429878535915
+        ],
+        "DCOY": [
+          -1.4388489208633093,
+          -50.12675203410767
+        ],
+        "GIPR": [
+          -1.4388489208633093,
+          -34.60526576269469
+        ],
+        "GLND": [
+          -1.5432098765432098,
+          -76.4408565135872
+        ],
+        "GRML": [
+          -1.5156525573192239,
+          -63.319299451252746
+        ],
+        "IMCC": [
+          -1.5156525573192239,
+          -60.58070288046555
+        ],
+        "INLF": [
+          -1.4388489208633093,
+          -55.33482153105607
+        ],
+        "IPDN": [
+          -1.4880952380952381,
+          -51.65558873946538
+        ],
+        "JAGX": [
+          -1.4880952380952381,
+          -60.02166405498254
+        ],
+        "KXIN": [
+          -1.4910293987032597,
+          -59.86322315617841
+        ],
+        "MSGY": [
+          -1.4880952380952381,
+          -58.46982026189402
+        ],
+        "MSS": [
+          -1.4388489208633093,
+          -47.54177808473333
+        ],
+        "NCPL": [
+          -1.5156525573192239,
+          -56.95549828440037
+        ],
+        "PFSA": [
+          -1.5156525573192239,
+          -66.39110619268213
+        ],
+        "PMAX": [
+          -1.5156525573192239,
+          -63.956928153574
+        ],
+        "QNME": [
+          -1.4634720794792737,
+          -53.525231437751906
+        ],
+        "RAIN": [
+          -1.4880952380952381,
+          -55.899552616192075
+        ],
+        "TOPS": [
+          -1.4388489208633093,
+          -55.317557134609835
+        ],
+        "TURB": [
+          -1.4634720794792737,
+          -56.95417233046091
+        ],
+        "VRME": [
+          -1.5156525573192239,
+          -66.01692066498501
+        ],
+        "VSA": [
+          -1.4634720794792737,
+          -53.60196438910568
+        ],
+        "WETO": [
+          -1.4634720794792737,
+          -53.37873880933609
+        ],
+        "ZTG": [
+          -1.5432098765432098,
+          -72.56453130066318
+        ]
+      }
+    },
+    {
+      "era": "post_993_pre_1049",
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "filled_buy_legs": 4,
+      "rows_with_outcomes": 4,
+      "winners": 1,
+      "median_pct": -1.8746914920129594,
+      "sum_pct": -3.2603403081320317,
+      "drop_one_by_name": {
+        "DCOY": [
+          -3.3136531365313653,
+          -2.8246104606374782
+        ],
+        "QNME": [
+          -0.4357298474945534,
+          0.05331282839933359
+        ],
+        "VRME": [
+          -1.8746914920129594,
+          -3.7493829840259187
+        ]
+      }
+    },
+    {
+      "era": "post_993_pre_1049",
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "filled_buy_legs": 63,
+      "rows_with_outcomes": 63,
+      "winners": 22,
+      "median_pct": -1.5863453815261044,
+      "sum_pct": -42.96849496071522,
+      "drop_one_by_name": {
+        "AEMD": [
+          -1.6583900820674,
+          -50.530634189231634
+        ],
+        "AIFF": [
+          -1.5863453815261044,
+          -46.18043525922268
+        ],
+        "APUS": [
+          -1.6583900820674,
+          -40.68866609495937
+        ],
+        "ARTL": [
+          -1.6583900820674,
+          -47.768494960715216
+        ],
+        "AVAT": [
+          -1.5863453815261044,
+          -46.1450599687409
+        ],
+        "BENF": [
+          -1.6209463040298475,
+          -33.59611607292978
+        ],
+        "CLRO": [
+          -1.5489016034885519,
+          -40.64002926757659
+        ],
+        "DAIC": [
+          -1.5863453815261044,
+          -44.669275481753154
+        ],
+        "DCOY": [
+          -1.5114578254509996,
+          -34.01103717165248
+        ],
+        "GIPR": [
+          -1.5863453815261044,
+          -39.515008302894195
+        ],
+        "GLND": [
+          -1.6583900820674,
+          -34.132797224284595
+        ],
+        "GRML": [
+          -1.7304347826086957,
+          -43.427778117029966
+        ],
+        "IPDN": [
+          -1.5489016034885519,
+          -34.61635049118926
+        ],
+        "JAGX": [
+          -1.5863453815261044,
+          -42.268128442636964
+        ],
+        "MSS": [
+          -1.5114578254509996,
+          -29.002966672902023
+        ],
+        "NCPL": [
+          -1.7304347826086957,
+          -26.784277899159328
+        ],
+        "PFSA": [
+          -1.5863453815261044,
+          -42.5674932854395
+        ],
+        "QNME": [
+          -1.5489016034885519,
+          -41.23806017810652
+        ],
+        "RAIN": [
+          -1.5863453815261044,
+          -37.04032851656746
+        ],
+        "TOPS": [
+          -1.5114578254509996,
+          -36.93693296393583
+        ],
+        "VRME": [
+          -1.5863453815261044,
+          -44.817682799372655
+        ],
+        "WHLR": [
+          -1.6583900820674,
+          -65.76084081471947
+        ]
+      }
+    },
+    {
+      "era": "post_993_pre_1049",
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 2,
+      "winners": 1,
+      "median_pct": -0.209919261822376,
+      "sum_pct": -0.419838523644752,
+      "drop_one_by_name": {}
+    },
+    {
+      "era": "pre_993",
+      "account": "live:orb",
+      "classification": "LIVE",
+      "filled_buy_legs": 42,
+      "rows_with_outcomes": 37,
+      "winners": 18,
+      "median_pct": -0.1695633743111488,
+      "sum_pct": 2.3365508674485302,
+      "drop_one_by_name": {
+        "AEHL": [
+          -0.24256857240147603,
+          -2.64565553824542
+        ],
+        "BMGL": [
+          0.8535561144530047,
+          6.817796383494848
+        ],
+        "DBGI": [
+          -0.1695633743111488,
+          5.562621771173466
+        ],
+        "DLXY": [
+          -0.24256857240147603,
+          -6.8063062754086125
+        ],
+        "FTFT": [
+          0.7805509163626775,
+          4.945335941310641
+        ],
+        "IPW": [
+          1.876675603217158,
+          12.331276605845154
+        ],
+        "MEDS": [
+          -0.1695633743111488,
+          5.692816531608931
+        ],
+        "MOBX": [
+          -0.24256857240147603,
+          0.02885855975622246
+        ],
+        "MYSZ": [
+          2.3076923076923075,
+          20.760654222328288
+        ],
+        "NAMI": [
+          0.8535561144530047,
+          2.8038405870746983
+        ],
+        "NUR": [
+          -0.1695633743111488,
+          1.9999987210214953
+        ],
+        "QCLS": [
+          -0.3155737704918033,
+          -11.069799956120837
+        ],
+        "SUGP": [
+          -0.1695633743111488,
+          1.901768258752878
+        ],
+        "TNON": [
+          -0.24256857240147603,
+          -0.7870446381694474
+        ],
+        "ZTG": [
+          -0.3155737704918033,
+          -8.824449030142883
+        ]
+      }
+    },
+    {
+      "era": "pre_993",
+      "account": "live:orb",
+      "classification": "NOT_FIRST",
+      "filled_buy_legs": 17,
+      "rows_with_outcomes": 13,
+      "winners": 10,
+      "median_pct": 1.935483870967742,
+      "sum_pct": 11.0656426853948,
+      "drop_one_by_name": {
+        "BIAF": [
+          2.022778352988712,
+          14.438944197355084
+        ],
+        "CDTG": [
+          1.9791311119782269,
+          15.109760332453623
+        ],
+        "FTFT": [
+          1.9791311119782269,
+          16.890885403841402
+        ],
+        "LIDR": [
+          1.9706217904032288,
+          9.130158814427057
+        ],
+        "PPBT": [
+          1.9184652278177459,
+          6.716774088998018
+        ],
+        "SSM": [
+          1.9111381618989653,
+          5.093814998296038
+        ],
+        "SUNE": [
+          1.9184652278177459,
+          0.9003107298277622
+        ],
+        "VIOT": [
+          1.9791311119782269,
+          9.17885023256461
+        ]
+      }
+    },
+    {
+      "era": "pre_993",
+      "account": "live:orb",
+      "classification": "REBUILT",
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 2,
+      "winners": 2,
+      "median_pct": 5.022068095838588,
+      "sum_pct": 10.044136191677175,
+      "drop_one_by_name": {
+        "FTFT": [
+          5.0,
+          5.0
+        ],
+        "MYSZ": [
+          5.044136191677175,
+          5.044136191677175
+        ]
+      }
+    },
+    {
+      "era": "pre_993",
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "filled_buy_legs": 41,
+      "rows_with_outcomes": 40,
+      "winners": 23,
+      "median_pct": 1.8647115508797028,
+      "sum_pct": -15.041497709854358,
+      "drop_one_by_name": {
+        "AEHL": [
+          1.8726591760299625,
+          -10.041497709854358
+        ],
+        "BIAF": [
+          1.6666666666666667,
+          -24.98523430412193
+        ],
+        "BNC": [
+          1.8941839941452494,
+          -11.751685914844074
+        ],
+        "CDTG": [
+          1.8139262726740784,
+          -20.942541754482885
+        ],
+        "CHPT": [
+          1.8353450992017606,
+          -18.973051337811185
+        ],
+        "GELS": [
+          1.8726591760299625,
+          -9.672565671019406
+        ],
+        "IMRN": [
+          1.925116310892173,
+          -13.471528851442294
+        ],
+        "LHAI": [
+          1.8941839941452494,
+          -5.86908391675091
+        ],
+        "LIDR": [
+          1.8726591760299625,
+          -10.163448929366552
+        ],
+        "MYSZ": [
+          1.8726591760299625,
+          -7.130747202754966
+        ],
+        "PPBT": [
+          1.8726591760299625,
+          -6.578563478331989
+        ],
+        "RDAC": [
+          1.8353450992017606,
+          -19.66091219367562
+        ],
+        "SSM": [
+          1.8139262726740784,
+          -20.91647942801886
+        ],
+        "SUNE": [
+          1.8941839941452494,
+          -11.492671549555984
+        ],
+        "VEEA": [
+          1.8353450992017606,
+          -21.836759768400732
+        ],
+        "VIOT": [
+          1.8647115508797028,
+          -12.13569363738362
+        ]
+      }
+    },
+    {
+      "era": "pre_993",
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "filled_buy_legs": 24,
+      "rows_with_outcomes": 24,
+      "winners": 10,
+      "median_pct": -1.2566882701244642,
+      "sum_pct": -8.263677847305251,
+      "drop_one_by_name": {
+        "BENF": [
+          -0.8875739644970414,
+          -1.151061420548265
+        ],
+        "FTFT": [
+          -1.4019751355586252,
+          -7.693062568706611
+        ],
+        "IPW": [
+          -0.547604940636588,
+          1.589206395822895
+        ],
+        "MEDS": [
+          -0.9167192462640107,
+          -1.7715440767008024
+        ],
+        "NUR": [
+          -1.2566882701244642,
+          -5.973753514370165
+        ],
+        "QCLS": [
+          -1.7710894411860478,
+          -22.47353350343132
+        ],
+        "TNON": [
+          -1.6258025757518868,
+          -12.108318395897236
+        ]
+      }
+    },
+    {
+      "era": "pre_993",
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "filled_buy_legs": 24,
+      "rows_with_outcomes": 20,
+      "winners": 13,
+      "median_pct": 1.919974117722527,
+      "sum_pct": 6.217372428431256,
+      "drop_one_by_name": {
+        "BIAF": [
+          1.9047619047619047,
+          2.7657733893412018
+        ],
+        "CHPT": [
+          1.906859660163625,
+          2.2712682584256023
+        ],
+        "FLYE": [
+          1.9309908198797088,
+          7.093399317725206
+        ],
+        "FTFT": [
+          1.919974117722527,
+          6.841155208552482
+        ],
+        "IMRN": [
+          1.935483870967742,
+          13.640384382260857
+        ],
+        "LIDR": [
+          1.908957415565345,
+          4.281888557463514
+        ],
+        "MOBX": [
+          1.9309908198797088,
+          9.213627110079196
+        ],
+        "SUNE": [
+          1.908957415565345,
+          -2.585889224829267
+        ]
+      }
+    },
+    {
+      "era": "pre_993",
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "filled_buy_legs": 30,
+      "rows_with_outcomes": 25,
+      "winners": 15,
+      "median_pct": 1.5873015873015872,
+      "sum_pct": 0.24346948029209783,
+      "drop_one_by_name": {
+        "BIAF": [
+          0.6526039302159673,
+          -8.94411474357241
+        ],
+        "CHPT": [
+          1.5864896683311005,
+          -3.586553413374217
+        ],
+        "FLYE": [
+          1.6428019197653032,
+          -4.450378818307738
+        ],
+        "IMRN": [
+          1.5873015873015872,
+          -1.5437027317111083
+        ],
+        "LHAI": [
+          1.6679422830870616,
+          15.838297344608186
+        ],
+        "LIDR": [
+          1.611630031652859,
+          4.231199541641791
+        ],
+        "SUNE": [
+          1.6359584760041306,
+          3.979269526820191
+        ],
+        "VEEA": [
+          1.5856777493606138,
+          -3.8197303440600097
+        ]
+      }
+    }
+  ],
+  "holdout": [
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "holdout": false,
+      "filled_buy_legs": 77,
+      "rows_with_outcomes": 70,
+      "winners": 36,
+      "median_pct": 2.092183955454733,
+      "sum_pct": 14.32890583562316
+    },
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "holdout": true,
+      "filled_buy_legs": 43,
+      "rows_with_outcomes": 42,
+      "winners": 13,
+      "median_pct": -2.4050793875958782,
+      "sum_pct": -73.34367336244827
+    },
+    {
+      "account": "live:orb",
+      "classification": "NOT_FIRST",
+      "holdout": false,
+      "filled_buy_legs": 17,
+      "rows_with_outcomes": 13,
+      "winners": 10,
+      "median_pct": 1.935483870967742,
+      "sum_pct": 11.0656426853948
+    },
+    {
+      "account": "live:orb",
+      "classification": "REBUILT",
+      "holdout": false,
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 2,
+      "winners": 2,
+      "median_pct": 5.022068095838588,
+      "sum_pct": 10.044136191677175
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "holdout": false,
+      "filled_buy_legs": 43,
+      "rows_with_outcomes": 42,
+      "winners": 24,
+      "median_pct": 1.8647115508797028,
+      "sum_pct": -14.55245503396047
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "holdout": true,
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 2,
+      "winners": 0,
+      "median_pct": -1.8746914920129594,
+      "sum_pct": -3.7493829840259187
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "holdout": false,
+      "filled_buy_legs": 52,
+      "rows_with_outcomes": 52,
+      "winners": 19,
+      "median_pct": -1.341121495327103,
+      "sum_pct": -29.41736751420918
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "holdout": true,
+      "filled_buy_legs": 35,
+      "rows_with_outcomes": 35,
+      "winners": 13,
+      "median_pct": -1.7522522522522523,
+      "sum_pct": -21.81480529381129
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "holdout": false,
+      "filled_buy_legs": 24,
+      "rows_with_outcomes": 20,
+      "winners": 13,
+      "median_pct": 1.919974117722527,
+      "sum_pct": 6.217372428431256
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "holdout": false,
+      "filled_buy_legs": 32,
+      "rows_with_outcomes": 27,
+      "winners": 16,
+      "median_pct": 1.5873015873015872,
+      "sum_pct": -0.1763690433526542
+    }
+  ],
+  "hour_et": [
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "hour_et": "07",
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 1,
+      "winners": 1,
+      "median_pct": 3.1235955056179776,
+      "sum_pct": 3.1235955056179776
+    },
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "hour_et": "08",
+      "filled_buy_legs": 6,
+      "rows_with_outcomes": 6,
+      "winners": 3,
+      "median_pct": 1.692440296963707,
+      "sum_pct": 9.341803631849043
+    },
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "hour_et": "09",
+      "filled_buy_legs": 10,
+      "rows_with_outcomes": 9,
+      "winners": 3,
+      "median_pct": -1.4880952380952381,
+      "sum_pct": -5.945584373999473
+    },
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "hour_et": "10",
+      "filled_buy_legs": 15,
+      "rows_with_outcomes": 14,
+      "winners": 6,
+      "median_pct": -3.083497549590677,
+      "sum_pct": -18.37795730849794
+    },
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "hour_et": "11",
+      "filled_buy_legs": 8,
+      "rows_with_outcomes": 8,
+      "winners": 4,
+      "median_pct": 0.9880806384612757,
+      "sum_pct": -1.8715998539436767
+    },
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "hour_et": "12",
+      "filled_buy_legs": 20,
+      "rows_with_outcomes": 20,
+      "winners": 8,
+      "median_pct": -2.3299446136140216,
+      "sum_pct": -20.730838236647656
+    },
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "hour_et": "13",
+      "filled_buy_legs": 15,
+      "rows_with_outcomes": 15,
+      "winners": 8,
+      "median_pct": 2.3076923076923075,
+      "sum_pct": -8.86124364504245
+    },
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "hour_et": "14",
+      "filled_buy_legs": 19,
+      "rows_with_outcomes": 18,
+      "winners": 10,
+      "median_pct": 4.147062139943006,
+      "sum_pct": 6.659301460453444
+    },
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "hour_et": "15",
+      "filled_buy_legs": 25,
+      "rows_with_outcomes": 21,
+      "winners": 6,
+      "median_pct": -0.9009009009009009,
+      "sum_pct": -22.352244706614382
+    },
+    {
+      "account": "live:orb",
+      "classification": "NOT_FIRST",
+      "hour_et": "09",
+      "filled_buy_legs": 3,
+      "rows_with_outcomes": 2,
+      "winners": 2,
+      "median_pct": 3.4499152188499513,
+      "sum_pct": 6.899830437699903
+    },
+    {
+      "account": "live:orb",
+      "classification": "NOT_FIRST",
+      "hour_et": "11",
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 2,
+      "winners": 2,
+      "median_pct": 1.9791311119782269,
+      "sum_pct": 3.9582622239564538
+    },
+    {
+      "account": "live:orb",
+      "classification": "NOT_FIRST",
+      "hour_et": "12",
+      "filled_buy_legs": 1,
+      "rows_with_outcomes": 0,
+      "winners": 0,
+      "median_pct": null,
+      "sum_pct": null
+    },
+    {
+      "account": "live:orb",
+      "classification": "NOT_FIRST",
+      "hour_et": "13",
+      "filled_buy_legs": 1,
+      "rows_with_outcomes": 1,
+      "winners": 1,
+      "median_pct": 2.2029458496156655,
+      "sum_pct": 2.2029458496156655
+    },
+    {
+      "account": "live:orb",
+      "classification": "NOT_FIRST",
+      "hour_et": "14",
+      "filled_buy_legs": 5,
+      "rows_with_outcomes": 4,
+      "winners": 4,
+      "median_pct": 2.08825342653671,
+      "sum_pct": 11.16534012223014
+    },
+    {
+      "account": "live:orb",
+      "classification": "NOT_FIRST",
+      "hour_et": "15",
+      "filled_buy_legs": 5,
+      "rows_with_outcomes": 4,
+      "winners": 1,
+      "median_pct": -4.626979228739253,
+      "sum_pct": -13.16073594810736
+    },
+    {
+      "account": "live:orb",
+      "classification": "REBUILT",
+      "hour_et": "11",
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 2,
+      "winners": 2,
+      "median_pct": 5.022068095838588,
+      "sum_pct": 10.044136191677175
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "hour_et": "08",
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 2,
+      "winners": 1,
+      "median_pct": -1.7560840565527542,
+      "sum_pct": -3.5121681131055085
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "hour_et": "09",
+      "filled_buy_legs": 9,
+      "rows_with_outcomes": 9,
+      "winners": 3,
+      "median_pct": -2.238095238095238,
+      "sum_pct": -17.159973683391932
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "hour_et": "10",
+      "filled_buy_legs": 5,
+      "rows_with_outcomes": 5,
+      "winners": 3,
+      "median_pct": 1.937984496124031,
+      "sum_pct": -4.294640135805246
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "hour_et": "11",
+      "filled_buy_legs": 7,
+      "rows_with_outcomes": 7,
+      "winners": 6,
+      "median_pct": 2.0324675324675323,
+      "sum_pct": 11.958972858401452
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "hour_et": "12",
+      "filled_buy_legs": 6,
+      "rows_with_outcomes": 6,
+      "winners": 4,
+      "median_pct": 1.93311415393138,
+      "sum_pct": 7.229600250614178
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "hour_et": "13",
+      "filled_buy_legs": 10,
+      "rows_with_outcomes": 9,
+      "winners": 5,
+      "median_pct": 1.9157088122605364,
+      "sum_pct": -2.084166605809769
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "hour_et": "14",
+      "filled_buy_legs": 3,
+      "rows_with_outcomes": 3,
+      "winners": 1,
+      "median_pct": -5.172413793103448,
+      "sum_pct": -5.5488510158007855
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "hour_et": "15",
+      "filled_buy_legs": 3,
+      "rows_with_outcomes": 3,
+      "winners": 1,
+      "median_pct": -4.844290657439446,
+      "sum_pct": -4.890611573088778
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "hour_et": "07",
+      "filled_buy_legs": 1,
+      "rows_with_outcomes": 1,
+      "winners": 1,
+      "median_pct": 3.844640548591985,
+      "sum_pct": 3.844640548591985
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "hour_et": "08",
+      "filled_buy_legs": 3,
+      "rows_with_outcomes": 3,
+      "winners": 2,
+      "median_pct": 2.9234629861982433,
+      "sum_pct": 4.749260012923345
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "hour_et": "09",
+      "filled_buy_legs": 5,
+      "rows_with_outcomes": 5,
+      "winners": 3,
+      "median_pct": 4.872389791183295,
+      "sum_pct": 19.4472176702532
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "hour_et": "10",
+      "filled_buy_legs": 11,
+      "rows_with_outcomes": 11,
+      "winners": 3,
+      "median_pct": -3.1070811744386875,
+      "sum_pct": -36.41001851643689
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "hour_et": "11",
+      "filled_buy_legs": 9,
+      "rows_with_outcomes": 9,
+      "winners": 3,
+      "median_pct": -1.954732510288066,
+      "sum_pct": -10.634307488727401
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "hour_et": "12",
+      "filled_buy_legs": 13,
+      "rows_with_outcomes": 13,
+      "winners": 6,
+      "median_pct": -1.6258025757518868,
+      "sum_pct": 2.0868835861270787
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "hour_et": "13",
+      "filled_buy_legs": 11,
+      "rows_with_outcomes": 11,
+      "winners": 1,
+      "median_pct": -2.4427480916030535,
+      "sum_pct": -34.25906568004748
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "hour_et": "14",
+      "filled_buy_legs": 16,
+      "rows_with_outcomes": 16,
+      "winners": 8,
+      "median_pct": 1.8001596942248286,
+      "sum_pct": 17.027377882310404
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "hour_et": "15",
+      "filled_buy_legs": 18,
+      "rows_with_outcomes": 18,
+      "winners": 5,
+      "median_pct": -0.9526926029168181,
+      "sum_pct": -17.084160823014706
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "hour_et": "09",
+      "filled_buy_legs": 4,
+      "rows_with_outcomes": 4,
+      "winners": 2,
+      "median_pct": -0.32226556838923737,
+      "sum_pct": -0.3976651183109153
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "hour_et": "10",
+      "filled_buy_legs": 1,
+      "rows_with_outcomes": 1,
+      "winners": 1,
+      "median_pct": 1.9309908198797088,
+      "sum_pct": 1.9309908198797088
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "hour_et": "11",
+      "filled_buy_legs": 4,
+      "rows_with_outcomes": 3,
+      "winners": 3,
+      "median_pct": 1.935483870967742,
+      "sum_pct": 5.847372405243394
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "hour_et": "12",
+      "filled_buy_legs": 5,
+      "rows_with_outcomes": 4,
+      "winners": 3,
+      "median_pct": 2.025374838421518,
+      "sum_pct": 3.1323984919285883
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "hour_et": "13",
+      "filled_buy_legs": 5,
+      "rows_with_outcomes": 4,
+      "winners": 2,
+      "median_pct": 0.25793650793650796,
+      "sum_pct": -0.5284297138229722
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "hour_et": "14",
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 2,
+      "winners": 2,
+      "median_pct": 3.145825050291662,
+      "sum_pct": 6.291650100583324
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "hour_et": "15",
+      "filled_buy_legs": 3,
+      "rows_with_outcomes": 2,
+      "winners": 0,
+      "median_pct": -5.029472278534937,
+      "sum_pct": -10.058944557069873
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "hour_et": "09",
+      "filled_buy_legs": 5,
+      "rows_with_outcomes": 4,
+      "winners": 2,
+      "median_pct": -1.1758857926727813,
+      "sum_pct": -6.001910861111579
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "hour_et": "10",
+      "filled_buy_legs": 3,
+      "rows_with_outcomes": 2,
+      "winners": 1,
+      "median_pct": -1.3805885317922502,
+      "sum_pct": -2.7611770635845003
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "hour_et": "11",
+      "filled_buy_legs": 6,
+      "rows_with_outcomes": 6,
+      "winners": 4,
+      "median_pct": 1.5864896683311005,
+      "sum_pct": 5.636199755332401
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "hour_et": "12",
+      "filled_buy_legs": 4,
+      "rows_with_outcomes": 3,
+      "winners": 2,
+      "median_pct": 1.925545571245186,
+      "sum_pct": 3.5170787392361924
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "hour_et": "13",
+      "filled_buy_legs": 7,
+      "rows_with_outcomes": 6,
+      "winners": 4,
+      "median_pct": 1.655539516420065,
+      "sum_pct": 1.5993109745592684
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "hour_et": "14",
+      "filled_buy_legs": 3,
+      "rows_with_outcomes": 3,
+      "winners": 2,
+      "median_pct": 1.6999260901699926,
+      "sum_pct": -0.793048507940205
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "hour_et": "15",
+      "filled_buy_legs": 4,
+      "rows_with_outcomes": 3,
+      "winners": 1,
+      "median_pct": -0.8394366197183099,
+      "sum_pct": -1.372822079844231
+    }
+  ],
+  "subclass": [
+    {
+      "account": "live:orb",
+      "classification": "LIVE",
+      "subclass": "",
+      "filled_buy_legs": 120,
+      "rows_with_outcomes": 112,
+      "winners": 49,
+      "median_pct": -1.1200933075933075,
+      "sum_pct": -59.01476752682511
+    },
+    {
+      "account": "live:orb",
+      "classification": "NOT_FIRST",
+      "subclass": "",
+      "filled_buy_legs": 17,
+      "rows_with_outcomes": 13,
+      "winners": 10,
+      "median_pct": 1.935483870967742,
+      "sum_pct": 11.0656426853948
+    },
+    {
+      "account": "live:orb",
+      "classification": "REBUILT",
+      "subclass": "same_session_readd",
+      "filled_buy_legs": 2,
+      "rows_with_outcomes": 2,
+      "winners": 2,
+      "median_pct": 5.022068095838588,
+      "sum_pct": 10.044136191677175
+    },
+    {
+      "account": "live:orb",
+      "classification": "UNKNOWN",
+      "subclass": "UNKNOWN",
+      "filled_buy_legs": 45,
+      "rows_with_outcomes": 44,
+      "winners": 24,
+      "median_pct": 1.8353450992017606,
+      "sum_pct": -18.30183801798639
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "LIVE",
+      "subclass": "",
+      "filled_buy_legs": 87,
+      "rows_with_outcomes": 87,
+      "winners": 32,
+      "median_pct": -1.5863453815261044,
+      "sum_pct": -51.232172808020465
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "NOT_FIRST",
+      "subclass": "",
+      "filled_buy_legs": 24,
+      "rows_with_outcomes": 20,
+      "winners": 13,
+      "median_pct": 1.919974117722527,
+      "sum_pct": 6.217372428431256
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "classification": "UNKNOWN",
+      "subclass": "UNKNOWN",
+      "filled_buy_legs": 32,
+      "rows_with_outcomes": 27,
+      "winners": 16,
+      "median_pct": 1.5873015873015872,
+      "sum_pct": -0.1763690433526542
+    }
+  ],
+  "unknown_reasons": {
+    "short_flip_not_observed": 48,
+    "warmup_after_short_or_unverified": 22,
+    "placement_matches_0": 5,
+    "scanner_membership_ambiguous": 2
+  }
+}
