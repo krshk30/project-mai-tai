@@ -33,7 +33,6 @@ class TradeTickPayload(BaseModel):
     cumulative_volume: int | None = None
     exchange: str | None = None
     conditions: list[str] = Field(default_factory=list)
-    conditions_present: bool = False
 
 
 class TradeTickEvent(EventEnvelope):

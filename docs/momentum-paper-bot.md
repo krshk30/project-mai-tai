@@ -1,13 +1,5 @@
 # Momentum Bot paper test: locked rules
 
-**2026-09-28 Option A amendment:** The whole-market `T.*` design and its
-throughput replay are superseded. The proposed bounded gateway-consumer design
-and its changed snapshot-based detection population are documented in
-[`docs/review-artifacts/momentum-option-a/DESIGN.md`](review-artifacts/momentum-option-a/DESIGN.md).
-The historical raw-trade protocol below is retained for audit, not as a claim
-that Option A produces equivalent signals. The Option A branch is not deployed
-or approved for live restart by this document.
-
 **Latest result (2026-09-17):** before the first successful paper session, the operator changed
 the trigger from 30% to **20%** and replaced the five-minute repeat cooldown with fresh-move
 re-entry after an exit. The **$500 paper amount** and every exit, evidence, safety, and grading rule
