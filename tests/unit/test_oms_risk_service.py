@@ -34,7 +34,7 @@ from project_mai_tai.events import (
     TradeTickEvent,
     TradeTickPayload,
 )
-from project_mai_tai.oms.service import _EXIT_FETCH_FAILED, OmsRiskService
+from project_mai_tai.oms.service import _EXIT_FETCH_FAILED, _PositionRead, OmsRiskService
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.runtime_registry import configured_broker_account_registrations, strategy_registration_map
 from project_mai_tai.settings import Settings
@@ -2707,6 +2707,133 @@ async def test_oms_service_still_rejects_exit_when_broker_refresh_confirms_no_po
     assert len(events) == 1
     assert events[0].payload.status == "rejected"
     assert events[0].payload.reason == "no broker position available to sell"
+
+
+@pytest.mark.asyncio
+async def test_oms_exit_unreadable_broker_position_keeps_account_and_virtual_position(monkeypatch) -> None:
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    await service.process_trade_intent(TradeIntentEvent(
+        source_service="strategy-engine",
+        payload=TradeIntentPayload(
+            strategy_code="macd_30s", broker_account_name="paper:macd_30s",
+            symbol="UGRO", side="buy", quantity=Decimal("10"), intent_type="open",
+            reason="ENTRY_P1_MACD_CROSS", metadata={"reference_price": "2.55"},
+        ),
+    ))
+    with session_factory() as session:
+        account = session.scalar(select(AccountPosition).where(AccountPosition.symbol == "UGRO"))
+        assert account is not None
+        account.quantity = Decimal("0")
+        session.commit()
+
+    async def unreadable(_account_name: str):
+        raise TimeoutError("position read timed out")
+
+    original_read = service.broker_adapter.list_account_positions
+    monkeypatch.setattr(service.broker_adapter, "list_account_positions", unreadable)
+    events = await service.process_trade_intent(TradeIntentEvent(
+        source_service="strategy-engine",
+        payload=TradeIntentPayload(
+            strategy_code="macd_30s", broker_account_name="paper:macd_30s",
+            symbol="UGRO", side="sell", quantity=Decimal("10"), intent_type="close",
+            reason="HARD_STOP", metadata={"reference_price": "2.40"},
+        ),
+    ))
+    assert [event.payload.status for event in events] == ["rejected"]
+    assert events[0].payload.reason == "broker_position_unreadable"
+    with session_factory() as session:
+        account = session.scalar(select(AccountPosition).where(AccountPosition.symbol == "UGRO"))
+        virtual = session.scalar(select(VirtualPosition).where(VirtualPosition.symbol == "UGRO"))
+        assert account is not None and account.quantity == Decimal("0")
+        assert virtual is not None and virtual.quantity == Decimal("10")
+
+    monkeypatch.setattr(service.broker_adapter, "list_account_positions", original_read)
+    retry = await service.process_trade_intent(TradeIntentEvent(
+        source_service="strategy-engine",
+        payload=TradeIntentPayload(
+            strategy_code="macd_30s", broker_account_name="paper:macd_30s",
+            symbol="UGRO", side="sell", quantity=Decimal("10"), intent_type="close",
+            reason="HARD_STOP", metadata={"reference_price": "2.40"},
+        ),
+    ))
+    assert "filled" in [event.payload.status for event in retry]
+
+
+@pytest.mark.asyncio
+async def test_oms_unreadable_position_sync_and_protection_read_keep_holdings(monkeypatch) -> None:
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(), session_factory=session_factory,
+    )
+    await service.process_trade_intent(TradeIntentEvent(
+        source_service="strategy-engine",
+        payload=TradeIntentPayload(
+            strategy_code="macd_30s", broker_account_name="paper:macd_30s",
+            symbol="UGRO", side="buy", quantity=Decimal("10"), intent_type="open",
+            reason="ENTRY_P1_MACD_CROSS", metadata={"reference_price": "2.55"},
+        ),
+    ))
+
+    async def unreadable(_account_name: str):
+        raise TimeoutError("position read timed out")
+
+    monkeypatch.setattr(service.broker_adapter, "list_account_positions", unreadable)
+    assert await service.sync_broker_positions(account_names=["paper:macd_30s"]) == {
+        "accounts": 1, "positions": 0,
+    }
+    assert await service._broker_symbol_position_state("paper:macd_30s", "UGRO") is _PositionRead.UNKNOWN
+    with session_factory() as session:
+        account = session.scalar(select(AccountPosition).where(AccountPosition.symbol == "UGRO"))
+        virtual = session.scalar(select(VirtualPosition).where(VirtualPosition.symbol == "UGRO"))
+        assert account is not None and account.quantity == Decimal("10")
+        assert virtual is not None and virtual.quantity == Decimal("10")
+
+
+@pytest.mark.asyncio
+async def test_oms_stop_reject_unreadable_recheck_reports_unknown_without_fallback(monkeypatch) -> None:
+    session_factory = build_test_session_factory()
+    adapter = FakeStopGuardCloseRejectFallbackBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(), session_factory=session_factory, broker_adapter=adapter,
+    )
+    await service.process_trade_intent(TradeIntentEvent(
+        source_service="strategy-engine",
+        payload=TradeIntentPayload(
+            strategy_code="macd_30s", broker_account_name="paper:macd_30s",
+            symbol="UGRO", side="buy", quantity=Decimal("10"), intent_type="open",
+            reason="ENTRY_P1_MACD_CROSS", metadata={"reference_price": "2.55"},
+        ),
+    ))
+
+    async def unreadable(_account_name: str):
+        raise ConnectionResetError("position read reset")
+
+    monkeypatch.setattr(adapter, "list_account_positions", unreadable)
+    events = await service.process_trade_intent(TradeIntentEvent(
+        source_service="strategy-engine",
+        payload=TradeIntentPayload(
+            strategy_code="macd_30s", broker_account_name="paper:macd_30s",
+            symbol="UGRO", side="sell", quantity=Decimal("10"), intent_type="close",
+            reason="HARD_STOP", metadata={
+                "stop_guard": "true", "order_type": "limit", "limit_price": "2.40",
+                "reference_price": "2.40", "time_in_force": "day",
+            },
+        ),
+    ))
+    assert "broker_position_unreadable" in [event.payload.reason for event in events]
+    assert len([request for request in adapter.submit_requests if request.side == "sell"]) == 1
+    with session_factory() as session:
+        account = session.scalar(select(AccountPosition).where(AccountPosition.symbol == "UGRO"))
+        virtual = session.scalar(select(VirtualPosition).where(VirtualPosition.symbol == "UGRO"))
+        assert account is not None and account.quantity == Decimal("10")
+        assert virtual is not None and virtual.quantity == Decimal("10")
 
 
 @pytest.mark.asyncio

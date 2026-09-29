@@ -1965,6 +1965,18 @@ class OmsRiskService:
                         broker_account_name=broker_account.name,
                         symbol=event.payload.symbol,
                     )
+                if available_quantity is None:
+                    self.store.mark_intent_refused(
+                        intent,
+                        origin="skipped_before_submit",
+                        code="broker_position_unreadable",
+                    )
+                    order_event = self._build_rejected_event(
+                        event, intent.id, reason="broker_position_unreadable"
+                    )
+                    session.commit()
+                    await self._publish_order_event(order_event)
+                    return [order_event]
                 if available_quantity <= 0:
                     self.store.mark_intent_refused(
                         intent,
@@ -14158,7 +14170,7 @@ class OmsRiskService:
         broker_account_id: UUID,
         broker_account_name: str,
         symbol: str,
-    ) -> Decimal:
+    ) -> Decimal | None:
         try:
             snapshots = await self.broker_adapter.list_account_positions(broker_account_name)
         except Exception as exc:
@@ -14168,7 +14180,7 @@ class OmsRiskService:
                 symbol,
                 exc,
             )
-            return Decimal("0")
+            return None
 
         self.store.sync_account_positions(
             session,
@@ -16010,6 +16022,44 @@ class OmsRiskService:
             broker_account_name=broker_account.name,
             symbol=original_event.payload.symbol,
         )
+        if available_quantity is None:
+            fallback_event = TradeIntentEvent(
+                source_service=SERVICE_NAME,
+                payload=TradeIntentPayload(
+                    strategy_code=original_event.payload.strategy_code,
+                    broker_account_name=original_event.payload.broker_account_name,
+                    symbol=original_event.payload.symbol,
+                    side="sell",
+                    quantity=original_event.payload.quantity,
+                    intent_type="close",
+                    reason="STOP_REJECTED_FALLBACK",
+                    metadata={
+                        **{str(k): str(v) for k, v in original_request.metadata.items()},
+                        "fallback_for_client_order_id": original_request.client_order_id,
+                        "fallback_rejection_reason": rejection_reason,
+                        "stop_reject_fallback": "true",
+                    },
+                ),
+            )
+            fallback_intent = self.store.create_trade_intent(
+                session, strategy=strategy, broker_account=broker_account, event=fallback_event
+            )
+            self.store.mark_intent_refused(
+                fallback_intent,
+                origin="skipped_before_submit",
+                code="broker_position_unreadable",
+            )
+            self.logger.warning(
+                "[OMS-STOP-FALLBACK-UNREADABLE] symbol=%s account=%s original_coid=%s "
+                "fallback_intent=%s; protection retained, sell not submitted",
+                original_event.payload.symbol,
+                broker_account.name,
+                original_request.client_order_id,
+                fallback_intent.id,
+            )
+            return [self._build_rejected_event(
+                fallback_event, fallback_intent.id, reason="broker_position_unreadable"
+            )]
         if available_quantity <= 0:
             return []
 

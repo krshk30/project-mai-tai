@@ -57,9 +57,9 @@ _INSTRUMENT_STATUS_RANK_UNKNOWN = 2
 
 
 class WebullPositionsUnavailable(Exception):
-    """A position read is rate-limited (HTTP 429) AND no cached snapshot exists.
+    """A position read cannot establish a complete broker snapshot.
 
-    ⚠ SAFETY: this is raised INSTEAD of returning an empty list so a rate-limit can never be
+    SAFETY: this is raised INSTEAD of returning an empty list so a failed read can never be
     read as a flat/empty account. The OMS callers treat a raised positions read as UNKNOWN and
     KEEP protection (``_broker_symbol_position_state`` -> UNKNOWN; ``sync_broker_positions``
     aborts before clearing virtuals); an empty list would classify as FLAT_INFERRED and, outside
@@ -525,10 +525,12 @@ class WebullBrokerAdapter:
           off the last cached snapshot is served, or -- if no snapshot exists -- a typed
           ``WebullPositionsUnavailable`` is RAISED (never `[]`). A rate-limit must never be read
           as a flat/empty account (that would clear protection); see the exception's docstring.
-        - Non-rate-limit errors preserve the prior behaviour (log + empty list)."""
+        - Other failed/incomplete reads raise UNKNOWN rather than imply a flat account."""
         account = self.accounts_by_name.get(broker_account_name)
         if account is None:
-            return []
+            raise WebullPositionsUnavailable(
+                f"Webull account {broker_account_name} is not configured -> UNKNOWN"
+            )
         key = broker_account_name
         throttle_secs = float(getattr(self, "_positions_throttle_secs", _DEFAULT_POSITIONS_THROTTLE_SECS))
         now = time.monotonic()
@@ -571,9 +573,10 @@ class WebullBrokerAdapter:
                     f"Webull positions for {key} rate-limited (429) and no cached snapshot "
                     f"-> UNKNOWN (protection kept)"
                 ) from exc
-            # Non-rate-limit error: preserve the prior behaviour (log + empty list).
             logger.exception("Webull position sync failed for %s", broker_account_name)
-            return []
+            raise WebullPositionsUnavailable(
+                f"Webull positions for {key} unreadable -> UNKNOWN (protection kept)"
+            ) from exc
 
         # SUCCESS — refresh the cache and clear any backoff for this account.
         with self._positions_lock:
@@ -1026,22 +1029,33 @@ class WebullBrokerAdapter:
                 req.set_last_instrument_id(last_instrument_id)
             body = self._body(client.get_response(req))
             if not isinstance(body, dict):
-                break
-            holdings = body.get("holdings") or body.get("positions") or []
+                raise ValueError("Webull positions response is not an object")
+            holdings = body.get("holdings")
+            if holdings in (None, []) and "positions" in body:
+                holdings = body["positions"]
+            if not isinstance(holdings, list):
+                raise ValueError("Webull positions response has no readable holdings list")
             for raw in holdings:
+                if not isinstance(raw, dict):
+                    raise ValueError("Webull positions holding is not an object")
+                quantity = self._decimal_or_none(raw, "quantity", "qty", "position", "shares")
+                if quantity is None:
+                    raise ValueError("Webull positions holding has no readable quantity")
                 snapshot = self._position_snapshot(raw, broker_account_name)
                 if snapshot is not None:
                     snapshots.append(snapshot)
+                elif quantity != 0:
+                    raise ValueError("Webull positions non-flat holding has no readable symbol")
             if not body.get("has_next") and not body.get("hasNext"):
-                break
+                return snapshots
             if not holdings:
-                break
+                raise ValueError("Webull positions has_next without holdings")
             # CONFIRM-AT-TEST: the pagination cursor field name on a holding.
             last = holdings[-1]
             last_instrument_id = self._first_str(last, "instrument_id", "instrumentId") if isinstance(last, dict) else None
             if not last_instrument_id:
-                break
-        return snapshots
+                raise ValueError("Webull positions has_next without a page cursor")
+        raise ValueError("Webull positions pagination exceeded the 20-page limit")
 
     async def _cancel_order(
         self, account: WebullAccountConfig, request: OrderRequest

@@ -805,6 +805,17 @@ async def test_list_positions_maps_holdings(fake_sdk) -> None:
     assert snaps[0].market_value == Decimal("14.25")
 
 
+@pytest.mark.asyncio
+async def test_positions_falls_back_to_positions_when_holdings_empty(fake_sdk) -> None:
+    client = _FakeClient({"positions": {
+        "has_next": False,
+        "holdings": [],
+        "positions": [{"symbol": "AAPL", "quantity": "5"}],
+    }})
+    snapshots = await _adapter(client).list_account_positions("live:orb")
+    assert len(snapshots) == 1 and snapshots[0].quantity == Decimal("5")
+
+
 def _positions_body(qty: str = "5"):
     return {
         "positions": {
@@ -877,13 +888,74 @@ async def test_positions_429_without_cache_raises_never_flat(fake_sdk) -> None:
 
 
 @pytest.mark.asyncio
-async def test_positions_non_ratelimit_error_returns_empty(fake_sdk) -> None:
-    # A NON-429 error preserves the prior behaviour (log + empty list) so flat-vs-unknown
-    # semantics for other failures are unchanged by this fix.
+async def test_positions_non_ratelimit_error_is_unknown(fake_sdk) -> None:
     client = _FakeClient({})
     client.raises["positions"] = _ServerException("ILLEGAL_PARAMETER", "bad", 417)
     adapter = _adapter(client, _positions_throttle_secs=0.0)
-    assert await adapter.list_account_positions("live:orb") == []
+    with pytest.raises(WebullPositionsUnavailable):
+        await adapter.list_account_positions("live:orb")
+    assert adapter._positions_cache == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [ConnectionResetError("reset"), TimeoutError("timed out")])
+async def test_positions_transport_error_is_unknown(fake_sdk, error: Exception) -> None:
+    client = _FakeClient({})
+    client.raises["positions"] = error
+    adapter = _adapter(client, _positions_throttle_secs=0.0)
+    with pytest.raises(WebullPositionsUnavailable):
+        await adapter.list_account_positions("live:orb")
+    assert adapter._positions_cache == {}
+
+
+@pytest.mark.asyncio
+async def test_positions_non_429_outage_does_not_reuse_old_snapshot(fake_sdk) -> None:
+    client = _FakeClient(_positions_body())
+    adapter = _adapter(client, _positions_throttle_secs=0.0)
+    assert len(await adapter.list_account_positions("live:orb")) == 1
+    client.raises["positions"] = TimeoutError("timed out")
+    with pytest.raises(WebullPositionsUnavailable):
+        await adapter.list_account_positions("live:orb")
+    assert len(adapter._positions_cache["live:orb"][1]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        [],
+        {},
+        {"holdings": "bad"},
+        {"has_next": True, "holdings": []},
+        {"has_next": True, "holdings": [{"symbol": "AAPL", "quantity": "5"}]},
+        {"has_next": False, "holdings": [{"symbol": "AAPL", "quantity": "not-a-number"}]},
+    ],
+)
+async def test_positions_unreadable_or_incomplete_page_is_unknown(fake_sdk, body: object) -> None:
+    client = _FakeClient({"positions": body})
+    adapter = _adapter(client, _positions_throttle_secs=0.0)
+    with pytest.raises(WebullPositionsUnavailable):
+        await adapter.list_account_positions("live:orb")
+    assert adapter._positions_cache == {}
+
+
+@pytest.mark.asyncio
+async def test_positions_second_page_error_never_returns_partial_holdings(fake_sdk) -> None:
+    class _PagedClient(_FakeClient):
+        def get_response(self, req: _Req) -> _Resp:
+            if self.calls.get("positions", 0):
+                raise TimeoutError("page two timed out")
+            return super().get_response(req)
+
+    client = _PagedClient({"positions": {
+        "has_next": True,
+        "holdings": [{"symbol": "AAPL", "quantity": "5", "instrument_id": "913256135"}],
+    }})
+    adapter = _adapter(client, _positions_throttle_secs=0.0)
+    with pytest.raises(WebullPositionsUnavailable):
+        await adapter.list_account_positions("live:orb")
+    assert adapter._positions_cache == {}
 
 
 @pytest.mark.asyncio
