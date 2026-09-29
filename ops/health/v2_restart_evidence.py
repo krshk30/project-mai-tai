@@ -718,8 +718,13 @@ def _bar_continuity(
 def _format_restart_gap(result: RestartGapResult) -> str:
     missing_start = result.prior_utc + timedelta(minutes=1)
     missing_end = result.following_utc - timedelta(minutes=1)
+    diagnostic = {
+        "HOLE": "PERSISTED_GAP_WITH_PRINTS",
+        "NO_TRADES_IN_GAP": "PERSISTED_GAP_NO_ELIGIBLE_PRINTS",
+        "COULD_NOT_TELL": "PERSISTED_GAP_UNGRADED",
+    }.get(result.verdict, "PERSISTED_GAP_UNGRADED")
     prefix = (
-        f"{result.verdict} symbol={result.symbol} "
+        f"{diagnostic} symbol={result.symbol} "
         f"window={format_moment(missing_start)}..{format_moment(missing_end)}"
     )
     if result.reason:

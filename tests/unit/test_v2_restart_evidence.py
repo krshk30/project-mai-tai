@@ -923,7 +923,7 @@ def test_persisted_gap_is_info_when_restart_coverage_is_not_at_issue(
     assert vre.report(args, runner=lambda command: "") == 0
     output = capsys.readouterr().out
     assert "persisted strategy_bar_history INFO" in output
-    assert "HOLE symbol=TEST" in output
+    assert "PERSISTED_GAP_WITH_PRINTS symbol=TEST" in output
     assert "| Bar continuity |" in output and "| N/A_OFF_SESSION |" in output
 
 
@@ -1010,7 +1010,7 @@ def test_report_passes_a_restart_gap_proven_to_have_no_eligible_trades(
 
     assert vre.report(args, runner=lambda command: "") == 0
     output = capsys.readouterr().out
-    assert "NO_TRADES_IN_GAP symbol=MNOV" in output
+    assert "PERSISTED_GAP_NO_ELIGIBLE_PRINTS symbol=MNOV" in output
     assert "eligible_transactions=0" in output
     assert "condition codes unavailable" in output
     assert "later corrections may revise history" in output
@@ -1061,7 +1061,7 @@ def test_legacy_gap_source_429_is_info_off_session(
 
     assert vre.report(args, runner=lambda command: "") == 0
     output = capsys.readouterr().out
-    assert "COULD_NOT_TELL symbol=RATE" in output
+    assert "PERSISTED_GAP_UNGRADED symbol=RATE" in output
     assert "Massive HTTP 429" in output
     assert "| N/A_OFF_SESSION |" in output
 
