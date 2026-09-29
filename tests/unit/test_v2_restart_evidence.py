@@ -412,8 +412,24 @@ def test_report_contains_every_required_denominator(monkeypatch, tmp_path: Path,
     assert "release markers=1/3" in output and "restoration_complete=1" in output
     assert "gaps>90s=2/99" in output and "gaps spanning restart=0/2" in output
     assert "headers=0/3" in output and "nearest-preceding timestamp scope" in output
-    assert "0 failed checks / 9 reported checks" in output
+    assert "0 failed checks / 0 unknown checks / 9 reported checks" in output
+    assert "Final call: EXPECTED BY DESIGN; restart outside bar session" in output
     assert "2026-09-10 20:25:00 EDT (2026-09-11 00:25:00 UTC)" in output
+
+
+def test_unreadable_report_has_unknown_final_call(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        vre,
+        "build_parser",
+        lambda: SimpleNamespace(parse_args=lambda argv: SimpleNamespace(command="report")),
+    )
+
+    def unreadable(_args):
+        raise vre.EvidenceUnknown("bar history query unavailable")
+
+    monkeypatch.setattr(vre, "report", unreadable)
+    assert vre.main([]) == 2
+    assert "Final call: UNKNOWN; evidence unreadable: bar history query unavailable" in capsys.readouterr().err
 
 
 def test_report_allows_a_declared_quiet_service_without_log_records(
@@ -548,6 +564,7 @@ def test_report_marks_no_watched_symbols_na_during_a_weekday_market_session(
     output = capsys.readouterr().out
     assert "nothing watched at stop or added after restart" in output
     assert "| N/A |" in output
+    assert "Final call: EXPECTED BY DESIGN; nothing watched at stop or added after restart" in output
 
 
 def test_report_fails_if_an_untouched_service_restarted(monkeypatch, tmp_path: Path) -> None:
@@ -1101,11 +1118,14 @@ def test_bar_continuity_is_pending_until_a_later_bar_exists(
         ),
     )
 
-    assert vre.report(args, runner=lambda command: "") == 1
+    assert vre.report(args, runner=lambda command: "") == 2
     output = capsys.readouterr().out
-    assert "REST backfill continuity COULD_NOT_TELL: no post-restart current bar" in output
+    assert "REST backfill continuity UNKNOWN: no post-restart current bar" in output
     assert "pending next bar=1 symbols=WAIT" in output
     assert "| COULD_NOT_TELL |" in output
+    assert "Final call: UNKNOWN; REST backfill continuity UNKNOWN: no post-restart current bar" in output
+    assert "Overall: UNKNOWN (0 failed checks / 1 unknown checks / 9 reported checks)" in output
+    assert "Failures:" not in output
 
 
 def test_bar_continuity_query_marks_a_live_symbol_without_a_later_bar_pending() -> None:
@@ -1192,6 +1212,8 @@ def test_rest_fill_missing_a_printed_minute_blocks_the_gate(monkeypatch, tmp_pat
     assert "REST backfill coverage not proven for 1 independently printed minute(s)" in output
     assert "filled=1/2 missing_printed=1" in output
     assert "minutes=2026-09-28 10:14:00 EDT" in output
+    assert "Final call: REAL FAILURE; REST backfill coverage not proven" in output
+    assert "Overall: REAL FAILURE (1 failed checks / 0 unknown checks / 9 reported checks)" in output
 
 
 def test_unreadable_tape_is_unknown_not_a_clean_minute() -> None:
@@ -1212,7 +1234,9 @@ def test_unreadable_tape_is_unknown_not_a_clean_minute() -> None:
     assert "HTTP 429" in result.reason
 
 
-def test_old_rest_replay_not_persisted_is_unknown_not_a_proven_hole() -> None:
+def test_old_rest_replay_not_persisted_is_unknown_not_a_proven_hole(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     old_print = datetime(2026, 9, 28, 14, 13, tzinfo=UTC)
     result = vre._grade_backfill_symbol(
         "TEST",
@@ -1227,6 +1251,22 @@ def test_old_rest_replay_not_persisted_is_unknown_not_a_proven_hole() -> None:
     assert result.verdict == "COULD_NOT_TELL"
     assert result.unverified_minutes == (old_print,)
     assert result.missing_print_minutes == ()
+
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    _move_v2_report_start(current, logs, datetime(2026, 9, 28, 14, 12, 30, tzinfo=UTC))
+    monkeypatch.setattr(
+        vre,
+        "_rest_backfill_continuity",
+        lambda runner, started, stopped, lines, before: vre.BackfillContinuity(
+            ("TEST",), (), (result,), "COULD_NOT_TELL"
+        ),
+    )
+    assert vre.report(args, runner=lambda command: "") == 2
+    output = capsys.readouterr().out
+    assert "Final call: UNKNOWN; REST backfill continuity UNKNOWN: TEST: " in output
+    assert "older REST replay may exist only in strategy memory" in output
+    assert "unverified_old=1" in output
+    assert "Failures:" not in output
 
 
 def test_historical_replay_row_cannot_end_the_coverage_window() -> None:
