@@ -72,7 +72,6 @@ env/config only when the operator asks. The author never reviews.
 | 27 | #1056 PAGEGAP | TO BE EXERCISED (installed) | box 3141bbd5; first run clean | claude-1 | first dropped exit |
 | 31 | Restart evidence | PARTLY EXERCISED | BOOT-HOLD released 18:58 ET 09-28; REST warmup + bar continuity pending | codex 06:20 gate / claude-1 | read the gate |
 | 3 | LXEH storm #1045 | TO BE EXERCISED | trigger never occurred | claude-1 | next removed name w/ pending recovery |
-| 4 | Child fill before close #1046 | TO BE EXERCISED | no Webull native stop fill yet | claude-1 | first one |
 | 5 | 16:00 handover #1047 | TO BE EXERCISED | flat at 16:00 09-28 | claude-1 | first held-at-16:00 day |
 | 6 | After-hours Webull ladder #1048 | TO BE EXERCISED | nothing held after 16:00 | claude-1 | first held Webull share |
 | 7 | Entry cutoff 15:45 | TO BE EXERCISED | no rest live at 15:45 09-28 | claude-1 | first rest live at 15:45 |
@@ -98,6 +97,13 @@ env/config only when the operator asks. The author never reviews.
 - Leftover TradingView Chrome stopped; polygon_30s paper bot OFF (strategy restarted, gate re-pinned).
 - #1029 closed (design superseded by Option A; overnight replay cancelled before start).
 - BAND1: 0 of 12 proven band-miss winners; 0.5% band unchanged.
+
+**Closed 09-29:**
+- Row 4 #1046 child fill before close (operator 09-29 ~13:10 ET). Exercised on DXST 09-29 (Webull-only; Schwab policy-refused):
+  - bare fill 12:45:26 @2.85, pair attached 12:45:37 (target 2.9925 / stop 2.622);
+  - target child filled 12:48:19 @2.99 and was recorded from the broker execution record (`[OMS-CHILD-EXIT-RECORDED]`) BEFORE `[OMS-V2-OCO-RESOLVED-FLAT]` closed the row;
+  - fill row `…-ocoexit-15DKFHKB` is in `fills`; no `oco_exit_fill_unrecorded`; exposure 0.
+  - Target leg only: a stop-side child fill is not yet seen, but #1046 applies the same path to both sides.
 - Old board C1 and C4–C7.
 - The deploy of 8f69a08a.
 
