@@ -1,0 +1,9 @@
+{
+  "pr_number": 1061,
+  "range_base": "fbc386c970bce27c9c758a2be858181cde99e21f",
+  "range_head": "2096c930a04d5b12675dae66c02479cfa7f8998d",
+  "reviewed_at": "2026-09-29T12:49:49Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Restart-evidence gate correction (operator Rule #1, 09-29): bar continuity now verifies the REST backfill instead of a live bar bracket. Checked against the design: v2 persists a bar only if <=300 s old (schwab_1m_v2_bot.py:4417); older REST-filled bars are memory-only. Missing printed minute inside the persistence window = REAL FAILURE rc=1; unverifiable older gap = UNKNOWN rc=2; nothing watched/off-session = EXPECTED BY DESIGN rc=0; preopen_restart_evidence.sh routes the three-way call and treats rc/final-call disagreement as UNKNOWN. Note moved to review-artifacts (round-1 request). 80/80 targeted; RED on base checker 37F. Mutations killed: UNKNOWN collapsed into rc=1 (2F), N/A called UNKNOWN (2F), wrapper routes UNKNOWN as failure (3F). Survivors: 300 s boundary <= vs < (exact-edge test missing, non-blocking); dropping the explicit UNKNOWN case is equivalent (catch-all also UNKNOWN). Full tests/unit 47F/4430P vs base 47F/4408P identical FAILED names; ruff + bash -n clean; CI validate x2 pass. Install: box pull + checked ops-only preopen.sh routing update."
+}
