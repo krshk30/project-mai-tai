@@ -40,6 +40,7 @@ def test_pager_window_is_et_in_edt_and_est(day, hour, minute, expected):
 
 
 def test_weekend_is_not_a_pager_day():
+    assert not watch._in_pager_hours(et_at("2026-10-31", 12, 0))
     assert not watch._in_pager_hours(et_at("2026-11-01", 12, 0))
 
 
@@ -87,11 +88,11 @@ def incident(source="oms_v2_webull_uncovered_share", incident_id=BENF_ID):
     }
 
 
-def facts(now, symbol="BENF", quantity="0", row_status="closed", open_rows=0):
+def facts(now, symbol="BENF", quantity="0", row_status="closed", open_rows=0, row_quantity=0):
     return {
         "account": "live:orb", "symbol": symbol, "quantity": quantity,
         "source_updated_at": now.isoformat(), "updated_at": now.isoformat(),
-        "managed_row_status": row_status, "managed_row_quantity": 0,
+        "managed_row_status": row_status, "managed_row_quantity": row_quantity,
         "managed_row_account": "live:orb", "managed_row_symbol": symbol,
         "open_managed_rows": open_rows,
     }
@@ -120,6 +121,16 @@ def test_benf_closed_exact_row_and_fresh_flat_broker_auto_closes(tmp_path, monke
         tmp_path, monkeypatch, incident(), facts(now), now
     )
     assert rc == 0
+    assert closes == []
+    assert len(pages) == 1
+    assert "awaiting_second_verified_read" in status
+    assert json.loads(state.read_text())[BENF_ID]["close_candidate"]["first_verified_at"] == now.isoformat()
+
+    later = now + timedelta(seconds=60)
+    rc, state, status, pages, closes = run_inc1(
+        tmp_path, monkeypatch, incident(), facts(later), later
+    )
+    assert rc == 0
     assert closes == [(BENF_ID, "exact_row_closed_and_broker_flat")]
     assert pages == []
     assert "verdict=NO_OPEN_INCIDENT open=0" in status
@@ -140,6 +151,7 @@ def test_benf_closed_exact_row_and_fresh_flat_broker_auto_closes(tmp_path, monke
     [
         ({"quantity": "1"}, "broker_position_still_held"),
         ({"managed_row_status": "open"}, "exact_managed_row_not_closed"),
+        ({"managed_row_quantity": 1}, "exact_managed_row_not_closed"),
         ({"source_updated_at": et_at("2026-09-28", 19, 30) - timedelta(minutes=3)},
          "broker_position_read_stale"),
     ],
@@ -157,6 +169,78 @@ def test_unresolved_or_stale_benf_stays_open(tmp_path, monkeypatch, changes, rea
     assert "verdict=OPEN_UNCOVERED open=1" in status
     assert "health=OPEN" in status
     assert reason in status
+
+
+def test_one_false_flat_then_held_never_closes_and_still_pages(tmp_path, monkeypatch):
+    first = et_at("2026-09-28", 19, 30)
+    _rc, state, _status, pages, closes = run_inc1(
+        tmp_path, monkeypatch, incident(), facts(first), first
+    )
+    assert len(pages) == 1 and closes == []
+    later = first + timedelta(seconds=60)
+    _rc, state, status, pages, closes = run_inc1(
+        tmp_path, monkeypatch, incident(), facts(later, quantity="1"), later
+    )
+    assert closes == [] and pages == []
+    assert "broker_position_still_held" in status
+    assert "close_candidate" not in json.loads(state.read_text())[BENF_ID]
+
+
+def test_two_verified_reads_need_a_newer_broker_stamp_and_55_seconds(tmp_path, monkeypatch):
+    first = et_at("2026-09-28", 19, 30)
+    run_inc1(tmp_path, monkeypatch, incident(), facts(first), first)
+    early = first + timedelta(seconds=30)
+    _rc, state, status, _pages, closes = run_inc1(
+        tmp_path, monkeypatch, incident(), facts(early), early
+    )
+    assert closes == [] and "awaiting_confirmation_interval" in status
+    later = first + timedelta(seconds=60)
+    same_stamp = facts(later)
+    same_stamp["source_updated_at"] = first.isoformat()
+    _rc, state, status, _pages, closes = run_inc1(
+        tmp_path, monkeypatch, incident(), same_stamp, later
+    )
+    assert closes == [] and "awaiting_newer_broker_read" in status
+    assert json.loads(state.read_text())[BENF_ID]["close_candidate"]["first_verified_at"] == first.isoformat()
+    _rc, state, status, _pages, closes = run_inc1(
+        tmp_path, monkeypatch, incident(), facts(later), later
+    )
+    assert closes == [(BENF_ID, "exact_row_closed_and_broker_flat")]
+    assert "verdict=NO_OPEN_INCIDENT" in status
+    assert "close_candidate" not in json.loads(state.read_text())[BENF_ID]
+
+
+def test_unverified_read_resets_confirmation_chain(tmp_path, monkeypatch):
+    first = et_at("2026-09-28", 19, 30)
+    run_inc1(tmp_path, monkeypatch, incident(), facts(first), first)
+    held = first + timedelta(seconds=60)
+    run_inc1(tmp_path, monkeypatch, incident(), facts(held, quantity="1"), held)
+    second_flat = held + timedelta(seconds=60)
+    _rc, state, status, _pages, closes = run_inc1(
+        tmp_path, monkeypatch, incident(), facts(second_flat), second_flat
+    )
+    assert closes == [] and "awaiting_second_verified_read" in status
+    assert json.loads(state.read_text())[BENF_ID]["close_candidate"]["first_verified_at"] == second_flat.isoformat()
+    third_flat = second_flat + timedelta(seconds=60)
+    _rc, _state, status, _pages, closes = run_inc1(
+        tmp_path, monkeypatch, incident(), facts(third_flat), third_flat
+    )
+    assert closes == [(BENF_ID, "exact_row_closed_and_broker_flat")]
+    assert "verdict=NO_OPEN_INCIDENT" in status
+
+
+def test_lost_state_cannot_supply_a_prior_close_confirmation(tmp_path, monkeypatch):
+    first = et_at("2026-09-28", 19, 30)
+    _rc, state, _status, _pages, _closes = run_inc1(
+        tmp_path, monkeypatch, incident(), facts(first), first
+    )
+    state.write_text("{corrupt")
+    later = first + timedelta(seconds=60)
+    _rc, state, status, _pages, closes = run_inc1(
+        tmp_path, monkeypatch, incident(), facts(later), later
+    )
+    assert closes == [] and "awaiting_second_verified_read" in status
+    assert json.loads(state.read_text())[BENF_ID]["close_candidate"]["first_verified_at"] == later.isoformat()
 
 
 def test_unreadable_resolution_db_stays_open_with_reason(tmp_path, monkeypatch):
@@ -191,6 +275,14 @@ def test_no_page_is_a_read_only_close_dry_run(tmp_path, monkeypatch):
     ) == 1
     assert "open=1" in status.read_text()
     assert "dry_run_no_close" in status.read_text()
+    assert "close_candidate" not in json.loads((tmp_path / "state.json").read_text())[BENF_ID]
+
+    later = now + timedelta(seconds=60)
+    _rc, state, second_status, _pages, closes = run_inc1(
+        tmp_path, monkeypatch, row, facts(later), later
+    )
+    assert closes == [] and "awaiting_second_verified_read" in second_status
+    assert json.loads(state.read_text())[BENF_ID]["close_candidate"]["first_verified_at"] == later.isoformat()
 
 
 def test_changed_evidence_at_commit_does_not_close_or_suppress_page(tmp_path, monkeypatch):
@@ -198,12 +290,18 @@ def test_changed_evidence_at_commit_does_not_close_or_suppress_page(tmp_path, mo
     now = et_at("2026-09-28", 19, 30)
     pages = []
     monkeypatch.setattr(watch, "_inc1_open_incidents", lambda: [row])
-    monkeypatch.setattr(watch, "_inc1_resolution_facts", lambda _row: facts(now))
+    observed = facts(now)
+    monkeypatch.setattr(watch, "_inc1_resolution_facts", lambda _row: observed)
     monkeypatch.setattr(watch, "_inc1_commit_close", lambda *_: False)
     monkeypatch.setattr(watch, "page", lambda title, _body: pages.append(title) or True)
     status = tmp_path / "STATUS.txt"
     assert watch._run_inc1_pager_unlocked(
         state_path=tmp_path / "state.json", status_path=status, no_page=False, now=now
+    ) == 0
+    later = now + timedelta(seconds=60)
+    observed = facts(later)
+    assert watch._run_inc1_pager_unlocked(
+        state_path=tmp_path / "state.json", status_path=status, no_page=False, now=later
     ) == 0
     assert "verdict=OPEN_UNCOVERED" in status.read_text()
     assert "evidence_changed_before_close" in status.read_text()
@@ -242,6 +340,12 @@ def test_hdl1_closes_only_when_broker_flat_and_no_open_row(tmp_path, monkeypatch
     rc, _state, status, pages, closes = run_inc1(
         tmp_path, monkeypatch, row, facts(now, symbol="DAIC"), now
     )
+    assert rc == 0 and not pages and not closes
+    assert "verdict=OPEN_AUX_INCIDENT" in status
+    later = now + timedelta(seconds=60)
+    rc, _state, status, pages, closes = run_inc1(
+        tmp_path, monkeypatch, row, facts(later, symbol="DAIC"), later
+    )
     assert rc == 0 and not pages
     assert closes == [(DAIC_ID, "hdl1_no_position_or_open_row")]
     assert "verdict=NO_OPEN_INCIDENT" in status
@@ -268,6 +372,7 @@ def test_closing_update_rechecks_all_resolution_facts(monkeypatch):
     statement = sql[0]
     assert "p.quantity = 0" in statement
     assert "p.source_updated_at between" in statement
+    assert "interval '120 seconds'" in statement
     assert "m.status = 'closed' and m.current_quantity = 0" in statement
     assert "i.payload->>'managed_row_id'" in statement
     assert "inc1_auto_close" in statement
@@ -282,6 +387,7 @@ def test_policy_closing_update_rechecks_session_end_and_no_open_row(monkeypatch)
     assert "m.status = 'open'" in sql[0]
     assert "timezone('America/New_York'" in sql[0]
     assert "time '20:00'" in sql[0]
+    assert "interval '120 seconds'" in sql[0]
 
 
 def test_installer_pins_both_all_day_cron_lines_to_one_copy():
@@ -319,7 +425,14 @@ def _install_fixture(tmp_path):
     fake_crontab = tmp_path / "fake-crontab"
     fake_crontab.write_text(
         "#!/usr/bin/env bash\nset -euo pipefail\n"
-        "if [[ $1 == -l ]]; then /bin/cat \"$PAGER_CRON_STATE\"; exit 0; fi\n"
+        "if [[ $1 == -l ]]; then\n"
+        "  /bin/cat \"$PAGER_CRON_STATE\"\n"
+        "  if [[ ${PAGER_CRON_READBACK_MISMATCH:-0} == 1 ]] && "
+        "/usr/bin/grep -q -- '--cron --inc1' \"$PAGER_CRON_STATE\"; then\n"
+        "    echo '# unexpected readback line'\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
         "if [[ ${PAGER_CRON_REJECT:-0} == 1 ]]; then exit 1; fi\n"
         "/bin/cp \"$1\" \"$PAGER_CRON_STATE\"\n"
     )
@@ -362,6 +475,31 @@ def test_installer_restores_old_copy_when_crontab_rejects_update(tmp_path):
     assert result.returncode != 0
     assert target.read_bytes() == original_watch
     assert cron_state.read_bytes() == original_cron
+
+
+def test_installer_restores_crontab_and_watch_on_readback_mismatch(tmp_path):
+    _source, target, cron_state, env = _install_fixture(tmp_path)
+    script = ROOT / "ops/health/install_unexercised_watch.sh"
+    old_watch, old_cron = target.read_bytes(), cron_state.read_bytes()
+    env["PAGER_CRON_READBACK_MISMATCH"] = "1"
+    result = subprocess.run(["bash", str(script), "--install"], env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "readback differs" in result.stderr
+    assert target.read_bytes() == old_watch
+    assert cron_state.read_bytes() == old_cron
+
+
+def test_installer_refuses_more_than_two_sha_guards_and_rolls_back(tmp_path):
+    source, target, cron_state, env = _install_fixture(tmp_path)
+    script = ROOT / "ops/health/install_unexercised_watch.sh"
+    extra_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    cron_state.write_text(cron_state.read_text() + f"# unrelated sha {extra_sha}\n")
+    old_watch, old_cron = target.read_bytes(), cron_state.read_bytes()
+    result = subprocess.run(["bash", str(script), "--install"], env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "both SHA guards were not installed" in result.stderr
+    assert target.read_bytes() == old_watch
+    assert cron_state.read_bytes() == old_cron
 
 
 def test_installer_refuses_incomplete_cron_block_before_copying(tmp_path):
