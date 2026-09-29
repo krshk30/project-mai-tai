@@ -187,6 +187,9 @@ class Settings(BaseSettings):
     orb_universe_lead_minutes: int = 5      # confirmed by open - 5m = 09:25
     orb_broker_account_name: str = "paper:orb"
     orb_quantity: int = 10
+    # Separate from broker-disconnected ORB paper observation. No live ORB
+    # intent can pass OMS unless this is deliberately enabled after review.
+    orb_live_schwab_orders_enabled: bool = False
     # Retained for rollback/config compatibility only. The ORB paper observer ignores
     # both broker fields; its runtime registration is hard-coded to provider=none.
     orb_broker_provider: str | None = None
@@ -1368,6 +1371,8 @@ class Settings(BaseSettings):
 
     def provider_for_strategy(self, strategy_code: str) -> str:
         normalized_code = str(strategy_code).strip().lower()
+        if normalized_code == "orb_schwab":
+            return "schwab" if self.orb_live_schwab_orders_enabled else "none"
         if normalized_code in {"orb", "momentum_30s", "momentum_60s"}:
             return "none"
         if normalized_code == "macd_30s":

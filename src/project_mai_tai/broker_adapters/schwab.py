@@ -601,6 +601,24 @@ class SchwabBrokerAdapter:
         return best
 
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
+        if request.strategy_code == "orb_schwab" and request.intent_type == "open" and (
+            not self._is_bracket_request(request)
+            or self._is_exit_only_oco_request(request)
+            or str(request.metadata.get("bracket_entry_type", "")).upper() != "STOP_LIMIT"
+        ):
+            return [
+                ExecutionReport(
+                    event_type="rejected",
+                    origin="client",
+                    client_order_id=request.client_order_id,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason="ORB Schwab open requires the enabled native STOP_LIMIT bracket",
+                    metadata=dict(request.metadata),
+                )
+            ]
         account = self.accounts_by_name.get(request.broker_account_name)
         if account is None:
             return [
@@ -1361,7 +1379,12 @@ class SchwabBrokerAdapter:
         Both conditions are required so the single-leg path stays byte-identical with the
         flag off — an intent that happens to carry bracket metadata must NOT silently
         become a combo on a box where the flag was never flipped."""
-        if not bool(getattr(self.settings, "schwab_native_bracket_enabled", False)):
+        enabled = (
+            bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
+            if request.strategy_code == "orb_schwab"
+            else bool(getattr(self.settings, "schwab_native_bracket_enabled", False))
+        )
+        if not enabled:
             return False
         return str(request.metadata.get("bracket", "")).lower() in {"1", "true", "yes"}
 
@@ -1564,6 +1587,108 @@ class SchwabBrokerAdapter:
             body=self._build_bracket_payload(request),
         )
         return status_code, response
+
+    async def replace_bracket_order(
+        self, request: OrderRequest, broker_order_id: str
+    ) -> ExecutionReport | None:
+        """Replace one unfilled ORB parent; None means broker outcome is unknown."""
+        if request.strategy_code != "orb_schwab" or not broker_order_id:
+            raise RuntimeError("ORB replace requires its known Schwab parent")
+        account = self.accounts_by_name.get(request.broker_account_name)
+        if account is None:
+            raise RuntimeError("ORB replace account is unavailable")
+        body = self._build_bracket_payload(request)
+        old = await self._fetch_order(account, broker_order_id)
+        if (
+            old is None
+            or str(old.get("status", "")).upper() not in self.ACCEPTED_STATUSES
+            or str(old.get("orderType", "")).upper() != "STOP_LIMIT"
+        ):
+            return None
+        old_report = self._execution_report_from_order(
+            request=request,
+            order=old,
+            event_type="accepted",
+            broker_order_id=broker_order_id,
+        )
+        if old_report.filled_quantity != 0:
+            return None
+        try:
+            status, headers, response = await self._authorized_request_json(
+                "PUT",
+                f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"
+                f"{quote(broker_order_id, safe='')}",
+                body=body,
+            )
+        except RuntimeError:
+            # A transport error after PUT is not proof that the old order survived.
+            return None
+        if status >= 400:
+            unchanged = await self._fetch_order(account, broker_order_id)
+            if (
+                unchanged is None
+                or str(unchanged.get("status", "")).upper() not in self.ACCEPTED_STATUSES
+            ):
+                return None
+            return ExecutionReport(
+                event_type="rejected",
+                origin="broker",
+                client_order_id=request.client_order_id,
+                broker_order_id=broker_order_id,
+                symbol=request.symbol,
+                side="buy",
+                intent_type="cancel",
+                quantity=Decimal("0"),
+                reason=self._extract_error_reason(response),
+                metadata=dict(request.metadata),
+            )
+        new_id = self._extract_order_id(response, headers) or broker_order_id
+        confirmed = await self._fetch_order(account, new_id)
+        if (
+            confirmed is None
+            or str(confirmed.get("status", "")).upper() not in self.ACCEPTED_STATUSES
+        ):
+            return None
+        report = self._execution_report_from_order(
+            request=request,
+            order=confirmed,
+            event_type="accepted",
+            broker_order_id=new_id,
+        )
+        if report.filled_quantity != 0:
+            return None
+        try:
+            parent_legs = confirmed["orderLegCollection"]
+            children = confirmed["childOrderStrategies"][0]["childOrderStrategies"]
+            target, protective = children
+            price_matches = (
+                Decimal(str(confirmed["stopPrice"])) == Decimal(str(body["stopPrice"]))
+                and Decimal(str(confirmed["price"])) == Decimal(str(body["price"]))
+                and str(confirmed["orderType"]).upper() == "STOP_LIMIT"
+                and str(confirmed["orderStrategyType"]).upper() == "TRIGGER"
+                and str(confirmed["session"]).upper() == "NORMAL"
+                and str(confirmed["duration"]).upper() == "DAY"
+                and len(parent_legs) == 1
+                and str(parent_legs[0]["instruction"]).upper() == "BUY"
+                and str(parent_legs[0]["instrument"]["symbol"]).upper() == request.symbol
+                and Decimal(str(parent_legs[0]["quantity"])) == request.quantity
+                and len(children) == 2
+                and str(target["orderType"]).upper() == "LIMIT"
+                and Decimal(str(target["price"]))
+                == Decimal(str(body["childOrderStrategies"][0]["childOrderStrategies"][0]["price"]))
+                and str(protective["orderType"]).upper() == "STOP"
+                and Decimal(str(protective["stopPrice"]))
+                == Decimal(str(body["childOrderStrategies"][0]["childOrderStrategies"][1]["stopPrice"]))
+                and all(
+                    len(child["orderLegCollection"]) == 1
+                    and str(child["orderLegCollection"][0]["instruction"]).upper() == "SELL"
+                    and Decimal(str(child["orderLegCollection"][0]["quantity"])) == request.quantity
+                    for child in children
+                )
+            )
+        except (IndexError, KeyError, ValueError, TypeError):
+            return None
+        return report if price_matches else None
 
     def _execution_report_from_order(
         self,
