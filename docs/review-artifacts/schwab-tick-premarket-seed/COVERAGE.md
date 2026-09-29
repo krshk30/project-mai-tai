@@ -6,6 +6,8 @@ Collected on 2026-09-29 at approximately 09:03 ET, while the 09-29 session was s
 
 The retained `market_trade_ticks` Schwab/LEVELONE_EQUITIES rows run from 2026-08-31 04:06:23.993 ET through the live 2026-09-29 session. Thus there are **21 retained trading sessions, 20 completed plus today's partial session**, not 30 retained sessions. The core denominator is **290 symbol-days with at least one persisted live v2 one-minute bar** (285 completed-session symbol-days). Of these, **112** had their first live bar before 09:30 ET (107 completed-session symbol-days). This is evidence of v2 bar processing, not a claim that every scanner confirmation reached v2.
 
+For the originally requested **last 30 trading sessions** (08-18 through 09-29, with 09-29 partial), v2 has **444 live-bar symbol-days**, including **172** whose first live bar was before 09:30. The nine sessions from 08-18 through 08-28 account for **154 symbol-days, 60 pre-market-first**, but precede the retained tick data. They are **UNKNOWN for historical tick-seed coverage**, not counted as zero-print days. Their names are in the [no-retention CSV](COVERAGE-NO-TICK-RETENTION.csv). The 21 retained sessions account for the remaining 290 symbol-days, 112 pre-market-first.
+
 For those 112 pre-market-first symbol-days:
 
 | Evidence before 07:00 ET | Stock-days |
