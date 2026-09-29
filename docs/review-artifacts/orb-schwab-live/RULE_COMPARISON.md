@@ -19,8 +19,8 @@ production. The running paper process has not received this branch's high-size f
 | Entry timing | 09:30-10:00 software cross | NORMAL/DAY native parent can fill from 09:30; cancel remaining buys at 10:00 | Same intended window; cancellation can race a fill |
 | Chase/price | Trade strictly above level models a fill at the level, even if the print was higher | Native stop trigger and +0.5% maximum buy price; price can gap past it without filling | Native execution difference, never a guaranteed fill |
 | MACD entry check | Not part of this selected paper mode | Previous completed Schwab minute, MACD histogram >=0; unknown/negative cancels unfilled buy | Operator-approved addition |
-| 45% breakout body exit | At the modeled fill, close when abs(close-open)/(high-low) <45% | Same shared formula using gateway trade prefix at Schwab's first execution timestamp; exactly45 allowed | Restored; actual fill evidence required |
-| ATR exit | Shared ATR 5/3.5/Wilder's; gateway raw OHLC; SELL flip after entry | Same math; completed Schwab OHLC from 07:00 onward; SELL flip closes at/after the completed minute boundary | Restored with operator-approved source change, not signal parity |
+| 45% breakout body exit | At the modeled fill, close when abs(close-open)/(high-low) <45% | At the close of the Schwab bar containing the actual parent fill, if still held; exactly45 holds | Intentional operator-confirmed timing/source change from paper |
+| ATR exit | Shared ATR 5/3.5/Wilder's; gateway raw OHLC; SELL flip after entry | Same math on completed Schwab OHLC from 07:00; SELL on a bar strictly later than the break bar | Operator-approved source/timing, not signal parity |
 | Profit and loss exits | Bid-modeled +5% target and -8% stop from intended level | Native OTOCO +5% / -8% from rounded trigger | Retained percentages; rounding/execution can differ |
 | Simultaneous exit reasons | Body, then ATR, then target/stop in paper quote evaluation | Body before ATR in strategy; native children can win any broker race | Native execution cannot promise paper priority |
 | 10:00 cutoff | No new modeled entries; selected window-flatten OFF | Cancel unfilled buys, keep held shares under exit management | Retained |
@@ -31,22 +31,38 @@ production. The running paper process has not received this branch's high-size f
 
 ## Evidence and safety details
 
-- The body calculation includes all gateway prices, including smaller trades. The 100-share
-  filter affects the breakout high only. First execution time comes from Schwab execution legs,
-  never parent enteredTime, a quote-cross time, or the report-arrival clock.
-- Keep a bounded two-minute / 20,000-tick buffer per symbol, requiring observation from before
-  the fill minute and tape reaching the execution timestamp. Missing/truncated history is
-  UNKNOWN. Save the body evidence on the owned entry so a producer restart does not recalculate
-  it from later prices. Late/out-of-order provider delivery and production timestamp coverage
-  still require first-session observation; this is not a perfect exchange-tape reconstruction.
+- The body uses the persisted completed Schwab candle, not any gateway tick prefix. The
+  100-share filter affects the breakout high only. First execution time comes from Schwab
+  execution legs, never parent enteredTime, a price cross, or the report-arrival clock.
+- Wait for the break bar to close. Normal 0-3 second persistence delay is pending, not an
+  incident; after that, absent evidence opens an incident and leaves the native bracket intact.
+  Saved completed-bar evidence survives producer restarts. The reviewer's 921-bar timing
+  sample is supplied evidence, not a new production measurement in this revision.
 - ATR reads only strategy_bar_history for schwab_1m_v2, interval60, live/rest provenance,
   complete minutes since 07:00 ET. No close-only synthetic OHLC, forming minute, or gateway
   fallback. Same-day initialization differs from paper's gateway history; no parity claim.
   Missing latest minute or insufficient Wilder seed is UNKNOWN. Internal illiquid gaps retain
   the unchanged paper helper's gap treatment. This PR does not subscribe ORB names to Schwab.
-- An unknown body does not suppress an independently proven ATR exit, and missing ATR does not
-  suppress a proven body exit. Missing evidence opens a durable incident, without cancelling
-  protection merely because data is unavailable. Incident phone delivery remains unproven.
+- A missing break bar means no strategy sell, even if a later ATR flip exists; keep protection
+  and report the evidence gap. A known small body can exit without sufficient ATR seed.
+  Native target/stop fills take priority, including a fill before the local position catches up.
+- MACD calls V2Indicators.macd on the full available 07:00+ Schwab series, not a freshly seeded
+  last-26 slice. At least 35 bars and the latest 35 consecutive minutes are required. Earlier
+  sparse minutes retain v2's observed-series math. Reviewer-supplied 32/34 coverage of 26 bars
+  does NOT prove this stronger seed/coverage prerequisite. The IMCC-shaped test is synthetic.
+- v2 entries no longer acquire an ORB broker-position read or refuse v2's own adds. Only ORB-
+  owned working buys/positions collide with v2; the existing post-submit reconciliation is
+  unchanged. Flag OFF adds neither this ownership gate nor an advisory lock.
+- An accepted replacement receipt persists the NEW ID even if the following read fails,
+  shows a partial fill, or cannot verify shape/prices. It is explicitly UNKNOWN, not confirmed
+  working. Durable HOLD blocks cancel/reprice; ordinary reconciliation reads the new handle
+  and records actual fills. It does not automatically clear HOLD on a mere status read.
+  No receipt/ID after transport uncertainty means manual broker reconciliation, never retry.
+- The pager query now includes ORB replacement, exit-evidence and EOD incidents with a specific
+  message. This changes only routing for these new sources, not other sources' closure rules.
+  Install requires separately copying ops/health/unexercised_watch.py to the sha-guarded
+  /home/trader/unexercised_watch/watch.py and updating BOTH cron sha guards; merging is not
+  installation. Mocked delivery tests are not proof that the operator's phone received a page.
 - Producer persists evidence before publishing a deterministic entry/fill/reason intent. OMS
   verifies the exact entry and fill and recomputes the rule, requires a fresh post-decision bid,
   then shares the EOD durable close claim. A stale queued exit from an older trip cannot close

@@ -20,7 +20,7 @@ def _bar(minute: int, close: float) -> OrbBar:
 
 
 def test_macd_gate_ignores_forming_bar_then_reads_it_after_close() -> None:
-    bars = [_bar(minute, float(minute + 35)) for minute in range(-34, 0)]
+    bars = [_bar(minute, float(minute + 41)) for minute in range(-40, 0)]
     bars.append(_bar(0, 1.0))
 
     at_open = completed_bar_macd_gate(bars, OPEN + timedelta(seconds=30))

@@ -204,7 +204,7 @@ def test_observer_exit_is_conditional_and_never_writes_or_publishes(monkeypatch,
     clock[0] = OPEN - timedelta(minutes=5)
     asyncio.run(service._sync_gateway_subscription(["CLRO"]))
     _observe_bars(service, clock)
-    # A high/low swing followed by an in-cap cross gives a small forming body.
+    # The cross is hypothetical; body decisions still wait for the Schwab close.
     for seconds, price in ((0, 5.69), (2, 5.60), (5, 5.50), (10, 5.70)):
         clock[0] = OPEN + timedelta(seconds=seconds)
         service._handle_market_data(_trade(clock[0], price))
@@ -212,10 +212,17 @@ def test_observer_exit_is_conditional_and_never_writes_or_publishes(monkeypatch,
                         lambda *_args: ([], "missing_last_closed_schwab_bar"))
     asyncio.run(service._process_strategy_exits(clock[0]))
     rows = [row for row in _observations(caplog) if row["kind"] == "conditional_exit"]
-    assert len(rows) == 1 and rows[0]["reason"] == BODY_REASON
-    assert rows[0]["fill_status"] == "UNMEASURED"
-    assert rows[0]["broker_orders_sent"] == 0
-    assert "NOT_A_BROKER_FILL" in rows[0]["assumption"]
+    assert len(rows) == 1 and rows[0]["reason"] is None
+    bar = OrbBar(timestamp=OPEN, open=5.69, high=5.70, low=5.50, close=5.70, volume=100)
+    monkeypatch.setattr("project_mai_tai.services.orb_schwab_app.schwab_completed_atr_bars",
+                        lambda *_args: ([bar], "insufficient_schwab_atr_history"))
+    clock[0] = OPEN + timedelta(minutes=1, seconds=3)
+    asyncio.run(service._process_strategy_exits(clock[0]))
+    row = [row for row in _observations(caplog) if row["kind"] == "conditional_exit"][-1]
+    assert row["reason"] == BODY_REASON
+    assert row["fill_status"] == "UNMEASURED"
+    assert row["broker_orders_sent"] == 0
+    assert "NOT_A_BROKER_FILL" in row["assumption"]
 
 
 def test_observer_records_same_three_actions_with_sending_off(monkeypatch, caplog):

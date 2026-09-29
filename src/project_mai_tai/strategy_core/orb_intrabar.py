@@ -20,8 +20,6 @@ from datetime import datetime, timedelta
 from enum import Enum
 from math import isfinite
 
-from project_mai_tai.strategy_core.indicators import macd
-
 
 class ExecutionMode(str, Enum):
     """``BAR_CLOSE`` = fill the entry at the breakout bar's close (the backtested,
@@ -76,12 +74,14 @@ def completed_bar_macd_gate(
     )
     if not completed or completed[-1].timestamp != latest_minute:
         return False, "missing_last_closed_bar", None
-    if len(completed) < 26:
+    if len(completed) < 35:
         return False, "insufficient_macd_history", None
-    histogram = macd([bar.close for bar in completed])["histogram"]
-    if not histogram or not isfinite(histogram[-1]):
+    from project_mai_tai.strategy_core.schwab_1m_v2 import V2Indicators
+
+    result = V2Indicators.macd([bar.close for bar in completed])
+    if result is None or not isfinite(result[2]):
         return False, "invalid_macd", None
-    value = histogram[-1]
+    value = result[2]
     return value >= 0, "nonnegative" if value >= 0 else "negative", value
 
 

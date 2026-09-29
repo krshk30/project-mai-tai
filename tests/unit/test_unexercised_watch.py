@@ -886,6 +886,27 @@ def test_eh_unsold_incident_reaches_phone_once_with_actionable_context(tmp_path,
     assert "managed_row_id=row-apus exit_tag=CW_FLOOR" in pages[0][1]
 
 
+@pytest.mark.parametrize("source", ["orb_schwab_replace_unknown", "orb_schwab_exit_evidence", "orb_schwab_eod_close"])
+def test_orb_incident_selected_and_dispatched_once_without_claiming_protection(tmp_path, monkeypatch, source):
+    row = json.loads(_inc1_row(source=source))
+    row.update(account="live:schwab_1m_v2", symbol="CLRO", entry_order_id="ENTRY",
+               new_broker_order_id="NEW-PARENT", reason="confirmation_unreadable")
+    queries, pages = [], []
+    def query(sql):
+        queries.append(sql)
+        return [json.dumps(row)]
+    monkeypatch.setattr(uw, "_psql", query)
+    monkeypatch.setattr(uw, "page", lambda title, body: pages.append((title, body)) or True)
+    state, status = tmp_path / "inc1.json", tmp_path / "status.txt"
+    for _ in range(2):
+        assert uw.main(["--inc1", "--state", str(state), "--status", str(status)]) == 0
+    assert f"'{source}'" in queries[0]
+    assert len(pages) == 1
+    assert "new_broker_order_id=NEW-PARENT" in pages[0][1]
+    assert "do not assume a fill, flatness, or protection" in pages[0][1]
+    assert "native protection was cancelled" not in pages[0][1]
+
+
 def test_a_hard_stop_page_names_the_hard_stop_not_a_confirmation_exit(tmp_path, monkeypatch):
     # #1032 review P2: the title named the exit but the body still said "confirmation exit".
     row = json.loads(_inc1_row(source="oms_v2_confirmation_exit_reprotected"))

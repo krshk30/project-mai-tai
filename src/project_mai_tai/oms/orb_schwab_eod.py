@@ -154,23 +154,46 @@ async def _attempt(
         or parent.event_type != "filled" or parent.filled_quantity != 2
     ):
         raise ValueError("entry_fill_not_confirmed")
-    await _broker_quantity(service, target)
-    release = await service.broker_adapter.release_native_oco_for_close(target.account, target.broker_id)
-    if release == "resolved_by_fill":
-        await service._poll_orb_schwab_child_exits()
-        def child_closed(session):
+    async def child_closed() -> bool:
+        from project_mai_tai.oms.service import oco_exit_client_order_id
+
+        await service._poll_orb_schwab_child_exits(entry_id=target.entry_id)
+        def read(session):
             position = service.store.get_virtual_position(
                 session, strategy_id=target.strategy_id,
                 broker_account_id=target.account_id, symbol=target.symbol,
             )
-            return position is not None and position.quantity == 0
+            entry = session.get(BrokerOrder, target.entry_id)
+            if position is None or position.quantity != 0 or entry is None:
+                return False
+            children = session.execute(select(Fill, BrokerOrder).join(
+                BrokerOrder, BrokerOrder.id == Fill.order_id,
+            ).where(BrokerOrder.intent_id == entry.intent_id, Fill.side == "sell",
+                    Fill.broker_fill_id.is_not(None), Fill.broker_account_id == target.account_id,
+                    Fill.strategy_id == target.strategy_id, Fill.symbol == target.symbol)).all()
+            quantity = sum((fill.quantity for fill, child in children
+                            if child.broker_order_id and child.client_order_id == oco_exit_client_order_id(
+                                target.client_id, child.broker_order_id)), Decimal("0"))
+            return quantity >= target.quantity
+        return await service._run_db(read, commit=False)
 
-        if not await service._run_db(child_closed, commit=False):
+    # The native target/stop may already have sold inside the break bar while
+    # the virtual position is still stale. Attribute its exact child fill first.
+    if await child_closed():
+        await _finish(service, target, "resolved_by_child_fill", clock())
+        return
+    await _broker_quantity(service, target)
+    release = await service.broker_adapter.release_native_oco_for_close(target.account, target.broker_id)
+    if release == "resolved_by_fill":
+        if not await child_closed():
             raise ValueError("child_fill_not_recorded")
         await _finish(service, target, "resolved_by_child_fill", clock())
         return
     if release != "released":
         raise ValueError("sell_pair_release_unconfirmed")
+    if await child_closed():
+        await _finish(service, target, "resolved_by_child_fill", clock())
+        return
     # Reread after confirmed cancellation; an earlier position read cannot size this sell.
     quantity = await _broker_quantity(service, target)
     now = clock()

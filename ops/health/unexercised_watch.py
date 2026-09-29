@@ -383,6 +383,8 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "'max_attempts', payload->>'max_attempts', 'terminal', payload->>'terminal', "
         "'cause', payload->>'cause', "
         "'client_order_id', payload->>'client_order_id', "
+        "'entry_order_id', payload->>'entry_order_id', "
+        "'new_broker_order_id', payload->>'new_broker_order_id', "
         "'session_date', payload->>'session_date', "
         "'uncovered_seconds', payload->>'uncovered_seconds')::text "
         "from system_incidents where status != 'closed' "
@@ -390,7 +392,8 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved',"
         "'oms_v2_confirmation_exit_reprotected','oms_v2_webull_uncovered_share',"
         "'schwab_opening_policy_reject','oco_exit_fill_unrecorded',"
-        "'webull_eh_ladder_unsold','oms_webull_protect_handle_lost') "
+        "'webull_eh_ladder_unsold','oms_webull_protect_handle_lost',"
+        "'orb_schwab_replace_unknown','orb_schwab_exit_evidence','orb_schwab_eod_close') "
         "order by opened_at, id"
     )
     incidents: list[dict[str, str]] = []
@@ -762,6 +765,18 @@ def _run_inc1_pager_unlocked(
                     f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'} "
                     f"exit_tag={incident.get('exit_tag') or 'UNKNOWN'}\n"
                     "Trading is closed; check the broker position and protection before the next open."
+                )
+            elif incident.get("source") in {
+                "orb_schwab_replace_unknown", "orb_schwab_exit_evidence", "orb_schwab_eod_close",
+            }:
+                body = (
+                    "ORB Schwab needs reconciliation; do not assume a fill, flatness, or protection.\n"
+                    f"account={incident.get('account') or 'UNKNOWN'} "
+                    f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
+                    f"entry_order_id={incident.get('entry_order_id') or 'UNKNOWN'} "
+                    f"new_broker_order_id={incident.get('new_broker_order_id') or 'UNKNOWN'}\n"
+                    f"source={incident['source']} reason={incident.get('reason') or 'UNKNOWN'}\n"
+                    "Check the exact broker parent and children before any manual action."
                 )
             else:
                 body = (
