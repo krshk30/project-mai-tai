@@ -1,8 +1,11 @@
-# ORB Schwab live route: review-only build
+# ORB Schwab route: staged observation only
 
-This branch is not approved for deployment. `orb_live_schwab_orders_enabled` defaults to false;
-the separate `orb-schwab` unit is not installed or part of the production target. The existing
-`orb` paper observer remains broker-disconnected.
+PR #1064 was independently pinned at 442b492b and merged as 90106fb4 on 2026-09-29. That approval
+covers staged observation, NOT live activation. `orb_live_schwab_orders_enabled` defaults false.
+The separate `orb-schwab` unit was inactive (PID 0) on the read-only box check around 17:03 ET;
+no install or restart was performed. The existing `orb` paper observer remains broker-disconnected.
+The new 90-second evidence-grace follow-up requires its own review. See
+[the combined installation plan](OBSERVE_INSTALL_PLAN.md) for exact-SHA boundaries and blockers.
 
 Start with [the simple review guide](REVIEW.md) for the rules and proposed rollout.
 The [rule comparison](RULE_COMPARISON.md) covers the selected paper mode and every intentional
@@ -29,7 +32,9 @@ native-route difference, including remaining activation limitations.
   of the completed Schwab minute containing the actual parent fill; >=45% holds. Only later
   completed bars can cause ATR SELL, using unchanged shared 5/3.5/Wilder's math. Native bracket
   exits inside the break bar are booked first, against the exact current parent, with no body
-  sell. Missing break bar means no strategy sell plus an incident; native protection stays.
+  sell. Missing break/latest bars are PENDING up to 90 seconds from their own close in the
+  follow-up, then incident once per entry if still absent. No pending-body sell is allowed;
+  native protection stays. Database read errors are not hidden by that grace.
 - Early exits reuse the same durable close claim as the 15:55 fallback, so an earlier strategy
   close cannot be duplicated by a later end-of-day sweep. OMS checks the persisted exact-fill
   evidence and a fresh post-decision bid before claiming; negative MACD never blocks a close.
@@ -83,7 +88,7 @@ native-route difference, including remaining activation limitations.
   The final focused rerun after strengthening the stale-bid fixture remained 483/483.
 - Ruff and diff-whitespace checks pass. New-head GitHub CI and independent review are separate.
 
-## Not yet deployment-ready
+## Not yet activation-ready
 
 - Schwab's specific pre-open STOP_LIMIT OTOCO preview, live placement, replacement, and confirmed
   cancellation have not been exercised. A separate attended one-order test at 09:25-09:26 ET can
@@ -92,7 +97,8 @@ native-route difference, including remaining activation limitations.
 - The reviewer supplied 26-bar coverage for 32/34 candidates and persistence latency for 921
   bars. This does not establish the new full-series/35-bar seed requirement, nor continued
   coverage after v2 watch removal. No new production read was performed in this revision.
-- Independent review, base/head pinning, and new-head Linux CI remain outstanding.
+- #1064's independent review and CI passed. The new evidence-grace follow-up still needs its
+  own exact-head review and CI; the staged installation needs its combined exact-SHA GO.
 - Early-close exchange sessions and real phone delivery of all new ORB incident sources must
   be covered before activation. The fallback still uses the normal 16:00 close. Installing
   the pager requires updating its separate installed copy and both cron sha guards; no such

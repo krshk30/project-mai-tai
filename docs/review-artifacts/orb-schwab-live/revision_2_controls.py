@@ -12,7 +12,7 @@ ORDER = "tests/unit/test_orb_schwab_order_route.py"
 EXIT = "tests/unit/test_orb_schwab_exits.py"
 ADAPTER = "tests/unit/test_orb_schwab_replace_adapter.py"
 CASES = {
-    "body_before_close": ("orb_schwab_exits", "exit_signal", "body is None or now < closed_at", "body is None", EXIT+"::test_no_body_decision_before_close_even_if_context_contains_bar"),
+    "body_before_close": ("orb_schwab_exits", "exit_signal", " or now < closed_at", "", EXIT+"::test_no_body_decision_before_close_even_if_context_contains_bar"),
     "body_at_fill": ("orb_schwab_exits", "exit_signal", "return BODY_REASON, closed_at", "return BODY_REASON, fill_at", EXIT+"::test_body_under_45_matches_paper_formula_and_has_priority_over_atr"),
     "body_boundary": ("orb_schwab_exits", "exit_signal", "percentage < PAPER_MIN_BREAK_BODY_PCT", "percentage <= PAPER_MIN_BREAK_BODY_PCT", EXIT+"::test_exact_45_body_boundary"),
     "atr_on_break_bar": ("orb_schwab_exits", "exit_signal", "bar.timestamp > minute", "bar.timestamp >= minute", EXIT+"::test_atr_sell_on_break_bar_itself_is_not_a_later_bar_exit"),

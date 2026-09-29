@@ -288,7 +288,8 @@ class OrbSchwabService(OrbService):
             else:
                 cached = self._exit_atr_cache.get(symbol)
                 if cached is None or cached[0].replace(second=0, microsecond=0) != now.replace(second=0, microsecond=0) or (
-                    cached[2] != "complete" and now - cached[0] >= timedelta(seconds=2)
+                    (cached[2] != "complete" or prior.get("atr_missing_minutes") or prior.get("body") is None)
+                    and now - cached[0] >= timedelta(seconds=2)
                 ):
                     bars, status = await asyncio.to_thread(schwab_completed_atr_bars, self.session_factory, symbol, now)
                     cached = self._exit_atr_cache[symbol] = (now, bars, status)
@@ -297,12 +298,15 @@ class OrbSchwabService(OrbService):
             if self._observe_only:
                 entry["context"] = context
                 key = (symbol, context.get("reason"), context.get("atr_status"),
-                       "known" if context.get("body") else "unknown")
+                       context.get("body_status"))
                 if key not in self._observe_exit_records:
                     self._observe_exit_records.add(key)
                     self._record_observation(
                         "conditional_exit", symbol=symbol, reason=context.get("reason"),
                         decision_at=context.get("decision_at"), body=context.get("body"),
+                        body_status=context.get("body_status"),
+                        atr_missing_minutes=context.get("atr_missing_minutes", []),
+                        atr_overdue_minutes=context.get("atr_overdue_minutes", []),
                         atr_status=context.get("atr_status"), atr_source=ATR_SOURCE,
                         assumption="ONLY_IF_THE_OBSERVED_CROSS_HAD_FILLED; NOT_A_BROKER_FILL",
                     )

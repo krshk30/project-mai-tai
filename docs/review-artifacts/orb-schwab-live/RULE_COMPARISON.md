@@ -34,14 +34,19 @@ production. The running paper process has not received this branch's high-size f
 - The body uses the persisted completed Schwab candle, not any gateway tick prefix. The
   100-share filter affects the breakout high only. First execution time comes from Schwab
   execution legs, never parent enteredTime, a price cross, or the report-arrival clock.
-- Wait for the break bar to close. Normal 0-3 second persistence delay is pending, not an
-  incident; after that, absent evidence opens an incident and leaves the native bracket intact.
-  Saved completed-bar evidence survives producer restarts. The reviewer's 921-bar timing
-  sample is supplied evidence, not a new production measurement in this revision.
+- Wait for the break bar to close. Missing break/latest Schwab bars remain PENDING for 90 seconds
+  from that specific minute's close. No body sell uses pending evidence. A completed bar arriving
+  sooner is judged immediately; the grace is not a 90-second delay on known evidence. After the
+  deadline, absent evidence opens one incident per entry and leaves the native bracket intact.
+  Pending minute identities survive producer restarts and cannot reset at each minute boundary.
+  The reviewer supplied 7,220 RTH bars (p99 write delay 33 seconds); 90 seconds is the operator's
+  chosen margin, not a claim that every bar arrives within it. Database read errors and invalid
+  provenance are not normal write delay and are not suppressed by the grace.
 - ATR reads only strategy_bar_history for schwab_1m_v2, interval60, live/rest provenance,
   complete minutes since 07:00 ET. No close-only synthetic OHLC, forming minute, or gateway
   fallback. Same-day initialization differs from paper's gateway history; no parity claim.
-  Missing latest minute or insufficient Wilder seed is UNKNOWN. Internal illiquid gaps retain
+  Missing latest minute is PENDING until its deadline; insufficient Wilder seed is UNKNOWN.
+  Internal illiquid gaps retain
   the unchanged paper helper's gap treatment. This PR does not subscribe ORB names to Schwab.
 - A missing break bar means no strategy sell, even if a later ATR flip exists; keep protection
   and report the evidence gap. A known small body can exit without sufficient ATR seed.

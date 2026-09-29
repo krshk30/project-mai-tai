@@ -25,6 +25,9 @@ BODY_REASON = "BREAK_BAR_BODY_UNDER_45_PCT"
 ATR_REASON = "ATR_TURNED_PURPLE_AT_BAR_CLOSE"
 BODY_SOURCE = "SCHWAB_1M_V2_COMPLETED_BARS"
 ATR_SOURCE = "SCHWAB_1M_V2_COMPLETED_BARS"
+# Reviewer-measured RTH persistence p99 was 33 s. Allow 90 s from the
+# specific minute close, not from each poll; protection stays at the broker.
+SCHWAB_BAR_EVIDENCE_GRACE_SECONDS = 90
 _ET = ZoneInfo("America/New_York")
 
 
@@ -72,14 +75,27 @@ def completed_bar_evidence(
     prior = prior or {}
     if body is None and prior.get("fill_id") == fill_id and prior.get("body_source") == BODY_SOURCE:
         body = prior.get("body")
-    # Normal persisted-bar latency is 0-3 seconds. Wait without paging until
-    # that allowance expires; never substitute gateway ticks or a forming bar.
-    body_status = ("complete" if body else "pending_break_bar" if now <= closed_at + timedelta(seconds=3)
+    grace = timedelta(seconds=SCHWAB_BAR_EVIDENCE_GRACE_SECONDS)
+    body_status = ("complete" if body else "pending_break_bar" if now <= closed_at + grace
                    else "missing_completed_schwab_break_bar")
+    # Retain each specifically observed missing minute across polls/restarts.
+    # Otherwise the latest-minute clock rolls over before a 90 s deadline.
+    missing = set(prior.get("atr_missing_minutes", [])) if prior.get("fill_id") == fill_id else set()
+    present = {bar.timestamp.isoformat() for bar in atr_bars}
+    missing.difference_update(present)
+    if atr_status == "missing_last_closed_schwab_bar":
+        last = now.replace(second=0, microsecond=0) - timedelta(minutes=1)
+        missing.add(last.isoformat())
+    overdue = sorted(at for at in missing if now > datetime.fromisoformat(at) + timedelta(minutes=1) + grace)
+    read_status = atr_status
+    if atr_status in {"complete", "missing_last_closed_schwab_bar"} and missing:
+        atr_status = "missing_completed_schwab_atr_bar" if overdue else "pending_last_closed_schwab_bar"
     result = {"body_source": BODY_SOURCE, "atr_source": ATR_SOURCE,
               "fill_id": fill_id, "fill_at": fill_at.isoformat(), "body": body,
               "body_status": body_status, "atr_bars": [bar_payload(bar) for bar in atr_bars],
-              "atr_status": atr_status, "atr_asof": now.isoformat()}
+              "atr_status": atr_status, "atr_asof": now.isoformat(), "atr_read_status": read_status,
+              "atr_missing_minutes": sorted(missing), "atr_overdue_minutes": overdue,
+              "bar_evidence_grace_seconds": SCHWAB_BAR_EVIDENCE_GRACE_SECONDS}
     reason, decision_at = exit_signal(result, now)
     result.update(reason=reason, decision_at=decision_at.isoformat() if decision_at else None)
     return result
@@ -95,7 +111,7 @@ def exit_signal(context: dict, now: datetime) -> tuple[str | None, datetime | No
     body = context.get("body")
     minute = fill_at.replace(second=0, microsecond=0)
     closed_at = minute + timedelta(minutes=1)
-    if body is None or now < closed_at:
+    if body is None or context.get("body_status") == "pending_break_bar" or now < closed_at:
         return None, None
     bar = decode_bar(body)
     if bar.timestamp != minute:
@@ -194,9 +210,9 @@ def save_context(factory, entry_id: str, context: dict) -> None:
         if previous.get("reason"):
             return
         entry.payload = {**(entry.payload or {}), CONTEXT_KEY: context}
-        if context.get("body_status") != "pending_break_bar" and (
-            context.get("body") is None or context.get("atr_status") != "complete"
-        ):
+        body_missing = context.get("body") is None and context.get("body_status") != "pending_break_bar"
+        atr_missing = context.get("atr_status") not in {"complete", "pending_last_closed_schwab_bar"}
+        if body_missing or atr_missing:
             exists = session.scalar(select(SystemIncident.id).where(
                 SystemIncident.payload["source"].as_string() == "orb_schwab_exit_evidence",
                 SystemIncident.payload["entry_order_id"].as_string() == entry_id,
@@ -208,6 +224,9 @@ def save_context(factory, entry_id: str, context: dict) -> None:
                     payload={"source": "orb_schwab_exit_evidence", "entry_order_id": entry_id,
                              "broker_account_name": session.get(BrokerAccount, entry.broker_account_id).name,
                              "symbol": entry.symbol,
-                             "reason": context.get("body_status", "broker_fill_time_unknown") if context.get("body") is None else context.get("atr_status"),
+                             "reason": context.get("body_status", "broker_fill_time_unknown") if body_missing else context.get("atr_status"),
+                             "atr_missing_minutes": context.get("atr_missing_minutes", []),
+                             "atr_overdue_minutes": context.get("atr_overdue_minutes", []),
+                             "bar_evidence_grace_seconds": SCHWAB_BAR_EVIDENCE_GRACE_SECONDS,
                              "native_protection": "not_cancelled"},
                 ))
