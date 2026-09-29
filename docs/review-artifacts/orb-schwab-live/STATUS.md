@@ -4,6 +4,8 @@ This branch is not approved for deployment. `orb_live_schwab_orders_enabled` def
 the separate `orb-schwab` unit is not installed or part of the production target. The existing
 `orb` paper observer remains broker-disconnected.
 
+Start with [the simple review guide](REVIEW.md) for the rules and proposed rollout.
+
 ## Implemented locally
 
 - One two-share NORMAL/DAY Schwab STOP_LIMIT parent with native +5% / -8% OTOCO children.
@@ -30,7 +32,7 @@ the separate `orb-schwab` unit is not installed or part of the production target
 
 ## Local verification
 
-- 420 tests passed across the ORB tests, native Schwab bracket tests, broker event-source
+- 439 tests passed across the ORB tests, native Schwab bracket tests, broker event-source
   checks, OMS ORB exits, v2 OCO emission/fan-out, and existing v2 end-of-day suites.
 - Removing the confirmed-pair-release guard, ignoring the persisted attempt, or removing
   the 15:55 start boundary each makes its regression test fail (three mutation checks).
@@ -53,3 +55,24 @@ the separate `orb-schwab` unit is not installed or part of the production target
 
 No service, broker order, account, environment flag, or production checkout was changed by this
 local build.
+
+## Flag-OFF rehearsal added September 29
+
+- Separate default-off `orb_schwab_observe_enabled` allows this producer to run while
+  `orb_live_schwab_orders_enabled=false`. Enabling both is rejected at startup.
+- Reuses the same three-bar decision model, bracket pricing and completed Schwab MACD read.
+  Observation branches before any intent construction/publish and does not change gateway
+  subscriptions. The existing feeds must cover the candidates; missing range minutes appear
+  in the once-per-minute coverage record.
+- `[ORB-SCHWAB-OBSERVE]` JSON records contain raw/qualified bar highs, bar counts, proposed
+  actions, prices, MACD result, fresh observed trade crossings and conditional unfilled-order
+  cancellation checks. Each states `broker_orders_sent=0` and `fill_status=UNMEASURED`.
+- Cross records require an explicit fresh trade timestamp after the hypothetical plan and
+  within 09:30-10:00 ET. They are deduplicated by symbol, proposed trigger and cap relation;
+  they do not represent the number of trades, fills or executable opportunities.
+- After-open MACD observation is sampled once per minute; it does not model the exact OMS
+  polling cadence, broker state, cancel/fill races, or fills. ATR/account collision checks and
+  end-of-day sells are not exercised by this read-only producer.
+- 22 producer/observation tests pass locally, including zero publisher calls/Redis writes,
+  live-OFF startup, mode exclusion, actual gateway event parsing, missing/negative MACD,
+  conditional cancel after a cross, cutoff, stale-tape rejection and session reset.

@@ -190,6 +190,9 @@ class Settings(BaseSettings):
     # Separate from broker-disconnected ORB paper observation. No live ORB
     # intent can pass OMS unless this is deliberately enabled after review.
     orb_live_schwab_orders_enabled: bool = False
+    # Read-only rehearsal of the separate Schwab route; never publishes an intent
+    # or requests additional gateway subscriptions. Cannot run alongside live mode.
+    orb_schwab_observe_enabled: bool = False
     # Retained for rollback/config compatibility only. The ORB paper observer ignores
     # both broker fields; its runtime registration is hard-coded to provider=none.
     orb_broker_provider: str | None = None
