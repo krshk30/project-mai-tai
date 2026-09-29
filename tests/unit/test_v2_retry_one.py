@@ -383,6 +383,52 @@ def test_unknown_segment_and_replayed_sell_cannot_start_a_budget() -> None:
     assert len(strategy.drain_pending_intents()) == 1
 
 
+def test_replayed_sell_cannot_borrow_an_older_zero_close_budget(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    strategy, clock, writes = _strategy()
+    segment_a = _sell_segment(strategy, clock, "STALESELL")
+    state = strategy.watchlist_state("STALESELL")
+    assert state.retry_one_closes_in_segment == 0
+
+    clock[0] += 60_000
+    state.bars.append(_bar(clock[0]))
+    state.atr_short_flip_bar_ts = clock[0]
+    _book(strategy, clock, "STALESELL")
+    strategy._cw_v2_track(state, {"flip": "SELL", "observation_phase": "replay"})
+    assert state.retry_one_segment_id == segment_a
+    assert writes == [("STALESELL", segment_a, 0)]
+
+    caplog.set_level(logging.INFO)
+    strategy._queue_resting_place(state, 3.80, slot="first")
+    assert strategy.drain_pending_intents() == []
+    assert "reason=retry_segment_mismatch" in caplog.text
+
+
+def test_failed_new_segment_reset_marks_budget_unreadable_and_refuses_rest(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    strategy, clock, writes = _strategy()
+    segment_a = _sell_segment(strategy, clock, "RESETFAIL")
+    state = strategy.watchlist_state("RESETFAIL")
+
+    def _reject_reset(_symbol: str, segment_id: int, _count: int) -> None:
+        if segment_id != segment_a:
+            raise RuntimeError("retry budget reset unavailable")
+
+    strategy._retry_one_budget_persist = _reject_reset
+    clock[0] += 60_000
+    caplog.set_level(logging.INFO)
+    _sell_segment(strategy, clock, "RESETFAIL")
+
+    assert state.retry_one_segment_id == segment_a
+    assert state.retry_one_budget_readable is False
+    assert writes == [("RESETFAIL", segment_a, 0)]
+    strategy._queue_resting_place(state, 3.80, slot="first")
+    assert strategy.drain_pending_intents() == []
+    assert "reason=retry_budget_unreadable" in caplog.text
+
+
 def test_readded_watch_does_not_reset_on_its_replayed_sell() -> None:
     strategy, clock, writes = _strategy()
     state = strategy.watchlist_state("READD")

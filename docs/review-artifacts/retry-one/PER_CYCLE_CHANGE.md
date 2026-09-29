@@ -17,4 +17,28 @@ BKYI on 2026-09-29 is the observed counterexample to the old rule. In `/var/log/
 
 The base-compatible BKYI test is RED on unchanged `origin/main` (`fc68b238`): the next SELL still refuses its first rest after two earlier closes. The branch's focused retry and flip-owner suite passed 86 tests; the full unit suite had exactly the same 47 failed test names as the untouched base (4481 passes on the branch versus 4468 on the base). Ruff and `git diff --check` passed.
 
-The previous `CAUSAL_BACKTEST.md` covers 2026-08-24 through 2026-09-23 and groups opportunities by day/name, not by an observed ATR SELL-cycle ID. Its 163 trips / 253 broker trades / 144 winners / -5.2979 sum return percent at one daily retry are **not** a per-cycle estimate. A valid requested 08-24..09-29 comparison still needs SELL-cycle attribution to each filled trip and a fresh-cross proof for each counterfactual added trip. The production v2 log rotations available on 09-29 begin on 08-31, and `[V2-ATR-PROBE]` is not a complete recorded cycle ledger for every historical symbol. Therefore exact added-trip names, winners and return for the full window are **UNKNOWN**; no return or fill is imputed from a bar high. Keep this PR draft until the retrospective evidence is resolved or the operator explicitly accepts this limitation after independent review.
+The previous `CAUSAL_BACKTEST.md` covers 2026-08-24 through 2026-09-23 and groups opportunities by day/name, not by an observed ATR SELL-cycle ID. Its 163 trips / 253 broker trades / 144 winners / -5.2979 sum return percent at one daily retry are **not** a per-cycle estimate. A valid requested 08-24..09-29 comparison still needs SELL-cycle attribution to each filled trip and a fresh-cross proof for each counterfactual added trip. The production v2 log rotations available on 09-29 begin on 08-31, and `[V2-ATR-PROBE]` is not a complete recorded cycle ledger for every historical symbol. Therefore exact added-trip names, winners and return for the full window are **UNKNOWN**; no return or fill is imputed from a bar high. The operator waived this informational P&L comparison; it is not used as a safety or approval claim.
+
+## Late SELL audit requested in review
+
+The 11 SELL bars first probed more than 120 seconds late during 09-22..09-29 were checked against the v2 watch-add/remove log and the first `[V2-ATR-PROBE] flip=SELL` for each exact `ts_ms`. Times below are ET. A watch start after the SELL bar means the segment was reconstructed; the existing seed-cap path already prevents a first rest. The operator waived the informational P&L comparison, not this live-admission check.
+
+| Symbol/date | SELL bar | First SELL probe | Watch evidence | Could the old live path place a first rest for this SELL? |
+| --- | --- | --- | --- | --- |
+| IMCC 09-22 | 12:48 | 13:37:58 | Removed 10:35; next added 13:20:30, after the bar | No, pre-watch reconstruction |
+| IMCC 09-22 | 13:28 | 14:04:41 | Removed 13:27:24; next added 13:37:58, after the bar | No, pre-watch reconstruction |
+| WETO 09-24 | 08:06 | 09:04:36 | Added 09:04:35 | No, pre-watch reconstruction |
+| PFSA 09-24 | 08:36 | 09:04:36 | Added 09:04:35 | No, pre-watch reconstruction |
+| YMAT 09-24 | 10:11 | 10:59:04 | First added 10:46:21, then removed/re-added | No, pre-watch reconstruction |
+| YMAT 09-24 | 10:50 | 10:59:04 | Watched from 10:46:21, removed 10:51:03; re-added 10:59:04 | No actual live flip processing before removal; replay was seed-capped |
+| JAGX 09-25 | 08:45 | 09:31:46 | Added 09:31:46 | No, pre-watch reconstruction |
+| IPST 09-25 | 13:00 | 13:53:35 | Added 13:53:35 | No, pre-watch reconstruction |
+| ONFO 09-28 | 18:05 | 18:58:03 | First added 18:58:00 | No, pre-watch and outside entry window |
+| ONFO 09-28 | 18:46 | 18:58:03 | First added 18:58:00 | No, pre-watch and outside entry window |
+| MSGY 09-29 | 09:35 | 09:44:17 | Removed 09:23:42; re-added 09:38, removed 09:43, re-added 09:44:17 | No, absent at the SELL bar and seed-capped on re-add |
+
+Raw evidence: `/var/log/project-mai-tai/schwab-1m-v2.log-20260923.gz`, `schwab-1m-v2.log-20260925.gz`, `schwab-1m-v2.log-20260926.gz`, `schwab-1m-v2.log-20260929`, and `schwab-1m-v2.log`. The first four are 09-22, 09-24, 09-25 and 09-28 UTC-day rotations; the last is 09-29. The active-watch YMAT exception is not inferred merely from age: the exact 10:50 `ts_ms=1790261400000` has no probe before its 10:51:03 removal, first probes at 10:59:04, and the 10:59 re-add logs `[V2-CW-SEED-CAP]` for that SELL. Thus 0/11 is a demonstrated old-path first-rest opportunity removed by the live-only reset.
+
+Review follow-up tests also pin two fail-closed seams: a replayed SELL cannot borrow a prior zero-close segment's budget, and a failed zero-count reset write marks the budget unreadable before any admission. Both pass normally and fail when the reviewer-specified guard or unreadable assignment is individually removed.
+
+After these tests, 94 focused retry/flip-owner/seed-cap/SELL-stamp tests passed; Ruff and `git diff --check` passed. The full macOS unit run had 4,483 passes and the same 47 host/tooling failure count reported on the prior head, with no RETRY-ONE failure.
