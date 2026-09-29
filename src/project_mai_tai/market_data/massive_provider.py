@@ -173,10 +173,6 @@ class MassiveSnapshotProvider:
         from_date = date.today() - timedelta(days=max(1, lookback_calendar_days))
         to_date = date.today()
         try:
-            logger.info(
-                "[MARKET-DATA-HISTORICAL-REST-ATTEMPT] symbol=%s interval_s=%d",
-                failure_key[0], interval_secs,
-            )
             aggs = client.list_aggs(
                 symbol,
                 multiplier,
