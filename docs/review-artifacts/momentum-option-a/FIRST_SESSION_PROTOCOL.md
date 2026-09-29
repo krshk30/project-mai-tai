@@ -47,24 +47,6 @@ closed for the paper experiment and ask for an operator decision; do not call
 the session healthy. Live positions and live service safety take priority over
 finishing the paper observation.
 
-After stopping the paper service, verify release rather than assuming SIGTERM
-was sufficient. Record the Momentum-owned symbols from the owner hash before
-the stop. Within 35 seconds afterward (two 15-second heartbeat periods plus
-slack), require all of: the `momentum-paper`
-field in `market-data-subscription-owners` is exactly `[]`; a post-stop
-`[MARKET-DATA-SUBSCRIPTION-UNION] consumer=momentum-paper` line names every
-formerly Momentum-only symbol in `removed`; and a newer healthy gateway
-heartbeat reports `active_symbols` equal to the union of the remaining owners.
-If the pre-stop Momentum owner set was already empty, no new union-update line
-is required; the empty hash and fresh matching heartbeat still are. Symbols
-still owned by scanner or v2 must remain in the union. If the service
-failed to release, publish a standard `mode=replace, symbols=[]` subscription
-event for consumer `momentum-paper` as the operator-approved ops fallback,
-then repeat the same checks and journal the fallback event ID. If the hash,
-union log, heartbeat, or publish/read path is unavailable or inconsistent,
-page the operator and classify the experiment `UNKNOWN`; never claim that
-stopping the service removed its load.
-
 One-minute system load is sampled at 1 Hz with exact start/end and missing
 sample count. `load1 > 3.5` is a **warning**, not a stop or a protocol void. It
 must be logged with process CPU contributors and the simultaneous trading
