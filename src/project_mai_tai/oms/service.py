@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
@@ -40,6 +40,7 @@ from project_mai_tai.db.models import (
     StrategyBarHistory,
     SystemIncident,
     TradeIntent,
+    VirtualPosition,
 )
 from project_mai_tai.exit_logic.config import TradingConfig
 from project_mai_tai.exit_logic.cw_exit import cw_effective_floor, cw_exit_decision
@@ -59,6 +60,12 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.orb_schwab_eod import close_orb_schwab_before_close
+from project_mai_tai.orb_schwab_macd import schwab_completed_bar_macd_gate
+from project_mai_tai.orb_schwab_order_route import (
+    build_orb_schwab_cancel_intent,
+    orb_schwab_intent_refusal,
+)
 from project_mai_tai.runtime_registry import configured_broker_account_registrations, strategy_registration_map
 from project_mai_tai.runtime_seed import seed_runtime_metadata
 from project_mai_tai.services.runtime import _install_signal_handlers
@@ -1066,6 +1073,18 @@ class OmsRiskService:
                     raise
                 except Exception:
                     self.logger.exception("[ORB-WINDOW-FLATTEN] sweep failed")
+                try:
+                    await self._orb_schwab_watchdog()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-ORB-SCHWAB-WATCHDOG] check unavailable")
+                try:
+                    await self._orb_schwab_eod_close()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-ORB-SCHWAB-EOD] check unavailable")
                 # Phase A EOD OCO transition: at 16:00 release the native-OCO stand-down for every
                 # still-open managed v2 position so the software EH-limit ladder resumes (decision A
                 # = keep managing +2%/−5%). Same 5s cadence, idempotent per symbol per day, flag-gated
@@ -1456,6 +1475,71 @@ class OmsRiskService:
                 event.payload.broker_account_name,
             )
             return []
+        if strategy_code == "orb_schwab":
+            refusal = orb_schwab_intent_refusal(event, self.settings, utcnow())
+            if refusal is None and event.payload.intent_type == "open":
+                allowed, macd_reason, _histogram = schwab_completed_bar_macd_gate(
+                    self.session_factory, event.payload.symbol, utcnow()
+                )
+                if not allowed:
+                    refusal = f"orb_schwab_macd_{macd_reason}"
+            if refusal is not None:
+                self.logger.warning(
+                    "[OMS-ORB-SCHWAB-REFUSED] symbol=%s account=%s reason=%s",
+                    event.payload.symbol, event.payload.broker_account_name, refusal,
+                )
+                return []
+            if event.payload.intent_type == "open" or (
+                event.payload.intent_type == "cancel"
+                and event.payload.metadata.get("orb_schwab_reprice") == "true"
+            ):
+                try:
+                    broker_positions = await self.broker_adapter.list_account_positions(
+                        event.payload.broker_account_name
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "[OMS-ORB-SCHWAB-REFUSED] symbol=%s reason=broker_position_unknown",
+                        event.payload.symbol,
+                    )
+                    return []
+                if any(
+                    position.symbol.upper() == event.payload.symbol.upper()
+                    and position.quantity != 0
+                    for position in broker_positions
+                ):
+                    self.logger.warning(
+                        "[OMS-ORB-SCHWAB-REFUSED] symbol=%s reason=broker_position_held",
+                        event.payload.symbol,
+                    )
+                    return []
+        if (
+            strategy_code == "schwab_1m_v2"
+            and event.payload.intent_type == "open"
+            and bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
+            and event.payload.broker_account_name
+            == self.settings.strategy_schwab_1m_v2_account_name
+        ):
+            try:
+                broker_positions = await self.broker_adapter.list_account_positions(
+                    event.payload.broker_account_name
+                )
+            except Exception:
+                self.logger.exception(
+                    "[OMS-V2-ORB-COLLISION] symbol=%s reason=broker_position_unknown",
+                    event.payload.symbol,
+                )
+                return []
+            if any(
+                position.symbol.upper() == event.payload.symbol.upper()
+                and position.quantity != 0
+                for position in broker_positions
+            ):
+                self.logger.warning(
+                    "[OMS-V2-ORB-COLLISION] symbol=%s reason=broker_position_held",
+                    event.payload.symbol,
+                )
+                return []
         if strategy_code in {"polygon_30s", "webull_30s"}:
             self.logger.error(
                 "[PAPER-EXIT-REFUSED] OMS blocked polygon_30s intent before intent/order "
@@ -1479,6 +1563,25 @@ class OmsRiskService:
                 "fanout_attempt_id": self._build_client_order_id(event),
             }
         with self.session_factory() as session:
+            if (
+                bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
+                and (
+                    strategy_code == "orb_schwab"
+                    or (
+                        event.payload.intent_type == "open"
+                        and strategy_code == "schwab_1m_v2"
+                    )
+                )
+                and event.payload.broker_account_name
+                == self.settings.strategy_schwab_1m_v2_account_name
+                and session.get_bind().dialect.name == "postgresql"
+            ):
+                # One OMS may run several async loops. Hold the per-symbol lock until
+                # commit so the second strategy sees the first strategy's order.
+                session.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                    {"key": f"orb-v2:{event.payload.broker_account_name}:{event.payload.symbol.upper()}"},
+                )
             registration = self.strategy_registrations.get(event.payload.strategy_code)
             strategy = self.store.ensure_strategy(
                 session,
@@ -1527,7 +1630,77 @@ class OmsRiskService:
                 await self._publish_order_event(order_event)
                 return [order_event]
 
+            if (
+                bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
+                and event.payload.intent_type == "open"
+                and strategy_code in {"orb_schwab", "schwab_1m_v2"}
+                and broker_account.name == self.settings.strategy_schwab_1m_v2_account_name
+            ):
+                collision = self._orb_schwab_collision_reason(
+                    session=session,
+                    account_id=broker_account.id,
+                    symbol=event.payload.symbol,
+                    incoming_strategy=strategy_code,
+                )
+                if collision:
+                    self.store.mark_intent_refused(
+                        intent, origin="skipped_before_submit", code=collision
+                    )
+                    order_event = self._build_rejected_event(event, intent.id, reason=collision)
+                    session.commit()
+                    self.logger.warning(
+                        "[OMS-ORB-SCHWAB-COLLISION] symbol=%s strategy=%s reason=%s",
+                        event.payload.symbol, strategy_code, collision,
+                    )
+                    await self._publish_order_event(order_event)
+                    return [order_event]
+
             if event.payload.intent_type == "cancel":
+                if strategy_code == "orb_schwab":
+                    target = self.store.find_open_order_for_cancel(
+                        session,
+                        strategy_id=strategy.id,
+                        broker_account_id=broker_account.id,
+                        symbol=event.payload.symbol,
+                        metadata=dict(event.payload.metadata),
+                    )
+                    if target is not None:
+                        refusal = await self._orb_schwab_cancel_refusal(
+                            session=session, target=target, account_name=broker_account.name
+                        )
+                        if refusal:
+                            self.store.mark_intent_refused(
+                                intent, origin="client_abort", code=refusal
+                            )
+                            order_event = self._build_rejected_event(
+                                event, intent.id, reason=refusal
+                            )
+                            session.commit()
+                            self.logger.warning(
+                                "[OMS-ORB-SCHWAB-CANCEL-REFUSED] symbol=%s reason=%s",
+                                event.payload.symbol, refusal,
+                            )
+                            await self._publish_order_event(order_event)
+                            return [order_event]
+                    if event.payload.metadata.get("orb_schwab_reprice") == "true":
+                        if target is None:
+                            reason = "orb_schwab_reprice_no_working_parent"
+                            self.store.mark_intent_refused(
+                                intent, origin="skipped_before_submit", code=reason
+                            )
+                            order_event = self._build_rejected_event(
+                                event, intent.id, reason=reason
+                            )
+                            session.commit()
+                            await self._publish_order_event(order_event)
+                            return [order_event]
+                        published_events = await self._process_orb_schwab_reprice(
+                            session=session, intent=intent, event=event, target=target
+                        )
+                        session.commit()
+                        for order_event in published_events:
+                            await self._publish_order_event(order_event)
+                        return published_events
                 published_events = await self._process_cancel_intent(
                     session=session,
                     strategy_id=strategy.id,
@@ -2009,6 +2182,55 @@ class OmsRiskService:
                 order_type=str(event.payload.metadata.get("order_type", "market")),
                 time_in_force=str(event.payload.metadata.get("time_in_force", "day")),
             )
+            if strategy_code == "orb_schwab":
+                try:
+                    preview_status, preview_body = await self.broker_adapter.preview_bracket_order(
+                        request
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "[OMS-ORB-SCHWAB-PREVIEW] unavailable symbol=%s", request.symbol
+                    )
+                    preview_status, preview_body = 0, None
+                validation = (
+                    preview_body.get("orderValidationResult")
+                    if isinstance(preview_body, dict)
+                    else None
+                )
+                accepted = (
+                    preview_status in {200, 201}
+                    and isinstance(preview_body, dict)
+                    and str(preview_body.get("status", "")).upper() == "ACCEPTED"
+                    and isinstance(validation, dict)
+                    and validation.get("rejects") == []
+                )
+                if not accepted:
+                    self.store.mark_intent_refused(
+                        intent, origin="client_abort", code="orb_schwab_preview_not_accepted"
+                    )
+                    order_event = self._build_rejected_event(
+                        event, intent.id, reason="orb_schwab_preview_not_accepted"
+                    )
+                    session.commit()
+                    self.logger.warning(
+                        "[OMS-ORB-SCHWAB-PREVIEW] refused symbol=%s status=%s",
+                        request.symbol, preview_status,
+                    )
+                    await self._publish_order_event(order_event)
+                    return [order_event]
+                post_preview_refusal = orb_schwab_intent_refusal(
+                    event, self.settings, utcnow()
+                )
+                if post_preview_refusal is not None:
+                    self.store.mark_intent_refused(
+                        intent, origin="client_abort", code=post_preview_refusal
+                    )
+                    order_event = self._build_rejected_event(
+                        event, intent.id, reason=post_preview_refusal
+                    )
+                    session.commit()
+                    await self._publish_order_event(order_event)
+                    return [order_event]
             reports = await self.broker_adapter.submit_order(request)
             self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
@@ -9171,6 +9393,13 @@ class OmsRiskService:
 
     async def sync_broker_state(self, *, account_names: list[str] | None = None) -> dict[str, int]:
         order_summary = await self.sync_broker_orders(account_names=account_names)
+        if bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False)):
+            try:
+                await self._poll_orb_schwab_child_exits()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger.exception("[OMS-ORB-SCHWAB-CHILD-EXIT] poll unavailable")
         # P0a census rollup. ⭐ Deliberately OUTSIDE any "did we evaluate anything" condition and
         # outside the per-account loop: it must emit `evaluated=0` on a quiet day, because that is
         # the reading that distinguishes "nothing qualified" from "the branch never runs". Gating
@@ -9197,6 +9426,71 @@ class OmsRiskService:
             "orders": order_summary["orders"],
             "terminal_orders": order_summary["terminal_orders"],
         }
+
+    async def _poll_orb_schwab_child_exits(self) -> None:
+        """Attribute only a filled SELL child owned by our exact ORB parent."""
+        with self.session_factory() as session:
+            entries = session.execute(
+                select(BrokerOrder, BrokerAccount.name)
+                .join(Strategy, Strategy.id == BrokerOrder.strategy_id)
+                .join(BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id)
+                .join(
+                    VirtualPosition,
+                    (VirtualPosition.strategy_id == BrokerOrder.strategy_id)
+                    & (VirtualPosition.broker_account_id == BrokerOrder.broker_account_id)
+                    & (VirtualPosition.symbol == BrokerOrder.symbol),
+                )
+                .where(
+                    Strategy.code == "orb_schwab",
+                    BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name,
+                    BrokerOrder.side == "buy",
+                    BrokerOrder.status == "filled",
+                    VirtualPosition.quantity > 0,
+                )
+            ).all()
+            work = [
+                (order.id, account_name, order.symbol, order.broker_order_id, order.client_order_id)
+                for order, account_name in entries
+                if order.broker_order_id
+            ]
+        for order_id, account_name, symbol, broker_id, client_id in work:
+            try:
+                detail = await self.broker_adapter.fetch_oco_exit_fill(
+                    account_name,
+                    symbol,
+                    client_id,
+                    entry_broker_order_id=broker_id,
+                )
+            except Exception:
+                self.logger.exception(
+                    "[OMS-ORB-SCHWAB-CHILD-EXIT] unreadable symbol=%s parent=%s",
+                    symbol, broker_id,
+                )
+                continue
+            if detail is None:
+                continue
+            with self.session_factory() as session:
+                entry = session.get(BrokerOrder, order_id)
+                if entry is None or entry.broker_order_id != broker_id:
+                    continue
+                if not self._persist_oco_exit_fill(session, account_name, symbol, entry, detail):
+                    session.commit()
+                    continue
+                self.store.apply_fill_to_positions(
+                    session,
+                    strategy_id=entry.strategy_id,
+                    broker_account_id=entry.broker_account_id,
+                    symbol=symbol,
+                    side="sell",
+                    quantity=Decimal(str(detail["quantity"])),
+                    price=Decimal(str(detail["price"])),
+                    reported_at=detail["filled_at"],
+                )
+                session.commit()
+                self.logger.info(
+                    "[OMS-ORB-SCHWAB-CHILD-EXIT] recorded symbol=%s child=%s qty=%s",
+                    symbol, detail.get("broker_order_id"), detail.get("quantity"),
+                )
 
     async def sync_broker_positions(self, *, account_names: list[str] | None = None) -> dict[str, int]:
         # SPOF fix (Fix 2): this is the method BOTH 2026-07-01/02 zombies hung in
@@ -12371,6 +12665,283 @@ class OmsRiskService:
                 return True
         return False
 
+    def _orb_schwab_collision_reason(
+        self,
+        *,
+        session: Session,
+        account_id: UUID,
+        symbol: str,
+        incoming_strategy: str,
+    ) -> str | None:
+        """Keep ORB and v2 from opening the same Schwab symbol on one account."""
+        ticker = symbol.upper()
+        open_buys = session.execute(
+            select(BrokerOrder, Strategy.code)
+            .join(Strategy, Strategy.id == BrokerOrder.strategy_id)
+            .where(
+                BrokerOrder.broker_account_id == account_id,
+                BrokerOrder.symbol == ticker,
+                BrokerOrder.side == "buy",
+                BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES),
+            )
+        ).all()
+        if incoming_strategy == "orb_schwab":
+            if open_buys:
+                return "orb_schwab_buy_order_already_open"
+            session_start_et = utcnow().astimezone(SESSION_TZ).replace(
+                hour=4, minute=0, second=0, microsecond=0
+            )
+            prior_orb_order = session.scalar(
+                select(BrokerOrder.id)
+                .join(Strategy, Strategy.id == BrokerOrder.strategy_id)
+                .join(TradeIntent, TradeIntent.id == BrokerOrder.intent_id)
+                .where(
+                    BrokerOrder.broker_account_id == account_id,
+                    BrokerOrder.symbol == ticker,
+                    BrokerOrder.side == "buy",
+                    Strategy.code == "orb_schwab",
+                    TradeIntent.created_at >= session_start_et.astimezone(UTC),
+                )
+                .limit(1)
+            )
+            if prior_orb_order is not None:
+                return "orb_schwab_entry_already_attempted_today"
+            account_position = session.scalar(
+                select(AccountPosition).where(
+                    AccountPosition.broker_account_id == account_id,
+                    AccountPosition.symbol == ticker,
+                )
+            )
+            if account_position is not None and account_position.quantity != 0:
+                return "orb_schwab_account_position_held"
+            account_name = self.settings.strategy_schwab_1m_v2_account_name
+            if self.store.get_open_managed_position(
+                session, broker_account_name=account_name, symbol=ticker
+            ) is not None:
+                return "orb_schwab_v2_managed_position_open"
+            if any(
+                stop.broker_account_name == account_name and stop.symbol == ticker
+                for stop in getattr(self, "_armed_hard_stops", {}).values()
+            ):
+                return "orb_schwab_v2_stop_armed"
+            return None
+
+        if any(code == "orb_schwab" for _order, code in open_buys):
+            return "v2_orb_schwab_buy_order_open"
+        orb_strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == "orb_schwab"))
+        if orb_strategy_id is not None:
+            orb_position = session.scalar(
+                select(VirtualPosition).where(
+                    VirtualPosition.strategy_id == orb_strategy_id,
+                    VirtualPosition.broker_account_id == account_id,
+                    VirtualPosition.symbol == ticker,
+                )
+            )
+            if orb_position is not None and orb_position.quantity != 0:
+                return "v2_orb_schwab_position_held"
+        return None
+
+    async def _orb_schwab_eod_close(self) -> None:
+        await close_orb_schwab_before_close(self, clock=utcnow)
+
+    async def _orb_schwab_watchdog(self) -> None:
+        """Cancel an unfilled ORB parent if MACD is not safe or its entry window ended."""
+        if not self.settings.orb_live_schwab_orders_enabled:
+            return
+        now = utcnow()
+        now_et = now.astimezone(SESSION_TZ)
+        if now_et.weekday() >= 5 or now_et.hour < 9 or now_et.hour >= 16:
+            return
+        with self.session_factory() as session:
+            symbols = session.scalars(
+                select(BrokerOrder.symbol)
+                .join(Strategy, Strategy.id == BrokerOrder.strategy_id)
+                .join(BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id)
+                .where(
+                    Strategy.code == "orb_schwab",
+                    BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name,
+                    BrokerOrder.side == "buy",
+                    BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES),
+                )
+                .distinct()
+            ).all()
+        last_attempt = self.__dict__.setdefault("_orb_schwab_watch_last_attempt", {})
+        for symbol in symbols:
+            prior = last_attempt.get(symbol)
+            if prior is not None and (now - prior).total_seconds() < 15:
+                continue
+            if now_et.hour >= 10:
+                reason = "entry_window_ended"
+            else:
+                allowed, macd_reason, _histogram = await asyncio.to_thread(
+                    schwab_completed_bar_macd_gate, self.session_factory, symbol, now
+                )
+                if allowed:
+                    continue
+                reason = f"macd_{macd_reason}"
+            last_attempt[symbol] = now
+            event = build_orb_schwab_cancel_intent(self.settings, symbol)
+            self.logger.warning(
+                "[OMS-ORB-SCHWAB-WATCHDOG] cancel symbol=%s reason=%s", symbol, reason
+            )
+            await self.process_trade_intent(event)
+
+    async def _process_orb_schwab_reprice(
+        self,
+        *,
+        session: Session,
+        intent: TradeIntent,
+        event: TradeIntentEvent,
+        target: BrokerOrder,
+    ) -> list[OrderEventEvent]:
+        """Replace the one known, unfilled parent without creating another buy."""
+        metadata = dict(event.payload.metadata)
+        old_metadata = dict(target.payload or {})
+        old_id = target.broker_order_id
+        try:
+            old_level = Decimal(str(old_metadata["stop_price"]))
+            new_level = Decimal(metadata["stop_price"])
+        except (KeyError, ValueError, TypeError, InvalidOperation):
+            old_level = new_level = Decimal("0")
+        reason = None
+        if not old_id or target.side != "buy" or target.quantity != Decimal("2"):
+            reason = "orb_schwab_reprice_parent_invalid"
+        elif old_level <= 0 or new_level <= old_level:
+            reason = "orb_schwab_reprice_not_higher"
+        if reason is not None:
+            self.store.mark_intent_refused(
+                intent, origin="skipped_before_submit", code=reason
+            )
+            return [self._build_rejected_event(event, intent.id, reason=reason)]
+
+        request = OrderRequest(
+            client_order_id=target.client_order_id,
+            broker_account_name=event.payload.broker_account_name,
+            strategy_code="orb_schwab",
+            symbol=event.payload.symbol,
+            side="buy",
+            intent_type="open",
+            quantity=target.quantity,
+            reason=event.payload.reason,
+            metadata=metadata,
+            order_type="stop_limit",
+            time_in_force="day",
+        )
+        try:
+            preview_status, preview_body = await self.broker_adapter.preview_bracket_order(request)
+        except Exception:
+            self.logger.exception(
+                "[OMS-ORB-SCHWAB-REPRICE] preview unreadable symbol=%s", request.symbol
+            )
+            preview_status, preview_body = 0, None
+        validation = (
+            preview_body.get("orderValidationResult")
+            if isinstance(preview_body, dict)
+            else None
+        )
+        preview_accepted = (
+            preview_status in {200, 201}
+            and isinstance(preview_body, dict)
+            and str(preview_body.get("status", "")).upper() == "ACCEPTED"
+            and isinstance(validation, dict)
+            and validation.get("rejects") == []
+        )
+        if not preview_accepted:
+            reason = "orb_schwab_reprice_preview_not_accepted"
+            self.store.mark_intent_refused(intent, origin="client_abort", code=reason)
+            return [self._build_rejected_event(event, intent.id, reason=reason)]
+        post_preview_refusal = orb_schwab_intent_refusal(event, self.settings, utcnow())
+        if post_preview_refusal is not None:
+            self.store.mark_intent_refused(
+                intent, origin="client_abort", code=post_preview_refusal
+            )
+            return [self._build_rejected_event(event, intent.id, reason=post_preview_refusal)]
+        try:
+            report = await self.broker_adapter.replace_bracket_order(request, old_id)
+        except Exception:
+            self.logger.exception(
+                "[OMS-ORB-SCHWAB-REPRICE-UNKNOWN] symbol=%s old_id=%s",
+                request.symbol, old_id,
+            )
+            report = None
+        if report is None:
+            reason = "orb_schwab_reprice_broker_outcome_unknown"
+            self.store.mark_intent_refused(intent, origin="could_not_tell", code=reason)
+            self.logger.error(
+                "[OMS-ORB-SCHWAB-REPRICE-UNKNOWN] symbol=%s old_id=%s", request.symbol, old_id
+            )
+            return [self._build_rejected_event(event, intent.id, reason=reason)]
+        if report.event_type != "accepted" or not report.broker_order_id:
+            reason = report.reason or "orb_schwab_reprice_broker_rejected"
+            self.store.mark_intent_refused(
+                intent,
+                origin="broker_reject" if report.origin == "broker" else "could_not_tell",
+                code=reason,
+            )
+            return [self._build_rejected_event(event, intent.id, reason=reason)]
+        target.broker_order_id = report.broker_order_id
+        target.payload = {**old_metadata, **metadata}
+        self.store.append_order_event(
+            session,
+            order=target,
+            report=report,
+            payload={"metadata": metadata, "replaced_broker_order_id": old_id},
+        )
+        self.store.mark_intent_status(intent, "submitted")
+        self.logger.info(
+            "[OMS-ORB-SCHWAB-REPRICED] symbol=%s old_id=%s new_id=%s level=%s",
+            request.symbol, old_id, report.broker_order_id, new_level,
+        )
+        return [
+            self._build_order_event(
+                intent_event=event,
+                intent_db_id=intent.id,
+                order_db_id=target.id,
+                report=report,
+                client_order_id=target.client_order_id,
+                quantity=Decimal("0"),
+            )
+        ]
+
+    async def _orb_schwab_cancel_refusal(
+        self, *, session: Session, target: BrokerOrder, account_name: str
+    ) -> str | None:
+        """A late MACD cancel may touch only an unfilled broker parent."""
+        if not target.broker_order_id:
+            return "orb_schwab_cancel_broker_order_unknown"
+        recorded_fill = session.scalar(
+            select(Fill.id).where(Fill.order_id == target.id, Fill.side == "buy").limit(1)
+        )
+        if recorded_fill is not None:
+            return "orb_schwab_cancel_entry_already_filled"
+        request = OrderRequest(
+            client_order_id=target.client_order_id,
+            broker_account_name=account_name,
+            strategy_code="orb_schwab",
+            symbol=target.symbol,
+            side="buy",
+            intent_type="open",
+            quantity=target.quantity,
+            reason="VERIFY_UNFILLED_BEFORE_MACD_CANCEL",
+            metadata={"broker_order_id": target.broker_order_id},
+        )
+        try:
+            broker_report = await self.broker_adapter.fetch_order_update(request)
+        except Exception:
+            self.logger.exception(
+                "[OMS-ORB-SCHWAB-CANCEL] broker read unavailable symbol=%s", target.symbol
+            )
+            return "orb_schwab_cancel_broker_read_unknown"
+        if broker_report is None:
+            return "orb_schwab_cancel_broker_read_unknown"
+        if (
+            broker_report.broker_order_id != target.broker_order_id
+            or broker_report.event_type != "accepted"
+            or broker_report.filled_quantity != 0
+        ):
+            return "orb_schwab_cancel_entry_not_unfilled_working"
+        return None
+
     def _lift_collapsed_schwab_stop_limit(
         self, symbol: str, md: dict, raw_stop: object, raw_limit: object
     ) -> None:
@@ -14553,6 +15124,8 @@ class OmsRiskService:
         request: OrderRequest,
         reports: list[ExecutionReport],
     ) -> str | None:
+        if request.strategy_code == "orb_schwab":
+            return None
         if str(request.metadata.get("stop_reject_fallback", "")).lower() == "true":
             return None
         is_stop_guard_close = (

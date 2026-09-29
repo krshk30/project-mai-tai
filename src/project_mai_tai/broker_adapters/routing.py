@@ -32,6 +32,23 @@ class RoutingBrokerAdapter:
         adapter = self._adapter_for_account(request.broker_account_name)
         return await adapter.submit_order(request)
 
+    async def preview_bracket_order(self, request: OrderRequest) -> tuple[int, object]:
+        """ORB's live bracket must be accepted by the account's own adapter first."""
+        adapter = self._adapter_for_account(request.broker_account_name)
+        preview = getattr(adapter, "preview_bracket_order", None)
+        if preview is None:
+            raise RuntimeError("broker adapter cannot preview a native bracket")
+        return await preview(request)
+
+    async def replace_bracket_order(
+        self, request: OrderRequest, broker_order_id: str
+    ) -> ExecutionReport | None:
+        adapter = self._adapter_for_account(request.broker_account_name)
+        replace = getattr(adapter, "replace_bracket_order", None)
+        if replace is None:
+            raise RuntimeError("broker adapter cannot replace a native bracket")
+        return await replace(request, broker_order_id)
+
     async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
         adapter = self._adapter_for_account(request.broker_account_name)
         return await adapter.fetch_order_update(request)

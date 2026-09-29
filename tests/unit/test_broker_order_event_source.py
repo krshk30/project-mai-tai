@@ -178,7 +178,8 @@ def test_schwab_status_order_report_is_broker_origin() -> None:
 
 def test_every_schwab_status_order_call_site_uses_the_classified_helper() -> None:
     src = (_ADAPTERS / "schwab.py").read_text(encoding="utf-8")
-    assert src.count("self._execution_report_from_order(") == 3
+    # The ORB replacement checks both the old and broker-confirmed new parent.
+    assert src.count("self._execution_report_from_order(") == 5
     helper = src[src.index("    def _execution_report_from_order(") :]
     assert 'origin="broker"' in helper
 

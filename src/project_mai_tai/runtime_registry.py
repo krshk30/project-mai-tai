@@ -167,6 +167,26 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                 },
             )
         )
+    if settings.orb_enabled and settings.orb_live_schwab_orders_enabled:
+        account_name = settings.strategy_schwab_1m_v2_account_name
+        registrations.append(
+            StrategyRegistration(
+                code="orb_schwab",
+                display_name="ORB Schwab Live",
+                account_name=account_name,
+                interval_secs=60,
+                runtime_kind="orb_schwab",
+                execution_mode="live",
+                metadata={
+                    "account_name": account_name,
+                    "account_display_name": settings.display_account_name(account_name),
+                    "interval_secs": 60,
+                    "runtime_kind": "orb_schwab",
+                    "provider": "schwab",
+                    "isolated_service": True,
+                },
+            )
+        )
     if settings.strategy_macd_30s_probe_enabled:
         registrations.append(
             StrategyRegistration(
