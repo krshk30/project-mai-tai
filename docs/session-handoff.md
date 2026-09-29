@@ -45,12 +45,11 @@ env/config only when the operator asks. The author never reviews.
 | **#1049 SLOTCLEAR1** | first same-session re-add on the new process | claude-1 |
 | **#1056 PAGEGAP** | first real dropped confirmation exit → one page per new `account:source_fill_id` (15-min throttle) | claude-1 |
 | **Pass mark (Webull exits)** | 09-28 counts if clean → **2 of 5** (09-25, 09-28); recount at close | claude-1 |
-| **B11 result** | codex's overnight run; report due **Thu 10-01** | codex / claude-1 review |
 | **#1029 replay** | overnight after B11, finish by 03:30 ET, limit 3.5 → PASS / FAIL / VOID | codex / claude-1 review |
 
 ## Open decisions (operator)
 1. **Board 30 + 22 (sent to codex 09-28):** extend the INC1 pager to 20:00 ET, DST-proof it, and build the INC1 auto-close. The operator said yes; build + review pending.
-2. **B11 ruling** after the report (valid / invalid / mixed).
+2. ~~B11 ruling~~ — **CLOSED 09-28 ~20:15 ET, no rule change**: report `f6d2cf8d` (branch `codex/b11-rebuilt-arm-trip-study`), 286 first-slot fills = 207 LIVE / 2 REBUILT (pre-#993) / 77 UNKNOWN (71 pre-#993); **0 rebuilt fills after #993**; rebuilt arms rarely reach fills. Observation only: post-#993 LIVE entries lose (Schwab 22/63, Webull 31/75, medians ≈ −1.5%).
 3. **DRIFT1** (replay mirror 16:00 vs live 15:45) — parked TBD by the operator until stable.
 4. **B4 Massive ATR seed — still UNRESOLVED** (carried from 09-27): two codex-2 PMAX runs disagree (1.35957 / SELL
    11:52 vs 1.7842 / 11:09); `replay-30.md` has no PMAX 09-24 replay; the 30-session parity failure (98.05% < 99.5%)
@@ -74,7 +73,6 @@ env/config only when the operator asks. The author never reviews.
 | 9 | Pager delivery, new sources | PARTLY EXERCISED | policy-reject pages delivered ×2 09-28; oco_exit_fill_unrecorded / webull_eh_ladder_unsold not yet | codex | first of either |
 | 10 | 09-18 naked-leg hard case | TO BE EXERCISED | none since 09-18 | claude-1 | wait |
 | 11 | Pass mark 5 Webull-exit sessions | IN PROGRESS | 2 of 5 if 09-28 stays clean | claude-1 | count at close |
-| 25 | B11 rebuilt-arm per-trip (resting-buy provenance) | IN PROGRESS | amendment ad0ba310 17:56 before outcomes | codex | report ≤ Thu 10-01 |
 | 15 | #1029 Momentum gateway | IN PROGRESS | replay overnight, limit 3.5; census peak 3.48 | codex | PASS/FAIL/VOID by morning |
 | 22 | INC1 alarms never self-clear | OPEN | open=4 (BENF ×2 stale, EGG, NAMI) | codex | build (relay sent 09-28) |
 | 30 | INC1 pager runs 07:00–17:59 ET only | OPEN | crontab `* 11-21 * * 1-5` UTC; shifts in EST | codex | extend to 20:00 ET, DST-proof (sent) |
@@ -89,6 +87,7 @@ env/config only when the operator asks. The author never reviews.
 - Row 23: the CLRO LULD pause (market event; no chase).
 - Rows 28/29: watch-only.
 - The cutoff analysis: dropped; 30% stays.
+- B11 / PROV1x: no rule change (0 rebuilt fills after #993).
 - BAND1: 0 of 12 proven band-miss winners; 0.5% band unchanged.
 - Old board C1 and C4–C7.
 - The deploy of 8f69a08a.
