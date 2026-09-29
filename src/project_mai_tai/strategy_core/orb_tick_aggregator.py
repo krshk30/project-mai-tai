@@ -21,6 +21,7 @@ from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 class OrbTickAggregator:
     session_open: datetime | None = None
     ema_period: int = 9
+    min_breakout_print_size: float = 100.0
 
     _bucket: datetime | None = field(default=None, init=False)
     _o: float = field(default=0.0, init=False)
@@ -31,6 +32,7 @@ class OrbTickAggregator:
     _cum_pv: float = field(default=0.0, init=False)
     _cum_v: float = field(default=0.0, init=False)
     _ema: float | None = field(default=None, init=False)
+    _breakout_high: float = field(default=0.0, init=False)
 
     @staticmethod
     def _floor_minute(ts: datetime) -> datetime:
@@ -48,6 +50,8 @@ class OrbTickAggregator:
             self._start(bucket, price, size)
         elif bucket == self._bucket:
             self._h = max(self._h, price)
+            if size >= self.min_breakout_print_size:
+                self._breakout_high = max(self._breakout_high, price)
             self._l = min(self._l, price)
             self._c = price
             self._v += size
@@ -80,12 +84,14 @@ class OrbTickAggregator:
             low=self._l,
             close=self._c,
             volume=self._v,
+            breakout_high=self._breakout_high,
         )
 
     def _start(self, bucket: datetime, price: float, size: float) -> None:
         self._bucket = bucket
         self._o = self._h = self._l = self._c = price
         self._v = size
+        self._breakout_high = price if size >= self.min_breakout_print_size else 0.0
 
     def _finalize(self) -> OrbBar:
         typical = (self._h + self._l + self._c) / 3.0
@@ -104,4 +110,5 @@ class OrbTickAggregator:
             volume=self._v,
             vwap=vwap,
             ema9=self._ema,
+            breakout_high=self._breakout_high,
         )

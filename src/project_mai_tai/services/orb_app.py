@@ -893,7 +893,7 @@ class OrbService:
         detail = self._fixed_resting_detail(
             order,
             check_kind=check_kind,
-            level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET",
+            level_derivation="MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:29_ET",
             status=("MODELED_RESTING" if allowed else "MODELED_ORDER_PULLED"),
             reason=reason,
             quote_at=st.latest_quote_at,
@@ -968,7 +968,13 @@ class OrbService:
             expected = {observe_open + timedelta(minutes=offset) for offset in range(5)}
             by_minute = {item.timestamp: item for item in st.or_bars if item.timestamp in expected}
             placed_at = self._modeled_minute_end(bar)
-            available_level = max((item.high for item in by_minute.values()), default=bar.high)
+            available_level = max(
+                (
+                    item.high if item.breakout_high is None else item.breakout_high
+                    for item in by_minute.values()
+                ),
+                default=0.0,
+            )
             source_minutes = tuple(sorted(item.astimezone(_ET).strftime("%H:%M") for item in by_minute))
             if set(by_minute) != expected:
                 missing = sorted(
@@ -983,7 +989,7 @@ class OrbService:
                         "reason": "FIXED_LEVEL_SOURCE_COVERAGE_INCOMPLETE",
                         "status": "UNANSWERABLE",
                         "check_kind": "day_gate",
-                        "level_derivation": "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET",
+                        "level_derivation": "MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:29_ET",
                         "level_window_et": "09:25-09:30 inclusive",
                         "level_source_minutes": list(source_minutes),
                         "missing_minutes": missing,
@@ -996,6 +1002,24 @@ class OrbService:
                     "[ORB-PAPER-ORDER-UNANSWERABLE] %s missing_minutes=%s check=day_gate",
                     symbol,
                     ",".join(missing),
+                )
+                return
+            if available_level <= 0:
+                self._queue_fixed_resting_event(
+                    symbol,
+                    price=0.0,
+                    observed_at=placed_at,
+                    event_type=ORB_PAPER_ORDER_UNANSWERABLE_EVENT_TYPE,
+                    detail={
+                        "reason": "NO_QUALIFYING_BREAKOUT_PRINT",
+                        "status": "UNANSWERABLE",
+                        "min_breakout_print_size": 100,
+                        "order_placed_at": None,
+                    },
+                )
+                logger.warning(
+                    "[ORB-PAPER-ORDER-UNANSWERABLE] %s reason=no-qualifying-breakout-print",
+                    symbol,
                 )
                 return
             order = _ModeledRestingOrder(
@@ -1030,7 +1054,7 @@ class OrbService:
                     detail=self._fixed_resting_detail(
                         order,
                         check_kind="day_gate",
-                        level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET",
+                        level_derivation="MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:29_ET",
                         status="MODELED_RESTING",
                         reason="FIXED_RESTING_ORDER_PLACED",
                         decision_observed_at=observed_at,
@@ -1050,7 +1074,8 @@ class OrbService:
         order = st.resting_order
         finalized_at = self._modeled_minute_end(bar)
         order.finalized_at = finalized_at
-        order.final_level = max(order.initial_level, bar.high)
+        qualified_high = bar.high if bar.breakout_high is None else bar.breakout_high
+        order.final_level = max(order.initial_level, qualified_high)
         st.running_high = order.final_level
         level_rose = order.final_level > order.initial_level
         if level_rose:
@@ -1071,7 +1096,7 @@ class OrbService:
                 detail=self._fixed_resting_detail(
                     order,
                     check_kind="post-fill",
-                    level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
+                    level_derivation="MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
                     status="FINALIZED_NO_ADJUSTMENT",
                     reason="ORDER_ALREADY_FILLED_AT_09:29_LEVEL",
                     decision_observed_at=observed_at,
@@ -1090,7 +1115,7 @@ class OrbService:
                 detail=self._fixed_resting_detail(
                     order,
                     check_kind="live",
-                    level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
+                    level_derivation="MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
                     status="FINALIZED_WHILE_PULLED",
                     reason="ENTRY_GATE_PULLED_ORDER_LEVEL_UPDATED_BEFORE_REARM",
                     decision_observed_at=observed_at,
@@ -1108,7 +1133,7 @@ class OrbService:
                 detail=self._fixed_resting_detail(
                     order,
                     check_kind="live",
-                    level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
+                    level_derivation="MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
                     status="FINALIZED_NO_ADJUSTMENT",
                     reason="09:30_HIGH_DID_NOT_RAISE_LEVEL",
                     decision_observed_at=observed_at,
@@ -1136,7 +1161,7 @@ class OrbService:
                 detail=self._fixed_resting_detail(
                     order,
                     check_kind="live",
-                    level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
+                    level_derivation="MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
                     status="MODELED_ADJUSTED",
                     reason="09:30_HIGH_RAISED_LEVEL",
                     decision_observed_at=observed_at,
@@ -1165,7 +1190,7 @@ class OrbService:
             detail=self._fixed_resting_detail(
                 order,
                 check_kind="live",
-                level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
+                level_derivation="MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
                 status="UNANSWERABLE",
                 reason="HIGHER_09:30_HIGH_BUT_ADJUSTMENT_NOT_PROVEN_IN_TIME",
                 decision_observed_at=observed_at,
@@ -1211,7 +1236,7 @@ class OrbService:
             detail=self._fixed_resting_detail(
                 order,
                 check_kind="live",
-                level_derivation="MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
+                level_derivation="MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE",
                 status="FINALIZED_NO_ADJUSTMENT",
                 reason="NO_09:30_TRADE_BAR_LEVEL_UNCHANGED",
                 quote_at=st.latest_quote_at,
@@ -1259,9 +1284,9 @@ class OrbService:
                     order,
                     check_kind="live",
                     level_derivation=(
-                        "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE"
+                        "MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE"
                         if order.finalized_at is not None
-                        else "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET"
+                        else "MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:29_ET"
                     ),
                     status="MODELED_BREAK_HELD",
                     reason="BREAK_HELD_BY_ENTRY_GATE_OR_FRESH_CROSS_REQUIREMENT",
@@ -1311,9 +1336,9 @@ class OrbService:
             order,
             check_kind="live",
             level_derivation=(
-                "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE"
+                "MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:30_ET_INCLUSIVE"
                 if order.adjusted_at is not None
-                else "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET"
+                else "MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:29_ET"
             ),
             status="RECORDED_NOT_A_BROKER_FILL",
             reason=(

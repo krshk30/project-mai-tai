@@ -78,7 +78,7 @@ def test_places_one_order_at_0929_high_at_092959() -> None:
     detail = service._pending_paper_entries[0].detail
     assert detail["check_kind"] == "day_gate"
     assert detail["modeled_order_id"] == order.order_id
-    assert detail["level_derivation"] == "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET"
+    assert detail["level_derivation"] == "MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:29_ET"
     assert detail["fill_assumption"].startswith("MODELED_AT_RESTING_LEVEL")
 
 
@@ -147,6 +147,65 @@ def test_real_tick_path_fills_during_0930_without_waiting_for_bar_close() -> Non
     assert order.fill_price == 10.50
     assert order.filled_at == open_at + timedelta(seconds=1)
     assert service._aggregators["FOO"]._bucket == open_at
+
+
+def test_one_share_spike_does_not_raise_fixed_breakout_level() -> None:
+    service = _service()
+    open_at = service._session_open_utc()
+
+    def send(minute: int, second: int, price: float, size: int) -> None:
+        at = open_at + timedelta(minutes=minute, seconds=second)
+        service._handle_market_data(
+            {
+                "data": json.dumps(
+                    {
+                        "event_type": "trade_tick",
+                        "payload": {
+                            "symbol": "FOO",
+                            "price": price,
+                            "size": size,
+                            "timestamp_ns": int(at.timestamp() * 1_000_000_000),
+                        },
+                    }
+                )
+            }
+        )
+
+    for minute in range(-5, 0):
+        send(minute, 1, 3.42 if minute == -5 else 3.38, 100)
+        if minute == -4:
+            send(minute, 6, 3.53, 1)
+    send(0, 1, 3.30, 100)
+
+    order = service._states["FOO"].resting_order
+    assert order is not None
+    assert order.initial_level == 3.42
+    assert service._aggregators["FOO"].current_bar().high == 3.30
+
+
+def test_fixed_breakout_without_any_qualifying_print_is_unanswerable() -> None:
+    service = _service()
+    open_at = service._session_open_utc()
+    for minute in range(-5, 1):
+        at = open_at + timedelta(minutes=minute, seconds=1)
+        service._handle_market_data(
+            {
+                "data": json.dumps(
+                    {
+                        "event_type": "trade_tick",
+                        "payload": {
+                            "symbol": "FOO",
+                            "price": 3.50,
+                            "size": 1,
+                            "timestamp_ns": int(at.timestamp() * 1_000_000_000),
+                        },
+                    }
+                )
+            }
+        )
+
+    assert service._states["FOO"].resting_order is None
+    assert service._pending_paper_entries[-1].detail["reason"] == "NO_QUALIFYING_BREAKOUT_PRINT"
 
 
 def test_0930_high_is_included_and_adjustment_is_modeled_only_when_proven_timely() -> None:
@@ -258,7 +317,7 @@ def test_unanswerable_adjustment_LEAVES_the_0929_order_working() -> None:
     assert fill.detail["reason"] == (
         "INTRABAR_BREAK_OF_RETAINED_09:29_LEVEL_AFTER_UNANSWERABLE_TIMING"
     ), "the LEFT population must be identifiable in the durable record, not just inferable"
-    assert fill.detail["level_derivation"] == "MAX_1M_TRADE_HIGH_09:25_THROUGH_09:29_ET"
+    assert fill.detail["level_derivation"] == "MAX_100SH_TRADE_HIGH_09:25_THROUGH_09:29_ET"
 
 
 def test_a_price_below_the_retained_level_still_does_NOT_fill() -> None:
