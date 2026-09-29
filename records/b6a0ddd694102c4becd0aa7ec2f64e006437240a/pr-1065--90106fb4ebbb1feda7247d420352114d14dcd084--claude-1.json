@@ -1,0 +1,9 @@
+{
+  "pr_number": 1065,
+  "range_base": "90106fb4ebbb1feda7247d420352114d14dcd084",
+  "range_head": "b6a0ddd694102c4becd0aa7ec2f64e006437240a",
+  "reviewed_at": "2026-09-29T21:26:16Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1 review of b6a0ddd6 (base 90106fb4; source identical to reviewed 012889cd via range-diff, plus 2 requested tests + evidence doc). Operator-confirmed card MATCH: 2 closes hold that ATR SELL cycle; next LIVE observed SELL starts a persisted zero count; never a whole-day block; unknown = no rest. 11/11 claude-1 mutations killed (incl. segment-mismatch admission and reset-persist failure). Late-SELL audit 0/11 lost first rests; spot-checked IMCC 09-22 watch times vs box log. Full suite FAILED set identical to main; CI validate pass. Deploy: RETRY_ONE already true in v2 /proc => live on v2 restart."
+}
