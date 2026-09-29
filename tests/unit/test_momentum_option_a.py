@@ -2,15 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
-import json
-import os
-import signal
-import subprocess
-import sys
-import time
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -22,7 +15,7 @@ from project_mai_tai.events import (
 from project_mai_tai.momentum_paper.conditions import ConditionSnapshot
 from project_mai_tai.momentum_paper.engine import MomentumPaperEngine
 from project_mai_tai.momentum_paper.models import TradePrint
-from project_mai_tai.services.momentum_paper_app import MomentumPaperService, _run_until_signal
+from project_mai_tai.services.momentum_paper_app import MomentumPaperService
 from project_mai_tai.settings import Settings
 
 
@@ -113,130 +106,6 @@ def test_gateway_trade_ticks_cannot_reintroduce_global_trade_detection() -> None
         allow_detection=False,
     )
     assert all(row.event_type != "DETECTED" for row in records)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
-async def test_process_signal_releases_momentum_gateway_owner(monkeypatch, signum) -> None:
-    class FakeRedis:
-        def __init__(self) -> None:
-            self.events: list[dict[str, object]] = []
-
-        async def xadd(self, _stream: str, fields: dict[str, str], **_kwargs) -> None:
-            self.events.append(json.loads(fields["data"]))
-
-    redis = FakeRedis()
-    service = MomentumPaperService(
-        Settings(
-            momentum_paper_enabled=True,
-            massive_api_key="test",
-            redis_stream_prefix="test",
-        ),
-        redis_client=redis,  # type: ignore[arg-type]
-        session_factory=lambda: None,  # type: ignore[arg-type]
-        store=object(),  # type: ignore[arg-type]
-    )
-    service._subscribed_symbols = {"MOMO"}
-    entered = asyncio.Event()
-
-    async def blocked_tick() -> None:
-        entered.set()
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(service, "_tick", blocked_tick)
-    loop = asyncio.get_running_loop()
-    handlers: dict[signal.Signals, object] = {}
-    monkeypatch.setattr(loop, "add_signal_handler", lambda sig, callback: handlers.__setitem__(sig, callback))
-    monkeypatch.setattr(loop, "remove_signal_handler", lambda sig: handlers.pop(sig, None) is not None)
-
-    task = asyncio.create_task(_run_until_signal(service))
-    try:
-        await asyncio.wait_for(entered.wait(), timeout=2)
-        handler = handlers[signum]
-        assert callable(handler)
-        handler()
-        await asyncio.wait_for(task, timeout=2)
-    finally:
-        if not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-
-    assert redis.events[-1]["payload"] == {
-        "consumer_name": "momentum-paper", "mode": "replace", "symbols": [],
-    }
-    assert service._subscribed_symbols == set()
-
-
-@pytest.mark.skipif(os.name != "posix", reason="signal handlers require POSIX")
-def test_real_sigterm_publishes_empty_momentum_replace(tmp_path) -> None:
-    ready = tmp_path / "ready"
-    released = tmp_path / "released.json"
-    child = f"""
-import asyncio
-import json
-from pathlib import Path
-from project_mai_tai.services.momentum_paper_app import MomentumPaperService, _run_until_signal
-from project_mai_tai.settings import Settings
-
-class Redis:
-    async def xadd(self, _stream, fields, **_kwargs):
-        Path({str(released)!r}).write_text(fields["data"])
-
-service = MomentumPaperService(
-    Settings(momentum_paper_enabled=True, massive_api_key="test", redis_stream_prefix="test"),
-    redis_client=Redis(), session_factory=lambda: None, store=object(),
-)
-service._subscribed_symbols = {{"MOMO"}}
-
-async def blocked_tick():
-    Path({str(ready)!r}).touch()
-    await asyncio.Event().wait()
-
-service._tick = blocked_tick
-asyncio.run(_run_until_signal(service))
-"""
-    process = subprocess.Popen([sys.executable, "-c", child])
-    try:
-        deadline = time.monotonic() + 5
-        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
-            time.sleep(0.02)
-        assert ready.exists(), f"paper child exited before signal: {process.poll()}"
-        process.send_signal(signal.SIGTERM)
-        assert process.wait(timeout=5) == 0
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
-
-    assert json.loads(released.read_text())["payload"] == {
-        "consumer_name": "momentum-paper", "mode": "replace", "symbols": [],
-    }
-
-
-@pytest.mark.asyncio
-async def test_inflight_claim_is_released_even_before_local_symbols_update() -> None:
-    class Redis:
-        def __init__(self) -> None:
-            self.events: list[dict[str, object]] = []
-
-        async def xadd(self, _stream: str, fields: dict[str, str], **_kwargs) -> None:
-            self.events.append(json.loads(fields["data"]))
-            if len(self.events) == 1:
-                raise asyncio.CancelledError
-
-    redis = Redis()
-    service = MomentumPaperService(
-        Settings(momentum_paper_enabled=True, redis_stream_prefix="test"),
-        redis_client=redis,  # type: ignore[arg-type]
-    )
-    with pytest.raises(asyncio.CancelledError):
-        await service._sync_gateway_subscriptions(force=True, desired_override={"MOMO"})
-
-    assert service._subscribed_symbols == set()
-    assert service._gateway_owner_claimed is True
-    await service._stop_gateway()
-    assert [event["payload"]["symbols"] for event in redis.events] == [["MOMO"], []]
-    assert service._gateway_owner_claimed is False
 
 
 @pytest.mark.asyncio

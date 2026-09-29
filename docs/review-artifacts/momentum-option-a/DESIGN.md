@@ -27,12 +27,6 @@ and does not authorize a production restart, flag change, or live trading route.
   also durably records each consumer's symbols and applied stream ID. After a
   restart it restores all owners and replays updates newer than the checkpoint.
   A Momentum replace/remove never alters the scanner's or v2's owner set.
-- SIGTERM/SIGINT cancels the Momentum runner and publishes `replace []` before
-  exit. A fatal runner exit also attempts the same cleanup. After a paper-only
-  stop, the first-session procedure checks the owner hash, the post-sync union
-  log and a fresh gateway heartbeat; if release failed, an operator-approved
-  empty replace is published as an ops fallback. Blind evidence is UNKNOWN,
-  never a claim that load was removed.
 
 This changes the studied signal population: snapshot-sampled 30/60 moves can
 miss brief trade-only spikes or nominate different candidates from `T.*`.
@@ -44,25 +38,12 @@ claim parity with the old detector or reuse #1029's replay verdict.
 
 - No v2, strategy-engine, OMS, order, broker, gateway snapshot cadence, or live
   flag/env code is changed. Gateway changes are limited to additive trade
-  metadata, subscription-owner recovery and audit logging, but the gateway is shared live
+  metadata and subscription-owner recovery, but the gateway is shared live
   infrastructure and needs independent review and a separate exact-SHA GO.
 - Before that GO, inspect the retained subscription stream on the box and prove
   its first-restart migration contains the active scanner and v2 owner events.
   If either owner cannot be reconstructed, do not restart the gateway; obtain
   fresh replace events or an independently reviewed migration plan first.
-- Redis read failure during owner restoration now fails gateway startup rather
-  than starting with an empty live subscription set. This fail-closed change is
-  intentional. The current systemd unit has `Restart=always`/`RestartSec=5`,
-  so a prolonged Redis failure can cause repeated start attempts; do not call
-  that harmless or claim the gateway stayed healthy. Fleet runtime monitoring
-  must page, and an operator must resolve the Redis/owner-state fault before
-  relying on the feed. A restart-rate limit needs separate review because it
-  also changes live recovery timing.
-- A retired consumer's durable owner set has no TTL. That is accepted for this
-  PR rather than silently expiring scanner/v2 ownership; stale-owner expiry and
-  migration policy are a follow-up. The paper stop procedure verifies or
-  forcibly publishes Momentum's empty replacement, so intentional stopping
-  does not depend on a TTL.
 - Deploy only after review/pin and the operator's exact-SHA approval for the
   momentum-paper and gateway restarts. Confirm both owner sets survive a
   gateway restart, the union never loses a scanner/v2 symbol, Momentum has no
