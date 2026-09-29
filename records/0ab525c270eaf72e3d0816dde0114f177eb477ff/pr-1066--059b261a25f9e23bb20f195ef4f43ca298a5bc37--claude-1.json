@@ -1,0 +1,9 @@
+{
+  "pr_number": 1066,
+  "range_base": "059b261a25f9e23bb20f195ef4f43ca298a5bc37",
+  "range_head": "0ab525c270eaf72e3d0816dde0114f177eb477ff",
+  "reviewed_at": "2026-09-29T21:56:39Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1 re-pin of 0ab525c2 (base 059b261a) after rebase over #1067: range-diff shows both commits patch-identical to the pinned 1c807e90 review (Card 10 MATCH incl. operator's 19:55 sell-anyway; full suite = main; mutations 4/5 + 6/6). #1067 touches only ORB files, disjoint from #1066. 689 focused tests pass on the new base (v2 EOD/Webull shared path/CW exit/adapter/confirmation/watch/ORB/RETRY-ONE); CI validate pass. Operator added #1066 to tonight's install; floor flag OFF in the same OMS restart."
+}

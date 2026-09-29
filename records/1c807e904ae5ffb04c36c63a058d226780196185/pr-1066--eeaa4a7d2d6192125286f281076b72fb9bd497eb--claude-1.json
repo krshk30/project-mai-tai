@@ -1,9 +1,0 @@
-{
-  "pr_number": 1066,
-  "range_base": "eeaa4a7d2d6192125286f281076b72fb9bd497eb",
-  "range_head": "1c807e904ae5ffb04c36c63a058d226780196185",
-  "reviewed_at": "2026-09-29T21:38:52Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "claude-1 review of 1c807e90 (base eeaa4a7d). Operator-confirmed Card 10 MATCH: same exit in every session (+5/-8/confirmation/ATR flip, no floor); Webull CW_TARGET/HARD_STOP/FLOOR/FLIP on shared cancel-then-sell path (3 past Webull CW_FLIP sells all filled <0.31 s); 16:00 both brokers cancel+broker-confirm RTH legs before any software sell (unconfirmed => no sell + INC1); 19:55 operator ruling 'sell anyway': flatten submits even with unconfirmed legs, shares-unavailable reject => one critical incident per row. Rebase range-diff clean; loop wiring verified. 311 targeted pass; claude-1 mutations 4/5 killed this round + 6/6 prior (survivor: defense-in-depth guard limiting allow_unconfirmed_overnight to the 19:55 reason; single caller today). Full suite FAILED set identical to main; CI validate pass. DEPLOY: MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED=false in the same OMS restart, verified in /proc with +5/-8; watch reinstall for the new incident source is held with #1059 until WBREAD1."
-}
