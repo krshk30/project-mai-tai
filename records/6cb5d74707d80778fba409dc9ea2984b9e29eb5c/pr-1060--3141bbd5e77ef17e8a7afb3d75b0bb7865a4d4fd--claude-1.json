@@ -1,0 +1,9 @@
+{
+  "pr_number": 1060,
+  "range_base": "3141bbd5e77ef17e8a7afb3d75b0bb7865a4d4fd",
+  "range_head": "6cb5d74707d80778fba409dc9ea2984b9e29eb5c",
+  "reviewed_at": "2026-09-29T10:01:21Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Momentum Option A (operator 09-28/09-29): no Momentum websocket/T.*; 5 s gateway snapshot nomination; 16-symbol capped momentum-paper gateway consumer; durable per-consumer owner hash + full retained-event migration replay; trade conditions provenance (no live consumer branches on conditions: strategy/OMS/ORB checked); warm-up allowed + REST-attempt audit log; first-session stop rule = live-trading slowdown, load 3.5 warning only. Round 1 blocking (no SIGTERM release + durable owners) fixed: run() releases in finally, SIGTERM/SIGINT handlers, pre-xadd claim flag, protocol verifies owner-hash [] / union removal / heartbeat with replace-[] fallback. 70/70 targeted; base gateway 6F. Mutations killed: owner union dropped (2F), restore last-event-only (1F), no signal handler (3F), no release on stop (5F), no pre-xadd claim (1F). Full tests/unit 47F/4408P vs base 47F/4395P identical FAILED names; ruff src tests clean; CI validate x2 pass. Notes accepted in PR: fail-closed restore may systemd-retry during prolonged Redis failure; durable owners have no TTL. Deploy restarts the LIVE gateway: needs retained-subscription replay proof + exact-SHA operator GO."
+}
