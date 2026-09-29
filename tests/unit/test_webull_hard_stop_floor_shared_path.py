@@ -243,6 +243,29 @@ async def test_1955_flatten_closes_both_accounts_but_releases_only_webull_pair(m
 
 
 @pytest.mark.asyncio
+async def test_1955_webull_unreadable_rth_leg_still_submits_flatten(monkeypatch) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    monkeypatch.setattr(service_module, "_extended_hours_session", lambda now=None: "PM")
+    adapter = _FanoutAdapter()
+    service, _sf = _service(fanout=True, adapter=adapter)
+    service.settings.oms_v2_overnight_flatten_enabled = True
+    service._v2_overnight_flatten_due = lambda now=None: True
+    service._market_is_fillable = lambda now=None: True
+
+    async def unconfirmed(_acct, _symbol, _row_id=""):
+        return False
+
+    service._v2_eod_handover_ready = unconfirmed
+    _quote(service, 9.80)
+    await service._v2_overnight_flatten()
+
+    sells = [r for r in adapter.submitted if r.side == "sell"]
+    assert sorted(r.broker_account_name for r in sells) == sorted((SCHWAB, WEBULL))
+    assert all(r.reason == "V2_OVERNIGHT_FLATTEN" for r in sells)
+    assert all(r.order_type == "limit" for r in sells)
+
+
+@pytest.mark.asyncio
 async def test_eh_floor_retries_after_unfilled_limit_expires_even_if_bid_recovers(monkeypatch) -> None:
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
     adapter = _FanoutAdapter()

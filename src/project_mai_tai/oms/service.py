@@ -8580,6 +8580,7 @@ class OmsRiskService:
         level: str | None = None,
         expected_managed_row_id: str = "",
         confirmation_context: dict[str, str] | None = None,
+        allow_unconfirmed_overnight: bool = False,
     ) -> str:
         """The RARE v2 exit-emit, kept ON-LOOP (single session, one commit) exactly as
         before PR-A: it reaches the shared ``_record_order_reports``, which mutates
@@ -8587,7 +8588,13 @@ class OmsRiskService:
         thread. Bounded to ~5s by #391 Fix-1; fires only when an exit actually triggers.
         Behaviour of the per-kind write/close/scale + publish is byte-identical to the
         pre-split inline branches."""
-        if not await self._v2_eod_handover_ready(acct, symbol, expected_managed_row_id):
+        if allow_unconfirmed_overnight and (
+            reason != "V2_OVERNIGHT_FLATTEN" or not self._v2_overnight_flatten_due()
+        ):
+            return "refused"
+        if not allow_unconfirmed_overnight and not await self._v2_eod_handover_ready(
+            acct, symbol, expected_managed_row_id
+        ):
             return "eod_handover_unconfirmed"
         # The decision instant: the caller decided to exit on THIS quote and awaited us
         # directly, so nothing has blocked yet — no session, no DB read, no broker call.
@@ -8595,6 +8602,7 @@ class OmsRiskService:
         decided_at = datetime.now(UTC)
         events: list = []
         pending_reject_alarm: _V2ExitRejectAlarm | None = None
+        flatten_unavailable_row_id = ""
         emit_outcome = "refused"
         resolved_oco: tuple[dict[str, object], str] | None = None
         try:
@@ -8659,7 +8667,7 @@ class OmsRiskService:
                             if statuses - self._V2_EXIT_NON_PROGRESS_STATUSES
                             else "refused"
                         )
-                elif self._a2_should_defer(acct, symbol):
+                elif reason != "V2_OVERNIGHT_FLATTEN" and self._a2_should_defer(acct, symbol):
                     # A2 backoff. The broker is refusing this exit as not-sellable; the block is
                     # broker-side ACCOUNT STATE and re-emitting at the 1-2s ladder cadence provably
                     # achieves nothing (313 attempts / 816s on AAOG, all rejected). We keep probing
@@ -8671,9 +8679,9 @@ class OmsRiskService:
                         symbol, acct, kind, self._A2_BACKOFF_SECONDS,
                     )
                     return "refused"
-                elif self._webull_late_close_should_defer(acct, symbol):
+                elif reason != "V2_OVERNIGHT_FLATTEN" and self._webull_late_close_should_defer(acct, symbol):
                     return "refused"
-                elif (acct, symbol) in self._v2_exit_stood_down:
+                elif reason != "V2_OVERNIGHT_FLATTEN" and (acct, symbol) in self._v2_exit_stood_down:
                     # ⛔ Retry loop stood down (see _V2_EXIT_ABANDON_AFTER_FAILURES). Emitting again
                     # would just re-reject: 145 times on NCRA 2026-07-29. The row and any protection
                     # stay in place and the read-only exit poll still resolves it.
@@ -8779,6 +8787,13 @@ class OmsRiskService:
                     )
                     if a2_hit and not reconciled:
                         await self._a2_maybe_escalate(acct, symbol)
+                    if (
+                        reason == "V2_OVERNIGHT_FLATTEN"
+                        and rejected
+                        and not reconciled
+                        and self._is_exit_refused_not_sellable(a2_reason)
+                    ):
+                        flatten_unavailable_row_id = str(row.id)
                     if reconciled:
                         emit_outcome = "closed"
                     if not reconciled:
@@ -8841,6 +8856,10 @@ class OmsRiskService:
                 # suppress exits for the replacement position.
                 getattr(self, "_native_oco_resolving", {}).pop((acct, symbol), None)
             return "closed" if closed else "refused"
+        if flatten_unavailable_row_id:
+            await self._page_v2_overnight_flatten_blocked(
+                acct, symbol, flatten_unavailable_row_id
+            )
         if pending_reject_alarm is not None:
             alarm_counts = self.__dict__.setdefault("_v2_exit_reject_alarm_count", {})
             announced = self.__dict__.setdefault("_v2_exit_reject_alarm_announced", set())
@@ -11358,10 +11377,7 @@ class OmsRiskService:
             for incident in incidents:
                 payload = incident.payload if isinstance(incident.payload, dict) else {}
                 if (
-                    payload.get("source") in {
-                        self._EXIT_RELEASE_INCIDENT_SOURCE,
-                        self._EOD_FLATTEN_BLOCKED_INCIDENT_SOURCE,
-                    }
+                    payload.get("source") == self._EXIT_RELEASE_INCIDENT_SOURCE
                     and payload.get("broker_account_name") == acct
                     and payload.get("symbol") == symbol
                     and payload.get("managed_row_id") == row_id
@@ -11387,10 +11403,7 @@ class OmsRiskService:
             if row is None or str(row.id) != row_id:
                 return False
             incidents = session.scalars(
-                select(SystemIncident).where(
-                    SystemIncident.service_name == SERVICE_NAME,
-                    SystemIncident.status == "open",
-                )
+                select(SystemIncident).where(SystemIncident.service_name == SERVICE_NAME)
             ).all()
             if any(
                 isinstance(incident.payload, dict)
@@ -11402,14 +11415,14 @@ class OmsRiskService:
                 return False
             session.add(SystemIncident(
                 service_name=SERVICE_NAME, severity="critical",
-                title=f"19:55 FLATTEN BLOCKED: {symbol} on {acct}; check broker legs now"[:255],
+                title=f"19:55 FLATTEN REJECTED: {symbol} on {acct}; check position now"[:255],
                 status="open", opened_at=utcnow(),
                 payload={
                     "source": self._EOD_FLATTEN_BLOCKED_INCIDENT_SOURCE,
                     "broker_account_name": acct,
                     "symbol": symbol,
                     "managed_row_id": row_id,
-                    "reason": "broker_exit_legs_working_or_unreadable",
+                    "reason": "broker_position_unavailable_for_flatten",
                     "session_date": self._session_day_et(),
                 },
             ))
@@ -11425,7 +11438,7 @@ class OmsRiskService:
         except Exception:
             self.logger.exception(
                 "[OMS-V2-OVERNIGHT-FLATTEN-BLOCKED] %s %s row=%s "
-                "incident=WRITE_FAILED sell=BLOCKED",
+                    "incident=WRITE_FAILED sell=RETRYING",
                 acct, symbol, row_id,
             )
 
@@ -11492,10 +11505,11 @@ class OmsRiskService:
         invariant). Full-qty close via the existing v2 exit primitive (LIMIT+session, EH-fillable — a
         market order won't fill in AH). A single close, not a resting stop => NOT the E5 oversell class.
 
-        An unconfirmed 16:00 broker-leg cancellation blocks this sell and pages, including at
-        19:55. The operator chose avoiding a possible double-sell over blind flattening.
+        At 19:55 the broker's DAY legs cannot fill in extended hours. Attempt the 16:00 handover,
+        but submit the flatten even if its readback is still working or unreadable. A broker
+        shares-unavailable rejection opens a critical incident and the next pass retries.
 
-        RETRY-UNTIL-FILLED once the handover is confirmed — there is NO per-day claim (by design).
+        RETRY-UNTIL-FILLED — there is NO per-day claim (by design).
         A limit that expires unfilled
         (thin AH) leaves the position open with no working order, so the next 5s pass RE-EMITS; the
         flatten keeps trying until it fills or the 20:00 gate closes. Double-submit is prevented by
@@ -11537,16 +11551,6 @@ class OmsRiskService:
             )
             if snapshot is None:
                 self._managed_v2_symbols.discard((acct, symbol))
-                continue
-            if not await self._v2_eod_handover_ready(acct, symbol, snapshot.managed_row_id):
-                await self._page_v2_overnight_flatten_blocked(
-                    acct, symbol, snapshot.managed_row_id
-                )
-                self.logger.error(
-                    "[OMS-V2-OVERNIGHT-FLATTEN] %s %s row=%s "
-                    "software_sell=BLOCKED reason=broker_exit_unconfirmed incident_route=INC1",
-                    acct, symbol, snapshot.managed_row_id,
-                )
                 continue
             if snapshot.dedup_active:
                 continue  # a close already works — no double-submit (re-emits when it expires)
@@ -11600,7 +11604,16 @@ class OmsRiskService:
                 "(no native stop; software fill impossible after 20:00)",
                 acct, symbol, snapshot.current_quantity,
             )
-            if self._is_v2_webull_account(acct):
+            handover_confirmed = await self._v2_eod_handover_ready(
+                acct, symbol, snapshot.managed_row_id
+            )
+            if not handover_confirmed:
+                self.logger.warning(
+                    "[OMS-V2-OVERNIGHT-FLATTEN] %s %s row=%s broker_legs=UNCONFIRMED "
+                    "software_sell=SUBMITTING",
+                    acct, symbol, snapshot.managed_row_id,
+                )
+            if self._is_v2_webull_account(acct) and handover_confirmed:
                 await self._webull_cw_exit_on_shared_path(
                     acct, symbol, tag="V2_OVERNIGHT_FLATTEN", ref=bid, bid=bid,
                     expected_row_id=snapshot.managed_row_id,
@@ -11610,6 +11623,8 @@ class OmsRiskService:
                     acct, symbol, position, snapshot.entry_price,
                     kind="OVERNIGHT_FLATTEN", reference_price=bid, reason="V2_OVERNIGHT_FLATTEN",
                     bid=bid, close_on_fill=close_on_fill,
+                    expected_managed_row_id=snapshot.managed_row_id,
+                    allow_unconfirmed_overnight=not handover_confirmed,
                 )
 
     async def _trigger_hard_stop(

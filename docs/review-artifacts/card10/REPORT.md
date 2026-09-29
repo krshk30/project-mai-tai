@@ -23,17 +23,18 @@ All three filled; none proves the generic path handles a future unfilled or refu
   the 20:00 unsold incident. An intent is not counted as a fill.
 - A *confirmed* RTH native bracket still owns target/stop. An unconfirmed Webull bracket can be
   cancelled with readback before a software full close; scale-outs cannot take it back.
-- At or after 16:00 ET, every held row is blocked from a software sell until its own RTH broker
+- From 16:00 until 19:55 ET, every held row is blocked from a software sell until its own RTH broker
   children are confirmed gone. Schwab rereads its native order tree. Webull cancels its
   deterministic T/S children and then rereads both; a cancel acknowledgement or a Webull
   `confirmed_after_accepted_request` fallback alone is not confirmation. Unknown/missing handles
   and working legs retain the block and open the existing INC1 exit-release incident. Probes are
   paced at 10 seconds. A later confirmation closes the incident and releases only that row.
-- At 19:55, a still-working or unreadable broker leg **blocks** the flatten sell and pages, per
-  the operator's explicit safety choice. When release is confirmed, the existing 19:55
-  retry-until-filled behavior remains on. A separate critical 19:55 incident makes a fresh page
-  even if the 16:00 unresolved-release incident was already delivered; both close on a confirmed
-  release or an exact recorded broker-child fill.
+- At 19:55, the OMS still attempts to cancel and verify the RTH legs, but a still-working or
+  unreadable leg does **not** block the flatten sell. The DAY legs cannot execute in extended
+  hours. The 19:55 sell uses the existing EH limit and retry-until-filled path. If the broker
+  rejects it because shares are committed/unavailable, a separate critical INC1 incident opens
+  once per managed row, even if the 16:00 release incident was already delivered. That incident
+  is not closed merely by a later leg-release readback; a sell fill still needs verification.
 - The floor flag is **not** changed by this PR. The deployment must set
   `MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED=false`, restart OMS under the exact-SHA GO, and verify
   `/proc` plus effective +5%/-8% parameters. The existing floor-OFF decision ignores a
@@ -50,6 +51,15 @@ adapter, OMS, handover, overnight, and regression suites passed (347 tests). The
 unit run was `47 failed, 4,488 passed`; its failures matched the previously reported host/tooling
 set (Linux `sha256sum` paths, installer shell tests, and the dead-consumer timing case), with no
 Card 10 failures.
+
+After #1064 merged, the 19:55 ruling changed to SELL ANYWAY. The working-leg and committed-share
+reject tests were red on the rebased branch before the follow-up edit (2 failures). The focused
+handover, overnight, Webull shared-path, and INC1 watcher suite is now 115 passed. Restoring the
+inner handover veto made the Schwab and Webull unconfirmed-leg tests fail; removing the incident
+write made the reject test fail. The full macOS unit run on this head was `56 failed, 4,638 passed`;
+the failures were in host-dependent installer and dead-consumer tests, not the touched exit tests.
+An exact failed-name control on fresh `origin/main` has not yet been run, so the full-suite baseline
+comparison remains unverified. Ruff and `git diff --check` passed.
 
 Deliberate mutations killed: bypassing the central handover guard made a direct sell place;
 removing Webull target/flip shared routing failed all four AM/PM retry tests; accepting a Webull
