@@ -824,7 +824,8 @@ async def test_failed_subscription_sync_retries_without_losing_owner_update() ->
 
 
 @pytest.mark.asyncio
-async def test_momentum_replace_and_restart_never_remove_other_consumer_symbols() -> None:
+async def test_momentum_replace_and_restart_never_remove_other_consumer_symbols(caplog) -> None:
+    caplog.set_level("INFO")
     redis = FakeRedis()
     stream = FakeTradeStream()
     settings = Settings(redis_stream_prefix="test", market_data_static_symbols="SPY")
@@ -858,6 +859,10 @@ async def test_momentum_replace_and_restart_never_remove_other_consumer_symbols(
     await redis.xadd("test:market-data-subscriptions", {"data": replacement.model_dump_json()})
     await service.apply_subscription_event(replacement)
     assert service.active_symbols() == {"SPY", "SCAN", "V2SY"}
+    assert (
+        "[MARKET-DATA-SUBSCRIPTION-UNION] consumer=momentum-paper "
+        "added=- removed=MOMO count=3"
+    ) in caplog.text
     redis.entries = redis.entries[-1:]
 
     restored = MarketDataGatewayService(

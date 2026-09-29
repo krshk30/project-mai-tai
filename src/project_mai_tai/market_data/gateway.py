@@ -292,11 +292,17 @@ class MarketDataGatewayService:
         candidate_owners = {**self._desired_symbols_by_consumer, consumer: updated}
         next_symbols = set().union(*candidate_owners.values())
         added_symbols = next_symbols - self._active_symbols
+        removed_symbols = self._active_symbols - next_symbols
         await self.redis.hset(self._subscription_state_key, mapping=checkpoint)
         if next_symbols != self._active_symbols:
             await self.trade_stream.sync_subscriptions(sorted(next_symbols))
         self._desired_symbols_by_consumer = candidate_owners
         self._active_symbols = next_symbols
+        self.logger.info(
+            "[MARKET-DATA-SUBSCRIPTION-UNION] consumer=%s added=%s removed=%s count=%d",
+            consumer, ",".join(sorted(added_symbols)) or "-",
+            ",".join(sorted(removed_symbols)) or "-", len(next_symbols),
+        )
         if added_symbols:
             self.logger.info(
                 "[MARKET-DATA-WARMUP-UNION-ADD] consumer=%s symbols=%s count=%d",

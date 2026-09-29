@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 import json
 import logging
+import signal
 from typing import Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
@@ -166,6 +167,7 @@ class MomentumPaperService:
         self._engine: MomentumPaperEngine | None = None
         self._gateway_task: asyncio.Task[None] | None = None
         self._subscribed_symbols: set[str] = set()
+        self._gateway_owner_claimed = False
         self._last_subscription_sync: datetime | None = None
         self._last_snapshot_at: datetime | None = None
         self._connected = False
@@ -197,11 +199,10 @@ class MomentumPaperService:
             while True:
                 await self._tick()
                 await asyncio.sleep(1)
-        except asyncio.CancelledError:
+        finally:
             await self._stop_gateway()
             if self._engine is not None:
                 await self._persist(self._engine.close_session(self._now_ms()))
-            raise
 
     async def _tick(self) -> None:
         now = self._clock()
@@ -463,6 +464,9 @@ class MomentumPaperService:
                 consumer_name=SERVICE_NAME, mode="replace", symbols=sorted(desired),
             ),
         )
+        if desired:
+            # Cancellation can land after xadd but before local symbols are updated.
+            self._gateway_owner_claimed = True
         await self.redis.xadd(
             stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
             {"data": event.model_dump_json()},
@@ -470,6 +474,7 @@ class MomentumPaperService:
             approximate=True,
         )
         self._subscribed_symbols = set(desired)
+        self._gateway_owner_claimed = bool(desired)
         self._last_subscription_sync = now
 
     def _mark_gateway_disconnected(self) -> None:
@@ -489,7 +494,7 @@ class MomentumPaperService:
         self._connected = False
         self._last_snapshot_at = None
         self._condition_feed_verified = False
-        if self._subscribed_symbols:
+        if self._gateway_owner_claimed or self._subscribed_symbols:
             await self._sync_gateway_subscriptions(force=True, desired_override=set())
         await self._flush_path_buffer(force=True)
 
@@ -737,7 +742,43 @@ class MomentumPaperService:
 async def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args(argv)
-    await MomentumPaperService(get_settings()).run()
+    await _run_until_signal(MomentumPaperService(get_settings()))
+
+
+async def _run_until_signal(service: MomentumPaperService) -> None:
+    loop = asyncio.get_running_loop()
+    stop_requested = asyncio.Event()
+    installed: list[signal.Signals] = []
+    service_task: asyncio.Task[None] | None = None
+    signal_task: asyncio.Task[bool] | None = None
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(signum, stop_requested.set)
+            installed.append(signum)
+        service_task = asyncio.create_task(service.run())
+        signal_task = asyncio.create_task(stop_requested.wait())
+        done, _ = await asyncio.wait(
+            {service_task, signal_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if signal_task in done:
+            logger.info("[MOMENTUM-PAPER-STOP] signal received; releasing gateway owner")
+            service_task.cancel()
+        try:
+            await service_task
+        except asyncio.CancelledError:
+            if not stop_requested.is_set():
+                raise
+    finally:
+        if service_task is not None and not service_task.done():
+            service_task.cancel()
+            try:
+                await service_task
+            except asyncio.CancelledError:
+                pass
+        if signal_task is not None:
+            signal_task.cancel()
+        for signum in installed:
+            loop.remove_signal_handler(signum)
 
 
 def run() -> None:
