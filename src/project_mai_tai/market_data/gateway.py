@@ -100,6 +100,9 @@ class MarketDataGatewayService:
         self._subscription_offsets = {
             stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"): "$",
         }
+        self._subscription_state_key = stream_name(
+            self.settings.redis_stream_prefix, "market-data-subscription-owners"
+        )
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -268,7 +271,9 @@ class MarketDataGatewayService:
         await self.publisher.publish_snapshot_batch(snapshot_list, reference_payloads)
         return len(snapshot_list)
 
-    async def apply_subscription_event(self, event: MarketDataSubscriptionEvent) -> set[str]:
+    async def apply_subscription_event(
+        self, event: MarketDataSubscriptionEvent, *, message_id: str | None = None
+    ) -> set[str]:
         symbols = {symbol.upper() for symbol in event.payload.symbols if symbol}
         consumer = event.payload.consumer_name
         mode = event.payload.mode
@@ -281,12 +286,18 @@ class MarketDataGatewayService:
         else:
             updated = current - symbols
 
-        self._desired_symbols_by_consumer[consumer] = updated
-        next_symbols = set().union(*self._desired_symbols_by_consumer.values())
+        checkpoint = {consumer: json.dumps(sorted(updated))}
+        if message_id is not None:
+            checkpoint["_last_applied_id"] = message_id
+        candidate_owners = {**self._desired_symbols_by_consumer, consumer: updated}
+        next_symbols = set().union(*candidate_owners.values())
         added_symbols = next_symbols - self._active_symbols
+        await self.redis.hset(self._subscription_state_key, mapping=checkpoint)
         if next_symbols != self._active_symbols:
-            self._active_symbols = next_symbols
-            await self.trade_stream.sync_subscriptions(sorted(self._active_symbols))
+            await self.trade_stream.sync_subscriptions(sorted(next_symbols))
+        self._desired_symbols_by_consumer = candidate_owners
+        self._active_symbols = next_symbols
+        if added_symbols:
             await self._publish_historical_warmup(added_symbols)
         return set(self._active_symbols)
 
@@ -373,12 +384,13 @@ class MarketDataGatewayService:
             for stream, entries in messages:
                 for message_id, fields in entries:
                     try:
-                        self._subscription_offsets[stream] = message_id
                         data = fields.get("data")
                         if not data:
+                            self._subscription_offsets[stream] = message_id
                             continue
                         event = MarketDataSubscriptionEvent.model_validate(json.loads(data))
-                        symbols = await self.apply_subscription_event(event)
+                        symbols = await self.apply_subscription_event(event, message_id=message_id)
+                        self._subscription_offsets[stream] = message_id
                         self.logger.info(
                             "market-data subscriptions updated by %s -> %s symbols",
                             event.payload.consumer_name,
@@ -392,36 +404,70 @@ class MarketDataGatewayService:
     async def _restore_subscription_state(self) -> None:
         stream = stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions")
         try:
-            entries = await self.redis.xrevrange(stream, count=1)
+            latest = await self.redis.xrevrange(stream, count=1)
+            saved = await self.redis.hgetall(self._subscription_state_key)
         except asyncio.CancelledError:
             raise
         except Exception:
-            self.logger.exception("failed to restore latest market-data subscription state")
-            return
+            self.logger.exception("failed to read market-data subscription state")
+            raise
 
-        if not entries:
-            return
-
-        message_id, fields = entries[0]
-        self._subscription_offsets[stream] = message_id
-        data = fields.get("data")
-        if not data:
-            return
-
-        event = MarketDataSubscriptionEvent.model_validate(json.loads(data))
-        symbols = {symbol.upper() for symbol in event.payload.symbols if symbol}
-        current = self._desired_symbols_by_consumer.get(event.payload.consumer_name, set())
-        if event.payload.mode == "replace":
-            updated = symbols
-        elif event.payload.mode == "add":
-            updated = current | symbols
-        else:
-            updated = current - symbols
-
-        self._desired_symbols_by_consumer[event.payload.consumer_name] = updated
+        migrated = saved.get("_migration_complete") == "1"
+        checkpoint = saved.get("_last_applied_id")
+        if migrated:
+            if latest and checkpoint is None:
+                raise RuntimeError("subscription owner state has no stream checkpoint")
+            for consumer, encoded in saved.items():
+                if consumer in {"_migration_complete", "_last_applied_id"}:
+                    continue
+                symbols = json.loads(encoded)
+                if not isinstance(symbols, list) or not all(isinstance(item, str) for item in symbols):
+                    raise RuntimeError(f"invalid subscription state for {consumer}")
+                self._desired_symbols_by_consumer[consumer] = {
+                    symbol.upper() for symbol in symbols if symbol
+                }
+        # Replay updates newer than the durable checkpoint. On first upgrade,
+        # replay all retained events rather than only the last consumer's event.
+        entries = await self.redis.xrange(stream, min=f"({checkpoint}" if checkpoint else "-")
+        for message_id, fields in entries:
+            data = fields.get("data")
+            if not data:
+                continue
+            event = MarketDataSubscriptionEvent.model_validate(json.loads(data))
+            consumer = event.payload.consumer_name
+            symbols = {symbol.upper() for symbol in event.payload.symbols if symbol}
+            current = self._desired_symbols_by_consumer.get(consumer, set())
+            if event.payload.mode == "replace":
+                updated = symbols
+            elif event.payload.mode == "add":
+                updated = current | symbols
+            else:
+                updated = current - symbols
+            self._desired_symbols_by_consumer[consumer] = updated
+        if entries or not migrated:
+            state = {
+                consumer: json.dumps(sorted(symbols))
+                for consumer, symbols in self._desired_symbols_by_consumer.items()
+                if consumer != "static"
+            }
+            state["_migration_complete"] = "1"
+            if entries:
+                checkpoint = entries[-1][0]
+            checkpoint = checkpoint or "0-0"
+            state["_last_applied_id"] = checkpoint
+            await self.redis.hset(self._subscription_state_key, mapping=state)
+        if checkpoint:
+            self._subscription_offsets[stream] = checkpoint
+        if not migrated:
+            self.logger.warning(
+                "bootstrapped market-data subscription owners from %s retained events; "
+                "verify every expected consumer before gateway deployment",
+                len(entries),
+            )
         self._active_symbols = set().union(*self._desired_symbols_by_consumer.values())
         self.logger.info(
-            "restored market-data subscriptions from stream -> %s symbols",
+            "restored market-data subscriptions from %s consumers -> %s symbols",
+            len(self._desired_symbols_by_consumer),
             len(self._active_symbols),
         )
 

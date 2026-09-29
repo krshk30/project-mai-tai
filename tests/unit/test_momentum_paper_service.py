@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import ast
-import asyncio
 import json
-import sys
-from types import SimpleNamespace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -227,23 +224,13 @@ def test_real_extended_hours_condition_shapes_fail_closed_except_form_t(
     assert trade.exclusion_reason == reason
 
 
-def test_service_disables_library_reconnects_so_feed_gaps_are_visible(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+def test_service_never_constructs_a_second_massive_websocket() -> None:
+    source = (
+        Path(__file__).parents[2] / "src/project_mai_tai/services/momentum_paper_app.py"
+    ).read_text()
 
-    class FakeWebSocketClient:
-        def __init__(self, **kwargs) -> None:
-            captured.update(kwargs)
-
-    monkeypatch.setitem(
-        sys.modules,
-        "massive",
-        SimpleNamespace(WebSocketClient=FakeWebSocketClient),
-    )
-    service = MomentumPaperService(Settings(massive_api_key="fixture-key"))
-
-    service._build_websocket_client()
-
-    assert captured["max_reconnects"] == 0
+    assert "WebSocketClient" not in source
+    assert 'subscribe("T.*")' not in source
 
 
 def test_append_only_store_dedupes_and_names_incomplete_paths() -> None:
@@ -295,7 +282,6 @@ async def test_disabled_service_opens_no_feed_or_database() -> None:
     service = MomentumPaperService(
         Settings(momentum_paper_enabled=False),
         rest_client_factory=forbidden,
-        websocket_client_factory=forbidden,
     )
 
     await service.run()
@@ -325,93 +311,19 @@ async def test_after_close_start_does_not_create_an_empty_paper_session() -> Non
     assert touched is False
 
 
-@pytest.mark.asyncio
-async def test_clean_unexpected_stream_end_opens_a_fail_closed_gap() -> None:
-    class EndingWebsocket:
-        closed = False
-
-        async def connect(self, _handler) -> None:
-            return
-
-        async def close(self) -> None:
-            self.closed = True
-
+def test_gateway_disconnect_opens_a_fail_closed_gap() -> None:
     now = datetime(2026, 9, 16, 8, 12, tzinfo=UTC)
-    websocket = EndingWebsocket()
-    service = MomentumPaperService(
-        Settings(momentum_paper_enabled=True),
-        clock=lambda: now,
-    )
-    service._websocket = websocket
+    service = MomentumPaperService(Settings(momentum_paper_enabled=True), clock=lambda: now)
     service._connected = True
 
-    await service._connect(websocket)
+    service._mark_gateway_disconnected()
 
     assert service._connected is False
     assert service._feed_gap_started_ms == int(now.timestamp() * 1000)
-    assert websocket.closed is True
 
 
 @pytest.mark.asyncio
-async def test_five_consecutive_policy_closes_cool_off_for_fifteen_minutes_then_probe(
-    caplog,
-) -> None:
-    class PolicyCloseWebsocket:
-        async def connect(self, _handler) -> None:
-            raise RuntimeError("received 1008 (policy violation)")
-
-        async def close(self) -> None:
-            return None
-
-    class ProbeWebsocket:
-        def __init__(self) -> None:
-            self.release = asyncio.Event()
-            self.subscriptions: list[str] = []
-
-        def subscribe(self, *subscriptions: str) -> None:
-            self.subscriptions.extend(subscriptions)
-
-        async def connect(self, _handler) -> None:
-            await self.release.wait()
-
-        async def close(self) -> None:
-            self.release.set()
-
-    now = [datetime(2026, 9, 18, 10, 40, tzinfo=UTC)]
-    probes: list[ProbeWebsocket] = []
-
-    def factory() -> ProbeWebsocket:
-        probe = ProbeWebsocket()
-        probes.append(probe)
-        return probe
-
-    service = MomentumPaperService(
-        Settings(momentum_paper_enabled=True),
-        websocket_client_factory=factory,
-        clock=lambda: now[0],
-    )
-    caplog.set_level("INFO")
-    for _ in range(5):
-        websocket = PolicyCloseWebsocket()
-        service._websocket = websocket
-        await service._connect(websocket)
-
-    assert service._policy_violation_streak == 5
-    assert service._policy_cooloff_until == now[0] + timedelta(minutes=15)
-    assert sum("decision=cooloff" in message for message in caplog.messages) == 1
-
-    await service._start_stream()
-    assert probes == []
-
-    now[0] += timedelta(minutes=15)
-    await service._start_stream()
-    assert len(probes) == 1
-    assert probes[0].subscriptions == ["T.*"]
-    await service._stop_stream()
-
-
-@pytest.mark.asyncio
-async def test_policy_cooloff_heartbeat_is_degraded_with_the_explicit_reason() -> None:
+async def test_gateway_disconnected_heartbeat_has_the_explicit_reason() -> None:
     class RecordingRedis:
         def __init__(self) -> None:
             self.rows: list[tuple[str, dict[str, str]]] = []
@@ -433,62 +345,13 @@ async def test_policy_cooloff_heartbeat_is_degraded_with_the_explicit_reason() -
         coverage_started_ms=_et_ms("04:00:00"),
     )
     service._connected = False
-    for _ in range(5):
-        service._record_policy_violation()
-
     await service._publish_state()
 
     heartbeat = json.loads(redis.rows[0][1]["data"])["payload"]
     assert heartbeat["status"] == "degraded"
-    assert heartbeat["details"]["feed_reason"] == "feed_policy_violation"
-    assert heartbeat["details"]["consecutive_policy_violations"] == "5"
-    assert heartbeat["details"]["policy_cooloff_until"] == (
-        now + timedelta(minutes=15)
-    ).isoformat()
-
-
-def test_policy_state_clears_only_after_a_stable_minute() -> None:
-    connected_at = datetime(2026, 9, 18, 10, 40, tzinfo=UTC)
-    service = MomentumPaperService(Settings(momentum_paper_enabled=True))
-    service._connected = True
-    service._connected_since = connected_at
-    service._policy_violation_streak = 5
-
-    service._clear_policy_violation_after_stable_connection(
-        connected_at + timedelta(seconds=59)
-    )
-    assert service._policy_violation_streak == 5
-
-    service._clear_policy_violation_after_stable_connection(
-        connected_at + timedelta(seconds=60)
-    )
-    assert service._policy_violation_streak == 0
-    assert service._policy_cooloff_until is None
-
-
-def test_new_process_announces_stable_connection_to_clear_an_old_health_latch(
-    caplog,
-) -> None:
-    connected_at = datetime(2026, 9, 18, 10, 40, tzinfo=UTC)
-    service = MomentumPaperService(Settings(momentum_paper_enabled=True))
-    service._connected = True
-    service._connected_since = connected_at
-    caplog.set_level("INFO")
-
-    service._clear_policy_violation_after_stable_connection(
-        connected_at + timedelta(seconds=60)
-    )
-    service._clear_policy_violation_after_stable_connection(
-        connected_at + timedelta(seconds=120)
-    )
-
-    recovered = [
-        message
-        for message in caplog.messages
-        if "decision=recovered reason=stable_connection" in message
-    ]
-    assert len(recovered) == 1
-    assert "prior_consecutive_1008=0" in recovered[0]
+    assert heartbeat["details"]["feed_reason"] == "gateway_disconnected"
+    assert heartbeat["details"]["subscription_mode"] == "snapshot_candidates"
+    assert heartbeat["details"]["subscription_cap"] == "16"
 
 
 @pytest.mark.asyncio
@@ -623,17 +486,14 @@ async def test_path_rows_batch_but_a_state_transition_forces_them_durable() -> N
     ]
 
 
-def test_0930_tail_unsubscribes_global_and_keeps_only_active_symbols() -> None:
-    class FakeWebsocket:
+@pytest.mark.asyncio
+async def test_0930_keeps_only_active_paths_in_bounded_gateway_subscription() -> None:
+    class RecordingRedis:
         def __init__(self) -> None:
-            self.subscribed: list[str] = []
-            self.unsubscribed: list[str] = []
+            self.rows: list[dict[str, object]] = []
 
-        def subscribe(self, *channels: str) -> None:
-            self.subscribed.extend(channels)
-
-        def unsubscribe(self, *channels: str) -> None:
-            self.unsubscribed.extend(channels)
+        async def xadd(self, _stream: str, fields: dict[str, str], **_kwargs) -> None:
+            self.rows.append(json.loads(fields["data"]))
 
     engine = MomentumPaperEngine(
         prior_closes={"ABCD": Decimal("1")},
@@ -642,15 +502,16 @@ def test_0930_tail_unsubscribes_global_and_keeps_only_active_symbols() -> None:
     )
     engine.ingest(TradePrint("ABCD", _et_ms("04:11:00"), Decimal("1"), 1))
     engine.ingest(TradePrint("ABCD", _et_ms("04:11:25"), Decimal("1.30"), 1))
-    websocket = FakeWebsocket()
-    service = MomentumPaperService(Settings(momentum_paper_enabled=True))
+    redis = RecordingRedis()
+    service = MomentumPaperService(
+        Settings(momentum_paper_enabled=True), redis_client=redis,  # type: ignore[arg-type]
+    )
     service._engine = engine
-    service._websocket = websocket
+    await service._sync_gateway_subscriptions()
 
-    service._enter_tail_mode()
-
-    assert websocket.unsubscribed == ["T.*"]
-    assert websocket.subscribed == ["T.ABCD"]
+    assert redis.rows[0]["payload"]["consumer_name"] == "momentum-paper"
+    assert redis.rows[0]["payload"]["mode"] == "replace"
+    assert redis.rows[0]["payload"]["symbols"] == ["ABCD"]
 
 
 def test_previous_trading_day_skips_weekend_and_shared_holiday_calendar() -> None:
@@ -734,7 +595,7 @@ def test_service_import_graph_has_no_live_order_or_broker_route() -> None:
     assert not any("trade_intent" in value for value in imports)
 
 
-def test_install_requires_entitlement_proof_before_enabling_the_new_unit() -> None:
+def test_install_requires_gateway_health_proof_before_enabling_the_new_unit() -> None:
     script = (Path(__file__).parents[2] / "ops/systemd/install_momentum_paper.sh").read_text()
 
     runtime = script.index('pip" install -e')
@@ -753,3 +614,5 @@ def test_entitlement_proof_requires_continued_gateway_health_not_only_same_pid()
     assert 'before_overview="$(gateway_overview)"' in script
     assert 'before_overview" == "$after_overview' in script
     assert "Massive websocket error|policy violation|reconnecting" in script
+    assert "--entitlement-check" not in script
+    assert "systemd-run" not in script

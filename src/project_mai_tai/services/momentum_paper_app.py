@@ -20,10 +20,15 @@ from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
     IsolatedBotStateEvent,
+    MarketDataSubscriptionEvent,
+    MarketDataSubscriptionPayload,
+    SnapshotBatchEvent,
     StrategyBotStatePayload,
+    TradeTickEvent,
     stream_name,
 )
 from project_mai_tai.log import configure_logging
+from project_mai_tai.market_data.tick_time import normalize_ts_ns
 from project_mai_tai.momentum_paper.conditions import (
     ConditionSnapshot,
     build_condition_snapshot,
@@ -54,11 +59,11 @@ _STREAM_AT = time(4, 0)
 _TAIL_AT = time(9, 30)
 _CLOSE_AT = time(9, 40, 1)
 _HEARTBEAT_SECONDS = 15
+_MAX_SUBSCRIBED_SYMBOLS = 16
+_SUBSCRIPTION_DEBOUNCE_SECONDS = 1
+_SNAPSHOT_STALE_SECONDS = 15
 _PATH_FLUSH_SECONDS = 0.25
 _PATH_FLUSH_ROWS = 500
-_POLICY_VIOLATION_LIMIT = 5
-_POLICY_VIOLATION_COOLOFF = timedelta(minutes=15)
-_POLICY_RECOVERY_STABLE_FOR = timedelta(seconds=60)
 
 
 def detector_health_status(detections: int) -> str:
@@ -148,7 +153,6 @@ class MomentumPaperService:
         session_factory: sessionmaker[Session] | None = None,
         store: MomentumPaperStore | None = None,
         rest_client_factory: Callable[[], object] | None = None,
-        websocket_client_factory: Callable[[], object] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
@@ -156,19 +160,17 @@ class MomentumPaperService:
         self.session_factory = session_factory
         self.store = store
         self._rest_client_factory = rest_client_factory or self._build_rest_client
-        self._websocket_client_factory = websocket_client_factory or self._build_websocket_client
         self._clock = clock or (lambda: datetime.now(UTC))
         self._session_date: date | None = None
         self._condition_snapshot: ConditionSnapshot | None = None
         self._engine: MomentumPaperEngine | None = None
-        self._websocket: object | None = None
-        self._websocket_task: asyncio.Task[None] | None = None
+        self._gateway_task: asyncio.Task[None] | None = None
+        self._subscribed_symbols: set[str] = set()
+        self._last_subscription_sync: datetime | None = None
+        self._last_snapshot_at: datetime | None = None
         self._connected = False
-        self._connected_since: datetime | None = None
-        self._stable_connection_reported = False
-        self._policy_violation_streak = 0
-        self._policy_cooloff_until: datetime | None = None
-        self._tail_mode = False
+        self._condition_feed_verified = False
+        self._subscription_cap_skips = 0
         self._last_heartbeat: datetime | None = None
         self._completed_from_store: list[dict[str, object]] = []
         self._historical_completed: list[dict[str, object]] = []
@@ -196,24 +198,22 @@ class MomentumPaperService:
                 await self._tick()
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
-            await self._stop_stream()
+            await self._stop_gateway()
             if self._engine is not None:
                 await self._persist(self._engine.close_session(self._now_ms()))
             raise
 
     async def _tick(self) -> None:
         now = self._clock()
-        self._clear_policy_violation_after_stable_connection(now)
         et = now.astimezone(_ET)
         if et.weekday() >= 5 or et.date() in US_MARKET_HOLIDAYS:
-            await self._stop_stream()
+            await self._stop_gateway()
             return
         if self._session_date != et.date():
-            await self._stop_stream()
+            await self._stop_gateway()
             self._session_date = et.date()
             self._condition_snapshot = None
             self._engine = None
-            self._tail_mode = False
             self._completed_from_store = []
             self._historical_completed = []
             self._complete_sessions = 0
@@ -224,13 +224,18 @@ class MomentumPaperService:
             return
         await self._persist(self._engine.advance_clock(self._now_ms()))
         await self._flush_path_buffer_if_due()
-        if _STREAM_AT <= et.time() < _CLOSE_AT and self._websocket_task is None:
-            await self._start_stream()
-        if et.time() >= _TAIL_AT and not self._tail_mode and self._websocket is not None:
-            self._enter_tail_mode()
+        if (
+            self._last_snapshot_at is not None
+            and (now - self._last_snapshot_at).total_seconds() > _SNAPSHOT_STALE_SECONDS
+        ):
+            self._mark_gateway_disconnected()
+        if _STREAM_AT <= et.time() < _CLOSE_AT and self._gateway_task is None:
+            await self._start_gateway()
+        if self._gateway_task is not None:
+            await self._sync_gateway_subscriptions()
         if et.time() >= _CLOSE_AT and not self._session_closed:
             await self._persist(self._engine.close_session(self._now_ms()))
-            await self._stop_stream()
+            await self._stop_gateway()
             closed = session_closed_record(
                 session_date=et.date(),
                 observed_at=now,
@@ -343,106 +348,149 @@ class MomentumPaperService:
             )
         return snapshot, closes
 
-    async def _start_stream(self) -> None:
-        if self._websocket is not None or self._websocket_task is not None:
-            await self._stop_stream()
-        now = self._clock()
-        if self._policy_cooloff_until is not None:
-            if now < self._policy_cooloff_until:
-                return
-            logger.warning(
-                "[MOMENTUM-PAPER-FEED-POLICY] decision=probe reason=feed_policy_violation "
-                "consecutive_1008=%d cooloff_ended_at=%s",
-                self._policy_violation_streak,
-                self._policy_cooloff_until.isoformat(),
-            )
-            self._policy_cooloff_until = None
-        websocket = self._websocket_client_factory()
-        self._websocket = websocket
-        websocket.subscribe("T.*")
-        self._tail_mode = False
-        self._websocket_task = asyncio.create_task(self._connect(websocket))
-        logger.info("[MOMENTUM-PAPER-FEED] subscribed=T.* mode=global")
+    async def _start_gateway(self) -> None:
+        await self._sync_gateway_subscriptions(force=True)
+        self._gateway_task = asyncio.create_task(self._gateway_loop())
+        logger.info("[MOMENTUM-PAPER-FEED] source=gateway snapshots+bounded_trades cap=%d",
+                    _MAX_SUBSCRIBED_SYMBOLS)
 
-    async def _connect(self, websocket: object) -> None:
+    async def _gateway_loop(self) -> None:
+        offsets = {
+            stream_name(self.settings.redis_stream_prefix, "snapshot-batches"): "$",
+            stream_name(self.settings.redis_stream_prefix, "market-data"): "$",
+        }
         try:
-            await websocket.connect(self._handle_messages)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            if self._is_policy_violation(exc):
-                self._record_policy_violation()
-            else:
-                self._clear_policy_violation(reason="non_policy_disconnect")
-                logger.exception("[MOMENTUM-PAPER-FEED] disconnected; current paths fail closed")
-        else:
-            self._clear_policy_violation(reason="clean_stream_end")
+            while True:
+                try:
+                    messages = await self.redis.xread(offsets, block=1000, count=500)
+                    for stream, entries in messages:
+                        for message_id, fields in entries:
+                            offsets[stream] = message_id
+                            data = fields.get("data")
+                            if data:
+                                await self._handle_gateway_event(data)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self._mark_gateway_disconnected()
+                    logger.exception("[MOMENTUM-PAPER-FEED] gateway read failed; paths fail closed")
+                    await asyncio.sleep(1)
         finally:
-            unexpected_disconnect = self._websocket is websocket
-            self._connected = False
-            self._connected_since = None
-            if unexpected_disconnect and self._feed_gap_started_ms is None:
-                self._feed_gap_started_ms = self._now_ms()
-                logger.warning("[MOMENTUM-PAPER-FEED] stream ended; current paths fail closed")
-            close = getattr(websocket, "close", None)
-            if close is not None:
-                result = close()
-                if asyncio.iscoroutine(result):
-                    await result
-            if self._websocket is websocket:
-                self._websocket = None
-            if self._websocket_task is asyncio.current_task():
-                self._websocket_task = None
+            self._mark_gateway_disconnected()
+            if self._gateway_task is asyncio.current_task():
+                self._gateway_task = None
 
-    async def _handle_messages(self, messages: Iterable[object] | str | bytes) -> None:
-        if not self._connected:
-            self._connected_since = self._clock()
-            self._stable_connection_reported = False
-        self._connected = True
-        if self._feed_gap_started_ms is not None and self._engine is not None:
-            await self._persist(
-                self._engine.mark_feed_gap(self._feed_gap_started_ms, self._now_ms())
-            )
-            self._feed_gap_started_ms = None
+    async def _handle_gateway_event(self, data: str | bytes) -> None:
         if self._engine is None or self._condition_snapshot is None:
             return
-        for row in decode_raw_messages(messages):
-            trade = normalize_raw_trade(row, conditions=self._condition_snapshot)
-            if trade is None:
-                continue
-            await self._persist(self._engine.ingest(trade))
+        envelope = json.loads(data)
+        if envelope.get("source_service") != "market-data-gateway":
+            return
+        event_type = envelope.get("event_type")
+        if event_type == "snapshot_batch":
+            event = SnapshotBatchEvent.model_validate(envelope)
+            completed_at = event.payload.completed_at
+            if not 0 <= (self._clock() - completed_at).total_seconds() <= _SNAPSHOT_STALE_SECONDS:
+                self._mark_gateway_disconnected()
+                return
+            self._last_snapshot_at = self._clock()
+            self._connected = True
+            if self._feed_gap_started_ms is not None:
+                await self._persist(
+                    self._engine.mark_feed_gap(self._feed_gap_started_ms, self._now_ms())
+                )
+                self._feed_gap_started_ms = None
+            records, capped = self._engine.detect_from_snapshots(
+                event.payload.snapshots, completed_at=completed_at,
+                max_symbols=_MAX_SUBSCRIBED_SYMBOLS,
+            )
+            self._subscription_cap_skips += capped
+            await self._persist(records)
+            if records:
+                await self._sync_gateway_subscriptions()
+        elif event_type == "trade_tick":
+            raw_payload = envelope.get("payload") or {}
+            if str(raw_payload.get("symbol", "")).upper() not in self._subscribed_symbols:
+                return
+            event = TradeTickEvent.model_validate(envelope)
+            payload = event.payload
+            stamp_ns = normalize_ts_ns(payload.timestamp_ns)
+            if stamp_ns is None or not payload.conditions_present:
+                self._condition_feed_verified = False
+                self._mark_gateway_disconnected()
+                logger.warning(
+                    "[MOMENTUM-PAPER-FEED] trade refused reason=missing_timestamp_or_conditions "
+                    "symbol=%s",
+                    payload.symbol,
+                )
+                return
+            try:
+                codes = tuple(int(code) for code in payload.conditions)
+            except (TypeError, ValueError):
+                self._condition_feed_verified = False
+                self._mark_gateway_disconnected()
+                return
+            self._condition_feed_verified = True
+            eligible, reason = self._condition_snapshot.classify(codes)
+            trade = TradePrint(
+                symbol=payload.symbol.upper(), sip_ts_ms=stamp_ns // 1_000_000,
+                price=payload.price, size=payload.size,
+                conditions=codes, eligible=eligible, exclusion_reason=reason,
+            )
+            await self._persist(self._engine.ingest(trade, allow_detection=False))
 
-    def _enter_tail_mode(self) -> None:
-        assert self._websocket is not None
-        assert self._engine is not None
-        symbols = sorted(
-            {str(row["symbol"]) for row in self._engine.active_events if str(row.get("symbol", ""))}
+    async def _sync_gateway_subscriptions(
+        self, *, force: bool = False, desired_override: set[str] | None = None
+    ) -> None:
+        desired = (
+            desired_override if desired_override is not None
+            else (self._engine.active_symbols if self._engine is not None else set())
         )
-        self._websocket.unsubscribe("T.*")
-        if symbols:
-            self._websocket.subscribe(*[f"T.{symbol}" for symbol in symbols])
-        self._tail_mode = True
-        logger.info(
-            "[MOMENTUM-PAPER-FEED] mode=symbol_tail symbols=%s",
-            ",".join(symbols) or "none",
+        if len(desired) > _MAX_SUBSCRIBED_SYMBOLS:
+            raise RuntimeError("Momentum subscription cap breached")
+        if not force and desired == self._subscribed_symbols:
+            return
+        now = self._clock()
+        if (
+            not force and desired.issubset(self._subscribed_symbols)
+            and self._last_subscription_sync is not None
+            and (now - self._last_subscription_sync).total_seconds() < _SUBSCRIPTION_DEBOUNCE_SECONDS
+        ):
+            return
+        event = MarketDataSubscriptionEvent(
+            source_service=SERVICE_NAME,
+            payload=MarketDataSubscriptionPayload(
+                consumer_name=SERVICE_NAME, mode="replace", symbols=sorted(desired),
+            ),
         )
+        await self.redis.xadd(
+            stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
+            {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
+            approximate=True,
+        )
+        self._subscribed_symbols = set(desired)
+        self._last_subscription_sync = now
 
-    async def _stop_stream(self) -> None:
-        websocket = self._websocket
-        task = self._websocket_task
-        self._websocket = None
-        self._websocket_task = None
+    def _mark_gateway_disconnected(self) -> None:
         self._connected = False
-        if websocket is not None:
-            result = websocket.close()
-            if asyncio.iscoroutine(result):
-                await result
+        if self._feed_gap_started_ms is None:
+            self._feed_gap_started_ms = self._now_ms()
+
+    async def _stop_gateway(self) -> None:
+        task = self._gateway_task
+        self._gateway_task = None
         if task is not None and not task.done():
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+        self._connected = False
+        self._last_snapshot_at = None
+        self._condition_feed_verified = False
+        if self._subscribed_symbols:
+            await self._sync_gateway_subscriptions(force=True, desired_override=set())
         await self._flush_path_buffer(force=True)
 
     async def _persist(self, records: Iterable[MomentumTapeRecord]) -> None:
@@ -485,37 +533,26 @@ class MomentumPaperService:
             + self._completed_from_store
             + list(self._engine.completed_events)
         )
-        feed_policy_violation = (
-            self._policy_violation_streak > 0 or self._policy_cooloff_until is not None
-        )
         heartbeat = HeartbeatEvent(
             source_service=SERVICE_NAME,
             payload=HeartbeatPayload(
                 service_name=SERVICE_NAME,
                 instance_name=SERVICE_NAME,
-                status=(
-                    "healthy"
-                    if self._connected and not feed_policy_violation
-                    else "degraded"
-                ),
+                status="healthy" if self._connected and self._condition_feed_verified else "degraded",
                 details={
                     "execution_mode": "paper",
                     "broker_route": "none",
                     "streamer_connected": str(self._connected).lower(),
+                    "gateway_connected": str(self._connected).lower(),
                     "feed_reason": (
-                        "feed_policy_violation"
-                        if feed_policy_violation
-                        else ("" if self._connected else "feed_disconnected")
+                        "gateway_disconnected" if not self._connected else
+                        ("" if self._condition_feed_verified else "trade_conditions_unverified")
                     ),
-                    "consecutive_policy_violations": str(
-                        self._policy_violation_streak
-                    ),
-                    "policy_cooloff_until": (
-                        self._policy_cooloff_until.isoformat()
-                        if self._policy_cooloff_until is not None
-                        else ""
-                    ),
-                    "subscription_mode": "symbol_tail" if self._tail_mode else "T.*",
+                    "trade_conditions_verified": str(self._condition_feed_verified).lower(),
+                    "subscription_mode": "snapshot_candidates",
+                    "subscribed_symbols": str(len(self._subscribed_symbols)),
+                    "subscription_cap": str(_MAX_SUBSCRIBED_SYMBOLS),
+                    "subscription_cap_skips": str(self._subscription_cap_skips),
                     "active_paths": str(len(self._engine.active_events)),
                     "excluded_prints": str(self._engine.session_excluded_prints),
                 },
@@ -538,67 +575,6 @@ class MomentumPaperService:
                 maxlen=self.settings.redis_strategy_state_isolated_stream_maxlen,
                 approximate=True,
             )
-
-    @staticmethod
-    def _is_policy_violation(exc: Exception) -> bool:
-        received = getattr(exc, "rcvd", None)
-        codes = (
-            getattr(received, "code", None),
-            getattr(exc, "code", None),
-            getattr(exc, "close_code", None),
-        )
-        if any(code == 1008 for code in codes):
-            return True
-        rendered = str(exc).lower()
-        return "1008" in rendered and "policy violation" in rendered
-
-    def _record_policy_violation(self) -> None:
-        self._policy_violation_streak += 1
-        if self._policy_violation_streak < _POLICY_VIOLATION_LIMIT:
-            logger.warning(
-                "[MOMENTUM-PAPER-FEED-POLICY] decision=retry "
-                "reason=feed_policy_violation consecutive_1008=%d/%d",
-                self._policy_violation_streak,
-                _POLICY_VIOLATION_LIMIT,
-            )
-            return
-        self._policy_cooloff_until = self._clock() + _POLICY_VIOLATION_COOLOFF
-        logger.error(
-            "[MOMENTUM-PAPER-FEED-POLICY] decision=cooloff "
-            "reason=feed_policy_violation consecutive_1008=%d "
-            "cooloff_until=%s - polarity: Momentum remains up with session state intact; "
-            "one probe is allowed after the cool-off",
-            self._policy_violation_streak,
-            self._policy_cooloff_until.isoformat(),
-        )
-
-    def _clear_policy_violation_after_stable_connection(self, now: datetime) -> None:
-        if (
-            not self._connected
-            or self._connected_since is None
-            or self._stable_connection_reported
-            or now - self._connected_since < _POLICY_RECOVERY_STABLE_FOR
-        ):
-            return
-        self._stable_connection_reported = True
-        self._clear_policy_violation(reason="stable_connection")
-
-    def _clear_policy_violation(self, *, reason: str) -> None:
-        prior = self._policy_violation_streak
-        if (
-            prior == 0
-            and self._policy_cooloff_until is None
-            and reason != "stable_connection"
-        ):
-            return
-        self._policy_violation_streak = 0
-        self._policy_cooloff_until = None
-        logger.info(
-            "[MOMENTUM-PAPER-FEED-POLICY] decision=recovered "
-            "reason=%s prior_consecutive_1008=%d",
-            reason,
-            prior,
-        )
 
     def _build_bot_state(
         self, strategy_code: str, completed: list[dict[str, object]]
@@ -641,7 +617,7 @@ class MomentumPaperService:
                 for row in recent
             },
             data_health={
-                "status": "healthy" if self._connected else "waiting",
+                "status": "healthy" if self._connected and self._condition_feed_verified else "waiting",
                 "execution_mode": "paper",
                 "broker_route": "none",
                 "streamer_connected": str(self._connected).lower(),
@@ -754,69 +730,14 @@ class MomentumPaperService:
 
         return RESTClient(api_key=self.settings.massive_api_key)
 
-    def _build_websocket_client(self) -> object:
-        from massive import WebSocketClient
-
-        return WebSocketClient(
-            api_key=self.settings.massive_api_key,
-            raw=True,
-            subscriptions=[],
-            max_reconnects=0,
-        )
-
     def _now_ms(self) -> int:
         return int(self._clock().timestamp() * 1000)
 
 
-async def prove_entitlement(settings: Settings, *, timeout_seconds: int) -> None:
-    from massive import WebSocketClient
-
-    seen = asyncio.Event()
-    evidence: list[str] = []
-    client = WebSocketClient(
-        api_key=settings.massive_api_key,
-        raw=True,
-        subscriptions=[],
-        max_reconnects=0,
-    )
-    client.subscribe("T.*")
-
-    async def handler(messages: Iterable[object] | str | bytes) -> None:
-        for row in decode_raw_messages(messages):
-            rendered = json.dumps(row, default=str, sort_keys=True)
-            if str(_raw_value(row, "ev", "event_type") or "") == "T" or (
-                "subscribed" in rendered.lower() and "t.*" in rendered.lower()
-            ):
-                evidence.append(rendered[:500])
-                seen.set()
-
-    task = asyncio.create_task(client.connect(handler))
-    try:
-        await asyncio.wait_for(seen.wait(), timeout=timeout_seconds)
-    finally:
-        result = client.close()
-        if asyncio.iscoroutine(result):
-            await result
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    print(f"[MOMENTUM-ENTITLEMENT] PASS evidence={evidence[0]}")
-
-
 async def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--entitlement-check", action="store_true")
-    parser.add_argument("--timeout-seconds", type=int, default=15)
-    args = parser.parse_args(argv)
-    settings = get_settings()
-    if args.entitlement_check:
-        if not settings.massive_api_key:
-            raise RuntimeError("MAI_TAI_MASSIVE_API_KEY is required")
-        await prove_entitlement(settings, timeout_seconds=max(1, args.timeout_seconds))
-        return
-    await MomentumPaperService(settings).run()
+    parser.parse_args(argv)
+    await MomentumPaperService(get_settings()).run()
 
 
 def run() -> None:
