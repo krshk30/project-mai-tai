@@ -285,6 +285,8 @@ class SymbolState:
     # resting = the durable first opportunity exists and may be working/repricing before a fill.
     flip_owner_phase: str = "idle"  # idle | resting | awaiting_fill | provisional | bound | consumed | awaiting_close | unknown
     flip_owner_opportunity_id: int = 0
+    flip_owner_retry_segment_id: int = 0
+    flip_owner_retry_closes_at_place: int = 0
     flip_owner_flip_bar_ts: int = 0
     flip_owner_provisional_started_ms: int = 0
     flip_owner_fill_accounts: set[str] = field(default_factory=set)
@@ -295,8 +297,10 @@ class SymbolState:
     flip_owner_open_positions: dict[str, FlipPositionLeg] = field(default_factory=dict)
     flip_owner_first_rest_placed: bool = False
     flip_owner_recovery_warning_at_ms: int = 0
-    retry_one_closes_today: int = 0
+    retry_one_segment_id: int = 0
+    retry_one_closes_in_segment: int = 0
     retry_one_budget_readable: bool = True
+    retry_one_watch_start_ms: int = 0
     fanout_last_retired_opportunity_id: int = 0
     # CW-v2 RESTING flip-entry (INERT unless strategy_schwab_1m_v2_cw_v2_resting_entry_enabled). A
     # resting buy-stop-limit tracks the ATR SHORT trail; NO-OVERLAP replace (cancel one bar, place the
@@ -717,8 +721,8 @@ class SchwabV2Strategy:
                 )
             ),
         )
-        self._retry_one_budget_persist: Callable[[str, int], None] | None = None
-        self._restored_retry_one_budgets: dict[str, int] = {}
+        self._retry_one_budget_persist: Callable[[str, int, int], None] | None = None
+        self._restored_retry_one_budgets: dict[str, tuple[int, int]] = {}
         self._retry_one_budget_restore_readable = not self._retry_one_enabled
         self._restored_flip_owners: dict[str, FlipEntryOwnershipRecord | None] = {}
         self._flip_owner_restore_readable = not self._flip_owned_first_entry_enabled
@@ -883,6 +887,7 @@ class SchwabV2Strategy:
         state = self._symbol_states.get(symbol)
         if state is None:
             state = SymbolState(symbol=symbol)
+            state.retry_one_watch_start_ms = self._now_ms()
             self._symbol_states[symbol] = state
             self._restore_flip_owner(state)
         return state
@@ -924,8 +929,8 @@ class SchwabV2Strategy:
         active_segments: Mapping[str, int] | None = None,
         restored: Mapping[str, FlipEntryOwnershipRecord] | None = None,
         restore_readable: bool = True,
-        retry_budget_persist: Callable[[str, int], None] | None = None,
-        restored_retry_budgets: Mapping[str, int] | None = None,
+        retry_budget_persist: Callable[[str, int, int], None] | None = None,
+        restored_retry_budgets: Mapping[str, tuple[int, int]] | None = None,
         retry_budget_restore_readable: bool = True,
     ) -> None:
         """Install RECLAIM1 state before any emitter or market-data task starts."""
@@ -936,8 +941,8 @@ class SchwabV2Strategy:
         self._flip_owner_restore_readable = bool(restore_readable)
         self._retry_one_budget_persist = retry_budget_persist
         self._restored_retry_one_budgets = {
-            str(symbol).upper(): max(0, int(count))
-            for symbol, count in (restored_retry_budgets or {}).items()
+            str(symbol).upper(): (int(budget[0]), int(budget[1]))
+            for symbol, budget in (restored_retry_budgets or {}).items()
         }
         self._retry_one_budget_restore_readable = bool(
             retry_budget_restore_readable
@@ -979,6 +984,8 @@ class SchwabV2Strategy:
             fill_accounts=tuple(sorted(state.flip_owner_fill_accounts)),
             position_ids=dict(state.flip_owner_position_ids),
             position_entry_ms=dict(state.flip_owner_position_entry_ms),
+            retry_segment_id=int(state.flip_owner_retry_segment_id),
+            retry_closes_at_place=int(state.flip_owner_retry_closes_at_place),
         )
 
     def _persist_flip_owner(self, state: SymbolState, *, active: bool, reason: str) -> bool:
@@ -1010,9 +1017,11 @@ class SchwabV2Strategy:
             state.retry_one_budget_readable = bool(
                 self._retry_one_budget_restore_readable
             )
-            state.retry_one_closes_today = int(
-                self._restored_retry_one_budgets.pop(state.symbol.upper(), 0)
+            segment_id, count = self._restored_retry_one_budgets.pop(
+                state.symbol.upper(), (0, 0)
             )
+            state.retry_one_segment_id = segment_id
+            state.retry_one_closes_in_segment = count
         if not self._flip_owned_first_entry_enabled:
             return
         restored = self._restored_flip_owners
@@ -1030,6 +1039,8 @@ class SchwabV2Strategy:
             return
         state.flip_owner_phase = record.phase
         state.flip_owner_opportunity_id = record.opportunity_id
+        state.flip_owner_retry_segment_id = record.retry_segment_id
+        state.flip_owner_retry_closes_at_place = record.retry_closes_at_place
         state.flip_owner_flip_bar_ts = record.flip_bar_ts
         state.flip_owner_provisional_started_ms = record.provisional_started_ms
         state.flip_owner_fill_accounts = set(record.fill_accounts)
@@ -1076,6 +1087,8 @@ class SchwabV2Strategy:
     def _clear_flip_owner_memory(state: SymbolState) -> None:
         state.flip_owner_phase = "idle"
         state.flip_owner_opportunity_id = 0
+        state.flip_owner_retry_segment_id = 0
+        state.flip_owner_retry_closes_at_place = 0
         state.flip_owner_flip_bar_ts = 0
         state.flip_owner_provisional_started_ms = 0
         state.flip_owner_fill_accounts.clear()
@@ -1302,6 +1315,43 @@ class SchwabV2Strategy:
         )
         return normalized or "unknown"
 
+    def _retry_one_start_segment_on_sell(self, state: SymbolState, *, live: bool) -> None:
+        if not self._retry_one_enabled or not live or not state.bars:
+            return
+        segment_id = int(state.bars[-1].timestamp_ms or 0)
+        if (
+            state.retry_one_watch_start_ms <= 0
+            or segment_id <= 0
+            or segment_id < state.retry_one_watch_start_ms
+            or segment_id <= state.retry_one_segment_id
+            or segment_id != int(state.atr_short_flip_bar_ts or 0)
+        ):
+            return
+        if not state.retry_one_budget_readable or self._retry_one_budget_persist is None:
+            logger.warning(
+                "[V2-FLIP-OWNER-RETRY] %s segment_id=%d action=held "
+                "reason=retry_budget_unreadable",
+                state.symbol, segment_id,
+            )
+            return
+        try:
+            self._retry_one_budget_persist(state.symbol.upper(), segment_id, 0)
+        except Exception:  # noqa: BLE001 - a failed reset cannot grant a new attempt
+            state.retry_one_budget_readable = False
+            logger.exception(
+                "[V2-FLIP-OWNER-RETRY] %s segment_id=%d action=held "
+                "reason=retry_budget_persist_failed",
+                state.symbol, segment_id,
+            )
+            return
+        state.retry_one_segment_id = segment_id
+        state.retry_one_closes_in_segment = 0
+        logger.info(
+            "[V2-FLIP-OWNER-RETRY] %s segment_id=%d closes_in_segment=0 "
+            "retries_left=%d action=reset_new_segment reason=fresh_sell_flip",
+            state.symbol, segment_id, self._retry_one_max_retries,
+        )
+
     def _flip_owner_closed_by_any_exit(
         self,
         state: SymbolState,
@@ -1329,37 +1379,80 @@ class SchwabV2Strategy:
         *,
         exit_reason: str,
     ) -> bool:
-        """Consume one daily close and release only while a fresh-cross retry remains."""
+        """Consume the causal SELL cycle's close before releasing its owner."""
 
-        closes_today = int(state.retry_one_closes_today) + 1
+        segment_id = int(state.flip_owner_retry_segment_id)
+        if segment_id <= 0 or not state.retry_one_budget_readable:
+            self._set_flip_owner_unknown(state, reason="retry_segment_unknown")
+            return False
+        closes_in_segment = int(state.flip_owner_retry_closes_at_place) + 1
+        if segment_id != state.retry_one_segment_id:
+            # An old position can close after the next SELL. Its close cannot spend the new
+            # cycle's allowance, and its old opportunity still needs durable retirement.
+            if segment_id < state.retry_one_segment_id:
+                if self._retry_one_budget_persist is None:
+                    self._set_flip_owner_unknown(state, reason="retry_budget_unreadable")
+                    return False
+                try:
+                    self._retry_one_budget_persist(
+                        state.symbol.upper(), segment_id, closes_in_segment
+                    )
+                except Exception:  # noqa: BLE001 - persist before owner release
+                    self._set_flip_owner_unknown(state, reason="retry_budget_persist_failed")
+                    return False
+                released = self._retire_flip_owner_opportunity(
+                    state, reason="old_cycle_position_closed"
+                )
+                logger.info(
+                    "[V2-FLIP-OWNER-RETRY] %s segment_id=%d closes_in_segment=%d "
+                    "action=%s reason=old_cycle_position_closed",
+                    state.symbol, segment_id, closes_in_segment,
+                    "released" if released else "held",
+                )
+                return released
+            self._set_flip_owner_unknown(state, reason="retry_segment_mismatch")
+            return False
+        prior_count = int(state.retry_one_closes_in_segment)
+        if prior_count not in {
+            state.flip_owner_retry_closes_at_place,
+            closes_in_segment,
+        }:
+            self._set_flip_owner_unknown(state, reason="retry_budget_count_mismatch")
+            return False
         max_closes = 1 + self._retry_one_max_retries
-        retries_left = max(0, max_closes - closes_today)
+        retries_left = max(0, max_closes - closes_in_segment)
         action = "held"
         reason = "retry_budget_exhausted"
         persisted = False
-        if state.retry_one_budget_readable and self._retry_one_budget_persist is not None:
+        if prior_count == closes_in_segment:
+            persisted = True
+        elif state.retry_one_budget_readable and self._retry_one_budget_persist is not None:
             try:
                 # Persist before releasing the owner. A crash between these writes can suppress a
                 # retry, but can never mint an extra one after restart.
-                self._retry_one_budget_persist(state.symbol.upper(), closes_today)
+                self._retry_one_budget_persist(
+                    state.symbol.upper(), segment_id, closes_in_segment
+                )
             except Exception:  # noqa: BLE001 - unreadable budget must fail closed
                 logger.exception(
-                    "[V2-FLIP-OWNER-RETRY-BUDGET-PERSIST-FAILED] %s closes_today=%d "
+                    "[V2-FLIP-OWNER-RETRY-BUDGET-PERSIST-FAILED] %s segment_id=%d "
+                    "closes_in_segment=%d "
                     "entry_allowed=0",
                     state.symbol,
-                    closes_today,
+                    segment_id,
+                    closes_in_segment,
                 )
                 state.retry_one_budget_readable = False
                 reason = "retry_budget_persist_failed"
             else:
                 persisted = True
-                state.retry_one_closes_today = closes_today
+                state.retry_one_closes_in_segment = closes_in_segment
         else:
             state.retry_one_budget_readable = False
             reason = "retry_budget_unreadable"
 
         released = False
-        if persisted and closes_today < max_closes:
+        if persisted and closes_in_segment < max_closes:
             released = self._retire_flip_owner_opportunity(
                 state,
                 reason=f"first_try_closed_{self._retry_one_exit_reason(exit_reason)}",
@@ -1372,9 +1465,11 @@ class SchwabV2Strategy:
             state.flip_owner_phase = "consumed"
             self._persist_flip_owner(state, active=True, reason=reason)
         logger.info(
-            "[V2-FLIP-OWNER-RETRY] %s closes_today=%d retries_left=%d action=%s reason=%s",
+            "[V2-FLIP-OWNER-RETRY] %s segment_id=%d closes_in_segment=%d "
+            "retries_left=%d action=%s reason=%s",
             state.symbol,
-            closes_today,
+            segment_id,
+            closes_in_segment,
             retries_left,
             action,
             (
@@ -1844,7 +1939,13 @@ class SchwabV2Strategy:
             allowed, reason = False, "restore_unreadable"
         elif self._retry_one_enabled and not state.retry_one_budget_readable:
             allowed, reason = False, "retry_budget_unreadable"
-        elif self._retry_one_enabled and state.retry_one_closes_today >= (
+        elif self._retry_one_enabled and state.retry_one_segment_id <= 0:
+            allowed, reason = False, "retry_segment_unknown"
+        elif self._retry_one_enabled and (
+            int(state.atr_short_flip_bar_ts or 0) != state.retry_one_segment_id
+        ):
+            allowed, reason = False, "retry_segment_mismatch"
+        elif self._retry_one_enabled and state.retry_one_closes_in_segment >= (
             1 + self._retry_one_max_retries
         ):
             allowed, reason = False, "retry_budget_exhausted"
@@ -3514,7 +3615,9 @@ class SchwabV2Strategy:
         state.cw_v2_emit_claimed = False
         state.cw_v2_emit_ms = 0
         if self._retry_one_enabled and owner_boundary_is_current:
-            state.retry_one_closes_today = 0
+            # The next live SELL, not the 04:00 roll, owns the budget reset.
+            state.retry_one_segment_id = 0
+            state.retry_one_closes_in_segment = 0
         restored_anchor = int(getattr(self, "_restored_fanout_session_anchor_ms", 0) or 0)
         if self._flip_owned_first_entry_enabled:
             # Historical warmup anchors cannot retire current durable ownership. At a real 04:00
@@ -4227,6 +4330,13 @@ class SchwabV2Strategy:
             live_fanout_transition = self._fanout_identity_bar_is_live(state)
             if self._flip_owned_first_entry_enabled:
                 self._end_flip_owner_on_sell(state)
+                self._retry_one_start_segment_on_sell(
+                    state,
+                    live=(
+                        live_fanout_transition
+                        and atr_signal.get("observation_phase", "live") == "live"
+                    ),
+                )
             else:
                 self._release_fanout_webull_claim(state, reason="flip")
                 self._clear_fanout_segment_id(
@@ -4273,20 +4383,23 @@ class SchwabV2Strategy:
             "[V2-CW-STATE-PROBE] sym=%s armed=%s bars_waited=%d trig=%.4f seg_high=%.4f "
             "flip_level=%.4f entries_this_flip=%d max_per_flip=%d emit_claimed=%s "
             "bars_since_exit=%d reclaim_gap=%d entries_held=%s pos_qty=%s atr_state=%s "
-            "atr_state_age=%d atr_trail=%s bars=%d cw_arm_bar_ts=%d "
+            "atr_state_age=%d atr_trail=%s atr_short_flip_bar_ts=%d "
+            "bars=%d cw_arm_bar_ts=%d "
             "cw_resting_suppressed_segment_id=%d cw_resting_suppressed_bars=%d "
             "cw_resting_taken=%s cw_reclaim_taken=%s "
             "resting_below_floor_bars=%d fanout_segment_id=%d position_qty_held=%s resting_active=%s "
             "resting_flip_ms=%d resting_level=%.4f resting_trigger=%.4f resting_slot=%s "
             "flip_owner_evidence_at_ms=%d flip_owner_evidence_readable=%s "
             "flip_owner_open_positions=%d flip_owner_phase=%s "
-            "retry_one_closes_today=%d retry_one_budget_readable=%s",
+            "retry_one_segment_id=%d retry_one_closes_in_segment=%d "
+            "retry_one_budget_readable=%s",
             state.symbol, state.cw_armed, state.cw_bars_waited, state.cw_trigger,
             state.cw_segment_high, state.cw_flip_level, state.cw_entries_this_flip,
             self._cw_v2_max_entries_per_flip, state.cw_v2_emit_claimed,
             state.cw_v2_bars_since_exit, self._cw_v2_reclaim_gap_bars,
             self._entries_held, state.position_qty,
-            state.atr_state, state.atr_state_age, state.atr_trail, len(state.bars),
+            state.atr_state, state.atr_state_age, state.atr_trail,
+            state.atr_short_flip_bar_ts, len(state.bars),
             state.cw_arm_bar_ts, state.cw_resting_suppressed_segment_id,
             state.cw_resting_suppressed_bars, state.cw_resting_taken,
             state.cw_reclaim_taken, state.resting_below_floor_bars,
@@ -4296,7 +4409,8 @@ class SchwabV2Strategy:
             state.flip_owner_evidence_at_ms,
             state.flip_owner_evidence_readable, len(state.flip_owner_open_positions),
             state.flip_owner_phase,
-            state.retry_one_closes_today, state.retry_one_budget_readable,
+            state.retry_one_segment_id, state.retry_one_closes_in_segment,
+            state.retry_one_budget_readable,
         )
 
     def _liquidity_floor_ok(self, state: SymbolState) -> bool:
@@ -4679,6 +4793,9 @@ class SchwabV2Strategy:
         if self._flip_owned_first_entry_enabled and self._ensure_flip_owner_opportunity(state) <= 0:
             return
         if self._flip_owned_first_entry_enabled:
+            if state.flip_owner_phase == "idle":
+                state.flip_owner_retry_segment_id = state.retry_one_segment_id
+                state.flip_owner_retry_closes_at_place = state.retry_one_closes_in_segment
             state.flip_owner_first_rest_placed = True
             if state.flip_owner_phase == "idle":
                 state.flip_owner_phase = "resting"
