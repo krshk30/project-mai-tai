@@ -65,7 +65,6 @@ class TradeTickRecord:
     cumulative_volume: int | None = None
     exchange: str | None = None
     conditions: tuple[str, ...] = ()
-    conditions_present: bool = False
 
     def to_payload(self) -> TradeTickPayload:
         return TradeTickPayload(
@@ -76,7 +75,6 @@ class TradeTickRecord:
             cumulative_volume=self.cumulative_volume,
             exchange=self.exchange,
             conditions=list(self.conditions),
-            conditions_present=self.conditions_present,
         )
 
 

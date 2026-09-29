@@ -420,10 +420,6 @@ class MassiveTradeStream:
                                 getattr(message, "sip_timestamp", None) or getattr(message, "timestamp", None)
                             ),
                             exchange=str(getattr(message, "exchange", "")) or None,
-                            conditions=tuple(
-                                str(code) for code in (getattr(message, "conditions", None) or ())
-                            ),
-                            conditions_present=hasattr(message, "conditions"),
                         )
                     )
                 elif event_type == "Q" and self._on_quote is not None:
