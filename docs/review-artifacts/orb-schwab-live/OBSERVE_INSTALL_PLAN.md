@@ -1,22 +1,25 @@
 # One combined after-hours installation (ORB observe-only)
 
-Updated for the operator's 2026-09-29 scope ruling: include #1065, #1066, and #1067; drop the watch install.
+Updated for the operator's 2026-09-29 Option C ruling: revert #1060, include #1065,
+#1066, and #1067, and drop the watch install.
 This is a plan, NOT a deployment record or an authorization.
 No production flag, file, order, subscription, or service was changed while preparing it.
 
 ## Exact revision and scope
 
-**EXACT INSTALL CANDIDATE: ba3ebf59144534ed35642de5757564fc2945c90c. NO OPERATOR GO YET.**
-The old 90106fb4 approval request is superseded. #1067 was rebase-merged from independently
-pinned head 1f4781af onto 059b261a; #1066 was rebase-merged from independently pinned head
-0ab525c2 onto that same base, without changing either reviewed PR head. #1064 remains approved
-for observation only; the ORB live-order flag must remain OFF.
+**EXACT INSTALL CANDIDATE: 3389090a7d30bdc88736a53211d968f4c82f0288. NO OPERATOR GO YET.**
+The prior GO for ba3ebf59144534ed35642de5757564fc2945c90c is void. #1068 was
+rebase-merged from independently pinned head fbe86e6a onto ba3ebf59 without changing
+the reviewed PR head. It mechanically reverts #1060; the gateway and Momentum paper code
+remain at the box's pre-#1060 behavior. #1064 remains approved for observation only;
+the ORB live-order flag must remain OFF.
 This planning copy is not part of the install candidate and must not be pulled to the box.
 
-The final scope includes #1060 (Momentum Option A/shared gateway), #1061 (restart-evidence
-checker), #1064 (ORB observation), #1065 (LIVE per-SELL-cycle RETRY-ONE), #1066 (LIVE Card 10
-OMS exits), #1067 (90-second ORB evidence grace), and already-installed PAGEGAP. #1059 source
+The final scope includes #1061 (restart-evidence checker), #1064 (ORB observation),
+#1065 (LIVE per-SELL-cycle RETRY-ONE), #1066 (LIVE Card 10 OMS exits),
+#1067 (90-second ORB evidence grace), and already-installed PAGEGAP. #1059 source
 is present in main, but its installed watch and auto-close behavior stay HELD until WBREAD1.
+#1060 Option A is reverted by #1068 and is NOT part of this installation.
 Only the ORB observer is observe-only; #1065 and #1066 change enabled live trading behavior.
 Request a separate operator GO for this exact SHA and the full scope below. Never install a
 substitute revision or partial service set under that GO.
@@ -29,10 +32,10 @@ preflight and record the new PID, start time, revision and restart count after e
 
 | Unit (project-mai-tai- prefix) | PID before | Planned action |
 | --- | --- | --- |
-| market-data | 2202865 | Restart for #1060 shared gateway changes |
-| momentum-paper | 2704889 | Restart onto Option A after gateway is healthy |
+| market-data | 2202865 | No restart; verify PID unchanged |
+| momentum-paper | 2704889 | No restart; verify PID unchanged |
 | oms | 1328348 | Restart to load #1064 routes and #1066 Card 10 with live ORB OFF; floor flag OFF |
-| strategy | 1359274 | Stop/start companion required by scoped gateway/OMS deployment |
+| strategy | 1359274 | Stop/start companion required by the scoped OMS restart helper; no Option A change |
 | orb | 2051823 | Restart existing broker-disconnected paper observer; #1064 changes its high filter |
 | orb-schwab | 0, inactive | Install/start separate OBSERVE_ONLY service |
 | schwab-1m-v2 | 1329729 | Restart for #1065; RETRY_ONE is already ON, so this changes LIVE trading |
@@ -58,20 +61,8 @@ No blanket target restart, schema migration, manual live trade, or attended brok
    process identities, healthy gateway/Redis, no concurrent deploy or heavy study, fresh broker
    flatness on BOTH live accounts, zero open managed positions and zero armed segments.
    A historical flat reading does not qualify. Do not override an ambiguous preflight.
-3. **WHOLE-INSTALL HARD STOP:** before ANY checkout/env/runtime/unit/wrapper mutation, run
-   #1060's retained-subscription reconstruction proof:
-   scanner and v2 owner events must be present, union preserved, and no desired owner erased.
-   An unreadable/missing owner is UNKNOWN; obtain evidence rather than restart an empty feed.
-   Recheck current ownership immediately before the gateway restart as well.
-4. **WHOLE-INSTALL HARD STOP:** require the measured Momentum-inactive 07:00-09:40 baseline
-   and explicit review of the first-session
-   slowdown thresholds in ../momentum-option-a/FIRST_SESSION_PROTOCOL.md. This turn did not
-   verify that separate baseline/review. Load 3.5 is a warning under Option A, not a stop rule.
-   If either step 3 or 4 is unproven, stop the WHOLE combined installation before changing the
-   box. No partial ORB-only, v2-only or mixed-revision deployment under this authorization.
-5. Check for the separately scheduled #1061 isolated installation at 18:00. Do not overlap or
-   overwrite its preopen wrapper. Let its approved isolated-file work finish and inspect its
-   record before the combined window. After ALL combined restarts, re-pin the wrapper ONCE
+3. Check the completed #1061 isolated installation record and the installed preopen wrapper.
+   Preserve its reviewed three-way routing. After ALL combined restarts, re-pin the wrapper ONCE
    to the final SHA/new PIDs for 09-30; no later installer may overwrite that final pin.
    Confirm one read-only 06:20 ET gate uses that script and its final hash, not an old pin.
    If the jobs cannot be sequenced, stop for coordination. Do not cancel the other job silently.
@@ -81,18 +72,18 @@ No blanket target restart, schema migration, manual live trade, or attended brok
 - Back up the fleet env, affected unit files, runtime manifest and preopen wrapper, with
   hashes and a durable journal. Capture the prior checkout AND each running-service revision;
   the current checkout is not automatically the revision of every process.
-- Use the reviewed scoped deployment path, not deploy_main.sh. Its gateway and OMS actions
-  stop/start strategy; hold strategy only as explicitly covered by the combined plan, so it
-  need not cycle twice. Run the existing OMS restart fence immediately before that restart,
+- Use the reviewed scoped deployment path, not deploy_main.sh. The OMS action in
+  ops/systemd/deploy_service.sh stops strategy before the OMS restart and starts strategy
+  afterward; keep that companion cycle, but do not restart strategy separately or for #1060.
+  Run the existing OMS restart fence immediately before that restart,
   and the v2 fence plus fresh flat/zero-armed checks immediately before the v2 restart.
 - Review all helper side effects before execution. deploy_service.sh refreshes the editable
   runtime and its bootstrap rebuilds the isolated paper ORB env, installs the paper ORB unit
   and target, and refreshes preflight links. Record these effects. Migrations stay OFF. The
-  existing Momentum installer unconditionally migrates; do not invoke it blindly merely to
-  restart an already-installed service. Use the reviewed unit/runtime without migrations.
-- Start/restart only the listed units, checking gateway owner restoration and fresh heartbeat
-  before Momentum starts. Preserve polygon_30s=false and every flag other than the two ORB
-  flags below and the Card 10 floor flag below. Install the
+  Momentum installer is out of scope. Use the reviewed unit/runtime without migrations.
+- Start/restart only the listed units. Market-data and momentum-paper must remain untouched.
+  Preserve polygon_30s=false and every flag other than the two ORB flags below and the
+  Card 10 floor flag below. Install the
   separate orb-schwab unit explicitly; it is not silently added to the live service target.
 - Back up /etc/project-mai-tai/project-mai-tai.env, then set exactly
   MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED=false BEFORE restarting OMS. No +2% floor ride remains;
@@ -111,9 +102,9 @@ No blanket target restart, schema migration, manual live trade, or attended brok
   Require boot mode OBSERVE_ONLY/live_sending=False; missing or contradictory evidence stops
   the rollout. Do not equate an env file with a running process having loaded it.
 - Verify no ORB trade intents, broker orders or new gateway subscriptions are emitted by the
-  observer. Momentum remains paper-only with its 16-symbol cap and no direct Massive socket.
-  Confirm gateway conditions metadata, scanner/v2 union preservation, snapshot cadence,
-  service health, tracebacks/restarts, and unchanged PIDs for units outside the plan.
+  observer. Confirm existing gateway snapshot cadence, service health, tracebacks/restarts,
+  and unchanged PIDs for units outside the plan, specifically market-data 2202865 and
+  momentum-paper 2704889 (after fresh identity checks).
 - Verify Card 10 on both brokers: RTH native OCO stand-down remains until broker-confirmed
   cancel at 16:00; pre-market and after-hours software target/stop/flip use +5%/-8% without
   a floor ride; Webull full closes use the shared tracked path; 19:55 overnight flatten stays
@@ -142,15 +133,13 @@ No blanket target restart, schema migration, manual live trade, or attended brok
 ## Rollback boundaries
 
 Approve these actions with the exact-SHA GO; none have been executed. Stop the new ORB observer
-first if it misbehaves; never turn on live sending as a remedy. An Option A slowdown stops ONLY
-momentum-paper, then verifies momentum-paper=[] ownership and removal of its exclusively-owned
-symbols (not scanner/v2-owned overlaps). Follow the reviewed empty-replace fallback if needed.
-Do not restart the gateway as an automatic response to a paper-only slowdown.
+first if it misbehaves; never turn on live sending as a remedy. No gateway or Momentum paper
+restart or Option A subscription-state rollback is authorized in this window.
 
 For a shared-service regression, retain evidence, keep ORB live OFF and request the separately
 approved rollback to recorded per-service revisions/unit/env backups. Re-run fresh flatness
 and restart gates. Do not blindly pull the old checkout and assume it matches every running
-service; do not erase durable gateway owners. The scoped deploy helper intentionally does not
+service. The scoped deploy helper intentionally does not
 perform an automatic trading-service rollback. #1065 writes schema-v2 per-cycle budget records;
 the prior retry-budget reader accepts only schema v1. A v2 downgrade must account for that
 durable state and its fail-closed restore behavior; never delete budget history to force entry
