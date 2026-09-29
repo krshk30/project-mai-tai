@@ -217,6 +217,35 @@ async def test_cw_target_full_close_at_plus_2pct():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bid,expected_tag,expected_reference",
+    [(10.51, "CW_TARGET", "10.5000"), (9.19, "CW_HARD_STOP", "9.2000"),
+     (9.90, "CW_FLIP", "9.9000")],
+)
+async def test_floor_off_ignores_legacy_armed_state_at_5_8_and_flip(
+    bid, expected_tag, expected_reference
+):
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
+    svc._cw_target_pct = 5.0
+    svc._cw_stop_pct = 8.0
+    svc._cw_floor_exit_enabled = False
+    _arm(svc, sf, entry=10.0)
+    svc._cw_floor_armed.add((ACCT, SYM))
+    if expected_tag == "CW_FLIP":
+        _bind_flip(svc, sf)
+    _quote(svc, bid=bid)
+
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+
+    intents = _sell_intents(sf)
+    assert len(intents) == 1
+    assert intents[0].reason.endswith(expected_tag)
+    assert _ref(intents[0]) == Decimal(expected_reference)
+    assert (ACCT, SYM) not in svc._cw_floor_armed
+
+
+@pytest.mark.asyncio
 async def test_cw_hard_stop_full_close_at_minus_5pct():
     sf = _make_sf()
     svc = _svc(sf, cw=True)

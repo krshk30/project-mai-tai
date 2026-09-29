@@ -284,7 +284,121 @@ async def test_eh_floor_retries_after_unfilled_limit_expires_even_if_bid_recover
 
 
 @pytest.mark.asyncio
-async def test_eh_limit_unsold_at_2000_pages_once_for_the_open_row(monkeypatch) -> None:
+@pytest.mark.parametrize("session_name", ["AM", "PM"])
+@pytest.mark.parametrize("tag,bid", [("CW_TARGET", 10.60), ("CW_FLIP", 9.90)])
+async def test_eh_target_and_flip_unfilled_limits_remain_tracked(
+    monkeypatch, tag, bid, session_name
+) -> None:
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: False)
+    monkeypatch.setattr(service_module, "_extended_hours_session", lambda now=None: session_name)
+    adapter = _FanoutAdapter()
+    adapter.submit_results.append([
+        ExecutionReport(
+            event_type="accepted", origin="broker", client_order_id="pending-close",
+            broker_order_id=f"{tag}-LIMIT-1", symbol=SYMBOL, side="sell",
+            intent_type="close", quantity=Decimal("1"), filled_quantity=Decimal("0"),
+        )
+    ])
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    service._market_is_fillable = lambda now=None: True
+    _cw(service)
+    service._cw_target_pct = 5.0
+    service._cw_stop_pct = 8.0
+    service._cw_floor_exit_enabled = False
+    service._cw_floor_armed.add((WEBULL, SYMBOL))
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "exit-pair"
+    if tag == "CW_FLIP":
+        with sf() as session:
+            row = service.store.get_open_managed_position(
+                session, broker_account_name=WEBULL, symbol=SYMBOL
+            )
+            assert row is not None
+            row_id = str(row.id)
+        service._arm_cw_flip_pending(
+            (WEBULL, SYMBOL),
+            bar_time_ms=int((service_module.utcnow() - timedelta(seconds=90)).timestamp() * 1000),
+            managed_row_id=row_id,
+        )
+
+    async def no_filled_child(*_args, **_kwargs):
+        return None
+
+    adapter.fetch_oco_exit_fill = no_filled_child
+    _quote(service, bid)
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert len([r for r in adapter.submitted if tag in r.reason]) == 1
+    assert [r for r in adapter.submitted if tag in r.reason][0].metadata["session"] == session_name
+    assert service._webull_eh_ladder_pending[(WEBULL, SYMBOL)][2] == tag
+    assert f"[OMS-WEBULL-CANCEL-THEN-SELL] exit={tag}" in "\n".join(service.logger.lines)
+    with sf() as session:
+        first = session.scalar(select(BrokerOrder).where(BrokerOrder.broker_order_id == f"{tag}-LIMIT-1"))
+        assert first is not None
+        first.status = "cancelled"
+        session.commit()
+    await service._retry_webull_eh_ladder_pending()
+    assert len([r for r in adapter.submitted if tag in r.reason]) == 2
+
+
+@pytest.mark.asyncio
+async def test_rth_webull_flip_releases_its_pair_in_shared_path() -> None:
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    _cw(service)
+    service._cw_target_pct = 5.0
+    service._cw_stop_pct = 8.0
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "rth-protect-base"
+    service._native_oco_armed_confirmed_at[(WEBULL, SYMBOL)] = service_module.utcnow()
+    with sf() as session:
+        row = service.store.get_open_managed_position(
+            session, broker_account_name=WEBULL, symbol=SYMBOL
+        )
+        assert row is not None
+        row_id = str(row.id)
+    service._arm_cw_flip_pending(
+        (WEBULL, SYMBOL),
+        bar_time_ms=int((service_module.utcnow() - timedelta(seconds=90)).timestamp() * 1000),
+        managed_row_id=row_id,
+    )
+    _quote(service, 9.90)
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "rth-protect-base")]
+    assert adapter.native_release_calls == []
+    assert _sell_accounts(sf) == [WEBULL]
+    assert "[OMS-WEBULL-CANCEL-THEN-SELL] exit=CW_FLIP" in "\n".join(service.logger.lines)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bracket_confirmed", [False, True])
+async def test_rth_target_only_uses_software_when_bracket_not_confirmed(bracket_confirmed) -> None:
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    _cw(service)
+    service._cw_target_pct = 5.0
+    service._cw_stop_pct = 8.0
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "rth-protect-base"
+    if bracket_confirmed:
+        service._native_oco_armed_confirmed_at[(WEBULL, SYMBOL)] = service_module.utcnow()
+    _quote(service, 10.60)
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+
+    if bracket_confirmed:
+        assert adapter.cancel_pair_calls == []
+        assert _sell_accounts(sf) == []
+    else:
+        assert adapter.cancel_pair_calls == [(WEBULL, SYMBOL, "rth-protect-base")]
+        assert _sell_accounts(sf) == [WEBULL]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tag", ["CW_FLOOR", "CW_TARGET", "CW_FLIP"])
+async def test_eh_limit_unsold_at_2000_pages_once_for_the_open_row(monkeypatch, tag) -> None:
     service, sf = _service(fanout=True, adapter=_FanoutAdapter())
     service.logger = _CapturedLogger()
     with sf() as session:
@@ -295,7 +409,7 @@ async def test_eh_limit_unsold_at_2000_pages_once_for_the_open_row(monkeypatch) 
         row_id = str(row.id)
     monkeypatch.setattr(service_module, "utcnow", lambda: datetime(2026, 9, 26, 0, 0, tzinfo=UTC))
     service._webull_eh_ladder_pending = {
-        (WEBULL, SYMBOL): (service._session_day_et(), row_id, "CW_FLOOR", 10.10)
+        (WEBULL, SYMBOL): (service._session_day_et(), row_id, tag, 10.10)
     }
     service._market_is_fillable = lambda now=None: False
 
@@ -308,7 +422,7 @@ async def test_eh_limit_unsold_at_2000_pages_once_for_the_open_row(monkeypatch) 
     ]
     assert len(incidents) == 1
     assert incidents[0]["managed_row_id"] == row_id
-    assert incidents[0]["exit_tag"] == "CW_FLOOR"
+    assert incidents[0]["exit_tag"] == tag
     assert "status=PAGE" in "\n".join(service.logger.lines)
 
 

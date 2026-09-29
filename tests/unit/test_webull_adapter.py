@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from project_mai_tai.broker_adapters.protocols import OrderRequest
+from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.broker_adapters.webull import (
     WebullAccountConfig,
     WebullBrokerAdapter,
@@ -1459,6 +1459,47 @@ async def test_release_pair_distinguishes_working_from_clear(fake_sdk) -> None:
 
     assert reserved.outcome == "reserved"
     assert released.outcome == "released"
+
+
+@pytest.mark.asyncio
+async def test_eod_handover_requires_fresh_terminal_reads_of_both_children(fake_sdk) -> None:
+    working = _LegClient({
+        _BASE + "T": _leg("WORKING", None, qty="0"),
+        _BASE + "S": _leg("CANCELLED", None, qty="0"),
+    })
+    clear = _LegClient({
+        _BASE + "T": _leg("CANCELLED", None, qty="0"),
+        _BASE + "S": _leg("CANCELLED", None, qty="0"),
+    })
+    reserved = await _adapter(working).confirm_exit_pair_terminal(
+        broker_account_name="live:orb", symbol="BIYA", base_client_order_id=_BASE,
+    )
+    released = await _adapter(clear).confirm_exit_pair_terminal(
+        broker_account_name="live:orb", symbol="BIYA", base_client_order_id=_BASE,
+    )
+    assert reserved.outcome == "unanswerable"
+    assert released.outcome == "released"
+    assert working.seen == [_BASE + "T", _BASE + "S"]
+    assert clear.seen == [_BASE + "T", _BASE + "S"]
+
+
+@pytest.mark.asyncio
+async def test_eod_handover_rejects_cancel_accepted_without_readback() -> None:
+    adapter = _adapter(_FakeClient({}))
+
+    async def unreadable_after_cancel(_account, request):
+        return ExecutionReport(
+            event_type="cancelled", origin="broker",
+            client_order_id=request.client_order_id, symbol=request.symbol,
+            side="sell", intent_type="cancel",
+            metadata={"cancel_outcome": "confirmed_after_accepted_request"},
+        )
+
+    adapter._confirm_cancel_order = unreadable_after_cancel
+    result = await adapter.confirm_exit_pair_terminal(
+        broker_account_name="live:orb", symbol="BIYA", base_client_order_id=_BASE,
+    )
+    assert result.outcome == "unanswerable"
 
 
 @pytest.mark.asyncio

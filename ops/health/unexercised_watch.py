@@ -390,6 +390,7 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "from system_incidents where status != 'closed' "
         "and payload->>'source' in "
         "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved',"
+        "'oms_v2_overnight_flatten_blocked',"
         "'oms_v2_confirmation_exit_reprotected','oms_v2_webull_uncovered_share',"
         "'schwab_opening_policy_reject','oco_exit_fill_unrecorded',"
         "'webull_eh_ladder_unsold','oms_webull_protect_handle_lost',"
@@ -707,6 +708,17 @@ def _run_inc1_pager_unlocked(
                     f"{incident.get('max_attempts') or 'UNKNOWN'} "
                     f"terminal={incident.get('terminal') or 'false'}\n"
                     "Use the existing position/protection runbook; do not assume flat."
+                )
+            elif incident.get("source") == "oms_v2_overnight_flatten_blocked":
+                body = (
+                    "19:55 FLATTEN BLOCKED: broker exit legs are still working or unreadable. "
+                    "Do not send a second sell against them.\n"
+                    f"account={incident.get('account') or 'UNKNOWN'} "
+                    f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
+                    f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'} "
+                    f"session_date={incident.get('session_date') or 'UNKNOWN'}\n"
+                    "Check exact broker children and held quantity; cancellation confirmation "
+                    "is required before any software sell."
                 )
             elif incident.get("source") == "oms_v2_confirmation_exit_reprotected":
                 restored = incident.get("protection_restored") == "true"

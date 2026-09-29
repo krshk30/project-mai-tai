@@ -146,6 +146,20 @@ class RoutingBrokerAdapter:
             base_client_order_id=base_client_order_id,
         )
 
+    async def confirm_exit_pair_terminal(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str
+    ) -> ExitPairReleaseResult:
+        """Route the strict broker reread used for the 16:00 handover."""
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "confirm_exit_pair_terminal", None)
+        if fn is None:
+            return ExitPairReleaseResult(outcome="unanswerable")
+        return await fn(
+            broker_account_name=broker_account_name,
+            symbol=symbol,
+            base_client_order_id=base_client_order_id,
+        )
+
     async def fetch_quotes(self, symbols: list[str]) -> dict[str, dict[str, float | None]]:
         """Quotes for ``symbols``, from ANY configured provider that can serve them.
 

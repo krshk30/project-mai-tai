@@ -653,6 +653,7 @@ class OmsRiskService:
         }
     )
     _EXIT_RELEASE_INCIDENT_SOURCE = "oms_v2_exit_release_unresolved"
+    _EOD_FLATTEN_BLOCKED_INCIDENT_SOURCE = "oms_v2_overnight_flatten_blocked"
     _CONFIRMATION_EXIT_INCIDENT_SOURCE = "oms_v2_confirmation_exit_reprotected"
     # #3 (operator, 2026-09-21): a Webull share with no resting broker stop for longer than this
     # pages, WHATEVER routine left it that way. Not cuttable; independent of every exit path.
@@ -909,6 +910,7 @@ class OmsRiskService:
         # for the rest of the day. Day-scoped key => the latch self-expires next session; empty
         # while the flag is OFF => `_native_oco_stand_down_active` is byte-identical.
         self._v2_eod_oco_transitioned: set[tuple[str, str, str]] = set()
+        self._v2_eod_oco_transition_rows: dict[tuple[str, str, str], str] = {}
         # 16:01 cancel-and-reexit: ONE claim per (session_day, account, symbol). Claimed BEFORE
         # the first await, so a slow broker call can never let the 5s cadence start a second run
         # for the same position. ⛔ This is the 220-in-14-minutes hole; it does not reopen here.
@@ -1085,10 +1087,8 @@ class OmsRiskService:
                     raise
                 except Exception:
                     self.logger.exception("[OMS-ORB-SCHWAB-EOD] check unavailable")
-                # Phase A EOD OCO transition: at 16:00 release the native-OCO stand-down for every
-                # still-open managed v2 position so the software EH-limit ladder resumes (decision A
-                # = keep managing +2%/−5%). Same 5s cadence, idempotent per symbol per day, flag-gated
-                # OFF. Wrapped so a failure never breaks broker-sync; LOUD on error.
+                # At 16:00, release each held row only after its broker exit legs are confirmed
+                # gone. Unreadable or working legs retain the software-sell stand-down and page.
                 try:
                     await self._v2_eod_oco_transition()
                 except asyncio.CancelledError:
@@ -3576,7 +3576,11 @@ class OmsRiskService:
                 # A reserved pair positively proves protection survived. It becomes operator work
                 # only when automated probes exhaust; unreadable state pages immediately because
                 # either or both cancel requests may already have landed.
-                if release.outcome != "unanswerable" and not terminal:
+                if (
+                    release.outcome != "unanswerable"
+                    and not terminal
+                    and reason != "V2_EOD_OCO_TRANSITION"
+                ):
                     return
                 attempts = self.__dict__.setdefault("_exit_reservation_attempts", {}).get(key, 0)
                 risk_state = (
@@ -4843,13 +4847,15 @@ class OmsRiskService:
         bid: float,
         expected_row_id: str,
     ) -> str:
-        """CW_HARD_STOP / CW_FLOOR on a Webull account -> `_webull_cancel_then_sell`.
+        """Webull full CW closes use the shared cancel-then-sell recovery path.
 
         One run per position at a time (concurrent quote tasks fall through), and after a run
         that did not sell, the next attempt waits `_WEBULL_CW_EXIT_RETRY_SECONDS` - the routine
         has already re-protected or paged, so a quote-rate retry storm buys nothing.
         """
         key = (acct, symbol)
+        if not await self._v2_eod_handover_ready(acct, symbol, expected_row_id):
+            return "eod_handover_unconfirmed"
         inflight: set[tuple[str, str]] = self.__dict__.setdefault("_webull_cw_exit_inflight", set())
         next_try: dict[tuple[str, str], float] = self.__dict__.setdefault(
             "_webull_cw_exit_next_try", {}
@@ -4863,7 +4869,7 @@ class OmsRiskService:
         if time.monotonic() < next_try.get(key, 0.0):
             return "paced"
         eh_ladder = (
-            tag in {"CW_HARD_STOP", "CW_FLOOR"}
+            tag in {"CW_TARGET", "CW_HARD_STOP", "CW_FLOOR", "CW_FLIP"}
             and not _is_regular_market_session()
             and self._market_is_fillable()
         )
@@ -5054,10 +5060,8 @@ class OmsRiskService:
         sell, no re-protect, no page, 474-663 s with no broker stop (the fifth, NCPL 15:07 ET, sold:
         its quote was ~1 s old going in, so the same 2.5 s release left it under the limit).
 
-        `exit_tag` names the caller. Wired: CONFIRMATION_EXIT (#1028, 2026-09-21); CW_HARD_STOP
-        and CW_FLOOR via `_webull_cw_exit_on_shared_path` (#1032, 2026-09-22 - YMAT 2026-09-09 was
-        the measured miss). STILL TO FLIP: CW_FLIP (own release path, 3/3 live 09-21) and the
-        overnight flatten. Callers pass
+        `exit_tag` names the caller. Wired: CONFIRMATION_EXIT, all four CW full-close tags, and
+        the overnight flatten. Scale-outs remain outside this pair-release path. Callers pass
         their own `reason` / `kind` / `reference_price` and a decision whose `source_fill_id`
         identifies the exit (e.g. ``f"{exit_tag}:{managed_row_id}"``); nothing in here is
         confirmation-specific except the optional `confirmation` payload carried into recovery.
@@ -5076,9 +5080,10 @@ class OmsRiskService:
             return outcome
 
         # ---- 1. ABORTABLE: the broker pair is still resting; a refusal costs nothing ----------
-        if not self._is_protective_v2_exit(reason):
-            # The resting pair IS the profit-taking exit. Only a safety exit may take it back, so a
-            # future caller cannot cancel a broker stop on behalf of a target or a scale-out.
+        if not (self._is_protective_v2_exit(reason) or exit_tag == "CW_TARGET"):
+            # A confirmed RTH bracket owns its target upstream. When it is not confirmed, a
+            # full CW_TARGET may take the pair back only through this cancel/readback path;
+            # scale-outs and arbitrary profit-taking reasons remain refused.
             self.logger.error(
                 "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s reason=%s "
                 "reason=not_a_protective_exit - refused BEFORE any release",
@@ -5280,7 +5285,8 @@ class OmsRiskService:
             return "released"
         if not _is_regular_market_session():
             eh_safety_exit = decision.exit_tag in {
-                "CW_FLOOR", "CW_HARD_STOP", "V2_OVERNIGHT_FLATTEN"
+                "CW_TARGET", "CW_FLOOR", "CW_HARD_STOP", "CW_FLIP",
+                "V2_OVERNIGHT_FLATTEN",
             }
             if not eh_safety_exit or not self._market_is_fillable():
                 self.logger.error(
@@ -6162,6 +6168,8 @@ class OmsRiskService:
         (owned by PR-D); it is bounded to ~5s by #391 Fix-1 and fires only on an exit."""
         if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
             return
+        if not await self._v2_eod_handover_ready(acct, symbol):
+            return
         key = (acct, symbol)
         confirmation_pending = self.__dict__.setdefault("_confirmation_exit_pending", {})
         confirmation_inflight = self.__dict__.setdefault("_confirmation_exit_inflight", set())
@@ -6609,49 +6617,45 @@ class OmsRiskService:
                     # bar-close ATR flip may take ownership, after its exact OCO is released.
                     if action != "flip":
                         return
-                    release_inflight = self.__dict__.setdefault(
-                        "_cw_flip_release_inflight", set()
-                    )
-                    if key in release_inflight:
-                        return
-                    # One flip is one release attempt. Pop before broker I/O so concurrent quote
-                    # tasks cannot repeat DELETEs; cancellation restores the decision for retry.
-                    owned_flip = cw_flip_decision
-                    self._clear_cw_flip_pending(key)
-                    release_inflight.add(key)
-                    try:
-                        release_result = await self._release_native_oco_for_cw_flip(
-                            acct,
-                            symbol,
-                            expected_row_id=snapshot.managed_row_id,
+                    if not self._is_v2_webull_account(acct):
+                        release_inflight = self.__dict__.setdefault(
+                            "_cw_flip_release_inflight", set()
                         )
-                    except asyncio.CancelledError:
-                        if owned_flip is not None:
-                            self._arm_cw_flip_pending(
-                                key,
-                                bar_time_ms=owned_flip.bar_time_ms,
-                                managed_row_id=owned_flip.managed_row_id,
-                                decision_id=owned_flip.decision_id,
+                        if key in release_inflight:
+                            return
+                        # Schwab owns the bracket tree; Webull's shared path below releases its
+                        # deterministic pair and sells only after the broker confirms both legs.
+                        owned_flip = cw_flip_decision
+                        self._clear_cw_flip_pending(key)
+                        release_inflight.add(key)
+                        try:
+                            release_result = await self._release_native_oco_for_cw_flip(
+                                acct, symbol, expected_row_id=snapshot.managed_row_id,
                             )
-                        raise
-                    finally:
-                        release_inflight.discard(key)
-                    if release_result == "resolved_by_fill":
-                        await self._close_resolved_oco_managed_row(
-                            acct,
-                            symbol,
-                            expected_row_id=snapshot.managed_row_id,
-                        )
-                        self._cw_floor_armed.discard(key)
-                        return
-                    if release_result != "released":
-                        self.logger.error(
-                            "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s reason=oco_release_unconfirmed "
-                            "— the native bracket remains authoritative; no close was submitted",
-                            symbol,
-                            acct,
-                        )
-                        return
+                        except asyncio.CancelledError:
+                            if owned_flip is not None:
+                                self._arm_cw_flip_pending(
+                                    key,
+                                    bar_time_ms=owned_flip.bar_time_ms,
+                                    managed_row_id=owned_flip.managed_row_id,
+                                    decision_id=owned_flip.decision_id,
+                                )
+                            raise
+                        finally:
+                            release_inflight.discard(key)
+                        if release_result == "resolved_by_fill":
+                            await self._close_resolved_oco_managed_row(
+                                acct, symbol, expected_row_id=snapshot.managed_row_id,
+                            )
+                            self._cw_floor_armed.discard(key)
+                            return
+                        if release_result != "released":
+                            self.logger.error(
+                                "[OMS-V2-CW-FLIP-REFUSED] sym=%s acct=%s "
+                                "reason=oco_release_unconfirmed; no close submitted",
+                                symbol, acct,
+                            )
+                            return
                 if action == "arm":
                     # reached +target% -> lock the floor, keep riding (NO exit); persist state.
                     self._cw_floor_armed.add((acct, symbol))
@@ -6684,7 +6688,7 @@ class OmsRiskService:
                         ref, tag = entry_price * (1.0 - self._cw_stop_pct / 100.0), "CW_HARD_STOP"
                     else:  # flip: full close at the current bid (trend exit)
                         ref, tag = bid, "CW_FLIP"
-                    if tag in {"CW_HARD_STOP", "CW_FLOOR"} and self._is_v2_webull_account(acct):
+                    if tag in {"CW_TARGET", "CW_HARD_STOP", "CW_FLOOR", "CW_FLIP"} and self._is_v2_webull_account(acct):
                         # #4: THE SHARED PATH. The bracket owns target/stop while it rests
                         # (`native_oco_stand_down` returned above), so this is reached only with
                         # NO pair resting - never protected, pre-market, or released - exactly
@@ -8583,6 +8587,8 @@ class OmsRiskService:
         thread. Bounded to ~5s by #391 Fix-1; fires only when an exit actually triggers.
         Behaviour of the per-kind write/close/scale + publish is byte-identical to the
         pre-split inline branches."""
+        if not await self._v2_eod_handover_ready(acct, symbol, expected_managed_row_id):
+            return "eod_handover_unconfirmed"
         # The decision instant: the caller decided to exit on THIS quote and awaited us
         # directly, so nothing has blocked yet — no session, no DB read, no broker call.
         # Everything downstream (session open, intent write, submit, record) trails this.
@@ -9157,7 +9163,9 @@ class OmsRiskService:
     def _native_oco_stand_down_active(self, broker_account_name: str, symbol: str) -> bool:
         """True only when a broker-native OCO bracket is CONFIRMED armed for this position.
 
-        *** THIS IS THE STAND-DOWN, AND IT FAILS OPEN BY DESIGN (operator-confirmed 2026-07-21).
+        *** During RTH this stand-down fails open by design (operator-confirmed 2026-07-21).
+        After the 16:00 handover is due, the row-specific broker confirmation guard is a
+        separate fail-closed gate on every software emitter.
 
         When it returns True the OMS does NOT run its exit ladder: the broker OCO owns the
         exit. That makes a WRONG True the worst failure in this system -- the software ladder
@@ -9181,11 +9189,8 @@ class OmsRiskService:
         key = (broker_account_name, symbol)
         if key in self.__dict__.get("_oco_exit_fill_pending", {}):
             return True
-        # Phase A EOD OCO transition: once 16:00 has released this position for the day, the
-        # RTH OCO is dead (session=NORMAL can't fill in EH) — never stand down again today,
-        # so the software EH-limit ladder owns the exit even if a stale broker read still
-        # reports the expiring OCO as armed (defeats the 16:00 re-arm flip-flop). The set is
-        # empty unless the flag fired, so this is byte-identical when the transition is OFF.
+        # The 16:00 latch is set only after a broker-confirmed release. The caller's row-scoped
+        # EOD guard checks it before any software sell, including when this cache ages out.
         eod_done = getattr(self, "_v2_eod_oco_transitioned", None)
         if eod_done and (self._session_day_et(), broker_account_name, symbol) in eod_done:
             return False
@@ -11187,30 +11192,8 @@ class OmsRiskService:
             )
 
     async def _v2_eod_oco_transition(self) -> None:
-        """Phase A EOD OCO cleanup (docs/premarket-eod-exit-design.md; decision A = KEEP MANAGING).
-
-        At 16:00 ET the native OCO exit legs expire with the RTH close — they carry session=NORMAL
-        (RTH-only) + duration=DAY (schwab.py `_build_bracket_payload`), so after the close they can no
-        longer fill on EITHER broker. For every OMS-managed v2 position still open, RELEASE the
-        native-OCO stand-down for the rest of the day so `_evaluate_v2_managed_exit` resumes and runs
-        the software +2%/−5% ladder as EH-LIMIT exits (#390 MARKET->LIMIT+session routing; the OMS
-        fillable gate keeps 16:00–20:00 fillable). The 19:55 `_v2_overnight_flatten` stays the backstop.
-
-        WHY A LOCAL RELEASE, NOT A BROKER CANCEL: the OCO child legs are broker-created and never land
-        in `broker_orders` (see `_refresh_native_oco_armed_state`), so there is no OMS order to cancel
-        via the existing cancel path — and none is needed: a session=NORMAL DAY order cannot fill in EH,
-        so nothing is lost by letting it lapse. Absent this method the ladder ALSO resumes on its own
-        once the broker drops the expired legs from `fetch_armed_native_oco_symbols` (the resolve-by-fill
-        docstring documents exactly this "timed out at the close -> software ladder manages" case), but
-        that path waits on the broker sync noticing the expiry PLUS the 90s resolution grace, and can
-        flip-flop if a stale read still reports the expiring OCO as armed. This makes the 16:00 handover
-        IMMEDIATE and deterministic: the day-scoped latch short-circuits `_native_oco_stand_down_active`
-        to False, so a re-arm read cannot re-defer the ladder.
-
-        NOT a liquidation (decision A keeps +2%/−5% running), NOT a broker mutation, and it never touches
-        the 19:55 backstop. Idempotent per (session_day, account, symbol). Flag-gated OFF => the latch set
-        stays empty and every consulting predicate is byte-identical."""
-        if not bool(getattr(self.settings, "oms_v2_eod_oco_transition_enabled", False)):
+        """Cancel and broker-confirm the current row's RTH legs before software takes over."""
+        if not bool(getattr(getattr(self, "settings", None), "oms_v2_eod_oco_transition_enabled", False)):
             return
         if not self._v2_eod_oco_transition_due():
             return
@@ -11223,7 +11206,28 @@ class OmsRiskService:
         )
         for acct, symbol in list(self._managed_v2_symbols):
             key = (session_day, acct, symbol)
-            if key in self._v2_eod_oco_transitioned:
+            inflight = self.__dict__.setdefault("_v2_eod_oco_transition_inflight", set())
+            if key in inflight:
+                continue
+            try:
+                snapshot = await self._run_db(
+                    lambda session: self._read_v2_managed_snapshot(session, acct, symbol, True),
+                    commit=False,
+                )
+            except Exception:
+                self.logger.exception(
+                    "[OMS-V2-EOD-OCO-TRANSITION] %s %s outcome=UNKNOWN reason=row_unreadable",
+                    acct, symbol,
+                )
+                continue
+            if snapshot is None:
+                self._managed_v2_symbols.discard((acct, symbol))
+                continue
+            if self._v2_eod_oco_transition_rows.get(key) == snapshot.managed_row_id:
+                continue
+            retry_key = (key, snapshot.managed_row_id)
+            last_try = self.__dict__.setdefault("_v2_eod_oco_last_try", {}).get(retry_key)
+            if last_try is not None and time.monotonic() - last_try < self._EXIT_RESERVATION_RETRY_SECONDS:
                 continue
             resolved_at = resolving.get((acct, symbol))
             if resolved_at is not None and (now - resolved_at).total_seconds() <= grace_seconds:
@@ -11233,8 +11237,60 @@ class OmsRiskService:
                     acct, symbol, (now - resolved_at).total_seconds(), grace_seconds,
                 )
                 continue
+            inflight.add(key)
+            try:
+                self.__dict__.setdefault("_v2_eod_oco_last_try", {})[retry_key] = time.monotonic()
+                release = await self._release_v2_eod_oco(
+                    acct, symbol, expected_row_id=snapshot.managed_row_id
+                )
+                if release.outcome == "resolved_by_fill":
+                    recorded = await self._close_resolved_oco_managed_row(
+                        acct, symbol, detail=self._exit_pair_fill_detail(release),
+                        expected_row_id=snapshot.managed_row_id,
+                    )
+                    if not recorded:
+                        release = ExitPairReleaseResult(outcome="unanswerable")
+                if release.outcome == "released":
+                    def _current_row_id(session: Session) -> str:
+                        row = self.store.get_open_managed_position(
+                            session, broker_account_name=acct, symbol=symbol
+                        )
+                        return str(row.id) if row is not None else ""
+
+                    try:
+                        current_row_id = await self._run_db(
+                            _current_row_id, commit=False,
+                        )
+                    except Exception:
+                        release = ExitPairReleaseResult(outcome="unanswerable")
+                    else:
+                        if current_row_id != snapshot.managed_row_id:
+                            self.logger.warning(
+                                "[OMS-V2-EOD-OCO-TRANSITION] %s %s old_row=%s current_row=%s "
+                                "outcome=POSITION_CHANGED_DURING_BROKER_READ; no handover latch",
+                                acct, symbol, snapshot.managed_row_id, current_row_id or "-",
+                            )
+                            continue
+                await self._run_db(
+                    lambda session: self._sync_v2_eod_release_incident(
+                        session, acct, symbol, snapshot.managed_row_id, release
+                    ),
+                    commit=True,
+                )
+                if release.outcome == "resolved_by_fill":
+                    continue
+                if release.outcome != "released":
+                    self.logger.error(
+                        "[OMS-V2-EOD-OCO-TRANSITION] %s %s row=%s outcome=%s "
+                        "software_sell=BLOCKED incident_route=INC1",
+                        acct, symbol, snapshot.managed_row_id, release.outcome,
+                    )
+                    continue
+            finally:
+                inflight.discard(key)
             await self._carry_v2_native_oco_floor_at_handover(acct, symbol)
-            self._v2_eod_oco_transitioned.add(key)  # claim first: fire once per position per day
+            self._v2_eod_oco_transition_rows[key] = snapshot.managed_row_id
+            self._v2_eod_oco_transitioned.add(key)
             self.__dict__.get("_v2_native_oco_high_bid", {}).pop((acct, symbol), None)
             # Drop any live broker-armed confirmation / resolution-grace entry so the ladder is not
             # deferred waiting for either to lapse. The stand-down short-circuit (keyed on this same
@@ -11242,13 +11298,181 @@ class OmsRiskService:
             armed.pop((acct, symbol), None)
             resolving.pop((acct, symbol), None)
             self.logger.info(
-                "[OMS-V2-EOD-OCO-TRANSITION] %s %s -> RTH OCO expired at %02d:%02d ET; released the "
-                "native-OCO stand-down for the day; software +2%%/−5%% EH-limit ladder now owns the exit "
-                "(19:55 overnight-flatten remains the backstop)",
-                acct, symbol,
-                int(getattr(self.settings, "oms_v2_eod_oco_transition_hour_et", 16)),
-                int(getattr(self.settings, "oms_v2_eod_oco_transition_minute_et", 0)),
+                "[OMS-V2-EOD-OCO-TRANSITION] %s %s row=%s broker_legs=CONFIRMED_GONE "
+                "software_exit=ENABLED",
+                acct, symbol, snapshot.managed_row_id,
             )
+
+    async def _v2_eod_handover_ready(
+        self, acct: str, symbol: str, expected_row_id: str = ""
+    ) -> bool:
+        if not bool(getattr(getattr(self, "settings", None), "oms_v2_eod_oco_transition_enabled", False)):
+            return True
+        if not self._v2_eod_oco_transition_due():
+            return True
+        try:
+            snapshot = await self._run_db(
+                lambda session: self._read_v2_managed_snapshot(session, acct, symbol, True),
+                commit=False,
+            )
+        except Exception:
+            self.logger.exception(
+                "[OMS-V2-EOD-OCO-HANDOVER] %s %s outcome=UNKNOWN software_sell=BLOCKED",
+                acct, symbol,
+            )
+            return False
+        if snapshot is None or (expected_row_id and snapshot.managed_row_id != expected_row_id):
+            return False
+        key = (self._session_day_et(), acct, symbol)
+        if self._v2_eod_oco_transition_rows.get(key) == snapshot.managed_row_id:
+            return True
+        last_try = self.__dict__.setdefault("_v2_eod_oco_last_try", {}).get(
+            (key, snapshot.managed_row_id)
+        )
+        if last_try is not None and time.monotonic() - last_try < self._EXIT_RESERVATION_RETRY_SECONDS:
+            return False
+        try:
+            await self._v2_eod_oco_transition()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception(
+                "[OMS-V2-EOD-OCO-HANDOVER] %s %s outcome=UNKNOWN "
+                "reason=transition_error software_sell=BLOCKED",
+                acct, symbol,
+            )
+            return False
+        return self._v2_eod_oco_transition_rows.get(key) == snapshot.managed_row_id
+
+    def _sync_v2_eod_release_incident(
+        self, session: Session, acct: str, symbol: str, row_id: str,
+        release: ExitPairReleaseResult,
+    ) -> None:
+        if release.outcome in {"released", "resolved_by_fill"}:
+            incidents = session.scalars(
+                select(SystemIncident).where(
+                    SystemIncident.service_name == SERVICE_NAME,
+                    SystemIncident.status == "open",
+                )
+            ).all()
+            for incident in incidents:
+                payload = incident.payload if isinstance(incident.payload, dict) else {}
+                if (
+                    payload.get("source") in {
+                        self._EXIT_RELEASE_INCIDENT_SOURCE,
+                        self._EOD_FLATTEN_BLOCKED_INCIDENT_SOURCE,
+                    }
+                    and payload.get("broker_account_name") == acct
+                    and payload.get("symbol") == symbol
+                    and payload.get("managed_row_id") == row_id
+                ):
+                    incident.status = "closed"
+                    incident.closed_at = utcnow()
+        row = self.store.get_open_managed_position(
+            session, broker_account_name=acct, symbol=symbol
+        )
+        if row is not None and str(row.id) == row_id:
+            self._sync_exit_release_incident(
+                session, row, release, reason="V2_EOD_OCO_TRANSITION", protective=False
+            )
+
+    async def _page_v2_overnight_flatten_blocked(
+        self, acct: str, symbol: str, row_id: str
+    ) -> None:
+        """A fresh 19:55 page is distinct from the earlier 16:00 release incident."""
+        def _write(session: Session) -> bool:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != row_id:
+                return False
+            incidents = session.scalars(
+                select(SystemIncident).where(
+                    SystemIncident.service_name == SERVICE_NAME,
+                    SystemIncident.status == "open",
+                )
+            ).all()
+            if any(
+                isinstance(incident.payload, dict)
+                and incident.payload.get("source") == self._EOD_FLATTEN_BLOCKED_INCIDENT_SOURCE
+                and incident.payload.get("broker_account_name") == acct
+                and incident.payload.get("managed_row_id") == row_id
+                for incident in incidents
+            ):
+                return False
+            session.add(SystemIncident(
+                service_name=SERVICE_NAME, severity="critical",
+                title=f"19:55 FLATTEN BLOCKED: {symbol} on {acct}; check broker legs now"[:255],
+                status="open", opened_at=utcnow(),
+                payload={
+                    "source": self._EOD_FLATTEN_BLOCKED_INCIDENT_SOURCE,
+                    "broker_account_name": acct,
+                    "symbol": symbol,
+                    "managed_row_id": row_id,
+                    "reason": "broker_exit_legs_working_or_unreadable",
+                    "session_date": self._session_day_et(),
+                },
+            ))
+            return True
+
+        try:
+            if await self._run_db(_write, commit=True):
+                self.logger.error(
+                    "[OMS-V2-OVERNIGHT-FLATTEN-BLOCKED] %s %s row=%s "
+                    "incident=OPEN route=INC1",
+                    acct, symbol, row_id,
+                )
+        except Exception:
+            self.logger.exception(
+                "[OMS-V2-OVERNIGHT-FLATTEN-BLOCKED] %s %s row=%s "
+                "incident=WRITE_FAILED sell=BLOCKED",
+                acct, symbol, row_id,
+            )
+
+    async def _release_v2_eod_oco(
+        self, acct: str, symbol: str, *, expected_row_id: str
+    ) -> ExitPairReleaseResult:
+        if not self._is_v2_webull_account(acct):
+            result = await self._release_native_oco_for_cw_flip(
+                acct, symbol, expected_row_id=expected_row_id
+            )
+            return ExitPairReleaseResult(outcome=result)
+
+        def _base(session: Session) -> str:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != expected_row_id:
+                return ""
+            entry = self._find_oco_entry_order(session, acct, symbol)
+            return self._oco_exit_base_for_entry(
+                entry, broker_account_name=acct, symbol=symbol
+            )
+
+        try:
+            base = await self._run_db(_base, commit=False)
+            if not base:
+                return ExitPairReleaseResult(outcome="unanswerable")
+            release = await self.broker_adapter.release_exit_pair_for_close(
+                broker_account_name=acct, symbol=symbol, base_client_order_id=base
+            )
+            if release.outcome == "resolved_by_fill":
+                return release
+            confirm = getattr(self.broker_adapter, "confirm_exit_pair_terminal", None)
+            if confirm is None:
+                return ExitPairReleaseResult(outcome="unanswerable")
+            return await confirm(
+                broker_account_name=acct, symbol=symbol, base_client_order_id=base
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception(
+                "[OMS-V2-EOD-OCO-TRANSITION] %s %s row=%s outcome=UNKNOWN "
+                "reason=broker_read_or_cancel_error",
+                acct, symbol, expected_row_id,
+            )
+            return ExitPairReleaseResult(outcome="unanswerable")
 
     def _v2_overnight_flatten_due(self, now: datetime | None = None) -> bool:
         """True once the ET clock passes the v2 overnight-flatten time on a weekday. Same half-day
@@ -11268,7 +11492,11 @@ class OmsRiskService:
         invariant). Full-qty close via the existing v2 exit primitive (LIMIT+session, EH-fillable — a
         market order won't fill in AH). A single close, not a resting stop => NOT the E5 oversell class.
 
-        RETRY-UNTIL-FILLED — there is NO per-day claim (by design). A limit that expires unfilled
+        An unconfirmed 16:00 broker-leg cancellation blocks this sell and pages, including at
+        19:55. The operator chose avoiding a possible double-sell over blind flattening.
+
+        RETRY-UNTIL-FILLED once the handover is confirmed — there is NO per-day claim (by design).
+        A limit that expires unfilled
         (thin AH) leaves the position open with no working order, so the next 5s pass RE-EMITS; the
         flatten keeps trying until it fills or the 20:00 gate closes. Double-submit is prevented by
         `dedup_active` (a working exit order => skip) — the same guard the managed exit uses. A per-day
@@ -11309,6 +11537,16 @@ class OmsRiskService:
             )
             if snapshot is None:
                 self._managed_v2_symbols.discard((acct, symbol))
+                continue
+            if not await self._v2_eod_handover_ready(acct, symbol, snapshot.managed_row_id):
+                await self._page_v2_overnight_flatten_blocked(
+                    acct, symbol, snapshot.managed_row_id
+                )
+                self.logger.error(
+                    "[OMS-V2-OVERNIGHT-FLATTEN] %s %s row=%s "
+                    "software_sell=BLOCKED reason=broker_exit_unconfirmed incident_route=INC1",
+                    acct, symbol, snapshot.managed_row_id,
+                )
                 continue
             if snapshot.dedup_active:
                 continue  # a close already works — no double-submit (re-emits when it expires)
