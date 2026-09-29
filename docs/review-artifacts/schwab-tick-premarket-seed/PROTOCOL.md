@@ -97,3 +97,11 @@ INSUFFICIENT/UNKNOWN for the tick-seed decision, never a silent negative.
 - The result informs an operator decision only. Do not build or deploy the
   proposed live Schwab-tick seed, enable Massive, or change any flag from this
   study. A chart match on BKYI alone is not an enable gate for all stocks.
+
+## Amendment 1: coverage-census timing
+
+On 2026-09-29 at about 09:01 ET, before the all-stock-day coverage read,
+the operator explicitly authorized running that coverage census during market
+hours. Only the bounded, read-only coverage query is moved earlier. It runs at
+nice 19 with a statement timeout. Full outcome joins, provider comparisons,
+and fill-aware replay remain subject to the original protocol's load caution.
