@@ -726,11 +726,13 @@ class SchwabV2BotService:
                 raise RuntimeError("flip entry ownership store is not configured")
             store.record(record, active=active, reason=reason)
 
-        def persist_retry_budget(symbol: str, closes_today: int) -> None:
+        def persist_retry_budget(
+            symbol: str, segment_id: int, closes_in_segment: int
+        ) -> None:
             store = self.flip_entry_ownership_store
             if store is None:
                 raise RuntimeError("flip entry ownership store is not configured")
-            store.record_retry_budget(symbol, closes_today)
+            store.record_retry_budget(symbol, segment_id, closes_in_segment)
 
         self.strategy.configure_flip_entry_ownership(
             persist,
@@ -3239,6 +3241,7 @@ class SchwabV2BotService:
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         for sym in new_symbols:
             self._watch_start_ms[sym] = now_ms
+            self.strategy.watchlist_state(sym).retry_one_watch_start_ms = now_ms
         self._watch_start_ms = {
             sym: ts for sym, ts in self._watch_start_ms.items() if sym in selected
         }

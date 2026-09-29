@@ -101,7 +101,8 @@ def _strategy(
     strategy.configure_flip_entry_ownership(
         lambda record, active, reason: owner_writes.append((record, active, reason)),
         restore_readable=True,
-        restored_retry_budgets={"FRESH": restored_retry_closes},
+        retry_budget_persist=lambda _symbol, _segment, _count: None,
+        restored_retry_budgets={"FRESH": (1790349780000, restored_retry_closes)},
     )
     return strategy, clock, identity_writes, owner_writes
 
@@ -335,7 +336,8 @@ def test_seed_cap_releases_only_after_a_sell_bar_opened_after_watch(
     bot._watch_start_ms = {"FRESH": watch_start}
     bot._cap_reconstructed_segment("FRESH", stage="db-seed")
     assert (state.cw_resting_taken, state.cw_reclaim_taken) == (True, True)
-    assert state.retry_one_closes_today == restored_retry_closes
+    assert state.retry_one_closes_in_segment == restored_retry_closes
+    assert state.retry_one_segment_id == 1790349780000
 
     clock[0] = 1790349963000
     state.bars.append(_bar(1790349900000))  # 15:25Z opens after the re-add.
@@ -346,13 +348,11 @@ def test_seed_cap_releases_only_after_a_sell_bar_opened_after_watch(
 
     strategy._cw_v2_resting_track(state, _signal(state="short"))
     intents = strategy.drain_pending_intents()
-    if restored_retry_closes == 0:
-        assert len(intents) == 1
-        assert intents[0].metadata["cw_entry_slot"] == "first"
-        assert int(intents[0].metadata["fanout_segment_id"]) > 0
-    else:
-        assert intents == []
-    assert state.retry_one_closes_today == restored_retry_closes
+    assert len(intents) == 1
+    assert intents[0].metadata["cw_entry_slot"] == "first"
+    assert int(intents[0].metadata["fanout_segment_id"]) > 0
+    assert state.retry_one_closes_in_segment == 0
+    assert state.retry_one_segment_id == 1790349900000
 
 
 def test_idle_sell_does_not_clear_a_non_seed_cap_slot_claim() -> None:

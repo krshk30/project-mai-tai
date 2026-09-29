@@ -766,6 +766,26 @@ def test_watchlist_transition_drops_pending_for_removed_symbols() -> None:
     assert "BBB" in bot._streamer_pending
 
 
+def test_retry_cycle_watch_start_uses_scanner_addition_not_state_creation() -> None:
+    bot = _bot()
+    state = bot.strategy.watchlist_state("NEW")
+    state.retry_one_watch_start_ms = 1
+
+    from project_mai_tai.events import (
+        StrategyStateSnapshotEvent,
+        StrategyStateSnapshotPayload,
+    )
+
+    event = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        payload=StrategyStateSnapshotPayload(watchlist=["NEW"]),
+    )
+    bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=25)
+
+    assert state.retry_one_watch_start_ms == bot._watch_start_ms["NEW"]
+    assert state.retry_one_watch_start_ms > 1
+
+
 def test_v2_ignores_previous_session_strategy_state_snapshot() -> None:
     bot = _bot()
     bot._watchlist = {"OLD"}

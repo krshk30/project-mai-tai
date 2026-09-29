@@ -15,6 +15,7 @@ from project_mai_tai.fanout_segment_store import current_session_anchor
 SNAPSHOT_TYPE = "v2_flip_entry_ownership"
 RETRY_BUDGET_SNAPSHOT_TYPE = "v2_retry_one_budget"
 SCHEMA_VERSION = 1
+RETRY_BUDGET_SCHEMA_VERSION = 2
 ACTIVE_PHASES = frozenset(
     {
         "resting",
@@ -80,6 +81,8 @@ class FlipEntryOwnershipRecord:
     fill_accounts: tuple[str, ...]
     position_ids: Mapping[str, str]
     position_entry_ms: Mapping[str, int]
+    retry_segment_id: int = 0
+    retry_closes_at_place: int = 0
 
     def as_payload(self, *, active: bool, reason: str) -> dict[str, object]:
         return {
@@ -95,6 +98,8 @@ class FlipEntryOwnershipRecord:
             "position_entry_ms": {
                 account: str(value) for account, value in self.position_entry_ms.items()
             },
+            "retry_segment_id": str(self.retry_segment_id),
+            "retry_closes_at_place": self.retry_closes_at_place,
             "active": active,
             "reason": reason,
         }
@@ -128,20 +133,24 @@ class FlipEntryOwnershipStore:
     def record_retry_budget(
         self,
         symbol: str,
-        closes_today: int,
+        segment_id: int,
+        closes_in_segment: int,
         *,
         now: datetime | None = None,
     ) -> None:
+        if segment_id <= 0 or closes_in_segment < 0:
+            raise ValueError("retry budget requires a known segment and nonnegative count")
         observed_at = now or datetime.now(UTC)
         with self._session_factory() as session:
             session.add(
                 DashboardSnapshot(
                     snapshot_type=RETRY_BUDGET_SNAPSHOT_TYPE,
                     payload={
-                        "schema_version": SCHEMA_VERSION,
+                        "schema_version": RETRY_BUDGET_SCHEMA_VERSION,
                         "strategy_code": "schwab_1m_v2",
                         "symbol": str(symbol).strip().upper(),
-                        "closes_today": max(0, int(closes_today)),
+                        "segment_id": str(segment_id),
+                        "closes_in_segment": int(closes_in_segment),
                     },
                     created_at=observed_at,
                 )
@@ -150,7 +159,7 @@ class FlipEntryOwnershipStore:
 
     def restore_retry_budgets(
         self, *, now: datetime | None = None
-    ) -> Mapping[str, int]:
+    ) -> Mapping[str, tuple[int, int]]:
         anchor = current_session_anchor(now)
         with self._session_factory() as session:
             rows = session.scalars(
@@ -162,7 +171,7 @@ class FlipEntryOwnershipStore:
                 .order_by(DashboardSnapshot.created_at, DashboardSnapshot.id)
             ).all()
 
-        latest: dict[str, int] = {}
+        latest: dict[str, tuple[int, int]] = {}
         for row in rows:
             if not isinstance(row.payload, dict):
                 raise ValueError(f"unreadable retry budget snapshot {row.id}")
@@ -171,16 +180,37 @@ class FlipEntryOwnershipStore:
             if (
                 not symbol
                 or payload.get("strategy_code") != "schwab_1m_v2"
-                or int(payload.get("schema_version", 0) or 0) != SCHEMA_VERSION
+                or int(payload.get("schema_version", 0) or 0)
+                not in {SCHEMA_VERSION, RETRY_BUDGET_SCHEMA_VERSION}
             ):
                 raise ValueError(f"invalid retry budget snapshot {row.id}")
             try:
-                closes_today = int(payload.get("closes_today", 0) or 0)
+                version = int(payload["schema_version"])
+                # A v1 daily counter has no provable SELL-cycle identity. Hold until the next
+                # live SELL rather than transferring its allowance into an unknown segment.
+                segment_id = (
+                    int(str(payload["segment_id"]))
+                    if version == RETRY_BUDGET_SCHEMA_VERSION
+                    else 0
+                )
+                count = int(
+                    payload["closes_in_segment"]
+                    if version == RETRY_BUDGET_SCHEMA_VERSION
+                    else payload["closes_today"]
+                )
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"invalid retry budget snapshot {row.id}") from exc
-            if closes_today < 0:
+            except KeyError as exc:
+                raise ValueError(f"invalid retry budget snapshot {row.id}") from exc
+            if count < 0 or (version == RETRY_BUDGET_SCHEMA_VERSION and segment_id <= 0):
                 raise ValueError(f"invalid retry budget snapshot {row.id}")
-            latest[symbol] = closes_today
+            # Late closes from an older cycle may be journaled after a newer SELL. The
+            # active budget is the greatest SELL timestamp, not the last row written.
+            previous = latest.get(symbol)
+            if previous is None or segment_id > previous[0] or (
+                segment_id == previous[0] and count >= previous[1]
+            ):
+                latest[symbol] = (segment_id, count)
         return latest
 
     def restore_active(
@@ -224,6 +254,10 @@ class FlipEntryOwnershipStore:
                     str(account): int(str(value))
                     for account, value in raw_position_entry_ms.items()
                 }
+                retry_segment_id = int(str(payload.get("retry_segment_id", "0")))
+                retry_closes_at_place = int(payload.get("retry_closes_at_place", 0))
+                if retry_closes_at_place < 0:
+                    raise ValueError("retry_closes_at_place must be nonnegative")
                 raw_position_ids = payload.get("position_ids", {})
                 if not isinstance(raw_position_ids, dict):
                     raise ValueError("position_ids must be an object")
@@ -249,5 +283,7 @@ class FlipEntryOwnershipStore:
                 fill_accounts=fill_accounts,
                 position_ids=position_ids,
                 position_entry_ms=position_entry_ms,
+                retry_segment_id=retry_segment_id,
+                retry_closes_at_place=retry_closes_at_place,
             )
         return {symbol: value for symbol, value in latest.items() if value is not None}
