@@ -21,11 +21,23 @@ document authorizes activation automatically.
 | What does negative MACD mean here? | The **MACD histogram** must be zero or positive on the latest completed Schwab one-minute bar. Negative, missing or stale data blocks entry or requests cancellation of an unfilled buy. This does not use the forming bar. |
 | Can ATR and ORB both buy the same stock? | The live OMS checks for conflicting orders or holdings in the same Schwab account and blocks another entry. Observation alone does not prove this broker check. |
 | How are exits handled? | Native paired sell orders: target +5%, protective stop -8%, measured from the rounded buy trigger, not the eventual fill. Execution prices are not guaranteed. |
+| Is the 45% body exit kept? | Yes. If the breakout candle's body is below 45% of its range at the actual Schwab entry fill, request a close. Exactly 45% does not trigger this exit. This is not a check of the candle after it finishes. |
+| Is the ATR purple exit kept? | Yes. Exit on an ATR SELL flip after entry, using **completed Schwab one-minute bars**, the same data source as MACD. Keep ATR 5 / 3.5 / Wilder's. Do not use a forming bar or silently substitute gateway bars. |
+| How can an early exit avoid a double sell? | Confirm the owned buy fill, confirm cancellation of the native sell pair, reread the remaining shares, then sell once. If a child already filled, record that exact fill instead. An unknown broker response needs attention, not another sell. |
 | What happens at 10:00? | Cancel unfilled buys. Filled shares remain under their exit management; 10:00 does not force a sale. |
 | What if shares remain near the close? | On a normal full session, attempt a close from 15:55, after confirming the existing sell pair is released and rereading the remaining shares. An uncertain result cannot cause a duplicate sell. No new market close is sent at/after 16:00. |
 
 A cancellation can race a fill. The live route must use Schwab's confirmed order state;
 it cannot assume that a cancellation request prevented the purchase.
+
+The two early exit rules were missing from the earlier draft and are now included. The full
+[paper-versus-new-route comparison](RULE_COMPARISON.md) lists retained rules and intentional
+changes. The existing paper bot's exits have not been removed or changed.
+
+If the fill-time candle or Schwab bars cannot be established, that check is **UNKNOWN**, not
+passed. Keep the native protection intact and record the missing evidence. A one-share partial
+fill waits for the buy remainder to resolve; it must not trigger an extra sell while the rest
+of the buy could still fill. Partial-fill handling needs explicit review before activation.
 
 ## The flag-OFF morning test
 
@@ -40,6 +52,8 @@ We will check:
 - Placement after bar three and upward repricing after bars four and five.
 - Completed-bar MACD decisions, data gaps, price crossings, and the 10:00 cutoff.
 - Candidate counts and missing minutes, including cases where no order would be proposed.
+- Conditional 45% body and completed-Schwab ATR exits, clearly labelled "only if that cross had
+  filled". The observation does not claim that a real fill or sale happened.
 
 **This is not a fill simulator.** A crossing is not a Schwab fill, and there is no claimed
 live profit/loss. After the open, cancellation observations mean "cancel if still unfilled";
@@ -60,11 +74,15 @@ without a broker order we cannot know whether it would already have filled.
 
 ## Still required before live activation
 
-Schwab order acceptance/replacement/cancellation, production Schwab-bar coverage, full-suite
-baseline comparison, and independent review remain to be verified. Early-close sessions and
+Schwab order acceptance/replacement/cancellation, production Schwab-bar coverage, and independent
+review remain to be verified. Early-close sessions and
 operator notification for an unresolved end-of-day close also need to be covered before live
 activation. The current close fallback uses the normal 16:00 session end and records an OMS
 incident; phone delivery for that incident is not yet proven.
+
+Schwab bars are read from v2's existing saved feed; this PR does not add a Schwab connection or
+change v2's watchlist. Coverage must be proven for an ORB-held name even if v2 stops watching it.
+Until then, do not call the ATR exit live-validated or enable live orders.
 
 The new setting names are `orb_schwab_observe_enabled` and
 `orb_live_schwab_orders_enabled`. Both default OFF; the producer refuses to start with both ON.

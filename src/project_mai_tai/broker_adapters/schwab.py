@@ -1715,6 +1715,24 @@ class SchwabBrokerAdapter:
             or self._parse_datetime(order.get("enteredTime"))
             or datetime.now(UTC)
         )
+        report_metadata = dict(request.metadata)
+        if request.strategy_code == "orb_schwab" and request.side == "buy" and filled_quantity > 0:
+            execution_times = []
+            for activity in order.get("orderActivityCollection") or []:
+                if not isinstance(activity, dict):
+                    continue
+                for leg in activity.get("executionLegs") or []:
+                    if not isinstance(leg, dict):
+                        continue
+                    at = self._parse_datetime(leg.get("time"))
+                    qty = self._decimal_or_none(leg.get("quantity"))
+                    price = self._decimal_or_none(leg.get("price"))
+                    if at is not None and qty is not None and qty > 0 and price is not None and price > 0:
+                        execution_times.append(at)
+            report_metadata["orb_entry_first_fill_at"] = (
+                min(execution_times).isoformat() if execution_times else ""
+            )
+            report_metadata["orb_entry_fill_time_source"] = "execution_leg" if execution_times else "UNKNOWN"
         return ExecutionReport(
             event_type=event_type,  # type: ignore[arg-type]
             # This helper is called only after Schwab returned an order record (initial terminal
@@ -1736,7 +1754,7 @@ class SchwabBrokerAdapter:
             filled_quantity=filled_quantity,
             fill_price=fill_price,
             reason=self._extract_error_reason(order) or request.reason,
-            metadata=dict(request.metadata),
+            metadata=report_metadata,
             reported_at=reported_at,
         )
 
