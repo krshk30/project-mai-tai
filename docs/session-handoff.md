@@ -60,7 +60,8 @@ env/config only when the operator asks. The author never reviews.
 5. **Weekdays-only digest** (currently daily) — follow-up if wanted (carried from 09-27).
 6. Refusal response table — **DROPPED by the operator 09-28** (with old-board C5/C6); recorded, no build.
 7. **Momentum Option A #1060 (draft, head `a5bd586d`)**: codex asks the operator two things before it's ready: (a) whether Momentum-triggered symbols may cause gateway warm-ups; (b) an ACTIVE-session load check (the 16:05 census runs after Momentum stops). Then claude-1 reviews and pins; deploy needs its own exact-SHA GO.
-8. **Remaining box-cleanup candidates** (operator: "validate each"): Redis `mai_tai:snapshot-batches` 180×~6 MB ≈ 1.1 GB (15 min of scanner history; cutting to ~5 min saves ~0.7 GB but weakens scanner recovery after a strategy restart); ORB observer (76 MB, 0 intents in 7 days; its routing flag must stay on); the dashboard/control CPU (top user, 66%; snapshot-write hot path → codex fix); clutter (35 failed one-off units, 2 dead harness timers, old checkouts 3.2 GB disk).
+8. **PREMKT-ATR (board 32) — PARKED 09-29** with two recorded options (Schwab-tick bars; Massive seed for pre-07:00 warm-up only). Un-park = operator; a fill-level replay comes first.
+9. **Remaining box-cleanup candidates** (operator: "validate each"): Redis `mai_tai:snapshot-batches` 180×~6 MB ≈ 1.1 GB (15 min of scanner history; cutting to ~5 min saves ~0.7 GB but weakens scanner recovery after a strategy restart); ORB observer (76 MB, 0 intents in 7 days; its routing flag must stay on); the dashboard/control CPU (top user, 66%; snapshot-write hot path → codex fix); clutter (35 failed one-off units, 2 dead harness timers, old checkouts 3.2 GB disk).
 
 ## Board (Mon 18:54 ET) — open rows only
 | # | Item | Status | Evidence | Owner | Next action |
@@ -82,6 +83,7 @@ env/config only when the operator asks. The author never reviews.
 | 22 | INC1 alarms never self-clear | OPEN | open=4 (BENF ×2 stale, EGG, NAMI) | codex | build (relay sent 09-28) |
 | 30 | INC1 pager runs 07:00–17:59 ET only | OPEN | crontab `* 11-21 * * 1-5` UTC; shifts in EST | codex | extend to 20:00 ET, DST-proof (sent) |
 | 20 | DRIFT1 replay mirror 16:00 vs 15:45 | TBD (parked) | drift page RED every 6 h | operator | un-park when stable |
+| 32 | PREMKT-ATR: v2 misses chart BUY flips on names SHORT before 07:00 (Schwab serves no pre-07:00 bars; v2's ATR starts LONG at its first bar ~07:08) | **PARKED (operator 09-29)** | BKYI 09-29: chart BUY 07:47 @2.45 missed (0 intents). 125 stock-days 09-09..09-29: chart BUYs 504, v2 matched 273; Massive seed +35 (≈2/day; +5-before-−8 score 21/13 ≈ break-even); Schwab-tick bars +14 (3 false); codex 30-session coverage (#1062): 172 pre-market stock-days, ticks retained 21 sessions → 112, only 42 with ≥10 printed minutes 06:00–06:59 | operator (un-park) → codex build / claude-1 review | **Option 1: Schwab-tick pre-market bars** (Schwab-only; ~40% of pre-market names; proven BKYI 07:47). **Option 2: Massive seed #994 for the pre-07:00 warm-up only** (built, OFF; covers all names; needs an exception to the no-Massive-bars rule; G5 parity 98.05%). Either needs a fill-level replay first |
 
 **Closed 09-28:**
 - #1043 GAPHOLD (skip once 07:00; real post-halt detect 09:42:46).
