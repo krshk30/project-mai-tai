@@ -30,3 +30,37 @@ cannot by itself overrule evidence that REST repaired the strategy's active seri
 No trading service, flag, or broker path changes are part of this gate correction. The 06:24
 artifact remains at `/home/trader/known_defect_regression_watch/v2-restart-evidence-20260929.md`;
 it must not be retrospectively relabelled a 9/9 PASS without per-symbol coverage evidence.
+
+## Pre-open routing at installation
+
+The pinned `/home/trader/preopen.sh` is an installed, host-specific file, not tracked source.
+The repository now carries `ops/health/preopen_restart_evidence.sh` as the reviewed three-way
+routing implementation. The ops-only installation must source
+`"$REPO/ops/health/preopen_restart_evidence.sh"` after the existing `fail` and `pass`
+functions and initialize `unknowns=0` beside `failures=0`. Capture and print the current
+collector stdout/stderr around the existing report invocation (the pinned script uses `set -uo`,
+not `set -e`):
+
+```bash
+evidence_output="$(sudo -n "$REPO/.venv/bin/python" "$REPO/ops/health/v2_restart_evidence.py" report \
+  ...existing report arguments... --output "$REPORT" 2>&1)"
+evidence_rc=$?
+printf '%s\n' "$evidence_output"
+preopen_record_restart_evidence "$evidence_rc" "$REPORT" "$evidence_output"
+```
+
+The router trusts only that invocation's unique `Final call` line, not an old file or a bare
+process rc. A crash, absent call, duplicate call, or rc/call mismatch is UNKNOWN.
+
+Replace the final binary verdict block with:
+
+```bash
+printf '\n=== VERDICT ===\n'
+preopen_final_verdict
+exit $?
+```
+
+Confirm the installed script's checksum, syntax, and three exit paths (0/1/2) before trusting it.
+No production script has been changed by this PR.
+Until this integration is installed and its pinned checksum verified, the old pre-open wrapper
+still collapses an unknown evidence result into rc=1; do not use it to classify the system.

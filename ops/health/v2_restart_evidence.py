@@ -4,7 +4,7 @@
 The collector is read-only. Run ``snapshot`` before the deploy and ``report`` after it. The
 snapshot makes "services deliberately not restarted" falsifiable; a post-deploy PID alone cannot
 prove that a service stayed up. Every report line carries the population it measured. Instrument
-failures exit 2 and never degrade to a clean zero.
+failures and unprovable REST backfills exit 2; proven violations exit 1. Neither degrades to zero.
 """
 
 from __future__ import annotations
@@ -1097,6 +1097,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     current = {name: service_state(name, runner) for name in DEFAULT_SERVICES}
     before_services = before["services"]
     failures: list[str] = []
+    unknowns: list[str] = []
     rows: list[tuple[str, str, str]] = []
 
     restarted_ok = 0
@@ -1361,7 +1362,15 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
             f"REST backfill coverage not proven for {missing} independently printed minute(s)"
         )
     elif backfill.verdict == "COULD_NOT_TELL":
-        failures.append(f"REST backfill continuity COULD_NOT_TELL: {backfill.reason or 'per-symbol evidence incomplete'}")
+        reasons = [
+            f"{item.symbol}: {item.reason or f'{len(item.unverified_minutes)} older printed minute(s) not persisted'}"
+            for item in backfill.symbols
+            if item.verdict == "COULD_NOT_TELL"
+        ]
+        unknowns.append(
+            "REST backfill continuity UNKNOWN: "
+            + (backfill.reason or "; ".join(reasons) or "per-symbol evidence incomplete")
+        )
     bar_status = "FAIL" if backfill.verdict == "MISSING_PRINTED_MINUTE" else backfill.verdict
     per_symbol = "; ".join(
         f"{item.symbol} status={item.verdict} watched_at_stop={int(item.watched_at_stop)} "
@@ -1445,14 +1454,28 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         )
     )
 
+    if failures:
+        final_call = "REAL FAILURE"
+        final_reason = "; ".join(failures)
+    elif unknowns:
+        final_call = "UNKNOWN"
+        final_reason = "; ".join(unknowns)
+    elif backfill.verdict in {"N/A", "N/A_OFF_SESSION"}:
+        final_call = "EXPECTED BY DESIGN"
+        final_reason = backfill.reason
+    else:
+        final_call = "PASS"
+        final_reason = "all reported checks passed"
+
     generated = datetime.now(UTC)
     output = [
         "# V2 Restart Evidence",
         "",
         f"Generated: {format_moment(generated)}",
         f"V2 process start: {format_moment(v2_start)}",
-        f"Overall: {'PASS' if not failures else 'FAIL'} "
-        f"({len(failures)} failed checks / {len(rows)} reported checks)",
+        f"Overall: {'REAL FAILURE' if failures else 'UNKNOWN' if unknowns else 'PASS'} "
+        f"({len(failures)} failed checks / {len(unknowns)} unknown checks / {len(rows)} reported checks)",
+        f"Final call: {final_call}; {final_reason}",
         "",
         "| Check | Measured evidence | Result |",
         "| --- | --- | --- |",
@@ -1462,11 +1485,13 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     )
     if failures:
         output.extend(["", "Failures:", *(f"- {failure}" for failure in failures)])
+    if unknowns:
+        output.extend(["", "Unknowns:", *(f"- {unknown}" for unknown in unknowns)])
     rendered = "\n".join(output) + "\n"
     if args.output:
         args.output.write_text(rendered, encoding="utf-8")
     print(rendered, end="")
-    return 0 if not failures else 1
+    return 1 if failures else 2 if unknowns else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1497,7 +1522,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0 if snapshot(args.output) else 1
         return report(args)
     except EvidenceUnknown as exc:
-        print(f"UNMEASURED: {exc}", file=sys.stderr)
+        print(f"Final call: UNKNOWN; evidence unreadable: {exc}", file=sys.stderr)
         return 2
 
 
