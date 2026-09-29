@@ -1,0 +1,9 @@
+{
+  "pr_number": 1067,
+  "range_base": "eeaa4a7d2d6192125286f281076b72fb9bd497eb",
+  "range_head": "1f4781afd1ffffa881a4328a5604acca32986bd0",
+  "reviewed_at": "2026-09-29T21:40:22Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1 re-review of 1f4781af (base eeaa4a7d). range-diff: 9c981a10 == previously pinned 3be48c4f (90 s ORB evidence grace; 5/5 mutations; full suite = main). 1f4781af is docs only: OBSERVE_INSTALL_PLAN refreshed to the operator's 09-29 scope (include #1065 with v2 restart; NO INC1 watch install, #1059 auto-close held until WBREAD1; #1060 preflight gates are whole-install hard stops; #1066 excluded). Live ORB flag stays OFF."
+}
