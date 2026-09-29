@@ -1,0 +1,9 @@
+{
+  "pr_number": 1068,
+  "range_base": "ba3ebf59144534ed35642de5757564fc2945c90c",
+  "range_head": "fbe86e6ae31ca4938bd90ff04c08f4ec11261c0b",
+  "reviewed_at": "2026-09-29T22:50:42Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1 review of fbe86e6a (base ba3ebf59): mechanical revert of #1060 per operator option C; tree 249a9624 identical to reviewed 35d9a6be (commits re-created only to carry the codex agent marker). Changed paths = exactly #1060's 15 paths; reverted files byte-identical to box revision 3141bbd5; later PR files untouched vs ba3ebf59. Full suite 47 failed = box 3141bbd5 set exactly. CI validate pass. Tonight's install must NOT restart market-data or momentum-paper."
+}
