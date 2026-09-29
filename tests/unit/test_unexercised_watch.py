@@ -249,7 +249,7 @@ def test_inc1_reads_all_incident_types_from_the_same_pager_route(monkeypatch):
     [
         ("schwab_opening_policy_reject", "PMAX", "Webull-only exposure"),
         ("oco_exit_fill_unrecorded", "WETO", "child fill is not in the ledger"),
-        ("oms_v2_overnight_flatten_blocked", "BKYI", "19:55 FLATTEN BLOCKED"),
+        ("oms_v2_overnight_flatten_blocked", "BKYI", "19:55 FLATTEN REJECTED"),
     ],
 )
 def test_new_broker_incidents_reach_the_inc1_sender(

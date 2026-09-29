@@ -149,7 +149,7 @@ async def test_transition_releases_stand_down():
 
 
 @pytest.mark.asyncio
-async def test_working_or_unreadable_leg_blocks_1600_and_1955_until_confirmed():
+async def test_working_leg_blocks_1600_but_1955_submits_flatten():
     sf = _make_sf()
     svc = _svc(sf)
     svc.logger = __import__("logging").getLogger("card10-eod-test")
@@ -169,26 +169,20 @@ async def test_working_or_unreadable_leg_blocks_1600_and_1955_until_confirmed():
     svc._release_native_oco_for_cw_flip = release
     await svc._v2_eod_oco_transition()
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
-    await svc._v2_overnight_flatten()
     with sf() as session:
         assert session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all() == []
-        incidents = session.scalars(select(SystemIncident)).all()
-        assert {i.payload["source"] for i in incidents} == {
-            "oms_v2_exit_release_unresolved", "oms_v2_overnight_flatten_blocked",
-        }
-        assert all(i.status == "open" and i.severity == "critical" for i in incidents)
-    assert (svc._session_day_et(), ACCT, SYM) not in svc._v2_eod_oco_transitioned
-
-    svc.__dict__.get("_v2_eod_oco_last_try", {}).clear()
-    await svc._v2_eod_oco_transition()
-    assert (svc._session_day_et(), ACCT, SYM) in svc._v2_eod_oco_transitioned
-    with sf() as session:
-        assert all(i.status == "closed" for i in session.scalars(select(SystemIncident)).all())
     await svc._v2_overnight_flatten()
     with sf() as session:
         intents = session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all()
         assert len(intents) == 1
         assert intents[0].reason == "V2_OVERNIGHT_FLATTEN"
+        incidents = session.scalars(select(SystemIncident)).all()
+        assert {i.payload["source"] for i in incidents} == {"oms_v2_exit_release_unresolved"}
+    assert (svc._session_day_et(), ACCT, SYM) not in svc._v2_eod_oco_transitioned
+
+    with sf() as session:
+        row = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM))
+        assert row.status == "closed"
 
 
 @pytest.mark.asyncio

@@ -711,14 +711,14 @@ def _run_inc1_pager_unlocked(
                 )
             elif incident.get("source") == "oms_v2_overnight_flatten_blocked":
                 body = (
-                    "19:55 FLATTEN BLOCKED: broker exit legs are still working or unreadable. "
-                    "Do not send a second sell against them.\n"
+                    "19:55 FLATTEN REJECTED: broker reports shares unavailable for the sell. "
+                    "Do not manually send a second sell against them.\n"
                     f"account={incident.get('account') or 'UNKNOWN'} "
                     f"symbol={incident.get('symbol') or 'UNKNOWN'}\n"
                     f"managed_row_id={incident.get('managed_row_id') or 'UNKNOWN'} "
                     f"session_date={incident.get('session_date') or 'UNKNOWN'}\n"
-                    "Check exact broker children and held quantity; cancellation confirmation "
-                    "is required before any software sell."
+                    "Check exact broker children, held quantity and the 19:55 retry; "
+                    "the automated flatten continues despite unreadable RTH legs."
                 )
             elif incident.get("source") == "oms_v2_confirmation_exit_reprotected":
                 restored = incident.get("protection_restored") == "true"

@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
+from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import OmsManagedPosition, SystemIncident, TradeIntent
 from project_mai_tai.oms.service import OmsRiskService
@@ -117,6 +118,49 @@ async def test_flatten_closes_open_position_full_qty():
     assert intents[0].reason.endswith("V2_OVERNIGHT_FLATTEN")
     row = _row(sf)
     assert row.current_quantity == 0 or row.status == "closed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reject_reason", [
+    "This order may result in an oversold position",
+    "ORDER_NOT_SUPPORT_REVERSE_OPTION",
+])
+async def test_committed_shares_reject_opens_one_critical_incident(reject_reason):
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf)
+    _quote(svc, bid=9.80)
+    _force_due(svc)
+    svc.settings.oms_v2_eod_oco_transition_enabled = True
+    svc._v2_eod_oco_transition_due = lambda now=None: True
+
+    async def no_release(*_args, **_kwargs):
+        return "reserved"
+
+    svc._release_native_oco_for_cw_flip = no_release
+
+    async def reject(request):
+        return [ExecutionReport(
+            event_type="rejected", origin="broker",
+            client_order_id=request.client_order_id,
+            broker_order_id=f"committed-shares-reject-{request.client_order_id}",
+            symbol=request.symbol, side=request.side,
+            intent_type=request.intent_type, quantity=request.quantity,
+            reason=reject_reason,
+            metadata=dict(request.metadata),
+        )]
+
+    svc.broker_adapter.submit_order = reject
+    await svc._v2_overnight_flatten()
+    await svc._v2_overnight_flatten()
+    assert len(_sell_intents(sf)) == 2
+    with sf() as session:
+        incidents = session.scalars(select(SystemIncident).where(
+            SystemIncident.payload["source"].as_string() == "oms_v2_overnight_flatten_blocked"
+        )).all()
+        assert len(incidents) == 1
+        assert incidents[0].severity == "critical"
+        assert incidents[0].payload["reason"] == "broker_position_unavailable_for_flatten"
 
 
 @pytest.mark.asyncio
