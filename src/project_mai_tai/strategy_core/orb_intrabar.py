@@ -18,6 +18,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
+from math import isfinite
+
+from project_mai_tai.strategy_core.indicators import macd
 
 
 class ExecutionMode(str, Enum):
@@ -60,6 +63,26 @@ class OrbBar:
     vwap: float | None = None
     ema9: float | None = None
     breakout_high: float | None = None
+
+
+def completed_bar_macd_gate(
+    bars: list[OrbBar], evaluated_at: datetime
+) -> tuple[bool, str, float | None]:
+    """Gate an ORB entry using the last completed 1-minute MACD histogram."""
+    latest_minute = evaluated_at.replace(second=0, microsecond=0) - timedelta(minutes=1)
+    completed = sorted(
+        (bar for bar in bars if bar.timestamp <= latest_minute),
+        key=lambda bar: bar.timestamp,
+    )
+    if not completed or completed[-1].timestamp != latest_minute:
+        return False, "missing_last_closed_bar", None
+    if len(completed) < 26:
+        return False, "insufficient_macd_history", None
+    histogram = macd([bar.close for bar in completed])["histogram"]
+    if not histogram or not isfinite(histogram[-1]):
+        return False, "invalid_macd", None
+    value = histogram[-1]
+    return value >= 0, "nonnegative" if value >= 0 else "negative", value
 
 
 @dataclass(frozen=True)
