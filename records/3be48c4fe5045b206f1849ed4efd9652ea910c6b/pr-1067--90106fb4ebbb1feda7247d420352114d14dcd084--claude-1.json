@@ -1,9 +1,0 @@
-{
-  "pr_number": 1067,
-  "range_base": "90106fb4ebbb1feda7247d420352114d14dcd084",
-  "range_head": "3be48c4fe5045b206f1849ed4efd9652ea910c6b",
-  "reviewed_at": "2026-09-29T21:26:16Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "claude-1 review of 3be48c4f (base 90106fb4). Fixes the #1064 activation blocker: Schwab bar evidence grace 90 s from the specific minute close (RTH save lag p50 2.6 s p95 3.3 s p99 33 s measured on box); pending body never sells; pending last-closed ATR bar does not page; missing minutes retained across polls; incident only after grace. 458 targeted pass; 5/5 claude-1 mutations killed (grace 3 s, grace 999 s, pending-body sell, ATR-pending pages, missing-minutes forgotten). Full suite FAILED set identical to main; CI validate pass. Live ORB flag stays OFF; activation still needs attended Schwab test, early close, phone delivery."
-}
