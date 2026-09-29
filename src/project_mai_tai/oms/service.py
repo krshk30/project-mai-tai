@@ -1520,33 +1520,6 @@ class OmsRiskService:
                         event.payload.symbol,
                     )
                     return []
-        if (
-            strategy_code == "schwab_1m_v2"
-            and event.payload.intent_type == "open"
-            and bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
-            and event.payload.broker_account_name
-            == self.settings.strategy_schwab_1m_v2_account_name
-        ):
-            try:
-                broker_positions = await self.broker_adapter.list_account_positions(
-                    event.payload.broker_account_name
-                )
-            except Exception:
-                self.logger.exception(
-                    "[OMS-V2-ORB-COLLISION] symbol=%s reason=broker_position_unknown",
-                    event.payload.symbol,
-                )
-                return []
-            if any(
-                position.symbol.upper() == event.payload.symbol.upper()
-                and position.quantity != 0
-                for position in broker_positions
-            ):
-                self.logger.warning(
-                    "[OMS-V2-ORB-COLLISION] symbol=%s reason=broker_position_held",
-                    event.payload.symbol,
-                )
-                return []
         if strategy_code in {"polygon_30s", "webull_30s"}:
             self.logger.error(
                 "[PAPER-EXIT-REFUSED] OMS blocked polygon_30s intent before intent/order "
@@ -9434,7 +9407,7 @@ class OmsRiskService:
             "terminal_orders": order_summary["terminal_orders"],
         }
 
-    async def _poll_orb_schwab_child_exits(self) -> None:
+    async def _poll_orb_schwab_child_exits(self, *, entry_id: UUID | None = None) -> None:
         """Attribute only a filled SELL child owned by our exact ORB parent."""
         with self.session_factory() as session:
             entries = session.execute(
@@ -9453,6 +9426,7 @@ class OmsRiskService:
                     BrokerOrder.side == "buy",
                     BrokerOrder.status == "filled",
                     VirtualPosition.quantity > 0,
+                    (BrokerOrder.id == entry_id) if entry_id is not None else True,
                 )
             ).all()
             work = [
@@ -9748,7 +9722,7 @@ class OmsRiskService:
                 request = OrderRequest(
                     client_order_id=order.client_order_id,
                     broker_account_name=account.name,
-                    strategy_code="",
+                    strategy_code="orb_schwab" if strategy is not None and strategy.code == "orb_schwab" else "",
                     symbol=order.symbol,
                     side=order.side,  # type: ignore[arg-type]
                     intent_type=intent.intent_type,  # type: ignore[arg-type]
@@ -9770,6 +9744,10 @@ class OmsRiskService:
                 recorded_metadata = carry_fanout_identity(
                     report.metadata, request.metadata
                 )
+                if strategy is not None and strategy.code == "orb_schwab":
+                    recorded_metadata = {**(order.payload or {}), **recorded_metadata}
+                    if (order.payload or {}).get("orb_replace_hold"):
+                        recorded_metadata["orb_replace_hold"] = order.payload["orb_replace_hold"]
                 payload = {
                     "client_order_id": report.client_order_id,
                     "broker_order_id": report.broker_order_id,
@@ -12871,8 +12849,32 @@ class OmsRiskService:
                 request.symbol, old_id,
             )
             report = None
-        if report is None:
+        if report is None or (report.event_type == "accepted" and (
+            not report.broker_order_id or report.metadata.get("orb_replace_confirmation") != "confirmed"
+        )):
             reason = "orb_schwab_reprice_broker_outcome_unknown"
+            # Persist the new handle before any further action. Ordinary order
+            # reconciliation reads it, but no cancel/reprice may assume its shape.
+            if report is not None and report.broker_order_id:
+                target.broker_order_id = report.broker_order_id
+            target.payload = {**old_metadata, "orb_replace_hold": {
+                "old_id": old_id, "new_id": report.broker_order_id if report else None,
+                "desired": metadata, "reason": report.reason if report else reason,
+                "observed_at": utcnow().isoformat(),
+            }}
+            if report is not None:
+                self.store.append_order_event(session, order=target, report=report,
+                    payload={"replacement_receipt_only": True, "old_id": old_id,
+                             "reason": report.reason, "metadata": dict(report.metadata)})
+            session.add(SystemIncident(
+                service_name="oms-risk", severity="critical", status="open",
+                title=f"ORB replacement UNKNOWN: {target.symbol}; reconcile new parent",
+                payload={"source": "orb_schwab_replace_unknown", "entry_order_id": str(target.id),
+                         "broker_account_name": event.payload.broker_account_name,
+                         "symbol": target.symbol, "old_broker_order_id": old_id,
+                         "new_broker_order_id": report.broker_order_id if report else None,
+                         "reason": report.reason if report else reason},
+            ))
             self.store.mark_intent_refused(intent, origin="could_not_tell", code=reason)
             self.logger.error(
                 "[OMS-ORB-SCHWAB-REPRICE-UNKNOWN] symbol=%s old_id=%s", request.symbol, old_id
@@ -12914,6 +12916,8 @@ class OmsRiskService:
         self, *, session: Session, target: BrokerOrder, account_name: str
     ) -> str | None:
         """A late MACD cancel may touch only an unfilled broker parent."""
+        if (target.payload or {}).get("orb_replace_hold"):
+            return "orb_schwab_replace_hold_reconcile_required"
         if not target.broker_order_id:
             return "orb_schwab_cancel_broker_order_unknown"
         recorded_fill = session.scalar(
@@ -14898,6 +14902,8 @@ class OmsRiskService:
         broker_account_name: str,
         report: ExecutionReport,
     ) -> dict[str, object]:
+        if strategy_code == "orb_schwab" and (order.payload or {}).get("orb_replace_hold"):
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
         remaining_quantity = max(Decimal("0"), order.quantity - report.filled_quantity)
         if remaining_quantity <= 0:
             return {"orders": 0, "terminal_orders": 0, "published_events": []}

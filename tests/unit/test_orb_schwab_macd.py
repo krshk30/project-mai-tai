@@ -20,8 +20,8 @@ def _factory() -> sessionmaker:
 
 def _add_bars(factory: sessionmaker, *, symbol: str = "TEST", strategy: str = "schwab_1m_v2") -> None:
     with factory.begin() as session:
-        for minute in range(-34, 0):
-            close = Decimal(str(minute + 35))
+        for minute in range(-40, 0):
+            close = Decimal(str(minute + 41))
             session.add(
                 StrategyBarHistory(
                     strategy_code=strategy,
@@ -107,3 +107,25 @@ def test_gate_fails_closed_when_bar_store_unreadable() -> None:
         "schwab_bar_read_error",
         None,
     )
+
+
+def test_imcc_shaped_full_history_negative_refuses_even_when_last_26_looks_positive():
+    from project_mai_tai.strategy_core.indicators import macd
+    from project_mai_tai.strategy_core.schwab_1m_v2 import V2Indicators
+
+    # Synthetic sign-divergence fixture, NOT a claim to reproduce IMCC's tape.
+    closes = [5 + i * .02 for i in range(122)] + [7.42 + i * .002 for i in range(26)]
+    assert macd(closes[-26:])["histogram"][-1] > 0
+    expected = V2Indicators.macd(closes)[2]
+    assert expected < 0
+    factory = _factory()
+    with factory.begin() as session:
+        for i, close in enumerate(closes):
+            session.add(StrategyBarHistory(
+                strategy_code="schwab_1m_v2", symbol="IMCC", interval_secs=60,
+                bar_time=OPEN - timedelta(minutes=len(closes) - i),
+                open_price=close, high_price=close, low_price=close, close_price=close, volume=100,
+            ))
+    allowed, reason, value = schwab_completed_bar_macd_gate(factory, "IMCC", OPEN)
+    assert not allowed and reason == "negative"
+    assert abs(value - expected) < 1e-10

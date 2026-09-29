@@ -19,7 +19,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_outcome_consumer import session_anchor
 from project_mai_tai.orb_schwab_macd import schwab_completed_bar_macd_gate
 from project_mai_tai.orb_schwab_exits import (
-    ATR_SOURCE, OrbExitTape, open_entries, save_context, schwab_completed_atr_bars,
+    ATR_SOURCE, completed_bar_evidence, open_entries, save_context, schwab_completed_atr_bars,
 )
 from project_mai_tai.orb_schwab_order_route import (
     build_orb_schwab_cancel_intent,
@@ -60,7 +60,6 @@ class OrbSchwabService(OrbService):
             self.settings.orb_paper_atr_entry_gate_enabled or self.settings.orb_paper_four_red_delay_enabled
         ):
             raise ValueError("Optional paper entry gates need a separately reviewed native-order design")
-        self._exit_tapes: dict[str, OrbExitTape] = {}
         self._exit_held_symbols: set[str] = set()
         self._exit_last_poll: datetime | None = None
         self._exit_atr_cache: dict[str, tuple[datetime, list, str]] = {}
@@ -85,7 +84,6 @@ class OrbSchwabService(OrbService):
         self._observe_crosses.clear()
         self._observe_seen_bars.clear()
         self._observe_status_at = None
-        self._exit_tapes.clear()
         self._exit_atr_cache.clear()
         self._exit_last_publish.clear()
         self._exit_last_poll = None
@@ -94,8 +92,6 @@ class OrbSchwabService(OrbService):
 
     async def _sync_gateway_subscription(self, symbols: list[str]) -> None:
         desired = sorted({str(symbol).upper() for symbol in symbols if str(symbol).strip()})
-        for symbol in desired:
-            self._exit_tapes.setdefault(symbol, OrbExitTape(self._processing_time()))
         if self._observe_only:
             # Observe only feeds other consumers already requested. No warm-up or
             # gateway owner changes are caused by the rehearsal.
@@ -129,17 +125,6 @@ class OrbSchwabService(OrbService):
             return
         if not isinstance(event.get("payload"), dict):
             return
-        payload = event["payload"]
-        symbol = str(payload.get("symbol", "")).upper()
-        if event.get("event_type") == "trade_tick" and symbol in self._last_gateway_symbols:
-            try:
-                timestamp_ns = _normalize_trade_ts_ns(payload.get("timestamp_ns"))
-                if timestamp_ns:
-                    traded_at = datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC)
-                    tape = self._exit_tapes.setdefault(symbol, OrbExitTape(self._processing_time()))
-                    tape.trade(traded_at, float(payload["price"]), float(payload.get("size") or 0))
-            except (KeyError, ValueError, TypeError, OverflowError, OSError):
-                pass
         if self._observe_only:
             self._observe_trade_cross(event)
         if event.get("event_type") == "quote_tick":
@@ -307,8 +292,7 @@ class OrbSchwabService(OrbService):
                 ):
                     bars, status = await asyncio.to_thread(schwab_completed_atr_bars, self.session_factory, symbol, now)
                     cached = self._exit_atr_cache[symbol] = (now, bars, status)
-                tape = self._exit_tapes.setdefault(symbol, OrbExitTape(now))
-                context = tape.evidence(entry["fill_id"], entry["fill_at"], now,
+                context = completed_bar_evidence(entry["fill_id"], entry["fill_at"], now,
                                         atr_bars=cached[1], atr_status=cached[2], prior=prior)
             if self._observe_only:
                 entry["context"] = context

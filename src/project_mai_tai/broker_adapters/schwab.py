@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -1591,7 +1591,11 @@ class SchwabBrokerAdapter:
     async def replace_bracket_order(
         self, request: OrderRequest, broker_order_id: str
     ) -> ExecutionReport | None:
-        """Replace one unfilled ORB parent; None means broker outcome is unknown."""
+        """Retain the PUT receipt even if the new bracket cannot be confirmed.
+
+        An accepted receipt with orb_replace_confirmation=unknown is a HOLD,
+        not confirmation that the requested prices are working or any fill.
+        """
         if request.strategy_code != "orb_schwab" or not broker_order_id:
             raise RuntimeError("ORB replace requires its known Schwab parent")
         account = self.accounts_by_name.get(request.broker_account_name)
@@ -1642,21 +1646,34 @@ class SchwabBrokerAdapter:
                 reason=self._extract_error_reason(response),
                 metadata=dict(request.metadata),
             )
-        new_id = self._extract_order_id(response, headers) or broker_order_id
-        confirmed = await self._fetch_order(account, new_id)
+        new_id = self._extract_order_id(response, headers)
+        def unknown(reason: str) -> ExecutionReport:
+            return ExecutionReport(
+                event_type="accepted", origin="broker", client_order_id=request.client_order_id,
+                broker_order_id=new_id, symbol=request.symbol, side="buy", intent_type="open",
+                quantity=request.quantity, reason=reason,
+                metadata={**request.metadata, "orb_replace_confirmation": "unknown"},
+            )
+
+        if not new_id:
+            return unknown("replace_receipt_missing_order_id")
+        try:
+            confirmed = await self._fetch_order(account, new_id)
+        except Exception:
+            return unknown("replace_confirmation_read_failed")
         if (
             confirmed is None
             or str(confirmed.get("status", "")).upper() not in self.ACCEPTED_STATUSES
         ):
-            return None
-        report = self._execution_report_from_order(
-            request=request,
-            order=confirmed,
-            event_type="accepted",
-            broker_order_id=new_id,
-        )
+            return unknown("replace_not_confirmed_working")
+        try:
+            report = self._execution_report_from_order(
+                request=request, order=confirmed, event_type="accepted", broker_order_id=new_id,
+            )
+        except Exception:
+            return unknown("replace_confirmation_decode_failed")
         if report.filled_quantity != 0:
-            return None
+            return unknown("replace_has_execution_reconcile_new_id")
         try:
             parent_legs = confirmed["orderLegCollection"]
             children = confirmed["childOrderStrategies"][0]["childOrderStrategies"]
@@ -1686,9 +1703,11 @@ class SchwabBrokerAdapter:
                     for child in children
                 )
             )
-        except (IndexError, KeyError, ValueError, TypeError):
-            return None
-        return report if price_matches else None
+        except (IndexError, KeyError, ValueError, TypeError, InvalidOperation):
+            return unknown("replace_shape_unreadable")
+        if not price_matches:
+            return unknown("replace_shape_mismatch")
+        return replace(report, metadata={**report.metadata, "orb_replace_confirmation": "confirmed"})
 
     def _execution_report_from_order(
         self,

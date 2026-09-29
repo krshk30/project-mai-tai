@@ -77,7 +77,10 @@ async def test_unknown_replace_never_claims_success(monkeypatch) -> None:
 
     monkeypatch.setattr(adapter, "_fetch_order", fetch)
     monkeypatch.setattr(adapter, "_authorized_request_json", request_json)
-    assert await adapter.replace_bracket_order(request, "old") is None
+    report = await adapter.replace_bracket_order(request, "old")
+    assert report.broker_order_id == "new"
+    assert report.metadata["orb_replace_confirmation"] == "unknown"
+    assert report.filled_quantity == 0 and report.broker_fill_id is None
 
 
 def test_orb_fill_time_comes_from_execution_legs_not_parent_entered_time():
@@ -111,3 +114,28 @@ def test_other_strategy_fill_metadata_is_unchanged():
     report = adapter._execution_report_from_order(request=request,
         order={"quantity": 2, "filledQuantity": 2}, event_type="filled", broker_order_id="parent")
     assert report.metadata == request.metadata
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("problem", ["read_raises", "partial", "wrong_price", "wrong_shape"])
+async def test_accepted_put_retains_new_id_on_every_confirmation_problem(monkeypatch, problem):
+    adapter, request = _setup()
+    old = {**adapter._build_bracket_payload(request), "status": "WORKING", "quantity": 2, "filledQuantity": 0}
+    async def fetch(_account, order_id):
+        if order_id == "old":
+            return old
+        if problem == "read_raises":
+            raise RuntimeError("GET unavailable after accepted PUT")
+        if problem == "partial":
+            return {**old, "filledQuantity": 1}
+        if problem == "wrong_price":
+            return {**old, "price": "100"}
+        return {**old, "childOrderStrategies": []}
+    async def put(*_args, **_kwargs):
+        return 201, {"Location": "/trader/v1/accounts/test-hash/orders/new"}, {}
+    monkeypatch.setattr(adapter, "_fetch_order", fetch)
+    monkeypatch.setattr(adapter, "_authorized_request_json", put)
+    report = await adapter.replace_bracket_order(request, "old")
+    assert report.broker_order_id == "new"
+    assert report.metadata["orb_replace_confirmation"] == "unknown"
+    assert report.filled_quantity == 0 and report.broker_fill_id is None

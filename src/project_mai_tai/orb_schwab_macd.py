@@ -19,7 +19,7 @@ from project_mai_tai.strategy_core.orb_intrabar import OrbBar, completed_bar_mac
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
 _SCHWAB_STRATEGY = "schwab_1m_v2"
-_MACD_BARS = 26
+_MACD_BARS = 35
 _ONE_MINUTE = timedelta(minutes=1)
 
 
@@ -57,8 +57,7 @@ def schwab_completed_bar_macd_gate(
                     StrategyBarHistory.bar_time >= morning_start,
                     StrategyBarHistory.bar_time <= last_minute,
                 )
-                .order_by(StrategyBarHistory.bar_time.desc())
-                .limit(_MACD_BARS)
+                .order_by(StrategyBarHistory.bar_time)
             ).all()
     except Exception:
         logger.exception("[ORB-SCHWAB-MACD] bar read unavailable symbol=%s", ticker)
@@ -66,7 +65,6 @@ def schwab_completed_bar_macd_gate(
 
     if len(rows) < _MACD_BARS:
         return False, "insufficient_schwab_history", None
-    rows.reverse()
     bars: list[OrbBar] = []
     for row in rows:
         bar_time = row.bar_time
@@ -90,6 +88,7 @@ def schwab_completed_bar_macd_gate(
 
     if bars[-1].timestamp != last_minute:
         return False, "missing_last_closed_schwab_bar", None
-    if any(right.timestamp - left.timestamp != _ONE_MINUTE for left, right in zip(bars, bars[1:])):
+    recent = bars[-_MACD_BARS:]
+    if any(right.timestamp - left.timestamp != _ONE_MINUTE for left, right in zip(recent, recent[1:])):
         return False, "missing_schwab_minute", None
     return completed_bar_macd_gate(bars, evaluated_utc)

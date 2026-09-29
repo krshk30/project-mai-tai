@@ -13,18 +13,23 @@ native-route difference, including remaining activation limitations.
 - One two-share NORMAL/DAY Schwab STOP_LIMIT parent with native +5% / -8% OTOCO children.
 - Place after the completed 09:27 bar (three 09:25-09:27 bars), around 09:28 ET. Request an
   upward-only replacement after the 09:28 and 09:29 bars, never a second OPEN order.
-- Completed Schwab one-minute MACD must be nonnegative; unknown data blocks entry, and a later
+- Full 07:00+ Schwab series MACD uses V2Indicators.macd (minimum 35 bars; latest 35 consecutive).
+  The last completed histogram must be nonnegative; unknown data blocks entry, and a later
   negative/unknown reading requests cancellation of an unfilled parent. OMS also checks the
   condition and cancels working parents at the 10:00 ET entry cutoff.
-- OMS checks broker positions and its own ORB/v2 orders before accepting a new buy. It previews
-  the bracket, verifies an unfilled parent before cancel/replace, and records only a broker-
-  confirmed replacement. An unknown PUT outcome is labelled unknown, not accepted.
+- ORB checks broker positions and its own ORB/v2 orders before a new buy. v2 itself only checks
+  ORB-owned orders/positions, not an added broker-position gate that would block v2's own adds.
+  The replacement's NEW broker ID is retained even if confirmation fails. Such a receipt is
+  not a confirmed working bracket; durable HOLD blocks cancel/reprice until reconciled. Exact
+  fills are still polled from the new ID. Unknown replacement, exit-evidence and EOD incidents
+  are included in the pager query; installation and phone delivery remain unexercised.
 - The OMS polls the exact owned Schwab child sell for fill attribution, not an account-wide
   symbol match.
-- Both previously omitted paper strategy exits are restored: body <45% at the actual broker
-  entry time and ATR SELL after entry. Body uses the unfiltered gateway minute prefix and an
-  explicit broker execution-leg timestamp; ATR uses only completed Schwab one-minute OHLC and
-  unchanged shared 5/3.5/Wilder's math. Neither a price cross nor generic order time is a fill.
+- Operator card supersedes the earlier fill-time body implementation: body <45% at the CLOSE
+  of the completed Schwab minute containing the actual parent fill; >=45% holds. Only later
+  completed bars can cause ATR SELL, using unchanged shared 5/3.5/Wilder's math. Native bracket
+  exits inside the break bar are booked first, against the exact current parent, with no body
+  sell. Missing break bar means no strategy sell plus an incident; native protection stays.
 - Early exits reuse the same durable close claim as the 15:55 fallback, so an earlier strategy
   close cannot be duplicated by a later end-of-day sweep. OMS checks the persisted exact-fill
   evidence and a fresh post-decision bid before claiming; negative MACD never blocks a close.
@@ -39,7 +44,19 @@ native-route difference, including remaining activation limitations.
   sell is not a fill. A still-held position at 15:59 is flagged. No market sell is sent at/after
   16:00. These times describe a normal full trading session.
 
-## Local verification
+## Revision 2 verification
+
+- 655 focused tests pass, including ORB, native Schwab brackets, existing v2 exits/fan-out,
+  the unexercised watch and known-defect watch. No real broker call was made.
+- All 13 new in-memory guard mutations were killed. Four RED controls restore the relevant
+  code from reviewed head 84c3f234 and expose R1/A1/A2/A3. A separate exact-main control runs
+  the same flag-OFF v2 test with the base process_trade_intent: it also passes.
+- The full-suite comparison is recorded in [REVISION_2.md](REVISION_2.md). Raw local files:
+  /tmp/orb-1064-r2-final-unit.log, /tmp/orb-1064-r2-base-unit.log,
+  /tmp/orb-1064-r2-targeted.log, /tmp/orb-1064-r2-controls.log.
+- New-head Linux CI and independent pinning remain separate requirements.
+
+## Historical verification at 84c3f234 (superseded body rule)
 
 - 483 tests passed across the ORB tests, native Schwab bracket tests, broker event-source
   checks, OMS ORB exits, v2 OCO emission/fan-out, and existing v2 end-of-day suites.
@@ -72,12 +89,14 @@ native-route difference, including remaining activation limitations.
   cancellation have not been exercised. A separate attended one-order test at 09:25-09:26 ET can
   prove that broker workflow before activating the three-bar strategy. The test needs exact
   symbol/price/date authorization and confirmed cancellation before 09:30.
-- Coverage and timing of v2-persisted Schwab bars for ORB-confirmed symbols have not been measured
-  on the production box. Missing bars fail closed; they are not substituted with Massive bars.
+- The reviewer supplied 26-bar coverage for 32/34 candidates and persistence latency for 921
+  bars. This does not establish the new full-series/35-bar seed requirement, nor continued
+  coverage after v2 watch removal. No new production read was performed in this revision.
 - Independent review, base/head pinning, and new-head Linux CI remain outstanding.
-- Early-close exchange sessions and phone delivery of the new end-of-day incident source must
-  be covered in deployment review. The current local implementation uses the approved 16:00
-  close and records incidents in the existing OMS incident table.
+- Early-close exchange sessions and real phone delivery of all new ORB incident sources must
+  be covered before activation. The fallback still uses the normal 16:00 close. Installing
+  the pager requires updating its separate installed copy and both cron sha guards; no such
+  installation or cron change was made here.
 
 No service, broker order, account, environment flag, or production checkout was changed by this
 local build.

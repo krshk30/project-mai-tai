@@ -1,12 +1,10 @@
-"""ORB exits: fill-time gateway body, completed Schwab ATR, exact broker fill.
+"""ORB exits: completed Schwab break-bar body, later Schwab ATR, exact broker fill.
 
 The paper calculation helpers are shared; paper positions and paper fills are not.
 """
 
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from math import isfinite
 from uuid import UUID
@@ -25,7 +23,7 @@ from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 CONTEXT_KEY = "orb_schwab_strategy_exit"
 BODY_REASON = "BREAK_BAR_BODY_UNDER_45_PCT"
 ATR_REASON = "ATR_TURNED_PURPLE_AT_BAR_CLOSE"
-BODY_SOURCE = "ORB_GATEWAY_TRADE_TICKS"
+BODY_SOURCE = "SCHWAB_1M_V2_COMPLETED_BARS"
 ATR_SOURCE = "SCHWAB_1M_V2_COMPLETED_BARS"
 _ET = ZoneInfo("America/New_York")
 
@@ -63,76 +61,48 @@ def decode_bar(row: dict) -> OrbBar:
     return OrbBar(timestamp=at, open=o, high=h, low=low, close=c, volume=v)
 
 
-@dataclass
-class OrbExitTape:
-    started_at: datetime
-    ticks: deque = field(default_factory=deque)
-    truncated_through: datetime | None = None
-    latest_trade_at: datetime | None = None
-    # Bounded intraminute history is needed only until the entry fill is observed.
-    max_ticks: int = 20000
-
-    def trade(self, at: datetime, price: float, size: float) -> None:
-        if at.tzinfo is None or not isfinite(price) or price <= 0 or not isfinite(size) or size < 0:
-            return
-        self.ticks.append((at, price, size))
-        newest = max(at, self.latest_trade_at or at)
-        self.latest_trade_at = newest
-        while self.ticks and (len(self.ticks) > self.max_ticks or self.ticks[0][0] < newest - timedelta(minutes=2)):
-            removed = self.ticks.popleft()[0]
-            self.truncated_through = max(removed, self.truncated_through or removed)
-
-    def body_at(self, fill_at: datetime) -> dict | None:
-        minute = fill_at.replace(second=0, microsecond=0)
-        if self.latest_trade_at is None or self.latest_trade_at < fill_at:
-            return None
-        if self.started_at > minute or (
-            self.truncated_through is not None and self.truncated_through >= minute
-        ):
-            return None
-        prefix = [(at, price, size) for at, price, size in self.ticks if minute <= at <= fill_at]
-        if not prefix:
-            return None
-        prefix.sort(key=lambda item: item[0])
-        prices = [price for _at, price, _size in prefix]
-        return {"open": prices[0], "high": max(prices), "low": min(prices), "close": prices[-1],
-                "last_trade_at": prefix[-1][0].isoformat(), "fill_at": fill_at.isoformat(),
-                "trade_count": len(prefix)}
-
-    def evidence(
-        self, fill_id: str, fill_at: datetime, now: datetime, *, atr_bars: list[OrbBar],
-        atr_status: str, prior: dict | None = None,
-    ) -> dict:
-        prior = prior or {}
-        body = prior.get("body") if prior.get("fill_id") == fill_id else None
-        body = body or self.body_at(fill_at)
-        result = {"body_source": BODY_SOURCE, "atr_source": ATR_SOURCE,
-                  "fill_id": fill_id, "fill_at": fill_at.isoformat(), "body": body,
-                  "atr_bars": [bar_payload(bar) for bar in atr_bars],
-                  "atr_status": atr_status, "atr_asof": now.isoformat()}
-        reason, decision_at = exit_signal(result, now)
-        result.update(reason=reason, decision_at=decision_at.isoformat() if decision_at else None)
-        return result
+def completed_bar_evidence(
+    fill_id: str, fill_at: datetime, now: datetime, *, atr_bars: list[OrbBar],
+    atr_status: str, prior: dict | None = None,
+) -> dict:
+    minute = fill_at.replace(second=0, microsecond=0)
+    closed_at = minute + timedelta(minutes=1)
+    body = next((bar_payload(bar) for bar in atr_bars
+                 if bar.timestamp == minute and closed_at <= now), None)
+    prior = prior or {}
+    if body is None and prior.get("fill_id") == fill_id and prior.get("body_source") == BODY_SOURCE:
+        body = prior.get("body")
+    # Normal persisted-bar latency is 0-3 seconds. Wait without paging until
+    # that allowance expires; never substitute gateway ticks or a forming bar.
+    body_status = ("complete" if body else "pending_break_bar" if now <= closed_at + timedelta(seconds=3)
+                   else "missing_completed_schwab_break_bar")
+    result = {"body_source": BODY_SOURCE, "atr_source": ATR_SOURCE,
+              "fill_id": fill_id, "fill_at": fill_at.isoformat(), "body": body,
+              "body_status": body_status, "atr_bars": [bar_payload(bar) for bar in atr_bars],
+              "atr_status": atr_status, "atr_asof": now.isoformat()}
+    reason, decision_at = exit_signal(result, now)
+    result.update(reason=reason, decision_at=decision_at.isoformat() if decision_at else None)
+    return result
 
 
 def exit_signal(context: dict, now: datetime) -> tuple[str | None, datetime | None]:
-    """Recompute the two paper rules; never trust a caller's proposed reason."""
+    """Recompute the operator's completed-bar rules, not a caller's reason."""
     if context.get("body_source") != BODY_SOURCE:
         raise ValueError("wrong_exit_evidence_source")
     fill_at = datetime.fromisoformat(context["fill_at"])
     if fill_at.tzinfo is None or fill_at > now:
         raise ValueError("invalid_fill_time")
     body = context.get("body")
-    if body is not None:
-        last_at = datetime.fromisoformat(body["last_trade_at"])
-        if not fill_at.replace(second=0, microsecond=0) <= last_at <= fill_at:
-            raise ValueError("body_contains_wrong_minute_or_post_fill_trade")
-        if datetime.fromisoformat(body["fill_at"]) != fill_at:
-            raise ValueError("body_fill_time_mismatch")
-        bar = decode_bar({**body, "at": fill_at.isoformat(), "volume": 0})
-        percentage = forming_bar_body_pct(open_price=bar.open, high=bar.high, low=bar.low, close=bar.close)
-        if percentage < PAPER_MIN_BREAK_BODY_PCT:
-            return BODY_REASON, fill_at
+    minute = fill_at.replace(second=0, microsecond=0)
+    closed_at = minute + timedelta(minutes=1)
+    if body is None or now < closed_at:
+        return None, None
+    bar = decode_bar(body)
+    if bar.timestamp != minute:
+        raise ValueError("body_not_broker_fill_minute")
+    percentage = forming_bar_body_pct(open_price=bar.open, high=bar.high, low=bar.low, close=bar.close)
+    if percentage < PAPER_MIN_BREAK_BODY_PCT:
+        return BODY_REASON, closed_at
     if context.get("atr_status") != "complete":
         return None, None
     if context.get("atr_source") != ATR_SOURCE:
@@ -149,7 +119,7 @@ def exit_signal(context: dict, now: datetime) -> tuple[str | None, datetime | No
         raise ValueError("atr_bars_not_ordered")
     for bar, result in zip(bars, compute_paper_atr_trail(bars), strict=True):
         decision_at = bar.timestamp + timedelta(minutes=1)
-        if result["flip"] == "SELL" and fill_at <= decision_at:
+        if result["flip"] == "SELL" and bar.timestamp > minute:
             return ATR_REASON, decision_at
     return None, None
 
@@ -209,9 +179,9 @@ def schwab_completed_atr_bars(factory, symbol: str, now: datetime) -> tuple[list
     except Exception:
         return [], "schwab_bar_read_unavailable"
     if not bars or bars[-1].timestamp != last:
-        return [], "missing_last_closed_schwab_bar"
+        return bars, "missing_last_closed_schwab_bar"
     if compute_paper_atr_trail(bars)[-1]["state"] is None:
-        return [], "insufficient_schwab_atr_history"
+        return bars, "insufficient_schwab_atr_history"
     return bars, "complete"
 
 
@@ -224,7 +194,9 @@ def save_context(factory, entry_id: str, context: dict) -> None:
         if previous.get("reason"):
             return
         entry.payload = {**(entry.payload or {}), CONTEXT_KEY: context}
-        if context.get("body") is None or context.get("atr_status") != "complete":
+        if context.get("body_status") != "pending_break_bar" and (
+            context.get("body") is None or context.get("atr_status") != "complete"
+        ):
             exists = session.scalar(select(SystemIncident.id).where(
                 SystemIncident.payload["source"].as_string() == "orb_schwab_exit_evidence",
                 SystemIncident.payload["entry_order_id"].as_string() == entry_id,
@@ -234,7 +206,8 @@ def save_context(factory, entry_id: str, context: dict) -> None:
                     service_name="orb-schwab", severity="critical", status="open",
                     title=f"ORB strategy-exit evidence unavailable: {entry.symbol}",
                     payload={"source": "orb_schwab_exit_evidence", "entry_order_id": entry_id,
+                             "broker_account_name": session.get(BrokerAccount, entry.broker_account_id).name,
                              "symbol": entry.symbol,
-                             "reason": "BODY_AT_BROKER_FILL_UNKNOWN" if context.get("body") is None else context.get("atr_status"),
+                             "reason": context.get("body_status", "broker_fill_time_unknown") if context.get("body") is None else context.get("atr_status"),
                              "native_protection": "not_cancelled"},
                 ))
