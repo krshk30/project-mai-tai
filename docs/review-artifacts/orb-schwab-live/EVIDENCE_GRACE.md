@@ -1,6 +1,13 @@
 # ORB evidence delay: activation-blocker follow-up
 
-Builder: codex. Base: 90106fb4ebbb1feda7247d420352114d14dcd084 (merged #1064).
+Builder: codex. Current review base: eeaa4a7d2d6192125286f281076b72fb9bd497eb (merged #1065).
+The original #1067 pin at 3be48c4f covered base 90106fb4, not this new range. Re-pin required.
+Range-diff confirms the rebased evidence-grace patch is unchanged; the additional documentation
+commit records the operator's installation scope (v2 restart, no watch install, whole-install
+hard stops). No runtime change was added after the prior independent review.
+The combined focused ORB/native bracket/watch plus RETRY-ONE/flip-owner/v2-bot suites pass
+798 tests on this base; raw log /tmp/orb-grace-rebase-focused.log. The full-suite comparison
+below is the historical original-base run, not a fresh full-suite claim on eeaa4a7d.
 Scope: ORB Schwab exit evidence, its read-only observation reporting, tests, and rollout docs.
 No broker adapter, OMS execution logic, ATR/v2 strategy, paper exit rule, or flag default changed.
 Production inspection was read-only. No service restart, order, config change or install occurred.
@@ -33,7 +40,7 @@ that p99, but does not claim all evidence arrives on time.
   again. Missing minute IDs/deadline context are included. Observation mode records pending/
   expired states but still writes no incidents, intents, orders or gateway subscriptions.
 
-## Verification
+## Original-base verification (90106fb4)
 
 - Focused ORB/native bracket/v2 exits/fan-out/watch regression suites: **665 passed**.
 - New core/route checks on base exit implementation: **8 failed / 100 passed** (RED control).
@@ -60,9 +67,9 @@ in isolated processes, never repository files. Raw local logs: /tmp/orb-grace-fo
 
 ## Remaining decisions
 
-The follow-up needs its own review/pin before merge. Live ORB remains OFF; this change alone
+The rebased follow-up needs a fresh exact-head/base review/pin before merge. Live ORB remains OFF; this change alone
 does not clear attended Schwab place/reprice/cancel, early-close, phone delivery, or other
 activation requirements. See OBSERVE_INSTALL_PLAN.md for the current exact-SHA candidate,
-the unpinned #1065 exclusion, preflight, unit/PID inventory, /proc flags and rollback boundaries.
+the #1065 inclusion, #1066 exclusion, preflight hard stops, unit/PID inventory, /proc flags and rollback boundaries.
 The read-only September 30 report is scheduled at 10:02 ET for the 09:25-10:00 window; it checks
 actual installation first and cannot deploy or enable anything. No signals means NOT VALIDATED.
