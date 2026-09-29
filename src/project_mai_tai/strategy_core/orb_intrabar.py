@@ -59,6 +59,7 @@ class OrbBar:
     volume: float
     vwap: float | None = None
     ema9: float | None = None
+    breakout_high: float | None = None
 
 
 @dataclass(frozen=True)
