@@ -107,8 +107,13 @@ watch reinstall. The 16:00 unconfirmed path already pages via `oms_v2_exit_relea
 | 27 | #1056 PAGEGAP | UNEXERCISED (correctly silent) | 09-29: 4/4 confirmation-exit legs closed, nothing dropped | claude-1 | first dropped exit |
 | 3 | LXEH storm #1045 | TO BE EXERCISED | trigger never occurred | claude-1 | next removed name w/ pending recovery |
 | 9 | Pager delivery, new sources | PARTLY EXERCISED | policy-reject pages delivered ×2 09-28; oco_exit_fill_unrecorded / webull_eh_ladder_unsold not yet | codex | first of either |
-| 10 | 09-18 naked-leg hard case | TO BE EXERCISED | none since 09-18 | claude-1 | wait |
+| 10 | 09-18 naked-leg hard case — the two cures (whiteboard: "two fixes born from the 09-18 naked leg" + "Webull exit: easy case only") | TO BE EXERCISED | none since 09-18 | claude-1 | wait |
 | 11 | Pass mark 5 Webull-exit sessions | IN PROGRESS → **3 of 5** | 09-29: Webull exits 3/3 clean (BKYI ×2 confirmation exits, cancel-then-sell 2.6 s, 0.14 s unprotected; DXST OCO target +4.9%); 0 refused sells | claude-1 | next clean session |
+| 41 | Late-close guard: no repeat sells after a broker fill already flattened Webull (operator whiteboard: "cure for the redundant sells") | TO BE EXERCISED | guard ON (18/18 flags 09-30); watch LATECLOSE1 episodes=0 at 06:30 ET 09-30; never had anything to stop | claude-1 | first late-close episode |
+| 42 | Webull software HARD STOP through the shared cancel-then-sell path (whiteboard: "hard stop and floor share the fixed path"; the floor half is moot — floor OFF by Card 10) | TO BE EXERCISED | 0 software hard stops on Webull since the fix | claude-1 | first −8% software stop on a Webull leg |
+| 43 | Bare Webull share after a pair release (whiteboard: "the 78-minute bare share") | PARTLY EXERCISED 09-29 (easy case) | BKYI ×2 09-29: pair released then sold in 2.6 s, 0.14 s unprotected (my 09-29 read, not re-read today); a release followed by a REFUSED or slow close not yet seen | claude-1 | first release where the close is slow or refused |
+| 44 | Webull starved-read fix (order-read fairness): recovery after a starved read | TO BE EXERCISED | no starvation seen; watch W4291 09-30 06:30 ET: 600 reads, 0 backoff | codex | first starved read + recovery |
+| 45 | Momentum page when the paper SERVICE STOPS | NEEDS A DRILL (not an event wait) | a feed-policy page delivered 09-18 — a different alert; the stop page has never fired | codex | one deliberate stop of momentum-paper on the operator's GO (natural slot: the Option A install) |
 
 ## Board B — EVERYTHING ELSE (work in progress, held installs, parked, unclassified) — as of 06:45 ET 09-30
 | # | Item | Status | Evidence | Owner | Next action |
