@@ -155,20 +155,20 @@
     },
     {
       "name": "orb_live_schwab_orders_enabled",
-      "expected": false,
+      "expected": true,
       "owning_service": "orb-schwab",
-      "reason": "Staged ORB Schwab routing stays disabled while observe-only evidence is collected.",
-      "ruling": "2026-09-29 operator GO 3389090a: ORB observe ON / live OFF.",
+      "reason": "The approved ORB Schwab live entry route must be enabled in the running producer and OMS.",
+      "ruling": "2026-09-30 operator accepted the 1-of-2 partial-fill gap and ruled ORB live ON after #1075.",
       "also_check_services": [
         "oms"
       ]
     },
     {
       "name": "orb_schwab_observe_enabled",
-      "expected": true,
+      "expected": false,
       "owning_service": "orb-schwab",
-      "reason": "ORB Schwab runs in observe-only mode without broker orders.",
-      "ruling": "2026-09-29 operator GO 3389090a: ORB observe ON / live OFF."
+      "reason": "Observe-only and live sending are mutually exclusive at service startup.",
+      "ruling": "2026-09-30 operator ruled ORB live ON after #1075; observe-only must be OFF."
     },
     {
       "name": "orb_intrabar_reclaim_enabled",

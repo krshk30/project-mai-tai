@@ -58,8 +58,8 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     by_name = {entry["name"]: entry for entry in entries}
     assert by_name["strategy_schwab_1m_v2_retry_one_enabled"]["expected"] is True
     assert by_name["strategy_schwab_1m_v2_gap_hold_enabled"]["expected"] is True
-    assert by_name["orb_schwab_observe_enabled"]["expected"] is True
-    assert by_name["orb_live_schwab_orders_enabled"]["expected"] is False
+    assert by_name["orb_schwab_observe_enabled"]["expected"] is False
+    assert by_name["orb_live_schwab_orders_enabled"]["expected"] is True
     assert by_name["oms_v2_cw_floor_exit_enabled"]["expected"] is False
     assert by_name["strategy_schwab_1m_v2_atr_massive_seed_enabled"]["expected"] is False
     assert by_name["strategy_schwab_1m_v2_dual_broker_fanout_enabled"][
@@ -138,6 +138,11 @@ def test_invalid_catalog_main_is_unknown_not_success(
             "MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED",
         ),
         (
+            "orb_schwab_observe_enabled",
+            "orb-schwab",
+            "MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED",
+        ),
+        (
             "oms_v2_cw_floor_exit_enabled",
             "oms",
             "MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED",
@@ -147,7 +152,10 @@ def test_invalid_catalog_main_is_unknown_not_success(
 def test_running_fix_and_deliberate_off_drift_are_real_failures(
     name: str, service: str, env_key: str
 ) -> None:
-    expected = name.endswith("retry_one_enabled")
+    expected = name in {
+        "strategy_schwab_1m_v2_retry_one_enabled",
+        "orb_live_schwab_orders_enabled",
+    }
     entry = _entry(name, expected, service)
     actual = "false" if expected else "true"
     rc, lines = flags.audit([entry], lambda _: _reading(1234, {env_key: actual}))
