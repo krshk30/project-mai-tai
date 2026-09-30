@@ -11,6 +11,18 @@ plan precedes one operator GO naming this full SHA and every listed restart.
 If main moves or any required evidence differs, refresh the plan and ask for
 a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
 
+The next GO must select `INSTALL_MODE=A` (the full Option A gateway, paper,
+and ORB install) or `INSTALL_MODE=B` (the ORB phase and isolated gate files
+only). The 2026-09-30 18:41 ET attempt already consumed its one gateway
+rollback. Mode A therefore needs a newly authorized single rollback and new
+attempt-specific evidence paths; mode B never restarts the gateway, starts
+paper, or runs the Option A samplers. The old momentum-paper service remains
+STOPPED unless the operator separately rules otherwise. Mode B can stage the
+FLAGGATE files but cannot produce a green full FLAGGATE result at this SHA:
+its catalog expects `momentum_paper_enabled=true` from a running paper PID.
+That row is UNKNOWN while paper is stopped; do not waive it, claim readiness,
+or schedule a green morning gate without a separately reviewed resolution.
+
 ## 1. Read-only preflight and hard stops
 
 1. Confirm the exact SHA and reviewed PR heads/pins; verify the box checkout is
@@ -26,7 +38,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    blocks that restart; a database zero alone is not broker flatness. Run the
    OMS restart fence and live preflight before OMS, and re-run them if the
    state changes. Do not override a gate or restart while a position is held.
-3. Before touching the shared gateway, preserve its current subscription
+3. **Mode A only:** Before touching the shared gateway, preserve its current subscription
    stream/owner-hash evidence and prove the retained stream can reconstruct
    **both scanner and v2 consumer owners** (including explicit empty replace
    events where appropriate). Record their event IDs and current union. If
@@ -48,8 +60,8 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
 
    ```bash
    REPO=/home/trader/project-mai-tai
-   OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners.json
-   ORB_REPLAY_APPROVED=0  # Change only if the exact-SHA operator GO explicitly approves ORB replay.
+   OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners-attempt2.json
+   ORB_REPLAY_APPROVED=0  # Change only if the renewed exact-SHA GO explicitly approves ORB replay.
    sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ORB_REPLAY_APPROVED" <<'PY'
    import base64
    import json
@@ -111,7 +123,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    print("preserved owner event IDs", {name: item["source_id"] for name, item in owners.items()})
    PY
    ```
-4. Claude-1 approved the accepted-with-gaps inactive control after
+4. **Mode A only:** Claude-1 approved the accepted-with-gaps inactive control after
    recomputing load, snapshot cadence, heartbeats, LGHL lag and OMS refusals.
    Claude-1 **did not recompute** VBIO/TGE lag rows or the OMS eligible-intent
    denominator. Preserve those caveats. #1074's automatic treatment guard
@@ -138,21 +150,24 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
 
 1. Command review for the scoped service change follows. These are **not
    executable until the operator's exact-SHA GO**. Run only after section 1's
-   fresh flatness, zero-row/arm,
-   retained-owner and identity proofs, and recheck flatness immediately
+   fresh flatness, zero-row/arm and identity proofs (plus retained-owner proof
+   in mode A), and recheck flatness immediately
    before every stop/start/restart listed here. The preflight owner artifact must name
    the latest retained raw `replace` event and symbol set for scanner, v2 and
-   any other active consumer; absent/truncated history is a hard stop. The
-   second Python block below is the post-restart gate, not a reason to skip
-   the separate subscription-stream replay proof.
+   any other active consumer in mode A; absent/truncated history is a hard
+   stop. The checkout/runtime refresh is common to A and B; the owner check,
+   gateway unit/restart/proof and new paper start are A-only. Mode B keeps
+   market-data at its preflight PID and the old paper service stopped.
 
    ```bash
    set -euo pipefail
    REPO=/home/trader/project-mai-tai
    TARGET_SHA=01a64e9b7552b673e7db6f6e6c787b77b16f6f22
-   OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners.json
+   INSTALL_MODE=A  # Set to B only when the renewed exact-SHA GO chooses B.
+   case "$INSTALL_MODE" in A|B) ;; *) exit 2 ;; esac
+   OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners-attempt2.json
    test "$(git -C "$REPO" ls-remote origin refs/heads/main | awk '{print $1}')" = "$TARGET_SHA"
-   test -s "$OWNER_FILE"
+   if test "$INSTALL_MODE" = A; then test -s "$OWNER_FILE"; fi
    test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = 3389090a7d30bdc88736a53211d968f4c82f0288
    test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
    sudo systemctl stop project-mai-tai-momentum-paper.service
@@ -164,6 +179,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    sudo -u trader "$REPO/.venv/bin/python" -m pip install --no-deps --disable-pip-version-check -e "$REPO"
    sudo -u trader "$REPO/.venv/bin/python" -c 'import project_mai_tai, pathlib; print(pathlib.Path(project_mai_tai.__file__).resolve())'
    test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
+   if test "$INSTALL_MODE" = A; then
    sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" <<'PY'
    import json
    import sys
@@ -198,7 +214,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    import math
    import sys
    import time
-   from datetime import UTC, datetime
+   from datetime import UTC, datetime, timedelta
    from pathlib import Path
    from redis import Redis
    from project_mai_tai.events import stream_name
@@ -210,52 +226,136 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    redis = Redis.from_url(settings.redis_url, decode_responses=True)
    heartbeat_key = stream_name(settings.redis_stream_prefix, "heartbeats")
    snapshot_key = stream_name(settings.redis_stream_prefix, "snapshot-batches")
-   deadline = time.monotonic() + 180
-   while time.monotonic() < deadline:
-       owners = redis.hgetall(stream_name(settings.redis_stream_prefix, "market-data-subscription-owners"))
-       if owners.get("_migration_complete") != "1":
-           time.sleep(1)
-           continue
-       expected_consumers = tuple(saved["owners"])
-       if set(expected_consumers) != {"strategy-engine", "schwab-1m-v2", "orb"}:
-           raise SystemExit(f"unexpected preserved consumer set: {expected_consumers}")
-       for consumer in expected_consumers:
-           if consumer not in owners or set(json.loads(owners[consumer])) != set(saved["owners"][consumer]["symbols"]):
+   market_key = stream_name(settings.redis_stream_prefix, "market-data")
+   owner_key = stream_name(settings.redis_stream_prefix, "market-data-subscription-owners")
+   expected_consumers = set(saved["owners"])
+   expected = set(settings.market_data_static_symbol_list)
+   for record in saved["owners"].values():
+       expected.update(record["symbols"])
+   tick_end = restarted + timedelta(seconds=120)
+   proof_end = restarted + timedelta(seconds=180)
+   if datetime.now(UTC) >= proof_end:
+       for number in range(1, 5):
+           print(f"content({number}) NOT_PROVEN reason=proof_started_after_180s")
+       raise SystemExit("new gateway content proof UNKNOWN; use only the renewed one-time rollback")
+
+   while datetime.now(UTC) < tick_end:
+       time.sleep(1)
+   start_ms = int(restarted.timestamp() * 1000)
+   end_ms = int(tick_end.timestamp() * 1000)
+   counts = {symbol: {"trade_tick": 0, "quote_tick": 0} for symbol in expected}
+   trimmed = None
+   scanned = 0
+   tick_error = None
+   try:
+       first = redis.xrange(market_key, count=1)
+       trimmed = bool(first and int(first[0][0].split("-")[0]) > start_ms)
+       cursor = f"{start_ms}-0"
+       while True:
+           rows = redis.xrange(market_key, min=cursor, max=f"({end_ms + 1}-0", count=1000)
+           if not rows:
                break
-       else:
-           allowed = {"static", "momentum-paper", *expected_consumers}
-           unexpected = [name for name in owners
-                         if not name.startswith("_") and name not in allowed]
-           if unexpected or json.loads(owners.get("momentum-paper", "[]")):
-               time.sleep(1)
-               continue
-           union = set(settings.market_data_static_symbol_list)
-           for consumer, payload in owners.items():
-               if not consumer.startswith("_"):
-                   union.update(json.loads(payload))
-           gateway = next((json.loads(fields["data"]) for _, fields in redis.xrevrange(heartbeat_key, count=25)
-                           if json.loads(fields["data"]).get("source_service") == "market-data-gateway"), None)
-           batches = sorted({datetime.fromisoformat(json.loads(fields["data"])["produced_at"].replace("Z", "+00:00"))
+           for _, fields in rows:
+               event = json.loads(fields["data"])
+               kind = event.get("event_type")
+               symbol = event.get("payload", {}).get("symbol")
+               if (event.get("source_service") == "market-data-gateway"
+                       and kind in {"trade_tick", "quote_tick"} and symbol in counts):
+                   stamp = datetime.fromisoformat(event["produced_at"].replace("Z", "+00:00"))
+                   if restarted < stamp <= tick_end:
+                       counts[symbol][kind] += 1
+               scanned += 1
+           cursor = f"({rows[-1][0]}"
+   except Exception as exc:
+       tick_error = f"{type(exc).__name__}:{exc}"
+   ticks_ok = tick_error is None and all(sum(by_kind.values()) > 0 for by_kind in counts.values())
+
+   while True:
+       now = datetime.now(UTC)
+       produced = age = active = status = None
+       heartbeat_error = None
+       try:
+           gateway = next((event for _, fields in redis.xrevrange(heartbeat_key, count=25)
+                           if (event := json.loads(fields["data"])).get("source_service") == "market-data-gateway"), None)
+           produced = datetime.fromisoformat(gateway["produced_at"].replace("Z", "+00:00")) if gateway else None
+           age = (now - produced).total_seconds() if produced else None
+           active = gateway.get("payload", {}).get("details", {}).get("active_symbols") if gateway else None
+           status = gateway.get("payload", {}).get("status") if gateway else None
+       except Exception as exc:
+           heartbeat_error = f"{type(exc).__name__}:{exc}"
+       heartbeat_ok = (heartbeat_error is None and produced is not None and restarted < produced <= now
+                       and 0 <= age <= 30.819 and status == "healthy" and str(active) == str(len(expected)))
+       intervals = []
+       p95 = None
+       cadence_error = None
+       try:
+           batches = sorted({datetime.fromisoformat(event["produced_at"].replace("Z", "+00:00"))
                              for _, fields in redis.xrevrange(snapshot_key, count=180)
-                             if json.loads(fields["data"]).get("event_type") == "snapshot_batch"})
+                             if (event := json.loads(fields["data"])).get("event_type") == "snapshot_batch"})
            recent = [stamp for stamp in batches if stamp > restarted]
            intervals = [(b - a).total_seconds() for a, b in zip(recent, recent[1:])]
-           if gateway is not None:
-               stamp = datetime.fromisoformat(gateway["produced_at"].replace("Z", "+00:00"))
-               healthy = (stamp > restarted and gateway["payload"]["status"] == "healthy"
-                          and (datetime.now(UTC) - stamp).total_seconds() <= 30.819
-                          and int(gateway["payload"]["details"]["active_symbols"]) == len(union))
-               if healthy and len(intervals) >= 20 and max(intervals) <= 15 and sorted(intervals)[math.ceil(.95 * len(intervals)) - 1] <= 10:
-                   print("gateway owners and cadence restored", sorted(union), gateway["produced_at"])
-                   break
+           p95 = sorted(intervals)[math.ceil(.95 * len(intervals)) - 1] if intervals else None
+       except Exception as exc:
+           cadence_error = f"{type(exc).__name__}:{exc}"
+       cadence_ok = cadence_error is None and len(intervals) >= 20 and p95 <= 10
+       owners = {}
+       actual = {}
+       extra = []
+       paper = None
+       owner_error = None
+       try:
+           owners = redis.hgetall(owner_key)
+           actual = {name: set(json.loads(owners[name])) if name in owners else None
+                     for name in expected_consumers}
+           extra = sorted(set(owners) - expected_consumers - {"_migration_complete", "_last_applied_id", "momentum-paper", "static"})
+           paper = json.loads(owners.get("momentum-paper", "[]"))
+       except Exception as exc:
+           owner_error = f"{type(exc).__name__}:{exc}"
+       owners_ok = (owner_error is None and owners.get("_migration_complete") == "1" and not extra and not paper
+                    and all(actual[name] == set(saved["owners"][name]["symbols"])
+                            for name in expected_consumers))
+       if (heartbeat_ok and ticks_ok and cadence_ok and owners_ok) or now >= proof_end:
+           break
        time.sleep(1)
-   else:
-       raise SystemExit("gateway owner/heartbeat/snapshot restoration not proven within 180s; use the one rollback")
+   in_time = datetime.now(UTC) <= proof_end
+   missing_ticks = sorted(symbol for symbol, by_kind in counts.items() if not sum(by_kind.values()))
+   heartbeat_reasons = ([heartbeat_error] if heartbeat_error else []) + (["no_post_restart_healthy_fresh_heartbeat_or_union_mismatch"] if not heartbeat_ok else [])
+   tick_reasons = ([tick_error] if tick_error else []) + ([f"missing_symbols={missing_ticks}"] if missing_ticks else [])
+   cadence_reasons = ([cadence_error] if cadence_error else []) + (["fewer_than_20_intervals_or_p95_over_10s"] if not cadence_ok else [])
+   if not in_time:
+       heartbeat_reasons.append("proof_deadline_exceeded")
+       tick_reasons.append("proof_deadline_exceeded")
+       cadence_reasons.append("proof_deadline_exceeded")
+   print(f"content(1) {'PASS' if heartbeat_ok and in_time else 'NOT_PROVEN'} heartbeat={produced} status={status} age_s={age} active={active} expected={len(expected)} reasons={heartbeat_reasons}")
+   print(f"content(2) {'PASS' if ticks_ok and in_time else 'NOT_PROVEN'} window={restarted.isoformat()}..{tick_end.isoformat()} scanned={scanned} trimmed={trimmed} counts={counts} reasons={tick_reasons}")
+   print(f"content(3) {'PASS' if cadence_ok and in_time else 'NOT_PROVEN'} intervals={len(intervals)} p95_s={p95} max_s={max(intervals) if intervals else None} reasons={cadence_reasons}")
+   expected_owner_sets = {name: saved["owners"][name]["symbols"] for name in expected_consumers}
+   owner_mismatch = sorted(name for name in expected_consumers if actual.get(name) != set(expected_owner_sets[name]))
+   owner_reasons = ([owner_error] if owner_error else []) + ([f"mismatched_consumers={owner_mismatch}"] if owner_mismatch else [])
+   if owners.get("_migration_complete") != "1":
+       owner_reasons.append("migration_incomplete")
+   if extra or paper:
+       owner_reasons.append("unexpected_or_stale_owner")
+   if not in_time:
+       owner_reasons.append("proof_deadline_exceeded")
+   print(f"content(4) {'PASS' if owners_ok and in_time else 'NOT_PROVEN'} migration={owners.get('_migration_complete')} actual={actual} expected={expected_owner_sets} extra={extra} paper={paper} reasons={owner_reasons}")
+   if not (heartbeat_ok and ticks_ok and cadence_ok and owners_ok and in_time):
+       raise SystemExit("new gateway content proof UNKNOWN; use only the renewed one-time rollback")
    PY
    sudo systemctl start project-mai-tai-momentum-paper.service
    sudo systemctl is-active --quiet project-mai-tai-momentum-paper.service
    sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-momentum-paper.service
+   fi
    ```
+
+   In mode B, stop after the common checkout/runtime refresh above and go to
+   section 2.2; do not install/restart gateway units, run the gateway content
+   proof, or start paper. Verify the gateway's original PID/start time again
+   after the refresh. In mode A, the content proof prints (1) the latest
+   heartbeat/status/union count, (2) per-symbol trade/quote counts within
+   120 seconds, (3) snapshot interval count/p95, and (4) the migrated owner
+   hash and preserved sets. An unproven condition is UNKNOWN and invokes
+   only the newly authorized single rollback. INFO log lines are not proof.
 
    The editable refresh may update the project distribution metadata and
    console entrypoints in this existing `.venv`, and may use a temporary
@@ -263,16 +363,19 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    dependencies; the unchanged `pyproject.toml` is checked against the old
    SHA. It does not install units/env, upgrade pip, run migrations or restart
    another service. If pip changes the tracked tree or fails, stop before
-   restarting the gateway. Do **not** use `deploy_main.sh`,
+   any service restart. Do **not** use `deploy_main.sh`,
    `deploy_service.sh market-data`, or `08_install_runtime.sh`: they touch
    companion/unrelated units. A fresh healthy heartbeat and 5-second nominal
    snapshot cadence must also be observed; the block above's heartbeat is
    not a substitute for the sustained cadence check. No ORB/OMS/v2/strategy
-   process may change identity **during this gateway phase**. If the
+   process may change identity **during this gateway phase**. In mode A, if the
    180-second owner/cadence check fails, use only section 4's one-time
    rollback; do not continue into the ORB flag change.
-2. **ORB live phase, only after gateway restoration is proven:** capture a
-   second set of fresh direct broker-flat reads for both live accounts, zero
+2. **ORB live phase:** In mode A, begin only after gateway restoration is
+   proven. In mode B, begin only after the common checkout/runtime refresh
+   and proof that market-data retained its preflight PID/start time; it is
+   deliberately still running old gateway code, and paper stays stopped.
+   Capture a second set of fresh direct broker-flat reads for both live accounts, zero
    open managed rows and zero armed segments. Run the OMS live preflight and
    `preflight_oms_restart.sh --require-all-account-positions-flat`; an
    unreadable or positive result stops here. Back up the fleet env and log
@@ -389,8 +492,9 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    by the restart gate classified as `restarted`, `newly_installed`, or
    `deliberately_untouched`. Verify evidence for `control`, `market-capture`,
    `reconciler`, and `tv-alerts`; never infer untouched from silence. Account
-   for the 09-29 v2/ORB restarts, tonight's OMS/strategy/orb-schwab and
-   gateway restarts, and orb-schwab's original installation, against the
+   for the 09-29 v2/ORB restarts, tonight's OMS/strategy/orb-schwab restarts,
+   the gateway restart in mode A or its proven untouched identity in mode B,
+   and orb-schwab's original installation, against the
    snapshot. Classify tonight's orb-schwab action as `restarted`, not a
    fictitious new service. The paper service is journaled
    separately if it is not in the gate's monitored service list. A missing or
@@ -412,18 +516,25 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    from each checker: FLAGGATE `PASS` with the full catalog checked, and
    restart evidence `PASS` or a genuine `EXPECTED BY DESIGN` N/A. A mismatch
    is REAL FAILURE; unreadable evidence or a return-code/final-call mismatch
-   is UNKNOWN. Neither is an install success. Arrange a one-shot read-only
-   06:20 ET 2026-10-01 gate with the verified script hash; no service restart
-   may be used to force green.
+   is UNKNOWN. Neither is an install success. In mode B the paper service is
+   intentionally stopped, while the unchanged catalog still requires its
+   running `momentum_paper_enabled=true` value. FLAGGATE must therefore call
+   that row UNKNOWN, not PASS. Mode B can stage the isolated files but cannot
+   complete this wrapper/gate step or claim morning readiness without a
+   separately reviewed resolution. Arrange a one-shot read-only 06:20 ET
+   2026-10-01 gate only after the final wrapper and all checks are verified;
+   no service restart may be used to force green.
 
 ## 3. Post-restart proof and first-session stop coverage
 
 1. Record old/new PIDs, exact start times, `NRestarts`, box checkout SHA,
    service logs, `/proc` flags and the unchanged PIDs of all other units.
-   Attribute the final SHA only to gateway, momentum-paper, OMS, strategy and
-   orb-schwab after each is confirmed restarted; an
+   Attribute the final SHA only to gateway and momentum-paper in mode A, and
+   to OMS, strategy and orb-schwab in either mode, after each is confirmed
+   restarted; an
    untouched process does not acquire new code merely because checkout moved.
-   Require the gateway healthy, normal snapshot/heartbeat cadence, restored
+   In mode B record the unchanged old gateway PID/code and stopped paper
+   PID=0 explicitly. In mode A require the gateway healthy, normal snapshot/heartbeat cadence, restored
    scanner and v2 owner sets, and a union containing every symbol still owned
    by either. Require Momentum owns at most 16 candidates, opens **no** second
    Massive socket, has no broker route, and receives condition-provenance trade
@@ -437,7 +548,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    OMS floor=false, target=5%, hard-stop=8%, EOD transition and 19:55
    flatten=true, polygon_30s=false, and parked massive seed=false. No
    unexercised order path is called PASS on the strength of these flags.
-2. The gateway log rotates by `copytruncate` at about **20:00:06 ET**. A
+2. **Mode A only:** The gateway log rotates by `copytruncate` at about **20:00:06 ET**. A
    truncation makes the 1008 byte-offset sampler UNKNOWN. Start the reviewed
    one-second 1008 sampler and treatment samplers **after both 20:00:06 ET and
    the gateway restart**, and verify this day's rotation has actually
@@ -447,7 +558,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    the first full 07:00-09:40 ET treatment window. Late start, unreadable log, rotation,
    truncation, or missing samples is UNKNOWN and blocks a healthy treatment
    verdict; it is never reported as zero 1008s.
-3. The reviewed automatic stop owner is
+3. **Mode A only:** The reviewed automatic stop owner is
    `project-mai-tai-option-a-guard@2026-10-01.service`, running as root under
    systemd's 15-second watchdog with `RefuseManualStop=yes`. The treatment-date
    instance is fixed to `2026-10-01`; manually stopping the guard is refused,
@@ -479,7 +590,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    ```bash
    set -euo pipefail
    GATEWAY_LOG=/var/log/project-mai-tai/market-data.log
-   ROTATION_EVIDENCE=/home/trader/after-hours/2026-09-30/option-a-gateway-rotation.txt
+   ROTATION_EVIDENCE=/home/trader/after-hours/2026-09-30/option-a-gateway-rotation-attempt2.txt
    test "$(TZ=America/New_York date +%H%M%S)" -lt 200000
    ROT_BEFORE_ID="$(stat -c '%d:%i' "$GATEWAY_LOG")"
    ROT_BEFORE_SIZE="$(stat -c '%s' "$GATEWAY_LOG")"
@@ -517,7 +628,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    a low-priority page if the guard crashes or misses its watchdog; even if
    its Python import is broken, its failure unit's first command still stops
    paper. This is a paper safety stop, not a live-service kill switch.
-4. Apply the independently reviewed
+4. **Mode A only:** Apply the independently reviewed
    `FIRST_SESSION_PROTOCOL.md` and
    `INACTIVE_CONTROL_2026-09-30.md` without tuning thresholds after treatment
    begins. Any new **gateway** 1008 stops only the paper service; measured
@@ -531,14 +642,14 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    blind evidence remains UNKNOWN and pages. A service-stop page drill (board
    row 45) is **excluded** unless the exact-SHA GO explicitly approves it.
 
-## 4. One rollback proposed for the exact-SHA GO
+## 4. One gateway rollback for a renewed mode-A GO
 
-The still GO-dependent rollback targets only
+Mode B does not restart the gateway and does not use this rollback. The
+18:41 ET attempt already used its one rollback; this section requires a NEW
+one-time authorization in the next mode-A GO. It targets only
 `3389090a7d30bdc88736a53211d968f4c82f0288` and only once. Trigger it
-if the gateway is not healthy within **180 seconds** of its restart, either
-scanner/v2 owner set is not restored, or 20 new snapshot intervals plus a
-fresh healthy heartbeat do not meet section 2.1's cadence proof within that
-bound. Stop paper first and leave **old Momentum paper STOPPED**: its old
+if any of section 2.1's four content conditions is not proven within **180
+seconds** of the restart. Stop paper first and leave **old Momentum paper STOPPED**: its old
 `T.*` socket can load the gateway. The old gateway restores only the last
 subscription event. Therefore its restart must be followed by byte-for-byte
 republication of the preserved scanner and v2 `replace` events, in their
@@ -555,7 +666,7 @@ After a renewed fresh-flat check, the one-time rollback command sequence is:
 ```bash
 set -euo pipefail
 REPO=/home/trader/project-mai-tai
-OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners.json
+OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners-attempt2.json
 OLD_SHA=3389090a7d30bdc88736a53211d968f4c82f0288
 test -s "$OWNER_FILE"
 sudo systemctl stop project-mai-tai-momentum-paper.service
@@ -592,9 +703,7 @@ while time.monotonic() < deadline:
     time.sleep(1)
 raise SystemExit("old gateway health unproven within 180s; keep paper stopped and page")
 PY
-ROLLBACK_LOG_OFFSET="$(stat -c%s /var/log/project-mai-tai/market-data.log)"
-ROLLBACK_LOG_ID="$(stat -c '%d:%i' /var/log/project-mai-tai/market-data.log)"
-ROLLBACK_EVENTS=/home/trader/after-hours/2026-09-30/option-a-rollback-events.jsonl
+ROLLBACK_EVENTS=/home/trader/after-hours/2026-09-30/option-a-rollback-events-attempt2.jsonl
 sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ROLLBACK_EVENTS" <<'PY'
 import base64
 import json
@@ -632,14 +741,13 @@ with os.fdopen(fd, "w", encoding="utf-8") as output:
         os.fsync(output.fileno())
         print("rollback replace", item)
 PY
-sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ROLLBACK_EVENTS" "$ROLLBACK_LOG_OFFSET" "$ROLLBACK_LOG_ID" <<'PY'
+sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ROLLBACK_EVENTS" "$ROLLBACK_RESTART_UTC" <<'PY'
 import base64
 import json
 import math
-import re
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from redis import Redis
 from project_mai_tai.events import stream_name
@@ -653,81 +761,131 @@ if saved["orb_replay_approved"]:
 else:
     assert not saved["owners"]["orb"]["symbols"]
 assert len(published) == len(replay_names) and {row["consumer"] for row in published} == replay_names
-log_path = Path("/var/log/project-mai-tai/market-data.log")
-offset, identity = int(sys.argv[3]), sys.argv[4]
 settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
-redis = Redis.from_url(settings.redis_url, decode_responses=False)
+redis = Redis.from_url(settings.redis_url, decode_responses=True)
+restarted = datetime.fromisoformat(sys.argv[3].replace("Z", "+00:00"))
 retained = dict(redis.xrevrange(saved["stream"], count=settings.redis_market_data_subscription_stream_maxlen))
 for row in published:
-    actual = retained[row["new_id"].encode("ascii")][b"data"]
+    actual = retained[row["new_id"]]["data"].encode("utf-8")
     original = base64.b64decode(saved["owners"][row["consumer"]]["raw_b64"], validate=True)
     assert actual == original, (row["consumer"], "replayed bytes differ")
 expected = set(settings.market_data_static_symbol_list)
 for consumer in replay_names:
     expected.update(saved["owners"][consumer]["symbols"])
 after_publish = datetime.fromisoformat(published[-1]["published_at"])
-deadline = time.monotonic() + 180
-pattern = re.compile(r"market-data subscriptions updated by (\S+) -> (\d+) symbols")
-while time.monotonic() < deadline:
-    stat = log_path.stat()
-    assert f"{stat.st_dev}:{stat.st_ino}" == identity and stat.st_size >= offset, "gateway log rotated/truncated"
-    with log_path.open("rb") as log:
-        log.seek(offset)
-        text = log.read().decode("utf-8", errors="replace")
-    assert "failed to apply market-data subscription event" not in text
-    updates = [pattern.search(line).groups() for line in text.splitlines() if pattern.search(line)]
-    assert len(updates) <= len(published), ("unexpected consumer update", updates)
-    assert [name for name, _ in updates] == [row["consumer"] for row in published[:len(updates)]], updates
-    if len(updates) == len(published) and int(updates[-1][1]) == len(expected):
-        key = stream_name(settings.redis_stream_prefix, "heartbeats")
-        heartbeat = next((json.loads(fields[b"data"]) for _, fields in redis.xrevrange(key, count=25)
-                          if json.loads(fields[b"data"]).get("source_service") == "market-data-gateway"), None)
-        if heartbeat:
-            stamped = datetime.fromisoformat(heartbeat["produced_at"].replace("Z", "+00:00"))
-            if (stamped > after_publish and heartbeat["payload"]["status"] == "healthy"
-                    and (datetime.now(UTC) - stamped).total_seconds() <= 30.819
-                    and int(heartbeat["payload"]["details"]["active_symbols"]) == len(expected)):
-                batch_key = stream_name(settings.redis_stream_prefix, "snapshot-batches")
-                stamps = sorted({datetime.fromisoformat(json.loads(fields[b"data"])["produced_at"].replace("Z", "+00:00"))
-                                 for _, fields in redis.xrevrange(batch_key, count=180)
-                                 if json.loads(fields[b"data"]).get("event_type") == "snapshot_batch"})
-                recent = [stamp for stamp in stamps if stamp > after_publish]
-                intervals = [(b - a).total_seconds() for a, b in zip(recent, recent[1:])]
-                if len(intervals) >= 20 and max(intervals) <= 15 and sorted(intervals)[math.ceil(.95 * len(intervals)) - 1] <= 10:
-                    print("old gateway restored union by code/log proof", sorted(expected),
-                          [row["new_id"] for row in published], heartbeat["produced_at"])
-                    raise SystemExit(0)
+tick_end = restarted + timedelta(seconds=120)
+proof_end = restarted + timedelta(seconds=180)
+if datetime.now(UTC) >= proof_end:
+    for number in range(1, 4):
+        print(f"content({number}) NOT_PROVEN reason=proof_started_after_180s")
+    raise SystemExit("rollback content proof UNKNOWN; paper stays stopped; page; no second rollback")
+while datetime.now(UTC) < tick_end:
     time.sleep(1)
-raise SystemExit("rollback union/cadence unproven; keep paper stopped and page; no second rollback")
+market_key = stream_name(settings.redis_stream_prefix, "market-data")
+start_ms = int(restarted.timestamp() * 1000)
+end_ms = int(tick_end.timestamp() * 1000)
+counts = {symbol: {"trade_tick": 0, "quote_tick": 0} for symbol in expected}
+trimmed = None
+scanned = 0
+tick_error = None
+try:
+    first = redis.xrange(market_key, count=1)
+    trimmed = bool(first and int(first[0][0].split("-")[0]) > start_ms)
+    cursor = f"{start_ms}-0"
+    while True:
+        rows = redis.xrange(market_key, min=cursor, max=f"({end_ms + 1}-0", count=1000)
+        if not rows:
+            break
+        for _, fields in rows:
+            event = json.loads(fields["data"])
+            kind = event.get("event_type")
+            symbol = event.get("payload", {}).get("symbol")
+            if (event.get("source_service") == "market-data-gateway"
+                    and kind in {"trade_tick", "quote_tick"} and symbol in counts):
+                stamp = datetime.fromisoformat(event["produced_at"].replace("Z", "+00:00"))
+                if restarted < stamp <= tick_end:
+                    counts[symbol][kind] += 1
+            scanned += 1
+        cursor = f"({rows[-1][0]}"
+except Exception as exc:
+    tick_error = f"{type(exc).__name__}:{exc}"
+ticks_ok = tick_error is None and all(sum(by_kind.values()) > 0 for by_kind in counts.values())
+heartbeat_key = stream_name(settings.redis_stream_prefix, "heartbeats")
+snapshot_key = stream_name(settings.redis_stream_prefix, "snapshot-batches")
+while True:
+    now = datetime.now(UTC)
+    produced = age = active = status = None
+    heartbeat_error = None
+    try:
+        gateway = next((event for _, fields in redis.xrevrange(heartbeat_key, count=25)
+                        if (event := json.loads(fields["data"])).get("source_service") == "market-data-gateway"), None)
+        produced = datetime.fromisoformat(gateway["produced_at"].replace("Z", "+00:00")) if gateway else None
+        age = (now - produced).total_seconds() if produced else None
+        active = gateway.get("payload", {}).get("details", {}).get("active_symbols") if gateway else None
+        status = gateway.get("payload", {}).get("status") if gateway else None
+    except Exception as exc:
+        heartbeat_error = f"{type(exc).__name__}:{exc}"
+    heartbeat_ok = (heartbeat_error is None and produced is not None
+                    and max(restarted, after_publish) < produced <= now
+                    and 0 <= age <= 30.819 and status == "healthy"
+                    and str(active) == str(len(expected)))
+    intervals = []
+    p95 = None
+    cadence_error = None
+    try:
+        batches = sorted({datetime.fromisoformat(event["produced_at"].replace("Z", "+00:00"))
+                          for _, fields in redis.xrevrange(snapshot_key, count=180)
+                          if (event := json.loads(fields["data"])).get("event_type") == "snapshot_batch"})
+        recent = [stamp for stamp in batches if stamp > restarted]
+        intervals = [(b - a).total_seconds() for a, b in zip(recent, recent[1:])]
+        p95 = sorted(intervals)[math.ceil(.95 * len(intervals)) - 1] if intervals else None
+    except Exception as exc:
+        cadence_error = f"{type(exc).__name__}:{exc}"
+    cadence_ok = cadence_error is None and len(intervals) >= 20 and p95 <= 10
+    if (heartbeat_ok and ticks_ok and cadence_ok) or now >= proof_end:
+        break
+    time.sleep(1)
+in_time = datetime.now(UTC) <= proof_end
+missing_ticks = sorted(symbol for symbol, by_kind in counts.items() if not sum(by_kind.values()))
+heartbeat_reasons = ([heartbeat_error] if heartbeat_error else []) + (["no_post_replay_healthy_fresh_heartbeat_or_union_mismatch"] if not heartbeat_ok else [])
+tick_reasons = ([tick_error] if tick_error else []) + ([f"missing_symbols={missing_ticks}"] if missing_ticks else [])
+cadence_reasons = ([cadence_error] if cadence_error else []) + (["fewer_than_20_intervals_or_p95_over_10s"] if not cadence_ok else [])
+if not in_time:
+    heartbeat_reasons.append("proof_deadline_exceeded")
+    tick_reasons.append("proof_deadline_exceeded")
+    cadence_reasons.append("proof_deadline_exceeded")
+print(f"content(1) {'PASS' if heartbeat_ok and in_time else 'NOT_PROVEN'} heartbeat={produced} status={status} age_s={age} active={active} expected={len(expected)} after_replay={after_publish} reasons={heartbeat_reasons}")
+print(f"content(2) {'PASS' if ticks_ok and in_time else 'NOT_PROVEN'} window={restarted.isoformat()}..{tick_end.isoformat()} scanned={scanned} trimmed={trimmed} counts={counts} reasons={tick_reasons}")
+print(f"content(3) {'PASS' if cadence_ok and in_time else 'NOT_PROVEN'} intervals={len(intervals)} p95_s={p95} max_s={max(intervals) if intervals else None} reasons={cadence_reasons}")
+print(f"replayed bytes and IDs {[row['new_id'] for row in published]}")
+if not (heartbeat_ok and ticks_ok and cadence_ok and in_time):
+    raise SystemExit("rollback content proof UNKNOWN; paper stays stopped; page; no second rollback")
 PY
 ```
 
 The two or three printed **new stream IDs** and the post-restart gateway PID go into
-the fleet journal. Do not claim the union from the count alone. The old
-gateway code deterministically processes each `replace` into its
-`_desired_symbols_by_consumer` map; require two post-offset
-`market-data subscriptions updated by <consumer> -> <count> symbols` log
-lines for every published consumer in order, no intervening failed-apply line or unexpected
-consumer update, and a newer healthy heartbeat whose `active_symbols` is
-   the count of the preserved static/scanner/v2 union plus ORB when its replay
-   is approved. This is a code-path and
-log proof, not direct inspection of old gateway memory. If either event is
-not visibly applied, any raw payload or new ID is unreadable, the log
-rotates, or the heartbeat count differs, classify rollback **UNKNOWN**, page
+the fleet journal. The old gateway code processes each `replace` into its
+`_desired_symbols_by_consumer` map, but INFO log lines are not a required
+proof: the gateway entrypoint does not configure INFO logging. Instead require
+the exact replayed payload bytes/IDs and content conditions (1)–(3), with each
+measured value printed. The count alone is not enough. If any payload or ID
+is unreadable, a required symbol has no trade/quote in the 120-second window,
+the heartbeat or cadence is not proven, classify rollback **UNKNOWN**, page
 the operator, stop further changes and keep old paper stopped. Do not retry
 the rollback or restart another service. The GO must explicitly set
 `ORB_REPLAY_APPROVED=1` if the preserved ORB owner is nonempty, or this plan
 refuses before a production write. Independent command review of this final
-revision remains required before GO. The ORB live flag edit comes **after**
-gateway restoration proof, so this rollback cannot race a new live ORB
-producer under this plan.
+revision remains required before GO. In mode A the ORB live flag edit comes
+**after** gateway restoration proof, so this rollback cannot race a new live
+ORB producer. Mode B has no gateway rollback or treatment sampler.
 
 ## 5. Journal and decision
 
 Journal the operator GO, preflight denominators and raw paths, retained-owner
 proof, every file blob/installed hash and backup, the structured install record,
 service identities, preopen diff/hash, gate return codes **with their actual
-Final calls**, sampler offsets/coverage, and any hard stop. Report the result
+Final calls**, mode-A sampler offsets/coverage (or mode-B skipped status),
+and any hard stop. Report the result
 as REAL FAILURE, EXPECTED BY DESIGN, or UNKNOWN after checking the relevant
 code/design, not by repeating a tool's red line. Until the operator signs the
 exact-SHA GO, no rollback or additional restart is authorized by this
