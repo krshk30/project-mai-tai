@@ -34,13 +34,22 @@ the underlying observations, not a p95 of rolling p95 values.
 | Gateway heartbeat | 638 unique events / 640 nominal, 07:00:12.538-09:39:53.367; events in all 160 minutes; 638/638 `healthy`. | Healthy observer-age max 15.410 s (6,824 observer samples from the main trace); stop after two consecutive non-healthy samples **or** age **>30.819 s**. Interarrival p95 15.229 s, max 16.220 s. | Observer-age maximum was sampled only from 07:29 onward, although heartbeat events cover the whole control. |
 | OMS quote refusals | Timestamped OMS log from 07:00:12.355-09:39:46.548, 2,919 records. Zero direct `NO_FRESH_QUOTE` or `no valid OMS market snapshot` refusals. | A treatment rolling-five-minute direct-refusal count must be **at least 3 and >0** for two consecutive evaluations. | Seven live v2 intents existed: five buy-open/sell-close candidates and two cancels. Thus 0/5 is an upper-bound quote-sensitive denominator, **not** a proven exact eligible-intent denominator. Exact OMS ask age and the published-quote/observer-receipt proxy were not captured. |
 | v2 ATR-probe lag | 267 marker-screened, unique live-candidate probes; 309 marker-coincident seed/replay/warmup probes excluded by same-symbol receipt second. Known watched minutes: LGHL 156, NCI 88, VBIO 49, TGE 9. | Per-symbol, per-hour bounds below. Stop only if rolling-five-minute p95 (at least three probes) exceeds the bound for **five consecutive evaluations**. | Log omits an explicit phase on each probe. VBIO/TGE bursts are demonstrably seed; an isolated live probe sharing a marker second could also be conservatively excluded, while unmarked replay cannot be excluded with certainty. Active-watch minutes are an upper bound on bars expected when prints occur. |
-| Gateway Massive 1008 | Four `received 1008` lines in the current gateway log at the end of control. | **No defensible matching-hour numeric reference** from this log. The protocol says stop on the first new event above the matching control count; that comparison cannot be implemented faithfully from this evidence. | The gateway log has no timestamps on its 1008 lines and rotated at 20:00 ET the prior day. None of the four can be assigned to a control hour from the retained text. Treat this signal as UNKNOWN, not zero. |
+| Gateway Massive 1008 | Four `received 1008` lines in the current gateway log; two are attributable to the control at about 07:01 and 08:32 ET, none to the 09:00 hour. | The control count is diagnostic. In the first Option A treatment session, **any new gateway 1008 stops the paper service**; no matching-hour subtraction. | Gateway lines lack embedded timestamps. Attribution is reconstructed from fleet-health pages at 05:35, 07:05 and 08:35 ET, the gateway log mtime at 12:32:18 UTC, and old paper cool-offs at 09:31:03, 11:01:43 and 12:32:24 UTC. The event times are approximate; co-occurrence is not causal proof. |
 
 The old **Momentum-paper** log, a different socket, records **11** timestamped
 1008 cool-offs during 07:00-09:40 ET (07:01:43 through 09:32:52), roughly one
 probe per 15 minutes; its `consecutive_1008` rose from 86 to 96. Those are not
 gateway 1008s and are never added to the gateway count. Co-occurrence does not
 prove that the old paper socket caused gateway disconnects.
+Across today's 23 old `T.*` probes, four coincided with a gateway 1008;
+that association is diagnostic, not proof of a shared-socket cause. The
+fleet-health pages lag the inferred events by minutes and are not themselves
+the websocket close timestamps. The third correlated gateway event is anchored
+by the 12:32:18 UTC gateway log mtime and the 12:32:24 UTC paper cool-off;
+the other control event is reconstructed near 07:01 ET from the 07:05 page and
+11:01:43 UTC paper cool-off. The 05:35 page corresponds to a pre-control
+event near 05:31 ET; the fourth event is outside the two identified control
+times and is not assigned a more precise clock minute here.
 
 ### v2 symbol references
 
@@ -77,11 +86,13 @@ The 3-refusal, two-evaluation OMS rule is unchanged. Load above 3.5 remains a
 warning. The quote-age proxy is warning-only and was not measured here.
 
 The control is accepted with gaps as ruled; individual observability gaps
-remain UNKNOWN. In particular, the first-session 1008 stop rule is blind with
-the current untimestamped gateway log. Under the pre-registered fail-closed
-monitor rule, **do not call a treatment session OBSERVED or deploy on this
-report alone**: independent review must approve how new timestamped gateway
-1008s and quote-age coverage will be captured. No service was restarted,
+remain UNKNOWN. The recovered 1008 association supplies a control count but
+not direct event timestamps. The first-session amendment in
+`FIRST_SESSION_PROTOCOL.md` therefore requires a read-only, one-second gateway
+log byte-offset/size/mtime capture and stops on **any** new gateway 1008.
+Under the fail-closed monitor rule, **do not call a treatment session OBSERVED
+or deploy on this report alone**: independent review must approve that capture
+and the unavailable quote-age coverage. No service was restarted,
 stopped, reconfigured, or installed for this control.
 
 Raw sources:
@@ -90,5 +101,6 @@ Raw sources:
 - Early load sampler: `/home/trader/after-hours/2026-09-30/option-a-control-load-1hz.log` on the box.
 - Heartbeat dumps: `/private/tmp/claude-502/-Users-velkris/9b59bc17-8b7a-4dde-be74-ff74d9edd1d0/scratchpad/heartbeats_0930_*.txt`, including `heartbeats_0930_dump_final.txt`.
 - v2, OMS, gateway and old paper logs on the box: `/var/log/project-mai-tai/schwab-1m-v2.log`, `/var/log/project-mai-tai/oms.log`, `/var/log/project-mai-tai/market-data.log`, `/var/log/project-mai-tai/momentum-paper.log`.
+- Gateway 1008 attribution: fleet-health page times (05:35, 07:05, 08:35 ET), gateway log mtime 12:32:18 UTC, and old paper probe/cool-off timestamps in the logs above; the correlation is reviewer-supplied and should be preserved with the treatment journal.
 - OMS candidate denominator: read-only `trade_intents` join to `strategies` and `broker_accounts`, created 11:00-13:40 UTC, accounts `live:orb` and `live:schwab_1m_v2`.
 - Reproducible parser and synthetic marker/coverage tests: `scripts/option_a_inactive_control.py`, `tests/unit/test_option_a_inactive_control.py`.

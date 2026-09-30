@@ -891,6 +891,25 @@ def test_massive_trade_stream_forwards_conditions_for_paper_eligibility() -> Non
     assert trades[0].conditions_present is True
 
 
+def test_massive_trade_stream_does_not_invent_missing_condition_provenance() -> None:
+    trades: list[TradeTickRecord] = []
+    stream = MassiveTradeStream(api_key="test")
+    stream._subscriptions = {"MOMO"}
+    stream._on_trade = trades.append
+
+    stream._handle_messages([
+        SimpleNamespace(
+            ev="T", symbol="MOMO", price=2.5, size=100,
+            sip_timestamp=1_790_000_000_000,
+        )
+    ])
+
+    assert len(trades) == 1
+    assert trades[0].conditions == ()
+    assert trades[0].conditions_present is False
+    assert trades[0].to_payload().conditions_present is False
+
+
 # ------------------------------------------------- periodic reference refresh (DFNS/LGHL incident)
 # 2026-07-27: `_ensure_reference_data()` was called ONCE in run(), so a gateway with long uptime
 # served an ever-staler cache. Ours reached 19 DAYS. five_pillars drops any symbol with no reference
