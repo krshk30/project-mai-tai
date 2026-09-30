@@ -20,6 +20,7 @@ claude-1 changes env/config only when the operator asks. The author never review
 
 > ⛔⭐⭐⭐ **OPERATOR'S STANDING LINES (all live).**
 > - ⛔⭐⭐⭐⭐ **(09-29) RULE #1 — both agents: before reporting ANY failure, or suggesting/recommending anything, READ THE CODE AND THE DESIGN and CALL IT: REAL FAILURE (the design was violated; show it), EXPECTED BY DESIGN (say so; the check is the defect), or UNKNOWN (name what's missing). Never relay a tool's FAIL raw; never "suggest" in place of a call.** Trigger: the 09-29 06:24 gate rc=1 bar-continuity row reported as a failure by both agents though the REST backfill covers restart gaps by design.
+> - ⛔⭐⭐⭐⭐ **(09-30) A LOG REASON IS WHERE THE ANSWER STARTS — both agents.** A 'why' question is answered with the mechanism: the CODE PATH that produced the string, the MEASURED data with a denominator and a control, and the TRIGGER upstream — never the log's reason string, never a tool's verdict, never 'parked'. Trigger: row 38 was answered `NO_FRESH_QUOTE` twice (DXST 06:50, TNON 15:15 ET) before the real cause (the */5 cron pile-up starving the gateway's trade queue) was traced only after the operator said "dig deep". His words: "I can go to the log and look at the log. Why would I have you?"
 > - (09-23) A fix ships with its flag ENABLED so it can be validated.
 > - (09-27) "No dark flag gets enabled without my ruling. No rule change unless I approve it."
 > - (09-27) "Never ask me to trace or add logs; you have every source."
