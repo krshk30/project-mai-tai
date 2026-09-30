@@ -24,7 +24,35 @@ env/config only when the operator asks. The author never reviews.
 
 ---
 
-# 🌙 TONIGHT 09-29 (as of 18:05 ET) — combined install PENDING the operator's exact-SHA GO
+# 🌙 TONIGHT 09-29 — INSTALL IN PROGRESS at `3389090a` (status 20:08 ET, claude-1 read of the box)
+
+**What happened after 18:05 ET:**
+1. The operator gave GO for `ba3ebf59`.
+2. codex STOPPED at the #1060 whole-install hard stop: the inactive-morning Momentum baseline was UNKNOWN. That is EXPECTED BY DESIGN; nothing was changed.
+3. The operator chose **option C**: revert #1060 out of main.
+4. **#1068** (a mechanical revert) was pinned at fbe86e6a (tree == reviewed; files byte-identical to box 3141bbd5; full suite = the box set) and merged → **main `3389090a`**.
+5. Operator: **"GO 3389090a, install tonight per the plan"** (no market-data/momentum-paper restart; no watch; no migrations).
+6. The codex side thread could not deploy, so the GO was re-sent to codex's MAIN thread.
+
+**Box at 20:08 ET:**
+
+| check | reading | verdict |
+|---|---|---|
+| checkout | `3389090a` | ✅ |
+| oms | **1663656** since 20:05:36 ET, NRestarts 0 | ✅ new |
+| strategy | **1663666** since 20:05:36 ET | ✅ new (OMS helper companion) |
+| schwab-1m-v2 | **1664453** since 20:08:16 ET | ✅ new (#1065 live) |
+| /proc (oms, v2, strategy) | FLOOR_EXIT=false · target 5.0 · stop 8.0 · EOD_OCO_TRANSITION=true · OVERNIGHT_FLATTEN=true · RETRY_ONE=true · ORB_SCHWAB_OBSERVE=true · ORB_LIVE_SCHWAB_ORDERS=false · POLYGON_30S=false | ✅ as ruled |
+| market-data / momentum-paper | 2202865 / 2704889 — unchanged | ✅ |
+| tracebacks since restart | oms 0 · v2 0 | ✅ |
+| watch.py | `45df60c6…` unchanged (#1059 held) | ✅ |
+| exposure | 0 non-zero positions | ✅ |
+| **orb** | 2051823 — **not yet restarted** | ⏳ pending |
+| **orb-schwab** | **not installed yet** (no unit, no log) | ⏳ pending |
+| **preopen.sh** | EXPECTED_DATE=2026-09-30, but SHA/PID still `3141bbd5` / 1329729 | ⏳ **must be re-pinned before 06:20** |
+| codex journal | not received yet | ⏳ |
+
+**Original scope table (18:05 ET), kept for the record:**
 
 **Operator scope rulings (09-29):**
 - "yes include both, drop the watcher step" (#1065 + #1067);
@@ -37,8 +65,8 @@ env/config only when the operator asks. The author never reviews.
 | T1 | ORB Schwab, 2 shares (MACD ≥0 on completed Schwab 1-min; body <45% judged at the break-bar CLOSE; ATR purple on a later completed Schwab bar; +5/−8 bracket; 10:00 cancel; 15:55 close) | #1064 | pinned 442b492b | merged `90106fb4` | **OBSERVE ON / LIVE ORDERS OFF** (new `orb-schwab` unit); 10:02 ET report on 09-30 |
 | T2 | ORB 90 s bar-evidence grace (no false critical page per trade) | #1067 | re-pinned 1f4781af | merged `059b261a` | with T1 |
 | T3 | RETRY-ONE per SELL cycle (never a whole-day block) | #1065 | pinned b6a0ddd6 (11/11 mutations; late-SELL audit 0/11) | merged `eeaa4a7d` | **LIVE** on the v2 restart (RETRY_ONE already true) |
-| T4 | Card 10: same exit in every session (+5/−8/confirmation/ATR flip, NO floor); 16:00 cancel + broker-confirm; Webull software sells on the shared path; 19:55 always sells | #1066 | re-pinned 0ab525c2 | **merge pending (codex)** | **LIVE** on the OMS restart + `MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED=false` |
-| T5 | Momentum Option A (one Massive connection) | #1060 | pinned 6cb5d747 | in main | gateway + momentum-paper restart; preflight steps 3–4 are WHOLE-INSTALL HARD STOPS |
+| T4 | Card 10: same exit in every session (+5/−8/confirmation/ATR flip, NO floor); 16:00 cancel + broker-confirm; Webull software sells on the shared path; 19:55 always sells | #1066 | re-pinned 0ab525c2 | merged `ba3ebf59` → **LIVE at OMS 1663656** | **LIVE** on the OMS restart + `MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED=false` |
+| T5 | Momentum Option A (one Massive connection) | #1060 | pinned 6cb5d747 | **REVERTED by #1068 (option C)** — re-lands after a complete inactive-morning baseline + threshold review | gateway + momentum-paper restart; preflight steps 3–4 are WHOLE-INSTALL HARD STOPS |
 | T6 | Restart-evidence three-way gate | #1061 | pinned 2096c930 | merged | isolated install 18:00 ET (codex), then ONE preopen.sh re-pin for 09-30 |
 | T7 | Pager 07:00–20:00 ET + INC1 auto-close | #1059 | pinned 83202e2c | merged | **INSTALL HELD until WBREAD1** — no watch reinstall tonight |
 
