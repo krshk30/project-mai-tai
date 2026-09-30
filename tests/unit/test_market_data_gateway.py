@@ -11,7 +11,7 @@ from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
 from project_mai_tai.events import MarketDataSubscriptionEvent, MarketDataSubscriptionPayload
-from project_mai_tai.market_data.massive_provider import MassiveTradeStream
+from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider, MassiveTradeStream
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.market_data.models import HistoricalBarRecord, LiveBarRecord, SnapshotRecord, TradeTickRecord
 from project_mai_tai.settings import Settings
@@ -20,6 +20,7 @@ from project_mai_tai.settings import Settings
 class FakeRedis:
     def __init__(self) -> None:
         self.entries: list[tuple[str, dict[str, object], dict[str, object]]] = []
+        self.hashes: dict[str, dict[str, str]] = {}
 
     async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
         self.entries.append((stream, json.loads(fields["data"]), kwargs))
@@ -31,13 +32,28 @@ class FakeRedis:
 
     async def xrevrange(self, stream: str, count: int = 1):
         results = []
-        for index, (saved_stream, payload, _kwargs) in enumerate(reversed(self.entries), start=1):
+        for index in range(len(self.entries), 0, -1):
+            saved_stream, payload, _kwargs = self.entries[index - 1]
             if saved_stream != stream:
                 continue
             results.append((f"{index}-0", {"data": json.dumps(payload)}))
             if len(results) >= count:
                 break
         return results
+
+    async def xrange(self, stream: str, min: str = "-"):
+        boundary = int(min.removeprefix("(").split("-")[0]) if min != "-" else 0
+        return [
+            (f"{index}-0", {"data": json.dumps(payload)})
+            for index, (saved_stream, payload, _kwargs) in enumerate(self.entries, start=1)
+            if saved_stream == stream and index > boundary
+        ]
+
+    async def hset(self, key: str, mapping: dict[str, str]) -> None:
+        self.hashes.setdefault(key, {}).update(mapping)
+
+    async def hgetall(self, key: str) -> dict[str, str]:
+        return dict(self.hashes.get(key, {}))
 
     async def aclose(self) -> None:
         return None
@@ -237,7 +253,8 @@ async def test_apply_subscription_event_replace_does_not_replay_warmup_when_symb
 
 
 @pytest.mark.asyncio
-async def test_apply_subscription_event_replace_only_warms_new_symbols() -> None:
+async def test_apply_subscription_event_replace_only_warms_new_symbols(caplog) -> None:
+    caplog.set_level("INFO")
     redis = FakeRedis()
     trade_stream = FakeTradeStream()
     service = MarketDataGatewayService(
@@ -271,6 +288,24 @@ async def test_apply_subscription_event_replace_only_warms_new_symbols() -> None
     assert len(warmup_events) == 2
     assert {event["payload"]["symbol"] for event in warmup_events} == {"ANNA"}
     assert {event["payload"]["interval_secs"] for event in warmup_events} == {30, 60}
+    assert "[MARKET-DATA-WARMUP-UNION-ADD] consumer=strategy-engine symbols=ANNA count=1" in caplog.text
+
+
+def test_historical_rest_audit_counts_only_actual_attempts(caplog) -> None:
+    class Client:
+        def list_aggs(self, *args, **kwargs):
+            return []
+
+    provider = MassiveSnapshotProvider(api_key="test")
+    provider._client = Client()
+    caplog.set_level("INFO")
+
+    provider.fetch_historical_bars("ANNA", interval_secs=30, lookback_calendar_days=1, limit=20)
+    assert caplog.text.count("[MARKET-DATA-HISTORICAL-REST-ATTEMPT] symbol=ANNA interval_s=30") == 1
+
+    provider._historical_failures[("ANNA", 30)] = time.monotonic() + 60
+    provider.fetch_historical_bars("ANNA", interval_secs=30, lookback_calendar_days=1, limit=20)
+    assert caplog.text.count("[MARKET-DATA-HISTORICAL-REST-ATTEMPT] symbol=ANNA interval_s=30") == 1
 
 
 def test_massive_trade_stream_accepts_and_normalizes_aggregate_callback() -> None:
@@ -675,6 +710,185 @@ async def test_restore_subscription_state_rehydrates_latest_replace_event() -> N
 
     assert service.active_symbols() == {"SPY", "SAGT", "XTLB"}
     assert service._desired_symbols_by_consumer["strategy-engine"] == {"SAGT", "XTLB"}
+
+
+@pytest.mark.asyncio
+async def test_first_gateway_restart_bootstraps_all_retained_consumer_events() -> None:
+    redis = FakeRedis()
+    for consumer, symbols in (
+        ("strategy-engine", ["SCAN"]),
+        ("schwab-1m-v2", ["V2SY"]),
+    ):
+        event = MarketDataSubscriptionEvent(
+            source_service=consumer,
+            payload=MarketDataSubscriptionPayload(
+                consumer_name=consumer, mode="replace", symbols=symbols,
+            ),
+        )
+        await redis.xadd("test:market-data-subscriptions", {"data": event.model_dump_json()})
+    service = MarketDataGatewayService(
+        settings=Settings(redis_stream_prefix="test", market_data_static_symbols="SPY"),
+        redis_client=redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(), reference_cache=FakeReferenceCache(),
+    )
+
+    await service._restore_subscription_state()
+
+    assert service.active_symbols() == {"SPY", "SCAN", "V2SY"}
+    assert redis.hashes["test:market-data-subscription-owners"]["_migration_complete"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_gateway_restart_replays_an_event_newer_than_durable_checkpoint() -> None:
+    redis = FakeRedis()
+    settings = Settings(redis_stream_prefix="test", market_data_static_symbols="SPY")
+    first = MarketDataGatewayService(
+        settings=settings, redis_client=redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(), reference_cache=FakeReferenceCache(),
+    )
+    await first._restore_subscription_state()
+    assert redis.hashes["test:market-data-subscription-owners"]["_last_applied_id"] == "0-0"
+
+    event = MarketDataSubscriptionEvent(
+        source_service="strategy-engine",
+        payload=MarketDataSubscriptionPayload(
+            consumer_name="strategy-engine", mode="replace", symbols=["SCAN"],
+        ),
+    )
+    await redis.xadd("test:market-data-subscriptions", {"data": event.model_dump_json()})
+    restored = MarketDataGatewayService(
+        settings=settings, redis_client=redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(), reference_cache=FakeReferenceCache(),
+    )
+    await restored._restore_subscription_state()
+
+    assert restored.active_symbols() == {"SPY", "SCAN"}
+    assert restored._subscription_offsets["test:market-data-subscriptions"] == "1-0"
+    assert redis.hashes["test:market-data-subscription-owners"]["_last_applied_id"] == "1-0"
+
+
+@pytest.mark.asyncio
+async def test_failed_subscription_state_write_does_not_advance_owner_or_stream_offset() -> None:
+    class FailingHashRedis(FakeRedis):
+        async def hset(self, key: str, mapping: dict[str, str]) -> None:
+            raise RuntimeError("Redis hash unavailable")
+
+    redis = FailingHashRedis()
+    service = MarketDataGatewayService(
+        settings=Settings(redis_stream_prefix="test"), redis_client=redis,
+        snapshot_provider=FakeSnapshotProvider(), trade_stream=FakeTradeStream(),
+        reference_cache=FakeReferenceCache(),
+    )
+    event = MarketDataSubscriptionEvent(
+        source_service="momentum-paper",
+        payload=MarketDataSubscriptionPayload(
+            consumer_name="momentum-paper", mode="replace", symbols=["MOMO"],
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Redis hash unavailable"):
+        await service.apply_subscription_event(event, message_id="1-0")
+
+    assert service.active_symbols() == set()
+    assert service._subscription_offsets["test:market-data-subscriptions"] == "$"
+
+
+@pytest.mark.asyncio
+async def test_failed_subscription_sync_retries_without_losing_owner_update() -> None:
+    class FailOnceTradeStream(FakeTradeStream):
+        async def sync_subscriptions(self, symbols) -> None:
+            if not self.synced:
+                self.synced.append(["failed"])
+                raise RuntimeError("stream reconnecting")
+            await super().sync_subscriptions(symbols)
+
+    stream = FailOnceTradeStream()
+    service = MarketDataGatewayService(
+        settings=Settings(redis_stream_prefix="test"), redis_client=FakeRedis(),
+        snapshot_provider=FakeSnapshotProvider(), trade_stream=stream,
+        reference_cache=FakeReferenceCache(),
+    )
+    event = MarketDataSubscriptionEvent(
+        source_service="momentum-paper",
+        payload=MarketDataSubscriptionPayload(
+            consumer_name="momentum-paper", mode="replace", symbols=["MOMO"],
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="stream reconnecting"):
+        await service.apply_subscription_event(event, message_id="1-0")
+    assert service.active_symbols() == set()
+
+    assert await service.apply_subscription_event(event, message_id="1-0") == {"MOMO"}
+    assert stream.synced[-1] == ["MOMO"]
+
+
+@pytest.mark.asyncio
+async def test_momentum_replace_and_restart_never_remove_other_consumer_symbols(caplog) -> None:
+    caplog.set_level("INFO")
+    redis = FakeRedis()
+    stream = FakeTradeStream()
+    settings = Settings(redis_stream_prefix="test", market_data_static_symbols="SPY")
+    service = MarketDataGatewayService(
+        settings=settings, redis_client=redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=stream, reference_cache=FakeReferenceCache(),
+    )
+    await service._restore_subscription_state()
+
+    for consumer, symbols in (
+        ("strategy-engine", ["SCAN"]),
+        ("schwab-1m-v2", ["V2SY"]),
+        ("momentum-paper", ["MOMO"]),
+    ):
+        event = MarketDataSubscriptionEvent(
+            source_service=consumer,
+            payload=MarketDataSubscriptionPayload(
+                consumer_name=consumer, mode="replace", symbols=symbols,
+            ),
+        )
+        await redis.xadd("test:market-data-subscriptions", {"data": event.model_dump_json()})
+        await service.apply_subscription_event(event)
+
+    assert service.active_symbols() == {"SPY", "SCAN", "V2SY", "MOMO"}
+    replacement = MarketDataSubscriptionEvent(
+        source_service="momentum-paper",
+        payload=MarketDataSubscriptionPayload(
+            consumer_name="momentum-paper", mode="replace", symbols=[],
+        ),
+    )
+    await redis.xadd("test:market-data-subscriptions", {"data": replacement.model_dump_json()})
+    await service.apply_subscription_event(replacement)
+    assert service.active_symbols() == {"SPY", "SCAN", "V2SY"}
+    assert (
+        "[MARKET-DATA-SUBSCRIPTION-UNION] consumer=momentum-paper "
+        "added=- removed=MOMO count=3"
+    ) in caplog.text
+    redis.entries = redis.entries[-1:]
+
+    restored = MarketDataGatewayService(
+        settings=settings, redis_client=redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(), reference_cache=FakeReferenceCache(),
+    )
+    await restored._restore_subscription_state()
+    assert restored.active_symbols() == {"SPY", "SCAN", "V2SY"}
+
+
+def test_massive_trade_stream_forwards_conditions_for_paper_eligibility() -> None:
+    trades: list[TradeTickRecord] = []
+    stream = MassiveTradeStream(api_key="test")
+    stream._subscriptions = {"MOMO"}
+    stream._on_trade = trades.append
+
+    stream._handle_messages([
+        SimpleNamespace(
+            ev="T", symbol="MOMO", price=2.5, size=100,
+            sip_timestamp=1_790_000_000_000, conditions=[12, 37],
+        )
+    ])
+
+    assert len(trades) == 1
+    assert trades[0].conditions == ("12", "37")
+    assert trades[0].conditions_present is True
 
 
 # ------------------------------------------------- periodic reference refresh (DFNS/LGHL incident)

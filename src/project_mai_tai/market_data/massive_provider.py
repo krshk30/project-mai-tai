@@ -173,6 +173,10 @@ class MassiveSnapshotProvider:
         from_date = date.today() - timedelta(days=max(1, lookback_calendar_days))
         to_date = date.today()
         try:
+            logger.info(
+                "[MARKET-DATA-HISTORICAL-REST-ATTEMPT] symbol=%s interval_s=%d",
+                failure_key[0], interval_secs,
+            )
             aggs = client.list_aggs(
                 symbol,
                 multiplier,
@@ -420,6 +424,10 @@ class MassiveTradeStream:
                                 getattr(message, "sip_timestamp", None) or getattr(message, "timestamp", None)
                             ),
                             exchange=str(getattr(message, "exchange", "")) or None,
+                            conditions=tuple(
+                                str(code) for code in (getattr(message, "conditions", None) or ())
+                            ),
+                            conditions_present=hasattr(message, "conditions"),
                         )
                     )
                 elif event_type == "Q" and self._on_quote is not None:

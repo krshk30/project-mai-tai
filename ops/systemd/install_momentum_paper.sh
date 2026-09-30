@@ -26,7 +26,7 @@ set +a
 sudo --preserve-env=MAI_TAI_DATABASE_URL -u trader \
   "$REPO_DIR/.venv/bin/alembic" upgrade head
 
-"$REPO_DIR/ops/systemd/verify_momentum_paper_entitlement.sh" "$REPO_DIR" 15
+"$REPO_DIR/ops/systemd/verify_momentum_paper_entitlement.sh" "$REPO_DIR"
 sudo cp "$REPO_DIR/ops/systemd/$UNIT" "/etc/systemd/system/$UNIT"
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$UNIT"
