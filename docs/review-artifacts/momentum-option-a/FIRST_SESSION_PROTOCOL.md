@@ -37,7 +37,28 @@ The relative bound is strict `>`; equality is not a stop.
 | OMS quote path | Published quote `produced_at` to read-only observer receipt age, p95, is a **proxy**, not the age of the exact ask in OMS memory. Report it separately from direct `[OMS-ABANDON-INTENT] ... NO_FRESH_QUOTE` and `no valid OMS market snapshot` counts, with the number of eligible intents. | Direct refusals stop if their rolling count is at least 3 and more than 2 times the matching control count for 2 consecutive evaluations. Proxy age alone is a warning until exact OMS ask-age instrumentation is separately approved; proxy p95 over both 2 times control and 2 seconds for 5 consecutive evaluations must be reported. |
 | gateway heartbeat | Latest heartbeat status and age, measured by a read-only stream observer. Record control maximum healthy age and unhealthy count. | A non-healthy status in 2 consecutive samples, or no heartbeat for longer than both 2 times the control maximum age and 30 seconds. |
 | snapshot cadence | Interarrival of distinct `snapshot_batch` producer timestamps; nominal interval 5 seconds. Report received / expected batches and rolling p95. | Rolling p95 exceeds both 2 times control p95 and 10 seconds for 5 consecutive evaluations, with at least 20 intervals in each rolling window. |
-| Massive 1008 | New gateway 1008 disconnects, counted from gateway logs, with control count and exact timestamps. | Any new 1008 during treatment above the matching control count; stop on the first new excess event. |
+| Massive 1008 | New gateway 1008 disconnects, counted from gateway logs, with control count and exact timestamps. | First treatment after Option A: any new gateway 1008 stops the paper service. Control count is diagnostic, not a subtraction. |
+
+### 2026-09-30 pre-treatment 1008 amendment
+
+Independent review recovered two gateway 1008s during the accepted control
+(about 07:01 and 08:32 ET), with none in the 09:00 hour. This reference is
+diagnostic only. Option A removes the old paper service's separate `T.*`
+socket; for the first treatment session, **any new gateway 1008 is an
+immediate stop trigger**, not a comparison with the control count. No other
+stop threshold changes.
+
+Before 07:00 ET, start the read-only
+`scripts/option_a_treatment_1008_sampler.py` against the active gateway log.
+It records the log's device/inode, byte size and nanosecond mtime once per
+second and counts new `1008` lines from the recorded byte offset. The initial
+offset is the pre-treatment log size; it never counts historical lines as new.
+Keep the JSONL path, initial offset, start/end times and received/expected
+samples in the journal. A sampled new 1008 invokes the paper-only stop and
+page procedure below. A late start, unreadable log, rotation/truncation,
+missing sample, or unconfirmed offset makes 1008 coverage UNKNOWN and fails
+closed for the paper experiment; it is never a zero-event observation. The
+sampler does not itself stop or restart any service.
 
 An independent stop trigger is sufficient. The monitor must preserve the raw
 evidence, stop **only** `project-mai-tai-momentum-paper.service`, journal the

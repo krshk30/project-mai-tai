@@ -116,6 +116,109 @@ def test_gateway_trade_ticks_cannot_reintroduce_global_trade_detection() -> None
 
 
 @pytest.mark.asyncio
+async def test_subscription_publish_refuses_more_than_sixteen_symbols() -> None:
+    class FakeRedis:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def xadd(self, _stream: str, fields: dict[str, str], **_kwargs) -> None:
+            self.events.append(json.loads(fields["data"]))
+
+    redis = FakeRedis()
+    service = MomentumPaperService(
+        Settings(momentum_paper_enabled=True, redis_stream_prefix="test"),
+        redis_client=redis,  # type: ignore[arg-type]
+    )
+    with pytest.raises(RuntimeError, match="subscription cap breached"):
+        await service._sync_gateway_subscriptions(
+            force=True, desired_override={f"M{index:03d}" for index in range(17)}
+        )
+    assert redis.events == []
+    assert service._subscribed_symbols == set()
+
+
+@pytest.mark.asyncio
+async def test_unsubscribed_gateway_tick_cannot_fill_an_active_candidate() -> None:
+    class FakeStore:
+        def __init__(self) -> None:
+            self.records = []
+
+        def append_many(self, records) -> None:
+            self.records.extend(records)
+
+    store = FakeStore()
+    service = MomentumPaperService(
+        Settings(momentum_paper_enabled=True, redis_stream_prefix="test"),
+        store=store, clock=lambda: _at("04:11:26"),  # type: ignore[arg-type]
+    )
+    engine = MomentumPaperEngine(
+        prior_closes={"OTHER": Decimal("1.00")}, condition_version="fixture",
+        coverage_started_ms=int(_at("04:00").timestamp() * 1000),
+    )
+    engine.detect_from_snapshots(
+        [_snapshot("OTHER", "1.00", "04:11")], completed_at=_at("04:11"), max_symbols=16,
+    )
+    detected, _ = engine.detect_from_snapshots(
+        [_snapshot("OTHER", "1.25", "04:11:25")],
+        completed_at=_at("04:11:25"), max_symbols=16,
+    )
+    assert len(detected) == 2
+    service._engine = engine
+    service._condition_snapshot = ConditionSnapshot(retrieved_at=_at("04:11:25"), rules={})
+    service._subscribed_symbols = {"MOMO"}
+    tick = TradeTickEvent(
+        source_service="market-data-gateway",
+        payload=TradeTickPayload(
+            symbol="OTHER", price=Decimal("1.30"), size=100,
+            timestamp_ns=int(_at("04:11:26").timestamp() * 1_000_000_000),
+            conditions_present=True,
+        ),
+    )
+
+    await service._handle_gateway_event(tick.model_dump_json())
+
+    assert store.records == []
+    assert engine.active_symbols == {"OTHER"}
+
+
+@pytest.mark.asyncio
+async def test_subscribed_trade_ticks_alone_cannot_detect_candidates() -> None:
+    class FakeStore:
+        def __init__(self) -> None:
+            self.records = []
+
+        def append_many(self, records) -> None:
+            self.records.extend(records)
+
+    store = FakeStore()
+    clock = [_at("04:11")]
+    service = MomentumPaperService(
+        Settings(momentum_paper_enabled=True, redis_stream_prefix="test"),
+        store=store, clock=lambda: clock[0],  # type: ignore[arg-type]
+    )
+    service._engine = MomentumPaperEngine(
+        prior_closes={"MOMO": Decimal("1.00")}, condition_version="fixture",
+        coverage_started_ms=int(_at("04:00").timestamp() * 1000),
+    )
+    service._condition_snapshot = ConditionSnapshot(retrieved_at=clock[0], rules={})
+    service._subscribed_symbols = {"MOMO"}
+    for at, price in (("04:11", "1.00"), ("04:11:25", "1.25")):
+        clock[0] = _at(at)
+        tick = TradeTickEvent(
+            source_service="market-data-gateway",
+            payload=TradeTickPayload(
+                symbol="MOMO", price=Decimal(price), size=100,
+                timestamp_ns=int(clock[0].timestamp() * 1_000_000_000),
+                conditions_present=True,
+            ),
+        )
+        await service._handle_gateway_event(tick.model_dump_json())
+
+    assert store.records == []
+    assert service._engine.active_symbols == set()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
 async def test_process_signal_releases_momentum_gateway_owner(monkeypatch, signum) -> None:
     class FakeRedis:
