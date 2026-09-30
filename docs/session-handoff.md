@@ -3,11 +3,18 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Written by `claude-1`, 2026-09-29 (Tue) ~21:00 ET, at the 09-29 close-out.** Freeze started 20:21 ET; both agents ACKed;
-manifest `2026-09-29-rule1-requirement-card-retry-cycle-card10-orb-observe-3389090a` is BALANCED (93/93). This PR carries
-all three files. codex-2 reviews and pins it, merges it, and runs `promote.sh` — that lifts the freeze.
-Superseded snapshots from this page (the 09-28 production table, Tuesday's reads, the 18:05 install scope, the closed
-decisions, Closed 09-28, the 09-28 corrections) were moved verbatim into `handoff-log.md` under 2026-09-29.
+**Written by `claude-1`, 2026-09-29 (Tue) 21:00 ET — AFTER the 09-29 close-out. This PR is the SHARED 09-30 handoff PR (new rule, see below).**
+- **09-29 close-out DONE:** #1058 merged 20:58 ET (codex pin, independent-review-pin pass) and promoted. Journals archived under `archive/2026-09-29-rule1-requirement-card-retry-cycle-card10-orb-observe-3389090a`; freeze lifted.
+- **Carried claims (codex-2's, via promote):** Momentum docs and 4 Card 10 claims (`oms/service.py`, `webull.py`/`routing.py`, `test_confirmation_exit_fanout.py`, `unexercised_watch.py`). #1066 has merged, so the Card 10 claims look stale — **codex releases them or states why they stay.**
+- **Resumed after the promote:** WBREAD1 (#1063 draft @ ad865c84) and FLAGGATE (board 39) — codex builds, claude-1 reviews.
+- **Box at 20:59 ET:** oms 1663656 · v2 1664453 · orb-schwab 1665845, all NRestarts 0 (on `3389090a`).
+
+> ⭐⭐⭐ **NEW PROCESS FROM 09-30 (operator 09-29): ONE COMMON HANDOFF PR PER DAY, updated by BOTH agents as things happen** (merge, pin, install, ruling, board move) — not rebuilt at close-out.
+> - Each agent edits only the rows it owns: codex = build/install/deploy evidence; claude-1 = reviews/pins/rulings/open decisions/closed lists/header.
+> - Always pull before editing; never overwrite the other agent's commits.
+> - Close-out = a final full sweep + the manifest in this same PR.
+> - Pin gate: nobody can pin their own commit, so each agent pins the other agent's contiguous commit runs (the gate accepts several pins covering the range). Group commits by author to keep this to two pins.
+
 Roles (operator, 09-28): **codex-2 builds all code; claude-1 reviews and pins.** "Send it to Codex" means a relay block.
 claude-1 changes env/config only when the operator asks. The author never reviews.
 
