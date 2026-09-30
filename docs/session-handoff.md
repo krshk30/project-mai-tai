@@ -83,11 +83,12 @@ watch reinstall. The 16:00 unconfirmed path already pages via `oms_v2_exit_relea
 5. **Remaining box-cleanup candidates** (operator: "validate each"): Redis `mai_tai:snapshot-batches` 180×~6 MB ≈ 1.1 GB (15 min of scanner history; cutting to ~5 min saves ~0.7 GB but weakens scanner recovery after a strategy restart); ORB observer (76 MB, 0 intents in 7 days; its routing flag must stay on); the dashboard/control CPU (top user, 66%; snapshot-write hot path → codex fix); clutter (35 failed one-off units, 2 dead harness timers, old checkouts 3.2 GB disk).
 6. **ORB Schwab activation (#1064)** — evening of 09-30 at the earliest, and only after: the observe evidence; an attended Schwab place/reprice/cancel test; early-close handling; proven phone delivery of the new ORB INC1 sources (needs the watch reinstall).
 7. **ORB: a big RED break bar** (body ≥45% but closing down) — sell or keep? The rule as written ignores direction.
-8. **Live-rule card audit, batch 1 — cards with NO operator words on record:**
-    - 2b: wait for 3 purple bars; reprice only when the line moves ≥0.5%;
-    - 3: a rest placed before 15:45 can fill until 16:00;
-    - 9: ATR sell-flip exit + floor wording;
-    - 11: Webull 1 share; held back while >8% away; policy-blocked name keeps the Webull leg.
+8. **Live-rule card audit, batch 1 — DONE 09-30 ~06:45 ET (operator confirmed all four, NO change, nothing for codex):**
+    - 2b: wait for 3 purple bars; the line is checked every bar, the rest moves only when the line moved ≥0.5% — "keep as it is… this is exactly what I want… no change";
+    - 3: no new rest after 15:45; a rest placed before 15:45 can fill until 16:00 — confirmed as is;
+    - 9: ATR sell-flip exit stays; floor wording deleted (covered by card 10) — closed;
+    - 11: Webull 1 share; policy-blocked name keeps the Webull leg; a refused far-above-market rest is held and sent within 8% — "yes confirm card 11".
+    Live values read from `/proc` 06:17 ET 09-30: REPRICE_PCT=0.5 · entry end 15:45 · WEBULL_FANOUT_QUANTITY=1 · MIRROR_DEFERRED_RESUBMIT=true.
     Card 4 (10,000-share floor + 3 thin bars) was CONFIRMED 09-29; card 10 was ruled; card 6 was fixed (#1065).
 9. **FLAGGATE** — RULED 09-29 ("yes, have codex add the flag check to the gate"): the 06:20 gate fails if any fix flag in a running process differs from `ops/health/expected_flags.json`; CI refuses an unlisted new flag. Build = codex after the promote (board 39).
 
@@ -113,7 +114,7 @@ watch reinstall. The 16:00 unconfirmed path already pages via `oms_v2_exit_relea
 | 34 | ORB Schwab (#1064/#1067) | INSTALLED 20:11 ET, OBSERVE_ONLY (orb-schwab 1665845) | live orders OFF (operator's staged plan) | codex / claude-1 | 10:02 ET 09-30 report; activation = Open decision 6 |
 | 35 | RETRY-ONE per SELL cycle (#1065) | INSTALLED 20:08 ET (v2 1664453), TO BE EXERCISED | BKYI 09-29: 12:52 flip missed by the whole-day block (my spec error) | claude-1 | first `reset_new_segment` |
 | 36 | Card 10 same exit everywhere (#1066) | INSTALLED 20:05 ET (oms 1663656, floor=false), TO BE EXERCISED | floor mode ON today: 86 `[OMS-V2-CW-FLOOR-ARMED]` / ~22 d (e.g. DAIC 09-17 armed 4.27 → sold 4.21) | claude-1 | first software +5% exit; first 16:00 hold; 19:55 |
-| 37 | Live-rule card audit | IN PROGRESS | batch 1: 11 cards; mismatches 6 (retry) + 10 (after 16:00) fixed; card 4 confirmed | operator | Open decision 8 |
+| 37 | Live-rule card audit | BATCH 1 DONE 09-30 | 11 cards; mismatches 6 (retry) + 10 (after 16:00) fixed; cards 4, 2b, 3, 9, 11 confirmed by the operator (09-30 ~06:45 ET), no change | claude-1 | batch 2 only if the operator asks |
 | 38 | DXST Webull entry mirror refused by our OMS `NO_FRESH_QUOTE` ×2 (14:11, 14:15 ET 09-29) | UNCLASSIFIED | `[OMS-BROKER-REJECT] … no valid OMS market snapshot` (client abort, entry side) | claude-1 | classify per RULE #1 (design or defect) |
 | 39 | FLAGGATE: 06:20 gate + CI fail on any fix flag not as ruled | BUILT, [PR #1070](https://github.com/krshk30/project-mai-tai/pull/1070) @ 5b032bd5 READY FOR REVIEW; CI validate ×2 PASS; independent pin pending; NOT INSTALLED | 120 settings booleans cataloged, 124 owner-process checks matched a read-only box snapshot; focused suite 101 PASS. Missing/mismatched/unreadable switches route separately; the live gate has not exercised this code. Requirement card is in the PR. | codex → claude-1 | independent review/pin; exact-SHA GO for isolated preopen install and live read-only proof |
 | 20 | DRIFT1 replay mirror 16:00 vs 15:45 | TBD (parked) | drift page RED every 6 h | operator | un-park when stable |
