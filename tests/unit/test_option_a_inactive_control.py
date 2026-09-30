@@ -112,6 +112,25 @@ def test_v2_truncated_watchlist_sample_is_reported_as_incomplete(tmp_path: Path)
     assert result["watchlist_truncated_updates_in_window"] == 0
 
 
+def test_v2_seed_probe_is_excluded_before_deduplicating_live_probe(tmp_path: Path) -> None:
+    path = tmp_path / "v2.log"
+    path.write_text(
+        "2026-09-30 10:59:00,000 INFO watchlist updated count=1 sample=TEST warmed=1\n"
+        "2026-09-30 11:01:02,100 WARNING [V2-DB-SEED-GAP] TEST dropped 2 bars\n"
+        "2026-09-30 11:01:02,101 INFO [V2-ATR-PROBE] sym=TEST ts_ms=1790766000000\n"
+        "2026-09-30 11:01:02,102 INFO schwab_1m_v2 db-seed: TEST hydrated 3 bars\n"
+        "2026-09-30 11:01:03,000 INFO [V2-ATR-PROBE] sym=TEST ts_ms=1790766000000\n",
+        encoding="utf-8",
+    )
+
+    result = control.summarize_v2(path)
+
+    assert result["probe_replay_marker_excluded_total"] == 1
+    assert result["probe_unique_total"] == 1
+    assert result["probe_duplicate_total"] == 0
+    assert result["per_symbol"]["TEST"]["lag_p95_s"] == 3.0
+
+
 def test_oms_counts_both_direct_refusal_kinds(tmp_path: Path) -> None:
     path = tmp_path / "oms.log"
     path.write_text(
