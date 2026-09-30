@@ -42,12 +42,15 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    scanner, v2, or ORB replace refuses the install, including when the last
    known symbol list was empty. Re-run the capture immediately before the
    gateway restart and refuse if any of the three newest source IDs changed.
+   The six Python blocks that read the root-only fleet env run as root;
+   `OWNER_FILE` and `ROLLBACK_EVENTS` are therefore root-owned, and their later
+   readers also run as root. The trader-owned venv's `pip install -e` stays as trader.
 
    ```bash
    REPO=/home/trader/project-mai-tai
    OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners.json
    ORB_REPLAY_APPROVED=0  # Change only if the exact-SHA operator GO explicitly approves ORB replay.
-   sudo -u trader "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ORB_REPLAY_APPROVED" <<'PY'
+   sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ORB_REPLAY_APPROVED" <<'PY'
    import base64
    import json
    import os
@@ -161,7 +164,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    sudo -u trader "$REPO/.venv/bin/python" -m pip install --no-deps --disable-pip-version-check -e "$REPO"
    sudo -u trader "$REPO/.venv/bin/python" -c 'import project_mai_tai, pathlib; print(pathlib.Path(project_mai_tai.__file__).resolve())'
    test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
-   sudo -u trader "$REPO/.venv/bin/python" - "$OWNER_FILE" <<'PY'
+   sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" <<'PY'
    import json
    import sys
    from pathlib import Path
@@ -190,7 +193,7 @@ a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
    sudo systemctl restart project-mai-tai-market-data.service
    sudo systemctl is-active --quiet project-mai-tai-market-data.service
    sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-market-data.service
-   sudo -u trader "$REPO/.venv/bin/python" - "$OWNER_FILE" "$RESTART_UTC" <<'PY'
+   sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$RESTART_UTC" <<'PY'
    import json
    import math
    import sys
@@ -564,7 +567,7 @@ ROLLBACK_RESTART_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 sudo systemctl restart project-mai-tai-market-data.service
 sudo systemctl is-active --quiet project-mai-tai-market-data.service
 sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-market-data.service
-sudo -u trader "$REPO/.venv/bin/python" - "$ROLLBACK_RESTART_UTC" <<'PY'
+sudo "$REPO/.venv/bin/python" - "$ROLLBACK_RESTART_UTC" <<'PY'
 import json
 import sys
 import time
@@ -592,7 +595,7 @@ PY
 ROLLBACK_LOG_OFFSET="$(stat -c%s /var/log/project-mai-tai/market-data.log)"
 ROLLBACK_LOG_ID="$(stat -c '%d:%i' /var/log/project-mai-tai/market-data.log)"
 ROLLBACK_EVENTS=/home/trader/after-hours/2026-09-30/option-a-rollback-events.jsonl
-sudo -u trader "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ROLLBACK_EVENTS" <<'PY'
+sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ROLLBACK_EVENTS" <<'PY'
 import base64
 import json
 import os
@@ -629,7 +632,7 @@ with os.fdopen(fd, "w", encoding="utf-8") as output:
         os.fsync(output.fileno())
         print("rollback replace", item)
 PY
-sudo -u trader "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ROLLBACK_EVENTS" "$ROLLBACK_LOG_OFFSET" "$ROLLBACK_LOG_ID" <<'PY'
+sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ROLLBACK_EVENTS" "$ROLLBACK_LOG_OFFSET" "$ROLLBACK_LOG_ID" <<'PY'
 import base64
 import json
 import math
