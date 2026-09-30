@@ -24,6 +24,28 @@ preopen_record_restart_evidence() {
   esac
 }
 
+preopen_record_expected_flags() {
+  local flags_rc="$1" catalog="$2" current_output="$3" final_count final_call
+  final_count="$(printf '%s\n' "$current_output" | grep -c '^Final call: ' || true)"
+  final_call="$(printf '%s\n' "$current_output" | sed -n 's/^Final call: \([^;]*\);.*/\1/p')"
+  if [[ "$final_count" != 1 ]]; then
+    final_call=""
+  fi
+  case "$flags_rc:$final_call" in
+    '0:PASS') pass "running flags match reviewed catalog: $catalog" ;;
+    '1:REAL FAILURE') fail "running flag mismatch; inspect $catalog and the flag check output" ;;
+    '2:UNKNOWN')
+      printf 'UNKNOWN: running flags could not be read; inspect %s and the flag check output\n' "$catalog"
+      unknowns=$((unknowns + 1))
+      ;;
+    *)
+      printf 'UNKNOWN: flag check rc=%s disagrees with current final call=%s; inspect %s\n' \
+        "$flags_rc" "${final_call:-missing}" "$catalog"
+      unknowns=$((unknowns + 1))
+      ;;
+  esac
+}
+
 preopen_final_verdict() {
   if (( failures > 0 )); then
     printf 'BLOCKED: REAL FAILURE in %d check group(s); unknown groups=%d.\n' "$failures" "$unknowns"
