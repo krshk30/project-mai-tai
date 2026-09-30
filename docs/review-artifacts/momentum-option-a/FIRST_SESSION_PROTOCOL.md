@@ -50,6 +50,10 @@ stop threshold changes.
 
 Before 07:00 ET, start the read-only
 `scripts/option_a_treatment_1008_sampler.py` against the active gateway log.
+Pass the treatment session date as `--treatment-date YYYY-MM-DD` and the
+planned end as an offset-aware `--end-utc` timestamp. It may start the evening
+before the treatment date; it refuses a start at or after 07:00 ET on that
+treatment date (with the ET daylight-saving offset applied).
 It records the log's device/inode, byte size and nanosecond mtime once per
 second and counts new `1008` lines from the recorded byte offset. The initial
 offset is the pre-treatment log size; it never counts historical lines as new.
