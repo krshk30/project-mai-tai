@@ -56,6 +56,7 @@ DEFAULT_SERVICES = (
 )
 OPTIONAL_SERVICES = ("orb-schwab",)
 KNOWN_SERVICES = DEFAULT_SERVICES + OPTIONAL_SERVICES
+SERVICE_ACTIONS = frozenset({"restarted", "newly_installed", "deliberately_untouched"})
 INTENTIONALLY_INACTIVE_SERVICES = frozenset({"tv-alerts"})
 LOG_TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})")
 FIELD = re.compile(r"\b([a-z_]+)=([^ ]+)")
@@ -1066,6 +1067,43 @@ def _load_snapshot(path: Path) -> dict:
     return payload
 
 
+def _load_install_record(
+    path: Path, *, before: dict, observed: set[str]
+) -> tuple[set[str], set[str]]:
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EvidenceUnknown(f"install record {path} unreadable or not structured JSON: {exc}") from exc
+    if not isinstance(record, dict) or record.get("schema_version") != 1:
+        raise EvidenceUnknown(f"install record {path} has an unsupported shape")
+    if record.get("snapshot_captured_at_utc") != before.get("captured_at_utc"):
+        raise EvidenceUnknown(f"install record {path} does not match the pre-restart snapshot")
+    if not isinstance(record.get("source_journal"), str) or not record["source_journal"].strip():
+        raise EvidenceUnknown(f"install record {path} has no source journal")
+    actions = record.get("service_actions")
+    if not isinstance(actions, dict):
+        raise EvidenceUnknown(f"install record {path} has no service actions")
+    missing = observed - set(actions)
+    extra = set(actions) - observed
+    invalid = {name for name, action in actions.items() if action not in SERVICE_ACTIONS}
+    if missing or extra or invalid:
+        raise EvidenceUnknown(
+            f"install record {path} does not classify the entire gate service list: "
+            f"missing={','.join(sorted(missing)) or '-'} "
+            f"extra={','.join(sorted(extra)) or '-'} "
+            f"invalid={','.join(sorted(invalid)) or '-'}"
+        )
+    restarted = {name for name, action in actions.items() if action == "restarted"}
+    new_services = {name for name, action in actions.items() if action == "newly_installed"}
+    if new_services - set(OPTIONAL_SERVICES):
+        raise EvidenceUnknown(f"install record {path} marks a non-optional unit newly installed")
+    if new_services & set(before["services"]):
+        raise EvidenceUnknown(f"install record {path} marks an existing unit newly installed")
+    if restarted - set(before["services"]):
+        raise EvidenceUnknown(f"install record {path} marks a missing pre-snapshot unit restarted")
+    return restarted, new_services
+
+
 def _fields(line: str) -> dict[str, str]:
     return dict(FIELD.findall(line))
 
@@ -1127,6 +1165,19 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     observed = (
         set(DEFAULT_SERVICES) | installed_optional | (set(before_services) & set(OPTIONAL_SERVICES))
     )
+    # The CLI always supplies this attribute. Older direct unit-test fixtures omit it.
+    if hasattr(args, "install_record"):
+        if args.install_record is None:
+            raise EvidenceUnknown("no complete install record supplied")
+        recorded_restarts, recorded_new = _load_install_record(
+            args.install_record, before=before, observed=observed
+        )
+        if restarted != recorded_restarts or new_services != recorded_new:
+            raise EvidenceUnknown(
+                "install record disagrees with --restarted/--new-service declarations: "
+                f"recorded restarted={','.join(sorted(recorded_restarts)) or '-'} "
+                f"new={','.join(sorted(recorded_new)) or '-'}"
+            )
     current = {name: service_state(name, runner) for name in sorted(observed)}
     failures: list[str] = []
     unknowns: list[str] = []
@@ -1584,6 +1635,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     after = sub.add_parser("report", help="collect and grade post-restart evidence")
     after.add_argument("--snapshot", required=True, type=Path)
+    after.add_argument("--install-record", type=Path)
     after.add_argument("--restarted", action="append", required=True, choices=KNOWN_SERVICES)
     after.add_argument("--new-service", action="append", default=[], choices=OPTIONAL_SERVICES)
     after.add_argument(
