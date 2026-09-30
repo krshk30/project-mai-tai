@@ -125,6 +125,30 @@ def test_preopen_routes_flag_check_three_ways(
     assert expected_line in result.stdout
 
 
+def test_duplicate_flag_final_calls_are_unknown() -> None:
+    script = """
+        source "$1"
+        failures=0
+        unknowns=0
+        fail() { failures=$((failures + 1)); }
+        pass() { :; }
+        preopen_record_expected_flags 0 /tmp/expected_flags.json "$2"
+        preopen_final_verdict
+    """
+    result = subprocess.run(
+        [
+            "bash", "-c", script, "flag-test", str(ROUTER),
+            "Final call: PASS; first\nFinal call: malformed duplicate",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "current final call=missing" in result.stdout
+    assert "running flags match reviewed catalog" not in result.stdout
+
+
 @pytest.mark.parametrize(
     ("checker_rc", "checker_call", "expected_rc", "expected_line"),
     [
