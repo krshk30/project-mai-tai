@@ -71,6 +71,22 @@ watch reinstall. The 16:00 unconfirmed path already pages via `oms_v2_exit_relea
 3. `ORB_REPLAY_APPROVED=1` — "include ORB in the rollback" — else a nonempty ORB paper owner set refuses the whole install at preflight.
 **18:2x ET: INSTALL PAUSED before any write (codex): the plan's six Python check blocks run as `trader` but build `Settings(_env_file=/etc/project-mai-tai/project-mai-tai.env)`, a 0600 root file → PermissionError (plan lines 50, 164, 193, 567, 595, 632). Box clean at 3389090a, PIDs unchanged, both accounts flat. Fix = run those six blocks as root (`sudo "$REPO/.venv/bin/python" -`); the two `pip install -e` lines stay as trader (venv is trader-owned). Renewed GO needed on the corrected plan SHA.** **18:33 ET: corrected plan @ ae48b953 reviewed — diff is exactly the six `sudo -u trader` → `sudo` substitutions + the ownership note; GO-READY. Renewed GO text handed to the operator.** Verified by claude-1: no v2 restart, no v2 env/flag change, no settings default change; OMS src change = the 42 ORB lines of #1075 only; restart order stop paper → checkout → guard units → market-data → 180 s owner/cadence proof → start paper → [ORB phase] flat reads → env edit (backed up, two lines) → stop strategy → restart OMS → start strategy → restart orb-schwab; every-unit install record; preopen re-pin for 10-01 with the new OMS/strategy PIDs and v2 1664453; samplers + guard `project-mai-tai-option-a-guard@2026-10-01` after the 20:00:06 rotation proof; 06:30 ET recheck; "not covered" lists the partial-fill gap (row 46), ORB INC1 sources not installed, no attended Schwab test. UNKNOWN: whether `pip install -e` needs network on the box; whether `deploy_preflight.py --service oms` runs with strategy stopped (plan substitutes the fence).
 
+## ✅ MODE B INSTALLED 19:28–19:32 ET 09-30 (codex) — claude-1 verified on the box 19:39 ET
+| check | reading | verdict |
+|---|---|---|
+| checkout | `01a64e9b`, clean | ✅ |
+| oms | **2074771** since 19:28:20 ET, NRestarts 0, 0 tracebacks | ✅ new (#1075 OMS gate/watchdog live) |
+| strategy | **2074995** since 19:28:59 ET, 0 tracebacks | ✅ new (companion) |
+| orb-schwab | **2075890** since 19:31:11 ET; log `[ORB-SCHWAB] mode=LIVE live_sending=True`; the one traceback is the CancelledError of the OLD observe process at stop (benign) | ✅ LIVE |
+| /proc (oms + orb-schwab) | ORB_LIVE_SCHWAB_ORDERS=true · ORB_SCHWAB_OBSERVE=false · CW_FLOOR_EXIT=false · CW_TARGET 5.0 · CW_HARD_STOP 8.0 · RETRY_ONE=true · OVERNIGHT_FLATTEN=true · EOD_OCO_TRANSITION=true | ✅ as ruled |
+| market-data | 2064731 (old code, since 18:45:28 ET) — NOT restarted in Mode B | ✅ untouched |
+| momentum-paper | STOPPED (deliberate; operator informed) | ✅ |
+| schwab-1m-v2 / orb | 1664453 / 1665228 unchanged | ✅ |
+| isolated gate files | expected_flags.json, expected_flags_check.py, preopen_restart_evidence.sh, v2_restart_evidence.py at 23:32Z (codex: hashes match Git) | ✅ |
+| exposure | 0 positions all bots | ✅ |
+| PENDING | install record + preopen.sh re-pin for 10-01 (codex paused on the snapshot-relative classification question) | ⏳ |
+**Classification ruling (claude-1, 19:42 ET): the record is written RELATIVE TO THE SNAPSHOT — `orb-schwab: newly_installed` (absent from the Sunday snapshot), `market-data: restarted` (PID changed since the snapshot: tonight's 18:41 restart + rollback), oms/strategy/schwab-1m-v2/orb: restarted, control/market-capture/reconciler: deliberately_untouched, tv-alerts: deliberately_untouched (inactive) — with tonight's actual actions journaled separately. That is the truthful reading the gate is built for.**
+
 ## 18:41–18:46 ET INSTALL ATTEMPT — STOPPED, box clean at 3389090a, nothing else changed (claude-1 read ~19:10 ET)
 - Codex ran the gateway phase: new gateway (01a64e9b code) PID 2063312 up 18:40:59 ET; the plan's 180 s restoration-proof script timed out → the one authorized rollback → old gateway PID 2064731 up 18:45:28 ET; the three preserved consumer events replayed (orb [], strategy-engine and schwab-1m-v2 = CMCT,GOW,TGE,TNON); the rollback's own proof also 'UNKNOWN' → stop, high-priority page sent. OMS/strategy/v2/orb PIDs unchanged; env, watch, preopen.sh unchanged; guard units installed but inactive; **momentum-paper (old) left STOPPED**.
 - **claude-1 call (RULE #1, by CONTENT, not by the tools' lines): BOTH gateways were healthy; BOTH proofs are check defects.**
