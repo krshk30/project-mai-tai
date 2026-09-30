@@ -1,0 +1,14 @@
+[Unit]
+Description=Fail-closed stop for failed Option A guard %i
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+ExecStart=-/usr/bin/systemctl stop project-mai-tai-momentum-paper.service
+ExecStart=-/home/trader/project-mai-tai/.venv/bin/python /home/trader/project-mai-tai/ops/health/option_a_treatment_guard.py --treatment-date %i --output-dir /home/trader/after-hours/%i/option-a-treatment --emergency-stop
+ExecStart=-/usr/bin/curl --max-time 15 --fail --silent --show-error -H "Title: Option A guard failed" -H "Priority: low" -d "Option A guard failed or was blind; paper stop requested. Verify owner release and the raw audit." https://ntfy.sh/mai-tai-routine-112964cc8f26787132a29538
+UMask=0077
+StandardOutput=journal
+StandardError=journal
