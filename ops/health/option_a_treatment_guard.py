@@ -182,6 +182,8 @@ class SamplerEvidence:
         self.last_recorded: datetime | None = None
         self.tail: LogTail | None = None
         self.treatment_count = 0
+        self.log_identity: tuple[int, int] | None = None
+        self.last_size: int | None = None
 
     def read(self, now: datetime) -> str | None:
         if self.tail is None and self.path.exists():
@@ -192,9 +194,26 @@ class SamplerEvidence:
                     row = json.loads(line)
                     stamped = parsed_time(row["sampled_at_utc"])
                     status = row["status"]
+                    identity = (row["device"], row["inode"])
+                    offset = row["read_from_offset"]
+                    size = row["size_bytes"]
+                    new_1008 = row["new_1008_lines"]
                 except (ValueError, KeyError, TypeError) as exc:
                     raise Blind("malformed 1008 sampler row") from exc
                 prior = self.last_recorded
+                if (not all(type(item) is int and item >= 0 for item in (*identity, offset, size, new_1008))
+                        or size < offset):
+                    raise Blind("invalid 1008 sampler cursor fields")
+                if prior is None and status != "BASELINE":
+                    raise Blind("missing initial 1008 sampler baseline")
+                if status == "BASELINE" and stamped >= self.start:
+                    raise Blind("1008 sampler baseline at or after treatment start")
+                if prior is None:
+                    if offset != size:
+                        raise Blind("1008 sampler baseline offset unconfirmed")
+                    self.log_identity = identity
+                elif identity != self.log_identity or offset != self.last_size:
+                    raise Blind("1008 sampler cursor discontinuity")
                 if prior is not None:
                     gap = (stamped - prior).total_seconds()
                     if not 0.5 <= gap <= 1.5:
@@ -202,13 +221,18 @@ class SamplerEvidence:
                 if (now - stamped).total_seconds() < -2:
                     raise Blind("1008 sampler row timestamp in future")
                 self.last_recorded = stamped
+                self.last_size = size
                 self.last_seen = now
                 if self.start <= stamped < self.end:
                     self.treatment_count += 1
                 if status == "STOP_TRIGGER":
+                    if new_1008 < 1:
+                        raise Blind("1008 stop row has no new 1008 line")
                     return "gateway_1008"
                 if status not in {"BASELINE", "OK"}:
                     raise Blind(f"1008 sampler status={status}")
+                if new_1008:
+                    raise Blind("1008 sampler suppressed a new 1008 line")
                 if status == "BASELINE" and prior is not None:
                     raise Blind("unexpected repeated 1008 sampler baseline")
         if (now - self.last_seen).total_seconds() > 2.5:
