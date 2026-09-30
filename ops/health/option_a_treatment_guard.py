@@ -328,8 +328,6 @@ def _healthy_union_count(redis: Redis, prefix: str, since: datetime) -> int | No
 
 
 def _union_line_confirms(path: Path, offset: int, removed: set[str]) -> bool:
-    if not removed:
-        return True
     with path.open("rb") as stream:
         stream.seek(offset)
         lines = stream.read().decode("utf-8", errors="replace").splitlines()
@@ -337,7 +335,7 @@ def _union_line_confirms(path: Path, offset: int, removed: set[str]) -> bool:
         if "[MARKET-DATA-SUBSCRIPTION-UNION] consumer=momentum-paper" not in line:
             continue
         match = re.search(r" removed=([^ ]+)", line)
-        if match and removed <= set(match.group(1).split(",")):
+        if match and (not removed or removed <= set(match.group(1).split(","))):
             return True
     return False
 
@@ -349,8 +347,8 @@ def _release_confirmed(
     current = _owners(redis, settings.redis_stream_prefix)
     if current.get("momentum-paper") != set() or "momentum-paper" not in current:
         return False
-    for consumer in ("strategy-engine", "schwab-1m-v2"):
-        if not before.get(consumer, set()) <= current.get(consumer, set()):
+    for consumer, symbols in before.items():
+        if consumer != "momentum-paper" and not symbols <= current.get(consumer, set()):
             return False
     remaining = set(settings.market_data_static_symbol_list)
     for name, symbols in current.items():
@@ -359,7 +357,9 @@ def _release_confirmed(
     old_paper = before.get("momentum-paper", set())
     removed = old_paper - remaining
     count = _healthy_union_count(redis, settings.redis_stream_prefix, stopped_at)
-    return count == len(remaining) and _union_line_confirms(GATEWAY_LOG, log_offset, removed)
+    return count == len(remaining) and (
+        not old_paper or _union_line_confirms(GATEWAY_LOG, log_offset, removed)
+    )
 
 
 def _page(title: str, body: str, *, priority: str = "low") -> bool:
