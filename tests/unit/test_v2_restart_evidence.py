@@ -607,6 +607,18 @@ def test_report_calls_an_undeclared_service_change_unknown(monkeypatch, tmp_path
     )
 
 
+def test_undeclared_automatic_restart_is_a_real_failure(monkeypatch, tmp_path: Path, capsys) -> None:
+    args, current, _ = _report_fixture(monkeypatch, tmp_path)
+    current["oms"] = vre.ServiceState(
+        "oms", 901, "active", "running", 1, datetime(2026, 9, 11, 0, 25, tzinfo=UTC).isoformat()
+    )
+
+    assert vre.report(args, runner=lambda command: "") == 1
+    output = capsys.readouterr().out
+    assert "automatic service restart (NRestarts increased): oms" in output
+    assert "Final call: REAL FAILURE" in output
+
+
 def test_approved_orb_restart_and_new_observer_are_not_a_false_failure(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
@@ -649,6 +661,65 @@ def test_approved_orb_restart_and_new_observer_are_not_a_false_failure(
     assert "active/running after snapshot=1/1; orb-schwab" in output
     assert "matched=3/3" in output
     assert "Final call: EXPECTED BY DESIGN" in output
+
+
+def _new_observer_fixture(monkeypatch, tmp_path: Path):
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    args.new_service = ["orb-schwab"]
+    current["orb-schwab"] = vre.ServiceState(
+        "orb-schwab", 1665845, "active", "running", 0,
+        datetime(2026, 9, 11, 0, 25, tzinfo=UTC).isoformat(),
+    )
+    logs["orb-schwab"] = [("orb-schwab.log", ["2026-09-11 00:25:01,000 INFO OBSERVE_ONLY"])]
+    monkeypatch.setattr(vre, "_installed_optional_services", lambda runner: ("orb-schwab",))
+    return args, current, logs
+
+
+@pytest.mark.parametrize(
+    ("active", "start", "n_restarts"),
+    [
+        ("inactive", datetime(2026, 9, 11, 0, 25, tzinfo=UTC), 0),
+        ("active", datetime(2026, 8, 31, 0, 25, tzinfo=UTC), 0),
+        ("active", datetime(2026, 9, 11, 0, 25, tzinfo=UTC), 1),
+    ],
+)
+def test_new_observer_must_be_healthy_started_after_snapshot_without_auto_restart(
+    monkeypatch, tmp_path: Path, capsys, active: str, start: datetime, n_restarts: int
+) -> None:
+    args, current, _ = _new_observer_fixture(monkeypatch, tmp_path)
+    current["orb-schwab"] = vre.ServiceState(
+        "orb-schwab", 1665845, active, "running" if active == "active" else "dead",
+        n_restarts, start.isoformat(),
+    )
+    assert vre.report(args, runner=lambda command: "") == 1
+    output = capsys.readouterr().out
+    assert "new service orb-schwab did not start active/running after the snapshot" in output
+    assert "| New services |" in output
+    assert "Final call: REAL FAILURE" in output
+
+
+def test_declared_new_observer_not_installed_is_unknown(monkeypatch, tmp_path: Path, capsys) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    args.new_service = ["orb-schwab"]
+    assert vre.report(args, runner=lambda command: "") == 2
+    output = capsys.readouterr().out
+    assert "declared new service not installed: orb-schwab" in output
+    assert "| New services |" in output
+
+
+def test_declared_restart_without_snapshot_pid_is_unknown(monkeypatch, tmp_path: Path) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    args.restarted.append("orb-schwab")
+    with pytest.raises(vre.EvidenceUnknown, match="no pre-restart PID in snapshot: orb-schwab"):
+        vre.report(args, runner=lambda command: "")
+
+
+def test_service_cannot_be_both_restarted_and_new(monkeypatch, tmp_path: Path) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    args.restarted.append("orb-schwab")
+    args.new_service = ["orb-schwab"]
+    with pytest.raises(vre.EvidenceUnknown, match="both restarted and newly installed"):
+        vre.report(args, runner=lambda command: "")
 
 
 def test_last_nights_prose_install_record_is_unknown_until_every_unit_is_classified(
@@ -723,6 +794,31 @@ def test_install_record_rejects_missing_and_conflicting_declarations(
     record["service_actions"]["oms"] = "restarted"
     args.install_record.write_text(json.dumps(record), encoding="utf-8")
     with pytest.raises(vre.EvidenceUnknown, match="disagrees"):
+        vre.report(args, runner=lambda command: "")
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        ("snapshot_mismatch", "does not match the pre-restart snapshot"),
+        ("invalid_action", "invalid=oms"),
+        ("extra_unit", "extra=not-a-fleet-unit"),
+    ],
+)
+def test_install_record_rejects_stale_invalid_or_extra_classification(
+    monkeypatch, tmp_path: Path, change: str, expected: str
+) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    args.install_record = _write_install_record(args, tmp_path)
+    record = json.loads(args.install_record.read_text(encoding="utf-8"))
+    if change == "snapshot_mismatch":
+        record["snapshot_captured_at_utc"] = "2026-09-10T00:00:00+00:00"
+    elif change == "invalid_action":
+        record["service_actions"]["oms"] = "assumed_untouched"
+    else:
+        record["service_actions"]["not-a-fleet-unit"] = "deliberately_untouched"
+    args.install_record.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(vre.EvidenceUnknown, match=expected):
         vre.report(args, runner=lambda command: "")
 
 

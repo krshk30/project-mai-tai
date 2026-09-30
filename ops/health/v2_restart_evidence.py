@@ -1266,11 +1266,24 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     ]
     changed = [name for name in untouched if name not in unchanged]
     unexpected_active: list[str] = []
+    automatic_restarts: list[str] = []
     if changed:
         unexpected_active = sorted(set(changed) & INTENTIONALLY_INACTIVE_SERVICES)
-        undeclared = sorted(set(changed) - set(unexpected_active))
+        automatic_restarts = sorted(
+            name
+            for name in set(changed) - set(unexpected_active)
+            if current[name].n_restarts > int(before_services[name]["n_restarts"])
+        )
+        undeclared = sorted(
+            set(changed) - set(unexpected_active) - set(automatic_restarts)
+        )
         if unexpected_active:
             failures.append(f"deliberately inactive service started: {','.join(unexpected_active)}")
+        if automatic_restarts:
+            failures.append(
+                "automatic service restart (NRestarts increased): "
+                + ",".join(automatic_restarts)
+            )
         if undeclared:
             unknowns.append(f"service changed without a declared restart: {','.join(undeclared)}")
     rows.append(
@@ -1280,7 +1293,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
             + "; ".join(
                 f"{name}={before_services[name]['pid']}->{current[name].pid}" for name in untouched
             ),
-            "PASS" if not changed else "FAIL" if unexpected_active else "UNKNOWN",
+            "PASS" if not changed else "FAIL" if unexpected_active or automatic_restarts else "UNKNOWN",
         )
     )
 
