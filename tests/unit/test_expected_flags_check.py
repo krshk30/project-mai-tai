@@ -266,6 +266,32 @@ def test_unreadable_existing_dotenv_is_unknown(
     assert "UNKNOWN flag=oms_v2_cw_floor_exit_enabled" in lines[0]
 
 
+def test_malformed_dotenv_line_is_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    reader = _proc_reader(
+        monkeypatch, tmp_path, b"OTHER=value\0",
+        "MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED='unterminated\n",
+    )
+    rc, lines = flags.audit([_entry("oms_v2_cw_floor_exit_enabled", False, "oms")], reader)
+    assert rc == 2
+    assert "malformed" in lines[0]
+    assert lines[-1].startswith("Final call: UNKNOWN;")
+
+
+def test_lowercase_dotenv_flag_is_not_mistaken_for_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    reader = _proc_reader(
+        monkeypatch, tmp_path, b"OTHER=value\0",
+        "mai_tai_oms_v2_cw_floor_exit_enabled=true\n",
+    )
+    rc, lines = flags.audit([_entry("oms_v2_cw_floor_exit_enabled", False, "oms")], reader)
+    assert rc == 2
+    assert "absent from process environment" in lines[0]
+    assert lines[-1].startswith("Final call: UNKNOWN;")
+
+
 @pytest.mark.parametrize("service", ["orb", "orb-schwab"])
 def test_orb_services_explicitly_ignore_checkout_dotenv(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, service: str
