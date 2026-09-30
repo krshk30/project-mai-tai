@@ -90,3 +90,36 @@ def test_duplicate_final_calls_are_unknown() -> None:
     )
     assert result.returncode == 2
     assert "current final call=missing" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("collector_rc", "collector_call", "expected_rc", "expected_line"),
+    [
+        (0, "PASS", 0, "PASS: running flags match reviewed catalog"),
+        (1, "REAL FAILURE", 1, "FAIL: running flag mismatch"),
+        (2, "UNKNOWN", 2, "UNKNOWN: running flags could not be read"),
+        (1, "UNKNOWN", 2, "UNKNOWN: flag check rc=1 disagrees"),
+        (0, "", 2, "UNKNOWN: flag check rc=0 disagrees"),
+    ],
+)
+def test_preopen_routes_flag_check_three_ways(
+    collector_rc: int, collector_call: str, expected_rc: int, expected_line: str
+) -> None:
+    script = """
+        source "$1"
+        failures=0
+        unknowns=0
+        fail() { printf 'FAIL: %s\\n' "$*"; failures=$((failures + 1)); }
+        pass() { printf 'PASS: %s\\n' "$*"; }
+        preopen_record_expected_flags "$2" /tmp/expected_flags.json "$3"
+        preopen_final_verdict
+    """
+    output = f"Final call: {collector_call}; checked=1/1" if collector_call else "Traceback"
+    result = subprocess.run(
+        ["bash", "-c", script, "flag-test", str(ROUTER), str(collector_rc), output],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == expected_rc
+    assert expected_line in result.stdout
