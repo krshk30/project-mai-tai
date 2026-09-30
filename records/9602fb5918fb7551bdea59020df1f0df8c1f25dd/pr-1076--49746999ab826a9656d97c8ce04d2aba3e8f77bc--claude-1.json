@@ -1,0 +1,9 @@
+{
+  "pr_number": 1076,
+  "range_base": "49746999ab826a9656d97c8ce04d2aba3e8f77bc",
+  "range_head": "9602fb5918fb7551bdea59020df1f0df8c1f25dd",
+  "reviewed_at": "2026-09-30T21:37:47Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "FLAGGATE catalog pair for the operator-ruled ORB Schwab activation (09-30 ~17:20 ET: live ON, 2 shares, partial-fill gap accepted): orb_live_schwab_orders_enabled expected true (owner orb-schwab, also_check oms), orb_schwab_observe_enabled expected false. Verified the exclusivity claim in code (orb_schwab_app.py:53 raises if both are on). ops/health catalog + its test only; 29 focused pass; reason/ruling text names the 09-30 ruling. Pin covers merge; the flags themselves change only in the operator's exact-SHA GO install, and the 06:20 gate must read PASS against them afterwards."
+}
