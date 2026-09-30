@@ -43,7 +43,8 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    ```bash
    REPO=/home/trader/project-mai-tai
    OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners.json
-   sudo -u trader "$REPO/.venv/bin/python" - "$OWNER_FILE" <<'PY'
+   ORB_REPLAY_APPROVED=0  # Change only if the exact-SHA operator GO explicitly approves ORB replay.
+   sudo -u trader "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ORB_REPLAY_APPROVED" <<'PY'
    import base64
    import json
    import os
@@ -60,7 +61,9 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    required = {"strategy-engine", "schwab-1m-v2", "orb"}
    owners = {}
    seen = set()
-   empty_other_consumers = []
+   orb_replay_approved = sys.argv[2] == "1"
+   if sys.argv[2] not in {"0", "1"}:
+       raise SystemExit("invalid ORB replay approval switch")
    for event_id, fields in entries:
        raw = fields.get(b"data")
        if raw is None:
@@ -71,10 +74,7 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
            continue
        seen.add(consumer)
        if consumer not in required:
-           if event.payload.mode != "replace" or event.payload.symbols:
-               raise SystemExit(f"unrestorable additional consumer: {consumer}")
-           empty_other_consumers.append(consumer)
-           continue
+           raise SystemExit(f"unexpected fourth subscription consumer: {consumer}")
        if event.payload.mode != "replace":
            raise SystemExit(f"latest {consumer} event is not replace")
        owners[consumer] = {
@@ -84,7 +84,7 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
        }
    if set(owners) != required:
        raise SystemExit(f"missing retained replace: {sorted(required - set(owners))}")
-   if owners["orb"]["symbols"]:
+   if owners["orb"]["symbols"] and not orb_replay_approved:
        raise SystemExit("nonempty ORB owner needs a reviewed rollback replay before any install write")
    saved_hash = redis.hgetall(stream_name(settings.redis_stream_prefix, "market-data-subscription-owners"))
    if saved_hash:
@@ -94,12 +94,12 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
                raise SystemExit(f"retained event disagrees with owner hash: {consumer}")
        for raw_consumer, encoded in saved_hash.items():
            consumer = raw_consumer.decode("ascii")
-           if not consumer.startswith("_") and consumer not in required and json.loads(encoded):
-               raise SystemExit(f"unrestorable nonempty owner hash: {consumer}")
+           if not consumer.startswith("_") and consumer not in required:
+               raise SystemExit(f"unexpected fourth owner hash: {consumer}")
    path = Path(sys.argv[1])
    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
    with os.fdopen(fd, "w", encoding="utf-8") as output:
-       json.dump({"owners": owners, "empty_other_consumers": empty_other_consumers,
+       json.dump({"owners": owners, "orb_replay_approved": orb_replay_approved,
                   "stream": stream}, output, sort_keys=True)
        output.write("\n")
    print("preserved owner event IDs", {name: item["source_id"] for name, item in owners.items()})
@@ -200,13 +200,16 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
        if owners.get("_migration_complete") != "1":
            time.sleep(1)
            continue
-       for consumer in ("strategy-engine", "schwab-1m-v2", "orb"):
+       expected_consumers = tuple(saved["owners"])
+       if set(expected_consumers) != {"strategy-engine", "schwab-1m-v2", "orb"}:
+           raise SystemExit(f"unexpected preserved consumer set: {expected_consumers}")
+       for consumer in expected_consumers:
            if consumer not in owners or set(json.loads(owners[consumer])) != set(saved["owners"][consumer]["symbols"]):
                break
        else:
-           allowed = {"static", "strategy-engine", "schwab-1m-v2", "orb", "momentum-paper"}
-           unexpected = [name for name, payload in owners.items()
-                         if not name.startswith("_") and name not in allowed and json.loads(payload)]
+           allowed = {"static", "momentum-paper", *expected_consumers}
+           unexpected = [name for name in owners
+                         if not name.startswith("_") and name not in allowed]
            if unexpected or json.loads(owners.get("momentum-paper", "[]")):
                time.sleep(1)
                continue
@@ -389,7 +392,7 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
 
 ## 4. Rollback is not yet preauthorized
 
-The operator-approved rollback targets only
+The proposed, still GO-dependent rollback targets only
 `3389090a7d30bdc88736a53211d968f4c82f0288` and only once. Trigger it
 if the gateway is not healthy within **180 seconds** of its restart, either
 scanner/v2 owner set is not restored, or 20 new snapshot intervals plus a
@@ -398,13 +401,13 @@ bound. Stop paper first and leave **old Momentum paper STOPPED**: its old
 `T.*` socket can load the gateway. The old gateway restores only the last
 subscription event. Therefore its restart must be followed by byte-for-byte
 republication of the preserved scanner and v2 `replace` events, in their
-original source-ID order, newest last. The operator approved those two
-events. The live ORB service also has a debounced consumer. Until the
-operator resolves that third-owner question, this draft **refuses the entire
-install if ORB's preserved set is nonempty**; it never silently drops ORB.
-The same hard stop applies to any other nonempty owner not covered by the
-reviewed rollback. If ORB replay is approved, add its preserved raw event and
-verification to the exact final plan before requesting GO.
+original source-ID order, newest last. The live ORB service also has a
+debounced consumer. The preflight's single `ORB_REPLAY_APPROVED=0` switch
+defaults to refusing a nonempty ORB set. Only an exact-SHA operator GO that
+explicitly includes ORB replay may change that line to `1`; that choice is
+saved in the owner artifact. With `1`, the rollback republishes **all three**
+preserved raw replaces in source-ID order and verifies all three. Any fourth
+consumer refuses the install in preflight; none is silently dropped.
 
 After a renewed fresh-flat check, the one-time rollback command sequence is:
 
@@ -462,13 +465,18 @@ from redis import Redis
 from project_mai_tai.settings import Settings
 
 saved = json.loads(Path(sys.argv[1]).read_text())
-assert not saved["owners"]["orb"]["symbols"], "nonempty ORB owner needs separate rollback approval"
+assert set(saved["owners"]) == {"strategy-engine", "schwab-1m-v2", "orb"}
+replay_names = {"strategy-engine", "schwab-1m-v2"}
+if saved["orb_replay_approved"]:
+    replay_names.add("orb")
+else:
+    assert not saved["owners"]["orb"]["symbols"], "nonempty ORB owner needs separate rollback approval"
 settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
 redis = Redis.from_url(settings.redis_url, decode_responses=False)
 ordered = sorted((tuple(map(int, record["source_id"].split("-"))), consumer, record)
                  for consumer, record in saved["owners"].items()
-                 if consumer in {"strategy-engine", "schwab-1m-v2"})
-assert len(ordered) == 2
+                 if consumer in replay_names)
+assert len(ordered) == len(replay_names)
 fd = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 with os.fdopen(fd, "w", encoding="utf-8") as output:
     for _, consumer, record in ordered:
@@ -498,7 +506,12 @@ from project_mai_tai.settings import Settings
 
 saved = json.loads(Path(sys.argv[1]).read_text())
 published = [json.loads(line) for line in Path(sys.argv[2]).read_text().splitlines()]
-assert len(published) == 2 and {row["consumer"] for row in published} == {"strategy-engine", "schwab-1m-v2"}
+replay_names = {"strategy-engine", "schwab-1m-v2"}
+if saved["orb_replay_approved"]:
+    replay_names.add("orb")
+else:
+    assert not saved["owners"]["orb"]["symbols"]
+assert len(published) == len(replay_names) and {row["consumer"] for row in published} == replay_names
 log_path = Path("/var/log/project-mai-tai/market-data.log")
 offset, identity = int(sys.argv[3]), sys.argv[4]
 settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
@@ -509,7 +522,7 @@ for row in published:
     original = base64.b64decode(saved["owners"][row["consumer"]]["raw_b64"], validate=True)
     assert actual == original, (row["consumer"], "replayed bytes differ")
 expected = set(settings.market_data_static_symbol_list)
-for consumer in ("strategy-engine", "schwab-1m-v2"):
+for consumer in replay_names:
     expected.update(saved["owners"][consumer]["symbols"])
 after_publish = datetime.fromisoformat(published[-1]["published_at"])
 deadline = time.monotonic() + 180
@@ -522,9 +535,9 @@ while time.monotonic() < deadline:
         text = log.read().decode("utf-8", errors="replace")
     assert "failed to apply market-data subscription event" not in text
     updates = [pattern.search(line).groups() for line in text.splitlines() if pattern.search(line)]
-    assert not updates or [name for name, _ in updates[:2]] == [row["consumer"] for row in published[:len(updates[:2])]], updates
-    assert len(updates) <= 2, ("unexpected consumer update", updates)
-    if len(updates) == 2 and int(updates[-1][1]) == len(expected):
+    assert len(updates) <= len(published), ("unexpected consumer update", updates)
+    assert [name for name, _ in updates] == [row["consumer"] for row in published[:len(updates)]], updates
+    if len(updates) == len(published) and int(updates[-1][1]) == len(expected):
         key = stream_name(settings.redis_stream_prefix, "heartbeats")
         heartbeat = next((json.loads(fields[b"data"]) for _, fields in redis.xrevrange(key, count=25)
                           if json.loads(fields[b"data"]).get("source_service") == "market-data-gateway"), None)
@@ -548,12 +561,12 @@ raise SystemExit("rollback union/cadence unproven; keep paper stopped and page; 
 PY
 ```
 
-The two printed **new stream IDs** and the post-restart gateway PID go into
+The two or three printed **new stream IDs** and the post-restart gateway PID go into
 the fleet journal. Do not claim the union from the count alone. The old
 gateway code deterministically processes each `replace` into its
 `_desired_symbols_by_consumer` map; require two post-offset
 `market-data subscriptions updated by <consumer> -> <count> symbols` log
-lines in the published order, no intervening failed-apply line or unexpected
+lines for every published consumer in order, no intervening failed-apply line or unexpected
 consumer update, and a newer healthy heartbeat whose `active_symbols` is
 the count of the preserved static/scanner/v2 union. This is a code-path and
 log proof, not direct inspection of old gateway memory. If either event is
