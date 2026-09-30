@@ -65,6 +65,12 @@ but its watch install HELD, #1068 = #1060 Momentum reverted (market-data and mom
 **Known gap (operator-accepted):** the new 19:55 "flatten rejected" incident is written but NOT paged until WBREAD1 + the
 watch reinstall. The 16:00 unconfirmed path already pages via `oms_v2_exit_release_unresolved`.
 
+## TONIGHT'S INSTALL — final main `01a64e9b` (#1070 FLAGGATE, #1073 restart gate, #1072 Option A, #1074 stop guard, #1075 ORB late-bar MACD wait, #1076 ORB catalog pair) — plan `codex/0930-final-combined-plan` @ cac05be7, reviewed by claude-1 ~17:55 ET: **GO-READY with three items the GO text must carry**
+1. OMS post-restart flags (floor=false, target 5, stop 8, RETRY_ONE, EOD/19:55 flatten, polygon_30s off, massive seed off) are READ from `/proc/<new OMS PID>` and journaled, not assumed.
+2. Pre-authorized ORB/OMS-phase rollback (the plan has only the gateway rollback): if OMS or orb-schwab does not come back healthy → restore the env backup → restart OMS → start strategy → restart orb-schwab in observe mode → verify /proc; ONE attempt, then page. Checkout stays at 01a64e9b (the gateway phase is already proven by then).
+3. `ORB_REPLAY_APPROVED=1` — "include ORB in the rollback" — else a nonempty ORB paper owner set refuses the whole install at preflight.
+Verified by claude-1: no v2 restart, no v2 env/flag change, no settings default change; OMS src change = the 42 ORB lines of #1075 only; restart order stop paper → checkout → guard units → market-data → 180 s owner/cadence proof → start paper → [ORB phase] flat reads → env edit (backed up, two lines) → stop strategy → restart OMS → start strategy → restart orb-schwab; every-unit install record; preopen re-pin for 10-01 with the new OMS/strategy PIDs and v2 1664453; samplers + guard `project-mai-tai-option-a-guard@2026-10-01` after the 20:00:06 rotation proof; 06:30 ET recheck; "not covered" lists the partial-fill gap (row 46), ORB INC1 sources not installed, no attended Schwab test. UNKNOWN: whether `pip install -e` needs network on the box; whether `deploy_preflight.py --service oms` runs with strategy stopped (plan substitutes the fence).
+
 ## What to READ Wednesday 09-30 (after the 09-29 20:05–20:12 ET install) — report UNPROMPTED
 | change | first evidence | owner |
 |---|---|---|
