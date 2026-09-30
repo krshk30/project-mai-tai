@@ -67,6 +67,92 @@ claude-1 verified the journal hashes and `/proc` on the box.
 
 **Mine to own:** the "per day" spec; relaying the 06:24 rc=1 raw; explaining BKYI before simulating it.
 
+**Superseded current-state snapshots, moved verbatim from `session-handoff.md` at the 09-29 close-out (codex review of #1058):**
+
+_The 18:05 ET install scope (before the #1060 stop and option C):_
+
+**Original scope table (18:05 ET), kept for the record:**
+
+**Operator scope rulings (09-29):**
+- "yes include both, drop the watcher step" (#1065 + #1067);
+- "yes add #1066 tonight".
+- codex's plan: `docs/review-artifacts/orb-schwab-live/OBSERVE_INSTALL_PLAN.md`, refreshed to the final main SHA after #1066 merges.
+- **Nothing is installed yet.** Production = the table below.
+
+| # | Item | PR / head | Review | State 18:05 ET | Goes live as |
+|---|---|---|---|---|---|
+| T1 | ORB Schwab, 2 shares (MACD ≥0 on completed Schwab 1-min; body <45% judged at the break-bar CLOSE; ATR purple on a later completed Schwab bar; +5/−8 bracket; 10:00 cancel; 15:55 close) | #1064 | pinned 442b492b | merged `90106fb4` | **OBSERVE ON / LIVE ORDERS OFF** (new `orb-schwab` unit); 10:02 ET report on 09-30 |
+| T2 | ORB 90 s bar-evidence grace (no false critical page per trade) | #1067 | re-pinned 1f4781af | merged `059b261a` | with T1 |
+| T3 | RETRY-ONE per SELL cycle (never a whole-day block) | #1065 | pinned b6a0ddd6 (11/11 mutations; late-SELL audit 0/11) | merged `eeaa4a7d` | **LIVE** on the v2 restart (RETRY_ONE already true) |
+| T4 | Card 10: same exit in every session (+5/−8/confirmation/ATR flip, NO floor); 16:00 cancel + broker-confirm; Webull software sells on the shared path; 19:55 always sells | #1066 | re-pinned 0ab525c2 | merged `ba3ebf59` → **LIVE at OMS 1663656** | **LIVE** on the OMS restart + `MAI_TAI_OMS_V2_CW_FLOOR_EXIT_ENABLED=false` |
+| T5 | Momentum Option A (one Massive connection) | #1060 | pinned 6cb5d747 | **REVERTED by #1068 (option C)** — re-lands after a complete inactive-morning baseline + threshold review | gateway + momentum-paper restart; preflight steps 3–4 are WHOLE-INSTALL HARD STOPS |
+| T6 | Restart-evidence three-way gate | #1061 | pinned 2096c930 | merged | isolated install 18:00 ET (codex), then ONE preopen.sh re-pin for 09-30 |
+| T7 | Pager 07:00–20:00 ET + INC1 auto-close | #1059 | pinned 83202e2c | merged | **INSTALL HELD until WBREAD1** — no watch reinstall tonight |
+
+Restarts in the plan: market-data, momentum-paper, oms, strategy, orb, orb-schwab (new), schwab-1m-v2. No migrations. Both accounts must be freshly flat, with zero open rows / armed segments.
+
+**Known gap (accepted by the operator):** the new 19:55 "flatten rejected" incident is written but NOT paged until WBREAD1 + the watch reinstall. The 16:00 unconfirmed path already pages via `oms_v2_exit_release_unresolved`.
+
+**After the install:** claude-1 verifies codex's journal against the box (SHA, new PIDs, flags from /proc: floor=false, target 5 / stop 8, RETRY_ONE=true, ORB observe=true / live=false; untouched PIDs unchanged) BEFORE the 06:20 gate.
+
+_The 09-28 production snapshot and Tuesday 09-29 reads:_
+
+# ✅ PRODUCTION — services `8f69a08a` live since 18:39–18:42 ET 09-28; box checkout `3141bbd5`
+
+| | |
+|---|---|
+| running services | **oms 1328348** (since 18:39:55 ET) · **v2 1329729** (since 18:42:25 ET) · **strategy 1359274** (restarted 20:47:24 ET for polygon_30s OFF, see below), all on `8f69a08a` (#1049 #1054 #1055). NRestarts 0 on all (05:21 ET). market-data 2202865 · control 2273848 · reconciler 1626620 · market-capture 2202817 · momentum-paper 2704889 · orb 2051823 untouched |
+| box checkout | **`3141bbd5`**, clean. That is `8f69a08a` + PAGEGAP #1056 (ops-only; `ops/health/known_defect_regression_watch.py` + its test), fast-forwarded with no restart |
+| gate pin | `/home/trader/preopen.sh`: `EXPECTED_DATE=2026-09-29` · `EXPECTED_SHA=3141bbd5…` · `EXPECTED_PID=1329729` · **`EXPECTED_STRATEGY_PID=1359274` / start `Tue 2026-09-29 00:47:24 UTC` (re-pinned by claude-1 20:47 ET; file sha256 `3763d6a3…`; codex informed)**. codex runs the gate at **06:20 ET Tue** |
+| restart evidence | v2 **BOOT-HOLD RELEASED 18:58:07 ET 09-28** (`restoration_complete=1 reconstructed_uncapped=0`) once a watchlist appeared. **Still a Tuesday check:** REST warmup (05:21 ET: watchlist 2, warmed 0, data_flow stalled_offhours_rest_dry) and live bar continuity, via the 06:20 gate |
+| exposure | 05:21 ET 09-29: 0 non-zero account_positions (0 open managed rows at 18:54). INC1 `open=4` (2 stale BENF 09-23, EGG + NAMI policy pages 09-28; see board 22) |
+| flags (from `/proc`) | v2: TICK_CAPTURE, CW_V2_EH_RESTING_ENTRY, GAP_HOLD, FLIP_OWNED_FIRST_ENTRY, RETRY_ONE = true · entry end 15:45 · ATR_MASSIVE_SEED=false · #1054 stream-cross flag defaults ON (no STREAM-INERT at boot). OMS: OMS_V2_EH_ENTRY, DUAL_BROKER_FANOUT, OMS_V2_EOD_OCO_TRANSITION = true · CW target/stop 5.0/8.0 |
+| deploy record | `/home/trader/fleet_health/deployments-20260928.md` (codex-2) · claude-1 verified 18:43 ET |
+| **state 17:58 ET 09-29 (claude-1, box)** | **UNCHANGED since 09-28:** oms 1328348 · v2 1329729 · strategy 1359274 · market-data 2202865 · orb 2051823 · momentum-paper 2704889 · orb-schwab not installed. Checkout `3141bbd5`; preopen.sh still pinned 09-29. 0 non-zero positions. INC1 `open=6 delivered=6` (adds DXST policy 11:02) |
+| merges 09-28 | #1054 EH1 pre-market stream cross · #1055 PMCAP1 Webull pre-market leg on the Schwab 0.5% band · #1056 PAGEGAP per-exit-ID pages. Closed: #1053 (my misauthored EH1, superseded) · #1057 BAND1 report (band unchanged) |
+| migration | `alembic_version = 20260916_0021`, unchanged |
+| **box cleanup (09-28 evening, operator-approved)** | Box is **4 vCPU / 8 GB** (hostname still says 2vcpu-4gb), no swap. (1) Leftover **TradingView Chrome stopped** 20:41 ET (up 164 days, no owning service; profile `/var/lib/project-mai-tai/tradingview_user_data` 972 MB kept). (2) **polygon_30s paper bot OFF**: `MAI_TAI_STRATEGY_POLYGON_30S_ENABLED=false` (env backup `…env.claude-before-polygon30s-off-20260929T004722Z`); last fill 09-02, OMS blocks its intents; strategy-engine gateway symbols were ⊆ v2's over 09-25..09-28. Result by 05:21 ET: **strategy RSS 2,544 → 1,889 MB, CPU ~30% → ~12%; box available RAM 1,218 → 2,263 MB**. Remaining candidates are in Open decisions |
+
+## What to READ Tuesday 09-29 (owner · first read) — report UNPROMPTED
+
+| change | first evidence | owner |
+|---|---|---|
+| **Restart completion** | codex gate 06:20 ET 9/9 incl. REST warmup + BOOT-HOLD literal release before 07:00; bar continuity | codex gate / claude-1 read |
+| **#1054 EH1** | next pre-market soft rest with a print ≥ trigger: `[V2-RESTING-EH-CROSS-STREAM]`, or `[V2-RESTING-EH-STREAM-SKIP] reason=ask_past_band / no_fresh_ask`; never after 09:30 | claude-1 |
+| **#1055 PMCAP1** | a pre-market cross with the ask 0.5–1% over the trigger → BOTH legs `[OMS-ABANDON-INTENT] ASK_PAST_BAND`; in band → both legs the same limit. Watch whether Webull fills at the unbuffered ask | claude-1 |
+| **#1049 SLOTCLEAR1** | first same-session re-add on the new process | claude-1 |
+| **#1056 PAGEGAP** | first real dropped confirmation exit → one page per new `account:source_fill_id` (15-min throttle) | claude-1 |
+| **Strategy settle + gate** | 06:20 gate passes with the re-pinned strategy PID; strategy RSS stays ≈1.9 GB through the session | codex / claude-1 |
+| **Pass mark (Webull exits)** | 09-28 counts if clean → **2 of 5** (09-25, 09-28); recount at close | claude-1 |
+| **Momentum Option A #1060** | operator answers codex's 2 questions (Open decision 7) → claude-1 review/pin → separate exact-SHA GO | operator / codex / claude-1 |
+
+_Closed open decisions:_
+
+1. ~~Board 30 + 22~~ — **BUILT: #1059 merged 09-29 10:31 ET** (2-read auto-close). **Install HELD until WBREAD1**: a Webull read error writes a fresh false zero (5 events / 30 d), which could close a real alarm.
+2. ~~B11 ruling~~ — **CLOSED 09-28 ~20:15 ET, no rule change**: report `f6d2cf8d` (branch `codex/b11-rebuilt-arm-trip-study`), 286 first-slot fills = 207 LIVE / 2 REBUILT (pre-#993) / 77 UNKNOWN (71 pre-#993); **0 rebuilt fills after #993**; rebuilt arms rarely reach fills. Observation only: post-#993 LIVE entries lose (Schwab 22/63, Webull 31/75, medians ≈ −1.5%).
+6. Refusal response table — **DROPPED by the operator 09-28** (with old-board C5/C6); recorded, no build.
+7. ~~Momentum Option A #1060~~ — **answered 09-29** (allow the gateway warm-up; stop rule = live-trading slowdown, load 3.5 = warning only); pinned 6cb5d747, in main, ships in tonight's install behind hard-stop gates. (Old text:) codex asks the operator two things before it's ready: (a) whether Momentum-triggered symbols may cause gateway warm-ups; (b) an ACTIVE-session load check (the 16:05 census runs after Momentum stops). Then claude-1 reviews and pins; deploy needs its own exact-SHA GO.
+
+**Closed 09-28:**
+- #1043 GAPHOLD (skip once 07:00; real post-halt detect 09:42:46).
+- #1044 policy rejects (NAMI 13:35; 7 retries dropped via the cache; Webull kept; EGG and NAMI paged).
+- Pre-open gate 9/9.
+- Alert split + digest.
+- #1052 close-out.
+- Row 23: the CLRO LULD pause (market event; no chase).
+- Rows 28/29: watch-only.
+- The cutoff analysis: dropped; 30% stays.
+- B11 / PROV1x: no rule change (0 rebuilt fills after #993).
+- Leftover TradingView Chrome stopped; polygon_30s paper bot OFF (strategy restarted, gate re-pinned).
+- #1029 closed (design superseded by Option A; overnight replay cancelled before start).
+- BAND1: 0 of 12 proven band-miss winners; 0.5% band unchanged.
+
+## Corrections I owe the record (09-28)
+- **CLRO 07:24:** I said the fixed code "would have entered". The first spike's ask of 5.59 was above the 5.5868 cap, so the OMS would have abandoned it and burned the latch, and the in-band second spike would have been ignored (codex's review of #1053; fixed in #1054).
+- **#1053:** I authored it myself when the operator meant "codex builds". Closed; codex rebuilt it as #1054.
+- **Row 23:** I read "no [V2-ATR-PROBE] lines" as "no Schwab bars". The bars were stored live; GAPHOLD suppresses the probe line while holding.
+- **Timestamps and a watch script:** I labelled a table "15:35 ET" when it was ~14:40 ET. A zsh word-split bug made one deploy watch print a false "CHANGED".
+
 ---
 
 ## 2026-09-28 — a CLRO miss became three fixes, the roles were reset, and one evening deploy
