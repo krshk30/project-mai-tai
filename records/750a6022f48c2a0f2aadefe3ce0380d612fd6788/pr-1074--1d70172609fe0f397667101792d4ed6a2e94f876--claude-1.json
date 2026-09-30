@@ -1,0 +1,9 @@
+{
+  "pr_number": 1074,
+  "range_base": "1d70172609fe0f397667101792d4ed6a2e94f876",
+  "range_head": "750a6022f48c2a0f2aadefe3ce0380d612fd6788",
+  "reviewed_at": "2026-09-30T20:24:41Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Option A first-session stop guard (ops/health + 2 systemd template units + combined install plan). Ruling: operator-approved Option A; guard = the stop mechanism the plan needs. Reviewed ee9b9171 (BLOCK: 6/19 mutations survived), 5ed83112 (plan only), 7f88e480 (12/13 killed; one heartbeat test owed), pinned here at 750a6022 after that test. Safety scope: only side effects are systemctl stop of project-mai-tai-momentum-paper, one empty momentum-paper replace, its own 0700 journal dir; failure unit stops the same unit and pages. Fail-closed: every Blind (stalled sampler, row gap, rotated/truncated log, unreadable heartbeat/snapshots/owners, late tick, load gap, no gateway heartbeat) -> stop_paper + page; failed systemctl stop -> STOP UNKNOWN page rc 2; monitor exception -> stop_paper. Thresholds equal INACTIVE_CONTROL_2026-09-30.md (2x control p95 with 5/10/30 s floors, consecutive counts, >=20 intervals, >=3 probes). Reviewer mutations killed: wrong unit, failed stop as success, release skipped / ignores other consumers / ignores paper owner hash, monitor exception without stop, late 1 Hz tick, rc 3 not a trigger, page skipped, union count ignored, empty replace for the wrong consumer, failure unit without page, no gateway heartbeat treated healthy (13/13 at this head; earlier round 12/13). Units: User=root, OnFailure, RefuseManualStop=yes (stated for the operator), WatchdogSec=15s, Restart=no. Plan: literal 2.1 commands, one-time rollback with byte-for-byte replay of the preserved consumer events, ORB behind ORB_REPLAY_APPROVED, consumers derived from the preserved file. Focused 37 pass; CI validate x2 pass. Pin covers merge; install only on the operator's exact-SHA GO."
+}
