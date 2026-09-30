@@ -10,6 +10,7 @@ import pytest
 
 from ops.health.option_a_treatment_guard import (
     Blind,
+    LiveSignals,
     LogTail,
     SamplerEvidence,
     SlowdownRules,
@@ -68,6 +69,26 @@ def test_heartbeat_unhealthy_streak_resets_on_a_healthy_sample():
     assert rules.heartbeat("healthy", 1) is None
     assert rules.heartbeat("degraded", 1) is None
     assert "consecutive=2" in rules.heartbeat("degraded", 1)
+
+
+def test_latest_25_heartbeats_without_gateway_are_blind():
+    class OtherServicesOnly:
+        def xrevrange(self, _key: str, count: int):
+            assert count == 25
+            return [
+                (f"{index}-0", {"data": json.dumps({
+                    "source_service": "strategy-engine" if index % 2 else "schwab-1m-v2",
+                    "produced_at": NOW.isoformat(),
+                    "payload": {"status": "healthy"},
+                })})
+                for index in range(count)
+            ]
+
+    signals = object.__new__(LiveSignals)
+    signals.redis = OtherServicesOnly()
+    signals.prefix = "mai_tai"
+    with pytest.raises(Blind, match="no gateway heartbeat in latest 25 events"):
+        signals.heartbeat(NOW)
 
 
 def test_snapshot_rule_uses_matching_hour_and_five_distinct_minutes():
