@@ -1,28 +1,31 @@
-# Combined 2026-09-30 install plan: FLAGGATE, restart evidence, Option A
+# Combined 2026-09-30 install plan: FLAGGATE, restart evidence, Option A, ORB live
 
-Status: **BLOCKED PLAN; no production write or restart authorized.** The
-operator chose an automatic first-session stop guard on 2026-09-30. The
-reviewed main SHA `1d70172609fe0f397667101792d4ed6a2e94f876` contains
-#1070, #1073 and #1072, but its 1008 sampler only exits with rc 3; it does
-not stop the paper service or page. The guard and its two systemd units are
-under build/review on this branch, not installed or independently pinned.
-They must merge first, so this is **not yet the final exact-SHA GO candidate**.
-After that merge, refresh this SHA, re-review the whole command list, then
-request one operator GO. If main moves, the source differs, or the reviewed
-baseline/stop procedure is not approved, stop. Do not include
-the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
+Status: **FINAL PLAN FOR INDEPENDENT REVIEW; NOT OPERATOR GO.** The exact
+candidate is `01a64e9b7552b673e7db6f6e6c787b77b16f6f22`, the rebase-merge
+of pinned #1076 after pinned #1075. It contains #1070 FLAGGATE, #1073 restart
+evidence, #1072 Momentum Option A, #1074 automatic treatment guard, #1075
+ORB Schwab late-bar handling, and #1076's paired ORB flag expectations.
+No further main merge, substitute SHA, service restart, flag edit, or box
+checkout advance is authorized by this document. Independent review of this
+plan precedes one operator GO naming this full SHA and every listed restart.
+If main moves or any required evidence differs, refresh the plan and ask for
+a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
 
 ## 1. Read-only preflight and hard stops
 
 1. Confirm the exact SHA and reviewed PR heads/pins; verify the box checkout is
    clean, no other install is in progress, all current service identities and
    `NRestarts` are recorded, and Redis, gateway, v2, scanner/strategy, OMS and
-   broker connections are healthy. A Git merge is not an install.
+   broker connections are healthy. Confirm the installed watch and both cron
+   SHA guards remain untouched. A Git merge is not an install.
 2. Obtain fresh broker reads proving **both live accounts flat**, zero open
    managed rows on `live:schwab_1m_v2` and `live:orb`, and zero armed segments.
-   Repeat immediately before each service restart. A failed, stale, ambiguous,
-   or unavailable read blocks the restart; a database zero alone is not broker
-   flatness. Do not override a gate or restart while a position is held.
+   Repeat immediately before **each** gateway, OMS, strategy, orb-schwab and
+   momentum-paper restart/start. Record the time, source, account and zero
+   denominator for every read. A failed, stale, ambiguous, or unavailable read
+   blocks that restart; a database zero alone is not broker flatness. Run the
+   OMS restart fence and live preflight before OMS, and re-run them if the
+   state changes. Do not override a gate or restart while a position is held.
 3. Before touching the shared gateway, preserve its current subscription
    stream/owner-hash evidence and prove the retained stream can reconstruct
    **both scanner and v2 consumer owners** (including explicit empty replace
@@ -108,23 +111,33 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
 4. Claude-1 approved the accepted-with-gaps inactive control after
    recomputing load, snapshot cadence, heartbeats, LGHL lag and OMS refusals.
    Claude-1 **did not recompute** VBIO/TGE lag rows or the OMS eligible-intent
-   denominator. Preserve those caveats. Independently review the automatic
-   treatment guard and its thresholds before a GO; if a required treatment
-   signal cannot be observed, stop the whole install before the first write.
+   denominator. Preserve those caveats. #1074's automatic treatment guard
+   is pinned and merged; recheck the final source and first-session thresholds
+   against the reviewed baseline before GO. If a required treatment signal
+   cannot be observed, stop the whole install before the first write.
 5. Capture hashes/backups of `/home/trader/preopen.sh`, the isolated files in
    `/home/trader/restart_evidence/`, the current checkout and service units;
-   capture the existing Sunday pre-restart snapshot and the 09-29 fleet
-   journal. No flag/env change, database migration, unrelated service
-   restart, Momentum replay, or live Momentum order route is in scope.
+   capture the snapshot bound to the current restart-evidence install record
+   and the 09-29/09-30 fleet journals. Only the two ORB env keys below may
+   change. No database migration,
+   unrelated service restart, Momentum replay, or live Momentum order route
+   is in scope.
+6. The operator explicitly accepted the 1-of-2 ORB partial-fill gap for this
+   run and assigned daily 15:55 ET position review to Claude-1 (board B row
+   46). That is a known unproven exit lifecycle, **not** a proven protection
+   path. Fresh flatness, native-bracket verification and the current risk
+   limits remain mandatory; this acceptance does not authorize a larger size.
+   Also not covered tonight: ORB INC1 sources missing from the installed
+   watch, and an attended live Schwab place/replace/cancel test before the
+   first order. Record these as open risks in the deploy journal, not PASS.
 
 ## 2. One scoped install under that GO
 
-1. Command review for the scoped service change follows. These are **not yet
-   executable**: the first `test` rejects the placeholder until #1074 is
-   independently pinned/merged and the final exact SHA is placed in the
-   operator GO. Run only after section 1's fresh flatness, zero-row/arm,
+1. Command review for the scoped service change follows. These are **not
+   executable until the operator's exact-SHA GO**. Run only after section 1's
+   fresh flatness, zero-row/arm,
    retained-owner and identity proofs, and recheck flatness immediately
-   before the two service operations. The preflight owner artifact must name
+   before every stop/start/restart listed here. The preflight owner artifact must name
    the latest retained raw `replace` event and symbol set for scanner, v2 and
    any other active consumer; absent/truncated history is a hard stop. The
    second Python block below is the post-restart gate, not a reason to skip
@@ -133,9 +146,9 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    ```bash
    set -euo pipefail
    REPO=/home/trader/project-mai-tai
-   TARGET_SHA=PENDING_GUARD_MERGE_SHA
+   TARGET_SHA=01a64e9b7552b673e7db6f6e6c787b77b16f6f22
    OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners.json
-   test "$TARGET_SHA" != PENDING_GUARD_MERGE_SHA
+   test "$(git -C "$REPO" ls-remote origin refs/heads/main | awk '{print $1}')" = "$TARGET_SHA"
    test -s "$OWNER_FILE"
    test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = 3389090a7d30bdc88736a53211d968f4c82f0288
    test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
@@ -252,34 +265,146 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    companion/unrelated units. A fresh healthy heartbeat and 5-second nominal
    snapshot cadence must also be observed; the block above's heartbeat is
    not a substitute for the sustained cadence check. No ORB/OMS/v2/strategy
-   process may change identity.
-2. Stage isolated `/home/trader/restart_evidence/` copies from this exact SHA:
+   process may change identity **during this gateway phase**. If the
+   180-second owner/cadence check fails, use only section 4's one-time
+   rollback; do not continue into the ORB flag change.
+2. **ORB live phase, only after gateway restoration is proven:** capture a
+   second set of fresh direct broker-flat reads for both live accounts, zero
+   open managed rows and zero armed segments. Run the OMS live preflight and
+   `preflight_oms_restart.sh --require-all-account-positions-flat`; an
+   unreadable or positive result stops here. Back up the fleet env and log
+   its SHA-256. Make exactly two edits in
+   `/etc/project-mai-tai/project-mai-tai.env`:
+   `MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED=true` and
+   `MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED=false`. Reject absent or duplicate
+   keys; prove the before/after diff has no other lines. This is the only
+   runtime flag change. Both values must be loaded by **new processes**, not
+   inferred from the env file. The service's constructor refuses both true.
+
+   Restart order is: stop strategy companion, restart OMS, start strategy,
+   then restart orb-schwab. Immediately **before each** restart/start, repeat
+   the fresh two-broker flat, zero-managed-row and zero-armed-segment reads;
+   the OMS fence is also repeated before OMS itself. If any read becomes
+   UNKNOWN or a position appears, stop without proceeding. A failed OMS or
+   orb-schwab restart is a partial install; do not force the next step or
+   call it complete. The already-running v2, ORB paper, control,
+   market-capture and reconciler are **not** restarted.
+
+   ```bash
+   set -euo pipefail
+   REPO=/home/trader/project-mai-tai
+   TARGET_SHA=01a64e9b7552b673e7db6f6e6c787b77b16f6f22
+   ENV_FILE=/etc/project-mai-tai/project-mai-tai.env
+   test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$TARGET_SHA"
+   test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
+   # Stop here until fresh direct broker snapshots for BOTH accounts, zero
+   # managed rows and zero armed segments are attached to this step's journal.
+   sudo -u trader "$REPO/.venv/bin/python" "$REPO/src/project_mai_tai/deploy_preflight.py" --service oms
+   sudo "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
+   ENV_BACKUP="${ENV_FILE}.before-orb-live-$(date -u +%Y%m%dT%H%M%SZ)"
+   sudo cp -p "$ENV_FILE" "$ENV_BACKUP"
+   sudo sha256sum "$ENV_FILE" "$ENV_BACKUP"
+   sudo python3 - "$ENV_FILE" <<'PY'
+   import os
+   import stat
+   import sys
+   import tempfile
+   from pathlib import Path
+
+   path = Path(sys.argv[1])
+   original = path.read_text()
+   replacements = {
+       "MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED": "true",
+       "MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED": "false",
+   }
+   lines = original.splitlines(keepends=True)
+   for key, desired in replacements.items():
+       matches = [i for i, line in enumerate(lines) if line.startswith(f"{key}=")]
+       if len(matches) != 1:
+           raise SystemExit(f"refuse missing or duplicate {key}: {len(matches)}")
+       i = matches[0]
+       ending = "\n" if lines[i].endswith("\n") else ""
+       lines[i] = f"{key}={desired}{ending}"
+   updated = "".join(lines)
+   if updated == original:
+       raise SystemExit("refuse no-op flag edit; recheck running values")
+   st = path.stat()
+   fd, temp = tempfile.mkstemp(prefix=".orb-live-", dir=path.parent)
+   try:
+       with os.fdopen(fd, "w") as handle:
+           handle.write(updated)
+           handle.flush()
+           os.fsync(handle.fileno())
+       os.chmod(temp, stat.S_IMODE(st.st_mode))
+       os.chown(temp, st.st_uid, st.st_gid)
+       os.replace(temp, path)
+   finally:
+       if os.path.exists(temp):
+           os.unlink(temp)
+   PY
+   sudo diff -u "$ENV_BACKUP" "$ENV_FILE" || test "$?" = 1
+   sudo sha256sum "$ENV_BACKUP" "$ENV_FILE"
+   # Before EACH operation below, reattach fresh direct broker-flat,
+   # zero-row and zero-arm proof; never rely on the earlier snapshot.
+   sudo systemctl stop project-mai-tai-strategy.service
+   # The all-service preflight was run above; it cannot be rerun while
+   # strategy is deliberately stopped. The broker reads and OMS fence can.
+   sudo "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
+   sudo systemctl restart project-mai-tai-oms.service
+   sudo systemctl is-active --quiet project-mai-tai-oms.service
+   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-oms.service
+   # Fresh direct broker-flat/row/arm proof again before strategy starts.
+   sudo "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
+   sudo systemctl start project-mai-tai-strategy.service
+   sudo systemctl is-active --quiet project-mai-tai-strategy.service
+   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-strategy.service
+   # Fresh direct broker-flat/row/arm proof again before the ORB producer.
+   sudo -u trader "$REPO/.venv/bin/python" "$REPO/src/project_mai_tai/deploy_preflight.py" --service oms
+   sudo "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
+   sudo systemctl restart project-mai-tai-orb-schwab.service
+   sudo systemctl is-active --quiet project-mai-tai-orb-schwab.service
+   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-orb-schwab.service
+   ```
+
+   The shell preflight is not a substitute for fresh direct broker reads:
+   `account_positions` is OMS-maintained. Do not execute this block if the
+   two direct snapshots cannot be captured independently at each stop point.
+   The old env backup is evidence and a recovery input, not an automatic
+   rollback instruction. Check `/proc/<new OMS PID>/environ` and
+   `/proc/<new orb-schwab PID>/environ` for live=true; check the orb-schwab
+   process for observe=false and boot `LIVE`. Require OMS/strategy/orb-schwab
+   zero tracebacks and normal heartbeats. The old v2 PID and RETRY_ONE flag
+   stay unchanged.
+3. Stage isolated `/home/trader/restart_evidence/` copies from this exact SHA:
    `ops/health/expected_flags.json`, `expected_flags_check.py`,
    `preopen_restart_evidence.sh` (#1070), and
    `v2_restart_evidence.py` (#1073). Compare each installed SHA-256 against
    its Git blob. Use these isolated copies in the wrapper rather than
    assuming the updated checkout's ops files are installed automatically.
-3. Write a structured install record bound to the existing snapshot's exact
+4. Write a structured install record bound to the existing snapshot's exact
    `captured_at_utc`, with a source fleet journal and **every** unit monitored
    by the restart gate classified as `restarted`, `newly_installed`, or
    `deliberately_untouched`. Verify evidence for `control`, `market-capture`,
    `reconciler`, and `tv-alerts`; never infer untouched from silence. Account
-   for the 09-29 OMS/strategy/v2/ORB restarts and new `orb-schwab`, plus this
-   gateway restart, against the snapshot. The paper service is journaled
+   for the 09-29 v2/ORB restarts, tonight's OMS/strategy/orb-schwab and
+   gateway restarts, and orb-schwab's original installation, against the
+   snapshot. Classify tonight's orb-schwab action as `restarted`, not a
+   fictitious new service. The paper service is journaled
    separately if it is not in the gate's monitored service list. A missing or
    conflicting classification is UNKNOWN and blocks readiness. The reviewed
    restart reporter requires the prior v2 restart declaration; do not create
    a fictitious v2 restart tonight merely to make the report pass.
-4. Back up `/home/trader/preopen.sh`; update it **once** for 2026-10-01, the
+5. Back up `/home/trader/preopen.sh`; update it **once** for 2026-10-01, the
    final checkout SHA and freshly verified OMS/strategy/v2 PIDs/start times.
    Point its restart-evidence call at the isolated checker with the structured
    `--install-record`, the verified `--restarted`/`--new-service` declarations
-   (including `orb-schwab`), and the existing required flags. Source the
+   (including tonight's `oms`, `strategy`, and `orb-schwab`), and the existing
+   required flags. Source the
    isolated router and add the reviewed
    `preopen_check_expected_flags "$REPO/.venv/bin/python"` call with the
    isolated checker/catalog before the final verdict. Preserve other checks.
    Log the exact before/after diff, backup path, `bash -n`, and new SHA-256.
-5. Run the revised gate read-only as `trader` (or root if permissions require)
+6. Run the revised gate read-only as `trader` (or root if permissions require)
    against actual running processes. Require exactly one consistent final call
    from each checker: FLAGGATE `PASS` with the full catalog checked, and
    restart evidence `PASS` or a genuine `EXPECTED BY DESIGN` N/A. A mismatch
@@ -292,13 +417,23 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
 
 1. Record old/new PIDs, exact start times, `NRestarts`, box checkout SHA,
    service logs, `/proc` flags and the unchanged PIDs of all other units.
-   Attribute the final SHA only to the two newly started processes; an
+   Attribute the final SHA only to gateway, momentum-paper, OMS, strategy and
+   orb-schwab after each is confirmed restarted; an
    untouched process does not acquire new code merely because checkout moved.
    Require the gateway healthy, normal snapshot/heartbeat cadence, restored
    scanner and v2 owner sets, and a union containing every symbol still owned
    by either. Require Momentum owns at most 16 candidates, opens **no** second
    Massive socket, has no broker route, and receives condition-provenance trade
    ticks. No observed paper intent may be described as a live fill.
+   Confirm from `/proc` that the new OMS and orb-schwab processes have
+   `MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED=true`, and orb-schwab has
+   `MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED=false`. The installed FLAGGATE catalog
+   from this SHA must check that same pair (`live=true`, `observe=false`),
+   including the OMS secondary owner; no separate hand-edited catalog is
+   permitted. Preserve all other ruled flags, including v2 RETRY_ONE=true,
+   OMS floor=false, target=5%, hard-stop=8%, EOD transition and 19:55
+   flatten=true, polygon_30s=false, and parked massive seed=false. No
+   unexercised order path is called PASS on the strength of these flags.
 2. The gateway log rotates by `copytruncate` at about **20:00:06 ET**. A
    truncation makes the 1008 byte-offset sampler UNKNOWN. Start the reviewed
    one-second 1008 sampler and treatment samplers **after both 20:00:06 ET and
@@ -309,7 +444,7 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    the first full 07:00-09:40 ET treatment window. Late start, unreadable log, rotation,
    truncation, or missing samples is UNKNOWN and blocks a healthy treatment
    verdict; it is never reported as zero 1008s.
-3. The proposed automatic owner is
+3. The reviewed automatic stop owner is
    `project-mai-tai-option-a-guard@2026-10-01.service`, running as root under
    systemd's 15-second watchdog with `RefuseManualStop=yes`. The treatment-date
    instance is fixed to `2026-10-01`; manually stopping the guard is refused,
@@ -393,9 +528,9 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    blind evidence remains UNKNOWN and pages. A service-stop page drill (board
    row 45) is **excluded** unless the exact-SHA GO explicitly approves it.
 
-## 4. Rollback is not yet preauthorized
+## 4. One rollback proposed for the exact-SHA GO
 
-The proposed, still GO-dependent rollback targets only
+The still GO-dependent rollback targets only
 `3389090a7d30bdc88736a53211d968f4c82f0288` and only once. Trigger it
 if the gateway is not healthy within **180 seconds** of its restart, either
 scanner/v2 owner set is not restored, or 20 new snapshot intervals plus a
@@ -571,13 +706,18 @@ gateway code deterministically processes each `replace` into its
 `market-data subscriptions updated by <consumer> -> <count> symbols` log
 lines for every published consumer in order, no intervening failed-apply line or unexpected
 consumer update, and a newer healthy heartbeat whose `active_symbols` is
-the count of the preserved static/scanner/v2 union. This is a code-path and
+   the count of the preserved static/scanner/v2 union plus ORB when its replay
+   is approved. This is a code-path and
 log proof, not direct inspection of old gateway memory. If either event is
 not visibly applied, any raw payload or new ID is unreadable, the log
 rotates, or the heartbeat count differs, classify rollback **UNKNOWN**, page
 the operator, stop further changes and keep old paper stopped. Do not retry
-the rollback or restart another service. The third-owner decision and
-independent command review remain required before this is GO-ready.
+the rollback or restart another service. The GO must explicitly set
+`ORB_REPLAY_APPROVED=1` if the preserved ORB owner is nonempty, or this plan
+refuses before a production write. Independent command review of this final
+revision remains required before GO. The ORB live flag edit comes **after**
+gateway restoration proof, so this rollback cannot race a new live ORB
+producer under this plan.
 
 ## 5. Journal and decision
 
@@ -586,6 +726,7 @@ proof, every file blob/installed hash and backup, the structured install record,
 service identities, preopen diff/hash, gate return codes **with their actual
 Final calls**, sampler offsets/coverage, and any hard stop. Report the result
 as REAL FAILURE, EXPECTED BY DESIGN, or UNKNOWN after checking the relevant
-code/design, not by repeating a tool's red line. No automatic rollback or
-additional restart is authorized by this blocked plan. The first-session result is
+code/design, not by repeating a tool's red line. Until the operator signs the
+exact-SHA GO, no rollback or additional restart is authorized by this
+review-only plan. The first-session result is
 `STOPPED`, `OBSERVED`, or `UNKNOWN`, not a Momentum P&L or live-trading verdict.
