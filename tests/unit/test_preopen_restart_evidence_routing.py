@@ -123,3 +123,42 @@ def test_preopen_routes_flag_check_three_ways(
     )
     assert result.returncode == expected_rc
     assert expected_line in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("checker_rc", "checker_call", "expected_rc", "expected_line"),
+    [
+        (0, "PASS", 0, "PASS: running flags match reviewed catalog"),
+        (1, "REAL FAILURE", 1, "FAIL: running flag mismatch"),
+        (2, "UNKNOWN", 2, "UNKNOWN: running flags could not be read"),
+        (1, "UNKNOWN", 2, "UNKNOWN: flag check rc=1 disagrees"),
+    ],
+)
+def test_preopen_invokes_flag_checker_and_routes_result(
+    tmp_path: Path, checker_rc: int, checker_call: str, expected_rc: int, expected_line: str
+) -> None:
+    checker = tmp_path / "checker.sh"
+    checker.write_text(
+        "#!/bin/sh\n"
+        'test "$1" = "--catalog" && test "$2" = "/tmp/expected_flags.json" || exit 9\n'
+        f"printf 'Final call: {checker_call}; checked=1/1\\n'\n"
+        f"exit {checker_rc}\n"
+    )
+    script = """
+        source "$1"
+        failures=0
+        unknowns=0
+        fail() { printf 'FAIL: %s\\n' "$*"; failures=$((failures + 1)); }
+        pass() { printf 'PASS: %s\\n' "$*"; }
+        preopen_check_expected_flags /bin/sh "$2" /tmp/expected_flags.json
+        preopen_final_verdict
+    """
+    result = subprocess.run(
+        ["bash", "-c", script, "flag-test", str(ROUTER), str(checker)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == expected_rc
+    assert "=== RUNNING FLAG CONTRACT ===" in result.stdout
+    assert expected_line in result.stdout

@@ -40,13 +40,10 @@ In the existing `/home/trader/preopen.sh`, after the restart-evidence section an
 final verdict, add this reviewed call without altering the existing checks:
 
 ```bash
-printf '\n=== RUNNING FLAG CONTRACT ===\n'
-FLAGS_CATALOG=/home/trader/restart_evidence/expected_flags.json
-flags_output="$("$REPO/.venv/bin/python" /home/trader/restart_evidence/expected_flags_check.py \
-  --catalog "$FLAGS_CATALOG" 2>&1)"
-flags_rc=$?
-printf '%s\n' "$flags_output"
-preopen_record_expected_flags "$flags_rc" "$FLAGS_CATALOG" "$flags_output"
+preopen_check_expected_flags \
+  "$REPO/.venv/bin/python" \
+  /home/trader/restart_evidence/expected_flags_check.py \
+  /home/trader/restart_evidence/expected_flags.json
 ```
 
 Run `bash -n`, record the backup/diff/hashes, re-pin the one-day pre-open gate to the final
