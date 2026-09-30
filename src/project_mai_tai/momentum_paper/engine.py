@@ -9,6 +9,8 @@ import json
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
+from project_mai_tai.events import MarketSnapshotPayload
+from project_mai_tai.market_data.tick_time import normalize_ts_ns
 from project_mai_tai.momentum_paper.models import (
     MOMENTUM_STRATEGIES,
     MomentumTapeRecord,
@@ -25,6 +27,7 @@ _STOP_MULTIPLIER = Decimal("0.85")
 _PAPER_NOTIONAL = Decimal("500")
 _FILL_WINDOW_MS = 10_000
 _PATH_WINDOW_MS = 600_000
+_SNAPSHOT_MAX_AGE_MS = 10_000
 
 
 def is_warrant_like(symbol: str) -> bool:
@@ -102,6 +105,7 @@ class MomentumPaperEngine:
         self.condition_version = condition_version
         self.coverage_started_ms = int(coverage_started_ms)
         self._eligible_history: dict[str, deque[TradePrint]] = defaultdict(deque)
+        self._snapshot_history: dict[str, deque[TradePrint]] = defaultdict(deque)
         self._excluded_history: dict[str, deque[TradePrint]] = defaultdict(deque)
         self._reference_after_ms: dict[tuple[str, str], int] = {}
         self._active: dict[str, _ActiveEvent] = {}
@@ -114,6 +118,10 @@ class MomentumPaperEngine:
     @property
     def active_events(self) -> tuple[dict[str, object], ...]:
         return tuple(self._summary(event) for event in self._active.values())
+
+    @property
+    def active_symbols(self) -> set[str]:
+        return {event.symbol for event in self._active.values()}
 
     @property
     def completed_events(self) -> tuple[dict[str, object], ...]:
@@ -145,7 +153,9 @@ class MomentumPaperEngine:
                 self._reference_after_ms.get(key, 0),
             )
 
-    def ingest(self, trade: TradePrint) -> tuple[MomentumTapeRecord, ...]:
+    def ingest(
+        self, trade: TradePrint, *, allow_detection: bool = True
+    ) -> tuple[MomentumTapeRecord, ...]:
         trade = TradePrint(
             symbol=trade.symbol.upper(),
             sip_ts_ms=trade.sip_ts_ms,
@@ -180,7 +190,7 @@ class MomentumPaperEngine:
                     records.append(path_record)
             return tuple(records)
 
-        if self._can_detect(trade):
+        if allow_detection and self._can_detect(trade):
             for strategy_code, window_seconds in MOMENTUM_STRATEGIES.items():
                 key = (strategy_code, trade.symbol)
                 if self._has_unresolved_event(key):
@@ -222,6 +232,80 @@ class MomentumPaperEngine:
             if path_record is not None:
                 records.append(path_record)
         return tuple(records)
+
+    def detect_from_snapshots(
+        self,
+        snapshots: Iterable[MarketSnapshotPayload],
+        *,
+        completed_at: datetime,
+        max_symbols: int,
+    ) -> tuple[tuple[MomentumTapeRecord, ...], int]:
+        """Detect from fresh five-second samples; never use them as fill/exit prints."""
+        completed_ms = int(completed_at.timestamp() * 1000)
+        proposals: list[tuple[Decimal, str, str, TradePrint, TradePrint, list[TradePrint]]] = []
+        for snapshot in snapshots:
+            symbol = snapshot.symbol.upper()
+            if symbol not in self.prior_closes or not symbol_is_eligible(symbol):
+                continue
+            raw_ns = normalize_ts_ns(snapshot.last_trade_timestamp_ns)
+            if raw_ns is None or snapshot.last_trade_price is None:
+                continue
+            sip_ms = raw_ns // 1_000_000
+            if not 0 <= completed_ms - sip_ms <= _SNAPSHOT_MAX_AGE_MS:
+                continue
+            price = Decimal(str(snapshot.last_trade_price))
+            if price <= 0:
+                continue
+            history = self._snapshot_history[symbol]
+            if history and sip_ms <= history[-1].sip_ts_ms:
+                continue
+            sample = TradePrint(
+                symbol=symbol, sip_ts_ms=sip_ms, price=price, size=0,
+                trade_id=f"snapshot:{symbol}:{sip_ms}", exclusion_reason="snapshot_candidate",
+            )
+            while history and history[0].sip_ts_ms < sip_ms - 60_000:
+                history.popleft()
+            if self._can_detect(sample):
+                for strategy_code, window_seconds in MOMENTUM_STRATEGIES.items():
+                    if self._has_unresolved_event((strategy_code, symbol)):
+                        continue
+                    boundary = self._reference_after_ms.get((strategy_code, symbol), 0)
+                    reference_pool = [
+                        item for item in history
+                        if sip_ms - window_seconds * 1000 <= item.sip_ts_ms < sip_ms
+                        and item.sip_ts_ms > boundary
+                    ]
+                    if not reference_pool:
+                        continue
+                    reference = min(reference_pool, key=lambda item: item.price)
+                    if price >= reference.price * _DETECTION_MULTIPLIER:
+                        proposals.append((
+                            price / reference.price, symbol, strategy_code,
+                            reference, sample, reference_pool,
+                        ))
+            history.append(sample)
+
+        records: list[MomentumTapeRecord] = []
+        active = self.active_symbols
+        capped = 0
+        for _score, symbol, strategy_code, reference, detection, window in sorted(
+            proposals, key=lambda item: (-item[0], item[1], item[2])
+        ):
+            if symbol not in active and len(active) >= max_symbols:
+                capped += 1
+                continue
+            event = self._new_event(
+                strategy_code=strategy_code,
+                window_seconds=MOMENTUM_STRATEGIES[strategy_code],
+                reference=reference,
+                detection=detection,
+                window_prints=window,
+                excluded_prints=0,
+            )
+            self._active[event.logical_id] = event
+            active.add(symbol)
+            records.append(self._record(event, "DETECTED", detection, self._summary(event)))
+        return tuple(records), capped
 
     def _has_unresolved_event(self, key: tuple[str, str]) -> bool:
         strategy_code, symbol = key

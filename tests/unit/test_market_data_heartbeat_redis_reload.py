@@ -33,6 +33,18 @@ class ScriptedRedis:
         del args, kwargs
         return []
 
+    async def xrange(self, *args: object, **kwargs: object) -> list[object]:
+        del args, kwargs
+        return []
+
+    async def hgetall(self, *args: object, **kwargs: object) -> dict[str, str]:
+        del args, kwargs
+        return {}
+
+    async def hset(self, *args: object, **kwargs: object) -> int:
+        del args, kwargs
+        return 1
+
     async def aclose(self) -> None:
         return None
 
