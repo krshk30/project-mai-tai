@@ -17,7 +17,9 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.fanout_outcome_consumer import session_anchor
-from project_mai_tai.orb_schwab_macd import schwab_completed_bar_macd_gate
+from project_mai_tai.orb_schwab_macd import (
+    BAR_WAIT, MacdVerdict, last_closed_bar_close, schwab_completed_bar_macd_gate,
+)
 from project_mai_tai.orb_schwab_exits import (
     ATR_SOURCE, completed_bar_evidence, open_entries, save_context, schwab_completed_atr_bars,
 )
@@ -53,6 +55,11 @@ class OrbSchwabService(OrbService):
         self._observe_only = self.settings.orb_schwab_observe_enabled
         self._observe_status_at: datetime | None = None
         self._observe_macd_minute: dict[str, datetime] = {}
+        self._observe_macd_checked_at: dict[str, datetime] = {}
+        self._observe_pending_close: dict[str, datetime] = {}
+        self._pending_macd_checked_at: dict[tuple[str, datetime], datetime] = {}
+        self._first_macd_processing_at: dict[tuple[str, datetime], datetime] = {}
+        self._macd_deferred_bars: set[tuple[str, datetime]] = set()
         self._observe_plan_at: dict[str, datetime] = {}
         self._observe_crosses: set[tuple[str, str, str]] = set()
         self._observe_seen_bars: dict[str, set[datetime]] = {}
@@ -80,6 +87,11 @@ class OrbSchwabService(OrbService):
         self._aggregators.clear()
         self._states.clear()
         self._observe_macd_minute.clear()
+        self._observe_macd_checked_at.clear()
+        self._observe_pending_close.clear()
+        self._pending_macd_checked_at.clear()
+        self._first_macd_processing_at.clear()
+        self._macd_deferred_bars.clear()
         self._observe_plan_at.clear()
         self._observe_crosses.clear()
         self._observe_seen_bars.clear()
@@ -149,6 +161,11 @@ class OrbSchwabService(OrbService):
         observed_price: float | None = None,
     ) -> None:
         if symbol in self._universe:
+            opening = self._session_open_utc()
+            if opening - timedelta(minutes=3) <= bar.timestamp < opening:
+                self._first_macd_processing_at.setdefault(
+                    (symbol, bar.timestamp), self._processing_time()
+                )
             self._closed_bars.append((symbol, bar, observed_at or datetime.now(UTC)))
 
     @staticmethod
@@ -220,19 +237,38 @@ class OrbSchwabService(OrbService):
                     continue
                 if self._observe_macd_minute.get(symbol) == minute:
                     continue
-                self._observe_macd_minute[symbol] = minute
+                prior_check = self._observe_macd_checked_at.get(symbol)
+                if prior_check is not None and now - prior_check < timedelta(seconds=1):
+                    continue
+                self._observe_macd_checked_at[symbol] = now
                 if now >= opening + timedelta(minutes=30):
-                    allowed, reason, histogram = False, "entry_window_ended", None
+                    verdict, reason, histogram = MacdVerdict.NEGATIVE, "entry_window_ended", None
                 else:
-                    allowed, reason, histogram = await asyncio.to_thread(
+                    verdict, reason, histogram = await asyncio.to_thread(
                         schwab_completed_bar_macd_gate, self.session_factory, symbol, now
                     )
-                if not allowed:
+                if verdict == MacdVerdict.BAR_NOT_YET:
+                    deadline = self._observe_pending_close.setdefault(
+                        symbol, last_closed_bar_close(now)
+                    ) + BAR_WAIT
+                    if now < deadline:
+                        self._record_observation(
+                            "working_plan_check", symbol=symbol, macd_allowed=None,
+                            macd_histogram=None, reason=reason, proposed_action="wait_for_schwab_bar",
+                        )
+                        continue
+                else:
+                    self._observe_pending_close.pop(symbol, None)
+                self._observe_macd_minute[symbol] = minute
+                if verdict != MacdVerdict.ALLOWED:
                     order.cancelled = True
+                    if verdict == MacdVerdict.BAR_NOT_YET:
+                        reason = "bar_missing"
                 self._record_observation(
-                    "working_plan_check", symbol=symbol, macd_allowed=allowed,
+                    "working_plan_check", symbol=symbol, macd_allowed=verdict == MacdVerdict.ALLOWED,
                     macd_histogram=histogram, reason=reason,
-                    proposed_action="keep_if_unfilled" if allowed else "cancel_if_still_unfilled",
+                    proposed_action=("keep_if_unfilled" if verdict == MacdVerdict.ALLOWED
+                                     else "cancel_if_still_unfilled"),
                 )
         if self._observe_status_at is None or now - self._observe_status_at >= timedelta(minutes=1):
             self._observe_status_at = now
@@ -324,11 +360,16 @@ class OrbSchwabService(OrbService):
                         symbol, context["reason"], entry["entry_id"], entry["fill_id"])
 
     async def _process_closed_bars(self) -> None:
+        pending: list[tuple[str, OrbBar, datetime]] = []
+        deferred_symbols: set[str] = set()
         while self._closed_bars:
-            symbol, bar, _observed_at = self._closed_bars.pop(0)
+            symbol, bar, observed_at = self._closed_bars.pop(0)
             opening = self._session_open_utc()
             first = opening - timedelta(minutes=5)
             if not first <= bar.timestamp < opening:
+                continue
+            if symbol in deferred_symbols:
+                pending.append((symbol, bar, observed_at))
                 continue
             if self._observe_only:
                 self._observe_seen_bars.setdefault(symbol, set()).add(bar.timestamp)
@@ -341,16 +382,63 @@ class OrbSchwabService(OrbService):
                         high=bar.high, qualified_high=bar.breakout_high,
                     )
                 continue
-            allowed, reason, histogram = await asyncio.to_thread(
+            now = self._processing_time()
+            key = symbol, bar.timestamp
+            self._first_macd_processing_at.setdefault(key, now)
+            prior_check = self._pending_macd_checked_at.get(key)
+            if prior_check is not None and now - prior_check < timedelta(seconds=1):
+                pending.append((symbol, bar, observed_at))
+                deferred_symbols.add(symbol)
+                continue
+            self._pending_macd_checked_at[key] = now
+            verdict, reason, histogram = await asyncio.to_thread(
                 schwab_completed_bar_macd_gate,
                 self.session_factory,
                 symbol,
-                self._processing_time(),
+                now,
             )
+            deadline = bar.timestamp + timedelta(minutes=1) + BAR_WAIT
+            if verdict == MacdVerdict.BAR_NOT_YET and now < deadline:
+                self._macd_deferred_bars.add(key)
+                pending.append((symbol, bar, observed_at))
+                deferred_symbols.add(symbol)
+                continue
+            self._pending_macd_checked_at.pop(key, None)
+            first_processing_at = self._first_macd_processing_at.pop(key)
+            was_deferred = key in self._macd_deferred_bars
+            self._macd_deferred_bars.discard(key)
+            if verdict == MacdVerdict.BAR_NOT_YET:
+                order.cancelled = True
+                logger.warning(
+                    "[ORB-SCHWAB-BAR-MISSING] symbol=%s bar=%s reason=%s",
+                    symbol, bar.timestamp.isoformat(), reason,
+                )
+                if self._observe_only:
+                    self._record_observation(
+                        "decision", symbol=symbol, bar_at=bar.timestamp.isoformat(),
+                        proposed_action="none" if not order.placed else "cancel",
+                        decision_reason="bar_missing", macd_allowed=None,
+                    )
+                elif order.placed:
+                    event = build_orb_schwab_cancel_intent(self.settings, symbol)
+                    await publish_orb_schwab_intent(self.redis, self.settings, event, now)
+                continue
+            if not order.placed and now >= opening - timedelta(seconds=30):
+                order.cancelled = True
+                logger.warning(
+                    "[ORB-SCHWAB-ENTRY-CUTOFF] symbol=%s bar=%s reason=late_macd_no_entry",
+                    symbol, bar.timestamp.isoformat(),
+                )
+                if self._observe_only:
+                    self._record_observation(
+                        "decision", symbol=symbol, bar_at=bar.timestamp.isoformat(),
+                        proposed_action="none", decision_reason="late_macd_no_entry",
+                    )
+                continue
             action = order.on_closed_bar(
                 bar,
-                observed_at=self._processing_time(),
-                macd_allowed=allowed,
+                observed_at=first_processing_at,
+                macd_allowed=verdict == MacdVerdict.ALLOWED,
                 macd_reason=reason,
             )
             if self._observe_only:
@@ -366,7 +454,8 @@ class OrbSchwabService(OrbService):
                     range_bars_seen=len(order.bars), range_bars_required=int(
                         (bar.timestamp - first).total_seconds() / 60
                     ) + 1,
-                    macd_allowed=allowed, macd_reason=reason, macd_histogram=histogram,
+                    macd_allowed=verdict == MacdVerdict.ALLOWED,
+                    macd_reason=reason, macd_histogram=histogram,
                     proposed_action=action.kind if action is not None else "none",
                     decision_reason=action.reason if action is not None else "no_action",
                     prices=prices, quantity=2, execution="NOT_TESTED",
@@ -376,7 +465,10 @@ class OrbSchwabService(OrbService):
                 continue
             if action.kind == "place":
                 assert action.level is not None
-                event = build_orb_schwab_open_intent(self.settings, symbol, action.level)
+                event = build_orb_schwab_open_intent(
+                    self.settings, symbol, action.level,
+                    deferred_macd_bar_close=(bar.timestamp + timedelta(minutes=1)) if was_deferred else None,
+                )
             elif action.kind == "cancel":
                 event = build_orb_schwab_cancel_intent(self.settings, symbol)
             else:
@@ -385,6 +477,7 @@ class OrbSchwabService(OrbService):
             await publish_orb_schwab_intent(
                 self.redis, self.settings, event, datetime.now(UTC)
             )
+        self._closed_bars = pending
 
     async def run(self) -> None:
         if not self.settings.orb_enabled or not (

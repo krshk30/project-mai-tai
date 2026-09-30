@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import UTC, datetime, time
 from decimal import Decimal, InvalidOperation
 from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
@@ -38,7 +38,8 @@ def build_orb_schwab_exit_intent(settings: Settings, symbol: str, entry_id: str,
 
 
 def build_orb_schwab_open_intent(
-    settings: Settings, symbol: str, breakout_level: Decimal
+    settings: Settings, symbol: str, breakout_level: Decimal,
+    *, deferred_macd_bar_close: datetime | None = None,
 ) -> TradeIntentEvent:
     """Build an intent only; OMS and the broker remain the execution authorities."""
     ticker = symbol.strip().upper()
@@ -47,6 +48,8 @@ def build_orb_schwab_open_intent(
         raise ValueError("ORB live orders require a named Schwab account and symbol")
     metadata = build_orb_schwab_bracket_metadata(breakout_level)
     metadata["orb_intended_break_level"] = format(breakout_level, "f")
+    if deferred_macd_bar_close is not None:
+        metadata["orb_deferred_macd_bar_close"] = deferred_macd_bar_close.isoformat()
     return TradeIntentEvent(
         source_service=SOURCE_SERVICE,
         payload=TradeIntentPayload(
@@ -172,7 +175,7 @@ def orb_schwab_intent_refusal(
     if now.tzinfo is None:
         return "orb_schwab_invalid_clock"
     now_et = now.astimezone(_ET)
-    if now_et.weekday() >= 5 or not time(9, 28) <= now_et.time() < time(9, 28, 15):
+    if now_et.weekday() >= 5 or not time(9, 28) <= now_et.time() < time(9, 29, 30):
         return "orb_schwab_outside_entry_window"
     try:
         raw_level = Decimal(payload.metadata["orb_intended_break_level"])
@@ -180,6 +183,13 @@ def orb_schwab_intent_refusal(
     except (KeyError, InvalidOperation, TypeError, ValueError):
         return "orb_schwab_invalid_bracket"
     expected["orb_intended_break_level"] = format(raw_level, "f")
+    if "orb_deferred_macd_bar_close" in payload.metadata:
+        expected_close = now_et.replace(hour=9, minute=28, second=0, microsecond=0)
+        if payload.metadata["orb_deferred_macd_bar_close"] != expected_close.astimezone(UTC).isoformat():
+            return "orb_schwab_invalid_deferred_macd_proof"
+        expected["orb_deferred_macd_bar_close"] = payload.metadata["orb_deferred_macd_bar_close"]
+    elif now_et.time() >= time(9, 28, 15):
+        return "orb_schwab_outside_entry_window"
     if payload.metadata != expected:
         return "orb_schwab_invalid_bracket"
     return None

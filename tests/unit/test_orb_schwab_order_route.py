@@ -17,6 +17,7 @@ from project_mai_tai.db.models import (
 )
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.orb_schwab_macd import MacdVerdict
 from project_mai_tai.orb_schwab_order_route import (
     build_orb_schwab_cancel_intent,
     build_orb_schwab_exit_intent,
@@ -136,7 +137,7 @@ def _service(monkeypatch, *, enabled=True, broker=None):
     monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: OPEN)
     monkeypatch.setattr(
         "project_mai_tai.oms.service.schwab_completed_bar_macd_gate",
-        lambda *_args: (True, "nonnegative", 0.1),
+        lambda *_args: (MacdVerdict.ALLOWED, "nonnegative", 0.1),
     )
     broker = broker or _Broker()
     factory = _factory()
@@ -244,7 +245,7 @@ def test_oms_refuses_negative_macd_without_preview_or_order(monkeypatch) -> None
     service, _factory_, broker = _service(monkeypatch)
     monkeypatch.setattr(
         "project_mai_tai.oms.service.schwab_completed_bar_macd_gate",
-        lambda *_args: (False, "negative", -0.1),
+        lambda *_args: (MacdVerdict.NEGATIVE, "negative", -0.1),
     )
     event = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
     assert asyncio.run(service.process_trade_intent(event)) == []
@@ -462,6 +463,50 @@ def test_oms_backstop_cancels_still_working_parent_at_cutoff(monkeypatch) -> Non
     original = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
     asyncio.run(service.process_trade_intent(original))
     monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: OPEN + timedelta(minutes=32))
+    asyncio.run(service._orb_schwab_watchdog())
+    assert [request.intent_type for request in broker.submitted] == ["open", "cancel"]
+
+
+def test_oms_never_treats_pending_macd_as_truthy_permission(monkeypatch) -> None:
+    service, _factory_, broker = _service(monkeypatch)
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.schwab_completed_bar_macd_gate",
+        lambda *_args: (MacdVerdict.BAR_NOT_YET, "missing_last_closed_schwab_bar", None),
+    )
+    event = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
+    assert asyncio.run(service.process_trade_intent(event)) == []
+    assert broker.submitted == []
+
+
+def test_oms_watchdog_waits_for_late_bar_but_cancels_after_90_seconds(monkeypatch) -> None:
+    service, _factory_, broker = _service(monkeypatch)
+    event = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
+    asyncio.run(service.process_trade_intent(event))
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.schwab_completed_bar_macd_gate",
+        lambda *_args: (MacdVerdict.BAR_NOT_YET, "missing_last_closed_schwab_bar", None),
+    )
+    clock = [OPEN + timedelta(minutes=2, seconds=1)]
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: clock[0])
+    asyncio.run(service._orb_schwab_watchdog())
+    assert [request.intent_type for request in broker.submitted] == ["open"]
+    clock[0] = OPEN + timedelta(minutes=3, seconds=29)
+    asyncio.run(service._orb_schwab_watchdog())
+    assert [request.intent_type for request in broker.submitted] == ["open"]
+    clock[0] = OPEN + timedelta(minutes=3, seconds=30)
+    asyncio.run(service._orb_schwab_watchdog())
+    assert [request.intent_type for request in broker.submitted] == ["open", "cancel"]
+
+
+def test_oms_watchdog_computed_negative_cancels_without_waiting(monkeypatch) -> None:
+    service, _factory_, broker = _service(monkeypatch)
+    event = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
+    asyncio.run(service.process_trade_intent(event))
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: OPEN + timedelta(minutes=2, seconds=1))
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.schwab_completed_bar_macd_gate",
+        lambda *_args: (MacdVerdict.NEGATIVE, "negative", -0.1),
+    )
     asyncio.run(service._orb_schwab_watchdog())
     assert [request.intent_type for request in broker.submitted] == ["open", "cancel"]
 
@@ -763,7 +808,7 @@ def test_eod_does_not_use_macd_to_block_a_close(monkeypatch) -> None:
     service, _factory, broker, _clock = _eod_service(monkeypatch)
     monkeypatch.setattr(
         "project_mai_tai.oms.service.schwab_completed_bar_macd_gate",
-        lambda *_args: (False, "negative", -0.1),
+        lambda *_args: (MacdVerdict.NEGATIVE, "negative", -0.1),
     )
     asyncio.run(service._orb_schwab_eod_close())
     assert broker.submitted[-1].intent_type == "close"
@@ -842,7 +887,7 @@ def _strategy_exit_service(monkeypatch, *, atr=False):
 def test_strategy_exit_uses_same_protected_single_close_path_as_eod(monkeypatch, atr):
     service, factory, broker, clock, event = _strategy_exit_service(monkeypatch, atr=atr)
     monkeypatch.setattr("project_mai_tai.oms.service.schwab_completed_bar_macd_gate",
-                        lambda *_args: (False, "negative", -0.1))
+                        lambda *_args: (MacdVerdict.NEGATIVE, "negative", -0.1))
     asyncio.run(service.process_trade_intent(event))
     asyncio.run(service.process_trade_intent(event))
     clock[0] = clock[0].replace(hour=19, minute=55)
@@ -1269,6 +1314,18 @@ def test_flag_off_watchdog_does_no_query_and_emits_no_intent(monkeypatch):
     assert broker.submitted == [] and service.redis.events == []
 
 
+def test_atr_open_does_not_consult_orb_macd_or_deferred_window(monkeypatch):
+    service, _factory_, broker = _service(monkeypatch, enabled=False)
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.schwab_completed_bar_macd_gate",
+        lambda *_args: pytest.fail("ATR order path consulted ORB-only MACD gate"),
+    )
+    result = asyncio.run(service.process_trade_intent(_v2_open()))
+    assert [row.payload.status for row in result] == ["accepted"]
+    assert len(broker.submitted) == 1
+    assert broker.submitted[0].strategy_code == "schwab_1m_v2"
+
+
 def test_flag_off_v2_skips_orb_db_collision_even_with_orb_owned_position(monkeypatch):
     service, factory, broker = _service(monkeypatch, enabled=False)
     service._reconcile_after_intent = lambda *_args: asyncio.sleep(0)
@@ -1289,10 +1346,27 @@ def test_flag_off_v2_skips_orb_db_collision_even_with_orb_owned_position(monkeyp
     assert len(broker.submitted) == 1 and broker.submitted[0].strategy_code == "schwab_1m_v2"
 
 
-@pytest.mark.parametrize("seconds,allowed", [(14, True), (15, False), (30, False), (59, False)])
-def test_new_open_deadline_is_exactly_092815_not_0929(seconds, allowed):
-    event = build_orb_schwab_open_intent(_settings(), "CLRO", Decimal("5.53"))
+@pytest.mark.parametrize(
+    "seconds,deferred,allowed",
+    [(14, False, True), (15, False, False), (15, True, True),
+     (89, True, True), (90, True, False)],
+)
+def test_new_open_deadline_is_exactly_092930_only_if_macd_waited(seconds, deferred, allowed):
+    event = build_orb_schwab_open_intent(
+        _settings(), "CLRO", Decimal("5.53"),
+        deferred_macd_bar_close=OPEN if deferred else None,
+    )
     assert (orb_schwab_intent_refusal(event, _settings(), OPEN + timedelta(seconds=seconds)) is None) is allowed
+
+
+def test_deferred_open_proof_must_name_this_sessions_0928_bar():
+    event = build_orb_schwab_open_intent(
+        _settings(), "CLRO", Decimal("5.53"),
+        deferred_macd_bar_close=OPEN + timedelta(days=1),
+    )
+    assert orb_schwab_intent_refusal(event, _settings(), OPEN + timedelta(seconds=89)) == (
+        "orb_schwab_invalid_deferred_macd_proof"
+    )
 
 
 def test_wrong_source_is_refused_before_any_io(monkeypatch):
