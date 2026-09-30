@@ -685,8 +685,15 @@ def test_last_nights_prose_install_record_is_unknown_until_every_unit_is_classif
     # market-capture, reconciler, or tv-alerts. Prose is not a complete install record.
     prose = tmp_path / "deployments-20260929.md"
     prose.write_text(
-        "OMS restarted; strategy restarted; v2 restarted; ORB restarted; "
-        "orb-schwab newly installed; market-data unchanged.\n",
+        "| Unit | PID | Start UTC | NRestarts | Action |\n"
+        "| --- | ---: | --- | ---: | --- |\n"
+        "| OMS | 1663656 | 00:05:36 | 0 | Restarted |\n"
+        "| strategy | 1663666 | 00:05:36 | 0 | OMS companion stop/start |\n"
+        "| schwab-1m-v2 | 1664453 | 00:08:16 | 0 | Restarted |\n"
+        "| ORB paper | 1665228 | 00:09:18 | 0 | Restarted |\n"
+        "| ORB-Schwab | 1665845 | 00:11:17 | 0 | Installed/start OBSERVE_ONLY |\n"
+        "| market-data | 2202865 | 2026-08-30 19:54:39 | 0 | Unchanged |\n"
+        "| Momentum-paper | 2704889 | 2026-09-18 11:27:53 | 0 | Unchanged |\n",
         encoding="utf-8",
     )
     args.install_record = prose
