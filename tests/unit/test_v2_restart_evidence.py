@@ -393,6 +393,27 @@ def _move_v2_report_start(current, logs, start: datetime) -> None:
     ]
 
 
+def _write_install_record(args, tmp_path: Path, *, include_observer: bool = False) -> Path:
+    before = json.loads(args.snapshot.read_text(encoding="utf-8"))
+    actions = {name: "deliberately_untouched" for name in vre.DEFAULT_SERVICES}
+    actions.update({name: "restarted" for name in args.restarted})
+    if include_observer:
+        actions["orb-schwab"] = "newly_installed"
+    path = tmp_path / "install-record.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "snapshot_captured_at_utc": before["captured_at_utc"],
+                "source_journal": "/home/trader/fleet_health/deployments-20260929.md",
+                "service_actions": actions,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_report_contains_every_required_denominator(monkeypatch, tmp_path: Path, capsys) -> None:
     args, _, _ = _report_fixture(monkeypatch, tmp_path)
 
@@ -628,6 +649,100 @@ def test_approved_orb_restart_and_new_observer_are_not_a_false_failure(
     assert "active/running after snapshot=1/1; orb-schwab" in output
     assert "matched=3/3" in output
     assert "Final call: EXPECTED BY DESIGN" in output
+
+
+def test_last_nights_prose_install_record_is_unknown_until_every_unit_is_classified(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    started = datetime(2026, 9, 30, 0, 11, tzinfo=UTC)
+    for name in ("oms", "strategy", "orb"):
+        current[name] = vre.ServiceState(name, 900 + len(name), "active", "running", 0, started.isoformat())
+        logs[name] = [(f"{name}.log", ["2026-09-30 00:11:01,000 INFO healthy"])]
+    current["orb-schwab"] = vre.ServiceState(
+        "orb-schwab", 1665845, "active", "running", 0, started.isoformat()
+    )
+    logs["orb-schwab"] = [("orb-schwab.log", ["2026-09-30 00:11:01,000 INFO OBSERVE_ONLY"])]
+    monkeypatch.setattr(vre, "_installed_optional_services", lambda runner: ("orb-schwab",))
+    args.restarted.extend(("oms", "strategy", "orb"))
+    args.new_service = ["orb-schwab"]
+    args.expect_flag.extend(
+        (
+            "orb-schwab:MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED=true",
+            "orb-schwab:MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED=false",
+        )
+    )
+    monkeypatch.setattr(
+        vre,
+        "_process_environment",
+        lambda pid, runner: {
+            "MAI_TAI_TEST_FLAG": "true",
+            "MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED": "true",
+            "MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED": "false",
+        },
+    )
+    # The actual journal names these process changes but never classifies control,
+    # market-capture, reconciler, or tv-alerts. Prose is not a complete install record.
+    prose = tmp_path / "deployments-20260929.md"
+    prose.write_text(
+        "OMS restarted; strategy restarted; v2 restarted; ORB restarted; "
+        "orb-schwab newly installed; market-data unchanged.\n",
+        encoding="utf-8",
+    )
+    args.install_record = prose
+    with pytest.raises(vre.EvidenceUnknown, match="not structured JSON"):
+        vre.report(args, runner=lambda command: "")
+
+    args.install_record = _write_install_record(args, tmp_path, include_observer=True)
+    record = json.loads(args.install_record.read_text(encoding="utf-8"))
+    del record["service_actions"]["control"]
+    args.install_record.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(vre.EvidenceUnknown, match="missing=control"):
+        vre.report(args, runner=lambda command: "")
+
+    args.install_record = _write_install_record(args, tmp_path, include_observer=True)
+    assert vre.report(args, runner=lambda command: "") == 0
+
+
+def test_install_record_rejects_missing_and_conflicting_declarations(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    args.install_record = None
+    with pytest.raises(vre.EvidenceUnknown, match="no complete install record"):
+        vre.report(args, runner=lambda command: "")
+    args.install_record = _write_install_record(args, tmp_path)
+    record = json.loads(args.install_record.read_text(encoding="utf-8"))
+    record["service_actions"]["oms"] = "restarted"
+    args.install_record.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(vre.EvidenceUnknown, match="disagrees"):
+        vre.report(args, runner=lambda command: "")
+
+
+def test_install_record_cli_has_unknown_route_without_file() -> None:
+    args = vre.build_parser().parse_args(
+        ["report", "--snapshot", "before.json", "--restarted", "schwab-1m-v2",
+         "--expect-flag", "schwab-1m-v2:FLAG=true", "--expected-alembic-head", "head",
+         "--no-schema-change"]
+    )
+    assert args.install_record is None
+
+
+def test_incomplete_install_record_exits_unknown_not_failure(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, _, _ = _report_fixture(monkeypatch, tmp_path)
+    args.install_record = _write_install_record(args, tmp_path)
+    record = json.loads(args.install_record.read_text(encoding="utf-8"))
+    del record["service_actions"]["market-capture"]
+    args.install_record.write_text(json.dumps(record), encoding="utf-8")
+    monkeypatch.setattr(
+        vre,
+        "build_parser",
+        lambda: SimpleNamespace(parse_args=lambda argv: SimpleNamespace(command="report", **vars(args))),
+    )
+    assert vre.main([]) == 2
+    assert "Final call: UNKNOWN" in capsys.readouterr().err
 
 
 def test_undeclared_new_observer_is_unknown(monkeypatch, tmp_path: Path, capsys) -> None:
