@@ -194,9 +194,10 @@ class SamplerEvidence:
                     status = row["status"]
                 except (ValueError, KeyError, TypeError) as exc:
                     raise Blind("malformed 1008 sampler row") from exc
-                if self.last_recorded is not None:
-                    gap = (stamped - self.last_recorded).total_seconds()
-                    if not 0.5 <= gap <= 2.5:
+                prior = self.last_recorded
+                if prior is not None:
+                    gap = (stamped - prior).total_seconds()
+                    if not 0.5 <= gap <= 1.5:
                         raise Blind(f"1008 sampler row gap={gap:.3f}s")
                 if (now - stamped).total_seconds() < -2:
                     raise Blind("1008 sampler row timestamp in future")
@@ -208,6 +209,8 @@ class SamplerEvidence:
                     return "gateway_1008"
                 if status not in {"BASELINE", "OK"}:
                     raise Blind(f"1008 sampler status={status}")
+                if status == "BASELINE" and prior is not None:
+                    raise Blind("unexpected repeated 1008 sampler baseline")
         if (now - self.last_seen).total_seconds() > 2.5:
             raise Blind("1008 sampler output stalled")
         return None
@@ -366,7 +369,7 @@ def _page(title: str, body: str, *, priority: str = "low") -> bool:
     )
     try:
         with request.urlopen(payload, timeout=15) as response:
-            return response.status == 200
+            return 200 <= response.status < 300
     except Exception:
         return False
 
