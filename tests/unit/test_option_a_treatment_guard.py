@@ -144,6 +144,15 @@ def test_stop_release_keeps_other_consumers_symbols(monkeypatch):
         redis, FakeSettings(),
         before={"momentum-paper": {"A", "C"}}, stopped_at=NOW, log_offset=0,
     )
+    redis.count = 2
+    redis.owners = {"momentum-paper": [], "strategy-engine": ["A"],
+                    "schwab-1m-v2": ["A", "C"]}
+    assert not _release_confirmed(
+        redis, FakeSettings(),
+        before={"momentum-paper": {"C"}, "strategy-engine": {"A"},
+                "schwab-1m-v2": {"A", "B"}},
+        stopped_at=NOW, log_offset=0,
+    )
 
 
 def test_log_tail_fails_closed_on_copytruncate(tmp_path: Path):
