@@ -14,6 +14,7 @@ from ops.health.option_a_treatment_guard import (
     SlowdownRules,
     _release_confirmed,
     _route_sampler_exit,
+    _union_line_confirms,
     stop_paper,
 )
 
@@ -50,6 +51,14 @@ def test_heartbeat_stop_after_two_nonhealthy_samples_and_absolute_age():
     assert "gateway_heartbeat_age" in rules.heartbeat("healthy", 30.820)
 
 
+def test_heartbeat_unhealthy_streak_resets_on_a_healthy_sample():
+    rules = SlowdownRules()
+    assert rules.heartbeat("degraded", 1) is None
+    assert rules.heartbeat("healthy", 1) is None
+    assert rules.heartbeat("degraded", 1) is None
+    assert "consecutive=2" in rules.heartbeat("degraded", 1)
+
+
 def test_snapshot_rule_uses_matching_hour_and_five_distinct_minutes():
     rules = SlowdownRules()
     for minute in range(4):
@@ -63,6 +72,16 @@ def test_snapshot_rule_uses_matching_hour_and_five_distinct_minutes():
         probe_lags={}, oms_refusals=0, snapshot_warmup_complete=True,
     )
     assert trigger == "snapshot_p95_s=15.000>14.076"
+
+
+def test_snapshot_exact_bound_does_not_stop():
+    rules = SlowdownRules()
+    for minute in range(5):
+        trigger, _ = rules.minute(
+            NOW.replace(minute=minute), snapshot_intervals=[14.076] * 20,
+            probe_lags={}, oms_refusals=0, snapshot_warmup_complete=True,
+        )
+        assert trigger is None
 
 
 def test_missing_snapshot_coverage_is_unknown_not_pass():
@@ -86,6 +105,22 @@ def test_oms_refusal_rule_stops_after_two_minutes():
     )[0]
 
 
+def test_oms_two_refusals_do_not_stop_or_carry_a_prior_streak():
+    rules = SlowdownRules()
+    assert rules.minute(
+        NOW, snapshot_intervals=[5.0] * 20, probe_lags={},
+        oms_refusals=3, snapshot_warmup_complete=True,
+    )[0] is None
+    assert rules.minute(
+        NOW.replace(minute=11), snapshot_intervals=[5.0] * 20, probe_lags={},
+        oms_refusals=2, snapshot_warmup_complete=True,
+    )[0] is None
+    assert rules.minute(
+        NOW.replace(minute=12), snapshot_intervals=[5.0] * 20, probe_lags={},
+        oms_refusals=3, snapshot_warmup_complete=True,
+    )[0] is None
+
+
 def test_v2_lag_requires_three_probes_and_five_minutes():
     rules = SlowdownRules()
     for minute in range(4):
@@ -97,6 +132,29 @@ def test_v2_lag_requires_three_probes_and_five_minutes():
     assert "v2_symbol=LGHL" in rules.minute(
         NOW.replace(minute=4), snapshot_intervals=[5.0] * 20,
         probe_lags={"LGHL": [6.019] * 3}, oms_refusals=0,
+        snapshot_warmup_complete=True,
+    )[0]
+
+
+def test_v2_exact_bound_and_unseen_symbol_pooled_bound():
+    rules = SlowdownRules()
+    for minute in range(5):
+        trigger, _ = rules.minute(
+            NOW.replace(minute=minute), snapshot_intervals=[5.0] * 20,
+            probe_lags={"LGHL": [6.018] * 3, "NEW": [6.096] * 3},
+            oms_refusals=0, snapshot_warmup_complete=True,
+        )
+        assert trigger is None
+    rules = SlowdownRules()
+    for minute in range(4):
+        assert rules.minute(
+            NOW.replace(minute=minute), snapshot_intervals=[5.0] * 20,
+            probe_lags={"NEW": [6.097] * 3}, oms_refusals=0,
+            snapshot_warmup_complete=True,
+        )[0] is None
+    assert "v2_symbol=NEW" in rules.minute(
+        NOW.replace(minute=4), snapshot_intervals=[5.0] * 20,
+        probe_lags={"NEW": [6.097] * 3}, oms_refusals=0,
         snapshot_warmup_complete=True,
     )[0]
 
@@ -152,6 +210,41 @@ def test_stop_release_keeps_other_consumers_symbols(monkeypatch):
         before={"momentum-paper": {"C"}, "strategy-engine": {"A"},
                 "schwab-1m-v2": {"A", "B"}},
         stopped_at=NOW, log_offset=0,
+    )
+
+
+def test_stop_release_cannot_hide_lost_orb_ownership_behind_same_union_count(monkeypatch):
+    redis = FakeRedis({"momentum-paper": [], "strategy-engine": ["A"],
+                       "schwab-1m-v2": ["B"], "orb": []}, count=2)
+    monkeypatch.setattr(
+        "ops.health.option_a_treatment_guard._union_line_confirms",
+        lambda *_args: True,
+    )
+    assert not _release_confirmed(
+        redis, FakeSettings(),
+        before={"momentum-paper": {"C"}, "strategy-engine": {"A"},
+                "schwab-1m-v2": {"B"}, "orb": {"B", "C"}},
+        stopped_at=NOW, log_offset=0,
+    )
+
+
+def test_overlap_only_paper_release_still_requires_gateway_update_line(tmp_path: Path, monkeypatch):
+    import ops.health.option_a_treatment_guard as guard
+
+    log = tmp_path / "gateway.log"
+    log.write_text("prior line\n")
+    offset = log.stat().st_size
+    monkeypatch.setattr(guard, "GATEWAY_LOG", log)
+    redis = FakeRedis({"momentum-paper": [], "strategy-engine": ["A"]}, count=1)
+    before = {"momentum-paper": {"A"}, "strategy-engine": {"A"}}
+    assert not _release_confirmed(
+        redis, FakeSettings(), before=before, stopped_at=NOW, log_offset=offset,
+    )
+    log.write_text(log.read_text() + "[MARKET-DATA-SUBSCRIPTION-UNION] "
+                   "consumer=momentum-paper added=- removed=- count=1\n")
+    assert _union_line_confirms(log, offset, set())
+    assert _release_confirmed(
+        redis, FakeSettings(), before=before, stopped_at=NOW, log_offset=offset,
     )
 
 
@@ -227,6 +320,63 @@ def test_stop_is_paper_only_and_pages_after_owner_release(monkeypatch, tmp_path:
     assert commands == [["systemctl", "stop", "project-mai-tai-momentum-paper.service"]]
     assert pages == ["Option A paper STOP"]
     assert json.loads(audit.read_text().splitlines()[0])["reason"] == "gateway_1008"
+
+
+def test_refused_paper_stop_is_unknown_and_never_claims_owner_release(monkeypatch, tmp_path: Path):
+    import ops.health.option_a_treatment_guard as guard
+
+    log = tmp_path / "gateway.log"
+    log.write_text("")
+    monkeypatch.setattr(guard, "GATEWAY_LOG", log)
+    monkeypatch.setattr(guard, "_owners", lambda *_: {"momentum-paper": {"A"}})
+    monkeypatch.setattr(guard, "_release_confirmed", lambda *_args, **_kw: pytest.fail(
+        "owner release cannot be claimed when systemctl stop was refused"
+    ))
+    monkeypatch.setattr(guard.subprocess, "run", lambda command, **_kw: (
+        subprocess.CompletedProcess(command, 1)
+    ))
+    pages = []
+    monkeypatch.setattr(guard, "_page", lambda title, *_args, **_kw: (
+        pages.append(title) or True
+    ))
+    assert stop_paper("gateway_1008", FakeRedis({}, 0), FakeSettings(),
+                      tmp_path / "audit.jsonl") == 2
+    assert pages == ["Option A paper STOP UNKNOWN"]
+
+
+def test_fallback_release_is_verified_and_paged_once(monkeypatch, tmp_path: Path):
+    import ops.health.option_a_treatment_guard as guard
+
+    log = tmp_path / "gateway.log"
+    log.write_text("")
+    monkeypatch.setattr(guard, "GATEWAY_LOG", log)
+    monkeypatch.setattr(guard, "_owners", lambda *_: {"momentum-paper": {"A"}})
+    monkeypatch.setattr(guard.subprocess, "run", lambda command, **_kw: (
+        subprocess.CompletedProcess(command, 0)
+    ))
+    monkeypatch.setattr(guard.time, "monotonic", iter((0, 40, 50, 51)).__next__)
+    pages = []
+    monkeypatch.setattr(guard, "_page", lambda title, *_args, **_kw: (
+        pages.append(title) or True
+    ))
+
+    class RedisWithRelease(FakeRedis):
+        def __init__(self):
+            super().__init__({}, 0)
+            self.published = []
+
+        def xadd(self, _key, fields):
+            self.published.append(json.loads(fields["data"]))
+            return "2-0"
+
+    redis = RedisWithRelease()
+    monkeypatch.setattr(guard, "_release_confirmed", lambda *_args, **_kw: bool(redis.published))
+    assert stop_paper("gateway_1008", redis, FakeSettings(), tmp_path / "audit.jsonl") == 0
+    assert len(redis.published) == 1
+    assert redis.published[0]["payload"] == {
+        "consumer_name": "momentum-paper", "mode": "replace", "symbols": [],
+    }
+    assert pages == ["Option A paper STOP"]
 
 
 def test_owner_release_fallback_publishes_only_momentum_empty_replace(monkeypatch, tmp_path: Path):
