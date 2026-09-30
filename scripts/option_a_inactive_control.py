@@ -19,6 +19,10 @@ END = datetime(2026, 9, 30, 13, 40, tzinfo=UTC)
 LOG_TIME = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3})")
 WATCH = re.compile(r"watchlist updated count=(\d+) sample=([^ ]*)")
 PROBE = re.compile(r"\[V2-ATR-PROBE\] sym=([A-Z0-9.\-^]+) ts_ms=(\d+)")
+DB_SEED_DONE = re.compile(r"schwab_1m_v2 db-seed: ([A-Z0-9.\-^]+) hydrated")
+STREAM_DRAIN = re.compile(r"\[V2-STREAMER-DRAIN\] replayed \d+ buffered bars for ([A-Z0-9.\-^]+)")
+REST_WARMED = re.compile(r"\[V2-REST-WARMED\].* for ([A-Z0-9.\-^]+) ")
+DB_SEED_GAP = re.compile(r"\[V2-DB-SEED-GAP\] ([A-Z0-9.\-^]+) ")
 TRACE = re.compile(
     r"^(\S+) load=([\d.]+),([\d.]+),([\d.]+) snap_last=(\S+) hb_last=(\S+)"
 )
@@ -204,7 +208,10 @@ def summarize_v2(path: Path) -> dict:
     minute_complete: dict[datetime, bool] = {}
     probes: dict[tuple[str, datetime], float] = {}
     probe_receipts: dict[tuple[str, datetime], datetime] = {}
+    probe_candidates: list[tuple[str, datetime, datetime]] = []
+    replay_seconds: set[tuple[str, int]] = set()
     duplicates = 0
+    replay_excluded = 0
     markers = Counter()
     watch_updates = 0
     truncated_watch_updates = 0
@@ -222,6 +229,10 @@ def summarize_v2(path: Path) -> dict:
             continue
         if any(tag in line for tag in ("[V2-DB-SEED", "[V2-STREAMER-DRAIN]", "[V2-REST-WARMED]")):
             markers[line.split("[V2-", 1)[1].split("]", 1)[0]] += 1
+        for pattern in (DB_SEED_DONE, STREAM_DRAIN, REST_WARMED, DB_SEED_GAP):
+            replay_marker = pattern.search(line)
+            if replay_marker:
+                replay_seconds.add((replay_marker.group(1), int(stamp.timestamp())))
         if update:
             continue
         probe = PROBE.search(line)
@@ -231,6 +242,11 @@ def summarize_v2(path: Path) -> dict:
         bar_start = datetime.fromtimestamp(int(probe.group(2)) / 1000, UTC)
         bar_close = bar_start + timedelta(minutes=1)
         if not START <= bar_close < END:
+            continue
+        probe_candidates.append((symbol, bar_close, stamp))
+    for symbol, bar_close, stamp in probe_candidates:
+        if (symbol, int(stamp.timestamp())) in replay_seconds:
+            replay_excluded += 1
             continue
         key = symbol, bar_close
         if key in probes:
@@ -363,6 +379,7 @@ def summarize_v2(path: Path) -> dict:
         "watchlist_incomplete_minutes": sum(not complete for complete in minute_complete.values()),
         "probe_unique_total": sum(len(values) for values in by_symbol.values()),
         "probe_duplicate_total": duplicates,
+        "probe_replay_marker_excluded_total": replay_excluded,
         "seed_replay_warmup_markers": dict(markers),
         "per_symbol": per_symbol,
     }
