@@ -1,10 +1,15 @@
 # Combined 2026-09-30 install plan: FLAGGATE, restart evidence, Option A
 
-Status: **PLAN ONLY; no production write or restart authorized.** Request one
-operator GO for the exact merged `origin/main` SHA
-`1d70172609fe0f397667101792d4ed6a2e94f876` (#1070, #1073, #1072).
-If main moves, the source differs, or the reviewed baseline/stop procedure is
-not approved, stop and obtain a new exact-SHA review and GO. Do not include
+Status: **BLOCKED PLAN; no production write or restart authorized.** The
+operator chose an automatic first-session stop guard on 2026-09-30. The
+reviewed main SHA `1d70172609fe0f397667101792d4ed6a2e94f876` contains
+#1070, #1073 and #1072, but its 1008 sampler only exits with rc 3; it does
+not stop the paper service or page. The guard and its two systemd units are
+under build/review on this branch, not installed or independently pinned.
+They must merge first, so this is **not yet the final exact-SHA GO candidate**.
+After that merge, refresh this SHA, re-review the whole command list, then
+request one operator GO. If main moves, the source differs, or the reviewed
+baseline/stop procedure is not approved, stop. Do not include
 the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
 
 ## 1. Read-only preflight and hard stops
@@ -25,10 +30,12 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    either owner is absent, the Redis read is unavailable, or a replay would
    remove a scanner/v2-owned symbol, **do not restart the gateway**. Obtain
    fresh owner replaces or a separately reviewed migration plan first.
-4. Require independent approval of the accepted-with-gaps inactive control,
-   its numerical thresholds and the first-session stop coverage. If a required
-   treatment signal cannot be observed, stop the whole install before the
-   first write; a passing code review alone is not a measured treatment plan.
+4. Claude-1 approved the accepted-with-gaps inactive control after
+   recomputing load, snapshot cadence, heartbeats, LGHL lag and OMS refusals.
+   Claude-1 **did not recompute** VBIO/TGE lag rows or the OMS eligible-intent
+   denominator. Preserve those caveats. Independently review the automatic
+   treatment guard and its thresholds before a GO; if a required treatment
+   signal cannot be observed, stop the whole install before the first write.
 5. Capture hashes/backups of `/home/trader/preopen.sh`, the isolated files in
    `/home/trader/restart_evidence/`, the current checkout and service units;
    capture the existing Sunday pre-restart snapshot and the 09-29 fleet
@@ -103,7 +110,23 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    the first full 07:00-09:40 ET treatment window. Late start, unreadable log, rotation,
    truncation, or missing samples is UNKNOWN and blocks a healthy treatment
    verdict; it is never reported as zero 1008s.
-3. Apply the independently reviewed
+3. The proposed automatic owner is
+   `project-mai-tai-option-a-guard@2026-10-01.service`, running as root under
+   systemd's 15-second watchdog. It starts after the evening log rotation and
+   before 07:00 ET, supervises the separate 1008 collector, records a 1 Hz
+   load/coverage audit, and evaluates direct slowdown evidence once per
+   minute. Collector rc 3, a direct slowdown trigger, or unreadable/stalled
+   required evidence calls only `systemctl stop
+   project-mai-tai-momentum-paper.service`; the guard then verifies the
+   `momentum-paper` owner hash, union-removal log and post-stop heartbeat,
+   publishes one empty replace if needed, and pages low-priority. The
+   `project-mai-tai-option-a-guard-failure@2026-10-01.service` OnFailure unit
+   stops paper and pages if the guard crashes or misses its watchdog. Its
+   exact installed unit text and a stop/release test must be reviewed before
+   enabling it. A missing or failed guard is UNKNOWN, never an observed
+   treatment session. No paper-only stop may restart the gateway or a live
+   trading service.
+4. Apply the independently reviewed
    `FIRST_SESSION_PROTOCOL.md` and
    `INACTIVE_CONTROL_2026-09-30.md` without tuning thresholds after treatment
    begins. Any new **gateway** 1008 stops only the paper service; measured
@@ -117,7 +140,22 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    blind evidence remains UNKNOWN and pages. A service-stop page drill (board
    row 45) is **excluded** unless the exact-SHA GO explicitly approves it.
 
-## 4. Journal and decision
+## 4. Rollback is not yet preauthorized
+
+The operator GO must explicitly include one rollback to
+`3389090a7d30bdc88736a53211d968f4c82f0288` if the gateway fails to
+become healthy within the reviewed bound, scanner/v2 ownership is not
+restored, or snapshot/heartbeat cadence does not resume. Stop paper first
+and leave it stopped on rollback. The old gateway restores only the latest
+subscription event, so a checkout rollback plus gateway restart alone could
+silently drop the other live consumer. Fresh `replace` events for both the
+scanner and v2 may be required from the preserved preflight owner sets; their
+authorization and exact commands are still awaiting an operator answer.
+**Do not execute a rollback or request GO until that answer and independent
+review are incorporated into a final exact-SHA plan.** Only one rollback may
+be attempted; any inconclusive verification stops further changes and pages.
+
+## 5. Journal and decision
 
 Journal the operator GO, preflight denominators and raw paths, retained-owner
 proof, every file blob/installed hash and backup, the structured install record,
@@ -125,5 +163,5 @@ service identities, preopen diff/hash, gate return codes **with their actual
 Final calls**, sampler offsets/coverage, and any hard stop. Report the result
 as REAL FAILURE, EXPECTED BY DESIGN, or UNKNOWN after checking the relevant
 code/design, not by repeating a tool's red line. No automatic rollback or
-additional restart is authorized by this plan. The first-session result is
+additional restart is authorized by this blocked plan. The first-session result is
 `STOPPED`, `OBSERVED`, or `UNKNOWN`, not a Momentum P&L or live-trading verdict.

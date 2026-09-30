@@ -1,0 +1,19 @@
+[Unit]
+Description=Option A first-session paper stop guard for %i
+After=network-online.target redis-server.service project-mai-tai-market-data.service project-mai-tai-momentum-paper.service
+OnFailure=project-mai-tai-option-a-guard-failure@%i.service
+RefuseManualStop=yes
+
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=15s
+TimeoutStartSec=30s
+User=root
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+ExecStart=/home/trader/project-mai-tai/.venv/bin/python /home/trader/project-mai-tai/ops/health/option_a_treatment_guard.py --treatment-date %i --output-dir /home/trader/after-hours/%i/option-a-treatment
+Restart=no
+UMask=0077
+StandardOutput=journal
+StandardError=journal
