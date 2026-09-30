@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.db.models import StrategyBarHistory
-from project_mai_tai.orb_schwab_macd import schwab_completed_bar_macd_gate
+from project_mai_tai.orb_schwab_macd import MacdVerdict, schwab_completed_bar_macd_gate
 
 OPEN = datetime(2026, 9, 29, 13, 30, tzinfo=UTC)
 
@@ -57,9 +57,9 @@ def test_gate_uses_prior_completed_schwab_minute_not_forming_bar() -> None:
 
     before_close = schwab_completed_bar_macd_gate(factory, "test", OPEN + timedelta(seconds=30))
     after_close = schwab_completed_bar_macd_gate(factory, "TEST", OPEN + timedelta(minutes=1))
-    assert before_close[0] is True
+    assert before_close[0] is MacdVerdict.ALLOWED
     assert before_close[1] == "nonnegative"
-    assert after_close[0] is False
+    assert after_close[0] is MacdVerdict.NEGATIVE
     assert after_close[1] == "negative"
 
 
@@ -67,7 +67,7 @@ def test_gate_rejects_missing_prior_minute_even_with_older_history() -> None:
     factory = _factory()
     _add_bars(factory)
     assert schwab_completed_bar_macd_gate(factory, "TEST", OPEN + timedelta(minutes=1)) == (
-        False,
+        MacdVerdict.BAR_NOT_YET,
         "missing_last_closed_schwab_bar",
         None,
     )
@@ -82,7 +82,7 @@ def test_gate_rejects_internal_one_minute_hole() -> None:
         ).one()
         session.delete(row)
     assert schwab_completed_bar_macd_gate(factory, "TEST", OPEN) == (
-        False,
+        MacdVerdict.BAR_NOT_YET,
         "missing_schwab_minute",
         None,
     )
@@ -93,7 +93,7 @@ def test_gate_never_substitutes_another_feed_or_symbol() -> None:
     _add_bars(factory, strategy="orb")
     _add_bars(factory, symbol="OTHER")
     assert schwab_completed_bar_macd_gate(factory, "TEST", OPEN) == (
-        False,
+        MacdVerdict.BAR_NOT_YET,
         "insufficient_schwab_history",
         None,
     )
@@ -103,7 +103,7 @@ def test_gate_fails_closed_when_bar_store_unreadable() -> None:
     engine = create_engine("sqlite://")
     factory = sessionmaker(engine)
     assert schwab_completed_bar_macd_gate(factory, "TEST", OPEN) == (
-        False,
+        MacdVerdict.BAR_NOT_YET,
         "schwab_bar_read_error",
         None,
     )
@@ -127,5 +127,5 @@ def test_imcc_shaped_full_history_negative_refuses_even_when_last_26_looks_posit
                 open_price=close, high_price=close, low_price=close, close_price=close, volume=100,
             ))
     allowed, reason, value = schwab_completed_bar_macd_gate(factory, "IMCC", OPEN)
-    assert not allowed and reason == "negative"
+    assert allowed is MacdVerdict.NEGATIVE and reason == "negative"
     assert abs(value - expected) < 1e-10

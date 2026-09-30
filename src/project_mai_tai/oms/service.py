@@ -61,7 +61,9 @@ from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.orb_schwab_eod import close_orb_schwab_before_close, close_orb_schwab_on_signal
-from project_mai_tai.orb_schwab_macd import schwab_completed_bar_macd_gate
+from project_mai_tai.orb_schwab_macd import (
+    BAR_WAIT, MacdVerdict, last_closed_bar_close, schwab_completed_bar_macd_gate,
+)
 from project_mai_tai.orb_schwab_order_route import (
     build_orb_schwab_cancel_intent,
     orb_schwab_intent_refusal,
@@ -1478,10 +1480,10 @@ class OmsRiskService:
         if strategy_code == "orb_schwab":
             refusal = orb_schwab_intent_refusal(event, self.settings, utcnow())
             if refusal is None and event.payload.intent_type == "open":
-                allowed, macd_reason, _histogram = schwab_completed_bar_macd_gate(
+                verdict, macd_reason, _histogram = schwab_completed_bar_macd_gate(
                     self.session_factory, event.payload.symbol, utcnow()
                 )
-                if not allowed:
+                if verdict != MacdVerdict.ALLOWED:
                     refusal = f"orb_schwab_macd_{macd_reason}"
             if refusal is not None:
                 self.logger.warning(
@@ -13004,6 +13006,7 @@ class OmsRiskService:
                 .distinct()
             ).all()
         last_attempt = self.__dict__.setdefault("_orb_schwab_watch_last_attempt", {})
+        missing_close = self.__dict__.setdefault("_orb_schwab_watch_missing_close", {})
         for symbol in symbols:
             prior = last_attempt.get(symbol)
             if prior is not None and (now - prior).total_seconds() < 15:
@@ -13011,12 +13014,19 @@ class OmsRiskService:
             if now_et.hour >= 10:
                 reason = "entry_window_ended"
             else:
-                allowed, macd_reason, _histogram = await asyncio.to_thread(
+                verdict, macd_reason, _histogram = await asyncio.to_thread(
                     schwab_completed_bar_macd_gate, self.session_factory, symbol, now
                 )
-                if allowed:
+                if verdict == MacdVerdict.ALLOWED:
+                    missing_close.pop(symbol, None)
                     continue
-                reason = f"macd_{macd_reason}"
+                if verdict == MacdVerdict.BAR_NOT_YET:
+                    deadline = missing_close.setdefault(symbol, last_closed_bar_close(now)) + BAR_WAIT
+                    if now < deadline:
+                        continue
+                else:
+                    missing_close.pop(symbol, None)
+                reason = "bar_missing" if verdict == MacdVerdict.BAR_NOT_YET else f"macd_{macd_reason}"
             last_attempt[symbol] = now
             event = build_orb_schwab_cancel_intent(self.settings, symbol)
             self.logger.warning(
