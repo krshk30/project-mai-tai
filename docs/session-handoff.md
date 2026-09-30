@@ -92,7 +92,8 @@ watch reinstall. The 16:00 unconfirmed path already pages via `oms_v2_exit_relea
     Card 4 (10,000-share floor + 3 thin bars) was CONFIRMED 09-29; card 10 was ruled; card 6 was fixed (#1065).
 9. **FLAGGATE** — RULED 09-29 ("yes, have codex add the flag check to the gate"): the 06:20 gate fails if any fix flag in a running process differs from `ops/health/expected_flags.json`; CI refuses an unlisted new flag. Build = codex after the promote (board 39).
 
-## Board A — TO BE EXERCISED (built and live; waiting for the first real event; nothing to build) — as of 06:45 ET 09-30
+## Board A — TO BE EXERCISED (built and live; waiting for the first real event; nothing to build) — consolidated with the operator's whiteboard 07:10 ET 09-30
+> **Operator 09-30: this board is NOT a daily read.** Rows close on their own when the event happens; claude-1 reports a row only when its event fires (or fails). **The daily focus is Board B.** Both agents keep this PR updated in parallel with every exchange with the operator, so nothing drops off the board.
 | # | Item | Status | Evidence | Owner | Next action |
 |---|---|---|---|---|---|
 | 35 | RETRY-ONE per SELL cycle (#1065) | INSTALLED 20:08 ET (v2 1664453), TO BE EXERCISED | BKYI 09-29: 12:52 flip missed by the whole-day block (my spec error) | claude-1 | first `reset_new_segment` |
