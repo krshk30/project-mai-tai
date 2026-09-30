@@ -95,9 +95,9 @@ def summarize_trace(path: Path) -> dict:
     snapshot_reference = {}
     for hour in (7, 8, 9):
         key = str(hour)
-        measured = rolling_by_hour.get(key, [])
-        use_hour = valid_by_hour.get(key, 0) >= 20 and bool(measured)
-        reference = p95(measured if use_hour else rolling_all)
+        measured = intervals_by_hour.get(key, [])
+        use_hour = snapshots_by_hour.get(f"{hour:02d}", 0) >= 20 and bool(measured)
+        reference = p95(measured if use_hour else intervals)
         snapshot_reference[key] = {
             "source": "matching_hour" if use_hour else "whole_control_fallback",
             "control_p95_s": reference,
@@ -288,7 +288,6 @@ def summarize_v2(path: Path) -> dict:
     expected = Counter(symbol for members in minute_members.values() for symbol in members)
     rolling_by_symbol: dict[str, list[float]] = defaultdict(list)
     rolling_by_symbol_hour: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
-    pooled_rolling_hour: dict[int, list[float]] = defaultdict(list)
     minute = START
     while minute < END:
         for symbol in by_symbol_minute:
@@ -304,9 +303,12 @@ def summarize_v2(path: Path) -> dict:
             rolling_by_symbol[symbol].append(value)
             hour = minute.astimezone(ET).hour
             rolling_by_symbol_hour[symbol][hour].append(value)
-            pooled_rolling_hour[hour].append(value)
         minute += timedelta(minutes=1)
-    pooled_rolling_all = [value for values in rolling_by_symbol.values() for value in values]
+    pooled_raw_hour: dict[int, list[float]] = defaultdict(list)
+    for hourly in by_symbol_hour.values():
+        for hour, values in hourly.items():
+            pooled_raw_hour[hour].extend(values)
+    pooled_raw_all = [lag for values in by_symbol.values() for lag in values]
     per_symbol = {}
     for symbol in sorted(set(expected) | set(by_symbol)):
         first_probe_close = min(
@@ -319,15 +321,15 @@ def summarize_v2(path: Path) -> dict:
         )
         references = {}
         for hour in (7, 8, 9):
-            values = rolling_by_symbol_hour[symbol].get(hour, [])
+            values = by_symbol_hour[symbol].get(hour, [])
             if len(values) >= 20:
                 source, selected = "symbol_matching_hour", values
-            elif rolling_by_symbol[symbol]:
-                source, selected = "symbol_whole_control_fallback", rolling_by_symbol[symbol]
-            elif len(pooled_rolling_hour[hour]) >= 20:
-                source, selected = "pooled_matching_hour_no_symbol_control", pooled_rolling_hour[hour]
+            elif by_symbol[symbol]:
+                source, selected = "symbol_whole_control_fallback", by_symbol[symbol]
+            elif len(pooled_raw_hour[hour]) >= 20:
+                source, selected = "pooled_matching_hour_no_symbol_control", pooled_raw_hour[hour]
             else:
-                source, selected = "pooled_whole_control_fallback", pooled_rolling_all
+                source, selected = "pooled_whole_control_fallback", pooled_raw_all
             reference = p95(selected)
             references[str(hour)] = {
                 "source": source,

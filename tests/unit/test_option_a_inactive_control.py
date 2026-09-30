@@ -76,10 +76,10 @@ def test_v2_probe_uses_bar_close_and_watched_minutes(tmp_path: Path) -> None:
     assert result["probe_unique_total"] == 1
     assert result["probe_duplicate_total"] == 1
     assert result["per_symbol"]["TEST"]["lag_p95_s"] == 2.5
-    assert result["per_symbol"]["TEST"]["reference_by_et_hour"]["7"]["control_p95_s"] is None
+    assert result["per_symbol"]["TEST"]["reference_by_et_hour"]["7"]["control_p95_s"] == 2.5
 
 
-def test_v2_reference_uses_rolling_five_minute_p95(tmp_path: Path) -> None:
+def test_v2_reports_rolling_p95_and_raw_control_reference(tmp_path: Path) -> None:
     path = tmp_path / "v2.log"
     path.write_text(
         "2026-09-30 10:59:00,000 INFO schwab_1m_v2 watchlist updated count=1 sample=TEST warmed=1\n"
