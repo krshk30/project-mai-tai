@@ -1,0 +1,9 @@
+{
+  "pr_number": 1070,
+  "range_base": "d4f3778b69a878b1058add7e2e6a802fa03a4eee",
+  "range_head": "a9293dd9fb3881d3ac9d492eb036dfb035483ac5",
+  "reviewed_at": "2026-09-30T14:38:09Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "FLAGGATE. Requirement card (operator 09-29) matches: every catalogued settings boolean is compared with the owning RUNNING process; mismatch = REAL FAILURE, unreadable = UNKNOWN; CI refuses an unlisted boolean; read-only. Reviewed 5b032bd5 (not pinned: cwd .env second source unmodelled, 7/20 mutations survived), re-reviewed 0397f72a, pinned here after rebase onto d4f3778b: diff vs base identical to 0397f72a plus two requested tests. Evidence: focused 145 passed; mutations 27/27 killed across both rounds (incl. .env-only flag -> UNKNOWN, malformed/lowercase .env, orb/orb-schwab Settings(_env_file=None) exemption verified in orb_app.py:235, catalog inventory, rc/final-call routing, precedence); reviewer's read-only run of the 0397f72a checker on the box as trader 09-30 07:02 ET = Final call PASS checked=124/124 (91 env, 33 settings-default), 0 unknown; catalog OFF entries agree with the 09-27 flag audit. Limits stated in README: booleans only; settings-default assumes the process runs the checkout's code; a deploy adding a boolean needs the installed catalog re-copied. Pin covers merge only; install needs the operator's exact-SHA GO."
+}
