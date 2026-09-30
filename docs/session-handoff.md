@@ -24,7 +24,7 @@ env/config only when the operator asks. The author never reviews.
 
 ---
 
-# 🌙 TONIGHT 09-29 — INSTALL IN PROGRESS at `3389090a` (status 20:08 ET, claude-1 read of the box)
+# 🌙 TONIGHT 09-29 — ✅ INSTALL COMPLETE at `3389090a` (codex 20:15 ET; claude-1 verified on the box 20:18 ET)
 
 **What happened after 18:05 ET:**
 1. The operator gave GO for `ba3ebf59`.
@@ -50,7 +50,10 @@ env/config only when the operator asks. The author never reviews.
 | orb | **1665228** since 20:09:18 ET (20:14 read) · /proc ORB_ENABLED=true, PAPER_LIFECYCLE=true | ✅ new |
 | orb-schwab | **1665845** since 20:11:17 ET · unit installed · log `[ORB-SCHWAB] mode=OBSERVE_ONLY live_sending=False` · /proc observe=true / live=false · 0 tracebacks | ✅ new (observe only) |
 | preopen.sh | re-pinned 20:12 ET: DATE 2026-09-30 · SHA `3389090a` · v2 1664453 · strategy 1663666. ⚠ file mode is now 700 (was 755); fine if the 06:20 run is as `trader` | ✅ (mode noted) |
-| codex journal + its own completion statement | **not received yet (20:14 ET)** — close-out waits for it | ⏳ |
+| codex journal + completion | **"Install complete"** — `/home/trader/fleet_health/deployments-20260929.md` sha256 `764d4bda…09b55d` ✅ matches · backup `backup-3389090a-20260930T0005Z/pre-deploy.tar.gz` `417babf7…a65d3` ✅ · fleet env `048f4e66…` → `d037d456…70e4839` ✅ · orb-schwab unit `7fe3449b…3579` ✅ · preopen.sh `81ba4ed6…225769a` ✅ | ✅ |
+| health 20:18 ET | oms / strategy / v2 / orb / orb-schwab NRestarts 0; 0 tracebacks in oms, v2, strategy, orb-schwab | ✅ |
+| 06:20 gate | one-shot codex gate on 09-30, run as `trader` (owns the mode-700 preopen.sh; sudo for read-only checks verified by codex) | scheduled |
+| still UNEXERCISED (expected by design after hours) | v2 literal BOOT-HOLD release and current-session bar evidence → 06:20 gate + the first live reads | tomorrow |
 
 **Original scope table (18:05 ET), kept for the record:**
 
