@@ -855,6 +855,46 @@ def test_oms_control_loop_runs_eod_close_without_strategy_process(monkeypatch) -
     assert [r.intent_type for r in broker.submitted] == ["open", "close"]
 
 
+def test_live_orb_watchdog_gets_one_second_control_loop_opportunity(monkeypatch) -> None:
+    service, _factory_, _broker = _service(monkeypatch)
+    calls = []
+
+    async def no_op(*_args, **_kwargs):
+        return {}
+
+    async def watch():
+        calls.append("watch")
+
+    async def cadence():
+        return 5.0
+
+    for name in (
+        "sync_broker_state", "_check_webull_uncovered_shares", "_window_flatten_armed_stops",
+        "_orb_schwab_eod_close", "_v2_eod_oco_transition", "_retry_webull_eh_ladder_pending",
+        "_v2_eod_cancel_and_reexit", "_v2_rth_edge_bracket", "_v2_overnight_flatten",
+    ):
+        monkeypatch.setattr(service, name, no_op)
+    monkeypatch.setattr(service, "_orb_schwab_watchdog", watch)
+    monkeypatch.setattr(service, "_broker_sync_interval_seconds", cadence)
+
+    async def run_once():
+        stop = asyncio.Event()
+
+        async def read(_streams, *, block, count):
+            calls.append((block, count))
+            if len([call for call in calls if isinstance(call, tuple)]) == 2:
+                stop.set()
+            return []
+
+        service.redis.xread = read
+        await asyncio.wait_for(service._run_control_loop(stop), timeout=5)
+
+    asyncio.run(run_once())
+    assert calls[0] == (100, 50)
+    assert calls[1] == "watch"
+    assert calls[2] == (1000, 50)
+
+
 def _strategy_exit_service(monkeypatch, *, atr=False):
     from project_mai_tai.orb_schwab_exits import CONTEXT_KEY, completed_bar_evidence
     from project_mai_tai.strategy_core.orb_intrabar import OrbBar

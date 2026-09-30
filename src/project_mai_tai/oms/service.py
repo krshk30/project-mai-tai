@@ -1005,6 +1005,7 @@ class OmsRiskService:
         heartbeat_interval_secs = max(1, self.settings.service_heartbeat_interval_seconds)
         last_heartbeat = asyncio.get_running_loop().time()
         last_broker_sync = 0.0
+        last_orb_watch = 0.0
         while not stop_event.is_set():
             loop_now = asyncio.get_running_loop().time()
             try:
@@ -1022,6 +1023,8 @@ class OmsRiskService:
                 heartbeat_interval_secs,
                 max(0.1, broker_sync_interval_secs - (loop_now - last_broker_sync)),
             )
+            if getattr(self.settings, "orb_live_schwab_orders_enabled", False):
+                read_timeout_secs = min(read_timeout_secs, 1.0)
             try:
                 messages = await self.redis.xread(
                     self._intent_offsets,
@@ -1077,12 +1080,6 @@ class OmsRiskService:
                     raise
                 except Exception:
                     self.logger.exception("[ORB-WINDOW-FLATTEN] sweep failed")
-                try:
-                    await self._orb_schwab_watchdog()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    self.logger.exception("[OMS-ORB-SCHWAB-WATCHDOG] check unavailable")
                 try:
                     await self._orb_schwab_eod_close()
                 except asyncio.CancelledError:
@@ -1143,6 +1140,17 @@ class OmsRiskService:
                         await self._retry_pending_native_guard_rearms()
                     except Exception:
                         self.logger.exception("failed retrying pending native-stop-guard rearms")
+            if (
+                getattr(self.settings, "orb_live_schwab_orders_enabled", False)
+                and asyncio.get_running_loop().time() - last_orb_watch >= 1.0
+            ):
+                try:
+                    await self._orb_schwab_watchdog()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-ORB-SCHWAB-WATCHDOG] check unavailable")
+                last_orb_watch = asyncio.get_running_loop().time()
             if now - last_heartbeat >= heartbeat_interval_secs:
                 heartbeat_details = {
                     "adapter": self.settings.oms_adapter_label,
