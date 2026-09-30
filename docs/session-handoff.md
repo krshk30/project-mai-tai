@@ -47,10 +47,10 @@ env/config only when the operator asks. The author never reviews.
 | tracebacks since restart | oms 0 · v2 0 | ✅ |
 | watch.py | `45df60c6…` unchanged (#1059 held) | ✅ |
 | exposure | 0 non-zero positions | ✅ |
-| **orb** | 2051823 — **not yet restarted** | ⏳ pending |
-| **orb-schwab** | **not installed yet** (no unit, no log) | ⏳ pending |
-| **preopen.sh** | EXPECTED_DATE=2026-09-30, but SHA/PID still `3141bbd5` / 1329729 | ⏳ **must be re-pinned before 06:20** |
-| codex journal | not received yet | ⏳ |
+| orb | **1665228** since 20:09:18 ET (20:14 read) · /proc ORB_ENABLED=true, PAPER_LIFECYCLE=true | ✅ new |
+| orb-schwab | **1665845** since 20:11:17 ET · unit installed · log `[ORB-SCHWAB] mode=OBSERVE_ONLY live_sending=False` · /proc observe=true / live=false · 0 tracebacks | ✅ new (observe only) |
+| preopen.sh | re-pinned 20:12 ET: DATE 2026-09-30 · SHA `3389090a` · v2 1664453 · strategy 1663666. ⚠ file mode is now 700 (was 755); fine if the 06:20 run is as `trader` | ✅ (mode noted) |
+| codex journal + its own completion statement | **not received yet (20:14 ET)** — close-out waits for it | ⏳ |
 
 **Original scope table (18:05 ET), kept for the record:**
 
