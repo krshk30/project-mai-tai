@@ -4,6 +4,7 @@ import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,7 @@ from ops.health.option_a_treatment_guard import (
     _release_confirmed,
     _route_sampler_exit,
     _union_line_confirms,
+    run_guard,
     stop_paper,
 )
 
@@ -237,6 +239,21 @@ def test_stop_release_cannot_hide_lost_orb_ownership_behind_same_union_count(mon
     )
 
 
+def test_stop_release_requires_paper_owner_hash_to_be_empty(monkeypatch):
+    redis = FakeRedis({"momentum-paper": ["C"], "strategy-engine": ["A"],
+                       "schwab-1m-v2": ["B"]}, count=2)
+    monkeypatch.setattr(
+        "ops.health.option_a_treatment_guard._union_line_confirms",
+        lambda *_args: True,
+    )
+    assert not _release_confirmed(
+        redis, FakeSettings(),
+        before={"momentum-paper": {"C"}, "strategy-engine": {"A"},
+                "schwab-1m-v2": {"B"}},
+        stopped_at=NOW, log_offset=0,
+    )
+
+
 def test_overlap_only_paper_release_still_requires_gateway_update_line(tmp_path: Path, monkeypatch):
     import ops.health.option_a_treatment_guard as guard
 
@@ -371,6 +388,57 @@ def test_stop_is_paper_only_and_pages_after_owner_release(monkeypatch, tmp_path:
     assert commands == [["systemctl", "stop", "project-mai-tai-momentum-paper.service"]]
     assert pages == ["Option A paper STOP"]
     assert json.loads(audit.read_text().splitlines()[0])["reason"] == "gateway_1008"
+    page_row = json.loads(audit.read_text().splitlines()[-1])
+    assert page_row["action"] == "page_delivery"
+    assert page_row["title"] == "Option A paper STOP"
+    assert page_row["delivered"] is True
+    assert page_row["at_utc"]
+
+
+def test_page_delivery_failure_is_audited_and_not_reported_as_success(monkeypatch, tmp_path: Path):
+    import ops.health.option_a_treatment_guard as guard
+
+    log = tmp_path / "gateway.log"
+    log.write_text("")
+    monkeypatch.setattr(guard, "GATEWAY_LOG", log)
+    monkeypatch.setattr(guard, "_owners", lambda *_: {"momentum-paper": {"A"}})
+    monkeypatch.setattr(guard, "_release_confirmed", lambda *_args, **_kw: True)
+    monkeypatch.setattr(guard.subprocess, "run", lambda command, **_kw: (
+        subprocess.CompletedProcess(command, 0)
+    ))
+    monkeypatch.setattr(guard, "_page", lambda *_args, **_kw: False)
+    audit = tmp_path / "audit.jsonl"
+    assert stop_paper("test", FakeRedis({}, 0), FakeSettings(), audit) == 2
+    page_row = json.loads(audit.read_text().splitlines()[-1])
+    assert page_row["action"] == "page_delivery"
+    assert page_row["delivered"] is False
+
+
+def test_page_delivery_audit_failure_is_not_reported_as_success(monkeypatch, tmp_path: Path):
+    import ops.health.option_a_treatment_guard as guard
+
+    log = tmp_path / "gateway.log"
+    log.write_text("")
+    monkeypatch.setattr(guard, "GATEWAY_LOG", log)
+    monkeypatch.setattr(guard, "_owners", lambda *_: {"momentum-paper": {"A"}})
+    monkeypatch.setattr(guard, "_release_confirmed", lambda *_args, **_kw: True)
+    monkeypatch.setattr(guard.subprocess, "run", lambda command, **_kw: (
+        subprocess.CompletedProcess(command, 0)
+    ))
+    monkeypatch.setattr(guard, "_page", lambda *_args, **_kw: True)
+    original_audit = guard._audit
+
+    def audit_except_delivery(path, item):
+        if item["action"] == "page_delivery":
+            raise OSError("audit disk full")
+        original_audit(path, item)
+
+    monkeypatch.setattr(guard, "_audit", audit_except_delivery)
+    audit = tmp_path / "audit.jsonl"
+    assert stop_paper("test", FakeRedis({}, 0), FakeSettings(), audit) == 2
+    assert [json.loads(line)["action"] for line in audit.read_text().splitlines()] == [
+        "stop_paper", "owner_release_confirmed",
+    ]
 
 
 def test_refused_paper_stop_is_unknown_and_never_claims_owner_release(monkeypatch, tmp_path: Path):
@@ -393,6 +461,30 @@ def test_refused_paper_stop_is_unknown_and_never_claims_owner_release(monkeypatc
     assert stop_paper("gateway_1008", FakeRedis({}, 0), FakeSettings(),
                       tmp_path / "audit.jsonl") == 2
     assert pages == ["Option A paper STOP UNKNOWN"]
+
+
+def test_audit_write_error_after_stop_still_pages_unknown(monkeypatch, tmp_path: Path):
+    import ops.health.option_a_treatment_guard as guard
+
+    log = tmp_path / "gateway.log"
+    log.write_text("")
+    monkeypatch.setattr(guard, "GATEWAY_LOG", log)
+    monkeypatch.setattr(guard, "_owners", lambda *_: {"momentum-paper": {"A"}})
+    commands = []
+    monkeypatch.setattr(guard.subprocess, "run", lambda command, **_kw: (
+        commands.append(command) or subprocess.CompletedProcess(command, 0)
+    ))
+    monkeypatch.setattr(guard, "_audit", lambda *_args, **_kw: (_ for _ in ()).throw(
+        OSError("disk full")
+    ))
+    pages = []
+    monkeypatch.setattr(guard, "_page", lambda title, *_args, **_kw: (
+        pages.append(title) or True
+    ))
+    assert stop_paper("monitor_UNKNOWN", FakeRedis({}, 0), FakeSettings(),
+                      tmp_path / "audit.jsonl") == 2
+    assert commands == [["systemctl", "stop", "project-mai-tai-momentum-paper.service"]]
+    assert pages == ["Option A audit UNKNOWN"]
 
 
 def test_fallback_release_is_verified_and_paged_once(monkeypatch, tmp_path: Path):
@@ -441,8 +533,12 @@ def test_owner_release_fallback_publishes_only_momentum_empty_replace(monkeypatc
     monkeypatch.setattr(guard.subprocess, "run", lambda command, **_kw: (
         subprocess.CompletedProcess(command, 0)
     ))
-    monkeypatch.setattr(guard, "_page", lambda *_args, **_kw: True)
-    monkeypatch.setattr(guard.time, "monotonic", iter((0, 40, 50, 90)).__next__)
+    pages = []
+    monkeypatch.setattr(guard, "_page", lambda title, *_args, **_kw: (
+        pages.append(title) or True
+    ))
+    monkeypatch.setattr(guard.time, "monotonic", iter((0, 1, 40, 50, 51, 90)).__next__)
+    monkeypatch.setattr(guard.time, "sleep", lambda *_args: None)
     class RedisWithWrites(FakeRedis):
         def __init__(self):
             super().__init__({}, 0)
@@ -458,6 +554,9 @@ def test_owner_release_fallback_publishes_only_momentum_empty_replace(monkeypatc
     assert redis.published[0]["payload"] == {
         "consumer_name": "momentum-paper", "mode": "replace", "symbols": [],
     }
+    assert pages == ["Option A owner release UNKNOWN"]
+    assert not any(json.loads(line)["action"] == "owner_release_confirmed"
+                   for line in (tmp_path / "audit.jsonl").read_text().splitlines())
 
 
 def test_systemd_guard_has_watchdog_and_failure_stop():
@@ -468,3 +567,85 @@ def test_systemd_guard_has_watchdog_and_failure_stop():
     assert "OnFailure=project-mai-tai-option-a-guard-failure@%i.service" in service
     assert "systemctl stop project-mai-tai-momentum-paper.service" in fallback
     assert "Priority: low" in fallback
+    actions = [line for line in fallback.splitlines() if line.startswith("ExecStart=")]
+    assert len(actions) == 3
+    assert actions[0].startswith("ExecStart=-/usr/bin/systemctl stop project-mai-tai-momentum-paper.service")
+    assert "--emergency-stop" in actions[1]
+    assert actions[2].startswith("ExecStart=-/usr/bin/curl ")
+    assert "Priority: low" in actions[2]
+
+
+def _run_one_guard_tick(monkeypatch, tmp_path: Path, *, late: bool) -> tuple[int, list[str]]:
+    import ops.health.option_a_treatment_guard as guard
+
+    before = datetime(2026, 10, 1, 10, 59, 58, tzinfo=UTC)
+    during = datetime(2026, 10, 1, 11, 0, 1, tzinfo=UTC)
+    times = iter([before, before, before, before, during])
+
+    class Clock:
+        @staticmethod
+        def combine(*args, **kwargs):
+            return datetime.combine(*args, **kwargs)
+
+        @staticmethod
+        def now(_tz):
+            return next(times)
+
+    class PaperSampler:
+        pid = 123
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, **_kwargs):
+            return 0
+
+    class GatewayRedis:
+        def close(self):
+            pass
+
+    class Signals:
+        def __init__(self, *_args):
+            pass
+
+        def read_logs(self, *_args):
+            raise RuntimeError("monitor source blew up")
+
+    fake_redis = GatewayRedis()
+    monkeypatch.setattr(guard, "datetime", Clock)
+    monkeypatch.setattr(guard, "Settings", lambda **_kw: SimpleNamespace(
+        redis_url="redis://unused", redis_stream_prefix="mai_tai",
+    ))
+    monkeypatch.setattr(guard, "Redis", SimpleNamespace(from_url=lambda *_args, **_kw: fake_redis))
+    monkeypatch.setattr(guard, "LiveSignals", Signals)
+    monkeypatch.setattr(guard, "SamplerEvidence", lambda *_args, **_kw: SimpleNamespace(
+        read=lambda *_a: None,
+    ))
+    monkeypatch.setattr(guard.subprocess, "Popen", lambda *_args, **_kw: PaperSampler())
+    monkeypatch.setattr(guard.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(guard, "_notify_systemd", lambda *_args: None)
+    monkeypatch.setattr(guard.time, "sleep", lambda *_args: None)
+    monkeypatch.setattr(guard.time, "monotonic", iter((10, 11, 11.6 if late else 11)).__next__)
+    monkeypatch.setattr(guard.os, "getloadavg", lambda: (1.0, 1.0, 1.0))
+    stopped = []
+    monkeypatch.setattr(guard, "stop_paper", lambda reason, *_args: (
+        stopped.append(reason) or 2
+    ))
+    return run_guard(during.date(), tmp_path), stopped
+
+
+def test_monitor_exception_stops_paper_instead_of_bare_exit(monkeypatch, tmp_path: Path):
+    rc, stopped = _run_one_guard_tick(monkeypatch, tmp_path, late=False)
+    assert rc == 2
+    assert len(stopped) == 1
+    assert "monitor_UNKNOWN:RuntimeError:monitor source blew up" in stopped[0]
+
+
+def test_late_one_hz_tick_stops_paper_as_unknown(monkeypatch, tmp_path: Path):
+    rc, stopped = _run_one_guard_tick(monkeypatch, tmp_path, late=True)
+    assert rc == 2
+    assert len(stopped) == 1
+    assert "monitor_UNKNOWN:Blind:1Hz monitor tick late" in stopped[0]
