@@ -380,7 +380,10 @@ def summarize_oms(path: Path) -> dict:
         first = first or stamp
         last = stamp
         kind = None
-        if "[OMS-ABANDON-INTENT]" in line and "code=NO_FRESH_QUOTE" in line:
+        if (
+            ("[OMS-ABANDON-INTENT]" in line and "code=NO_FRESH_QUOTE" in line)
+            or ("[OMS-BROKER-REJECT]" in line and "reason=NO_FRESH_QUOTE" in line)
+        ):
             kind = "NO_FRESH_QUOTE"
         elif "no valid OMS market snapshot" in line:
             kind = "no_valid_market_snapshot"
