@@ -2,10 +2,12 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from project_mai_tai.services.orb_schwab_app import OrbSchwabService
+from project_mai_tai.fanout_outcome_consumer import session_anchor
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 
@@ -366,8 +368,19 @@ def test_observer_ten_oclock_cancels_only_hypothetical_unfilled_order(monkeypatc
     assert service._paper_positions == {}
 
 
-def test_observer_session_roll_resets_all_observation_evidence(monkeypatch):
+@pytest.mark.parametrize("today", [(2026, 9, 29), (2026, 9, 30), (2026, 10, 1)])
+def test_observer_session_roll_resets_all_observation_evidence(monkeypatch, today):
+    class FakeDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = datetime(*today, 12, tzinfo=UTC)
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    monkeypatch.setattr("project_mai_tai.services.orb_app.datetime", FakeDatetime)
     service, clock = _observer(monkeypatch)
+    # The fixture's opening session, not the machine date, owns this state.
+    service._session_date = OPEN.astimezone(ZoneInfo("America/New_York")).date()
+    service._scanner_session_start = session_anchor(OPEN)
     _observe_bars(service, clock)
     clock[0] = OPEN + timedelta(seconds=1)
     service._handle_market_data(_trade(clock[0], 5.70))
