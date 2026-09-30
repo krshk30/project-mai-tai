@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -20,6 +20,15 @@ from ops.health.option_a_treatment_guard import (
 
 
 NOW = datetime(2026, 10, 1, 11, 10, tzinfo=UTC)
+
+
+def sampler_row(stamped: datetime, status: str, *, offset: int = 100,
+                size: int = 100, new_1008: int = 0) -> dict:
+    return {
+        "sampled_at_utc": stamped.isoformat(), "status": status,
+        "device": 1, "inode": 2, "read_from_offset": offset,
+        "size_bytes": size, "new_1008_lines": new_1008,
+    }
 
 
 def test_new_gateway_1008_route_is_not_a_successful_observation():
@@ -268,26 +277,68 @@ def test_sampler_alive_but_not_writing_fails_closed(tmp_path: Path):
 
 def test_sampler_row_gap_and_1008_trigger(tmp_path: Path):
     output = tmp_path / "1008.jsonl"
-    output.write_text(json.dumps({"sampled_at_utc": NOW.isoformat(), "status": "BASELINE"}) + "\n")
+    baseline_at = NOW - timedelta(seconds=1)
+    output.write_text(json.dumps(sampler_row(baseline_at, "BASELINE")) + "\n")
     evidence = SamplerEvidence(
-        output, start=NOW, end=NOW.replace(hour=13), launched_at=NOW,
+        output, start=NOW, end=NOW.replace(hour=13), launched_at=baseline_at,
     )
-    assert evidence.read(NOW) is None
-    output.write_text(output.read_text() + json.dumps({
-        "sampled_at_utc": NOW.replace(second=1).isoformat(), "status": "STOP_TRIGGER",
-    }) + "\n")
-    assert evidence.read(NOW.replace(second=1)) == "gateway_1008"
-    assert evidence.treatment_count == 2
+    assert evidence.read(baseline_at) is None
+    output.write_text(output.read_text() + json.dumps(
+        sampler_row(NOW, "STOP_TRIGGER", size=120, new_1008=1)
+    ) + "\n")
+    assert evidence.read(NOW) == "gateway_1008"
+    assert evidence.treatment_count == 1
 
     gap = tmp_path / "gap.jsonl"
-    gap.write_text(json.dumps({"sampled_at_utc": NOW.isoformat(), "status": "BASELINE"}) + "\n")
-    missing = SamplerEvidence(gap, start=NOW, end=NOW.replace(hour=13), launched_at=NOW)
-    assert missing.read(NOW) is None
-    gap.write_text(gap.read_text() + json.dumps({
-        "sampled_at_utc": NOW.replace(second=3).isoformat(), "status": "OK",
-    }) + "\n")
+    gap.write_text(json.dumps(sampler_row(baseline_at, "BASELINE")) + "\n")
+    missing = SamplerEvidence(gap, start=NOW, end=NOW.replace(hour=13), launched_at=baseline_at)
+    assert missing.read(baseline_at) is None
+    gap.write_text(gap.read_text() + json.dumps(
+        sampler_row(NOW.replace(second=2), "OK", size=120)
+    ) + "\n")
     with pytest.raises(Blind, match="row gap"):
-        missing.read(NOW.replace(second=3))
+        missing.read(NOW.replace(second=2))
+
+
+def test_sampler_refuses_missing_or_late_initial_baseline(tmp_path: Path):
+    output = tmp_path / "1008.jsonl"
+    output.write_text(json.dumps(sampler_row(NOW, "OK")) + "\n")
+    evidence = SamplerEvidence(output, start=NOW, end=NOW + timedelta(hours=1),
+                               launched_at=NOW - timedelta(seconds=1))
+    with pytest.raises(Blind, match="missing initial .* baseline"):
+        evidence.read(NOW)
+    output.write_text(json.dumps(sampler_row(NOW, "BASELINE")) + "\n")
+    evidence = SamplerEvidence(output, start=NOW, end=NOW + timedelta(hours=1),
+                               launched_at=NOW - timedelta(seconds=1))
+    with pytest.raises(Blind, match="baseline at or after treatment start"):
+        evidence.read(NOW)
+
+
+def test_sampler_cursor_and_count_disagreement_fail_closed(tmp_path: Path):
+    baseline_at = NOW - timedelta(seconds=1)
+    output = tmp_path / "1008.jsonl"
+    for bad_baseline in (
+        sampler_row(baseline_at, "BASELINE", offset=99),
+        {"sampled_at_utc": baseline_at.isoformat(), "status": "BASELINE"},
+    ):
+        output.write_text(json.dumps(bad_baseline) + "\n")
+        evidence = SamplerEvidence(output, start=NOW, end=NOW + timedelta(hours=1),
+                                   launched_at=baseline_at)
+        with pytest.raises(Blind, match="offset unconfirmed|malformed"):
+            evidence.read(baseline_at)
+    for bad_next in (
+        sampler_row(NOW, "OK", offset=99, size=120),
+        {**sampler_row(NOW, "OK", size=120), "inode": 3},
+        sampler_row(NOW, "OK", size=120, new_1008=1),
+        sampler_row(NOW, "STOP_TRIGGER", size=120, new_1008=0),
+    ):
+        output.write_text(json.dumps(sampler_row(baseline_at, "BASELINE")) + "\n")
+        evidence = SamplerEvidence(output, start=NOW, end=NOW + timedelta(hours=1),
+                                   launched_at=baseline_at)
+        assert evidence.read(baseline_at) is None
+        output.write_text(output.read_text() + json.dumps(bad_next) + "\n")
+        with pytest.raises(Blind, match="cursor discontinuity|suppressed|no new"):
+            evidence.read(NOW)
 
 
 def test_consecutive_minute_rule_rejects_a_monitor_gap():
