@@ -70,16 +70,34 @@ def summarize_trace(path: Path) -> dict:
     snapshots.sort()
     intervals = [(b - a).total_seconds() for a, b in zip(snapshots, snapshots[1:])]
     intervals_by_hour: dict[str, list[float]] = defaultdict(list)
+    interval_ends = []
     for a, b in zip(snapshots, snapshots[1:]):
-        intervals_by_hour[str(b.astimezone(ET).hour)].append((b - a).total_seconds())
+        value = (b - a).total_seconds()
+        intervals_by_hour[str(b.astimezone(ET).hour)].append(value)
+        interval_ends.append((b, value))
     valid_minutes = sorted({stamp.astimezone(ET).strftime("%H:%M") for stamp in snapshots})
-    valid_by_hour = dict(sorted(Counter(minute[:2] for minute in valid_minutes).items()))
+    snapshots_by_hour = dict(sorted(Counter(minute[:2] for minute in valid_minutes).items()))
+    rolling_by_hour: dict[str, list[float]] = defaultdict(list)
+    rolling_all = []
+    minute = first.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    while minute < END:
+        window = [
+            value for endpoint, value in interval_ends
+            if minute - timedelta(minutes=5) < endpoint <= minute
+        ]
+        if len(window) >= 20:
+            value = p95(window)
+            assert value is not None
+            rolling_all.append(value)
+            rolling_by_hour[str(minute.astimezone(ET).hour)].append(value)
+        minute += timedelta(minutes=1)
+    valid_by_hour = {hour: len(values) for hour, values in sorted(rolling_by_hour.items())}
     snapshot_reference = {}
     for hour in (7, 8, 9):
         key = str(hour)
-        measured = intervals_by_hour.get(key, [])
-        use_hour = valid_by_hour.get(f"{hour:02d}", 0) >= 20 and bool(measured)
-        reference = p95(measured if use_hour else intervals)
+        measured = rolling_by_hour.get(key, [])
+        use_hour = valid_by_hour.get(key, 0) >= 20 and bool(measured)
+        reference = p95(measured if use_hour else rolling_all)
         snapshot_reference[key] = {
             "source": "matching_hour" if use_hour else "whole_control_fallback",
             "control_p95_s": reference,
@@ -108,10 +126,13 @@ def summarize_trace(path: Path) -> dict:
         "snapshot_interval_count": len(intervals),
         "snapshot_interval_p95_s": p95(intervals),
         "snapshot_interval_max_s": max(intervals, default=None),
+        "snapshot_rolling_5m_p95_count": len(rolling_all),
+        "snapshot_rolling_5m_control_p95_s": p95(rolling_all),
         "snapshot_interval_p95_by_et_hour_s": {
             hour: p95(values) for hour, values in sorted(intervals_by_hour.items())
         },
-        "snapshot_valid_minutes_by_et_hour": valid_by_hour,
+        "snapshot_generated_minutes_by_et_hour": snapshots_by_hour,
+        "snapshot_rolling_valid_minutes_by_et_hour": valid_by_hour,
         "snapshot_reference_by_et_hour": snapshot_reference,
     }
 
@@ -180,11 +201,13 @@ def summarize_heartbeats(paths: list[Path], trace_path: Path | None) -> dict:
 def summarize_v2(path: Path) -> dict:
     watchlist: set[str] | None = None
     minute_members: dict[datetime, set[str]] = {}
+    minute_complete: dict[datetime, bool] = {}
     probes: dict[tuple[str, datetime], float] = {}
     probe_receipts: dict[tuple[str, datetime], datetime] = {}
     duplicates = 0
     markers = Counter()
     watch_updates = 0
+    truncated_watch_updates = 0
     for line in path.open(encoding="utf-8", errors="replace"):
         stamp = log_time(line)
         if stamp is None or stamp >= END:
@@ -194,6 +217,7 @@ def summarize_v2(path: Path) -> dict:
             watchlist = set(filter(None, update.group(2).split(",")))
             if START <= stamp:
                 watch_updates += 1
+                truncated_watch_updates += int(int(update.group(1)) != len(watchlist))
         if stamp < START:
             continue
         if any(tag in line for tag in ("[V2-DB-SEED", "[V2-STREAMER-DRAIN]", "[V2-REST-WARMED]")):
@@ -218,18 +242,20 @@ def summarize_v2(path: Path) -> dict:
     # at that minute's close; this is an active-watch upper bound, not guaranteed trades.
     watchlist = None
     active_at_start = None
+    complete_at_start = False
     for line in path.open(encoding="utf-8", errors="replace"):
         stamp = log_time(line)
         if stamp is None or stamp >= END:
             continue
+        if stamp >= START:
+            break
         update = WATCH.search(line)
         if update:
             watchlist = set(filter(None, update.group(2).split(",")))
-        if stamp < START:
-            active_at_start = sorted(watchlist) if watchlist is not None else None
-            continue
-        break
+            complete_at_start = int(update.group(1)) == len(watchlist)
+        active_at_start = sorted(watchlist) if watchlist is not None else None
     watchlist = set(active_at_start) if active_at_start is not None else None
+    complete = complete_at_start
     updates = []
     for line in path.open(encoding="utf-8", errors="replace"):
         stamp = log_time(line)
@@ -237,41 +263,71 @@ def summarize_v2(path: Path) -> dict:
             continue
         update = WATCH.search(line)
         if update:
-            updates.append((stamp, set(filter(None, update.group(2).split(",")))))
+            sample = set(filter(None, update.group(2).split(",")))
+            updates.append((stamp, sample, int(update.group(1)) == len(sample)))
     minute = START
     index = 0
     while minute < END:
         while index < len(updates) and updates[index][0] < minute:
             watchlist = updates[index][1]
+            complete = updates[index][2]
             index += 1
         minute_members[minute] = set(watchlist or ())
+        minute_complete[minute] = complete
         minute += timedelta(minutes=1)
     by_symbol: dict[str, list[float]] = defaultdict(list)
     by_symbol_hour: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    by_symbol_minute: dict[str, dict[datetime, list[float]]] = defaultdict(lambda: defaultdict(list))
     for (symbol, bar_close), lag in probes.items():
         if symbol not in minute_members.get(bar_close, set()):
             continue
         by_symbol[symbol].append(lag)
-        by_symbol_hour[symbol][probe_receipts[(symbol, bar_close)].astimezone(ET).hour].append(lag)
+        received = probe_receipts[(symbol, bar_close)]
+        by_symbol_hour[symbol][received.astimezone(ET).hour].append(lag)
+        by_symbol_minute[symbol][received.replace(second=0, microsecond=0)].append(lag)
     expected = Counter(symbol for members in minute_members.values() for symbol in members)
-    pooled_by_hour: dict[int, list[float]] = defaultdict(list)
-    for hourly in by_symbol_hour.values():
-        for hour, values in hourly.items():
-            pooled_by_hour[hour].extend(values)
-    pooled_all = [lag for values in by_symbol.values() for lag in values]
+    rolling_by_symbol: dict[str, list[float]] = defaultdict(list)
+    rolling_by_symbol_hour: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    pooled_rolling_hour: dict[int, list[float]] = defaultdict(list)
+    minute = START
+    while minute < END:
+        for symbol in by_symbol_minute:
+            window = [
+                lag
+                for offset in range(5)
+                for lag in by_symbol_minute[symbol].get(minute - timedelta(minutes=offset), ())
+            ]
+            if len(window) < 3:
+                continue
+            value = p95(window)
+            assert value is not None
+            rolling_by_symbol[symbol].append(value)
+            hour = minute.astimezone(ET).hour
+            rolling_by_symbol_hour[symbol][hour].append(value)
+            pooled_rolling_hour[hour].append(value)
+        minute += timedelta(minutes=1)
+    pooled_rolling_all = [value for values in rolling_by_symbol.values() for value in values]
     per_symbol = {}
     for symbol in sorted(set(expected) | set(by_symbol)):
+        first_probe_close = min(
+            (close for candidate, close in probes if candidate == symbol and candidate in minute_members.get(close, set())),
+            default=None,
+        )
+        expected_after_first_probe = sum(
+            first_probe_close is not None and close >= first_probe_close and symbol in members
+            for close, members in minute_members.items()
+        )
         references = {}
         for hour in (7, 8, 9):
-            values = by_symbol_hour[symbol].get(hour, [])
+            values = rolling_by_symbol_hour[symbol].get(hour, [])
             if len(values) >= 20:
                 source, selected = "symbol_matching_hour", values
-            elif by_symbol[symbol]:
-                source, selected = "symbol_whole_control_fallback", by_symbol[symbol]
-            elif len(pooled_by_hour[hour]) >= 20:
-                source, selected = "pooled_matching_hour_no_symbol_control", pooled_by_hour[hour]
+            elif rolling_by_symbol[symbol]:
+                source, selected = "symbol_whole_control_fallback", rolling_by_symbol[symbol]
+            elif len(pooled_rolling_hour[hour]) >= 20:
+                source, selected = "pooled_matching_hour_no_symbol_control", pooled_rolling_hour[hour]
             else:
-                source, selected = "pooled_whole_control_fallback", pooled_all
+                source, selected = "pooled_whole_control_fallback", pooled_rolling_all
             reference = p95(selected)
             references[str(hour)] = {
                 "source": source,
@@ -280,21 +336,29 @@ def summarize_v2(path: Path) -> dict:
             }
         per_symbol[symbol] = {
             "eligible_live_probes": len(by_symbol[symbol]),
-            "expected_active_watch_minutes": expected[symbol],
+            "known_active_watch_minutes": expected[symbol],
+            "expected_minutes_after_first_live_probe": expected_after_first_probe,
+            "first_live_probe_bar_close_et": display(first_probe_close),
             "lag_p95_s": p95(by_symbol[symbol]),
             "lag_max_s": max(by_symbol[symbol], default=None),
+            "rolling_5m_p95_count": len(rolling_by_symbol[symbol]),
+            "rolling_5m_p95_s": p95(rolling_by_symbol[symbol]),
             "lag_p95_by_et_hour_s": {
                 str(hour): p95(values) for hour, values in sorted(by_symbol_hour[symbol].items())
             },
-            "valid_minutes_by_et_hour": {
-                str(hour): len(values) for hour, values in sorted(by_symbol_hour[symbol].items())
+            "rolling_valid_minutes_by_et_hour": {
+                str(hour): len(values)
+                for hour, values in sorted(rolling_by_symbol_hour[symbol].items())
             },
             "reference_by_et_hour": references,
         }
     return {
         "source": str(path),
         "watchlist_at_start": active_at_start,
+        "watchlist_at_start_complete": complete_at_start,
         "watchlist_updates_in_window": watch_updates,
+        "watchlist_truncated_updates_in_window": truncated_watch_updates,
+        "watchlist_incomplete_minutes": sum(not complete for complete in minute_complete.values()),
         "probe_unique_total": sum(len(values) for values in by_symbol.values()),
         "probe_duplicate_total": duplicates,
         "seed_replay_warmup_markers": dict(markers),

@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from scripts import option_a_inactive_control as control
@@ -21,6 +22,26 @@ def test_trace_reports_observed_and_whole_window_coverage_separately(tmp_path: P
     assert result["load_over_3_5_unique_seconds"] == 1
     assert result["snapshot_interval_p95_s"] == 5.0
     assert result["snapshot_reference_by_et_hour"]["7"]["source"] == "whole_control_fallback"
+
+
+def test_snapshot_reference_requires_rolling_window_with_twenty_intervals(tmp_path: Path) -> None:
+    path = tmp_path / "trace.txt"
+    start = datetime(2026, 9, 30, 11, 30, tzinfo=UTC)
+    rows = []
+    for index in range(85):
+        stamp = start + timedelta(seconds=5 * index)
+        stream_id = f"{int(stamp.timestamp() * 1000)}-0"
+        rows.append(
+            f"{stamp.isoformat().replace('+00:00', 'Z')} "
+            f"load=2.0,2.0,2.0 snap_last={stream_id} hb_last=1-0"
+        )
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    result = control.summarize_trace(path)
+
+    assert result["snapshot_rolling_5m_p95_count"] > 0
+    assert result["snapshot_reference_by_et_hour"]["7"]["control_p95_s"] == 5.0
+    assert result["snapshot_reference_by_et_hour"]["7"]["stop_strictly_above_s"] == 10.0
 
 
 def test_heartbeat_dumps_dedupe_events_and_keep_gateway_status(tmp_path: Path) -> None:
@@ -55,7 +76,40 @@ def test_v2_probe_uses_bar_close_and_watched_minutes(tmp_path: Path) -> None:
     assert result["probe_unique_total"] == 1
     assert result["probe_duplicate_total"] == 1
     assert result["per_symbol"]["TEST"]["lag_p95_s"] == 2.5
-    assert result["per_symbol"]["TEST"]["reference_by_et_hour"]["7"]["source"] == "symbol_whole_control_fallback"
+    assert result["per_symbol"]["TEST"]["reference_by_et_hour"]["7"]["control_p95_s"] is None
+
+
+def test_v2_reference_uses_rolling_five_minute_p95(tmp_path: Path) -> None:
+    path = tmp_path / "v2.log"
+    path.write_text(
+        "2026-09-30 10:59:00,000 INFO schwab_1m_v2 watchlist updated count=1 sample=TEST warmed=1\n"
+        "2026-09-30 11:01:01,000 INFO [V2-ATR-PROBE] sym=TEST ts_ms=1790766000000\n"
+        "2026-09-30 11:02:02,000 INFO [V2-ATR-PROBE] sym=TEST ts_ms=1790766060000\n"
+        "2026-09-30 11:03:03,000 INFO [V2-ATR-PROBE] sym=TEST ts_ms=1790766120000\n",
+        encoding="utf-8",
+    )
+
+    result = control.summarize_v2(path)["per_symbol"]["TEST"]
+
+    assert result["rolling_5m_p95_count"] >= 1
+    assert result["reference_by_et_hour"]["7"]["source"] == "symbol_whole_control_fallback"
+    assert result["reference_by_et_hour"]["7"]["control_p95_s"] == 3.0
+    assert result["reference_by_et_hour"]["7"]["stop_strictly_above_s"] == 6.0
+
+
+def test_v2_truncated_watchlist_sample_is_reported_as_incomplete(tmp_path: Path) -> None:
+    path = tmp_path / "v2.log"
+    path.write_text(
+        "2026-09-30 10:59:00,000 INFO schwab_1m_v2 watchlist updated count=6 sample=A,B,C,D,E warmed=6\n"
+        "2026-09-30 11:01:00,000 INFO schwab_1m_v2 watchlist updated count=2 sample=A,B warmed=2\n",
+        encoding="utf-8",
+    )
+
+    result = control.summarize_v2(path)
+
+    assert result["watchlist_at_start_complete"] is False
+    assert result["watchlist_incomplete_minutes"] == 2
+    assert result["watchlist_truncated_updates_in_window"] == 0
 
 
 def test_oms_counts_both_direct_refusal_kinds(tmp_path: Path) -> None:
