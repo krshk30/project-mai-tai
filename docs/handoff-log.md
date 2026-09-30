@@ -15,6 +15,60 @@
 
 ---
 
+## 2026-09-29 — Rule #1, a spec that said "per day", and a five-PR night that shipped without Momentum
+
+**Morning: RULE #1.** The 06:24 gate returned rc=1 on bar continuity (0 of 1,266 live pairs bracketing Monday's 18:42 v2 restart).
+Both agents relayed it as a failure. The REST backfill covers restart gaps by design, so the check, not the system, was wrong.
+The operator made it rule number one for both agents: before any failure or recommendation, read the code and the design and call
+it REAL FAILURE, EXPECTED BY DESIGN, or UNKNOWN. Codex fixed the gate three ways (#1061); it was installed as an isolated copy at 18:03 ET.
+
+**BKYI pre-market (parked).** The chart BUY at 07:47 was missed because Schwab serves no bars before 07:00 and v2's ATR starts LONG at
+its first bar. A 125-stock-day backtest put a Massive seed at about break-even (+35 BUYs, 21/13) and Schwab-tick bars at +14. The
+operator parked it with both options recorded (board 32).
+
+**#1059 and WBREAD1.** The INC1 auto-close review found that the Webull adapter turns a non-429 read error into `[]`, which becomes a
+fresh zero for every live:orb symbol (5 events in 30 days, no harm yet). #1059 now closes only after two reads a minute apart. A long
+outage still fools it, so its install is held until WBREAD1 (#1063, draft) makes a failed read UNKNOWN.
+
+**Trades.**
+- BKYI 11:00 and the 11:21 retry: both brokers, confirmation exits at about −4%.
+- DXST: Webull only (Schwab policy refusal), OCO target +4.9%. That exercised #1046 (child fill recorded before the row closed); row 4 closed.
+- Webull exits 3/3 clean → pass mark 3 of 5.
+- BKYI's 12:52 flip was missed because RETRY-ONE blocked the whole day. That traced to claude-1's own spec #1039, which turned the
+  operator's "skip the next flip" into "one retry per name per day".
+- MSGY's 15:26 flip was missed by design: after the Schwab policy refusal only the Webull leg could trade, and its rest was pulled
+  on thin bars. The operator confirmed the 10,000-share floor.
+
+**The requirement card.** "You are the reviewer… give me the plain simple English… this is what this PR has." Every rule PR now gets
+a 2–3 sentence card checked against the operator's own words, before the build and before the pin. A first audit of 11 live rules
+found two mismatches:
+- retry, fixed by #1065 (per SELL cycle);
+- after 16:00: floor mode armed a +2% ride at +5% in every software-managed period, 86 times in ~22 days.
+The operator ruled one exit in every session (+5/−8/confirmation/ATR flip, no floor), a 16:00 cancel-and-confirm, and "sell anyway"
+at 19:55. That became #1066.
+
+**ORB Schwab (#1064).** The operator chose a simple rule set: MACD ≥0 on the completed Schwab bar, body <45% judged at the break-bar
+close, and ATR purple on later completed Schwab bars. Review caught three problems:
+- MACD from 26 seeded bars disagreed with v2's in 7 of 96 minutes;
+- a replace-unknown could leave an untracked parent;
+- a 3 s evidence grace would have paged falsely on nearly every trade (RTH bar save lag p99 33 s → #1067, 90 s).
+It ships observe-only; live orders stay OFF until the operator decides.
+
+**Deploy = flag ON.** The operator restated it: a flag is only a rollback switch, and deploying one OFF means it is never validated.
+The ORB live flag is the one exception.
+
+**Night.** The GO for `ba3ebf59` stopped at #1060's own hard stop (the Momentum inactive baseline was UNKNOWN) — the gate worked.
+The operator chose option C: #1068 reverted #1060 (tree identical to the reviewed version; its commits were re-created only to carry
+codex's agent marker). **`3389090a` installed 20:05–20:12 ET**:
+- oms 1663656, strategy 1663666, v2 1664453, orb 1665228, orb-schwab 1665845 (OBSERVE_ONLY);
+- floor=false, target 5, stop 8, RETRY_ONE=true;
+- market-data and Momentum untouched; the watch unchanged; preopen re-pinned for 09-30.
+claude-1 verified the journal hashes and `/proc` on the box.
+
+**Mine to own:** the "per day" spec; relaying the 06:24 rc=1 raw; explaining BKYI before simulating it.
+
+---
+
 ## 2026-09-28 — a CLRO miss became three fixes, the roles were reset, and one evening deploy
 
 **Morning.** Pre-open gate 9/9 at 06:50 ET. GAPHOLD's first live day passed: one `no_live_bar_this_session` skip
