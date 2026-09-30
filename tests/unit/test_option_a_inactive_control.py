@@ -117,14 +117,16 @@ def test_oms_counts_both_direct_refusal_kinds(tmp_path: Path) -> None:
     path.write_text(
         "2026-09-30 11:01:00,000 INFO [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=TEST\n"
         "2026-09-30 11:02:00,000 WARNING no valid OMS market snapshot\n"
+        "2026-09-30 11:03:00,000 WARNING [OMS-BROKER-REJECT] "
+        "reason=NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot\n"
         "2026-09-30 13:40:00,000 INFO [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=TEST\n",
         encoding="utf-8",
     )
 
     result = control.summarize_oms(path)
 
-    assert result["timestamped_records_in_window"] == 2
+    assert result["timestamped_records_in_window"] == 3
     assert result["direct_refusals"] == {
-        "NO_FRESH_QUOTE": 1,
+        "NO_FRESH_QUOTE": 2,
         "no_valid_market_snapshot": 1,
     }
