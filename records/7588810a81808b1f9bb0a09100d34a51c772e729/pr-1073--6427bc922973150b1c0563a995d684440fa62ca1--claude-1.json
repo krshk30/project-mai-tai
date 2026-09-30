@@ -1,0 +1,9 @@
+{
+  "pr_number": 1073,
+  "range_base": "6427bc922973150b1c0563a995d684440fa62ca1",
+  "range_head": "7588810a81808b1f9bb0a09100d34a51c772e729",
+  "reviewed_at": "2026-09-30T15:25:27Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Restart-evidence gate fix (ops/health only). Trigger: the 09-30 06:21 ET gate printed REAL FAILURE for ORB, which the approved 09-29 install restarted by plan (codex journal line 55); claude-1 called it EXPECTED BY DESIGN, check-input defect. Reviewed three heads (5448626c, 32384f9d not pinned). At 7588810a: a structured install record must classify every monitored unit and match the snapshot and the CLI declarations; an undeclared PID change is UNKNOWN (blocking), an NRestarts increase is REAL FAILURE (automatic restart), a deliberately inactive unit starting is REAL FAILURE; orb-schwab tracked as an optional/new service with health, start-after-snapshot and NRestarts=0 checks. Evidence: 109 focused pass; reviewer mutations 19/20 killed (A-K, N1, N2, R1-R6); survivor L = the 'Services not restarted' row LABEL only, the final call is driven by the failures/unknowns lists (cosmetic, follow-up). CI validate x2 pass. The real 09-29 prose journal reads UNKNOWN until control, market-capture, reconciler and tv-alerts are classified - intended. Pin covers merge only; the installed isolated copy and preopen.sh re-pin need the operator's exact-SHA GO."
+}
