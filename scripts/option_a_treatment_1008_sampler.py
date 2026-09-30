@@ -11,14 +11,26 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, time as clock_time
+from datetime import UTC, date, datetime, time as clock_time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 
 ET = ZoneInfo("America/New_York")
 MARKER = b"1008"
+
+
+def start_deadline_utc(treatment_date: date) -> datetime:
+    """The treatment day's 07:00 ET boundary, including DST changes."""
+    return datetime.combine(treatment_date, clock_time(7, 0), tzinfo=ET).astimezone(UTC)
+
+
+def start_is_before_deadline(now: datetime, treatment_date: date) -> bool:
+    if now.tzinfo is None:
+        raise ValueError("start time must be timezone-aware")
+    return now.astimezone(UTC) < start_deadline_utc(treatment_date)
 
 
 @dataclass(frozen=True)
@@ -67,18 +79,22 @@ def sample_log(path: Path, cursor: Cursor | None, *, sampled_at: datetime) -> tu
     return row, Cursor(stat.st_dev, stat.st_ino, stat.st_size, chunks[-1])
 
 
-def main() -> int:
+def main(
+    argv: list[str] | None = None, *, clock: Callable[[], datetime] | None = None
+) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gateway-log", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--treatment-date", type=date.fromisoformat, required=True)
     parser.add_argument("--end-utc", type=datetime.fromisoformat, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     end = args.end_utc
     if end.tzinfo is None:
         parser.error("--end-utc must include a UTC offset")
-    now = datetime.now(UTC)
-    if now.astimezone(ET).time() >= clock_time(7, 0):
-        parser.error("start before 07:00 ET to retain full treatment coverage")
+    read_clock = clock or (lambda: datetime.now(UTC))
+    now = read_clock()
+    if not start_is_before_deadline(now, args.treatment_date):
+        parser.error(f"start before {args.treatment_date} 07:00 ET to retain full treatment coverage")
 
     cursor = None
     next_sample = time.monotonic()
@@ -96,7 +112,7 @@ def main() -> int:
                 return 2
             next_sample += 1.0
             time.sleep(max(0.0, next_sample - time.monotonic()))
-            now = datetime.now(UTC)
+            now = read_clock()
     return 0
 
 
