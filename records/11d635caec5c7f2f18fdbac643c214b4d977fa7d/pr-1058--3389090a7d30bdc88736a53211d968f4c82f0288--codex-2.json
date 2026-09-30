@@ -1,0 +1,9 @@
+{
+  "pr_number": 1058,
+  "range_base": "3389090a7d30bdc88736a53211d968f4c82f0288",
+  "range_head": "11d635caec5c7f2f18fdbac643c214b4d977fa7d",
+  "reviewed_at": "2026-09-30T00:54:17Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independent docs review: verified 3389090a deployment table against fleet journal, moved superseded snapshots to historical log, current board decision references resolve, 16 Claude-only commits, three-file scope, frozen manifest byte-identical to 93/93 journal entries (SHA256 5030db9f), and diff check clean."
+}
