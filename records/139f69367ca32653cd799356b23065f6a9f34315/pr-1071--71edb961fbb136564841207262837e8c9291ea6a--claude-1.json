@@ -1,0 +1,9 @@
+{
+  "pr_number": 1071,
+  "range_base": "71edb961fbb136564841207262837e8c9291ea6a",
+  "range_head": "139f69367ca32653cd799356b23065f6a9f34315",
+  "reviewed_at": "2026-09-30T11:00:41Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Test-only fix of the date-fixed ORB session-roll test; no src change (diff = tests/unit/test_orb_schwab_service.py only). Reviewer ran the WHOLE file with the service clock faked in orb_app and orb_schwab_app to 2026-09-29, 09-30, 10-01, 10-05 and 2027-01-04: 27 passed each. Control: main's copy of the file under the same fake fails 1 on 09-30 and passes 09-29 (reproduces the defect). Mutations: deleting self._opening_orders.clear() -> 3 failed; making _maybe_roll_session return early -> 3 failed. CI validate x2 pass at this head."
+}
