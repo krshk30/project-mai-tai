@@ -54,6 +54,8 @@ DEFAULT_SERVICES = (
     "strategy",
     "tv-alerts",
 )
+OPTIONAL_SERVICES = ("orb-schwab",)
+KNOWN_SERVICES = DEFAULT_SERVICES + OPTIONAL_SERVICES
 INTENTIONALLY_INACTIVE_SERVICES = frozenset({"tv-alerts"})
 LOG_TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})")
 FIELD = re.compile(r"\b([a-z_]+)=([^ ]+)")
@@ -156,6 +158,17 @@ def service_state(service: str, runner: Runner = run_checked) -> ServiceState:
         n_restarts=n_restarts,
         started_at_utc=started,
     )
+
+
+def _installed_optional_services(runner: Runner) -> tuple[str, ...]:
+    installed = []
+    for service in OPTIONAL_SERVICES:
+        load_state = _systemctl_value(service, "LoadState", runner)
+        if load_state == "loaded":
+            installed.append(service)
+        elif load_state != "not-found":
+            raise EvidenceUnknown(f"unreadable unit load state for {service}: {load_state}")
+    return tuple(installed)
 
 
 def format_moment(value: datetime) -> str:
@@ -987,6 +1000,7 @@ def snapshot(path: Path, runner: Runner = run_checked) -> bool:
     migration_head, _, _, _ = _migration_evidence(runner, columns=[], constraints=[])
     watchlist_at, watchlist_symbols = _latest_v2_watchlist(runner, now=captured)
     flat = accounts_found == len(LIVE_ACCOUNTS) and managed_open == 0 and positions_nonzero == 0
+    tracked_services = DEFAULT_SERVICES + _installed_optional_services(runner)
     payload = {
         "schema_version": 3,
         "captured_at_utc": captured.isoformat(),
@@ -1002,13 +1016,13 @@ def snapshot(path: Path, runner: Runner = run_checked) -> bool:
             "open_managed_rows": managed_open,
             "nonzero_account_position_rows": positions_nonzero,
         },
-        "services": {name: asdict(service_state(name, runner)) for name in DEFAULT_SERVICES},
+        "services": {name: asdict(service_state(name, runner)) for name in tracked_services},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
         f"{'PASS' if flat else 'FAIL'}: "
-        f"captured services={len(DEFAULT_SERVICES)}/{len(DEFAULT_SERVICES)}; "
+        f"captured services={len(tracked_services)}/{len(tracked_services)}; "
         f"live accounts={accounts_found}/{len(LIVE_ACCOUNTS)}; "
         f"open managed rows={managed_open}; "
         f"nonzero account-position rows={positions_nonzero}; "
@@ -1071,14 +1085,21 @@ def _integer_fields(line: str, *names: str) -> dict[str, int]:
 def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     before = _load_snapshot(args.snapshot)
     restarted = set(args.restarted)
+    new_services = set(getattr(args, "new_service", []))
     expected_quiet_services = set(args.expected_quiet_service)
     if V2_SERVICE not in restarted:
         raise EvidenceUnknown(
             f"C6 is the v2 restart artifact; --restarted must include {V2_SERVICE}"
         )
-    unknown_services = restarted - set(DEFAULT_SERVICES)
+    unknown_services = restarted - set(KNOWN_SERVICES)
     if unknown_services:
         raise EvidenceUnknown(f"unknown restarted service(s): {','.join(sorted(unknown_services))}")
+    if new_services - set(OPTIONAL_SERVICES):
+        raise EvidenceUnknown(
+            f"unknown new service(s): {','.join(sorted(new_services - set(OPTIONAL_SERVICES)))}"
+        )
+    if restarted & new_services:
+        raise EvidenceUnknown("a service cannot be both restarted and newly installed")
     unexpected_quiet_declarations = expected_quiet_services - restarted
     if unexpected_quiet_declarations:
         raise EvidenceUnknown(
@@ -1094,11 +1115,36 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
             "--no-schema-change cannot be combined with schema-column/schema-constraint evidence"
         )
 
-    current = {name: service_state(name, runner) for name in DEFAULT_SERVICES}
     before_services = before["services"]
+    untracked_restarts = restarted - set(before_services)
+    if untracked_restarts:
+        raise EvidenceUnknown(
+            "declared restart has no pre-restart PID in snapshot: "
+            + ",".join(sorted(untracked_restarts))
+            + "; use --new-service for a genuinely new observer"
+        )
+    installed_optional = set(_installed_optional_services(runner))
+    observed = (
+        set(DEFAULT_SERVICES) | installed_optional | (set(before_services) & set(OPTIONAL_SERVICES))
+    )
+    current = {name: service_state(name, runner) for name in sorted(observed)}
     failures: list[str] = []
     unknowns: list[str] = []
     rows: list[tuple[str, str, str]] = []
+
+    absent_new = new_services - installed_optional
+    if absent_new:
+        unknowns.append(f"declared new service not installed: {','.join(sorted(absent_new))}")
+    undeclared_new = installed_optional - set(before_services) - new_services
+    if undeclared_new:
+        unknowns.append(
+            f"installed service missing from snapshot and change declaration: {','.join(sorted(undeclared_new))}"
+        )
+    already_present = new_services & set(before_services)
+    if already_present:
+        unknowns.append(
+            f"declared new service already present in snapshot: {','.join(sorted(already_present))}"
+        )
 
     restarted_ok = 0
     for service in sorted(restarted):
@@ -1128,7 +1174,37 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         )
     )
 
-    untouched = sorted(set(DEFAULT_SERVICES) - restarted)
+    new_ok = 0
+    for service in sorted(new_services & installed_optional - already_present):
+        state = current[service]
+        good = (
+            state.pid > 0
+            and state.active_state == "active"
+            and state.sub_state == "running"
+            and state.n_restarts == 0
+            and datetime.fromisoformat(state.started_at_utc)
+            > _parse_utc(str(before.get("captured_at_utc", "")), label="snapshot capture")
+        )
+        new_ok += int(good)
+        if not good:
+            failures.append(
+                f"new service {service} did not start active/running after the snapshot"
+            )
+    if new_services:
+        rows.append(
+            (
+                "New services",
+                f"active/running after snapshot={new_ok}/{len(new_services)}; "
+                + ",".join(sorted(new_services)),
+                "PASS"
+                if new_ok == len(new_services)
+                else "UNKNOWN"
+                if absent_new or already_present
+                else "FAIL",
+            )
+        )
+
+    untouched = sorted((set(before_services) & observed) - restarted - new_services)
     unchanged = [
         name
         for name in untouched
@@ -1138,8 +1214,14 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
         and int(before_services[name]["n_restarts"]) == current[name].n_restarts
     ]
     changed = [name for name in untouched if name not in unchanged]
+    unexpected_active: list[str] = []
     if changed:
-        failures.append(f"deliberately untouched service PID changed: {','.join(changed)}")
+        unexpected_active = sorted(set(changed) & INTENTIONALLY_INACTIVE_SERVICES)
+        undeclared = sorted(set(changed) - set(unexpected_active))
+        if unexpected_active:
+            failures.append(f"deliberately inactive service started: {','.join(unexpected_active)}")
+        if undeclared:
+            unknowns.append(f"service changed without a declared restart: {','.join(undeclared)}")
     rows.append(
         (
             "Services not restarted",
@@ -1147,7 +1229,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
             + "; ".join(
                 f"{name}={before_services[name]['pid']}->{current[name].pid}" for name in untouched
             ),
-            "PASS" if not changed else "FAIL",
+            "PASS" if not changed else "FAIL" if unexpected_active else "UNKNOWN",
         )
     )
 
@@ -1218,7 +1300,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     flag_details: list[str] = []
     for encoded in args.expect_flag:
         service, key, expected = _parse_expected_flag(encoded)
-        if service not in restarted:
+        if service not in restarted | new_services:
             raise EvidenceUnknown(f"flag check names non-restarted service {service!r}")
         state = current[service]
         actual = _process_environment(state.pid, runner).get(key, "<absent>")
@@ -1414,7 +1496,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     traceback_detail: list[str] = []
     services_without_records: list[str] = []
     unexpected_silent_services: list[str] = []
-    for service in sorted(restarted):
+    for service in sorted(restarted | (new_services & installed_optional - already_present)):
         start = datetime.fromisoformat(current[service].started_at_utc).astimezone(UTC)
         evidence = parse_log_files(_log_files(service, runner, since=start), since=start)
         traceback_total += len(evidence.traceback_times_utc)
@@ -1502,7 +1584,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     after = sub.add_parser("report", help="collect and grade post-restart evidence")
     after.add_argument("--snapshot", required=True, type=Path)
-    after.add_argument("--restarted", action="append", required=True, choices=DEFAULT_SERVICES)
+    after.add_argument("--restarted", action="append", required=True, choices=KNOWN_SERVICES)
+    after.add_argument("--new-service", action="append", default=[], choices=OPTIONAL_SERVICES)
     after.add_argument(
         "--expected-quiet-service", action="append", default=[], choices=DEFAULT_SERVICES
     )
