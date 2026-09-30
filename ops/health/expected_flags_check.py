@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
+from io import StringIO
 import json
 from pathlib import Path
 import subprocess
 from typing import Callable, get_args
 
+from dotenv.parser import parse_stream
 from pydantic import AliasChoices, TypeAdapter, ValidationError
 
 from project_mai_tai.settings import Settings
@@ -27,6 +30,15 @@ SERVICE_UNITS = {
     "strategy": "project-mai-tai-strategy.service",
 }
 BOOL = TypeAdapter(bool)
+DOTENV_DISABLED_SERVICES = frozenset({"orb", "orb-schwab"})
+
+
+@dataclass(frozen=True)
+class ServiceEnvironment:
+    pid: int
+    environ: dict[str, str]
+    dotenv_names: frozenset[str]
+    dotenv_path: Path | None
 
 
 class CatalogError(ValueError):
@@ -93,13 +105,20 @@ def _environment_names(name: str, field: object) -> list[str]:
     return [f"MAI_TAI_{name.upper()}"]
 
 
-def flag_value(name: str, environ: dict[str, str]) -> tuple[bool, str]:
+def flag_value(
+    name: str,
+    environ: dict[str, str],
+    dotenv_names: frozenset[str] = frozenset(),
+    dotenv_path: Path | None = None,
+) -> tuple[bool, str]:
     field = boolean_fields()[name]
     keys = _environment_names(name, field)
     upper_environ = {key.upper(): value for key, value in environ.items()}
     for key in keys:
         if key in upper_environ:
             return BOOL.validate_python(upper_environ[key]), f"env:{key}"
+    if any(key in dotenv_names for key in keys):
+        raise ValueError(f"{name}: present in {dotenv_path} but absent from process environment")
     default = field.get_default(call_default_factory=True)
     if type(default) is not bool:
         raise ValueError(f"{name}: no boolean settings default")
@@ -127,7 +146,9 @@ def _unit_pid(service: str) -> int:
     return pid
 
 
-def read_service_environment(service: str, proc_root: Path = Path("/proc")) -> tuple[int, dict[str, str]]:
+def read_service_environment(
+    service: str, proc_root: Path = Path("/proc")
+) -> ServiceEnvironment:
     pid = _unit_pid(service)
     raw = (proc_root / str(pid) / "environ").read_bytes()
     environ: dict[str, str] = {}
@@ -141,21 +162,38 @@ def read_service_environment(service: str, proc_root: Path = Path("/proc")) -> t
         if name in environ:
             raise OSError(f"{service} pid={pid} duplicate environment key {name}")
         environ[name] = value.decode("utf-8")
+    dotenv_path: Path | None = None
+    dotenv_names: frozenset[str] = frozenset()
+    if service not in DOTENV_DISABLED_SERVICES:
+        cwd = (proc_root / str(pid) / "cwd").resolve(strict=True)
+        dotenv_path = cwd / ".env"
+        try:
+            dotenv_text = dotenv_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            pass
+        else:
+            names: set[str] = set()
+            for binding in parse_stream(StringIO(dotenv_text)):
+                if binding.error:
+                    raise OSError(f"{service} pid={pid} malformed {dotenv_path} line={binding.original.line}")
+                if binding.key is not None:
+                    names.add(binding.key.upper())
+            dotenv_names = frozenset(names)
     if _unit_pid(service) != pid:
         raise OSError(f"{service} MainPID changed during the read")
-    return pid, environ
+    return ServiceEnvironment(pid, environ, dotenv_names, dotenv_path)
 
 
 def audit(
     entries: list[dict[str, object]],
-    environment_reader: Callable[[str], tuple[int, dict[str, str]]] = read_service_environment,
+    environment_reader: Callable[[str], ServiceEnvironment] = read_service_environment,
 ) -> tuple[int, list[str]]:
     output: list[str] = []
     mismatches = 0
     unknowns = 0
     checked = 0
     total = sum(1 + len(entry.get("also_check_services", [])) for entry in entries)
-    environments: dict[str, tuple[int, dict[str, str]] | Exception] = {}
+    environments: dict[str, ServiceEnvironment | Exception] = {}
     for entry in entries:
         name = str(entry["name"])
         for service in [str(entry["owning_service"]), *entry.get("also_check_services", [])]:
@@ -169,12 +207,13 @@ def audit(
                 unknowns += 1
                 output.append(f"UNKNOWN flag={name} service={service} reason={reading}")
                 continue
-            pid, environ = reading
             try:
-                actual, source = flag_value(name, environ)
+                actual, source = flag_value(
+                    name, reading.environ, reading.dotenv_names, reading.dotenv_path
+                )
             except (ValidationError, ValueError) as exc:
                 unknowns += 1
-                output.append(f"UNKNOWN flag={name} service={service} pid={pid} reason={exc}")
+                output.append(f"UNKNOWN flag={name} service={service} pid={reading.pid} reason={exc}")
                 continue
             checked += 1
             expected = entry["expected"]
@@ -182,7 +221,7 @@ def audit(
             if actual is not expected:
                 mismatches += 1
             output.append(
-                f"{verdict} flag={name} service={service} pid={pid} "
+                f"{verdict} flag={name} service={service} pid={reading.pid} "
                 f"running={str(actual).lower()} expected={str(expected).lower()} source={source}"
             )
     if mismatches:

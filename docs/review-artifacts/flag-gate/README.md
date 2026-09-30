@@ -15,14 +15,18 @@ running units matched 124/124 owner checks (120 settings; four extra checks for 
 dual-broker flags). This is a baseline observation, not a live gate run or proof of tomorrow's
 state.
 
-The checker reads `systemctl MainPID` and `/proc/<pid>/environ`, then rechecks the PID to reject a
-restart during the read. It never prints unrelated environment values. An unset boolean uses
-the reviewed `settings.py` default. The box checkout's `.env` currently has eight boolean keys;
-all eight are also present in the owning process environment. **Before installation**, repeat
-that comparison. If any effective `.env` boolean is not mirrored in `/proc`, stop the install:
-the checker must be extended to model that source before a default fallback is trustworthy.
+The checker reads `systemctl MainPID`, `/proc/<pid>/environ`, and each process's
+`/proc/<pid>/cwd/.env` on **every run**, then rechecks the PID. Process environment wins over
+`.env`; a catalogued boolean (including aliases) found only in `.env` is UNKNOWN, not a settings
+default. An existing but unreadable `.env` is also UNKNOWN; absent `.env` leaves the default
+fallback unchanged. `orb` and `orb-schwab` explicitly skip `.env` because their shared
+`OrbService` constructs `Settings(_env_file=None)`. The checker never prints unrelated values.
 CI's catalog test rejects any new, removed, or duplicated settings boolean without an explicit
 catalog edit. A malformed catalog is UNKNOWN, never PASS.
+
+The gate covers booleans only; numeric trading-rule values are out of scope.
+A settings-default PASS assumes the running process uses the checkout's `settings.py` code.
+A deploy adding a boolean requires the installed catalog to be re-copied, or the gate reads UNKNOWN.
 
 ## Reviewed installation seam (not executed by merging)
 
