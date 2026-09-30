@@ -46,6 +46,15 @@ preopen_record_expected_flags() {
   esac
 }
 
+preopen_check_expected_flags() {
+  local python_bin="$1" checker="$2" catalog="$3" flags_output flags_rc
+  printf '\n=== RUNNING FLAG CONTRACT ===\n'
+  flags_output="$("$python_bin" "$checker" --catalog "$catalog" 2>&1)"
+  flags_rc=$?
+  printf '%s\n' "$flags_output"
+  preopen_record_expected_flags "$flags_rc" "$catalog" "$flags_output"
+}
+
 preopen_final_verdict() {
   if (( failures > 0 )); then
     printf 'BLOCKED: REAL FAILURE in %d check group(s); unknown groups=%d.\n' "$failures" "$unknowns"
