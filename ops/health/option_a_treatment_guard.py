@@ -398,6 +398,21 @@ def _page(title: str, body: str, *, priority: str = "low") -> bool:
         return False
 
 
+def _page_with_audit(title: str, body: str, audit: Path) -> bool:
+    try:
+        delivered = _page(title, body)
+    except Exception:
+        delivered = False
+    try:
+        _audit(audit, {
+            "action": "page_delivery", "title": title,
+            "delivered": delivered, "at_utc": datetime.now(UTC).isoformat(),
+        })
+    except Exception:
+        return False
+    return delivered
+
+
 def _notify_systemd(message: str) -> None:
     address = os.environ.get("NOTIFY_SOCKET")
     if not address:
@@ -430,9 +445,17 @@ def stop_paper(reason: str, redis: Redis, settings: Settings, audit: Path) -> in
         "at_utc": stopped_at.isoformat(), "action": "stop_paper", "reason": reason,
         "systemctl_rc": stop_rc,
     }
-    _audit(audit, result)
+    try:
+        _audit(audit, result)
+    except Exception as exc:
+        _page_with_audit(
+            "Option A audit UNKNOWN",
+            f"paper stop rc={stop_rc}; audit unreadable: {type(exc).__name__}: {exc}; {reason}",
+            audit,
+        )
+        return 2
     if stop_rc != 0:
-        _page("Option A paper STOP UNKNOWN", json.dumps(result, sort_keys=True))
+        _page_with_audit("Option A paper STOP UNKNOWN", json.dumps(result, sort_keys=True), audit)
         return 2
     deadline = time.monotonic() + 35
     for attempt in range(2):
@@ -442,9 +465,17 @@ def stop_paper(reason: str, redis: Redis, settings: Settings, audit: Path) -> in
                     redis, settings, before=before, stopped_at=stopped_at,
                     log_offset=log_offset,
                 ):
-                    _audit(audit, {"action": "owner_release_confirmed", "attempt": attempt})
-                    return 0 if _page(
-                        "Option A paper STOP", json.dumps(result, sort_keys=True)
+                    try:
+                        _audit(audit, {"action": "owner_release_confirmed", "attempt": attempt})
+                    except Exception as exc:
+                        _page_with_audit(
+                            "Option A audit UNKNOWN",
+                            f"paper stopped, release confirmed but audit failed: "
+                            f"{type(exc).__name__}: {exc}; {reason}", audit,
+                        )
+                        return 2
+                    return 0 if _page_with_audit(
+                        "Option A paper STOP", json.dumps(result, sort_keys=True), audit,
                     ) else 2
             except Exception:
                 pass
@@ -466,7 +497,8 @@ def stop_paper(reason: str, redis: Redis, settings: Settings, audit: Path) -> in
             except Exception:
                 break
             deadline = time.monotonic() + 35
-    _page("Option A owner release UNKNOWN", f"paper stopped, owner release unverified: {reason}")
+    _page_with_audit("Option A owner release UNKNOWN",
+                     f"paper stopped, owner release unverified: {reason}", audit)
     return 2
 
 

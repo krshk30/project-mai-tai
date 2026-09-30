@@ -311,7 +311,10 @@ the unconfirmed ORB Schwab MACD wait-card, WBREAD1, or a watch reinstall.
    verdict; it is never reported as zero 1008s.
 3. The proposed automatic owner is
    `project-mai-tai-option-a-guard@2026-10-01.service`, running as root under
-   systemd's 15-second watchdog. It starts after the evening log rotation and
+   systemd's 15-second watchdog with `RefuseManualStop=yes`. The treatment-date
+   instance is fixed to `2026-10-01`; manually stopping the guard is refused,
+   not a way to bypass its paper stop and release checks. It starts after the
+   evening log rotation and
    before 07:00 ET, supervises the separate 1008 collector, records a 1 Hz
    load/coverage audit, and evaluates direct slowdown evidence once per
    minute. Collector rc 3, a direct slowdown trigger, or unreadable/stalled
