@@ -59,11 +59,11 @@ watch reinstall. The 16:00 unconfirmed path already pages via `oms_v2_exit_relea
 ## What to READ Wednesday 09-30 (after the 09-29 20:05–20:12 ET install) — report UNPROMPTED
 | change | first evidence | owner |
 |---|---|---|
-| **Install + gate** | codex journal vs box; 06:20 gate on the new PIDs; three-way call (REAL FAILURE / UNKNOWN / EXPECTED BY DESIGN) | codex / claude-1 |
+| **Gate** | install journal already verified 20:18 ET; 06:20 gate on the new PIDs; three-way call (REAL FAILURE / UNKNOWN / EXPECTED BY DESIGN) | codex / claude-1 |
 | **#1065 per-cycle retry** | `[V2-FLIP-OWNER-RETRY] … action=reset_new_segment` on the first live SELL; a symbol with 2 closes can trade the NEXT cycle | claude-1 |
 | **#1066 Card 10** | first software exit sells at +5% with NO `[OMS-V2-CW-FLOOR-ARMED]`; first held-past-16:00 cancel + confirm; 19:55 flatten | claude-1 |
 | **#1064/#1067 ORB observe** | codex 10:02 ET report on 09:25–10:00 records; no candidates / no install = NOT VALIDATED | codex / claude-1 |
-| **#1060 Momentum** | the first-session slowdown thresholds (live-trading slowdown = stop; load 3.5 = warning only) | codex / claude-1 |
+| **#1060 Momentum (NOT installed — reverted by #1068)** | a COMPLETE inactive-morning control (Momentum's old code keeps running) to establish the baseline + slowdown thresholds before any re-land | codex / claude-1 |
 | carried | #1054/#1055 pre-market rest (none 09-29) · #1049 fresh SELL after a re-add · #1056 first dropped exit | claude-1 |
 
 ## Open decisions (operator) — as of 21:00 ET 09-29
