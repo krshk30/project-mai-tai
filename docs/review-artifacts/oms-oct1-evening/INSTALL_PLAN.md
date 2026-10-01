@@ -131,7 +131,12 @@ done
 now_et=$(TZ=America/New_York date +%H%M%S)
 if (( now_et >= 191000 && now_et < 201000 )); then exit 1; fi
 entry_orders_clear | sudo tee -a "$JOURNAL"
-# Record arms and verify v2 /proc entry-window end=15:45 before proceeding.
+V2_PID=$(sudo systemctl show -p MainPID --value project-mai-tai-schwab-1m-v2.service)
+V2_WINDOW=$(sudo sh -c 'tr "\0" "\n" < "$1" | grep -E "^MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENTRY_WINDOW_END_(HOUR|MINUTE)_ET="' sh "/proc/$V2_PID/environ")
+printf '%s\n' "$V2_WINDOW" | sudo tee -a "$JOURNAL"
+test "$(printf '%s\n' "$V2_WINDOW" | grep -Fxc 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENTRY_WINDOW_END_HOUR_ET=15')" = 1
+test "$(printf '%s\n' "$V2_WINDOW" | grep -Fxc 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENTRY_WINDOW_END_MINUTE_ET=45')" = 1
+# Record arms before proceeding.
 sudo systemctl stop project-mai-tai-strategy.service
 flat_once
 entry_orders_clear | sudo tee -a "$JOURNAL"
