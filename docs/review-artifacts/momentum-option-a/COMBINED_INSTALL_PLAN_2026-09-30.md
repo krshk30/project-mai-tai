@@ -3,7 +3,8 @@
 Status: **REVIEW REQUIRED BEFORE THE 16:05 ET EXECUTION.** The operator's
 2026-10-01 GO by paste names the gateway phase at box SHA
 `01a64e9b7552b673e7db6f6e6c787b77b16f6f22`. The later `origin/main`
-may differ only under `docs/`; a code/config diff or dirty box refuses the
+may advance in unrelated code: its full path diff is journaled, while changes
+to the scoped gateway/paper/guard/sampler paths or a dirty box refuse the
 install. This refresh changes the reviewed combined plan at `778565cd` into
 the remaining Mode A gateway phase only. Mode B's OMS, strategy, ORB Schwab,
 FLAGGATE and restart-gate installs already happened on 2026-09-30; do not
@@ -536,9 +537,24 @@ page and one snapshot per call) were probed read-only.
    sudo -u trader git -C "$REPO" fetch origin main:refs/remotes/origin/main
    sudo -u trader git -C "$REPO" cat-file -e "$TARGET_SHA^{commit}"
    sudo -u trader git -C "$REPO" merge-base --is-ancestor "$TARGET_SHA" origin/main
-   sudo -u trader git -C "$REPO" diff --name-only "$TARGET_SHA" origin/main | while IFS= read -r path; do
-       case "$path" in docs/*) ;; *) printf 'REFUSE non-doc main diff: %s\n' "$path" >&2; exit 1 ;; esac
-   done
+   MAIN_DIFF_LOG=/home/trader/after-hours/2026-10-01/option-a-main-diff-1605-go.txt
+   {
+       printf 'box_target_sha=%s\norigin_main_sha=' "$TARGET_SHA"
+       sudo -u trader git -C "$REPO" rev-parse origin/main
+       sudo -u trader git -C "$REPO" diff --name-only "$TARGET_SHA" origin/main
+   } | sudo sh -c 'set -C; cat > "$1"' sh "$MAIN_DIFF_LOG"
+   sudo cat "$MAIN_DIFF_LOG"
+   if ! sudo -u trader git -C "$REPO" diff --quiet "$TARGET_SHA" origin/main -- \
+       src/project_mai_tai/market_data src/project_mai_tai/momentum_paper \
+       src/project_mai_tai/services/momentum_paper_app.py ops/systemd \
+       ops/health/option_a_treatment_guard.py scripts/option_a_treatment_1008_sampler.py; then
+       printf 'REFUSE changed gateway/paper/guard/sampler path(s):\n' >&2
+       sudo -u trader git -C "$REPO" diff --name-only "$TARGET_SHA" origin/main -- \
+           src/project_mai_tai/market_data src/project_mai_tai/momentum_paper \
+           src/project_mai_tai/services/momentum_paper_app.py ops/systemd \
+           ops/health/option_a_treatment_guard.py scripts/option_a_treatment_1008_sampler.py >&2
+       exit 1
+   fi
    test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
    sudo -u trader "$REPO/.venv/bin/python" -c 'import project_mai_tai, pathlib; print(pathlib.Path(project_mai_tai.__file__).resolve())'
    test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$TARGET_SHA"
