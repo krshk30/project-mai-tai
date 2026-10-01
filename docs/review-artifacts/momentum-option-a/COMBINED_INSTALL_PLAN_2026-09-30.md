@@ -1,27 +1,22 @@
-# Combined 2026-09-30 install plan: FLAGGATE, restart evidence, Option A, ORB live
+# 2026-10-01 Mode A-only gateway install plan
 
-Status: **FINAL PLAN FOR INDEPENDENT REVIEW; NOT OPERATOR GO.** The exact
-candidate is `01a64e9b7552b673e7db6f6e6c787b77b16f6f22`, the rebase-merge
-of pinned #1076 after pinned #1075. It contains #1070 FLAGGATE, #1073 restart
-evidence, #1072 Momentum Option A, #1074 automatic treatment guard, #1075
-ORB Schwab late-bar handling, and #1076's paired ORB flag expectations.
-No further main merge, substitute SHA, service restart, flag edit, or box
-checkout advance is authorized by this document. Independent review of this
-plan precedes one operator GO naming this full SHA and every listed restart.
-If main moves or any required evidence differs, refresh the plan and ask for
-a new GO. WBREAD1, the watch reinstall, and all unrelated live rules stay out.
-
-The next GO must select `INSTALL_MODE=A` (the full Option A gateway, paper,
-and ORB install) or `INSTALL_MODE=B` (the ORB phase and isolated gate files
-only). The 2026-09-30 18:41 ET attempt already consumed its one gateway
-rollback. Mode A therefore needs a newly authorized single rollback and new
-attempt-specific evidence paths; mode B never restarts the gateway, starts
-paper, or runs the Option A samplers. The old momentum-paper service remains
-STOPPED unless the operator separately rules otherwise. Mode B can stage the
-FLAGGATE files but cannot produce a green full FLAGGATE result at this SHA:
-its catalog expects `momentum_paper_enabled=true` from a running paper PID.
-That row is UNKNOWN while paper is stopped; do not waive it, claim readiness,
-or schedule a green morning gate without a separately reviewed resolution.
+Status: **REVIEW REQUIRED BEFORE THE 16:05 ET EXECUTION.** The operator's
+2026-10-01 GO by paste names the gateway phase at box SHA
+`01a64e9b7552b673e7db6f6e6c787b77b16f6f22`. The later `origin/main`
+may differ only under `docs/`; a code/config diff or dirty box refuses the
+install. This refresh changes the reviewed combined plan at `778565cd` into
+the remaining Mode A gateway phase only. Mode B's OMS, strategy, ORB Schwab,
+FLAGGATE and restart-gate installs already happened on 2026-09-30; do not
+repeat them. The old Momentum-paper service remains STOPPED tonight. The
+operator's GO authorizes one gateway restart at or after 16:05 ET today, one
+rollback if any mandatory content proof is unproven, a guard start after
+the 20:00:06 ET log rotation, and a conditional paper start at 05:15 ET on
+2026-10-02. Independent review of this refreshed plan must finish first.
+No restart before 16:05 ET, OMS/strategy/v2/ORB/orb-schwab restart, env/flag
+change, WBREAD1, watch install, gate edit, Momentum replay, or protocol
+threshold change is authorized here. The old gateway's final restart must
+finish before the 20:00 ET rotation. The separate untimestamped-traceback
+checker defect is not a reason to alter this live gateway phase.
 
 ## 1. Read-only preflight and hard stops
 
@@ -30,38 +25,39 @@ or schedule a green morning gate without a separately reviewed resolution.
    `NRestarts` are recorded, and Redis, gateway, v2, scanner/strategy, OMS and
    broker connections are healthy. Confirm the installed watch and both cron
    SHA guards remain untouched. A Git merge is not an install.
-2. Obtain fresh broker reads proving **both live accounts flat**, zero open
+2. Obtain fresh direct broker reads proving **both live accounts flat**, zero open
    managed rows on `live:schwab_1m_v2` and `live:orb`, and zero armed segments.
-   Repeat immediately before **each** gateway, OMS, strategy, orb-schwab and
-   momentum-paper restart/start. Record the time, source, account and zero
+   Repeat immediately before the gateway restart and any rollback restart.
+   Record the time, source, account and zero
    denominator for every read. A failed, stale, ambiguous, or unavailable read
    blocks that restart; a database zero alone is not broker flatness. Run the
-   OMS restart fence and live preflight before OMS, and re-run them if the
+   live preflight before the gateway restart, and re-run it if the
    state changes. Do not override a gate or restart while a position is held.
-3. **Mode A only:** Before touching the shared gateway, preserve its current subscription
+3. Before touching the shared gateway, preserve its current subscription
    stream/owner-hash evidence and prove the retained stream can reconstruct
-   **both scanner and v2 consumer owners** (including explicit empty replace
+   **all four consumer owners** (including explicit empty replace
    events where appropriate). Record their event IDs and current union. If
-   either owner is absent, the Redis read is unavailable, or a replay would
+   any owner is absent, the Redis read is unavailable, or a replay would
    remove a scanner/v2-owned symbol, **do not restart the gateway**. Obtain
    fresh owner replaces or a separately reviewed migration plan first.
-   The live ORB paper observer is also a debounced gateway consumer; record
-   its latest replace, even though `orb-schwab` in `OBSERVE_ONLY` does not
-   publish one. The old gateway cannot restore all these owners by itself.
+   ORB and live orb-schwab are also debounced gateway consumers; record each
+   latest replace. The old gateway cannot restore all these owners by itself.
    Capture the raw UTF-8 payload bytes, not a reconstructed event, using the
    read-only Redis command below. The only write is a new local evidence file.
    The existing file must not be silently overwritten. A missing/trimmed
-   scanner, v2, or ORB replace refuses the install, including when the last
-   known symbol list was empty. Re-run the capture immediately before the
-   gateway restart and refuse if any of the three newest source IDs changed.
-   The six Python blocks that read the root-only fleet env run as root;
+   scanner, v2, ORB, or ORB Schwab replace refuses the install, including when the last
+   known symbol list was empty. Perform this O_EXCL capture at the 16:05
+   install preflight, immediately before the section 2 command block;
+   refuse if any of the four newest source IDs changes between capture and
+   restart. The Python blocks that read the root-only fleet env run as root;
    `OWNER_FILE` and `ROLLBACK_EVENTS` are therefore root-owned, and their later
    readers also run as root. The trader-owned venv's `pip install -e` stays as trader.
 
    ```bash
    REPO=/home/trader/project-mai-tai
-   OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners-attempt2.json
-   ORB_REPLAY_APPROVED=0  # Change only if the renewed exact-SHA GO explicitly approves ORB replay.
+   OWNER_FILE=/home/trader/after-hours/2026-10-01/option-a-preflight-owners-1605-go.json
+   ORB_REPLAY_APPROVED=1  # Operator approved all active ORB consumers for rollback replay.
+   sudo install -d -m 0750 /home/trader/after-hours/2026-10-01
    sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ORB_REPLAY_APPROVED" <<'PY'
    import base64
    import json
@@ -76,7 +72,7 @@ or schedule a green morning gate without a separately reviewed resolution.
    redis = Redis.from_url(settings.redis_url, decode_responses=False)
    stream = stream_name(settings.redis_stream_prefix, "market-data-subscriptions")
    entries = redis.xrevrange(stream, count=settings.redis_market_data_subscription_stream_maxlen)
-   required = {"strategy-engine", "schwab-1m-v2", "orb"}
+   required = {"strategy-engine", "schwab-1m-v2", "orb", "orb-schwab"}
    owners = {}
    seen = set()
    orb_replay_approved = sys.argv[2] == "1"
@@ -92,7 +88,7 @@ or schedule a green morning gate without a separately reviewed resolution.
            continue
        seen.add(consumer)
        if consumer not in required:
-           raise SystemExit(f"unexpected fourth subscription consumer: {consumer}")
+           raise SystemExit(f"unexpected subscription consumer: {consumer}")
        if event.payload.mode != "replace":
            raise SystemExit(f"latest {consumer} event is not replace")
        owners[consumer] = {
@@ -113,7 +109,7 @@ or schedule a green morning gate without a separately reviewed resolution.
        for raw_consumer, encoded in saved_hash.items():
            consumer = raw_consumer.decode("ascii")
            if not consumer.startswith("_") and consumer not in required:
-               raise SystemExit(f"unexpected fourth owner hash: {consumer}")
+               raise SystemExit(f"unexpected owner hash consumer: {consumer}")
    path = Path(sys.argv[1])
    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
    with os.fdopen(fd, "w", encoding="utf-8") as output:
@@ -123,18 +119,17 @@ or schedule a green morning gate without a separately reviewed resolution.
    print("preserved owner event IDs", {name: item["source_id"] for name, item in owners.items()})
    PY
    ```
-4. **Mode A only:** Claude-1 approved the accepted-with-gaps inactive control after
+4. Claude-1 approved the accepted-with-gaps inactive control after
    recomputing load, snapshot cadence, heartbeats, LGHL lag and OMS refusals.
    Claude-1 **did not recompute** VBIO/TGE lag rows or the OMS eligible-intent
    denominator. Preserve those caveats. #1074's automatic treatment guard
    is pinned and merged; recheck the final source and first-session thresholds
    against the reviewed baseline before GO. If a required treatment signal
    cannot be observed, stop the whole install before the first write.
-5. Capture hashes/backups of `/home/trader/preopen.sh`, the isolated files in
+5. Capture hashes of `/home/trader/preopen.sh`, the isolated files in
    `/home/trader/restart_evidence/`, the current checkout and service units;
-   capture the snapshot bound to the current restart-evidence install record
-   and the 09-29/09-30 fleet journals. Only the two ORB env keys below may
-   change. No database migration,
+   capture the current restart-evidence install record and fleet journal.
+   No env keys may change. No database migration,
    unrelated service restart, Momentum replay, or live Momentum order route
    is in scope.
 6. The operator explicitly accepted the 1-of-2 ORB partial-fill gap for this
@@ -145,41 +140,53 @@ or schedule a green morning gate without a separately reviewed resolution.
    Also not covered tonight: ORB INC1 sources missing from the installed
    watch, and an attended live Schwab place/replace/cancel test before the
    first order. Record these as open risks in the deploy journal, not PASS.
+7. Capture OMS, strategy, v2, ORB and orb-schwab PID, start and `NRestarts`
+   as a new root-owned O_EXCL file. Use the same command substitution below
+   after the new gateway proof and again before and after any rollback checkout
+   switch. A byte mismatch is a hard stop, not a silent re-pin.
 
-## 2. One scoped install under that GO
+   ```bash
+   LIVE_IDS_FILE=/home/trader/after-hours/2026-10-01/option-a-live-identities-1605-go.txt
+   LIVE_UNITS=(project-mai-tai-oms project-mai-tai-strategy project-mai-tai-schwab-1m-v2 project-mai-tai-orb project-mai-tai-orb-schwab)
+   for unit in "${LIVE_UNITS[@]}"; do
+       printf '%s\n' "$unit"
+       systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"
+   done | sudo bash -c 'set -C; cat > "$1"' bash "$LIVE_IDS_FILE"
+   sudo cat "$LIVE_IDS_FILE"
+   ```
 
-1. Command review for the scoped service change follows. These are **not
-   executable until the operator's exact-SHA GO**. Run only after section 1's
-   fresh flatness, zero-row/arm and identity proofs (plus retained-owner proof
-   in mode A), and recheck flatness immediately
-   before every stop/start/restart listed here. The preflight owner artifact must name
-   the latest retained raw `replace` event and symbol set for scanner, v2 and
-   any other active consumer in mode A; absent/truncated history is a hard
-   stop. The checkout/runtime refresh is common to A and B; the owner check,
-   gateway unit/restart/proof and new paper start are A-only. Mode B keeps
-   market-data at its preflight PID and the old paper service stopped.
+## 2. Gateway phase at or after 16:05 ET on 2026-10-01
+
+1. Execute these literal commands only after independent review of this
+   refresh and section 1's fresh flatness, zero-row/arm, unchanged service
+   identities and four-owner proof. Recheck flatness immediately before the
+   gateway restart. The owner artifact must contain the latest raw `replace`
+   event and symbol set for strategy-engine, schwab-1m-v2, orb and orb-schwab;
+   absent/truncated history, a fifth consumer, or an ID change is a hard stop.
+   Record the initial OMS, strategy, v2, orb and orb-schwab PIDs/start times;
+   all five must remain unchanged. Paper is already stopped and stays stopped.
 
    ```bash
    set -euo pipefail
    REPO=/home/trader/project-mai-tai
    TARGET_SHA=01a64e9b7552b673e7db6f6e6c787b77b16f6f22
-   INSTALL_MODE=A  # Set to B only when the renewed exact-SHA GO chooses B.
-   case "$INSTALL_MODE" in A|B) ;; *) exit 2 ;; esac
-   OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners-attempt2.json
-   test "$(git -C "$REPO" ls-remote origin refs/heads/main | awk '{print $1}')" = "$TARGET_SHA"
-   if test "$INSTALL_MODE" = A; then test -s "$OWNER_FILE"; fi
-   test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = 3389090a7d30bdc88736a53211d968f4c82f0288
-   test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
-   sudo systemctl stop project-mai-tai-momentum-paper.service
-   test "$(systemctl show -p ActiveState --value project-mai-tai-momentum-paper.service)" = inactive
-   sudo -u trader git -C "$REPO" fetch origin main
-   sudo -u trader git -C "$REPO" cat-file -e "$TARGET_SHA^{commit}"
-   sudo -u trader git -C "$REPO" switch --detach "$TARGET_SHA"
+   OWNER_FILE=/home/trader/after-hours/2026-10-01/option-a-preflight-owners-1605-go.json
+   test "$(TZ=America/New_York date +%F)" = 2026-10-01
+   test "$(TZ=America/New_York date +%H%M%S)" -ge 160500
+   test "$(TZ=America/New_York date +%H%M%S)" -lt 191500
+   test -s "$OWNER_FILE"
    test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$TARGET_SHA"
-   sudo -u trader "$REPO/.venv/bin/python" -m pip install --no-deps --disable-pip-version-check -e "$REPO"
-   sudo -u trader "$REPO/.venv/bin/python" -c 'import project_mai_tai, pathlib; print(pathlib.Path(project_mai_tai.__file__).resolve())'
    test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
-   if test "$INSTALL_MODE" = A; then
+   test "$(systemctl show -p ActiveState --value project-mai-tai-momentum-paper.service)" = inactive
+   sudo -u trader git -C "$REPO" fetch origin main:refs/remotes/origin/main
+   sudo -u trader git -C "$REPO" cat-file -e "$TARGET_SHA^{commit}"
+   sudo -u trader git -C "$REPO" merge-base --is-ancestor "$TARGET_SHA" origin/main
+   sudo -u trader git -C "$REPO" diff --name-only "$TARGET_SHA" origin/main | while IFS= read -r path; do
+       case "$path" in docs/*) ;; *) printf 'REFUSE non-doc main diff: %s\n' "$path" >&2; exit 1 ;; esac
+   done
+   test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
+   sudo -u trader "$REPO/.venv/bin/python" -c 'import project_mai_tai, pathlib; print(pathlib.Path(project_mai_tai.__file__).resolve())'
+   test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$TARGET_SHA"
    sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" <<'PY'
    import json
    import sys
@@ -195,6 +202,10 @@ or schedule a green morning gate without a separately reviewed resolution.
    for event_id, fields in redis.xrevrange(saved["stream"], count=settings.redis_market_data_subscription_stream_maxlen):
        event = MarketDataSubscriptionEvent.model_validate(json.loads(fields[b"data"]))
        newest.setdefault(event.payload.consumer_name, event_id.decode("ascii"))
+   required = {"strategy-engine", "schwab-1m-v2", "orb", "orb-schwab"}
+   assert set(saved["owners"]) == required
+   assert saved["orb_replay_approved"] is True
+   assert set(newest) == required, ("unexpected subscription consumer", set(newest) - required)
    for consumer, record in saved["owners"].items():
        assert newest.get(consumer) == record["source_id"], (consumer, "source changed after capture")
    print("pre-restart owner source IDs unchanged", newest)
@@ -205,6 +216,12 @@ or schedule a green morning gate without a separately reviewed resolution.
    test "$(sha256sum "$REPO/ops/systemd/project-mai-tai-option-a-guard-failure@.service" | awk '{print $1}')" = "$(sha256sum /etc/systemd/system/project-mai-tai-option-a-guard-failure@.service | awk '{print $1}')"
    sudo systemd-analyze verify /etc/systemd/system/project-mai-tai-option-a-guard@.service /etc/systemd/system/project-mai-tai-option-a-guard-failure@.service
    sudo systemctl daemon-reload
+   LIVE_IDS_FILE=/home/trader/after-hours/2026-10-01/option-a-live-identities-1605-go.txt
+   LIVE_UNITS=(project-mai-tai-oms project-mai-tai-strategy project-mai-tai-schwab-1m-v2 project-mai-tai-orb project-mai-tai-orb-schwab)
+   test "$(for unit in "${LIVE_UNITS[@]}"; do printf '%s\n' "$unit"; systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"; done)" = "$(sudo cat "$LIVE_IDS_FILE")"
+   # Immediately before this restart, repeat fresh direct broker flatness,
+   # zero open managed rows and zero armed segments for BOTH accounts.
+   test "$(TZ=America/New_York date +%H%M%S)" -lt 191500
    RESTART_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
    sudo systemctl restart project-mai-tai-market-data.service
    sudo systemctl is-active --quiet project-mai-tai-market-data.service
@@ -342,336 +359,227 @@ or schedule a green morning gate without a separately reviewed resolution.
    if not (heartbeat_ok and ticks_ok and cadence_ok and owners_ok and in_time):
        raise SystemExit("new gateway content proof UNKNOWN; use only the renewed one-time rollback")
    PY
-   sudo systemctl start project-mai-tai-momentum-paper.service
-   sudo systemctl is-active --quiet project-mai-tai-momentum-paper.service
-   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-momentum-paper.service
-   fi
+   test "$(for unit in "${LIVE_UNITS[@]}"; do printf '%s\n' "$unit"; systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"; done)" = "$(sudo cat "$LIVE_IDS_FILE")"
+   test "$(systemctl show -p ActiveState --value project-mai-tai-momentum-paper.service)" = inactive
+   GATEWAY_ID_FILE=/home/trader/after-hours/2026-10-01/option-a-gateway-identity-1605-go.txt
+   systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-market-data.service | sudo bash -c 'set -C; cat > "$1"' bash "$GATEWAY_ID_FILE"
    ```
 
-   In mode B, stop after the common checkout/runtime refresh above and go to
-   section 2.2; do not install/restart gateway units, run the gateway content
-   proof, or start paper. Verify the gateway's original PID/start time again
-   after the refresh. In mode A, the content proof prints (1) the latest
+   The content proof prints (1) the latest
    heartbeat/status/union count, (2) per-symbol trade/quote counts within
    120 seconds, (3) snapshot interval count/p95, and (4) the migrated owner
    hash and preserved sets. An unproven condition is UNKNOWN and invokes
    only the newly authorized single rollback. INFO log lines are not proof.
 
-   The editable refresh may update the project distribution metadata and
-   console entrypoints in this existing `.venv`, and may use a temporary
-   isolated build environment. `--no-deps` does **not** update runtime
-   dependencies; the unchanged `pyproject.toml` is checked against the old
-   SHA. It does not install units/env, upgrade pip, run migrations or restart
-   another service. If pip changes the tracked tree or fails, stop before
-   any service restart. Do **not** use `deploy_main.sh`,
+   There is no checkout switch or runtime reinstall in the forward phase:
+   Mode B already left the clean box at this exact service SHA. The import
+   path and clean-tree checks remain mandatory. Do **not** use `deploy_main.sh`,
    `deploy_service.sh market-data`, or `08_install_runtime.sh`: they touch
    companion/unrelated units. A fresh healthy heartbeat and 5-second nominal
    snapshot cadence must also be observed; the block above's heartbeat is
    not a substitute for the sustained cadence check. No ORB/OMS/v2/strategy
-   process may change identity **during this gateway phase**. In mode A, if the
-   180-second owner/cadence check fails, use only section 4's one-time
-   rollback; do not continue into the ORB flag change.
-2. **ORB live phase:** In mode A, begin only after gateway restoration is
-   proven. In mode B, begin only after the common checkout/runtime refresh
-   and proof that market-data retained its preflight PID/start time; it is
-   deliberately still running old gateway code, and paper stays stopped.
-   Capture a second set of fresh direct broker-flat reads for both live accounts, zero
-   open managed rows and zero armed segments. Run the OMS live preflight and
-   `preflight_oms_restart.sh --require-all-account-positions-flat`; an
-   unreadable or positive result stops here. Back up the fleet env and log
-   its SHA-256. Make exactly two edits in
-   `/etc/project-mai-tai/project-mai-tai.env`:
-   `MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED=true` and
-   `MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED=false`. Reject absent or duplicate
-   keys; prove the before/after diff has no other lines. This is the only
-   runtime flag change. Both values must be loaded by **new processes**, not
-   inferred from the env file. The service's constructor refuses both true.
+   process may change identity **during this gateway phase**. If the
+   180-second content check fails, use only section 4's one-time rollback;
+   do not continue to a guard or paper start.
+2. The ORB live, OMS/strategy companion, FLAGGATE and restart-gate phases
+   were completed under the separate 2026-09-30 Mode B GO. Do not repeat
+   their env edits, restarts, isolated-file installs, install-record writes,
+   or preopen re-pin during this Mode A gateway phase. Preserve all five
+   running process identities; a changed PID/start or `NRestarts` is a hard
+   stop. The 2026-10-01 preopen result's historical traceback limitation
+   remains an explicitly known UNKNOWN until a separately reviewed fix.
 
-   Restart order is: stop strategy companion, restart OMS, start strategy,
-   then restart orb-schwab. Immediately **before each** restart/start, repeat
-   the fresh two-broker flat, zero-managed-row and zero-armed-segment reads;
-   the OMS fence is also repeated before OMS itself. If any read becomes
-   UNKNOWN or a position appears, stop without proceeding. A failed OMS or
-   orb-schwab restart is a partial install; do not force the next step or
-   call it complete. The already-running v2, ORB paper, control,
-   market-capture and reconciler are **not** restarted.
+## 3. Overnight guard and conditional paper start
+
+1. After the four gateway content checks pass, record its new PID/start,
+   `NRestarts`, exact box SHA, stream evidence and preserved owner sets.
+   Recheck OMS, strategy, v2, orb and orb-schwab PID/start/`NRestarts`
+   against preflight. These services must not restart. Paper remains STOPPED
+   tonight; no treatment claim, paper intent, or live fill follows merely
+   from successful gateway restoration. Record the installed unit hashes.
+   If the gateway is not healthy or the five identities drift, refuse the
+   next step and report. Keep the 2026-10-01 restart-gate UNKNOWN from the
+   historical untimestamped traceback distinct from gateway content proof.
+2. At 19:59 ET, before the expected 20:00:06 ET `copytruncate`, capture
+   the gateway log device/inode and byte size. After 20:00:06, require the
+   **same** inode with a smaller size. If no drop is observed by 20:03 ET,
+   or the log is unreadable/replaced, the rotation proof is UNKNOWN and
+   paper remains stopped. Do not start the sampler at an unproven byte
+   offset. Use a new O_EXCL evidence file under the 2026-10-01 directory.
+   Start only `project-mai-tai-option-a-guard@2026-10-02.service` after
+   rotation proof, with its reviewed OnFailure unit installed. The guard
+   itself starts the 1008 sampler and begins the 1 Hz load audit at 07:00 ET.
+   Before 07:00, only the sampler JSONL advances; the guard audit JSONL has
+   a startup record, while systemd watchdog pulses prove the live guard loop.
+   Verify the unit active, the sampler JSONL advancing and the guard startup
+   record present; record PID, offset, sample
+   timestamps, device/inode, hashes and journal path. The guard's treatment
+   date is **2026-10-02**, not the date of this gateway restart.
 
    ```bash
    set -euo pipefail
    REPO=/home/trader/project-mai-tai
-   TARGET_SHA=01a64e9b7552b673e7db6f6e6c787b77b16f6f22
-   ENV_FILE=/etc/project-mai-tai/project-mai-tai.env
-   test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$TARGET_SHA"
-   test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
-   # Stop here until fresh direct broker snapshots for BOTH accounts, zero
-   # managed rows and zero armed segments are attached to this step's journal.
-   sudo -u trader "$REPO/.venv/bin/python" "$REPO/src/project_mai_tai/deploy_preflight.py" --service oms
-   sudo "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
-   ENV_BACKUP="${ENV_FILE}.before-orb-live-$(date -u +%Y%m%dT%H%M%SZ)"
-   sudo cp -p "$ENV_FILE" "$ENV_BACKUP"
-   sudo sha256sum "$ENV_FILE" "$ENV_BACKUP"
-   sudo python3 - "$ENV_FILE" <<'PY'
-   import os
-   import stat
-   import sys
-   import tempfile
-   from pathlib import Path
-
-   path = Path(sys.argv[1])
-   original = path.read_text()
-   replacements = {
-       "MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED": "true",
-       "MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED": "false",
-   }
-   lines = original.splitlines(keepends=True)
-   for key, desired in replacements.items():
-       matches = [i for i, line in enumerate(lines) if line.startswith(f"{key}=")]
-       if len(matches) != 1:
-           raise SystemExit(f"refuse missing or duplicate {key}: {len(matches)}")
-       i = matches[0]
-       ending = "\n" if lines[i].endswith("\n") else ""
-       lines[i] = f"{key}={desired}{ending}"
-   updated = "".join(lines)
-   if updated == original:
-       raise SystemExit("refuse no-op flag edit; recheck running values")
-   st = path.stat()
-   fd, temp = tempfile.mkstemp(prefix=".orb-live-", dir=path.parent)
-   try:
-       with os.fdopen(fd, "w") as handle:
-           handle.write(updated)
-           handle.flush()
-           os.fsync(handle.fileno())
-       os.chmod(temp, stat.S_IMODE(st.st_mode))
-       os.chown(temp, st.st_uid, st.st_gid)
-       os.replace(temp, path)
-   finally:
-       if os.path.exists(temp):
-           os.unlink(temp)
-   PY
-   sudo diff -u "$ENV_BACKUP" "$ENV_FILE" || test "$?" = 1
-   sudo sha256sum "$ENV_BACKUP" "$ENV_FILE"
-   # Before EACH operation below, reattach fresh direct broker-flat,
-   # zero-row and zero-arm proof; never rely on the earlier snapshot.
-   sudo systemctl stop project-mai-tai-strategy.service
-   # The all-service preflight was run above; it cannot be rerun while
-   # strategy is deliberately stopped. The broker reads and OMS fence can.
-   sudo "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
-   sudo systemctl restart project-mai-tai-oms.service
-   sudo systemctl is-active --quiet project-mai-tai-oms.service
-   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-oms.service
-   # Fresh direct broker-flat/row/arm proof again before strategy starts.
-   sudo "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
-   sudo systemctl start project-mai-tai-strategy.service
-   sudo systemctl is-active --quiet project-mai-tai-strategy.service
-   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-strategy.service
-   # Fresh direct broker-flat/row/arm proof again before the ORB producer.
-   sudo -u trader "$REPO/.venv/bin/python" "$REPO/src/project_mai_tai/deploy_preflight.py" --service oms
-   sudo "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
-   sudo systemctl restart project-mai-tai-orb-schwab.service
-   sudo systemctl is-active --quiet project-mai-tai-orb-schwab.service
-   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-orb-schwab.service
-   ```
-
-   The shell preflight is not a substitute for fresh direct broker reads:
-   `account_positions` is OMS-maintained. Do not execute this block if the
-   two direct snapshots cannot be captured independently at each stop point.
-   The old env backup is evidence and a recovery input, not an automatic
-   rollback instruction. Check `/proc/<new OMS PID>/environ` and
-   `/proc/<new orb-schwab PID>/environ` for live=true; check the orb-schwab
-   process for observe=false and boot `LIVE`. Require OMS/strategy/orb-schwab
-   zero tracebacks and normal heartbeats. The old v2 PID and RETRY_ONE flag
-   stay unchanged.
-3. Stage isolated `/home/trader/restart_evidence/` copies from this exact SHA:
-   `ops/health/expected_flags.json`, `expected_flags_check.py`,
-   `preopen_restart_evidence.sh` (#1070), and
-   `v2_restart_evidence.py` (#1073). Compare each installed SHA-256 against
-   its Git blob. Use these isolated copies in the wrapper rather than
-   assuming the updated checkout's ops files are installed automatically.
-4. Write a structured install record bound to the existing snapshot's exact
-   `captured_at_utc`, with a source fleet journal and **every** unit monitored
-   by the restart gate classified as `restarted`, `newly_installed`, or
-   `deliberately_untouched`. Verify evidence for `control`, `market-capture`,
-   `reconciler`, and `tv-alerts`; never infer untouched from silence. Account
-   for the 09-29 v2/ORB restarts, tonight's OMS/strategy/orb-schwab restarts,
-   the gateway restart in mode A or its proven untouched identity in mode B,
-   and orb-schwab's original installation, against the
-   snapshot. Classify tonight's orb-schwab action as `restarted`, not a
-   fictitious new service. The paper service is journaled
-   separately if it is not in the gate's monitored service list. A missing or
-   conflicting classification is UNKNOWN and blocks readiness. The reviewed
-   restart reporter requires the prior v2 restart declaration; do not create
-   a fictitious v2 restart tonight merely to make the report pass.
-5. Back up `/home/trader/preopen.sh`; update it **once** for 2026-10-01, the
-   final checkout SHA and freshly verified OMS/strategy/v2 PIDs/start times.
-   Point its restart-evidence call at the isolated checker with the structured
-   `--install-record`, the verified `--restarted`/`--new-service` declarations
-   (including tonight's `oms`, `strategy`, and `orb-schwab`), and the existing
-   required flags. Source the
-   isolated router and add the reviewed
-   `preopen_check_expected_flags "$REPO/.venv/bin/python"` call with the
-   isolated checker/catalog before the final verdict. Preserve other checks.
-   Log the exact before/after diff, backup path, `bash -n`, and new SHA-256.
-6. Run the revised gate read-only as `trader` (or root if permissions require)
-   against actual running processes. Require exactly one consistent final call
-   from each checker: FLAGGATE `PASS` with the full catalog checked, and
-   restart evidence `PASS` or a genuine `EXPECTED BY DESIGN` N/A. A mismatch
-   is REAL FAILURE; unreadable evidence or a return-code/final-call mismatch
-   is UNKNOWN. Neither is an install success. In mode B the paper service is
-   intentionally stopped, while the unchanged catalog still requires its
-   running `momentum_paper_enabled=true` value. FLAGGATE must therefore call
-   that row UNKNOWN, not PASS. Mode B can stage the isolated files but cannot
-   complete this wrapper/gate step or claim morning readiness without a
-   separately reviewed resolution. Arrange a one-shot read-only 06:20 ET
-   2026-10-01 gate only after the final wrapper and all checks are verified;
-   no service restart may be used to force green.
-
-## 3. Post-restart proof and first-session stop coverage
-
-1. Record old/new PIDs, exact start times, `NRestarts`, box checkout SHA,
-   service logs, `/proc` flags and the unchanged PIDs of all other units.
-   Attribute the final SHA only to gateway and momentum-paper in mode A, and
-   to OMS, strategy and orb-schwab in either mode, after each is confirmed
-   restarted; an
-   untouched process does not acquire new code merely because checkout moved.
-   In mode B record the unchanged old gateway PID/code and stopped paper
-   PID=0 explicitly. In mode A require the gateway healthy, normal snapshot/heartbeat cadence, restored
-   scanner and v2 owner sets, and a union containing every symbol still owned
-   by either. Require Momentum owns at most 16 candidates, opens **no** second
-   Massive socket, has no broker route, and receives condition-provenance trade
-   ticks. No observed paper intent may be described as a live fill.
-   Confirm from `/proc` that the new OMS and orb-schwab processes have
-   `MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED=true`, and orb-schwab has
-   `MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED=false`. The installed FLAGGATE catalog
-   from this SHA must check that same pair (`live=true`, `observe=false`),
-   including the OMS secondary owner; no separate hand-edited catalog is
-   permitted. Preserve all other ruled flags, including v2 RETRY_ONE=true,
-   OMS floor=false, target=5%, hard-stop=8%, EOD transition and 19:55
-   flatten=true, polygon_30s=false, and parked massive seed=false. No
-   unexercised order path is called PASS on the strength of these flags.
-2. **Mode A only:** The gateway log rotates by `copytruncate` at about **20:00:06 ET**. A
-   truncation makes the 1008 byte-offset sampler UNKNOWN. Start the reviewed
-   one-second 1008 sampler and treatment samplers **after both 20:00:06 ET and
-   the gateway restart**, and verify this day's rotation has actually
-   completed before fixing the initial offset. Record the sampler PID, start
-   time, treatment date, log device/inode, initial byte offset, raw JSONL path
-   and expected sample count. Confirm them still running at **06:30 ET** before
-   the first full 07:00-09:40 ET treatment window. Late start, unreadable log, rotation,
-   truncation, or missing samples is UNKNOWN and blocks a healthy treatment
-   verdict; it is never reported as zero 1008s.
-3. **Mode A only:** The reviewed automatic stop owner is
-   `project-mai-tai-option-a-guard@2026-10-01.service`, running as root under
-   systemd's 15-second watchdog with `RefuseManualStop=yes`. The treatment-date
-   instance is fixed to `2026-10-01`; manually stopping the guard is refused,
-   not a way to bypass its paper stop and release checks. It starts after the
-   evening log rotation and
-   before 07:00 ET, supervises the separate 1008 collector, records a 1 Hz
-   load/coverage audit, and evaluates direct slowdown evidence once per
-   minute. Collector rc 3, a direct slowdown trigger, or unreadable/stalled
-   required evidence calls only `systemctl stop
-   project-mai-tai-momentum-paper.service`; the guard then verifies the
-   `momentum-paper` owner hash, union-removal log and post-stop heartbeat,
-   publishes one empty replace if needed, and pages low-priority. The
-   `project-mai-tai-option-a-guard-failure@2026-10-01.service` OnFailure unit
-   stops paper and pages if the guard crashes or misses its watchdog. Its
-   exact installed unit text and a stop/release test must be reviewed before
-   enabling it. A missing or failed guard is UNKNOWN, never an observed
-   treatment session. No paper-only stop may restart the gateway or a live
-   trading service.
-   Its reviewed unit is started once, only after the **actual**
-   `copytruncate` around 20:00:06 ET has been observed and the gateway is
-   healthy. Capture the first tuple before 20:00 ET; a same-inode size drop
-   after 20:00 is the required rotation proof. The commands journal both
-   tuples. If the log was too small to prove a drop, the file was replaced,
-   or the comparison is unavailable or inconclusive, leave paper stopped and
-   call the treatment UNKNOWN rather than starting a sampler with an unsafe
-   offset. The named systemd unit is the stop owner; no unattended human
-   response is assumed.
-
-   ```bash
-   set -euo pipefail
    GATEWAY_LOG=/var/log/project-mai-tai/market-data.log
-   ROTATION_EVIDENCE=/home/trader/after-hours/2026-09-30/option-a-gateway-rotation-attempt2.txt
+   ROTATION_EVIDENCE=/home/trader/after-hours/2026-10-01/option-a-gateway-rotation-1605-go.txt
    test "$(TZ=America/New_York date +%H%M%S)" -lt 200000
    ROT_BEFORE_ID="$(stat -c '%d:%i' "$GATEWAY_LOG")"
    ROT_BEFORE_SIZE="$(stat -c '%s' "$GATEWAY_LOG")"
-   printf 'before_utc=%s id=%s size=%s\n' "$(date -u +%FT%TZ)" "$ROT_BEFORE_ID" "$ROT_BEFORE_SIZE" | sudo -u trader tee "$ROTATION_EVIDENCE"
+   sudo "$REPO/.venv/bin/python" - "$ROTATION_EVIDENCE" "$ROT_BEFORE_ID" "$ROT_BEFORE_SIZE" <<'PY'
+   import os, sys
+   from datetime import UTC, datetime
+   fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+   with os.fdopen(fd, "w") as out:
+       out.write(f"before_utc={datetime.now(UTC).isoformat()} id={sys.argv[2]} size={sys.argv[3]}\n")
+   PY
    ROTATION_PROVED=0
    for attempt in $(seq 1 180); do
        ET_NOW="$(TZ=America/New_York date +%H%M%S)"
        ROT_AFTER_ID="$(stat -c '%d:%i' "$GATEWAY_LOG")"
        ROT_AFTER_SIZE="$(stat -c '%s' "$GATEWAY_LOG")"
-       if test "$ROT_AFTER_ID" != "$ROT_BEFORE_ID"; then
-           break
-       fi
+       if test "$ROT_AFTER_ID" != "$ROT_BEFORE_ID"; then break; fi
        if test "$ET_NOW" -ge 200006 && test "$ROT_AFTER_SIZE" -lt "$ROT_BEFORE_SIZE"; then
            ROTATION_PROVED=1
            break
        fi
        sleep 1
    done
-   printf 'after_utc=%s id=%s size=%s proved=%s\n' "$(date -u +%FT%TZ)" "$ROT_AFTER_ID" "$ROT_AFTER_SIZE" "$ROTATION_PROVED" | sudo -u trader tee -a "$ROTATION_EVIDENCE"
+   printf 'after_utc=%s id=%s size=%s proved=%s\n' "$(date -u +%FT%TZ)" "$ROT_AFTER_ID" "$ROT_AFTER_SIZE" "$ROTATION_PROVED" | sudo tee -a "$ROTATION_EVIDENCE"
    test "$ROTATION_PROVED" = 1
    sudo systemctl is-active --quiet project-mai-tai-market-data.service
-   sudo systemctl start project-mai-tai-option-a-guard@2026-10-01.service
-   sudo systemctl is-active --quiet project-mai-tai-option-a-guard@2026-10-01.service
-   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p WatchdogUSec -p NRestarts project-mai-tai-option-a-guard@2026-10-01.service
-   sudo journalctl -u project-mai-tai-option-a-guard@2026-10-01.service --since '2026-10-01 00:00:06 UTC' --no-pager -n 30
-   sudo test -s /home/trader/after-hours/2026-10-01/option-a-treatment/option-a-guard.jsonl
-   sudo test -s /home/trader/after-hours/2026-10-01/option-a-treatment/option-a-1008.jsonl
+   test "$(systemctl show -p ActiveState --value project-mai-tai-momentum-paper.service)" = inactive
+   sudo systemctl start project-mai-tai-option-a-guard@2026-10-02.service
+   sudo systemctl is-active --quiet project-mai-tai-option-a-guard@2026-10-02.service
+   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p WatchdogUSec -p NRestarts project-mai-tai-option-a-guard@2026-10-02.service
+   sudo test -s /home/trader/after-hours/2026-10-02/option-a-treatment/option-a-guard.jsonl
+   sudo test -s /home/trader/after-hours/2026-10-02/option-a-treatment/option-a-1008.jsonl
    ```
 
-   At 06:30 ET, rerun `systemctl is-active` and inspect the newest timestamps
-   in both JSONL files. Any gap greater than 1.5 seconds in the 1008 rows,
-   greater than 1.5 seconds in the guard's 1 Hz load rows, a stopped unit,
-   or an unverified owner release after a stop is UNKNOWN and blocks an
-   `OBSERVED` verdict. The guard unit's `OnFailure` stops only paper and sends
-   a low-priority page if the guard crashes or misses its watchdog; even if
-   its Python import is broken, its failure unit's first command still stops
-   paper. This is a paper safety stop, not a live-service kill switch.
-4. **Mode A only:** Apply the independently reviewed
-   `FIRST_SESSION_PROTOCOL.md` and
-   `INACTIVE_CONTROL_2026-09-30.md` without tuning thresholds after treatment
-   begins. Any new **gateway** 1008 stops only the paper service; measured
-   trading slowdown uses the pre-registered v2, OMS, heartbeat and snapshot
-   rules. One-minute load over 3.5 is a warning, not a stop. Record Momentum
-   union additions and historical 30/60-second REST attempts per session.
-   If a stop fires, stop only paper, page low-priority, and verify its owner
-   hash is `[]`, the post-stop union removes Momentum-only symbols, and a
-   fresh gateway heartbeat matches the remaining owners. If release fails,
-   publish only the approved empty `momentum-paper` replace and reverify;
-   blind evidence remains UNKNOWN and pages. A service-stop page drill (board
-   row 45) is **excluded** unless the exact-SHA GO explicitly approves it.
+3. The reviewed guard permits paper to be inactive from 20:00 ET until
+   05:15 ET: before 07:00 it continuously checks the sampler and watchdog,
+   but does not require paper active or evaluate the minute-by-minute
+   trading slowdown. A new gateway 1008, collector error, blind sample,
+   crash or watchdog miss can stop the already-stopped paper and page;
+   it must **not** be reset or ignored to permit a morning start. At
+   05:15 ET on 2026-10-02, an attended one-shot check must verify the
+   gateway PID/start is unchanged since section 2, its latest heartbeat
+   healthy/fresh with the preserved union, the guard active with no stop
+   trigger, and the 1008 JSONL fresh with continuous 1 Hz rows. The guard
+   audit JSONL is not refreshed before 07:00 by the reviewed code; its
+   startup record plus current systemd watchdog/journal health is the only
+   available pre-07:00 guard-loop proof. The operator's requested "both
+   JSONL files fresh" criterion is therefore **not satisfiable as written**.
+   Unless the operator explicitly accepts that watchdog substitution, the
+   05:15 paper start is a hard stop; do not alter guard code in this plan.
+   Recheck
+   direct two-broker flatness, zero managed rows and zero armed segments
+   immediately before starting paper. If any proof is missing, leave
+   paper STOPPED and page; do not restart the gateway or a live service.
+   Only then start the new Momentum-paper and verify its PID, condition
+   provenance, at most 16 own subscriptions, no second Massive connection,
+   and paper-only/no broker route. Confirm guard/files at 06:30 ET. Re-pin
+   preopen for 2026-10-02 to the actual gateway PID using the separately
+   reviewed preopen procedure, preserving OMS/strategy/v2 pins; the
+   06:20 gate is read-only and may still call restart continuity UNKNOWN
+   until the separate traceback checker fix is installed. The first
+   treatment window is 07:00–09:40 ET on 2026-10-02. The guard's stop rule
+   stops ONLY paper, verifies owner release and sends a low-priority page.
+   Load >3.5 remains WARNING only. Do not change thresholds or use a
+   green gate label to hide an UNKNOWN.
 
-## 4. One gateway rollback for a renewed mode-A GO
+   ```bash
+   set -euo pipefail
+   REPO=/home/trader/project-mai-tai
+   GATEWAY_ID_FILE=/home/trader/after-hours/2026-10-01/option-a-gateway-identity-1605-go.txt
+   TREATMENT=/home/trader/after-hours/2026-10-02/option-a-treatment
+   test "$(TZ=America/New_York date +%F)" = 2026-10-02
+   test "$(TZ=America/New_York date +%H%M%S)" -ge 051500
+   test "$(TZ=America/New_York date +%H%M%S)" -lt 070000
+   test "$(systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-market-data.service)" = "$(sudo cat "$GATEWAY_ID_FILE")"
+   sudo systemctl is-active --quiet project-mai-tai-market-data.service
+   sudo systemctl is-active --quiet project-mai-tai-option-a-guard@2026-10-02.service
+   test "$(systemctl show -p ActiveState --value project-mai-tai-momentum-paper.service)" = inactive
+   sudo "$REPO/.venv/bin/python" - "$TREATMENT" <<'PY'
+   import json, sys, time
+   from pathlib import Path
+   from redis import Redis
+   from project_mai_tai.events import stream_name
+   from project_mai_tai.settings import Settings
 
-Mode B does not restart the gateway and does not use this rollback. The
-18:41 ET attempt already used its one rollback; this section requires a NEW
-one-time authorization in the next mode-A GO. It targets only
-`3389090a7d30bdc88736a53211d968f4c82f0288` and only once. Trigger it
-if any of section 2.1's four content conditions is not proven within **180
-seconds** of the restart. Stop paper first and leave **old Momentum paper STOPPED**: its old
-`T.*` socket can load the gateway. The old gateway restores only the last
-subscription event. Therefore its restart must be followed by byte-for-byte
-republication of the preserved scanner and v2 `replace` events, in their
-original source-ID order, newest last. The live ORB service also has a
-debounced consumer. The preflight's single `ORB_REPLAY_APPROVED=0` switch
-defaults to refusing a nonempty ORB set. Only an exact-SHA operator GO that
-explicitly includes ORB replay may change that line to `1`; that choice is
-saved in the owner artifact. With `1`, the rollback republishes **all three**
-preserved raw replaces in source-ID order and verifies all three. Any fourth
-consumer refuses the install in preflight; none is silently dropped.
+   root = Path(sys.argv[1])
+   for name in ("option-a-guard.jsonl", "option-a-1008.jsonl"):
+       path = root / name
+       if not path.is_file() or time.time() - path.stat().st_mtime > 5:
+           raise SystemExit(f"stale treatment evidence: {path}")
+       last = json.loads(path.read_text().splitlines()[-1])
+       print("fresh treatment evidence", path, last)
+   settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
+   redis = Redis.from_url(settings.redis_url, decode_responses=True)
+   key = stream_name(settings.redis_stream_prefix, "heartbeats")
+   for _, fields in redis.xrevrange(key, count=25):
+       event = json.loads(fields["data"])
+       if event.get("source_service") != "market-data-gateway":
+           continue
+       from datetime import UTC, datetime
+       stamp = datetime.fromisoformat(event["produced_at"].replace("Z", "+00:00"))
+       age = (datetime.now(UTC) - stamp).total_seconds()
+       if event.get("payload", {}).get("status") != "healthy" or not 0 <= age <= 30.819:
+           raise SystemExit(f"gateway heartbeat unhealthy or stale: age_s={age}")
+       print("gateway heartbeat", event["produced_at"], "age_s", age,
+             "active_symbols", event.get("payload", {}).get("details", {}).get("active_symbols"))
+       break
+   else:
+       raise SystemExit("gateway heartbeat missing")
+   PY
+   # Attach fresh direct two-broker flat, zero-open-row and zero-armed-segment
+   # evidence here; if absent, STOP. Then and only then:
+   sudo systemctl start project-mai-tai-momentum-paper.service
+   sudo systemctl is-active --quiet project-mai-tai-momentum-paper.service
+   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-momentum-paper.service
+   ```
+
+## 4. One authorized gateway rollback
+
+The operator's 2026-10-01 GO authorizes one new rollback for this attempt;
+the 2026-09-30 attempt's rollback is already spent. Trigger this one if any
+of section 2's four content conditions is not proven within **180 seconds**
+of restart. Switch temporarily to old gateway SHA
+`3389090a7d30bdc88736a53211d968f4c82f0288`, then replay **all four**
+preserved raw consumer replaces (strategy-engine, schwab-1m-v2, orb,
+orb-schwab) byte-for-byte in original source-ID order, newest last. The old
+gateway restores only the final event on its own, so a healthy heartbeat
+alone is not enough. `ORB_REPLAY_APPROVED=1` is fixed by this GO. A fifth
+consumer refuses preflight rather than being silently dropped. After old
+gateway proof, return the checkout and editable runtime to `01a64e9b`;
+the old Momentum-paper stays STOPPED. Record the five live-unit PIDs/starts
+before and after the temporary old checkout; any drift stops further work.
 
 After a renewed fresh-flat check, the one-time rollback command sequence is:
 
 ```bash
 set -euo pipefail
 REPO=/home/trader/project-mai-tai
-OWNER_FILE=/home/trader/after-hours/2026-09-30/option-a-preflight-owners-attempt2.json
+OWNER_FILE=/home/trader/after-hours/2026-10-01/option-a-preflight-owners-1605-go.json
 OLD_SHA=3389090a7d30bdc88736a53211d968f4c82f0288
+TARGET_SHA=01a64e9b7552b673e7db6f6e6c787b77b16f6f22
+LIVE_IDS_FILE=/home/trader/after-hours/2026-10-01/option-a-live-identities-1605-go.txt
+LIVE_UNITS=(project-mai-tai-oms project-mai-tai-strategy project-mai-tai-schwab-1m-v2 project-mai-tai-orb project-mai-tai-orb-schwab)
 test -s "$OWNER_FILE"
-sudo systemctl stop project-mai-tai-momentum-paper.service
 test "$(systemctl show -p ActiveState --value project-mai-tai-momentum-paper.service)" = inactive
+# First attach fresh direct flat reads for both brokers, zero managed rows,
+# zero armed segments, and PID/start/NRestarts of OMS, strategy, v2, ORB and ORB Schwab.
+test "$(for unit in "${LIVE_UNITS[@]}"; do printf '%s\n' "$unit"; systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"; done)" = "$(sudo cat "$LIVE_IDS_FILE")"
+test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$TARGET_SHA"
+test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
+test "$(TZ=America/New_York date +%F)" = 2026-10-01
+test "$(TZ=America/New_York date +%H%M%S)" -lt 191500
+restore_checkout() {
+    sudo -u trader git -C "$REPO" switch --detach "$TARGET_SHA"
+    sudo -u trader "$REPO/.venv/bin/python" -m pip install --no-deps --disable-pip-version-check -e "$REPO"
+    test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$TARGET_SHA"
+    test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
+}
 sudo -u trader git -C "$REPO" switch --detach "$OLD_SHA"
+trap 'restore_checkout || printf "CRITICAL: checkout restoration unproven; page operator\n" >&2' EXIT
 test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$OLD_SHA"
 sudo -u trader "$REPO/.venv/bin/python" -m pip install --no-deps --disable-pip-version-check -e "$REPO"
 ROLLBACK_RESTART_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -703,7 +611,7 @@ while time.monotonic() < deadline:
     time.sleep(1)
 raise SystemExit("old gateway health unproven within 180s; keep paper stopped and page")
 PY
-ROLLBACK_EVENTS=/home/trader/after-hours/2026-09-30/option-a-rollback-events-attempt2.jsonl
+ROLLBACK_EVENTS=/home/trader/after-hours/2026-10-01/option-a-rollback-events-1605-go.jsonl
 sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$ROLLBACK_EVENTS" <<'PY'
 import base64
 import json
@@ -715,12 +623,9 @@ from redis import Redis
 from project_mai_tai.settings import Settings
 
 saved = json.loads(Path(sys.argv[1]).read_text())
-assert set(saved["owners"]) == {"strategy-engine", "schwab-1m-v2", "orb"}
-replay_names = {"strategy-engine", "schwab-1m-v2"}
-if saved["orb_replay_approved"]:
-    replay_names.add("orb")
-else:
-    assert not saved["owners"]["orb"]["symbols"], "nonempty ORB owner needs separate rollback approval"
+replay_names = {"strategy-engine", "schwab-1m-v2", "orb", "orb-schwab"}
+assert set(saved["owners"]) == replay_names
+assert saved["orb_replay_approved"] is True
 settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
 redis = Redis.from_url(settings.redis_url, decode_responses=False)
 ordered = sorted((tuple(map(int, record["source_id"].split("-"))), consumer, record)
@@ -755,11 +660,9 @@ from project_mai_tai.settings import Settings
 
 saved = json.loads(Path(sys.argv[1]).read_text())
 published = [json.loads(line) for line in Path(sys.argv[2]).read_text().splitlines()]
-replay_names = {"strategy-engine", "schwab-1m-v2"}
-if saved["orb_replay_approved"]:
-    replay_names.add("orb")
-else:
-    assert not saved["owners"]["orb"]["symbols"]
+replay_names = {"strategy-engine", "schwab-1m-v2", "orb", "orb-schwab"}
+assert set(saved["owners"]) == replay_names
+assert saved["orb_replay_approved"] is True
 assert len(published) == len(replay_names) and {row["consumer"] for row in published} == replay_names
 settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
 redis = Redis.from_url(settings.redis_url, decode_responses=True)
@@ -861,9 +764,16 @@ print(f"replayed bytes and IDs {[row['new_id'] for row in published]}")
 if not (heartbeat_ok and ticks_ok and cadence_ok and in_time):
     raise SystemExit("rollback content proof UNKNOWN; paper stays stopped; page; no second rollback")
 PY
+# Restore the service checkout after the old gateway proof; do NOT restart
+# OMS, strategy, v2, ORB or ORB Schwab while old code is checked out.
+restore_checkout
+trap - EXIT
+sudo -u trader "$REPO/.venv/bin/python" -c 'import project_mai_tai, pathlib; print(pathlib.Path(project_mai_tai.__file__).resolve())'
+test "$(for unit in "${LIVE_UNITS[@]}"; do printf '%s\n' "$unit"; systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"; done)" = "$(sudo cat "$LIVE_IDS_FILE")"
+for unit in "${LIVE_UNITS[@]}"; do systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"; done
 ```
 
-The two or three printed **new stream IDs** and the post-restart gateway PID go into
+The four printed **new stream IDs** and the post-restart gateway PID go into
 the fleet journal. The old gateway code processes each `replace` into its
 `_desired_symbols_by_consumer` map, but INFO log lines are not a required
 proof: the gateway entrypoint does not configure INFO logging. Instead require
@@ -872,22 +782,23 @@ measured value printed. The count alone is not enough. If any payload or ID
 is unreadable, a required symbol has no trade/quote in the 120-second window,
 the heartbeat or cadence is not proven, classify rollback **UNKNOWN**, page
 the operator, stop further changes and keep old paper stopped. Do not retry
-the rollback or restart another service. The GO must explicitly set
-`ORB_REPLAY_APPROVED=1` if the preserved ORB owner is nonempty, or this plan
-refuses before a production write. Independent command review of this final
-revision remains required before GO. In mode A the ORB live flag edit comes
-**after** gateway restoration proof, so this rollback cannot race a new live
-ORB producer. Mode B has no gateway rollback or treatment sampler.
+the rollback or restart another service. This GO fixes
+`ORB_REPLAY_APPROVED=1`. The ORB live flag was already enabled in Mode B;
+the rollback therefore replays ORB and ORB Schwab owners before it is called
+restored. Independent command review of this refresh remains required before
+the 16:05 ET restart. No paper start follows a rollback.
 
 ## 5. Journal and decision
 
-Journal the operator GO, preflight denominators and raw paths, retained-owner
-proof, every file blob/installed hash and backup, the structured install record,
-service identities, preopen diff/hash, gate return codes **with their actual
-Final calls**, mode-A sampler offsets/coverage (or mode-B skipped status),
-and any hard stop. Report the result
+Journal the operator GO, independent plan review, preflight denominators and
+raw paths, all four retained owner source IDs/sets, service identities and
+unchanged five live-unit tuples, exact checkout SHA, gateway content proof
+values, rollback event IDs (if used), guard unit/hash, rotation device/inode
+and sampler offsets/coverage, next-day paper start proof or refusal, and
+preopen diff/hash if separately re-pinned. Keep evidence under new O_EXCL
+paths in `/home/trader/after-hours/2026-10-01/` or the treatment-date
+directory; never overwrite the earlier morning-go owner artifact. Report
+the result
 as REAL FAILURE, EXPECTED BY DESIGN, or UNKNOWN after checking the relevant
-code/design, not by repeating a tool's red line. Until the operator signs the
-exact-SHA GO, no rollback or additional restart is authorized by this
-review-only plan. The first-session result is
+code/design, not by repeating a tool's red line. The first-session result is
 `STOPPED`, `OBSERVED`, or `UNKNOWN`, not a Momentum P&L or live-trading verdict.
