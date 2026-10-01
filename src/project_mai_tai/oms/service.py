@@ -14929,6 +14929,8 @@ class OmsRiskService:
         )
         if row is None or str(row.id) != str((order.payload or {}).get("cw_target_managed_row_id", "")):
             return "managed_row_changed"
+        if (order.payload or {}).get("cw_target_cancel_requested_at"):
+            return "cancel_pending"
         quote = self._latest_quotes_by_symbol.get(order.symbol) or {}
         received_at = quote.get("received_at")
         if not isinstance(received_at, datetime):
@@ -14992,6 +14994,30 @@ class OmsRiskService:
         account_name: str, reason: str,
     ) -> bool:
         metadata = {str(k): str(v) for k, v in (order.payload or {}).items()}
+        now = utcnow()
+        first_requested_at: datetime | None = None
+        recorded_first = metadata.get("cw_target_cancel_requested_at")
+        if recorded_first:
+            try:
+                first_requested_at = datetime.fromisoformat(recorded_first)
+                if first_requested_at.tzinfo is None:
+                    raise ValueError("missing timezone")
+            except ValueError:
+                self._set_cw_target_cancel_incident(
+                    session, order=order, account_name=account_name,
+                    reason="pending_timestamp_unreadable", cancel_confirmed=False,
+                )
+                return False
+        pending_seconds = max(0.0, (now - first_requested_at).total_seconds()) if first_requested_at else 0.0
+        if pending_seconds >= 10.0:
+            self._set_cw_target_cancel_incident(
+                session, order=order, account_name=account_name,
+                reason="cancel_unconfirmed_after_10_seconds", cancel_confirmed=False,
+            )
+        last_attempts = self.__dict__.setdefault("_cw_target_cancel_last_attempt", {})
+        attempted_at = time.monotonic()
+        if attempted_at - last_attempts.get(order.id, float("-inf")) < 1.0:
+            return False
         request = OrderRequest(
             client_order_id=order.client_order_id,
             broker_account_name=account_name,
@@ -15013,6 +15039,7 @@ class OmsRiskService:
         if order.id in in_flight:
             return False
         in_flight.add(order.id)
+        last_attempts[order.id] = attempted_at
         try:
             reports = await self.broker_adapter.submit_order(request)
         except asyncio.CancelledError:
@@ -15033,9 +15060,10 @@ class OmsRiskService:
             session, order=order, reports=broker_reports, existing_metadata=metadata,
             internal="cw_target_release", extra_metadata={"release_reason": reason},
         )
-        if cancelled is not None and cancelled.origin == "broker":
+        if cancelled is not None:
             self.store.mark_intent_status(intent, "cancelled")
             self.__dict__.setdefault("_cw_target_held_orders", set()).discard(order.id)
+            last_attempts.pop(order.id, None)
             self._set_cw_target_cancel_incident(
                 session, order=order, account_name=account_name, reason=reason,
                 cancel_confirmed=True,
@@ -15047,15 +15075,24 @@ class OmsRiskService:
                 metadata.get("cw_target_managed_row_id"), reason,
             )
             return True
-        self.logger.error(
+        if first_requested_at is None:
+            order.payload = {
+                **(order.payload or {}),
+                "cw_target_cancel_requested_at": now.isoformat(),
+            }
+        rejected = any(report.event_type == "rejected" for report in reports)
+        if rejected:
+            self._set_cw_target_cancel_incident(
+                session, order=order, account_name=account_name,
+                reason="broker_cancel_rejected", cancel_confirmed=False,
+            )
+        log = self.logger.error if rejected or pending_seconds >= 10 else self.logger.info
+        log(
             "[OMS-CW-TARGET-RELEASE] acct=%s sym=%s order=%s row=%s reason=%s "
-            "cancel=UNCONFIRMED sell=BLOCKED",
+            "cancel=%s pending_seconds=%.1f sell=BLOCKED",
             account_name, order.symbol, order.client_order_id,
             metadata.get("cw_target_managed_row_id"), reason,
-        )
-        self._set_cw_target_cancel_incident(
-            session, order=order, account_name=account_name, reason=reason,
-            cancel_confirmed=False,
+            "REJECTED" if rejected else "PENDING", pending_seconds,
         )
         return False
 

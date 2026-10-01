@@ -92,6 +92,7 @@ def test_target_does_not_hold_across_session_boundary(monkeypatch):
 class _Broker:
     def __init__(self) -> None:
         self.cancel_outcome = "cancelled"
+        self.cancel_outcomes = []
         self.cancel_origin = "broker"
         self.cancels = []
         self.sells = []
@@ -107,7 +108,7 @@ class _Broker:
     async def submit_order(self, request):
         if request.intent_type == "cancel":
             self.cancels.append(request)
-            outcome = self.cancel_outcome
+            outcome = self.cancel_outcomes.pop(0) if self.cancel_outcomes else self.cancel_outcome
         else:
             self.sells.append(request)
             outcome = "accepted"
@@ -116,7 +117,11 @@ class _Broker:
             broker_order_id=request.metadata.get("broker_order_id") or "new-sell",
             symbol=request.symbol, side=request.side, intent_type=request.intent_type,
             quantity=request.quantity, metadata=dict(request.metadata),
-            origin=self.cancel_origin if outcome == "cancelled" else "client",
+            origin=self.cancel_origin if outcome == "cancelled" else "broker",
+            reason=(
+                "cancel requested; awaiting order-detail confirmation"
+                if request.intent_type == "cancel" and outcome == "accepted" else ""
+            ),
         )]
 
 
@@ -271,7 +276,31 @@ async def test_new_target_can_be_placed_after_confirmed_release(monkeypatch, acc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("account", ["live:schwab_1m_v2", "live:orb"])
-async def test_unconfirmed_release_keeps_order_and_pages_once_until_broker_confirms(monkeypatch, account):
+async def test_webull_shaped_accepted_then_confirmed_cancel_stays_quiet(monkeypatch, account):
+    service, factory, broker = _db_service(monkeypatch)
+    order_id, _ = _seed_target(service, factory, account, "7.1569")
+    broker.cancel_outcomes = ["accepted", "cancelled"]
+    service._latest_quotes_by_symbol["NXL"] = {
+        "bid": 7.085, "ask": 7.09, "received_at": datetime.now(UTC),
+    }
+    await service.sync_broker_orders()
+    for _ in range(6):
+        await service.sync_broker_orders()
+    assert len(broker.cancels) == 1
+    with factory() as session:
+        assert session.get(BrokerOrder, order_id).status == "accepted"
+        assert session.scalars(select(SystemIncident)).all() == []
+        assert session.get(BrokerOrder, order_id).payload["cw_target_cancel_requested_at"]
+    service._cw_target_cancel_last_attempt[order_id] -= 1.1
+    await service.sync_broker_orders()
+    with factory() as session:
+        assert session.get(BrokerOrder, order_id).status == "cancelled"
+        assert session.scalars(select(SystemIncident)).all() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", ["live:schwab_1m_v2", "live:orb"])
+async def test_unconfirmed_cancel_pages_once_after_ten_seconds(monkeypatch, account):
     service, factory, broker = _db_service(monkeypatch)
     order_id, _ = _seed_target(service, factory, account, "7.1569")
     broker.cancel_outcome = "accepted"
@@ -279,18 +308,53 @@ async def test_unconfirmed_release_keeps_order_and_pages_once_until_broker_confi
         "bid": 7.085, "ask": 7.09, "received_at": datetime.now(UTC),
     }
     await service.sync_broker_orders()
+    with factory.begin() as session:
+        order = session.get(BrokerOrder, order_id)
+        order.payload = {
+            **order.payload,
+            "cw_target_cancel_requested_at": (datetime.now(UTC) - timedelta(seconds=11)).isoformat(),
+        }
+    await service.sync_broker_orders()
     await service.sync_broker_orders()
     with factory() as session:
-        assert session.get(BrokerOrder, order_id).status == "accepted"
         incidents = session.scalars(select(SystemIncident)).all()
         assert len(incidents) == 1
         assert incidents[0].status == "open"
         assert incidents[0].payload["broker_account_name"] == account
-    broker.cancel_outcome = "cancelled"
+    assert len(broker.cancels) == 1
+
+
+@pytest.mark.asyncio
+async def test_broker_cancel_rejection_pages_immediately(monkeypatch):
+    service, factory, broker = _db_service(monkeypatch)
+    _seed_target(service, factory, "live:orb", "7.1569")
+    broker.cancel_outcome = "rejected"
+    service._latest_quotes_by_symbol["NXL"] = {
+        "bid": 7.085, "ask": 7.09, "received_at": datetime.now(UTC),
+    }
     await service.sync_broker_orders()
     with factory() as session:
-        assert session.get(BrokerOrder, order_id).status == "cancelled"
-        assert session.scalars(select(SystemIncident)).one().status == "closed"
+        assert session.scalars(select(SystemIncident)).one().status == "open"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", ["live:schwab_1m_v2", "live:orb"])
+async def test_quote_storm_sends_at_most_one_cancel_per_order_per_second(monkeypatch, account):
+    service, factory, broker = _db_service(monkeypatch)
+    order_id, _ = _seed_target(service, factory, account, "7.1569")
+    broker.cancel_outcome = "accepted"
+    service._latest_quotes_by_symbol["NXL"] = {
+        "bid": 7.085, "ask": 7.09, "received_at": datetime.now(UTC),
+    }
+    monkeypatch.setattr(service, "_v2_eod_handover_ready", _true_async)
+    for _ in range(8):
+        await service._evaluate_v2_managed_exit(account, "NXL")
+    assert len(broker.cancels) == 1
+    service._cw_target_cancel_last_attempt[order_id] -= 1.1
+    await service._evaluate_v2_managed_exit(account, "NXL")
+    assert len(broker.cancels) == 2
+    with factory() as session:
+        assert session.get(BrokerOrder, order_id).status == "accepted"
 
 
 @pytest.mark.asyncio
@@ -304,7 +368,7 @@ async def test_client_only_cancel_claim_cannot_release_reserved_shares(monkeypat
     await service.sync_broker_orders()
     with factory() as session:
         assert session.get(BrokerOrder, order_id).status == "accepted"
-        assert session.scalars(select(SystemIncident)).one().status == "open"
+        assert session.scalars(select(SystemIncident)).all() == []
 
 
 @pytest.mark.asyncio
@@ -377,7 +441,7 @@ async def test_hard_stop_waits_for_broker_confirmed_target_cancel(monkeypatch, a
     assert len(broker.cancels) == 1
     assert emitted == []
     with factory() as session:
-        assert session.scalars(select(SystemIncident)).one().status == "open"
+        assert session.scalars(select(SystemIncident)).all() == []
 
 
 @pytest.mark.asyncio
