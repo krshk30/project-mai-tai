@@ -1167,6 +1167,7 @@ class Settings(BaseSettings):
     # change. See docs/atr-confirmed-window-forward-test.md.
     oms_v2_cw_target_pct: float = 2.0
     oms_v2_cw_hard_stop_pct: float = 5.0
+    oms_v2_cw_target_stay_enabled: bool = True
     # CW-v2 floor exit: when True, instead of a HARD close at +target% the OMS arms a floor at
     # +floor_pct% once the bid reaches +target% and RIDES; it closes when the bid falls back to the
     # floor (or -hard_stop% before arming, or a bar-close flip). Lets winners run past +2% instead

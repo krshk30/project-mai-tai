@@ -390,6 +390,7 @@ def _inc1_open_incidents() -> list[dict[str, str]]:
         "from system_incidents where status != 'closed' "
         "and payload->>'source' in "
         "('oms_v2_cw_flip_uncovered','oms_v2_exit_release_unresolved',"
+        "'oms_v2_cw_target_cancel_unconfirmed',"
         "'oms_v2_overnight_flatten_blocked',"
         "'oms_v2_confirmation_exit_reprotected','oms_v2_webull_uncovered_share',"
         "'schwab_opening_policy_reject','oco_exit_fill_unrecorded',"
