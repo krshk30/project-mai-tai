@@ -1,0 +1,9 @@
+{
+  "pr_number": 1078,
+  "range_base": "2c155b86971e0f441e468466754326ed565444c4",
+  "range_head": "aeda65c9c543acf5dbaa3df0a78f59e499f7d611",
+  "reviewed_at": "2026-10-01T16:13:09Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "ORB Schwab preview acceptance fix. Read full diff (service.py both call sites via _orb_schwab_preview_outcome, orb_schwab_app.py decision logging + macd_negative reason, tests). Fed the helper the real Schwab previewOrder body I captured 2026-10-01T13:50:55Z (orderStrategy.status=ACCEPTED, warns only, no rejects key): accepted; old hand-made body: refused. My mutations, all RED at aeda65c9: drop nested status check; accept non-empty rejects; drop HTTP status check; accept when orderValidationResult missing (was GREEN at 31162e71, test added). 146 focused tests pass locally; CI validate pass. Not covered: no live order has passed this check yet; reject fixture shape is codex-captured, not re-captured by me (fail-closed either way)."
+}
