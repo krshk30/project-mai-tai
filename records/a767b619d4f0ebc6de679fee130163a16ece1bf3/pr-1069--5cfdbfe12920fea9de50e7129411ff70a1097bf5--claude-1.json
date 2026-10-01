@@ -1,0 +1,9 @@
+{
+  "pr_number": 1069,
+  "range_base": "5cfdbfe12920fea9de50e7129411ff70a1097bf5",
+  "range_head": "a767b619d4f0ebc6de679fee130163a16ece1bf3",
+  "reviewed_at": "2026-10-01T00:31:05Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Shared 09-30 handoff PR, rebased onto 01a64e9b (tree identical to the reviewed a08f171d): codex-2 docs-only commit on docs/session-handoff.md (board rows 33/39 status text). Reviewed by diff: accurate when written, two lines, no other file. Close-out carrier: manifest BALANCED 62/62 matching the frozen journals; CI validate pass pre-rebase."
+}
