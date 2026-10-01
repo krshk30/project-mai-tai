@@ -10375,9 +10375,11 @@ class OmsRiskService:
             try:
                 await self._evaluate_v2_managed_exit(acct, symbol)
             finally:
-                self.logger.info(
-                    "[OMS-V2-QUOTE-LEG] acct=%s sym=%s elapsed_ms=%.1f",
-                    acct, symbol, (time.monotonic() - started) * 1000,
+                elapsed_ms = (time.monotonic() - started) * 1000
+                log = self.logger.warning if elapsed_ms >= 250 else self.logger.debug
+                log(
+                    "[OMS-V2-QUOTE-LEG] acct=%s sym=%s elapsed_ms=%.1f slow=%s",
+                    acct, symbol, elapsed_ms, elapsed_ms >= 250,
                 )
 
         results = await asyncio.gather(
