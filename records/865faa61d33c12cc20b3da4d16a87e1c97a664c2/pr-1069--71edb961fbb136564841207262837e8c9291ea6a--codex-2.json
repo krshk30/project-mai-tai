@@ -1,9 +1,0 @@
-{
-  "pr_number": 1069,
-  "range_base": "71edb961fbb136564841207262837e8c9291ea6a",
-  "range_head": "865faa61d33c12cc20b3da4d16a87e1c97a664c2",
-  "reviewed_at": "2026-10-01T00:18:39Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Reviewed handoff opening commit and initial board against fleet state and carried claims."
-}

@@ -1,9 +1,0 @@
-{
-  "pr_number": 1069,
-  "range_base": "c34eb00f90e46a06063bdaa8d8cb4ed0bdf1d3fa",
-  "range_head": "a08f171d01cc4ea19321a065425d2ea552245cbb",
-  "reviewed_at": "2026-10-01T00:18:40Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Reviewed close-out docs, six-cell board rows, status accuracy, journal fidelity, and byte-identical balanced manifest 62/62."
-}

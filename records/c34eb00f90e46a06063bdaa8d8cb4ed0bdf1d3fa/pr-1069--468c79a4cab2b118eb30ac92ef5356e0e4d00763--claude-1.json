@@ -1,9 +1,0 @@
-{
-  "pr_number": 1069,
-  "range_base": "468c79a4cab2b118eb30ac92ef5356e0e4d00763",
-  "range_head": "c34eb00f90e46a06063bdaa8d8cb4ed0bdf1d3fa",
-  "reviewed_at": "2026-10-01T00:23:27Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "Shared 09-30 handoff PR: codex-2 docs-only commit on docs/session-handoff.md (board rows 33/39 status text: WBREAD1 draft #1063 @ 4b968f80; FLAGGATE #1070 built -> pinned a9293dd9 -> merged 6427bc92, not installed). Reviewed by diff: accurate when written, two lines, no other file. Close-out carrier: manifest BALANCED 62/62 matching the frozen journals; current-state page rebuilt 20:10 ET; CI validate pass at a08f171d."
-}
