@@ -1,0 +1,9 @@
+{
+  "pr_number": 1069,
+  "range_base": "01a64e9b7552b673e7db6f6e6c787b77b16f6f22",
+  "range_head": "5cfdbfe12920fea9de50e7129411ff70a1097bf5",
+  "reviewed_at": "2026-10-01T00:32:43Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed Claude-authored handoff segment after rebase onto 01a64e9b; PR changes only three docs, their content matches previously reviewed a08f171d, six-cell rows are valid, and manifest matches frozen journals 62/62."
+}
