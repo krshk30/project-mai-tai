@@ -6301,6 +6301,15 @@ class OmsRiskService:
                             fanout_decision, acct, outcome="refused"
                         )
                     return
+                if await self._cancel_active_cw_target(
+                    acct, symbol, open_row_id, reason="confirmation_exit"
+                ) is False:
+                    self.logger.error(
+                        "[OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=%s acct=%s "
+                        "reason=target_cancel_unconfirmed; decision=RETRY",
+                        symbol, acct,
+                    )
+                    return
                 if self._is_v2_webull_account(acct):
                     # One-shot claim BEFORE the routine's first await: the in-flight key above
                     # already keeps a second quote task out, and dictionary identity makes the
@@ -6529,6 +6538,33 @@ class OmsRiskService:
             entry_price = snapshot.entry_price
             position = self._hydrate_v2_position(snapshot)
             position.update_price(bid)
+
+            if snapshot.dedup_active and (
+                cw_flip_decision is not None
+                or (self._cw_exit_enabled and bid <= entry_price * (1 - self._cw_stop_pct / 100))
+                or self._cw_target_release_due(entry_price=entry_price, bid=bid)
+            ):
+                expected_row_id = snapshot.managed_row_id
+                reason = (
+                    "cw_flip" if cw_flip_decision is not None
+                    else "cw_hard_stop" if bid <= entry_price * (1 - self._cw_stop_pct / 100)
+                    else "bid_below_entry_minus_one_percent"
+                )
+                if await self._cancel_active_cw_target(
+                    acct, symbol, expected_row_id, reason=reason
+                ) is False:
+                    return
+                snapshot = await self._run_db(
+                    lambda session: self._read_v2_managed_snapshot(
+                        session, acct, symbol, close_on_fill
+                    ),
+                    commit=False,
+                )
+                if snapshot is None or snapshot.managed_row_id != expected_row_id:
+                    return
+                entry_price = snapshot.entry_price
+                position = self._hydrate_v2_position(snapshot)
+                position.update_price(bid)
 
             # #6 dedup guard: an exit order already works for this symbol -> keep the
             # position open + monitored + broker-consistent; refresh ladder PRICE-state
@@ -9044,6 +9080,9 @@ class OmsRiskService:
             "order_type": "market",
             "time_in_force": "day",
         }
+        if reason == "oms_v2_managed_exit:CW_TARGET":
+            metadata["cw_exit_tag"] = "CW_TARGET"
+            metadata["cw_target_managed_row_id"] = str(row.id)
         if confirmation_context:
             metadata.update(confirmation_context)
         order_type = "market"
@@ -9837,6 +9876,11 @@ class OmsRiskService:
                     intent_type=intent.intent_type,
                 )
                 status_changed = report.event_type != previous_status
+                if report.event_type in {"filled", "cancelled"} and self._is_cw_target_stay_order(order):
+                    self._set_cw_target_cancel_incident(
+                        session, order=order, account_name=account.name,
+                        reason="broker_terminal", cancel_confirmed=True,
+                    )
                 should_refresh = (
                     report.event_type in self.store.OPEN_ORDER_STATUSES
                     and (
@@ -9997,6 +10041,25 @@ class OmsRiskService:
                         )
                     )
 
+                if report.event_type in self.store.OPEN_ORDER_STATUSES and self._is_cw_target_stay_order(order):
+                    try:
+                        release_reason = self._cw_target_release_reason(
+                            session, order=order, account_name=account.name
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "[OMS-CW-TARGET-RELEASE] acct=%s sym=%s order=%s "
+                            "state=UNKNOWN action=stay",
+                            account.name, order.symbol, order.client_order_id,
+                        )
+                        release_reason = None
+                    if release_reason is not None:
+                        await self._cancel_cw_target_for_release(
+                            session, order=order, intent=intent, account_name=account.name,
+                            reason=release_reason,
+                        )
+                        continue
+
                 if should_refresh:
                     # Tier 2 + Tier 3: before paying for another cancel-and-replace
                     # cycle, decide whether the intent itself should be abandoned.
@@ -10078,8 +10141,11 @@ class OmsRiskService:
                         # watch could only infer it from the ABSENCE of cancels, and absence-of-a-thing
                         # is exactly how a broken watch reports health. Log the engage EDGE (not every
                         # 5s tick, which would flood) so the hold is provable from the tape.
-                        self._log_p0a_hold_edge(order, bid=bid_now)
-                        self._p0a_census_note("held")
+                        if self._is_cw_target_stay_order(order):
+                            self._log_cw_target_stay_edge(order, account_name=account.name, bid=bid_now)
+                        else:
+                            self._log_p0a_hold_edge(order, bid=bid_now)
+                            self._p0a_census_note("held")
                     else:
                         # INSTRUMENT THE NEGATIVE (2026-08-06). Record WHY this evaluation declined.
                         # Without it a silent `[OMS-P0A-HOLD]` cannot be read: "no managed exit
@@ -10297,9 +10363,29 @@ class OmsRiskService:
         # churning unfillable exits overnight. Management resumes when it reopens.
         if not self._market_is_fillable():
             return
-        for acct in self._v2_accounts():
-            if (acct, symbol) in self._managed_v2_symbols:
+        accounts = [
+            acct for acct in self._v2_accounts()
+            if (acct, symbol) in self._managed_v2_symbols
+        ]
+        if not accounts:
+            return
+
+        async def _evaluate_leg(acct: str) -> None:
+            started = time.monotonic()
+            try:
                 await self._evaluate_v2_managed_exit(acct, symbol)
+            finally:
+                self.logger.info(
+                    "[OMS-V2-QUOTE-LEG] acct=%s sym=%s elapsed_ms=%.1f",
+                    acct, symbol, (time.monotonic() - started) * 1000,
+                )
+
+        results = await asyncio.gather(
+            *(_evaluate_leg(acct) for acct in accounts), return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def _handle_trade_tick_event(self, event: TradeTickEvent) -> None:
         symbol = str(event.payload.symbol).upper()
@@ -11592,8 +11678,25 @@ class OmsRiskService:
             if snapshot is None:
                 self._managed_v2_symbols.discard((acct, symbol))
                 continue
+            target_cancel_unconfirmed = False
             if snapshot.dedup_active:
-                continue  # a close already works — no double-submit (re-emits when it expires)
+                target_result = await self._cancel_active_cw_target(
+                    acct, symbol, snapshot.managed_row_id, reason="overnight_flatten"
+                )
+                if target_result is None:
+                    continue  # another close already works
+                target_cancel_unconfirmed = target_result is False
+                if target_result is True:
+                    snapshot = await self._run_db(
+                        lambda session: self._read_v2_managed_snapshot(
+                            session, acct, symbol, close_on_fill
+                        ),
+                        commit=False,
+                    )
+                    if snapshot is None:
+                        continue
+                    if snapshot.dedup_active:
+                        continue
             quote = self._latest_quotes_by_symbol.get(symbol) or {}
             bid = float(quote.get("bid") or 0.0)
             if bid <= 0.0:
@@ -11653,7 +11756,7 @@ class OmsRiskService:
                     "software_sell=SUBMITTING",
                     acct, symbol, snapshot.managed_row_id,
                 )
-            if self._is_v2_webull_account(acct) and handover_confirmed:
+            if self._is_v2_webull_account(acct) and handover_confirmed and not target_cancel_unconfirmed:
                 await self._webull_cw_exit_on_shared_path(
                     acct, symbol, tag="V2_OVERNIGHT_FLATTEN", ref=bid, bid=bid,
                     expected_row_id=snapshot.managed_row_id,
@@ -11664,7 +11767,7 @@ class OmsRiskService:
                     kind="OVERNIGHT_FLATTEN", reference_price=bid, reason="V2_OVERNIGHT_FLATTEN",
                     bid=bid, close_on_fill=close_on_fill,
                     expected_managed_row_id=snapshot.managed_row_id,
-                    allow_unconfirmed_overnight=not handover_confirmed,
+                    allow_unconfirmed_overnight=not handover_confirmed or target_cancel_unconfirmed,
                 )
 
     async def _trigger_hard_stop(
@@ -14787,6 +14890,233 @@ class OmsRiskService:
             and not bool(getattr(self.settings, "oms_refresh_resting_trigger_orders", False))
         )
 
+    def _is_cw_target_stay_order(self, order: BrokerOrder) -> bool:
+        if not bool(getattr(self.settings, "oms_v2_cw_target_stay_enabled", True)):
+            return False
+        payload = order.payload or {}
+        if not (
+            str(order.side).lower() == "sell"
+            and str(payload.get("oms_v2_managed_exit", "")).lower() == "true"
+            and payload.get("cw_exit_tag") == "CW_TARGET"
+            and str(payload.get("order_type", order.order_type)).upper() == "LIMIT"
+            and str(payload.get("cw_target_managed_row_id", "")).strip()
+        ):
+            return False
+        try:
+            return Decimal(str(payload["limit_price"])) > 0
+        except (KeyError, InvalidOperation, TypeError, ValueError):
+            return False
+
+    def _cw_target_release_due(self, *, entry_price: Decimal | float, bid: Decimal | float) -> bool:
+        try:
+            entry = Decimal(str(entry_price))
+            current_bid = Decimal(str(bid))
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+        if entry <= 0 or current_bid <= 0:
+            return False
+        return current_bid <= entry * Decimal("0.99")
+
+    def _cw_target_release_reason(
+        self, session: Session, *, order: BrokerOrder, account_name: str
+    ) -> str | None:
+        if not _managed_exit_session_matches_clock(order.payload or {}):
+            return "session_ended"
+        row = self.store.get_open_managed_position(
+            session, broker_account_name=account_name, symbol=order.symbol
+        )
+        if row is None or str(row.id) != str((order.payload or {}).get("cw_target_managed_row_id", "")):
+            return "managed_row_changed"
+        quote = self._latest_quotes_by_symbol.get(order.symbol) or {}
+        received_at = quote.get("received_at")
+        if not isinstance(received_at, datetime):
+            return None
+        age_ms = (utcnow() - received_at).total_seconds() * 1000
+        if age_ms < 0 or age_ms > float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
+            return None
+        if self._cw_target_release_due(entry_price=row.entry_price, bid=quote.get("bid")):
+            return "bid_below_entry_minus_one_percent"
+        return None
+
+    async def _cancel_active_cw_target(
+        self, acct: str, symbol: str, row_id: str, *, reason: str
+    ) -> bool | None:
+        key = (acct, symbol, row_id)
+        in_flight = self.__dict__.setdefault("_cw_target_cancel_inflight", set())
+        if key in in_flight:
+            return False
+        in_flight.add(key)
+        try:
+            with self.session_factory() as session:
+                accounts = self.store.list_named_broker_accounts(session, [acct])
+                if len(accounts) != 1:
+                    return False
+                orders = self.store.list_open_orders(
+                    session, broker_account_ids=[accounts[0].id]
+                )
+                targets = [
+                    order for order in orders
+                    if order.symbol == symbol and self._is_cw_target_stay_order(order)
+                    and str((order.payload or {}).get("cw_target_managed_row_id")) == row_id
+                ]
+                if not targets:
+                    return None
+                for order in targets:
+                    intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
+                    if intent is None:
+                        return False
+                    if not await self._cancel_cw_target_for_release(
+                        session, order=order, intent=intent,
+                        account_name=acct, reason=reason,
+                    ):
+                        session.commit()
+                        return False
+                session.commit()
+                return True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception(
+                "[OMS-CW-TARGET-RELEASE] acct=%s sym=%s row=%s reason=%s "
+                "state=UNKNOWN sell=BLOCKED",
+                acct, symbol, row_id, reason,
+            )
+            return False
+        finally:
+            in_flight.discard(key)
+
+    async def _cancel_cw_target_for_release(
+        self, session: Session, *, order: BrokerOrder, intent: TradeIntent,
+        account_name: str, reason: str,
+    ) -> bool:
+        metadata = {str(k): str(v) for k, v in (order.payload or {}).items()}
+        request = OrderRequest(
+            client_order_id=order.client_order_id,
+            broker_account_name=account_name,
+            strategy_code="schwab_1m_v2",
+            symbol=order.symbol,
+            side="sell",
+            intent_type="cancel",
+            quantity=order.quantity,
+            reason=f"cw_target_release:{reason}",
+            metadata={
+                **metadata,
+                "broker_order_id": order.broker_order_id or "",
+                "target_client_order_id": order.client_order_id,
+            },
+            order_type=order.order_type,
+            time_in_force=order.time_in_force,
+        )
+        in_flight = self.__dict__.setdefault("_cw_target_cancel_order_inflight", set())
+        if order.id in in_flight:
+            return False
+        in_flight.add(order.id)
+        try:
+            reports = await self.broker_adapter.submit_order(request)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception(
+                "[OMS-CW-TARGET-RELEASE] acct=%s sym=%s order=%s reason=%s cancel=UNKNOWN",
+                account_name, order.symbol, order.client_order_id, reason,
+            )
+            reports = []
+        finally:
+            in_flight.discard(order.id)
+        broker_reports = [
+            report for report in reports
+            if report.event_type != "cancelled" or report.origin == "broker"
+        ]
+        cancelled = self._record_direct_cancel_reports(
+            session, order=order, reports=broker_reports, existing_metadata=metadata,
+            internal="cw_target_release", extra_metadata={"release_reason": reason},
+        )
+        if cancelled is not None and cancelled.origin == "broker":
+            self.store.mark_intent_status(intent, "cancelled")
+            self.__dict__.setdefault("_cw_target_held_orders", set()).discard(order.id)
+            self._set_cw_target_cancel_incident(
+                session, order=order, account_name=account_name, reason=reason,
+                cancel_confirmed=True,
+            )
+            self.logger.info(
+                "[OMS-CW-TARGET-RELEASE] acct=%s sym=%s order=%s row=%s reason=%s "
+                "cancel=CONFIRMED",
+                account_name, order.symbol, order.client_order_id,
+                metadata.get("cw_target_managed_row_id"), reason,
+            )
+            return True
+        self.logger.error(
+            "[OMS-CW-TARGET-RELEASE] acct=%s sym=%s order=%s row=%s reason=%s "
+            "cancel=UNCONFIRMED sell=BLOCKED",
+            account_name, order.symbol, order.client_order_id,
+            metadata.get("cw_target_managed_row_id"), reason,
+        )
+        self._set_cw_target_cancel_incident(
+            session, order=order, account_name=account_name, reason=reason,
+            cancel_confirmed=False,
+        )
+        return False
+
+    def _set_cw_target_cancel_incident(
+        self, session: Session, *, order: BrokerOrder, account_name: str,
+        reason: str, cancel_confirmed: bool,
+    ) -> None:
+        source = "oms_v2_cw_target_cancel_unconfirmed"
+        row_id = str((order.payload or {}).get("cw_target_managed_row_id", ""))
+        existing = session.scalars(
+            select(SystemIncident).where(
+                SystemIncident.service_name == SERVICE_NAME,
+                SystemIncident.status == "open",
+            )
+        ).all()
+        incident = next(
+            (
+                item for item in existing
+                if isinstance(item.payload, dict)
+                and item.payload.get("source") == source
+                and item.payload.get("client_order_id") == order.client_order_id
+                and item.payload.get("broker_account_name") == account_name
+            ),
+            None,
+        )
+        if cancel_confirmed:
+            if incident is not None:
+                incident.status = "closed"
+                incident.closed_at = utcnow()
+                incident.payload = {**incident.payload, "resolution": "broker_cancel_confirmed"}
+            return
+        if incident is None:
+            session.add(SystemIncident(
+                service_name=SERVICE_NAME,
+                severity="critical",
+                title=f"CW target cancel unconfirmed: {order.symbol} on {account_name}"[:255],
+                status="open",
+                opened_at=utcnow(),
+                payload={
+                    "source": source,
+                    "broker_account_name": account_name,
+                    "symbol": order.symbol,
+                    "managed_row_id": row_id,
+                    "client_order_id": order.client_order_id,
+                    "reason": reason,
+                },
+            ))
+
+    def _log_cw_target_stay_edge(
+        self, order: BrokerOrder, *, account_name: str, bid: float | None
+    ) -> None:
+        held = self.__dict__.setdefault("_cw_target_held_orders", set())
+        if order.id in held:
+            return
+        held.add(order.id)
+        self.logger.info(
+            "[OMS-CW-TARGET-STAY] acct=%s sym=%s order=%s row=%s "
+            "limit=%s bid=%s action=rest_unchanged",
+            account_name, order.symbol, order.client_order_id,
+            (order.payload or {}).get("cw_target_managed_row_id"),
+            (order.payload or {}).get("limit_price"), bid,
+        )
+
     def _p0a_decline_reason(self, order: BrokerOrder, *, bid: float | None) -> str | None:
         """WHY `_managed_exit_refresh_exempt` said no. Returns None when it said yes.
 
@@ -14802,6 +15132,8 @@ class OmsRiskService:
         [[feedback_authoritative_for_a_is_not_for_b]] — two sources for one question is exactly the
         bug class; the test is what keeps this pair honest.
         """
+        if self._is_cw_target_stay_order(order):
+            return None if _managed_exit_session_matches_clock(order.payload or {}) else "session_mismatch"
         if not bool(getattr(self.settings, "oms_hold_marketable_managed_exit", True)):
             return "flag_off"
         payload = order.payload or {}
@@ -15083,6 +15415,8 @@ class OmsRiskService:
         marketable, so we do NOT claim the exemption and the old behaviour stands. An exit is
         protection; when in doubt keep the existing machinery, never invent a hold.
         """
+        if self._is_cw_target_stay_order(order):
+            return _managed_exit_session_matches_clock(order.payload or {})
         if not bool(getattr(self.settings, "oms_hold_marketable_managed_exit", True)):
             return False
         payload = order.payload or {}

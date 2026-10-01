@@ -49,7 +49,7 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 120
+    assert len(entries) == 121
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
@@ -61,6 +61,7 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     assert by_name["orb_schwab_observe_enabled"]["expected"] is False
     assert by_name["orb_live_schwab_orders_enabled"]["expected"] is True
     assert by_name["oms_v2_cw_floor_exit_enabled"]["expected"] is False
+    assert by_name["oms_v2_cw_target_stay_enabled"]["expected"] is True
     assert by_name["strategy_schwab_1m_v2_atr_massive_seed_enabled"]["expected"] is False
     assert by_name["strategy_schwab_1m_v2_dual_broker_fanout_enabled"][
         "also_check_services"
