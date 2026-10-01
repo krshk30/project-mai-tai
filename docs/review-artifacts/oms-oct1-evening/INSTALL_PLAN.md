@@ -6,9 +6,10 @@ merge, or this plan authorizes a production restart.
 
 ## Scope and hard gates
 
-- Eligible changes are #1078, and #1079 only if each has an independent pin on
-  its exact head, both Validate checks pass, and it merges by 15:30 ET. Record
-  both PR heads, pin evidence, merge commits and the resulting exact main SHA.
+- Eligible changes are #1078 and #1079, plus #1063 **only if** #1063 has an
+  independent pin on its exact head, both Validate checks pass, and it merges
+  by 15:30 ET. Record all three PR heads, pin evidence, merge commits and the
+  resulting exact main SHA. #1063 adds no runtime flag or env edit.
   Never include an unpinned PR by advancing to a later main SHA.
 - The separately approved Option A gateway phase must be journaled before the
   first OMS-phase restart. Proceed if its new gateway passed all content proofs,
@@ -234,14 +235,25 @@ unapproved recovery. The operator's GO must explicitly accept this scope.
    boot mode, health and no traceback. Never restart v2, ORB or market-data in
    this phase. Recheck their PID/start/`NRestarts` against step 1. Keep the
    momentum-paper state decided by the separate gateway plan.
-4. If #1079 is in the final SHA, install the reviewed `expected_flags.json`
+4. If #1063 is in the final SHA, prove one **post-OMS-restart** `live:orb`
+   position sync using raw `/var/log/project-mai-tai/oms.log`: a
+   `[BROKER-SYNC-CENSUS]` window wholly after the new OMS start with
+   `live:orb ok>0 failed=0 consecutive_now=0`, and no
+   `[BROKER-SYNC-UNREADABLE] acct=live:orb` in that window. Pair it with a
+   read-only `account_positions.source_updated_at` (and `updated_at`) for
+   `live:orb` strictly newer than the new OMS start. Capture the census line,
+   log byte/time bounds, row count and maximum stamp in the journal. A missing
+   row/stamp or an unmeasured window is UNKNOWN, not a clean sync; do not
+   infer success solely from an absent error line. No extra broker call is
+   made for this proof.
+5. If #1079 is in the final SHA, install the reviewed `expected_flags.json`
    into `/home/trader/restart_evidence/` after backing up the old copy and
    comparing its SHA-256 to the exact Git blob. Require the target-stay entry
    to be expected true. Do not install the INC1 watch or alter its cron guards:
    `oms_v2_cw_target_cancel_unconfirmed` will **not page** until the watch
    copy is separately re-pinned after WBREAD1. Surface that gap in the GO and
    journal; do not report the new incident as a working pager.
-5. Back up and re-pin `/home/trader/preopen.sh` **once** for 2026-10-02,
+6. Back up and re-pin `/home/trader/preopen.sh` **once** for 2026-10-02,
    **after both the gateway and OMS phases**, with the approved checkout SHA,
    new OMS/strategy/orb-schwab identities, and the verified unchanged v2/ORB
    identities **plus the final gateway PID/start**. Preserve the installed
