@@ -1,0 +1,9 @@
+{
+  "pr_number": 1069,
+  "range_base": "e10aa6c328b0c32e50e485b821f88f441449f669",
+  "range_head": "468c79a4cab2b118eb30ac92ef5356e0e4d00763",
+  "reviewed_at": "2026-10-01T00:18:40Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed #1072 and #1070 handoff status wording against pinned and merged evidence."
+}

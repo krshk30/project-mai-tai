@@ -1,0 +1,9 @@
+{
+  "pr_number": 1069,
+  "range_base": "da49226f689d5bc974791de2ad6d23ae0c0f1730",
+  "range_head": "4e0113357bc2515fc0bd43dd2f0a0e30483705fc",
+  "reviewed_at": "2026-10-01T00:18:39Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed Claude handoff updates, board classifications, timestamps, status distinctions, and evidence references."
+}
