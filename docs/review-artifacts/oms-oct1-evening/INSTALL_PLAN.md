@@ -72,16 +72,13 @@ sudo -u trader git -C "$REPO" merge-base --is-ancestor "$APPROVED_SHA" origin/ma
 sudo -u trader git -C "$REPO" diff --name-only "$APPROVED_SHA" origin/main | while IFS= read -r path; do
   case "$path" in docs/*) ;; *) printf 'REFUSE non-doc main diff: %s\n' "$path" >&2; exit 1 ;; esac
 done
-sudo -u trader git -C "$REPO" switch --detach "$APPROVED_SHA"
-test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$APPROVED_SHA"
-sudo -u trader "$REPO/.venv/bin/python" -m pip install --no-deps --disable-pip-version-check -e "$REPO"
-IMPORT_PATH="$(sudo -u trader "$REPO/.venv/bin/python" -c 'import pathlib, project_mai_tai; print(pathlib.Path(project_mai_tai.__file__).resolve())')"
-printf 'import_path=%s\n' "$IMPORT_PATH" | sudo tee -a "$JOURNAL"
-test "$IMPORT_PATH" = "$REPO/src/project_mai_tai/__init__.py"
-test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
 ```
 
-Before each command in the next block that stops, starts or restarts a unit,
+The first flatness loop, working-entry check, and running v2 window check in
+the next block occur on the **old** clean checkout, before any `git switch` or
+runtime refresh. If the loop cannot establish bot-flat by the start cutoff,
+the box remains on its old checkout. Before each later command that stops,
+starts or restarts a unit,
 attach a **new** strict-flat helper output and working-entry-order read to
 the journal; do not reuse a prior snapshot. Record armed segments without
 making their count an admission test. Verify v2's running 15:45 entry-window
@@ -90,6 +87,34 @@ check may wait and retry on rc 1 or 2, every 300 seconds while inside the
 window. Do not restart until one read is proven rc 0. A later rc 1/2 halts.
 
 ```bash
+STRATEGY_STOPPED=0
+OMS_RESTART_BEGUN=0
+oms_install_exit() {
+  local rc=$? strategy_state strategy_pid recovery=not_needed message
+  trap - EXIT
+  if (( rc == 0 )); then return 0; fi
+  set +e
+  if (( STRATEGY_STOPPED == 1 && OMS_RESTART_BEGUN == 0 )); then
+    if sudo systemctl start project-mai-tai-strategy.service &&
+       sudo systemctl is-active --quiet project-mai-tai-strategy.service; then
+      recovery=started_and_verified_before_oms_restart
+    else
+      recovery=STRATEGY_RESTART_UNVERIFIED
+    fi
+  fi
+  strategy_state=$(sudo systemctl show -p ActiveState --value project-mai-tai-strategy.service 2>&1)
+  strategy_pid=$(sudo systemctl show -p MainPID --value project-mai-tai-strategy.service 2>&1)
+  message="OMS install ABORT rc=$rc oms_restart_begun=$OMS_RESTART_BEGUN strategy_state=$strategy_state strategy_pid=$strategy_pid recovery=$recovery; $JOURNAL"
+  printf '%s\n' "$message" | sudo tee -a "$JOURNAL"
+  sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-strategy.service | sudo tee -a "$JOURNAL"
+  if ! curl -sS --fail-with-body --connect-timeout 10 --max-time 30 \
+      -H 'Title: OMS install aborted' -H 'Priority: urgent' -H 'Tags: rotating_light' \
+      -d "$message" 'https://ntfy.sh/mai-tai-preopen-28806a5a97b7' >/dev/null; then
+    printf 'PAGE DELIVERY UNKNOWN for OMS install abort\n' | sudo tee -a "$JOURNAL"
+  fi
+  exit "$rc"
+}
+trap oms_install_exit EXIT
 flat_once() {
   local rc=0 output
   output="$(timeout 45s sudo "$REPO/.venv/bin/python" "$FLAT_CHECK" 2>&1)" || rc=$?
@@ -136,10 +161,24 @@ V2_WINDOW=$(sudo sh -c 'tr "\0" "\n" < "$1" | grep -E "^MAI_TAI_STRATEGY_SCHWAB_
 printf '%s\n' "$V2_WINDOW" | sudo tee -a "$JOURNAL"
 test "$(printf '%s\n' "$V2_WINDOW" | grep -Fxc 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENTRY_WINDOW_END_HOUR_ET=15')" = 1
 test "$(printf '%s\n' "$V2_WINDOW" | grep -Fxc 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENTRY_WINDOW_END_MINUTE_ET=45')" = 1
-# Record arms before proceeding.
+# Record arms. Only now, after old-checkout preflight passed, advance the checkout.
+sudo -u trader git -C "$REPO" switch --detach "$APPROVED_SHA"
+test "$(sudo -u trader git -C "$REPO" rev-parse HEAD)" = "$APPROVED_SHA"
+sudo -u trader "$REPO/.venv/bin/python" -m pip install --no-deps --disable-pip-version-check -e "$REPO"
+IMPORT_PATH="$(sudo -u trader "$REPO/.venv/bin/python" -c 'import pathlib, project_mai_tai; print(pathlib.Path(project_mai_tai.__file__).resolve())')"
+printf 'import_path=%s\n' "$IMPORT_PATH" | sudo tee -a "$JOURNAL"
+test "$IMPORT_PATH" = "$REPO/src/project_mai_tai/__init__.py"
+test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
+# Runtime refresh may have taken time; recheck window and evidence before the stop.
+now_et=$(TZ=America/New_York date +%H%M%S)
+if (( now_et >= 191000 && now_et < 201000 )); then exit 1; fi
+flat_once
+entry_orders_clear | sudo tee -a "$JOURNAL"
+STRATEGY_STOPPED=1
 sudo systemctl stop project-mai-tai-strategy.service
 flat_once
 entry_orders_clear | sudo tee -a "$JOURNAL"
+OMS_RESTART_BEGUN=1
 sudo systemctl restart project-mai-tai-oms.service
 sudo systemctl is-active --quiet project-mai-tai-oms.service
 sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-oms.service
@@ -147,6 +186,7 @@ flat_once
 entry_orders_clear | sudo tee -a "$JOURNAL"
 sudo systemctl start project-mai-tai-strategy.service
 sudo systemctl is-active --quiet project-mai-tai-strategy.service
+STRATEGY_STOPPED=0
 sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-strategy.service
 flat_once
 entry_orders_clear | sudo tee -a "$JOURNAL"
@@ -157,6 +197,7 @@ for unit in "${UNITS[@]}"; do
   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"
 done | sudo tee -a "$JOURNAL"
 test -z "$(sudo -u trader git -C "$REPO" status --porcelain)"
+trap - EXIT
 ```
 
 The `# Record` comment is a **manual stop point**: the operator must read v2's
@@ -164,6 +205,10 @@ actual 15:45 setting and record armed segments. The database entry-order
 query is a necessary check, not proof of broker-side absence; reconcile any
 pending broker-side entry before proceeding. Verify the five-unit PID snapshot
 at each stop point. Do not run the block as one unattended script.
+If any read fails before the OMS restart, the trap starts strategy again,
+checks it active, journals the result and urgently pages. Once the OMS restart
+has begun, an abort halts and pages with the actual strategy state; do not
+blindly start strategy against an unverified OMS or without a fresh flat read.
 If the pre-19:20 deadline becomes infeasible after strategy is stopped, halt
 and report the partial state rather than crossing rotation or starting an
 unapproved recovery. The operator's GO must explicitly accept this scope.
