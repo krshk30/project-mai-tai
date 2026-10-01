@@ -25,11 +25,19 @@ merge, or this plan authorizes a production restart.
 - Use the reviewed, hash-verified
   `/home/trader/after-hours/2026-10-01/option-a-strict-flat-check.py` helper
   from the gateway journal for fresh direct reads immediately before **each**
-  service restart/start. Its rc 0 means bot-flat: zero open managed rows and
-  virtual positions on both `live:schwab_1m_v2` and `live:orb`, zero net bot
-  fills today by account/symbol, and readable broker positions on both legs.
-  A manual broker holding is recorded by symbol/quantity but is not called an
-  account-flat position. Record armed segments, but do **not** block on them:
+  service restart/start. Its named operator override is **only**
+  `OPERATOR_MANUAL_CLOSE = {("live:schwab_1m_v2", "NXL"): Decimal("2")}`.
+  Rc 0 requires fresh readable positions on both brokers, no Schwab NXL
+  holding, no nonzero virtual position, and either zero open managed rows or
+  exactly one open `live:schwab_1m_v2` NXL row with quantity 2. Nonzero net
+  bot fills must be empty or exactly NXL +2 on that account. For this OMS
+  install, additionally require the fresh `live:orb` Webull read to be flat;
+  a manual Webull holding is **not** an OMS-phase exception. Any other open
+  row, quantity mismatch, unreadable broker read, or other nonzero bot fill
+  blocks the restart. If the NXL row remains open after installation, report
+  whether its ID is `8efd26fa-03d4-4a54-8633-f983da00d12e`.
+  Do not edit or manually close the row; OMS owns its reject-to-flat path.
+  Record armed segments, but do **not** block on them:
   v2 is not restarted, its 15:45 ET entry-window end must be read from its
   running `/proc`, and this phase does not modify arms. Working bot **entry**
   orders block. Before the first restart, rc 1 or 2 means wait 300 seconds and
@@ -121,6 +129,19 @@ flat_once() {
   output="$(timeout 45s sudo "$REPO/.venv/bin/python" "$FLAT_CHECK" 2>&1)" || rc=$?
   printf '%s\n' "$output" | sudo tee -a "$JOURNAL"
   printf 'strict_flat_rc=%s\n' "$rc" | sudo tee -a "$JOURNAL"
+  if (( rc != 0 )); then return "$rc"; fi
+  # The reviewed helper proves the exact NXL row, fill and Schwab conditions.
+  # OMS additionally requires the fresh Webull positions read to be flat.
+  if ! printf '%s\n' "$output" | grep -Eq '^FRESH_DIRECT_READ schwab_holding_rows=[0-9]+ webull_holding_rows=0 webull_pages=[1-9][0-9]* '; then
+    printf 'UNKNOWN OMS flat proof: fresh Webull-flat evidence missing\n' | sudo tee -a "$JOURNAL"
+    return 2
+  fi
+  if printf '%s\n' "$output" | grep -Eq '^OPERATOR_MANUAL_CLOSE_OVERRIDE account=live:schwab_1m_v2 symbol=NXL qty=2 managed_row_open=1 net_fills=2(\.0+)?$'; then
+    printf '[OVERRIDE] open managed row accepted by OPERATOR: live:schwab_1m_v2 NXL qty=2 (manual close, broker flat)\n' | sudo tee -a "$JOURNAL"
+  elif ! printf '%s\n' "$output" | grep -Eq '^OPERATOR_MANUAL_CLOSE_OVERRIDE account=live:schwab_1m_v2 symbol=NXL qty=2 managed_row_open=0 net_fills=(0|2(\.0+)?)$'; then
+    printf 'UNKNOWN OMS flat proof: named override evidence missing\n' | sudo tee -a "$JOURNAL"
+    return 2
+  fi
   return "$rc"
 }
 entry_orders_clear() {
@@ -194,6 +215,32 @@ entry_orders_clear | sudo tee -a "$JOURNAL"
 sudo systemctl restart project-mai-tai-orb-schwab.service
 sudo systemctl is-active --quiet project-mai-tai-orb-schwab.service
 sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-orb-schwab.service
+sudo "$REPO/.venv/bin/python" - <<'PY' | sudo tee -a "$JOURNAL"
+from decimal import Decimal
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from project_mai_tai.db.models import OmsManagedPosition
+from project_mai_tai.db.session import build_engine
+from project_mai_tai.settings import Settings
+
+settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
+with Session(build_engine(settings.database_url)) as session:
+    rows = session.execute(
+        select(OmsManagedPosition.id, OmsManagedPosition.broker_account_name,
+               OmsManagedPosition.symbol, OmsManagedPosition.current_quantity)
+        .where(OmsManagedPosition.status == "open")
+        .where(OmsManagedPosition.broker_account_name.in_(("live:schwab_1m_v2", "live:orb")))
+    ).all()
+if not rows:
+    print("NXL_MANAGED_ROW still_open=0")
+elif len(rows) == 1 and str(rows[0].id) == "8efd26fa-03d4-4a54-8633-f983da00d12e" and \
+     rows[0].broker_account_name == "live:schwab_1m_v2" and rows[0].symbol == "NXL" and \
+     Decimal(str(rows[0].current_quantity)) == Decimal("2"):
+    print(f"NXL_MANAGED_ROW still_open=1 id={rows[0].id} quantity=2")
+else:
+    print(f"UNKNOWN unexpected open managed rows after OMS install: {rows}")
+    raise SystemExit(2)
+PY
 for unit in "${UNITS[@]}"; do
   sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"
 done | sudo tee -a "$JOURNAL"
