@@ -15,6 +15,92 @@
 
 ---
 
+## 2026-09-30 — a why answered from the log, twice; the */5 cron pile-up; ORB goes live; Momentum's install stops on its own checks
+
+**The day in one line:** seven PRs merged and pinned (#1070 FLAGGATE, #1071, #1072 Option A, #1073 restart gate, #1074 stop guard, #1075 ORB late-bar wait, #1076), ORB Schwab went LIVE at 19:31 ET (Mode B), Momentum's Option A install stopped at 18:41 ET on two check defects (both gateways were healthy by content) and was rescheduled to 05:15 ET 10-01, and the row-38 root cause was found: every */5 minute 13 cron jobs start together, the gateway's publish loop starves trades behind quotes, and the OMS's 2-second freshness guard drops the Webull leg.
+
+**Operator's standing lines added today:** (1) a log reason is where the answer starts — a "why" = code path + measured data + trigger, never the log's string, never parked (trigger: row 38 answered `NO_FRESH_QUOTE` twice before the real cause); (2) reload memory before every task, and no per-bug double-assessment ceremony; (3) Board B is the daily board, Board A (to exercise) is not; (4) update the shared handoff PR with every exchange.
+
+**Rulings:** card audit batch 1 (2b, 3, 9, 11) confirmed, no change; ORB entry-level source stays on Massive ticks (revisit only on a chart mismatch); ORB MACD card (entry-only; wait for a late bar up to 90 s; a late bar is never negative) confirmed; ORB live tonight with 2 shares and the 1-of-2 partial-fill gap accepted (row 46); the Option A control accepted with documented gaps; row 38 parked then un-parked ("find the root cause"); ORB included in the rollback replay.
+
+**Live reads:** LGHL (Webull-only) exercised Card 10's software +5% exit (bought 7.00 08:24, sold 7.35 08:35, no floor), the pre-market stream cross (#1054) and the per-cycle retry reset (#1065 ×3). TNON lost its Webull leg on two of three flips (row 38 class). ORB Schwab observe: 8/8 decisions refused for a bar not yet saved → the #1075 fix.
+
+### Moved verbatim from session-handoff.md at the 09-30 close-out
+
+# ✅ PRODUCTION — `3389090a` installed 20:05–20:12 ET 09-29 (codex); claude-1 verified on the box 20:18 ET
+
+Installed per the operator's GO ("GO 3389090a, install tonight per the plan"): #1064 + #1067 ORB Schwab (observe only),
+#1065 RETRY-ONE per SELL cycle, #1066 Card 10, #1061 restart-evidence gate (isolated copy, 18:03 ET), #1059 code present
+but its watch install HELD, #1068 = #1060 Momentum reverted (market-data and momentum-paper not restarted).
+
+| check | reading | verdict |
+|---|---|---|
+| checkout | `3389090a` | ✅ |
+| oms | **1663656** since 20:05:36 ET, NRestarts 0 | ✅ new |
+| strategy | **1663666** since 20:05:36 ET | ✅ new (OMS helper companion) |
+| schwab-1m-v2 | **1664453** since 20:08:16 ET | ✅ new (#1065 live) |
+| /proc (oms, v2, strategy) | FLOOR_EXIT=false · target 5.0 · stop 8.0 · EOD_OCO_TRANSITION=true · OVERNIGHT_FLATTEN=true · RETRY_ONE=true · ORB_SCHWAB_OBSERVE=true · ORB_LIVE_SCHWAB_ORDERS=false · POLYGON_30S=false | ✅ as ruled |
+| market-data / momentum-paper | 2202865 / 2704889 — unchanged | ✅ |
+| tracebacks since restart | oms 0 · v2 0 | ✅ |
+| watch.py | `45df60c6…` unchanged (#1059 held) | ✅ |
+| exposure | 0 non-zero positions | ✅ |
+| orb | **1665228** since 20:09:18 ET (20:14 read) · /proc ORB_ENABLED=true, PAPER_LIFECYCLE=true | ✅ new |
+| orb-schwab | **1665845** since 20:11:17 ET · unit installed · log `[ORB-SCHWAB] mode=OBSERVE_ONLY live_sending=False` · /proc observe=true / live=false · 0 tracebacks | ✅ new (observe only) |
+| preopen.sh | re-pinned 20:12 ET: DATE 2026-09-30 · SHA `3389090a` · v2 1664453 · strategy 1663666. ⚠ file mode is now 700 (was 755); fine if the 06:20 run is as `trader` | ✅ (mode noted) |
+| codex journal + completion | **"Install complete"** — `/home/trader/fleet_health/deployments-20260929.md` sha256 `764d4bda…09b55d` ✅ matches · backup `backup-3389090a-20260930T0005Z/pre-deploy.tar.gz` `417babf7…a65d3` ✅ · fleet env `048f4e66…` → `d037d456…70e4839` ✅ · orb-schwab unit `7fe3449b…3579` ✅ · preopen.sh `81ba4ed6…225769a` ✅ | ✅ |
+| health 20:18 ET | oms / strategy / v2 / orb / orb-schwab NRestarts 0; 0 tracebacks in oms, v2, strategy, orb-schwab | ✅ |
+| 06:20 gate | one-shot codex gate on 09-30, run as `trader` (owns the mode-700 preopen.sh; sudo for read-only checks verified by codex) | scheduled |
+| still UNEXERCISED (expected by design after hours) | v2 literal BOOT-HOLD release and current-session bar evidence → 06:20 gate + the first live reads | tomorrow |
+
+**Known gap (operator-accepted):** the new 19:55 "flatten rejected" incident is written but NOT paged until WBREAD1 + the
+watch reinstall. The 16:00 unconfirmed path already pages via `oms_v2_exit_release_unresolved`.
+
+
+## 18:41–18:46 ET INSTALL ATTEMPT — STOPPED, box clean at 3389090a, nothing else changed (claude-1 read ~19:10 ET)
+- Codex ran the gateway phase: new gateway (01a64e9b code) PID 2063312 up 18:40:59 ET; the plan's 180 s restoration-proof script timed out → the one authorized rollback → old gateway PID 2064731 up 18:45:28 ET; the three preserved consumer events replayed (orb [], strategy-engine and schwab-1m-v2 = CMCT,GOW,TGE,TNON); the rollback's own proof also 'UNKNOWN' → stop, high-priority page sent. OMS/strategy/v2/orb PIDs unchanged; env, watch, preopen.sh unchanged; guard units installed but inactive; **momentum-paper (old) left STOPPED**.
+- **claude-1 call (RULE #1, by CONTENT, not by the tools' lines): BOTH gateways were healthy; BOTH proofs are check defects.**
+  - New gateway 18:41–18:45: heartbeats every 15 s `status=healthy active_symbols=4` (= the exact union of both consumers); trades AND quotes flowed for all four symbols (TGE 298/123, TNON 54/39, GOW 44/26, CMCT 28/15); 41 snapshot batches, p95 7.3 s, max 9.4 s; log: "bootstrapped market-data subscription owners from 250 retained events" (the hash was written). The proof script exits with a single "not proven within 180 s" and never prints WHICH sub-condition failed → UNKNOWN by construction, not a gateway fault.
+  - Old gateway after rollback: active_symbols=4, events flowing for exactly CMCT/GOW/TGE/TNON since 18:46 → fully restored. Its proof demanded INFO log lines the gateway entrypoint never emits (logging level) → cannot pass by construction (same class as LOG-LINE ABSENCE ≠ DATA ABSENCE).
+- Live-money state: both accounts flat; v2 and OMS untouched; the old Momentum bot is stopped (it received nothing and kicked the gateway — leaving it stopped is the safer state; operator to confirm).
+- **19:15 ET: plan @ 778565cd reviewed — proofs are now content(1)–(4), each printed with its measured value, no log-line proof; Mode B defined (no gateway restart, no paper start, no samplers); FLAGGATE's momentum row reads UNKNOWN in Mode B because the old paper is deliberately stopped — recorded, to be called EXPECTED BY DESIGN at the 06:20 gate. Caveat on content(2) (a tick for every expected symbol within 120 s): void after ~20:00 ET when after-hours prints stop — Mode A's gateway phase must start before ~19:40 ET or use heartbeat active_symbols alone. claude-1 recommends MODE B tonight.**
+- Next: proofs rewritten as CONTENT checks (heartbeat active_symbols == union; events for every expected symbol within N s; ≥20 snapshot intervals p95 ≤10 s; print every sub-condition with its value) → my review → renewed GO. Options put to the operator: (A) full plan again tonight with the corrected proofs; (B) tonight ORB-live phase only (checkout advance + OMS/strategy/orb-schwab restarts + FLAGGATE/restart-gate installs; gateway and Momentum untouched), Option A tomorrow night.
+
+
+## What to READ Wednesday 09-30 (after the 09-29 20:05–20:12 ET install) — report UNPROMPTED
+| change | first evidence | owner |
+|---|---|---|
+| **Gate** | install journal already verified 20:18 ET; 06:20 gate on the new PIDs; three-way call (REAL FAILURE / UNKNOWN / EXPECTED BY DESIGN) | codex / claude-1 |
+| **#1065 per-cycle retry** | `[V2-FLIP-OWNER-RETRY] … action=reset_new_segment` on the first live SELL; a symbol with 2 closes can trade the NEXT cycle | claude-1 |
+| **#1066 Card 10** | first software exit sells at +5% with NO `[OMS-V2-CW-FLOOR-ARMED]`; first held-past-16:00 cancel + confirm; 19:55 flatten | claude-1 |
+| **#1064/#1067 ORB observe** | codex 10:02 ET report on 09:25–10:00 records; no candidates / no install = NOT VALIDATED | codex / claude-1 |
+| **#1060 Momentum (NOT installed — reverted by #1068)** | a COMPLETE inactive-morning control (Momentum's old code keeps running) to establish the baseline + slowdown thresholds before any re-land | codex / claude-1 |
+| carried | #1054/#1055 pre-market rest (none 09-29) · #1049 fresh SELL after a re-add · #1056 first dropped exit | claude-1 |
+
+
+**Closed 09-29:**
+- Row 4 #1046 child fill before close (operator 09-29 ~13:10 ET). Exercised on DXST 09-29 (Webull-only; Schwab policy-refused):
+  - bare fill 12:45:26 @2.85, pair attached 12:45:37 (target 2.9925 / stop 2.622);
+  - target child filled 12:48:19 @2.99 and was recorded from the broker execution record (`[OMS-CHILD-EXIT-RECORDED]`) BEFORE `[OMS-V2-OCO-RESOLVED-FLAT]` closed the row;
+  - fill row `…-ocoexit-15DKFHKB` is in `fills`; no `oco_exit_fill_unrecorded`; exposure 0.
+  - Target leg only: a stop-side child fill is not yet seen, but #1046 applies the same path to both sides.
+- Old board C1 and C4–C7.
+- The deploy of 8f69a08a.
+- **BKYI 12:52 flip missed:** root cause = RETRY-ONE blocked the whole day (a spec error, mine). Fixed by #1065 (T3).
+- **MSGY 15:26 flip missed:** by design (card 4: Webull-only after the Schwab policy refusal; the rest was pulled on thin bars of 200–4,710 sh). The operator: "drop MSGY… our design, which is good".
+- **DXST Schwab leg missing:** by design (a policy refusal; Webull traded alone, +4.9%).
+- **ORB Schwab rule set** ruled by the operator: MACD-only entry, body <45% at the bar close, ATR on Schwab 1-min bars; ATR entry gates not now.
+- **Card 10** ruled (same exit everywhere, no floor, 19:55 sell anyway) → #1066. **Card 4** confirmed.
+- **#1059** reviewed + pinned + merged (install held). #1061, #1064, #1065, #1067 merged.
+
+
+## Corrections I owe the record (09-29)
+- **RETRY-ONE "per day":** my spec #1039 turned the operator's "skip the next flip" into "one retry per name per day". Codex built my words; it blocked BKYI for the day. Hence the REQUIREMENT CARD rule.
+- **06:24 gate:** codex and I both relayed rc=1 as a failure without checking the REST-backfill design. Hence RULE #1.
+- **BKYI (pre-market):** I gave "history/session" explanations before simulating; the operator rejected them. Simulate first, then answer.
+
+
+---
+
 ## 2026-09-29 — Rule #1, a spec that said "per day", and a five-PR night that shipped without Momentum
 
 **Morning: RULE #1.** The 06:24 gate returned rc=1 on bar continuity (0 of 1,266 live pairs bracketing Monday's 18:42 v2 restart).
