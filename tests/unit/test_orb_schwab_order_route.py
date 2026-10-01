@@ -292,6 +292,14 @@ def test_orb_preview_accepts_nested_status_with_warns_and_no_rejects(monkeypatch
     assert len(broker.submitted) == 1
 
 
+def test_orb_preview_refuses_when_validation_block_is_missing(monkeypatch):
+    broker = _Broker(preview_body={"orderStrategy": {"status": "ACCEPTED"}})
+    service, _factory, _ = _service(monkeypatch, broker=broker)
+    event = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
+    assert asyncio.run(service.process_trade_intent(event))[0].payload.status == "rejected"
+    assert broker.submitted == []
+
+
 def test_orb_reprice_preview_refusal_never_replaces_parent(monkeypatch):
     service, factory, broker = _service(monkeypatch)
     opened = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
