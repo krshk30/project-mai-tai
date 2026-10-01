@@ -82,6 +82,30 @@ logger = logging.getLogger(__name__)
 SERVICE_NAME = "oms-risk"
 
 
+def _orb_schwab_preview_outcome(status: int, body: object) -> tuple[bool, list[str], list[str]]:
+    """Schwab reports preview acceptance inside orderStrategy, not at the top level."""
+    if not isinstance(body, dict):
+        return False, [], []
+    strategy = body.get("orderStrategy")
+    validation = body.get("orderValidationResult")
+    if not isinstance(strategy, dict) or not isinstance(validation, dict):
+        return False, [], []
+    rejects = validation.get("rejects", [])
+    warns = validation.get("warns", [])
+    if not isinstance(rejects, list):
+        return False, [str(rejects)], []
+    reject_messages = [
+        str(item.get("activityMessage", item)) if isinstance(item, dict) else str(item)
+        for item in rejects
+    ]
+    warn_messages = [
+        str(item.get("activityMessage", item)) if isinstance(item, dict) else str(item)
+        for item in warns
+    ] if isinstance(warns, list) else []
+    accepted = status in {200, 201} and strategy.get("status") == "ACCEPTED" and not rejects
+    return accepted, reject_messages, warn_messages
+
+
 class _ExitFetchFailed:
     """Sentinel: we could NOT ask the broker about the exit (transient, typically a Webull 429).
 
@@ -2173,41 +2197,47 @@ class OmsRiskService:
                 time_in_force=str(event.payload.metadata.get("time_in_force", "day")),
             )
             if strategy_code == "orb_schwab":
+                preview_error = None
                 try:
                     preview_status, preview_body = await self.broker_adapter.preview_bracket_order(
                         request
                     )
-                except Exception:
+                except Exception as exc:
                     self.logger.exception(
                         "[OMS-ORB-SCHWAB-PREVIEW] unavailable symbol=%s", request.symbol
                     )
                     preview_status, preview_body = 0, None
-                validation = (
-                    preview_body.get("orderValidationResult")
-                    if isinstance(preview_body, dict)
-                    else None
-                )
-                accepted = (
-                    preview_status in {200, 201}
-                    and isinstance(preview_body, dict)
-                    and str(preview_body.get("status", "")).upper() == "ACCEPTED"
-                    and isinstance(validation, dict)
-                    and validation.get("rejects") == []
+                    preview_error = str(exc)
+                accepted, rejects, warns = _orb_schwab_preview_outcome(
+                    preview_status, preview_body
                 )
                 if not accepted:
                     self.store.mark_intent_refused(
                         intent, origin="client_abort", code="orb_schwab_preview_not_accepted"
                     )
+                    intent.payload = {
+                        **dict(intent.payload or {}),
+                        "orb_schwab_preview": {
+                            "http_status": preview_status,
+                            "body": preview_body,
+                            "error": preview_error,
+                        },
+                    }
                     order_event = self._build_rejected_event(
                         event, intent.id, reason="orb_schwab_preview_not_accepted"
                     )
                     session.commit()
                     self.logger.warning(
-                        "[OMS-ORB-SCHWAB-PREVIEW] refused symbol=%s status=%s",
-                        request.symbol, preview_status,
+                        "[OMS-ORB-SCHWAB-PREVIEW] refused symbol=%s status=%s rejects=%s error=%s",
+                        request.symbol, preview_status, rejects, preview_error,
                     )
                     await self._publish_order_event(order_event)
                     return [order_event]
+                if warns:
+                    self.logger.info(
+                        "[OMS-ORB-SCHWAB-PREVIEW] accepted symbol=%s warns=%s",
+                        request.symbol, warns,
+                    )
                 post_preview_refusal = orb_schwab_intent_refusal(
                     event, self.settings, utcnow()
                 )
@@ -13083,29 +13113,39 @@ class OmsRiskService:
             order_type="stop_limit",
             time_in_force="day",
         )
+        preview_error = None
         try:
             preview_status, preview_body = await self.broker_adapter.preview_bracket_order(request)
-        except Exception:
+        except Exception as exc:
             self.logger.exception(
                 "[OMS-ORB-SCHWAB-REPRICE] preview unreadable symbol=%s", request.symbol
             )
             preview_status, preview_body = 0, None
-        validation = (
-            preview_body.get("orderValidationResult")
-            if isinstance(preview_body, dict)
-            else None
-        )
-        preview_accepted = (
-            preview_status in {200, 201}
-            and isinstance(preview_body, dict)
-            and str(preview_body.get("status", "")).upper() == "ACCEPTED"
-            and isinstance(validation, dict)
-            and validation.get("rejects") == []
+            preview_error = str(exc)
+        preview_accepted, rejects, warns = _orb_schwab_preview_outcome(
+            preview_status, preview_body
         )
         if not preview_accepted:
             reason = "orb_schwab_reprice_preview_not_accepted"
             self.store.mark_intent_refused(intent, origin="client_abort", code=reason)
+            intent.payload = {
+                **dict(intent.payload or {}),
+                "orb_schwab_preview": {
+                    "http_status": preview_status,
+                    "body": preview_body,
+                    "error": preview_error,
+                },
+            }
+            self.logger.warning(
+                "[OMS-ORB-SCHWAB-REPRICE] preview refused symbol=%s status=%s rejects=%s error=%s",
+                request.symbol, preview_status, rejects, preview_error,
+            )
             return [self._build_rejected_event(event, intent.id, reason=reason)]
+        if warns:
+            self.logger.info(
+                "[OMS-ORB-SCHWAB-REPRICE] preview accepted symbol=%s warns=%s",
+                request.symbol, warns,
+            )
         post_preview_refusal = orb_schwab_intent_refusal(event, self.settings, utcnow())
         if post_preview_refusal is not None:
             self.store.mark_intent_refused(

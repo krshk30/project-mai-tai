@@ -32,6 +32,25 @@ from project_mai_tai.settings import Settings
 OPEN = datetime(2026, 9, 29, 13, 28, tzinfo=UTC)
 ACCOUNT = "live:schwab_1m_v2"
 
+# Broker-relevant fields captured from read-only Schwab /previewOrder calls on
+# 2026-10-01. Account number and buying-power fields are omitted from the fixture.
+ACCEPTED_PREVIEW = {
+    "orderId": 0,
+    "orderStrategy": {"status": "ACCEPTED", "orderType": "STOP_LIMIT"},
+    "orderValidationResult": {"warns": [{
+        "activityMessage": "With stop orders and triggered market orders, there is no guarantee that the execution price will be equal to or near the activation/trigger price.",
+        "originalSeverity": "WARN",
+    }]},
+}
+REJECTED_PREVIEW = {
+    "orderId": 0,
+    "orderStrategy": {"status": "REJECTED", "orderType": "STOP_LIMIT"},
+    "orderValidationResult": {"rejects": [{
+        "activityMessage": "The stop price must be above the current ask for buy stop orders and below the bid for sell stop orders.",
+        "originalSeverity": "REJECT",
+    }]},
+}
+
 
 def _settings(*, enabled: bool = True) -> Settings:
     return Settings(
@@ -56,9 +75,12 @@ class _Redis:
 
 class _Broker:
     def __init__(
-        self, *, preview_accepted: bool = True, positions=None, parent_status: str = "accepted"
+        self, *, preview_accepted: bool = True, positions=None, parent_status: str = "accepted",
+        preview_body=None, preview_status: int = 200,
     ) -> None:
         self.preview_accepted = preview_accepted
+        self.preview_body = preview_body
+        self.preview_status = preview_status
         self.positions = positions or []
         self.parent_status = parent_status
         self.submitted = []
@@ -72,9 +94,11 @@ class _Broker:
 
     async def preview_bracket_order(self, request):
         self.previewed.append(request)
+        if self.preview_body is not None:
+            return self.preview_status, self.preview_body
         if self.preview_accepted:
-            return 200, {"status": "ACCEPTED", "orderValidationResult": {"rejects": []}}
-        return 200, {"status": "REJECTED", "orderValidationResult": {"rejects": ["invalid"]}}
+            return 200, ACCEPTED_PREVIEW
+        return 200, REJECTED_PREVIEW
 
     async def submit_order(self, request):
         self.submitted.append(request)
@@ -239,6 +263,69 @@ def test_oms_previews_then_submits_only_valid_intent(monkeypatch) -> None:
     assert broker.submitted[0].metadata["stop_price"] == "5.53"
     with factory() as session:
         assert session.scalar(select(TradeIntent).where(TradeIntent.symbol == "CLRO")) is not None
+
+
+@pytest.mark.parametrize("body,status", [
+    ({"orderStrategy": {"status": "REJECTED"}, "orderValidationResult": {}}, 200),
+    (REJECTED_PREVIEW, 200),
+    ({"orderStrategy": {"status": "ACCEPTED"}, "orderValidationResult": {"rejects": ["bad"]}}, 200),
+    (ACCEPTED_PREVIEW, 500),
+])
+def test_orb_preview_requires_nested_acceptance_and_zero_rejects(monkeypatch, body, status):
+    broker = _Broker(preview_body=body, preview_status=status)
+    service, factory, _ = _service(monkeypatch, broker=broker)
+    event = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
+    result = asyncio.run(service.process_trade_intent(event))
+    assert result[0].payload.status == "rejected"
+    assert broker.submitted == []
+    with factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "CLRO"))
+        assert intent.payload["orb_schwab_preview"]["body"] == body
+        assert intent.payload["orb_schwab_preview"]["http_status"] == status
+
+
+def test_orb_preview_accepts_nested_status_with_warns_and_no_rejects(monkeypatch):
+    broker = _Broker(preview_body=ACCEPTED_PREVIEW)
+    service, _factory, _ = _service(monkeypatch, broker=broker)
+    event = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
+    assert asyncio.run(service.process_trade_intent(event))[0].payload.status == "accepted"
+    assert len(broker.submitted) == 1
+
+
+def test_orb_reprice_preview_refusal_never_replaces_parent(monkeypatch):
+    service, factory, broker = _service(monkeypatch)
+    opened = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
+    assert asyncio.run(service.process_trade_intent(opened))[0].payload.status == "accepted"
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: OPEN + timedelta(minutes=1))
+    broker.preview_body = {
+        "orderStrategy": {"status": "ACCEPTED"},
+        "orderValidationResult": {"rejects": REJECTED_PREVIEW["orderValidationResult"]["rejects"]},
+    }
+    event = build_orb_schwab_reprice_intent(service.settings, "CLRO", Decimal("5.6"))
+    result = asyncio.run(service.process_trade_intent(event))
+    assert result[0].payload.reason == "orb_schwab_reprice_preview_not_accepted"
+    assert broker.replaced == []
+    with factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.reason == event.payload.reason))
+        assert intent.payload["orb_schwab_preview"]["body"] == broker.preview_body
+
+
+def test_orb_preview_timeout_refuses_and_preserves_error(monkeypatch):
+    broker = _Broker()
+
+    async def timeout(_request):
+        raise TimeoutError("preview timed out")
+
+    broker.preview_bracket_order = timeout
+    service, factory, _ = _service(monkeypatch, broker=broker)
+    event = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"))
+    assert asyncio.run(service.process_trade_intent(event))[0].payload.status == "rejected"
+    assert broker.submitted == []
+    with factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "CLRO"))
+        assert intent.payload["orb_schwab_preview"] == {
+            "http_status": 0, "body": None, "error": "preview timed out",
+        }
 
 
 def test_oms_refuses_negative_macd_without_preview_or_order(monkeypatch) -> None:
