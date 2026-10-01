@@ -1,0 +1,9 @@
+{
+  "pr_number": 1063,
+  "range_base": "42fa39997e56ed0ee0a1f16a87a6e5fc9d9c72cc",
+  "range_head": "3a0add43ce7af05ac0e6136c9987335fd30c0927",
+  "reviewed_at": "2026-10-01T17:51:50Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "WBREAD1: a failed/incomplete Webull position read is UNKNOWN, never flat. No trading-rule change (card: failed read = unknown, protection kept; confirmed 09-29). Read full src diff at 4b968f80; range-diff 71edb961..4b968f80 vs 42fa3999..3a0add43 = 2/2 identical + 1 new test commit. Callers checked: ORB Schwab open check, sync_broker_positions (per-account unreadable), _broker_position_read (UNKNOWN), _refresh_broker_position_quantity (None at both call sites -> broker_position_unreadable); NO_POSITION_REASONS not reachable from a failed read. Parser keys equal the existing _position_snapshot keys. My mutations on this head RED: non-429 -> []; unconfigured account -> []; OMS None -> 0. RED at 4b968f80: holding without quantity skipped; stop-fallback returns []. Equivalent: non-object body -> break (falls to the page-limit raise). Combined suites with #1078/#1079 pass locally. CI: pull_request validate pass; push validate failed once on test_v2_managed_exit::test_flag_on_tracks_and_exits_both_accounts_independently = a sqlite StaticPool concurrency flake introduced by #1079 (0/25 before, 5/25 after, unrelated to this diff), re-run requested. Not covered: no live failed-read event has exercised this; real Webull holdings shape relied on via the unchanged key list."
+}
