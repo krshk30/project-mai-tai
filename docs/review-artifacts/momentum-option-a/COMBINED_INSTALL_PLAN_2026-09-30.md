@@ -17,8 +17,10 @@ the 20:00:06 ET log rotation, and a conditional paper start at 05:15 ET on
 2026-10-02. Independent review of this refreshed plan must finish first.
 No restart before 16:05 ET, OMS/strategy/v2/ORB/orb-schwab restart, env/flag
 change, WBREAD1, watch install, gate edit, Momentum replay, or protocol
-threshold change is authorized here. The old gateway's final restart must
-finish before the 20:00 ET rotation. The separate untimestamped-traceback
+threshold change is authorized here. The normal gateway restart cutoff is
+19:15 ET; only if bot-flat has not been proven by then, section 2's late
+window permits a restart after old-gateway rotation, by 21:30 ET. The separate
+untimestamped-traceback
 checker defect is not a reason to alter this live gateway phase.
 The earlier `b01b93b1` proof is unsafe and the 16:05 automation is PAUSED;
 do not resume it on that head. This revision itself is not an execution
@@ -69,7 +71,8 @@ page and one snapshot per call) were probed read-only.
    service. Record time, source,
    account and denominator for every read. A database zero alone is not
    broker flatness. Open bot books or unproven broker holdings at 16:05 wait
-   five minutes for a fresh read, through the 19:15 ET restart cutoff.
+   five minutes for a fresh read, through the 19:15 ET normal restart cutoff;
+   if never proven by then, use only section 2's late window.
    Unreadable/stale/ambiguous is UNKNOWN and also waits five minutes for a
    fresh read; restart only after a proven-clear read. Rollback pre-checks
    still refuse on UNKNOWN. The deployed Webull
@@ -567,6 +570,12 @@ page and one snapshot per call) were probed read-only.
    LIVE_IDS_FILE=/home/trader/after-hours/2026-10-01/option-a-live-identities-1605-go.txt
    LIVE_UNITS=(project-mai-tai-oms project-mai-tai-strategy project-mai-tai-schwab-1m-v2 project-mai-tai-orb project-mai-tai-orb-schwab)
    ATTEMPT_JOURNAL=/home/trader/after-hours/2026-10-01/option-a-attempts-1605-go.log
+   LATE_WINDOW_FILE=/home/trader/after-hours/2026-10-01/option-a-late-window-1605-go.txt
+   LATE_ROTATION_EVIDENCE=/home/trader/after-hours/2026-10-01/option-a-gateway-rotation-late-1605-go.txt
+   LATE_WINDOW=0
+   BOT_FLAT_PROVEN=0
+   ! sudo test -e "$LATE_WINDOW_FILE"
+   ! sudo test -e "$LATE_ROTATION_EVIDENCE"
    sudo bash -c 'set -C; : > "$1"' bash "$ATTEMPT_JOURNAL"
    V2_PID="$(systemctl show -p MainPID --value project-mai-tai-schwab-1m-v2.service)"
    sudo "$REPO/.venv/bin/python" - "$V2_PID" <<'PY'
@@ -582,8 +591,46 @@ page and one snapshot per call) were probed read-only.
    PY
    while :; do
        test "$(TZ=America/New_York date +%F)" = 2026-10-01
-       if test "$(TZ=America/New_York date +%H%M%S)" -ge 191500; then
-           printf 'REFUSE: last gateway restart cutoff 19:15 ET reached\n' >&2
+       ET_NOW="$(TZ=America/New_York date +%H%M%S)"
+       if test "$LATE_WINDOW" -eq 0 && test "$ET_NOW" -ge 191500; then
+           if test "$BOT_FLAT_PROVEN" -ne 0; then
+               echo 'REFUSE normal cutoff reached after bot-flat was proven; late exception does not apply' >&2
+               exit 1
+           fi
+           echo 'LATE_WINDOW bot-flat never proven by 19:15; old gateway stays running' | sudo tee -a "$ATTEMPT_JOURNAL"
+           while test "$(TZ=America/New_York date +%H%M%S)" -lt 195900; do sleep 5; done
+           test "$(TZ=America/New_York date +%H%M%S)" -lt 200000
+           GATEWAY_LOG=/var/log/project-mai-tai/market-data.log
+           OLD_GATEWAY_ID="$(systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-market-data.service)"
+           ROT_BEFORE_ID="$(stat -c '%d:%i' "$GATEWAY_LOG")"
+           ROT_BEFORE_SIZE="$(stat -c '%s' "$GATEWAY_LOG")"
+           printf 'before_utc=%s id=%s size=%s old_gateway=%s\n' "$(date -u +%FT%TZ)" "$ROT_BEFORE_ID" "$ROT_BEFORE_SIZE" "$OLD_GATEWAY_ID" |
+               sudo bash -c 'set -C; cat > "$1"' bash "$LATE_ROTATION_EVIDENCE"
+           ROTATION_PROVED=0
+           for attempt in $(seq 1 180); do
+               ET_NOW="$(TZ=America/New_York date +%H%M%S)"
+               ROT_AFTER_ID="$(stat -c '%d:%i' "$GATEWAY_LOG")"
+               ROT_AFTER_SIZE="$(stat -c '%s' "$GATEWAY_LOG")"
+               if test "$ROT_AFTER_ID" != "$ROT_BEFORE_ID"; then break; fi
+               if test "$ET_NOW" -ge 200006 && test "$ROT_AFTER_SIZE" -lt "$ROT_BEFORE_SIZE"; then
+                   ROTATION_PROVED=1
+                   break
+               fi
+               sleep 1
+           done
+           printf 'after_utc=%s id=%s size=%s proved=%s\n' "$(date -u +%FT%TZ)" "$ROT_AFTER_ID" "$ROT_AFTER_SIZE" "$ROTATION_PROVED" |
+               sudo tee -a "$LATE_ROTATION_EVIDENCE"
+           test "$ROTATION_PROVED" = 1
+           test "$(systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-market-data.service)" = "$OLD_GATEWAY_ID"
+           printf 'LATE_WINDOW rotation=%s old_gateway=%s\n' "$LATE_ROTATION_EVIDENCE" "$OLD_GATEWAY_ID" |
+               sudo bash -c 'set -C; cat > "$1"' bash "$LATE_WINDOW_FILE"
+           echo 'LATE_WINDOW rotation proved on old gateway; no guard before content(1),(3),(4)' | sudo tee -a "$ATTEMPT_JOURNAL"
+           while test "$(TZ=America/New_York date +%H%M%S)" -lt 201000; do sleep 5; done
+           LATE_WINDOW=1
+           continue
+       fi
+       if test "$LATE_WINDOW" -eq 1 && test "$ET_NOW" -ge 213000; then
+           echo 'REFUSE late gateway restart cutoff 21:30 ET reached' >&2
            exit 1
        fi
        test "$(for unit in "${LIVE_UNITS[@]}"; do printf '%s\n' "$unit"; systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"; done)" = "$(sudo cat "$LIVE_IDS_FILE")"
@@ -660,6 +707,7 @@ page and one snapshot per call) were probed read-only.
            echo 'ARMED_UNKNOWN_NOT_BLOCKING published state unreadable'
        fi
        if FLAT_RESULT="$(timeout 45s sudo "$REPO/.venv/bin/python" "$FLAT_CHECK" 2>&1)"; then
+           BOT_FLAT_PROVEN=1
            printf 'PREFLIGHT_ATTEMPT rc=0 %s\n' "$FLAT_RESULT" | sudo tee -a "$ATTEMPT_JOURNAL"
            REDIS_BASELINE="/home/trader/after-hours/2026-10-01/option-a-redis-before-${ATTEMPT}.json"
            if REDIS_RESULT="$(sudo "$REPO/.venv/bin/python" "$REDIS_GUARD" capture "$REDIS_BASELINE" 2>&1)"; then
@@ -677,16 +725,32 @@ page and one snapshot per call) were probed read-only.
            sleep 300
        fi
    done
-   test "$(TZ=America/New_York date +%H%M%S)" -lt 191500
+   if test "$LATE_WINDOW" -eq 1; then
+       test "$(TZ=America/New_York date +%H%M%S)" -ge 201000
+       test "$(TZ=America/New_York date +%H%M%S)" -lt 213000
+       sudo test -s "$LATE_WINDOW_FILE"
+       sudo grep -q 'proved=1$' "$LATE_ROTATION_EVIDENCE"
+   else
+       test "$(TZ=America/New_York date +%H%M%S)" -lt 191500
+   fi
+   # In the late branch, leave time for restart and the 180-second proof.
+   if test "$LATE_WINDOW" -eq 1; then
+       test "$(TZ=America/New_York date +%H%M%S)" -lt 212700
+   fi
    printf '%s\n' "$REDIS_BASELINE" | sudo bash -c 'set -C; cat > "$1"' bash /home/trader/after-hours/2026-10-01/option-a-redis-baseline-path-1605-go.txt
    RESTART_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
    sudo systemctl restart project-mai-tai-market-data.service
    sudo systemctl is-active --quiet project-mai-tai-market-data.service
    sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-market-data.service
    POST_START_UTC="$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)"  # After restart returned; content lower bound.
+   if test "$LATE_WINDOW" -eq 1 && test "$(TZ=America/New_York date +%H%M%S)" -ge 213000; then
+       RESTART_OVERRUN=1  # Still run the content proof before reporting UNKNOWN.
+   else
+       RESTART_OVERRUN=0
+   fi
    sudo "$REPO/.venv/bin/python" "$REDIS_GUARD" check "$REDIS_BASELINE" || { echo 'UNKNOWN Redis eviction after restart: STOP, PAGE, NO ROLLBACK'; exit 2; }
    set +e
-   sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$CONTROL_FILE" "$RESTART_UTC" "$POST_START_UTC" "$REDIS_BASELINE" <<'PY'
+   sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" "$CONTROL_FILE" "$RESTART_UTC" "$POST_START_UTC" "$REDIS_BASELINE" "$LATE_WINDOW" <<'PY'
    import json
    import math
    import sys
@@ -707,6 +771,7 @@ page and one snapshot per call) were probed read-only.
    settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
    redis = Redis.from_url(settings.redis_url, decode_responses=True)
    redis_baseline = json.loads(Path(sys.argv[5]).read_text())
+   late_window = sys.argv[6] == "1"
    baseline_streams = redis_baseline["streams"]
    heartbeat_key = stream_name(settings.redis_stream_prefix, "heartbeats")
    snapshot_key = stream_name(settings.redis_stream_prefix, "snapshot-batches")
@@ -835,9 +900,10 @@ page and one snapshot per call) were probed read-only.
                   for name in (set(control["counts"]) | expected) - required_ticks - set(thin_excused)}
        missing_ticks = sorted(name for name in required_ticks if not sum(post_counts[name].values()))
        ticks_ok = tick_scanned and tick_error is None and not trimmed and not missing_ticks
+       deferred_tick_ok = tick_scanned and tick_error is None and not trimmed
        owners_ok = (owner_error is None and ids_stable and owners.get("_migration_complete") == "1"
                     and not extra and not paper and all(actual[name] == current[name]["symbols"] for name in required_owners))
-       if (heartbeat_ok and ticks_ok and cadence_ok and owners_ok) or now >= proof_end:
+       if (heartbeat_ok and (deferred_tick_ok if late_window else ticks_ok) and cadence_ok and owners_ok) or now >= proof_end:
            break
        time.sleep(1)
    in_time = datetime.now(UTC) <= proof_end
@@ -845,10 +911,11 @@ page and one snapshot per call) were probed read-only.
    expected_owner_sets = {name: sorted(row["symbols"]) for name, row in current.items()}
    print("owner source IDs captured", captured_ids, "current", current_ids)
    print(f"content(1) {'PASS' if heartbeat_ok and in_time else 'NOT_PROVEN'} heartbeat={produced} status={status} age_s={age} active={active} expected={len(expected)} error={heartbeat_error or owner_error}")
-   print(f"content(2) {'PASS' if ticks_ok and in_time else 'NOT_PROVEN'} control={control['start_utc']}..{control['end_utc']} post={post_start.isoformat()}..{tick_end.isoformat()} scanned={scanned} trimmed={trimmed} required={sorted(required_ticks)} counts={dict(post_counts)} thin_excused={thin_excused} excused={excused} missing={missing_ticks} error={tick_error}")
+   tick_call = ("DEFERRED" if deferred_tick_ok and in_time else "NOT_PROVEN") if late_window else ("PASS" if ticks_ok and in_time else "NOT_PROVEN")
+   print(f"content(2) {tick_call} control={control['start_utc']}..{control['end_utc']} post={post_start.isoformat()}..{tick_end.isoformat()} scanned={scanned} trimmed={trimmed} required={sorted(required_ticks)} counts={dict(post_counts)} thin_excused={thin_excused} excused={excused} missing={missing_ticks} error={tick_error}")
    print(f"content(3) {'PASS' if cadence_ok and in_time else 'NOT_PROVEN'} intervals={len(intervals)} p95_s={p95} max_s={max(intervals) if intervals else None} error={cadence_error}")
    print(f"content(4) {'PASS' if owners_ok and in_time else 'NOT_PROVEN'} migration={owners.get('_migration_complete')} actual={actual} expected={expected_owner_sets} ids_stable={ids_stable} extra={extra} paper={paper} error={owner_error}")
-   if not (heartbeat_ok and ticks_ok and cadence_ok and owners_ok and in_time):
+   if not (heartbeat_ok and (deferred_tick_ok if late_window else ticks_ok) and cadence_ok and owners_ok and in_time):
        raise SystemExit("new gateway content proof UNKNOWN; single rollback only")
    PY
    PROOF_RC=$?
@@ -860,6 +927,10 @@ page and one snapshot per call) were probed read-only.
    if test "$PROOF_RC" -ne 0; then
        echo 'UNKNOWN content proof; execute section 4 single rollback immediately after fresh Redis safety check' >&2
        exit 3
+   fi
+   if test "$RESTART_OVERRUN" -eq 1; then
+       echo 'UNKNOWN late restart completed after 21:30 ET; content proved but no guard or paper start; page' >&2
+       exit 2
    fi
    test "$(for unit in "${LIVE_UNITS[@]}"; do printf '%s\n' "$unit"; systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts "$unit.service"; done)" = "$(sudo cat "$LIVE_IDS_FILE")"
    test "$(systemctl show -p ActiveState --value project-mai-tai-momentum-paper.service)" = inactive
@@ -873,7 +944,12 @@ page and one snapshot per call) were probed read-only.
    10 snapshot intervals and p95, and (4) the migrated owner hash against
    current retained sets (printing captured and current source IDs). An
    unproven condition is UNKNOWN and invokes
-   only the newly authorized single rollback. INFO log lines are not proof.
+   only the newly authorized single rollback. In the late window only,
+   content (2) is `DEFERRED`, never PASS: print its pre/post control counts,
+   and require the bounded stream read itself to be complete. Content (1),
+   (3), and (4) must PASS before the guard can start; a separate 04:00-04:30
+   ET tick proof must PASS before paper starts at 05:15. INFO log lines are
+   not proof.
 
    There is no checkout switch or runtime reinstall in the forward phase:
    Mode B already left the clean box at this exact service SHA. The import
@@ -904,14 +980,18 @@ page and one snapshot per call) were probed read-only.
    If the gateway is not healthy or the five identities drift, refuse the
    next step and report. Keep the 2026-10-01 restart-gate UNKNOWN from the
    historical untimestamped traceback distinct from gateway content proof.
-2. At 19:59 ET, before the expected 20:00:06 ET `copytruncate`, capture
+2. On the normal path, at 19:59 ET, before the expected 20:00:06 ET
+   `copytruncate`, capture
    the gateway log device/inode and byte size. After 20:00:06, require the
    **same** inode with a smaller size. If no drop is observed by 20:03 ET,
    or the log is unreadable/replaced, the rotation proof is UNKNOWN and
    paper remains stopped. Do not start the sampler at an unproven byte
    offset. Use a new O_EXCL evidence file under the 2026-10-01 directory.
-   Start only `project-mai-tai-option-a-guard@2026-10-02.service` after
-   rotation proof, with its reviewed OnFailure unit installed. The guard
+   The late path already captured and proved this rotation **on the old
+   gateway** before its 20:10-21:30 restart; reuse that O_EXCL evidence
+   instead of attempting to capture a second pre-rotation size. Start only
+   `project-mai-tai-option-a-guard@2026-10-02.service` after rotation proof
+   and content (1), (3), (4) PASS, with its reviewed OnFailure unit installed. The guard
    itself starts the 1008 sampler and begins the 1 Hz load audit at 07:00 ET.
    Before 07:00, only the sampler JSONL advances; the guard audit JSONL has
    a startup record, while systemd watchdog pulses prove the live guard loop.
@@ -925,30 +1005,37 @@ page and one snapshot per call) were probed read-only.
    REPO=/home/trader/project-mai-tai
    GATEWAY_LOG=/var/log/project-mai-tai/market-data.log
    ROTATION_EVIDENCE=/home/trader/after-hours/2026-10-01/option-a-gateway-rotation-1605-go.txt
-   test "$(TZ=America/New_York date +%H%M%S)" -lt 200000
-   ROT_BEFORE_ID="$(stat -c '%d:%i' "$GATEWAY_LOG")"
-   ROT_BEFORE_SIZE="$(stat -c '%s' "$GATEWAY_LOG")"
-   sudo "$REPO/.venv/bin/python" - "$ROTATION_EVIDENCE" "$ROT_BEFORE_ID" "$ROT_BEFORE_SIZE" <<'PY'
+   LATE_WINDOW_FILE=/home/trader/after-hours/2026-10-01/option-a-late-window-1605-go.txt
+   if sudo test -s "$LATE_WINDOW_FILE"; then
+       ROTATION_EVIDENCE=/home/trader/after-hours/2026-10-01/option-a-gateway-rotation-late-1605-go.txt
+       sudo grep -F "LATE_WINDOW rotation=$ROTATION_EVIDENCE" "$LATE_WINDOW_FILE"
+       sudo grep -q 'proved=1$' "$ROTATION_EVIDENCE"
+   else
+       test "$(TZ=America/New_York date +%H%M%S)" -lt 200000
+       ROT_BEFORE_ID="$(stat -c '%d:%i' "$GATEWAY_LOG")"
+       ROT_BEFORE_SIZE="$(stat -c '%s' "$GATEWAY_LOG")"
+       sudo "$REPO/.venv/bin/python" - "$ROTATION_EVIDENCE" "$ROT_BEFORE_ID" "$ROT_BEFORE_SIZE" <<'PY'
    import os, sys
    from datetime import UTC, datetime
    fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
    with os.fdopen(fd, "w") as out:
        out.write(f"before_utc={datetime.now(UTC).isoformat()} id={sys.argv[2]} size={sys.argv[3]}\n")
    PY
-   ROTATION_PROVED=0
-   for attempt in $(seq 1 180); do
-       ET_NOW="$(TZ=America/New_York date +%H%M%S)"
-       ROT_AFTER_ID="$(stat -c '%d:%i' "$GATEWAY_LOG")"
-       ROT_AFTER_SIZE="$(stat -c '%s' "$GATEWAY_LOG")"
-       if test "$ROT_AFTER_ID" != "$ROT_BEFORE_ID"; then break; fi
-       if test "$ET_NOW" -ge 200006 && test "$ROT_AFTER_SIZE" -lt "$ROT_BEFORE_SIZE"; then
-           ROTATION_PROVED=1
-           break
-       fi
-       sleep 1
-   done
-   printf 'after_utc=%s id=%s size=%s proved=%s\n' "$(date -u +%FT%TZ)" "$ROT_AFTER_ID" "$ROT_AFTER_SIZE" "$ROTATION_PROVED" | sudo tee -a "$ROTATION_EVIDENCE"
-   test "$ROTATION_PROVED" = 1
+       ROTATION_PROVED=0
+       for attempt in $(seq 1 180); do
+           ET_NOW="$(TZ=America/New_York date +%H%M%S)"
+           ROT_AFTER_ID="$(stat -c '%d:%i' "$GATEWAY_LOG")"
+           ROT_AFTER_SIZE="$(stat -c '%s' "$GATEWAY_LOG")"
+           if test "$ROT_AFTER_ID" != "$ROT_BEFORE_ID"; then break; fi
+           if test "$ET_NOW" -ge 200006 && test "$ROT_AFTER_SIZE" -lt "$ROT_BEFORE_SIZE"; then
+               ROTATION_PROVED=1
+               break
+           fi
+           sleep 1
+       done
+       printf 'after_utc=%s id=%s size=%s proved=%s\n' "$(date -u +%FT%TZ)" "$ROT_AFTER_ID" "$ROT_AFTER_SIZE" "$ROTATION_PROVED" | sudo tee -a "$ROTATION_EVIDENCE"
+       test "$ROTATION_PROVED" = 1
+   fi
    sudo systemctl is-active --quiet project-mai-tai-market-data.service
    test "$(systemctl show -p ActiveState --value project-mai-tai-momentum-paper.service)" = inactive
    sudo systemctl start project-mai-tai-option-a-guard@2026-10-02.service
@@ -961,6 +1048,113 @@ page and one snapshot per call) were probed read-only.
    done
    sudo test -s "$TREATMENT/option-a-guard.jsonl"
    sudo test -s "$TREATMENT/option-a-1008.jsonl"
+   ```
+
+   If and only if the late window was used, run this read-only Redis proof
+   beginning at 04:00 ET on 2026-10-02, no later than 04:30. It records
+   trade/quote counts for every symbol in the four current owner sets plus
+   static symbols, using `XRANGE count=100` pages (<1 MiB per measured
+   reply). Missing symbols, unreadable evidence, eviction, changed gateway
+   identity, or no healthy post-04:00 heartbeat is UNKNOWN: paper remains
+   STOPPED. The O_EXCL PASS artifact is required at 05:15. This does not
+   retroactively call the nighttime content (2) PASS. Arrange a one-shot
+   read-only root run of this block at 04:00 ET after the late gateway
+   outcome is journaled; if no runner is confirmed, leave paper stopped.
+
+   ```bash
+   set -euo pipefail
+   REPO=/home/trader/project-mai-tai
+   LATE_WINDOW_FILE=/home/trader/after-hours/2026-10-01/option-a-late-window-1605-go.txt
+   if sudo test -s "$LATE_WINDOW_FILE"; then
+       sudo "$REPO/.venv/bin/python" - \
+           /home/trader/after-hours/2026-10-01/option-a-gateway-identity-1605-go.txt \
+           /home/trader/after-hours/2026-10-01/option-a-redis-baseline-path-1605-go.txt \
+           /home/trader/after-hours/2026-10-02/option-a-deferred-tick-proof.json <<'PY'
+   import json, os, subprocess, sys, time
+   from collections import defaultdict
+   from datetime import UTC, datetime
+   from pathlib import Path
+   from zoneinfo import ZoneInfo
+   from redis import Redis
+   from project_mai_tai.events import stream_name
+   from project_mai_tai.settings import Settings
+
+   start = datetime(2026, 10, 2, 4, 0, tzinfo=ZoneInfo("America/New_York")).astimezone(UTC)
+   deadline = datetime(2026, 10, 2, 4, 30, tzinfo=ZoneInfo("America/New_York")).astimezone(UTC)
+   if not start <= datetime.now(UTC) < deadline:
+       raise SystemExit("UNKNOWN deferred tick proof outside 04:00-04:30 ET")
+   expected_identity = Path(sys.argv[1]).read_text().strip()
+   def identity():
+       return subprocess.check_output([
+           "systemctl", "show", "-p", "MainPID", "-p", "ActiveEnterTimestamp",
+           "-p", "NRestarts", "project-mai-tai-market-data.service"], text=True).strip()
+   if identity() != expected_identity:
+       raise SystemExit("UNKNOWN gateway identity changed before deferred tick proof")
+   baseline = json.loads(Path(Path(sys.argv[2]).read_text().strip()).read_text())
+   settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
+   redis = Redis.from_url(settings.redis_url, decode_responses=True)
+   prefix = settings.redis_stream_prefix
+   market = stream_name(prefix, "market-data")
+   heartbeat = stream_name(prefix, "heartbeats")
+   owners = redis.hgetall(stream_name(prefix, "market-data-subscription-owners"))  # <1 MiB.
+   required = {"strategy-engine", "schwab-1m-v2", "orb", "orb-schwab"}
+   if (owners.get("_migration_complete") != "1" or not required <= set(owners)
+           or set(owners) - required - {"_migration_complete", "_last_applied_id", "static", "momentum-paper"}):
+       raise SystemExit("UNKNOWN owner migration or one of four owners missing")
+   owner_sets = {name: set(json.loads(owners[name])) for name in required}
+   symbols = set(settings.market_data_static_symbol_list)
+   for owned in owner_sets.values():
+       symbols.update(owned)
+   if not symbols:
+       raise SystemExit("UNKNOWN no owned symbols to prove")
+   counts = defaultdict(lambda: {"trade_tick": 0, "quote_tick": 0})
+   cursor = f"{int(start.timestamp() * 1000)}-0"
+   end_id = f"({int(deadline.timestamp() * 1000) + 1}-0"
+   scanned = 0
+   while datetime.now(UTC) < deadline:
+       if (int(redis.info("stats")["evicted_keys"]) != baseline["evicted_keys"]  # <64 KiB.
+               or redis.exists(*baseline["streams"]) != len(baseline["streams"])):  # One integer.
+           raise SystemExit("UNKNOWN Redis eviction or stream loss; stop and page")
+       rows = redis.xrange(market, min=f"({cursor}", max=end_id, count=100)  # <1 MiB per page.
+       for event_id, fields in rows:
+           event = json.loads(fields["data"])
+           stamp = datetime.fromisoformat(event["produced_at"].replace("Z", "+00:00"))
+           name = event.get("payload", {}).get("symbol")
+           kind = event.get("event_type")
+           if (start <= stamp <= deadline and event.get("source_service") == "market-data-gateway"
+                   and name in symbols and kind in {"trade_tick", "quote_tick"}):
+               counts[name][kind] += 1
+           scanned += 1
+       if rows:
+           cursor = rows[-1][0]
+       if all(sum(counts[name].values()) > 0 for name in symbols):
+           break
+       if not rows:
+           time.sleep(1)
+   missing = sorted(name for name in symbols if not sum(counts[name].values()))
+   latest = next((event for _, fields in redis.xrevrange(heartbeat, count=25)  # <256 KiB.
+                  if (event := json.loads(fields["data"])).get("source_service") == "market-data-gateway"), None)
+   produced = datetime.fromisoformat(latest["produced_at"].replace("Z", "+00:00")) if latest else None
+   now = datetime.now(UTC)
+   healthy = (latest is not None and latest.get("payload", {}).get("status") == "healthy"
+              and produced is not None and produced >= start
+              and 0 <= (now - produced).total_seconds() <= 30.819
+              and str(latest.get("payload", {}).get("details", {}).get("active_symbols")) == str(len(symbols)))
+   latest_owners = redis.hgetall(stream_name(prefix, "market-data-subscription-owners"))  # <1 MiB.
+   owners_stable = all(set(json.loads(latest_owners.get(name, "[]"))) == owned
+                       for name, owned in owner_sets.items())
+   if missing or not healthy or not owners_stable or now > deadline or identity() != expected_identity:
+       raise SystemExit(f"UNKNOWN deferred tick proof missing={missing} heartbeat_healthy={healthy} scanned={scanned} counts={dict(counts)}")
+   result = {"call": "PASS", "window_start_utc": start.isoformat(),
+             "proved_at_utc": datetime.now(UTC).isoformat(), "gateway_identity": expected_identity,
+             "expected": sorted(symbols), "counts": dict(counts), "scanned": scanned}
+   fd = os.open(sys.argv[3], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+   with os.fdopen(fd, "w") as output:
+       json.dump(result, output, sort_keys=True)
+       output.write("\n")
+   print("DEFERRED_CONTENT_2_MORNING PASS", result)
+   PY
+   fi
    ```
 
 3. The reviewed guard permits paper to be inactive from 20:00 ET until
@@ -999,10 +1193,32 @@ page and one snapshot per call) were probed read-only.
    REPO=/home/trader/project-mai-tai
    GATEWAY_ID_FILE=/home/trader/after-hours/2026-10-01/option-a-gateway-identity-1605-go.txt
    TREATMENT=/home/trader/after-hours/2026-10-02/option-a-treatment
+   LATE_WINDOW_FILE=/home/trader/after-hours/2026-10-01/option-a-late-window-1605-go.txt
    test "$(TZ=America/New_York date +%F)" = 2026-10-02
    test "$(TZ=America/New_York date +%H%M%S)" -ge 051500
    test "$(TZ=America/New_York date +%H%M%S)" -lt 070000
    test "$(systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-market-data.service)" = "$(sudo cat "$GATEWAY_ID_FILE")"
+   if sudo test -s "$LATE_WINDOW_FILE"; then
+       sudo "$REPO/.venv/bin/python" - "$GATEWAY_ID_FILE" <<'PY'
+   import json, sys
+   from pathlib import Path
+   evidence = json.loads(Path("/home/trader/after-hours/2026-10-02/option-a-deferred-tick-proof.json").read_text())
+   assert evidence["call"] == "PASS" and evidence["expected"]
+   assert all(sum(evidence["counts"][name].values()) > 0 for name in evidence["expected"])
+   assert evidence["gateway_identity"] == Path(sys.argv[1]).read_text().strip()
+   from redis import Redis
+   from project_mai_tai.events import stream_name
+   from project_mai_tai.settings import Settings
+   settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
+   owners = Redis.from_url(settings.redis_url, decode_responses=True).hgetall(
+       stream_name(settings.redis_stream_prefix, "market-data-subscription-owners"))  # <1 MiB.
+   current = set(settings.market_data_static_symbol_list)
+   for name in ("strategy-engine", "schwab-1m-v2", "orb", "orb-schwab"):
+       current.update(json.loads(owners[name]))
+   assert current == set(evidence["expected"])
+   print("05:15 deferred content(2) morning proof PASS", evidence["proved_at_utc"], evidence["counts"])
+   PY
+   fi
    sudo systemctl is-active --quiet project-mai-tai-market-data.service
    sudo systemctl is-active --quiet project-mai-tai-option-a-guard@2026-10-02.service
    test "$(systemctl show -p NRestarts --value project-mai-tai-option-a-guard@2026-10-02.service)" = 0
@@ -1109,8 +1325,11 @@ page and one snapshot per call) were probed read-only.
 
 The operator's 2026-10-01 GO authorizes one new rollback for this attempt;
 the 2026-09-30 attempt's rollback is already spent. Trigger this one if any
-of section 2's four content conditions is not proven within **180 seconds**
-of restart. Switch temporarily to old gateway SHA
+mandatory section 2 content condition is not proven within **180 seconds**
+of restart: all four on the normal path, or (1), (3), (4) and a readable
+DEFERRED (2) stream on the late path. The 04:00-04:30 tick proof is a
+separate paper-start gate, not a second rollback trigger. Switch
+temporarily to old gateway SHA
 `3389090a7d30bdc88736a53211d968f4c82f0288`, then replay **all four**
 **newest retained** raw consumer replaces at rollback time (strategy-engine,
 schwab-1m-v2, orb, orb-schwab) byte-for-byte in source-ID order, newest last.
@@ -1488,8 +1707,12 @@ values, rollback event IDs (if used), guard unit/hash, rotation device/inode
 and sampler offsets/coverage, next-day paper start proof or refusal, and
 preopen diff/hash if separately re-pinned. Keep evidence under new O_EXCL
 paths in `/home/trader/after-hours/2026-10-01/` or the treatment-date
-directory; never overwrite the earlier morning-go owner artifact. Report
-the result
-as REAL FAILURE, EXPECTED BY DESIGN, or UNKNOWN after checking the relevant
+directory; never overwrite the earlier morning-go owner artifact. If the
+late branch was taken, report its old-gateway rotation proof, 20:10-21:30
+fresh preflight, content (2) DEFERRED counts, and the 04:00-04:30 result.
+The separate OMS install uses its already approved after-20:10 window only
+after the gateway outcome is journaled; this plan does not authorize an OMS
+restart. Report the result as REAL FAILURE, EXPECTED BY DESIGN, or UNKNOWN
+after checking the relevant
 code/design, not by repeating a tool's red line. The first-session result is
 `STOPPED`, `OBSERVED`, or `UNKNOWN`, not a Momentum P&L or live-trading verdict.
