@@ -32,7 +32,7 @@ claude-1 changes env/config only when the operator asks. The author never review
 > - (09-28) **Codex builds, claude reviews.**
 > - (09-28) **Stability first: backtest/replay-engine work is parked TBD until the system is stable.**
 > - ⛔⭐⭐⭐⭐ (09-29) **REQUIREMENT CARD:** every rule-changing PR gets 2–3 plain-English sentences ("when X, the bot does Y; it does NOT do Z"), checked against the operator's OWN words, and confirmed by him BEFORE the build and again BEFORE the pin. Trigger: RETRY-ONE was built "blocked for the whole day" (my spec #1039 said "per day") when he had said "skip the next flip". Register: claude-1 memory `project_mai_tai_live_rule_cards`.
-> - ⛔⭐⭐⭐⭐ (09-29) **DEPLOY = FLAG ON:** a flag is only a rollback switch. It goes ON in the same deploy, verified in `/proc`; no pin without that deploy line. The only STAGED exception: #1064 ORB Schwab live orders stay OFF (observe first, then the operator's decision). Flags that are OFF BY RULING (not staged fixes): `OMS_V2_CW_FLOOR_EXIT=false` (card 10: no floor ride) and `ATR_MASSIVE_SEED=false` (parked, board 32).
+> - ⛔⭐⭐⭐⭐ (09-29) **DEPLOY = FLAG ON:** a flag is only a rollback switch. It goes ON in the same deploy, verified in `/proc`; no pin without that deploy line. (The #1064 ORB Schwab staged exception ENDED 09-30: live orders ON since 19:31 ET by the operator's ruling.) Flags that are OFF BY RULING (not staged fixes): `OMS_V2_CW_FLOOR_EXIT=false` (card 10: no floor ride) and `ATR_MASSIVE_SEED=false` (parked, board 32).
 
 ---
 
