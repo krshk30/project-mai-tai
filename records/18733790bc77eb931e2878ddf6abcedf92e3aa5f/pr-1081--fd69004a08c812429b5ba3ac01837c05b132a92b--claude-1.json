@@ -1,0 +1,9 @@
+{
+  "pr_number": 1081,
+  "range_base": "fd69004a08c812429b5ba3ac01837c05b132a92b",
+  "range_head": "18733790bc77eb931e2878ddf6abcedf92e3aa5f",
+  "reviewed_at": "2026-10-01T18:41:46Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Test-only fixture fix, no trading-rule change, no production code. Dual-leg tests in test_v2_managed_exit.py get a file-backed sqlite engine with NullPool (one connection per session, as Postgres in production) instead of one shared StaticPool connection; adds a 50-iteration dual-leg quote test. Cause it fixes: #1079's gathered legs run two _run_db worker threads at once (0/25 failures at aeda65c9, 5/25 at 3a0add43). Checked: the fixed test + 50-run test 0 failures in 12 repeats (612 dual-leg quotes); my mutation putting the 50-run test back on the shared-connection fixture goes RED; test_cw_target_stay_release.py, test_oms_webull_mirror_deferred_resubmit.py and test_v2_managed_exit.py 0 failures in 20 runs each on this head; CI validate pass x2. Not covered: other test files outside those three were not repeat-run for the same exposure."
+}
