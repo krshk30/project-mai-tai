@@ -434,15 +434,24 @@ class ReconciliationService:
 
             if severity is not None and direction is not None and title is not None:
                 configured_entry_quantity: int | None = None
+                configured_entry_notional_usd: int | None = None
                 if account_name == "live:schwab_1m_v2":
-                    configured_entry_quantity = int(
-                        self.settings.strategy_schwab_1m_v2_default_quantity
-                    )
+                    configured_entry_notional_usd = int(
+                        self.settings.strategy_schwab_1m_v2_entry_notional_usd
+                    ) or None
+                    if configured_entry_notional_usd is None:
+                        configured_entry_quantity = int(
+                            self.settings.strategy_schwab_1m_v2_default_quantity
+                        )
                 elif account_name == "live:orb":
-                    configured_entry_quantity = int(
-                        self.settings.strategy_schwab_1m_v2_webull_fanout_quantity
-                        or self.settings.strategy_schwab_1m_v2_default_quantity
-                    )
+                    configured_entry_notional_usd = int(
+                        self.settings.strategy_schwab_1m_v2_webull_entry_notional_usd
+                    ) or None
+                    if configured_entry_notional_usd is None:
+                        configured_entry_quantity = int(
+                            self.settings.strategy_schwab_1m_v2_webull_fanout_quantity
+                            or self.settings.strategy_schwab_1m_v2_default_quantity
+                        )
                 findings.append(
                     FindingSpec(
                         finding_type="position_quantity_mismatch",
@@ -471,6 +480,7 @@ class ReconciliationService:
                             # Context only. Quantity shape never decides ownership: 500 and 1000
                             # are both multiples of the live Schwab size of 2.
                             "configured_entry_quantity": configured_entry_quantity,
+                            "configured_entry_notional_usd": configured_entry_notional_usd,
                             "strategy_codes": sorted(
                                 set(aggregate["strategy_codes"] if aggregate else [])
                                 | managed_strategies.get((account_id, symbol), set())

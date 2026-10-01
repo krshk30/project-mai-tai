@@ -67,6 +67,8 @@ def _session_factory() -> sessionmaker[Session]:
 
 
 def _oms(**settings_kw) -> OmsRiskService:
+    settings_kw.setdefault("strategy_schwab_1m_v2_entry_notional_usd", 0)
+    settings_kw.setdefault("strategy_schwab_1m_v2_webull_entry_notional_usd", 0)
     return OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated", **settings_kw),
         redis_client=_FakeRedis(),

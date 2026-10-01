@@ -126,6 +126,8 @@ def _integrated_service(
     adapter = _RecordingAdapter()
     service = OmsRiskService(
         settings=Settings(
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             redis_stream_prefix="test",
             oms_adapter="simulated",
             oms_v2_webull_mirror_deferred_resubmit_enabled=enabled,
@@ -538,6 +540,8 @@ def _v2_strategy_with_an_expiring_claim(*, mirror_live: bool):
     clock = {"ms": _CLAIM_SEGMENT_MS}
     strategy = SchwabV2Strategy(
         Settings(
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             strategy_schwab_1m_v2_confirmed_window_enabled=True,
             strategy_schwab_1m_v2_cw_v2_enabled=True,
             strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,

@@ -146,6 +146,8 @@ def _service(
 ) -> OmsRiskService:
     return OmsRiskService(
         settings=Settings(
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             redis_stream_prefix="test",
             oms_adapter="simulated",
             **settings,

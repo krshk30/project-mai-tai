@@ -30,6 +30,7 @@ SERVICE_UNITS = {
     "strategy": "project-mai-tai-strategy.service",
 }
 BOOL = TypeAdapter(bool)
+INTEGER = TypeAdapter(int)
 DOTENV_DISABLED_SERVICES = frozenset({"orb", "orb-schwab"})
 
 
@@ -95,6 +96,47 @@ def load_catalog(path: Path) -> list[dict[str, object]]:
     return entries
 
 
+def load_numeric_catalog(path: Path) -> list[dict[str, object]]:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CatalogError(f"cannot read numeric catalog {path}: {exc}") from exc
+    if not isinstance(document, dict) or document.get("schema_version") != 1:
+        raise CatalogError("numeric catalog schema_version must be 1")
+    entries = document.get("settings")
+    if not isinstance(entries, list):
+        raise CatalogError("numeric catalog settings must be a list")
+    names: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise CatalogError("every numeric entry must be an object")
+        name = entry.get("name")
+        if not isinstance(name, str) or name not in Settings.model_fields:
+            raise CatalogError(f"unknown numeric setting {name!r}")
+        if Settings.model_fields[name].annotation is not int:
+            raise CatalogError(f"{name}: numeric setting must be an integer field")
+        if type(entry.get("expected")) is not int or entry["expected"] < 0:
+            raise CatalogError(f"{name}: expected must be a nonnegative integer")
+        if name in names:
+            raise CatalogError(f"duplicate numeric setting {name}")
+        names.add(name)
+        owner = entry.get("owning_service")
+        if owner not in SERVICE_UNITS:
+            raise CatalogError(f"{name}: unknown owning_service {owner!r}")
+        also_check = entry.get("also_check_services", [])
+        if not isinstance(also_check, list) or any(
+            service not in SERVICE_UNITS or service == owner for service in also_check
+        ) or len(also_check) != len(set(also_check)):
+            raise CatalogError(f"{name}: invalid also_check_services")
+        if type(entry.get("require_process_env", False)) is not bool:
+            raise CatalogError(f"{name}: require_process_env must be boolean")
+        for key in ("reason", "ruling"):
+            if not isinstance(entry.get(key), str) or not entry[key].strip():
+                raise CatalogError(f"{name}: {key} must be documented")
+        entry["kind"] = "numeric"
+    return entries
+
+
 def _environment_names(name: str, field: object) -> list[str]:
     alias = getattr(field, "validation_alias", None)
     if isinstance(alias, AliasChoices):
@@ -122,6 +164,26 @@ def flag_value(
     default = field.get_default(call_default_factory=True)
     if type(default) is not bool:
         raise ValueError(f"{name}: no boolean settings default")
+    return default, "settings-default"
+
+
+def numeric_value(
+    name: str,
+    environ: dict[str, str],
+    dotenv_names: frozenset[str] = frozenset(),
+    dotenv_path: Path | None = None,
+) -> tuple[int, str]:
+    field = Settings.model_fields[name]
+    keys = _environment_names(name, field)
+    upper_environ = {key.upper(): value for key, value in environ.items()}
+    for key in keys:
+        if key in upper_environ:
+            return INTEGER.validate_python(upper_environ[key]), f"env:{key}"
+    if any(key in dotenv_names for key in keys):
+        raise ValueError(f"{name}: present in {dotenv_path} but absent from process environment")
+    default = field.get_default(call_default_factory=True)
+    if type(default) is not int:
+        raise ValueError(f"{name}: no integer settings default")
     return default, "settings-default"
 
 
@@ -208,17 +270,19 @@ def audit(
                 output.append(f"UNKNOWN flag={name} service={service} reason={reading}")
                 continue
             try:
-                actual, source = flag_value(
-                    name, reading.environ, reading.dotenv_names, reading.dotenv_path
-                )
+                value_reader = numeric_value if entry.get("kind") == "numeric" else flag_value
+                actual, source = value_reader(name, reading.environ, reading.dotenv_names, reading.dotenv_path)
             except (ValidationError, ValueError) as exc:
                 unknowns += 1
                 output.append(f"UNKNOWN flag={name} service={service} pid={reading.pid} reason={exc}")
                 continue
             checked += 1
             expected = entry["expected"]
-            verdict = "PASS" if actual is expected else "REAL FAILURE"
-            if actual is not expected:
+            matches = actual == expected and (
+                not entry.get("require_process_env") or source.startswith("env:")
+            )
+            verdict = "PASS" if matches else "REAL FAILURE"
+            if not matches:
                 mismatches += 1
             output.append(
                 f"{verdict} flag={name} service={service} pid={reading.pid} "
@@ -242,9 +306,12 @@ def main() -> int:
     parser.add_argument(
         "--catalog", type=Path, default=Path(__file__).with_name("expected_flags.json")
     )
+    parser.add_argument(
+        "--numeric-catalog", type=Path, default=Path(__file__).with_name("expected_numeric.json")
+    )
     args = parser.parse_args()
     try:
-        entries = load_catalog(args.catalog)
+        entries = load_catalog(args.catalog) + load_numeric_catalog(args.numeric_catalog)
     except CatalogError as exc:
         print(f"UNKNOWN catalog={args.catalog} reason={exc}")
         print("Final call: UNKNOWN; checked=0/0 mismatches=0 unknown=1")

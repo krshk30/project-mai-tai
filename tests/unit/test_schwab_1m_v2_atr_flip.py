@@ -44,7 +44,10 @@ def _entry_window_strategy(settings: Settings | None = None) -> SchwabV2Strategy
     Pin that independent precondition explicitly so running the suite after 16:00 does not silently
     change their subject. The close-boundary polarities are exercised in test_v2_arm_lifecycle.py.
     """
-    strategy = SchwabV2Strategy(settings or Settings())
+    strategy = SchwabV2Strategy(settings or Settings(
+        strategy_schwab_1m_v2_entry_notional_usd=0,
+        strategy_schwab_1m_v2_webull_entry_notional_usd=0,
+    ))
     strategy._entry_window_closed_for_session = lambda now=None: False
     return strategy
 

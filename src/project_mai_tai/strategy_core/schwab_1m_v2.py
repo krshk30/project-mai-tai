@@ -59,6 +59,7 @@ from project_mai_tai.v2_flip_entry_ownership import (
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.entry_gate import resolve_entry_window
+from project_mai_tai.strategy_core.v2_entry_sizing import sized_entry_quantity
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +319,8 @@ class SymbolState:
     resting_active: bool = False               # a resting entry is armed (broker order OR EH soft-rest)
     resting_level: float = 0.0                 # raw ATR line; stable-rest reprice baseline
     resting_trigger: float = 0.0               # offset stop price the resting order sits at
+    resting_schwab_quantity: int = 0            # quantity placed, never a current-price recomputation
+    resting_webull_quantity: int = 0
     resting_below_floor_bars: int = 0          # consecutive completed thin bars while the rest works
     # ⛔⭐ SET AT PLACEMENT, READ AT CANCEL. `resting_active` is True for BOTH an RTH broker order and
     # an EH in-memory soft-rest, so it cannot answer "is something live at the BROKER?". Asking the
@@ -587,6 +590,15 @@ class SchwabV2Strategy:
         ).strip().upper()
         self._atr_qty = max(
             1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_quantity", 10))
+        )
+        self._entry_notional_schwab = Decimal(str(
+            getattr(self.settings, "strategy_schwab_1m_v2_entry_notional_usd", 600)
+        ))
+        self._entry_notional_webull = Decimal(str(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_entry_notional_usd", 300)
+        ))
+        self._entry_max_shares = int(
+            getattr(self.settings, "strategy_schwab_1m_v2_entry_max_shares", 1000)
         )
         self._atr_vol_floor = int(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_vol_floor", 5000)
@@ -2282,6 +2294,7 @@ class SchwabV2Strategy:
         state.resting_active = False
         state.resting_level = 0.0
         state.resting_trigger = 0.0
+        state.resting_schwab_quantity = 0
         state.resting_flip_ms = 0
         state.resting_below_floor_bars = 0
         return cleared
@@ -2842,7 +2855,7 @@ class SchwabV2Strategy:
                     self._resting_band_pct_value(),
                     self._resting_offset_pct_value(),
                 )
-                self._pending_webull_fanout_intents.append(
+                self._queue_webull_fanout_draft(state,
                     self._build_webull_fanout_draft(
                         state,
                         # Anchor both the expected price and band on the resting trigger. The actual
@@ -3348,6 +3361,13 @@ class SchwabV2Strategy:
             self._log_hold(state, ph, mode + "_age_skip", net_bps)
             return None
         entry = ph.touch_price
+        quote = state.last_quote
+        sized = self._sized_open(
+            state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
+        )
+        if sized is None:
+            return None
+        quantity, sizing_metadata = sized
         state.last_entry_price = entry
         trail = state.atr_trail
         if self._atr_rearm_enabled:            # emit -> claim PROVISIONAL (released on no-fill by the poll)
@@ -3357,7 +3377,7 @@ class SchwabV2Strategy:
             symbol=state.symbol,
             side="buy",
             intent_type="open",
-            quantity=Decimal(str(self._atr_qty)),
+            quantity=quantity,
             reason=f"schwab_1m_v2 ATR Flip {self._atr_variant} [hold:{mode}]",
             metadata={
                 "path": "ATR Flip",
@@ -3369,6 +3389,7 @@ class SchwabV2Strategy:
                 "atr_state_age": str(ph.seg_age),
                 "source": "schwab_1m_v2",
                 "strategy_version": STRATEGY_VERSION,
+                **sizing_metadata,
                 # hold-confirmation telemetry (slippage/decision audit)
                 "hold_mode": mode,
                 "hold_net_bps": f"{net_bps:.2f}",
@@ -3673,6 +3694,8 @@ class SchwabV2Strategy:
         state.resting_active = False
         state.resting_level = 0.0
         state.resting_trigger = 0.0
+        state.resting_schwab_quantity = 0
+        state.resting_webull_quantity = 0
         state.resting_is_broker_order = False
         state.resting_slot = "first"
         state.last_resting_placed_slot = "first"
@@ -4042,6 +4065,13 @@ class SchwabV2Strategy:
             else:
                 return None
 
+        quote = state.last_quote
+        sized = self._sized_open(
+            state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
+        )
+        if sized is None:
+            return None
+        quantity, sizing_metadata = sized
         state.last_entry_price = entry
         trail = atr_signal.get("trail")
         loss = atr_signal.get("loss")
@@ -4052,7 +4082,7 @@ class SchwabV2Strategy:
             symbol=state.symbol,
             side="buy",
             intent_type="open",
-            quantity=Decimal(str(self._atr_qty)),
+            quantity=quantity,
             reason=f"schwab_1m_v2 ATR Flip {self._atr_variant}",
             metadata={
                 "path": "ATR Flip",
@@ -4071,6 +4101,7 @@ class SchwabV2Strategy:
                 "volume": str(cur.volume),
                 "source": "schwab_1m_v2",
                 "strategy_version": STRATEGY_VERSION,
+                **sizing_metadata,
                 "bar_time_ms": str(cur.timestamp_ms),
             },
         )
@@ -4121,6 +4152,13 @@ class SchwabV2Strategy:
             return None  # broke on a sub-floor bar; wait for a liquid break
 
         entry = float(state.cw_three_bar_high)  # idealized stop-buy fill at the trigger
+        quote = state.last_quote
+        sized = self._sized_open(
+            state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
+        )
+        if sized is None:
+            return None
+        quantity, sizing_metadata = sized
         # P2.11: the ENTER line below marks this, but pairing ARM/DISARM must not depend on a
         # reader knowing that. Unconditional here: this branch is only reachable while armed.
         logger.info("[V2-CW-DISARM] %s reason=entered", state.symbol)
@@ -4139,7 +4177,7 @@ class SchwabV2Strategy:
             symbol=state.symbol,
             side="buy",
             intent_type="open",
-            quantity=Decimal(str(self._atr_qty)),
+            quantity=quantity,
             reason="schwab_1m_v2 ATR Flip CW",
             metadata={
                 "path": "ATR Flip",
@@ -4157,6 +4195,7 @@ class SchwabV2Strategy:
                 "volume": str(cur.volume),
                 "source": "schwab_1m_v2",
                 "strategy_version": STRATEGY_VERSION,
+                **sizing_metadata,
                 "bar_time_ms": str(cur.timestamp_ms),
             },
         )
@@ -4578,6 +4617,12 @@ class SchwabV2Strategy:
                 )
                 return None
 
+        sized = self._sized_open(
+            state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
+        )
+        if sized is None:
+            return None
+        quantity, sizing_metadata = sized
         state.cw_v2_emit_claimed = True
         state.cw_v2_emit_ms = now_ms
         state.cw_seed_cap_watch_start_ms = 0
@@ -4650,10 +4695,11 @@ class SchwabV2Strategy:
                         "count (its own marker is deliberately not repeated here)",
                         state.symbol, state.cw_entries_this_flip, px,
                     )
-                    self._pending_webull_fanout_intents.append(
+                    self._queue_webull_fanout_draft(state,
                         self._build_webull_fanout_draft(
                             state,
                             entry_px=px,
+                            sizing_quote=quote,
                             session_is_eh=self._cw_is_extended_hours(now_ms),
                             source="reactive",
                             # ALREADY incremented just above -- the counter reflects THIS entry.
@@ -4711,7 +4757,7 @@ class SchwabV2Strategy:
             symbol=state.symbol,
             side="buy",
             intent_type="open",
-            quantity=Decimal(str(self._atr_qty)),
+            quantity=quantity,
             reason="schwab_1m_v2 ATR Flip CW-v2",
             metadata={
                 "path": "ATR Flip",
@@ -4729,10 +4775,37 @@ class SchwabV2Strategy:
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2",
                 "strategy_version": STRATEGY_VERSION,
+                **sizing_metadata,
             },
         )
 
     # ------------------------------------------------------- CW-v2 RESTING flip-entry
+    def _sized_open(
+        self, symbol: str, *, leg: Literal["schwab", "webull"],
+        price: float | Decimal | None, basis: str,
+    ) -> tuple[Decimal, dict[str, str]] | None:
+        notional = Decimal(str(getattr(self, f"_entry_notional_{leg}", 0)))
+        legacy = self._atr_qty if leg == "schwab" else self._webull_fanout_qty
+        try:
+            price_decimal = Decimal(str(price)) if price is not None else None
+            quantity = sized_entry_quantity(
+                notional, price_decimal, legacy, int(getattr(self, "_entry_max_shares", 1000))
+            )
+        except (ValueError, ArithmeticError) as exc:
+            logger.warning(
+                "[V2-ENTRY-SIZE-REFUSED] symbol=%s leg=%s price_basis=%s price=%s reason=%s",
+                symbol, leg, basis, price, exc,
+            )
+            return None
+        if notional == 0:
+            return Decimal(quantity), {}
+        return Decimal(quantity), {
+            "entry_notional_target_usd": str(notional),
+            "entry_size_price_basis": basis,
+            "entry_size_price": str(price_decimal) if price_decimal is not None else "",
+            "entry_computed_shares": str(quantity),
+        }
+
     def _now_ms(self) -> int:
         """Wall-clock now in ms. A method so tests can control the silence-on-fill grace."""
         return int(datetime.now(UTC).timestamp() * 1000)
@@ -4792,6 +4865,17 @@ class SchwabV2Strategy:
             return
         if self._flip_owned_first_entry_enabled and self._ensure_flip_owner_opportunity(state) <= 0:
             return
+        trigger = self._resting_trigger_for_line(line)
+        band_pct = self._resting_band_pct_value()
+        offset_pct = self._resting_offset_pct_value()
+        limit = trigger * (1.0 + band_pct / 100.0)
+        limit_s = f"{limit:.4f}"
+        soft_rest = self._eh_resting_enabled and self._resting_session_is_eh()
+        schwab_sized = None if soft_rest else self._sized_open(
+            state.symbol, leg="schwab", price=Decimal(limit_s), basis="stop_limit_limit"
+        )
+        if not soft_rest and schwab_sized is None:
+            return
         if self._flip_owned_first_entry_enabled:
             if state.flip_owner_phase == "idle":
                 state.flip_owner_retry_segment_id = state.retry_one_segment_id
@@ -4805,18 +4889,16 @@ class SchwabV2Strategy:
                 reason="first_rest_working",
             ):
                 return
-        trigger = self._resting_trigger_for_line(line)
-        band_pct = self._resting_band_pct_value()
-        offset_pct = self._resting_offset_pct_value()
-        limit = trigger * (1.0 + band_pct / 100.0)
         state.resting_active = True
         state.cw_seed_cap_watch_start_ms = 0
         state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel
         state.last_resting_placed_slot = slot
         state.resting_level = line
         state.resting_trigger = trigger
+        state.resting_schwab_quantity = int(schwab_sized[0]) if schwab_sized else 0
+        state.resting_webull_quantity = 0
         state.resting_below_floor_bars = 0
-        if self._eh_resting_enabled and self._resting_session_is_eh():
+        if soft_rest:
             state.resting_is_broker_order = False      # soft-rest: nothing goes to the broker
             # EH SOFTWARE REST (P-B2): a broker buy-stop-limit can't trigger in extended hours, so we do
             # NOT place a broker order — we arm the level IN MEMORY and watch quotes (_eh_resting_cross_check
@@ -4858,13 +4940,13 @@ class SchwabV2Strategy:
             )
         self._pending_intents.append(TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="open",
-            quantity=Decimal(str(self._atr_qty)),
+            quantity=schwab_sized[0],
             reason="schwab_1m_v2 ATR Flip CW-v2-resting",   # keeps the ATR-only belt (has 'ATR Flip')
             metadata={
                 "path": "ATR Flip", "atr_variant": "CW-v2-resting",
                 "order_type": "STOP_LIMIT",
                 "reference_price": f"{trigger:.4f}", "entry_price": f"{trigger:.4f}",
-                "stop_price": f"{trigger:.4f}", "limit_price": f"{limit:.4f}",
+                "stop_price": f"{trigger:.4f}", "limit_price": limit_s,
                 "cw_flip_level": f"{line:.4f}", "resting_entry": "true",
                 "resting_band_pct": f"{band_pct}",
                 "resting_offset_pct": f"{offset_pct}",
@@ -4878,6 +4960,7 @@ class SchwabV2Strategy:
                 "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
+                **schwab_sized[1],
             },
         ))
         # ⭐⭐ MIRROR THE REST TO WEBULL — same level, same instant, sitting at ITS broker too.
@@ -4895,6 +4978,11 @@ class SchwabV2Strategy:
         # ⛔ Goes on the DIRECT queue, not the fan-out queue: the fan-out queue is drained through
         # `_maybe_emit`, and the matching CANCEL must never be gated.
         if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled:
+            webull_sized = self._sized_open(
+                state.symbol, leg="webull", price=Decimal(limit_s), basis="stop_limit_limit"
+            )
+            if webull_sized is None:
+                return
             claimed = self._claim_fanout_webull(
                 state,
                 identity=shared_fanout_identity,
@@ -4902,6 +4990,7 @@ class SchwabV2Strategy:
             )
             if claimed:
                 state.webull_resting_active = True
+                state.resting_webull_quantity = int(webull_sized[0])
                 # D20 observation edge: a fresh mirror level arms the below-edge so the FIRST
                 # live up-cross of this placement emits (price sits below a new stop by design).
                 state.fanout_mirror_cross_below_seen = True
@@ -4932,7 +5021,7 @@ class SchwabV2Strategy:
                         symbol=state.symbol,
                         side="buy",
                         intent_type="open",
-                        quantity=Decimal(str(self._webull_fanout_qty)),
+                        quantity=webull_sized[0],
                         reason="schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)",
                         metadata={
                             "path": "ATR Flip", "atr_variant": "CW-v2-fanout",
@@ -4949,6 +5038,7 @@ class SchwabV2Strategy:
                             "cw_entry_slot": slot,
                             "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                             **shared_fanout_identity,
+                            **webull_sized[1],
                             # ⛔ NO bracket_* keys on purpose -- see the note above.
                             "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
                         },
@@ -4960,6 +5050,8 @@ class SchwabV2Strategy:
         was_trigger = self._active_resting_trigger(state)
         was_broker_order = state.resting_is_broker_order
         was_webull_resting = state.webull_resting_active
+        was_schwab_quantity = state.resting_schwab_quantity
+        was_webull_quantity = state.resting_webull_quantity
         webull_reason = reason
         was_below_floor_bars = state.resting_below_floor_bars
         state.webull_resting_active = False
@@ -4967,6 +5059,8 @@ class SchwabV2Strategy:
         state.resting_active = False
         state.resting_level = 0.0
         state.resting_trigger = 0.0
+        state.resting_schwab_quantity = 0
+        state.resting_webull_quantity = 0
         state.resting_is_broker_order = False
         state.resting_slot = "first"
         state.resting_below_floor_bars = 0
@@ -5026,7 +5120,7 @@ class SchwabV2Strategy:
             )
             self._pending_intents.append(TradeIntentDraft(
                 symbol=state.symbol, side="buy", intent_type="cancel",
-                quantity=Decimal(str(self._atr_qty)),
+                quantity=Decimal(was_schwab_quantity or self._atr_qty),
                 reason="schwab_1m_v2 resting-entry cancel",
                 metadata={"resting_entry_cancel": "true", "reason": reason,
                           "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
@@ -5076,7 +5170,7 @@ class SchwabV2Strategy:
                 )
             self._pending_webull_direct_intents.append(TradeIntentDraft(
                 symbol=state.symbol, side="buy", intent_type="cancel",
-                quantity=Decimal(str(self._webull_fanout_qty)),
+                quantity=Decimal(was_webull_quantity or self._webull_fanout_qty),
                 reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
                 metadata={"resting_entry_cancel": "true", "reason": webull_reason,
                           "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
@@ -5565,6 +5659,12 @@ class SchwabV2Strategy:
         if px <= 0.0 or px < trigger:
             return None
         cap = trigger * (1.0 + self._resting_band_pct_value() / 100.0)
+        sized = self._sized_open(
+            state.symbol, leg="schwab", price=Decimal(f"{cap:.4f}"), basis="eh_limit_cap"
+        )
+        if sized is None:
+            return None
+        quantity, sizing_metadata = sized
         # Enter the settle grace BEFORE returning so a burst of quotes can't double-emit (emit exactly once
         # per cross). The bar-track then HOLDs through the grace (silence-on-fill) and either sees the fill
         # (position_qty != 0 -> clear) or grace-expires and disarms/re-arms (flip_no_fill), all in memory.
@@ -5598,9 +5698,10 @@ class SchwabV2Strategy:
                 identity=shared_fanout_identity,
                 reason="eh_resting_cross_draft_attempted",
             ):
-                self._pending_webull_fanout_intents.append(
+                self._queue_webull_fanout_draft(state,
                     self._build_webull_fanout_draft(
-                        state, entry_px=trigger, session_is_eh=True, source="eh_resting",
+                        state, entry_px=trigger, sizing_quote=quote,
+                        session_is_eh=True, source="eh_resting",
                         # NOT yet incremented on this path -- this leg is the NEXT entry.
                         entry_n=state.cw_entries_this_flip + 1,
                         entry_slot=state.last_resting_placed_slot,
@@ -5610,7 +5711,7 @@ class SchwabV2Strategy:
                 )
         return TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="open",
-            quantity=Decimal(str(self._atr_qty)),
+            quantity=quantity,
             reason="schwab_1m_v2 ATR Flip CW-v2-resting",   # keeps the ATR-only belt (has 'ATR Flip')
             metadata={
                 "path": "ATR Flip", "atr_variant": "CW-v2-resting",
@@ -5625,6 +5726,7 @@ class SchwabV2Strategy:
                 "cw_entry_slot": state.last_resting_placed_slot,
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
+                **sizing_metadata,
             },
         )
 
@@ -5750,17 +5852,34 @@ class SchwabV2Strategy:
             **self._fanout_slot_metadata(state, source=source, segment_id=segment),
         }
 
+    def _queue_webull_fanout_draft(
+        self, state: SymbolState, draft: TradeIntentDraft | None
+    ) -> None:
+        if draft is None:
+            self._release_fanout_webull_claim(state, reason="entry_size_unavailable")
+            return
+        self._pending_webull_fanout_intents.append(draft)
+
     def _build_webull_fanout_draft(
         self, state: SymbolState, *, entry_px: float, session_is_eh: bool, source: str,
         entry_n: int, entry_slot: str | None = None, band_anchor: float | None = None,
         resting_line: float | None = None,
         shared_identity: dict[str, str] | None = None,
-    ) -> TradeIntentDraft:
+        sizing_quote: Quote | None = None,
+    ) -> TradeIntentDraft | None:
         """Build the parallel Webull FAN-OUT leg draft (account-agnostic; the bot routes it to the
         Webull emitter). ALWAYS a MARKET-at-cross in RTH (the OMS `_apply_v2_oco_bracket_entry`
         anchors the native OCO off `entry_price` exactly like the Schwab primary); in EXTENDED HOURS
         a plain LIMIT that the bot's EH-routing + the OMS reactive-EH builder re-price to a marketable,
         band-capped EH-LIMIT off the OMS's own fresh ask (a MARKET/OCO 417s in EH on Webull)."""
+        quote = sizing_quote or state.last_quote
+        sized = self._sized_open(
+            state.symbol, leg="webull", price=getattr(quote, "ask_price", None),
+            basis="trigger_quote_ask",
+        )
+        if sized is None:
+            return None
+        quantity, sizing_metadata = sized
         identity = dict(
             shared_identity
             or self._fanout_identity_metadata(state, source=source)
@@ -5810,6 +5929,7 @@ class SchwabV2Strategy:
             "order_type": "limit" if session_is_eh else "market",
             "source": "schwab_1m_v2",
             "strategy_version": STRATEGY_VERSION,
+            **sizing_metadata,
         }
         # ⛔⭐ The RTH band anchor, when it differs from `entry_price`. Only `rth_resting` supplies it:
         # its `entry_px` is where SOFTWARE noticed the cross, which on a fast move is far above the
@@ -5826,7 +5946,7 @@ class SchwabV2Strategy:
             symbol=state.symbol,
             side="buy",
             intent_type="open",
-            quantity=Decimal(str(self._webull_fanout_qty)),
+            quantity=quantity,
             reason=f"schwab_1m_v2 ATR Flip fan-out webull ({source})",
             metadata=md,
         )
@@ -5969,9 +6089,10 @@ class SchwabV2Strategy:
             self._resting_band_pct_value(),
             self._resting_offset_pct_value(),
         )
-        self._pending_webull_fanout_intents.append(
+        self._queue_webull_fanout_draft(state,
             self._build_webull_fanout_draft(
-                state, entry_px=px, session_is_eh=False, source="rth_resting",
+                state, entry_px=px, sizing_quote=quote,
+                session_is_eh=False, source="rth_resting",
                 # NOT yet incremented on this path -- this leg is the NEXT entry.
                 entry_n=state.cw_entries_this_flip + 1,
                 entry_slot=state.last_resting_placed_slot,

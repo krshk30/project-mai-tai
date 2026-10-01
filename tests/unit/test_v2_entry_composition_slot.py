@@ -49,6 +49,8 @@ def test_rested_reclaim_is_reclaim_on_both_legs_despite_resting_style() -> None:
 
 def test_reactive_pair_is_stamped_as_the_reclaim_slot() -> None:
     strategy = SchwabV2Strategy(Settings(
+        strategy_schwab_1m_v2_entry_notional_usd=0,
+        strategy_schwab_1m_v2_webull_entry_notional_usd=0,
         strategy_schwab_1m_v2_confirmed_window_enabled=True,
         strategy_schwab_1m_v2_cw_v2_enabled=True,
         strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,

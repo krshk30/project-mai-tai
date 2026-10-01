@@ -43,6 +43,8 @@ def _factory():
 def _strategy() -> tuple[SchwabV2Strategy, dict[str, str]]:
     strategy = SchwabV2Strategy(
         Settings(
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             strategy_schwab_1m_v2_confirmed_window_enabled=True,
             strategy_schwab_1m_v2_cw_v2_enabled=True,
             strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
@@ -265,6 +267,8 @@ def test_same_evidence_is_idempotent() -> None:
 def _resting_cross_strategy() -> tuple[SchwabV2Strategy, object, list[int]]:
     strategy = SchwabV2Strategy(
         Settings(
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             strategy_schwab_1m_v2_confirmed_window_enabled=True,
             strategy_schwab_1m_v2_cw_v2_enabled=True,
             strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,

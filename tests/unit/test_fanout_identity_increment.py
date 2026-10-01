@@ -33,6 +33,8 @@ AFTER_HOURS_NOW = datetime(2026, 8, 27, 0, 30, tzinfo=UTC)
 def _strategy() -> SchwabV2Strategy:
     return SchwabV2Strategy(
         Settings(
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             strategy_schwab_1m_v2_confirmed_window_enabled=True,
             strategy_schwab_1m_v2_cw_v2_enabled=True,
             strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
@@ -243,7 +245,9 @@ async def test_attempt_identity_reaches_intent_order_event_and_fill_when_sdk_dro
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     service = OmsRiskService(
-        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated",
+                          strategy_schwab_1m_v2_entry_notional_usd=0,
+                          strategy_schwab_1m_v2_webull_entry_notional_usd=0),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=_MetadataDroppingFillAdapter(),
@@ -284,7 +288,9 @@ async def test_polled_fill_cannot_erase_identity_when_sdk_drops_metadata() -> No
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     service = OmsRiskService(
-        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated",
+                          strategy_schwab_1m_v2_entry_notional_usd=0,
+                          strategy_schwab_1m_v2_webull_entry_notional_usd=0),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=_MetadataDroppingPollFillAdapter(),
@@ -319,7 +325,9 @@ async def test_cancel_outcome_keeps_target_attempt_identity_instead_of_minting_o
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     service = OmsRiskService(
-        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated",
+                          strategy_schwab_1m_v2_entry_notional_usd=0,
+                          strategy_schwab_1m_v2_webull_entry_notional_usd=0),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=FakeWorkingOrderRefreshBrokerAdapter(),
@@ -373,6 +381,8 @@ async def test_watchdog_replacement_keeps_slot_and_names_exact_prior_attempt(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             oms_working_order_refresh_seconds=5,
         ),
         redis_client=redis,
@@ -416,6 +426,8 @@ async def test_watchdog_replacement_stays_blocked_after_fillable_session(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             oms_working_order_refresh_seconds=5,
         ),
         redis_client=redis,

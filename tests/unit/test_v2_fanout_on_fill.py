@@ -33,7 +33,7 @@ def test_the_webull_leg_is_queued_from_the_FILL() -> None:
     s = _src()
     assert "[V2-FANOUT-ON-FILL]" in s
     assert "_build_webull_fanout_draft(" in s
-    assert "_pending_webull_fanout_intents.append" in s
+    assert "_queue_webull_fanout_draft" in s
 
 
 def test_it_fires_on_the_ZERO_to_POSITIVE_held_transition() -> None:
@@ -49,7 +49,7 @@ def test_the_claim_is_taken_BEFORE_the_draft_is_queued() -> None:
     one signal produces two Webull orders."""
     s = _src()
     claim = s.index("_claim_fanout_webull(")
-    queue = s.index("_pending_webull_fanout_intents.append")
+    queue = s.index("_queue_webull_fanout_draft")
     assert claim < queue, "claim must be taken before the draft is queued"
 
 

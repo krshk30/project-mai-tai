@@ -30,7 +30,12 @@ POST = datetime(2026, 6, 23, 21, 0, tzinfo=UTC)   # 17:00 ET post
 
 
 def _svc(**kw) -> SchwabV2BotService:
-    return SchwabV2BotService(Settings(strategy_schwab_1m_v2_enabled=True, **kw))
+    return SchwabV2BotService(Settings(
+        strategy_schwab_1m_v2_enabled=True,
+        strategy_schwab_1m_v2_entry_notional_usd=0,
+        strategy_schwab_1m_v2_webull_entry_notional_usd=0,
+        **kw,
+    ))
 
 
 def _open_draft(symbol: str = "SUNE") -> TradeIntentDraft:

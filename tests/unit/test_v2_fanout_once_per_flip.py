@@ -48,8 +48,8 @@ def _reactive_src() -> str:
 def test_the_reactive_fanout_honours_the_SHARED_latch() -> None:
     """⛔ THE REGRESSION. Without this the reactive leg fires on a segment the resting leg claimed."""
     src = _reactive_src()
-    assert "_pending_webull_fanout_intents.append" in src, "anchor moved — re-point this test"
-    gate = src.split("_pending_webull_fanout_intents.append")[0]
+    assert "_queue_webull_fanout_draft" in src, "anchor moved — re-point this test"
+    gate = src.split("_queue_webull_fanout_draft")[0]
     assert "not state.fanout_webull_claimed" in gate, (
         "the reactive fan-out must consult the SAME latch the resting paths set"
     )

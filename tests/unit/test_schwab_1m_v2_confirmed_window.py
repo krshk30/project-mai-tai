@@ -24,7 +24,10 @@ def _now_ms() -> int:
 
 
 def _strat(**overrides):
-    kwargs = {"strategy_schwab_1m_v2_confirmed_window_enabled": True}
+    kwargs = {
+        "strategy_schwab_1m_v2_confirmed_window_enabled": True,
+        "strategy_schwab_1m_v2_entry_notional_usd": 0,
+    }
     kwargs.update(overrides)
     return SchwabV2Strategy(Settings(**kwargs))
 
