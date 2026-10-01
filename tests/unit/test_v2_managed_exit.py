@@ -11,11 +11,12 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, ExitPairReleaseResult
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
@@ -53,11 +54,18 @@ class _FakeRedis:
         return b"1-1"
 
 
-def _make_sf() -> sessionmaker:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:", future=True,
-        connect_args={"check_same_thread": False}, poolclass=StaticPool,
-    )
+def _make_sf(db_path: Path | None = None) -> sessionmaker:
+    if db_path is None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:", future=True,
+            connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        )
+    else:
+        # Each worker session gets its own SQLite connection, as with Postgres.
+        engine = create_engine(
+            f"sqlite+pysqlite:///{db_path}", future=True,
+            connect_args={"check_same_thread": False, "timeout": 30}, poolclass=NullPool,
+        )
     tables = [t for t in Base.metadata.sorted_tables
               if t.name not in ("market_trade_ticks", "market_quote_ticks")]
     Base.metadata.create_all(engine, tables=tables)
@@ -1092,10 +1100,10 @@ async def test_flag_off_single_account_evaluates_as_before() -> None:
 
 
 @pytest.mark.asyncio
-async def test_flag_on_tracks_and_exits_both_accounts_independently() -> None:
+async def test_flag_on_tracks_and_exits_both_accounts_independently(tmp_path: Path) -> None:
     """(b) mirror flag ON: _v2_accounts() includes the Webull account, and a managed row on
     EACH account for the SAME symbol is tracked + exited independently on one quote."""
-    sf = _make_sf()
+    sf = _make_sf(tmp_path / "dual-leg.sqlite")
     svc = _svc_dual(sf)
     assert svc._v2_accounts() == [ACCT, WEBULL_ACCT]
     _arm_on(svc, sf, ACCT, entry=10.0, qty=100)
@@ -1112,6 +1120,25 @@ async def test_flag_on_tracks_and_exits_both_accounts_independently() -> None:
     assert {r.broker_account_name for r in rows} == {ACCT, WEBULL_ACCT}
     assert all(r.status == "closed" for r in rows)               # each leg exited
     assert svc._managed_v2_symbols == set()                      # both disarmed
+
+
+@pytest.mark.asyncio
+async def test_dual_leg_quote_is_stable_across_50_runs(tmp_path: Path) -> None:
+    for attempt in range(50):
+        sf = _make_sf(tmp_path / f"dual-leg-{attempt}.sqlite")
+        svc = _svc_dual(sf)
+        _arm_on(svc, sf, ACCT, entry=10.0, qty=100)
+        _arm_on(svc, sf, WEBULL_ACCT, entry=10.0, qty=100)
+
+        await svc._handle_quote_tick_event(_quote_event(SYM, 9.80))
+
+        with sf() as session:
+            rows = list(session.scalars(
+                select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM)
+            ).all())
+        assert len(rows) == 2, f"attempt={attempt}"
+        assert all(row.status == "closed" for row in rows), f"attempt={attempt}"
+        assert svc._managed_v2_symbols == set(), f"attempt={attempt}"
 
 
 # --------------------------------------------------------------------------- decided_at
