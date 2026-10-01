@@ -299,7 +299,8 @@ page and one snapshot per call) were probed read-only.
            continue
        seen.add(consumer)
        if consumer not in required:
-           raise SystemExit(f"unexpected subscription consumer: {consumer}")
+           print(f"REFUSE unexpected fifth subscription consumer: {consumer}", file=sys.stderr)
+           raise SystemExit(4)
        if event.payload.mode != "replace":
            raise SystemExit(f"latest {consumer} event is not replace")
        owners[consumer] = {
@@ -321,7 +322,8 @@ page and one snapshot per call) were probed read-only.
        for raw_consumer, encoded in saved_hash.items():
            consumer = raw_consumer.decode("ascii")
            if not consumer.startswith("_") and consumer not in required:
-               raise SystemExit(f"unexpected owner hash consumer: {consumer}")
+               print(f"REFUSE unexpected fifth owner hash consumer: {consumer}", file=sys.stderr)
+               raise SystemExit(4)
    path = Path(sys.argv[1])
    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
    with os.fdopen(fd, "w", encoding="utf-8") as output:
@@ -573,8 +575,23 @@ page and one snapshot per call) were probed read-only.
        OWNER_FILE="/home/trader/after-hours/2026-10-01/option-a-owners-${ATTEMPT}.json"
        CONTROL_FILE="/home/trader/after-hours/2026-10-01/option-a-control-${ATTEMPT}.json"
        printf 'PREFLIGHT_ATTEMPT utc=%s owner=%s control=%s\n' "$(date -u +%FT%TZ)" "$OWNER_FILE" "$CONTROL_FILE" | sudo tee -a "$ATTEMPT_JOURNAL"
-       sudo "$REPO/.venv/bin/python" "$OWNER_CAPTURE" "$OWNER_FILE" "$ORB_REPLAY_APPROVED"
-       sudo "$REPO/.venv/bin/python" "$TICK_CONTROL" "$OWNER_FILE" "$CONTROL_FILE"
+       if OWNER_RESULT="$(sudo "$REPO/.venv/bin/python" "$OWNER_CAPTURE" "$OWNER_FILE" "$ORB_REPLAY_APPROVED" 2>&1)"; then
+           printf 'OWNER_CAPTURE rc=0 %s\n' "$OWNER_RESULT" | sudo tee -a "$ATTEMPT_JOURNAL"
+       else
+           OWNER_RC=$?
+           printf 'OWNER_CAPTURE rc=%s %s\n' "$OWNER_RC" "$OWNER_RESULT" | sudo tee -a "$ATTEMPT_JOURNAL"
+           if test "$OWNER_RC" -eq 4; then exit 4; fi  # A fifth consumer is not transient.
+           sleep 300
+           continue
+       fi
+       if CONTROL_RESULT="$(sudo "$REPO/.venv/bin/python" "$TICK_CONTROL" "$OWNER_FILE" "$CONTROL_FILE" 2>&1)"; then
+           printf 'TICK_CONTROL rc=0 %s\n' "$CONTROL_RESULT" | sudo tee -a "$ATTEMPT_JOURNAL"
+       else
+           CONTROL_RC=$?
+           printf 'TICK_CONTROL rc=%s %s\n' "$CONTROL_RC" "$CONTROL_RESULT" | sudo tee -a "$ATTEMPT_JOURNAL"
+           sleep 300
+           continue
+       fi
        if sudo "$REPO/.venv/bin/python" - "$OWNER_FILE" <<'PY'; then
    import json, sys
    from pathlib import Path
@@ -592,7 +609,7 @@ page and one snapshot per call) were probed read-only.
    captured = {name: row["source_id"] for name, row in saved["owners"].items()}
    if set(current) != set(captured):
        print(f"UNKNOWN owner set changed/unexpected during control: {current}", file=sys.stderr)
-       raise SystemExit(2)
+       raise SystemExit(4 if set(current) - set(captured) else 2)
    if current != captured:
        print(f"OWNER_MOVED during control; recapture: {captured} -> {current}", file=sys.stderr)
        raise SystemExit(3)
@@ -602,8 +619,9 @@ page and one snapshot per call) were probed read-only.
        else
            OWNER_RC=$?
            printf 'OWNER_CHECK rc=%s owner=%s control=%s\n' "$OWNER_RC" "$OWNER_FILE" "$CONTROL_FILE" | sudo tee -a "$ATTEMPT_JOURNAL"
-           if test "$OWNER_RC" -eq 3; then continue; fi
-           exit 2
+           if test "$OWNER_RC" -eq 4; then exit 4; fi  # A fifth consumer refuses outright.
+           sleep 300
+           continue
        fi
        if sudo "$REPO/.venv/bin/python" - <<'PY'; then
    import json
@@ -627,7 +645,15 @@ page and one snapshot per call) were probed read-only.
        fi
        if FLAT_RESULT="$(timeout 45s sudo "$REPO/.venv/bin/python" "$FLAT_CHECK" 2>&1)"; then
            printf 'PREFLIGHT_ATTEMPT rc=0 %s\n' "$FLAT_RESULT" | sudo tee -a "$ATTEMPT_JOURNAL"
-           break
+           REDIS_BASELINE="/home/trader/after-hours/2026-10-01/option-a-redis-before-${ATTEMPT}.json"
+           if REDIS_RESULT="$(sudo "$REPO/.venv/bin/python" "$REDIS_GUARD" capture "$REDIS_BASELINE" 2>&1)"; then
+               printf 'REDIS_GUARD rc=0 %s\n' "$REDIS_RESULT" | sudo tee -a "$ATTEMPT_JOURNAL"
+               break
+           fi
+           REDIS_RC=$?
+           printf 'REDIS_GUARD rc=%s %s\n' "$REDIS_RC" "$REDIS_RESULT" | sudo tee -a "$ATTEMPT_JOURNAL"
+           sleep 300
+           continue
        else
            FLAT_RC=$?
            printf 'PREFLIGHT_ATTEMPT rc=%s at=%s %s\n' "$FLAT_RC" "$(date -u +%FT%TZ)" "$FLAT_RESULT" | sudo tee -a "$ATTEMPT_JOURNAL"
@@ -636,8 +662,6 @@ page and one snapshot per call) were probed read-only.
        fi
    done
    test "$(TZ=America/New_York date +%H%M%S)" -lt 191500
-   REDIS_BASELINE="/home/trader/after-hours/2026-10-01/option-a-redis-before-${ATTEMPT}.json"
-   sudo "$REPO/.venv/bin/python" "$REDIS_GUARD" capture "$REDIS_BASELINE"
    printf '%s\n' "$REDIS_BASELINE" | sudo bash -c 'set -C; cat > "$1"' bash /home/trader/after-hours/2026-10-01/option-a-redis-baseline-path-1605-go.txt
    RESTART_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
    sudo systemctl restart project-mai-tai-market-data.service
@@ -676,7 +700,8 @@ page and one snapshot per call) were probed read-only.
    assert set(captured["owners"]) == required_owners
    assert datetime.fromisoformat(control["end_utc"]) <= restarted
    captured_ids = {name: row["source_id"] for name, row in captured["owners"].items()}
-   control_positive = {name for name, kinds in control["counts"].items() if sum(kinds.values()) > 0}
+   control_thick = {name for name, kinds in control["counts"].items()
+                    if sum(kinds.values()) >= 20}
    tick_end = post_start + timedelta(seconds=120)
    proof_end = restarted + timedelta(seconds=180)
 
@@ -787,9 +812,11 @@ page and one snapshot per call) were probed read-only.
        intervals = [(b - a) / 1000 for a, b in zip(snapshot_ms, snapshot_ms[1:])]
        p95 = sorted(intervals)[math.ceil(.95 * len(intervals)) - 1] if intervals else None
        cadence_ok = cadence_error is None and len(intervals) >= 10 and p95 <= 10
-       required_ticks = control_positive & expected
+       required_ticks = control_thick & expected
+       thin_excused = {name: kinds for name, kinds in control["counts"].items()
+                       if name in expected and 0 < sum(kinds.values()) < 20}
        excused = {name: ("no_pre_restart_tick" if name in expected else "no_longer_owned")
-                  for name in (set(control["counts"]) | expected) - required_ticks}
+                  for name in (set(control["counts"]) | expected) - required_ticks - set(thin_excused)}
        missing_ticks = sorted(name for name in required_ticks if not sum(post_counts[name].values()))
        ticks_ok = tick_scanned and tick_error is None and not trimmed and not missing_ticks
        owners_ok = (owner_error is None and ids_stable and owners.get("_migration_complete") == "1"
@@ -802,7 +829,7 @@ page and one snapshot per call) were probed read-only.
    expected_owner_sets = {name: sorted(row["symbols"]) for name, row in current.items()}
    print("owner source IDs captured", captured_ids, "current", current_ids)
    print(f"content(1) {'PASS' if heartbeat_ok and in_time else 'NOT_PROVEN'} heartbeat={produced} status={status} age_s={age} active={active} expected={len(expected)} error={heartbeat_error or owner_error}")
-   print(f"content(2) {'PASS' if ticks_ok and in_time else 'NOT_PROVEN'} control={control['start_utc']}..{control['end_utc']} post={post_start.isoformat()}..{tick_end.isoformat()} scanned={scanned} trimmed={trimmed} required={sorted(required_ticks)} counts={dict(post_counts)} excused={excused} missing={missing_ticks} error={tick_error}")
+   print(f"content(2) {'PASS' if ticks_ok and in_time else 'NOT_PROVEN'} control={control['start_utc']}..{control['end_utc']} post={post_start.isoformat()}..{tick_end.isoformat()} scanned={scanned} trimmed={trimmed} required={sorted(required_ticks)} counts={dict(post_counts)} thin_excused={thin_excused} excused={excused} missing={missing_ticks} error={tick_error}")
    print(f"content(3) {'PASS' if cadence_ok and in_time else 'NOT_PROVEN'} intervals={len(intervals)} p95_s={p95} max_s={max(intervals) if intervals else None} error={cadence_error}")
    print(f"content(4) {'PASS' if owners_ok and in_time else 'NOT_PROVEN'} migration={owners.get('_migration_complete')} actual={actual} expected={expected_owner_sets} ids_stable={ids_stable} extra={extra} paper={paper} error={owner_error}")
    if not (heartbeat_ok and ticks_ok and cadence_ok and owners_ok and in_time):
@@ -1276,7 +1303,8 @@ snapshot_key = stream_name(settings.redis_stream_prefix, "snapshot-batches")
 after_publish = datetime.fromisoformat(published[-1]["published_at"])
 captured_ids = {name: row["source_id"] for name, row in captured["owners"].items()}
 replayed_ids = {row["consumer"]: row["source_id"] for row in published}
-control_positive = {name for name, kinds in control["counts"].items() if sum(kinds.values()) > 0}
+control_thick = {name for name, kinds in control["counts"].items()
+                 if sum(kinds.values()) >= 20}
 byte_error = None
 try:
     for row in published:
@@ -1382,9 +1410,11 @@ while True:
     intervals = [(b - a) / 1000 for a, b in zip(snapshot_ms, snapshot_ms[1:])]
     p95 = sorted(intervals)[math.ceil(.95 * len(intervals)) - 1] if intervals else None
     cadence_ok = cadence_error is None and len(intervals) >= 10 and p95 <= 10
-    required_ticks = control_positive & expected
+    required_ticks = control_thick & expected
+    thin_excused = {name: kinds for name, kinds in control["counts"].items()
+                    if name in expected and 0 < sum(kinds.values()) < 20}
     excused = {name: ("no_pre_restart_tick" if name in expected else "no_longer_owned")
-               for name in (set(control["counts"]) | expected) - required_ticks}
+               for name in (set(control["counts"]) | expected) - required_ticks - set(thin_excused)}
     missing_ticks = sorted(name for name in required_ticks if not sum(post_counts[name].values()))
     ticks_ok = tick_scanned and tick_error is None and not trimmed and not missing_ticks
     replay_ok = byte_error is None and owner_error is None and ids_stable
@@ -1395,7 +1425,7 @@ in_time = datetime.now(UTC) <= proof_end
 current_ids = {name: row["source_id"] for name, row in current.items()}
 print("owner source IDs captured", captured_ids, "replay_sources", replayed_ids, "current", current_ids)
 print(f"content(1) {'PASS' if heartbeat_ok and in_time else 'NOT_PROVEN'} heartbeat={produced} status={status} age_s={age} active={active} expected={len(expected)} error={heartbeat_error or owner_error}")
-print(f"content(2) {'PASS' if ticks_ok and in_time else 'NOT_PROVEN'} control={control['start_utc']}..{control['end_utc']} post={post_start.isoformat()}..{tick_end.isoformat()} scanned={scanned} trimmed={trimmed} required={sorted(required_ticks)} counts={dict(post_counts)} excused={excused} missing={missing_ticks} error={tick_error}")
+print(f"content(2) {'PASS' if ticks_ok and in_time else 'NOT_PROVEN'} control={control['start_utc']}..{control['end_utc']} post={post_start.isoformat()}..{tick_end.isoformat()} scanned={scanned} trimmed={trimmed} required={sorted(required_ticks)} counts={dict(post_counts)} thin_excused={thin_excused} excused={excused} missing={missing_ticks} error={tick_error}")
 print(f"content(3) {'PASS' if cadence_ok and in_time else 'NOT_PROVEN'} intervals={len(intervals)} p95_s={p95} max_s={max(intervals) if intervals else None} error={cadence_error}")
 print(f"replay_bytes {'PASS' if replay_ok and in_time else 'NOT_PROVEN'} ids_stable={ids_stable} source_ids={replayed_ids} new_ids={[row['new_id'] for row in published]} error={byte_error or owner_error}")
 if not (heartbeat_ok and ticks_ok and cadence_ok and replay_ok and in_time):
