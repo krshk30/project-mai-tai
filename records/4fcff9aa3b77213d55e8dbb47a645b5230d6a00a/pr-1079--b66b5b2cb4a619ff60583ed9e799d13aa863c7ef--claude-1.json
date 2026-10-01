@@ -1,0 +1,9 @@
+{
+  "pr_number": 1079,
+  "range_base": "b66b5b2cb4a619ff60583ed9e799d13aa863c7ef",
+  "range_head": "4fcff9aa3b77213d55e8dbb47a645b5230d6a00a",
+  "reviewed_at": "2026-10-01T17:10:53Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "CW target-stay rule, operator card confirmed before build and again before pin (2026-10-01 ~13:15 ET: 'yes'). Read full src diff at 48a7a9bf and delta to 94a11cb8; range-diff 2c155b86..94a11cb8 vs b66b5b2c..4fcff9aa = 3/3 identical. Card match: tagged CW_TARGET EH LIMIT is refresh-exempt while its session matches; per-leg release at bid <= entry*0.99 on quote and sync paths; stop/flip/confirmation wait for broker-confirmed cancel; 19:55 sells with cancel unconfirmed (operator ruling 09-29); both legs gathered. My mutations RED on this head: tag dropped; 0.99->0.995; 19:55 not selling; retry spacing removed; legs serial. RED at 94a11cb8/48a7a9bf: exemption ignores tag; 0.99->0.0; unconfirmed treated as confirmed; 10s->never; 10s->0; rejected opens no incident; pending counted as confirmed. One equivalent mutant (origin==broker re-check). Webull accepted-cancel is pending, incident on reject or >=10s; 1s spacing. Not covered: no live broker run of the release/cancel paths; the new incident source does not page until the installed watch is re-pinned; quote loop still awaits each event serially (timing now logged)."
+}
