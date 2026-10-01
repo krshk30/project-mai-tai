@@ -90,6 +90,65 @@ def test_traceback_without_a_preceding_timestamp_is_unmeasured() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("service", "startup"),
+    [
+        ("market-data", "bootstrapped market-data subscription owners from 250 retained events"),
+        ("orb-schwab", "INFO:orb_schwab:[ORB-SCHWAB] mode=LIVE live_sending=True"),
+    ],
+)
+def test_untimestamped_traceback_before_later_same_file_startup_is_historical(
+    service: str, startup: str
+) -> None:
+    evidence = vre.parse_log_files(
+        [(f"{service}.log", ["Traceback (most recent call last):", "old error", startup])],
+        since=datetime(2026, 10, 1, tzinfo=UTC),
+        service=service,
+    )
+
+    assert evidence.traceback_times_utc == ()
+    assert evidence.pre_start_untimestamped_tracebacks == 1
+
+
+def test_untimestamped_traceback_after_startup_remains_unknown() -> None:
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files(
+            [("market-data.log", [
+                "bootstrapped market-data subscription owners from 250 retained events",
+                "Traceback (most recent call last):",
+            ])],
+            since=datetime(2026, 10, 1, tzinfo=UTC),
+            service="market-data",
+        )
+
+
+def test_startup_clears_a_prior_process_timestamp() -> None:
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files(
+            [("market-data.log", [
+                "2026-09-30 23:00:00,000 INFO prior process",
+                "restored market-data subscriptions from 4 consumers -> 12 symbols",
+                "Traceback (most recent call last):",
+            ])],
+            since=datetime(2026, 10, 1, tzinfo=UTC),
+            service="market-data",
+        )
+
+
+def test_untimestamped_startup_in_another_file_cannot_scope_a_traceback() -> None:
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files(
+            [
+                ("market-data.log.1", ["Traceback (most recent call last):"]),
+                ("market-data.log", [
+                    "bootstrapped market-data subscription owners from 250 retained events"
+                ]),
+            ],
+            since=datetime(2026, 10, 1, tzinfo=UTC),
+            service="market-data",
+        )
+
+
 def test_missing_service_logs_are_unmeasured() -> None:
     with pytest.raises(vre.EvidenceUnknown, match="no log files found for strategy"):
         vre._log_files("strategy", runner=lambda command: "")
@@ -480,7 +539,7 @@ def test_report_allows_a_declared_quiet_service_without_log_records(
     assert "| PASS |" not in traceback_row
 
 
-def test_report_fails_when_an_unexpected_service_has_no_log_records(
+def test_report_is_unknown_when_an_unexpected_service_has_no_time_scoped_log_records(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     args, current, logs = _report_fixture(monkeypatch, tmp_path)
@@ -496,13 +555,44 @@ def test_report_fails_when_an_unexpected_service_has_no_log_records(
     logs["oms"] = []
     args.restarted.append("oms")
 
-    assert vre.report(args, runner=lambda command: "") == 1
+    assert vre.report(args, runner=lambda command: "") == 2
 
     output = capsys.readouterr().out
     traceback_row = next(line for line in output.splitlines() if line.startswith("| Tracebacks |"))
     assert "oms=UNMEASURED(0/0)" in traceback_row
-    assert "| FAIL |" in traceback_row
-    assert "unexpected-silent service(s): oms" in output
+    assert "| UNKNOWN |" in traceback_row
+    assert "untimestamped/silent service(s): oms" in output
+    assert "Final call: UNKNOWN" in output
+
+
+def test_report_scopes_old_gateway_traceback_but_does_not_call_silent_log_pass(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    args, current, logs = _report_fixture(monkeypatch, tmp_path)
+    start = datetime(2026, 10, 1, 0, 25, tzinfo=UTC)
+    current["market-data"] = vre.ServiceState(
+        service="market-data",
+        pid=902,
+        active_state="active",
+        sub_state="running",
+        n_restarts=0,
+        started_at_utc=start.isoformat(),
+    )
+    logs["market-data"] = [
+        ("market-data.log", [
+            "Traceback (most recent call last):",
+            "RuntimeError: prior process",
+            "bootstrapped market-data subscription owners from 250 retained events",
+        ])
+    ]
+    args.restarted.append("market-data")
+
+    assert vre.report(args, runner=lambda command: "") == 2
+
+    output = capsys.readouterr().out
+    assert "market-data=historical_before_later_startup(1)" in output
+    assert "Final call: UNKNOWN" in output
+    assert "Final call: REAL FAILURE" not in output
 
 
 def test_expected_quiet_declaration_cannot_name_an_untouched_service(
