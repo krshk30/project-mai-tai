@@ -33,8 +33,19 @@ bytes. The old gateway's owner hash was empty, as expected before Option A.
 The strict flat helper first found NXL bot exposure on both accounts (rc=1),
 then found both bot books clear on a later fresh read (rc=0). Neither read
 authorizes a later restart: flatness must be proved again immediately before
-it. The post-restart content verdict and replay writes cannot be dry-run on
-the old gateway; their bounded Redis **read patterns** were probed separately.
+it. At 09:43 ET the full forward proof was dry-run read-only for 180 seconds
+against the **old** gateway with explicitly synthetic timestamps and no
+restart: 21,675 market events scanned; both required symbols NXL/VEEA had
+post-bound ticks; 24 snapshot intervals from stream IDs, p95 7.989 s,
+maximum 11.392 s; latest heartbeat healthy with active=2/expected=2.
+The old gateway has no migrated owner hash, so content (4) was NOT_PROVEN
+and the synthetic run correctly exited nonzero. No rollback was executed.
+Redis `evicted_keys` remained 18, all eight preexisting `mai_tai` streams
+remained present, and used memory after the run was 1,181,659,008 bytes.
+This is a bounded-read safety test, **not** post-restart acceptance proof.
+Rollback replay writes were not dry-run on the live system; its distinct
+read patterns (single exact subscription event, heartbeat page, 100-tick
+page and one snapshot per call) were probed read-only.
 
 ## 1. Read-only preflight and hard stops
 
@@ -1146,11 +1157,12 @@ sudo systemctl is-active --quiet project-mai-tai-market-data.service
 sudo systemctl show -p MainPID -p ActiveEnterTimestamp -p NRestarts project-mai-tai-market-data.service
 POST_ROLLBACK_UTC="$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)"
 sudo "$REPO/.venv/bin/python" "$REDIS_GUARD" check "$REDIS_BASELINE" || { echo 'UNKNOWN Redis eviction after rollback restart: STOP, PAGE'; exit 2; }
-sudo "$REPO/.venv/bin/python" - "$ROLLBACK_RESTART_UTC" "$POST_ROLLBACK_UTC" <<'PY'
+sudo "$REPO/.venv/bin/python" - "$ROLLBACK_RESTART_UTC" "$POST_ROLLBACK_UTC" "$REDIS_BASELINE" <<'PY'
 import json
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from redis import Redis
 from project_mai_tai.events import stream_name
 from project_mai_tai.settings import Settings
@@ -1159,8 +1171,13 @@ settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
 redis = Redis.from_url(settings.redis_url, decode_responses=True)
 restarted = datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
 since = datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00"))
+baseline = json.loads(Path(sys.argv[3]).read_text())
 deadline = restarted + timedelta(seconds=180)
 while datetime.now(UTC) < deadline:
+    # INFO stats <64 KiB; EXISTS returns one integer (<1 KiB).
+    if (int(redis.info("stats")["evicted_keys"]) != baseline["evicted_keys"]
+            or redis.exists(*baseline["streams"]) != len(baseline["streams"])):
+        raise SystemExit("UNKNOWN Redis eviction/stream loss during rollback health; STOP, PAGE")
     for _, fields in redis.xrevrange(stream_name(settings.redis_stream_prefix, "heartbeats"), count=25):  # <256 KiB.
         event = json.loads(fields["data"])
         if event.get("source_service") != "market-data-gateway":
