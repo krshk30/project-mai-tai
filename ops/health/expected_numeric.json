@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "settings": [
+    {
+      "name": "strategy_schwab_1m_v2_entry_notional_usd",
+      "expected": 600,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "require_process_env": true,
+      "reason": "Fixed-dollar Schwab entry sizing and OMS notional guard must agree in running processes.",
+      "ruling": "Operator 2026-10-01: Schwab $600 every time we trade"
+    },
+    {
+      "name": "strategy_schwab_1m_v2_webull_entry_notional_usd",
+      "expected": 300,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "require_process_env": true,
+      "reason": "Fixed-dollar Webull fan-out and OMS notional guard must agree in running processes.",
+      "ruling": "Operator 2026-10-01: the other broker $300"
+    },
+    {
+      "name": "strategy_schwab_1m_v2_entry_max_shares",
+      "expected": 1000,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "reason": "Both entry placement and the broker-side guard enforce the same hard share cap.",
+      "ruling": "Operator fixed-dollar entry card 2026-10-01: at most 1,000 shares"
+    }
+  ]
+}

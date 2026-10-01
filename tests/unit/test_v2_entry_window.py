@@ -24,6 +24,8 @@ EASTERN = ZoneInfo("America/New_York")
 
 
 def _svc(**settings_kwargs) -> SchwabV2BotService:
+    settings_kwargs.setdefault("strategy_schwab_1m_v2_entry_notional_usd", 0)
+    settings_kwargs.setdefault("strategy_schwab_1m_v2_webull_entry_notional_usd", 0)
     return SchwabV2BotService(Settings(strategy_schwab_1m_v2_enabled=True, **settings_kwargs))
 
 

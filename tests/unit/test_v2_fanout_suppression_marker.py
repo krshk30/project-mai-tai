@@ -51,6 +51,8 @@ RTH_MS = 1787580000000
 def _strat(*, fanout: bool = True) -> SchwabV2Strategy:
     return SchwabV2Strategy(
         Settings(
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             strategy_schwab_1m_v2_confirmed_window_enabled=True,
             strategy_schwab_1m_v2_cw_v2_enabled=True,
             strategy_schwab_1m_v2_cw_v2_reactive_entry_enabled=True,

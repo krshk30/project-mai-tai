@@ -41,6 +41,7 @@ def _strat(**over):
         "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": True,
+        "strategy_schwab_1m_v2_webull_entry_notional_usd": 0,
     }
     kw.update(over)
     return SchwabV2Strategy(Settings(**kw))

@@ -564,7 +564,8 @@ def test_configured_quantity_is_context_only_and_never_claims_a_manual_position(
     )
     assert len(findings) == 1
     assert findings[0].severity == "info"
-    assert findings[0].payload["configured_entry_quantity"] == 100
+    assert findings[0].payload["configured_entry_quantity"] is None
+    assert findings[0].payload["configured_entry_notional_usd"] == 300
 
 
 def test_manual_position_is_persisted_as_info_without_lowering_confidence() -> None:

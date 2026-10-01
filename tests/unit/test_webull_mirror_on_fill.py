@@ -179,6 +179,8 @@ def _session_factory() -> sessionmaker[Session]:
 def _oms(*, adapter, mirror_on: bool = True, webull_account: str = WEBULL) -> OmsRiskService:
     service = OmsRiskService(
         settings=Settings(
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             redis_stream_prefix="test",
             oms_adapter="simulated",
             oms_v2_exit_management_enabled=True,

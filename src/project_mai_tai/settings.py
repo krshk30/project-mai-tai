@@ -330,6 +330,7 @@ class Settings(BaseSettings):
     # leg independently (operator wanted 2x capital on eligible names — per-order default qty
     # on each broker, no netting).
     strategy_schwab_1m_v2_webull_fanout_quantity: int = 0
+    strategy_schwab_1m_v2_webull_entry_notional_usd: int = 300
     # Cold-start warmup lookback (calendar days). The first poll per symbol
     # (since=0) requests this many days back so the indicator-seed batch
     # always reaches the last completed trading session even across a
@@ -451,6 +452,8 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_go_live_enabled: bool = False
     strategy_schwab_1m_v2_atr_flip_variant: str = "B"          # "A" or "B"
     strategy_schwab_1m_v2_atr_flip_quantity: int = 10          # live-paper size
+    strategy_schwab_1m_v2_entry_notional_usd: int = 600
+    strategy_schwab_1m_v2_entry_max_shares: int = 1000
     # ⭐ 10000, matching PRODUCTION (2026-07-28). The default said 5000 while the box had run
     # `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_VOL_FLOOR=10000` all along, so anyone reading this
     # file saw the wrong number -- I nearly reported it as the live value. Operator confirmed

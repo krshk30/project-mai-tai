@@ -5231,13 +5231,33 @@ class SchwabV2BotService:
         THIS module's binding (keeping the existing monkeypatch seam), and ``logger``
         is passed so the skip-warning stays under this module's logger byte-identically.
         """
-        return entry_gate.route_extended_hours(
+        routed = entry_gate.route_extended_hours(
             draft,
             now,
             self._last_quote_by_symbol.get,
             session_fn=extended_hours_session,
             log=logger,
         )
+        if not routed or getattr(draft, "intent_type", "") != "open":
+            return routed
+        metadata = draft.metadata
+        leg = "webull" if metadata.get("fanout_leg") == "webull" else "schwab"
+        if Decimal(str(getattr(self.strategy, f"_entry_notional_{leg}", 0))) == 0:
+            return True
+        order_type = str(metadata.get("order_type", "market")).lower()
+        if order_type in {"limit", "stop_limit"}:
+            price = metadata.get("limit_price")
+            basis = "limit_price"
+        else:
+            quote = self._last_quote_by_symbol.get(str(draft.symbol).upper())
+            price = getattr(quote, "ask_price", None)
+            basis = "trigger_quote_ask"
+        sized = self.strategy._sized_open(draft.symbol, leg=leg, price=price, basis=basis)
+        if sized is None:
+            return False
+        draft.quantity, sizing_metadata = sized
+        metadata.update(sizing_metadata)
+        return True
 
 
 async def main() -> None:

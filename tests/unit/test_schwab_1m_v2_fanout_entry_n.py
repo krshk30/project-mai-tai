@@ -30,6 +30,7 @@ def _strat():
         strategy_schwab_1m_v2_confirmed_window_enabled=True,
         strategy_schwab_1m_v2_cw_v2_enabled=True,
         strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_entry_notional_usd=0,
     ))
 
 

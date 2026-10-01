@@ -133,6 +133,8 @@ async def test_polled_pmax_policy_reject_is_logged_cached_paged_and_blocks_retry
     broker = _Broker()
     service = OmsRiskService(
         settings=Settings(
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
             redis_stream_prefix="test",
             oms_adapter="simulated",
             strategy_schwab_1m_v2_broker_provider="schwab",
@@ -340,7 +342,9 @@ async def test_policy_cache_failure_preserves_the_poll_pass_and_other_fill(monke
 
     broker = _PollBroker()
     service = OmsRiskService(
-        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated",
+                          strategy_schwab_1m_v2_entry_notional_usd=0,
+                          strategy_schwab_1m_v2_webull_entry_notional_usd=0),
         redis_client=_Redis(), session_factory=sessions, broker_adapter=broker,
     )
     service._current_session_day = lambda value=None: "2026-09-24"

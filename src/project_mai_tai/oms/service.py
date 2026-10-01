@@ -76,6 +76,7 @@ from project_mai_tai.strategy_core.time_utils import (
     is_fillable_et_session,
     session_day_eastern_str,
 )
+from project_mai_tai.strategy_core.v2_entry_sizing import sized_entry_quantity
 
 logger = logging.getLogger(__name__)
 
@@ -2153,6 +2154,27 @@ class OmsRiskService:
                 return [*pre_submit_events, rth_reactive_abandon_event]
 
             self._stamp_webull_resting_mirror_market(event)
+            final_size_refusal = self._finalize_v2_entry_quantity(event, intent)
+            if final_size_refusal is not None:
+                self.store.mark_intent_refused(
+                    intent, origin="client_abort", code=final_size_refusal
+                )
+                order_event = self._build_rejected_event(
+                    event, intent.id, reason=final_size_refusal
+                )
+                session.commit()
+                self.logger.warning(
+                    "[OMS-V2-ENTRY-SIZE-REFUSED] symbol=%s account=%s code=%s",
+                    event.payload.symbol, event.payload.broker_account_name, final_size_refusal,
+                )
+                await self._publish_order_event(order_event)
+                return [*pre_submit_events, order_event]
+            if (
+                event.payload.strategy_code == "schwab_1m_v2"
+                and event.payload.intent_type == "open"
+                and event.payload.side == "buy"
+            ):
+                request_quantity = event.payload.quantity
             if self._defer_webull_resting_mirror_before_submit(event):
                 refusal_code = "webull_mirror_precheck_deferred"
                 self.store.mark_intent_refused(
@@ -12351,7 +12373,95 @@ class OmsRiskService:
             return False, f"unsupported intent_type={event.payload.intent_type}"
         if event.payload.side not in {"buy", "sell"}:
             return False, f"unsupported side={event.payload.side}"
+        if (
+            event.payload.strategy_code == "schwab_1m_v2"
+            and event.payload.intent_type == "open"
+            and event.payload.side == "buy"
+        ):
+            refusal = self._v2_entry_size_refusal(event)
+            if refusal:
+                self.logger.warning(
+                    "[OMS-V2-ENTRY-SIZE-REFUSED] symbol=%s account=%s quantity=%s code=%s",
+                    event.payload.symbol, event.payload.broker_account_name,
+                    event.payload.quantity, refusal,
+                )
+                return False, refusal
         return True, "ok"
+
+    def _v2_entry_notional(self, account_name: str) -> Decimal | None:
+        schwab_notional = Decimal(str(self.settings.strategy_schwab_1m_v2_entry_notional_usd))
+        webull_notional = Decimal(str(self.settings.strategy_schwab_1m_v2_webull_entry_notional_usd))
+        if account_name == self.settings.strategy_schwab_1m_v2_account_name:
+            return schwab_notional
+        if account_name == self.settings.strategy_schwab_1m_v2_webull_account_name:
+            return webull_notional
+        if schwab_notional == 0 and webull_notional == 0:
+            return Decimal(0)
+        return None
+
+    def _v2_entry_size_refusal(self, event: TradeIntentEvent) -> str | None:
+        notional = self._v2_entry_notional(event.payload.broker_account_name)
+        if notional is None:
+            return "v2_entry_account_unknown"
+        if notional <= 0:
+            return None if notional == 0 else "v2_entry_notional_invalid"
+        max_shares = int(self.settings.strategy_schwab_1m_v2_entry_max_shares)
+        if event.payload.quantity > max_shares or max_shares < 1:
+            return "v2_entry_max_shares_exceeded"
+        metadata = event.payload.metadata
+        order_type = str(metadata.get("order_type", "market")).lower()
+        price_raw = (
+            metadata.get("limit_price") if order_type in {"limit", "stop_limit"}
+            else metadata.get("entry_size_price")
+        )
+        try:
+            price = Decimal(str(price_raw))
+        except (InvalidOperation, ValueError):
+            return "v2_entry_price_unavailable"
+        if not price.is_finite() or price <= 0:
+            return "v2_entry_price_unavailable"
+        if event.payload.quantity * price > notional * Decimal("1.25"):
+            return "v2_entry_notional_cap_exceeded"
+        return None
+
+    def _finalize_v2_entry_quantity(
+        self, event: TradeIntentEvent, intent: TradeIntent
+    ) -> str | None:
+        if not (
+            event.payload.strategy_code == "schwab_1m_v2"
+            and event.payload.intent_type == "open"
+            and event.payload.side == "buy"
+        ):
+            return None
+        notional = self._v2_entry_notional(event.payload.broker_account_name)
+        if notional is None:
+            return "v2_entry_account_unknown"
+        if notional == 0:
+            return None
+        metadata = event.payload.metadata
+        order_type = str(metadata.get("order_type", "market")).lower()
+        price_raw = (
+            metadata.get("limit_price") if order_type in {"limit", "stop_limit"}
+            else metadata.get("entry_size_price")
+        )
+        try:
+            price = Decimal(str(price_raw))
+            quantity = sized_entry_quantity(
+                notional, price, int(event.payload.quantity),
+                int(self.settings.strategy_schwab_1m_v2_entry_max_shares),
+            )
+        except (InvalidOperation, ValueError, ArithmeticError):
+            return "v2_entry_price_unavailable"
+        event.payload.quantity = Decimal(quantity)
+        metadata.update({
+            "entry_notional_target_usd": str(notional),
+            "entry_size_price_basis": "limit_price" if order_type in {"limit", "stop_limit"} else "trigger_quote_ask",
+            "entry_size_price": str(price),
+            "entry_computed_shares": str(quantity),
+        })
+        intent.quantity = event.payload.quantity
+        intent.payload = {**dict(intent.payload or {}), "metadata": dict(metadata)}
+        return self._v2_entry_size_refusal(event)
 
     def _build_client_order_id(self, event: TradeIntentEvent) -> str:
         intent_id = event.event_id.hex[:12]

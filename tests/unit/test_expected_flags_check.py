@@ -14,6 +14,7 @@ from project_mai_tai.settings import Settings
 
 
 CATALOG = Path(__file__).resolve().parents[2] / "ops" / "health" / "expected_flags.json"
+NUMERIC_CATALOG = CATALOG.with_name("expected_numeric.json")
 
 
 def _entry(name: str, expected: bool, service: str) -> dict[str, object]:
@@ -76,6 +77,38 @@ def test_new_unlisted_settings_bool_blocks_catalog(monkeypatch: pytest.MonkeyPat
     )
     with pytest.raises(flags.CatalogError, match="new_fix_enabled"):
         flags.load_catalog(CATALOG)
+
+
+def test_fixed_dollar_numeric_catalog_covers_both_running_consumers() -> None:
+    entries = flags.load_numeric_catalog(NUMERIC_CATALOG)
+    assert {entry["name"] for entry in entries} == {
+        "strategy_schwab_1m_v2_entry_notional_usd",
+        "strategy_schwab_1m_v2_webull_entry_notional_usd",
+        "strategy_schwab_1m_v2_entry_max_shares",
+    }
+
+    def process_env(service: str) -> flags.ServiceEnvironment:
+        assert service in {"schwab-1m-v2", "oms"}
+        return _reading(1234, {
+            "MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENTRY_NOTIONAL_USD": "600",
+            "MAI_TAI_STRATEGY_SCHWAB_1M_V2_WEBULL_ENTRY_NOTIONAL_USD": "300",
+        })
+
+    rc, lines = flags.audit(entries, process_env)
+    assert rc == 0
+    assert "checked=6/6" in lines[-1]
+
+
+def test_missing_or_wrong_live_notional_fails_numeric_gate() -> None:
+    entry = flags.load_numeric_catalog(NUMERIC_CATALOG)[0]
+    rc, lines = flags.audit([entry], lambda _: _reading(1234, {}))
+    assert rc == 1
+    assert "source=settings-default" in lines[0]
+    rc, lines = flags.audit([entry], lambda _: _reading(1234, {
+        "MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENTRY_NOTIONAL_USD": "601",
+    }))
+    assert rc == 1
+    assert "running=601 expected=600" in lines[0]
 
 
 def test_new_optional_bool_also_blocks_catalog(monkeypatch: pytest.MonkeyPatch) -> None:

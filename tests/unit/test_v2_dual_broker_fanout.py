@@ -40,6 +40,8 @@ SHARED_IDENTITY_KEYS = ("fanout_segment_id", "fanout_slot", "fanout_slot_id")
 # ============================================================ strategy-side helpers
 def _strat(*, fanout=True, **overrides) -> SchwabV2Strategy:
     kwargs = {
+        "strategy_schwab_1m_v2_entry_notional_usd": 0,
+        "strategy_schwab_1m_v2_webull_entry_notional_usd": 0,
         "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
         "strategy_schwab_1m_v2_dual_broker_fanout_enabled": fanout,
@@ -477,6 +479,8 @@ def test_transient_veto_wins_even_with_the_closing_only_code():
 # ============================================================ OMS: _v2_accounts under fan-out
 def _svc_settings(**over):
     base = dict(
+        strategy_schwab_1m_v2_entry_notional_usd=0,
+        strategy_schwab_1m_v2_webull_entry_notional_usd=0,
         strategy_schwab_1m_v2_account_name="paper:schwab_1m_v2",
         strategy_schwab_1m_v2_webull_account_name="live:orb",
     )
