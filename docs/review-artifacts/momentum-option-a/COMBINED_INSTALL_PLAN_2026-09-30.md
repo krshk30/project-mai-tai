@@ -77,8 +77,16 @@ page and one snapshot per call) were probed read-only.
    `_positions_blocking` can stop on a bad or partial page; neither is a
    valid direct-flat proof. Use the strict read below: every holding must be
    legible; malformed, unreadable, or incomplete pages are UNKNOWN.
-   Exit 0 proves bot books clear (with any manual holdings printed); exit 1
-   means bot exposure; exit 2 means UNKNOWN. Create the read-only helper once
+   The operator's 16:21 ET hand-close of exactly two NXL shares on
+   `live:schwab_1m_v2` is the sole named exception to the managed-row and
+   net-fill checks. It is valid only while a fresh direct Schwab read shows
+   no NXL holding, both accounts have zero nonzero virtual positions, the
+   only possible open managed row is NXL quantity 2 on that account, and the
+   only possible nonzero net bot fill is NXL +2 on that account. Any other
+   exposure blocks; an unreadable read is UNKNOWN. The reconciler incident
+   from the manual close is journaled, not edited. Exit 0 proves this narrow
+   bot-flat condition (with any manual holdings printed); exit 1 means bot
+   exposure; exit 2 means UNKNOWN. Create the read-only helper once
    with O_EXCL and journal its hash before invoking it:
 
    ```bash
@@ -99,6 +107,8 @@ page and one snapshot per call) were probed read-only.
    from project_mai_tai.db.session import build_engine
    from project_mai_tai.settings import Settings
    from webull.trade.request.get_account_positions_request import AccountPositionsRequest
+
+   OPERATOR_MANUAL_CLOSE = {("live:schwab_1m_v2", "NXL"): Decimal("2")}
 
    def webull_rows(adapter):
        account = adapter.accounts_by_name.get("live:orb")
@@ -175,6 +185,7 @@ page and one snapshot per call) were probed read-only.
            raise ValueError("Schwab empty-position response lacks account identity/balances")
        schwab_rows = body.get("positions", [])
        broker_holdings = []
+       override_broker_held = False
        for row in schwab_rows:
            if not isinstance(row, dict) or not isinstance(row.get("instrument"), dict):
                raise ValueError("Schwab holding shape unreadable")
@@ -185,6 +196,8 @@ page and one snapshot per call) were probed read-only.
            short_qty = Decimal(str(row.get("shortQuantity", 0)))
            if not long_qty.is_finite() or not short_qty.is_finite():
                raise ValueError("Schwab holding quantity nonfinite")
+           if symbol.upper() == "NXL" and (long_qty or short_qty):
+               override_broker_held = True
            quantity = long_qty - short_qty
            if quantity:
                broker_holdings.append(("live:schwab_1m_v2", symbol.upper(), quantity))
@@ -193,9 +206,13 @@ page and one snapshot per call) were probed read-only.
        engine = build_engine(settings.database_url, connect_timeout_s=5,
                              statement_timeout_ms=5000)
        with Session(engine) as session:
-           counts = {account: int(session.scalar(select(func.count()).select_from(OmsManagedPosition)
-                        .where(OmsManagedPosition.broker_account_name == account,
-                               OmsManagedPosition.status == "open")) or 0)
+           managed_rows = session.execute(select(OmsManagedPosition.broker_account_name,
+                                                 OmsManagedPosition.symbol,
+                                                 OmsManagedPosition.current_quantity)
+                   .where(OmsManagedPosition.broker_account_name.in_(
+                       ("live:schwab_1m_v2", "live:orb")),
+                          OmsManagedPosition.status == "open")).all()
+           counts = {account: sum(row.broker_account_name == account for row in managed_rows)
                      for account in ("live:schwab_1m_v2", "live:orb")}
            virtual_rows = session.execute(select(BrokerAccount.name, VirtualPosition.symbol,
                                                  VirtualPosition.quantity)
@@ -218,12 +235,28 @@ page and one snapshot per call) were probed read-only.
        if any(total != known for _, _, _, total, known in fill_rows):
            raise ValueError("UNKNOWN fill side prevents net bot-fill proof")
        net_fills = [(account, symbol, str(net)) for account, symbol, net, _, _ in fill_rows if net != 0]
+       managed = [(row.broker_account_name, row.symbol,
+                   Decimal(str(row.current_quantity))) for row in managed_rows]
+       if any(not quantity.is_finite() for _, _, quantity in managed):
+           raise ValueError("UNKNOWN managed quantity nonfinite")
+       override_key = ("live:schwab_1m_v2", "NXL")
+       managed_override_ok = (len(managed) <= 1 and
+                              all((account, symbol) == override_key and
+                                  quantity == OPERATOR_MANUAL_CLOSE[override_key]
+                                  for account, symbol, quantity in managed))
+       fills_override_ok = all((account, symbol) == override_key and
+                               Decimal(quantity) == OPERATOR_MANUAL_CLOSE[override_key]
+                               for account, symbol, quantity in net_fills)
        print(f"FRESH_DIRECT_READ schwab_holding_rows={len(schwab_rows)} "
              f"webull_holding_rows={len(webull_holdings)} webull_pages={pages} "
              f"broker_holdings={[(a, s, str(q)) for a, s, q in broker_holdings]} "
-             f"open_managed={counts} nonzero_virtual={virtual_rows} "
+             f"open_managed={counts} managed_rows={managed} nonzero_virtual={virtual_rows} "
              f"fill_session_start_et={day_start.isoformat()} net_bot_fills={net_fills}")
-       if any(counts.values()) or virtual_rows or net_fills:
+       override_net = next((quantity for account, symbol, quantity in net_fills
+                            if (account, symbol) == override_key), "0")
+       print(f"OPERATOR_MANUAL_CLOSE_OVERRIDE account={override_key[0]} symbol=NXL qty=2 "
+             f"managed_row_open={int(bool(managed))} net_fills={override_net}")
+       if override_broker_held or virtual_rows or not managed_override_ok or not fills_override_ok:
            return 1
        for account, symbol, quantity in broker_holdings:
            print(f"MANUAL_HOLDING_RECORDED_NOT_BLOCKING account={account} "
