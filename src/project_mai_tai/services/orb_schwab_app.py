@@ -413,6 +413,12 @@ class OrbSchwabService(OrbService):
                     "[ORB-SCHWAB-BAR-MISSING] symbol=%s bar=%s reason=%s",
                     symbol, bar.timestamp.isoformat(), reason,
                 )
+                if not self._observe_only:
+                    logger.info(
+                        "[ORB-SCHWAB-DECISION] symbol=%s bar=%s macd=%s histogram=%s action=%s reason=bar_missing",
+                        symbol, bar.timestamp.isoformat(), verdict.value, histogram,
+                        "cancel" if order.placed else "none",
+                    )
                 if self._observe_only:
                     self._record_observation(
                         "decision", symbol=symbol, bar_at=bar.timestamp.isoformat(),
@@ -425,14 +431,23 @@ class OrbSchwabService(OrbService):
                 continue
             if not order.placed and now >= opening - timedelta(seconds=30):
                 order.cancelled = True
-                logger.warning(
-                    "[ORB-SCHWAB-ENTRY-CUTOFF] symbol=%s bar=%s reason=late_macd_no_entry",
-                    symbol, bar.timestamp.isoformat(),
+                decision_reason = (
+                    "macd_negative_no_entry"
+                    if verdict == MacdVerdict.NEGATIVE else "late_macd_no_entry"
                 )
+                logger.warning(
+                    "[ORB-SCHWAB-ENTRY-CUTOFF] symbol=%s bar=%s reason=%s",
+                    symbol, bar.timestamp.isoformat(), decision_reason,
+                )
+                if not self._observe_only:
+                    logger.info(
+                        "[ORB-SCHWAB-DECISION] symbol=%s bar=%s macd=%s histogram=%s action=none reason=%s",
+                        symbol, bar.timestamp.isoformat(), verdict.value, histogram, decision_reason,
+                    )
                 if self._observe_only:
                     self._record_observation(
                         "decision", symbol=symbol, bar_at=bar.timestamp.isoformat(),
-                        proposed_action="none", decision_reason="late_macd_no_entry",
+                        proposed_action="none", decision_reason=decision_reason,
                     )
                 continue
             action = order.on_closed_bar(
@@ -441,6 +456,13 @@ class OrbSchwabService(OrbService):
                 macd_allowed=verdict == MacdVerdict.ALLOWED,
                 macd_reason=reason,
             )
+            if not self._observe_only:
+                logger.info(
+                    "[ORB-SCHWAB-DECISION] symbol=%s bar=%s macd=%s histogram=%s action=%s reason=%s",
+                    symbol, bar.timestamp.isoformat(), verdict.value, histogram,
+                    action.kind if action is not None else "none",
+                    action.reason if action is not None else "no_action",
+                )
             if self._observe_only:
                 prices = (
                     build_orb_schwab_bracket_metadata(action.level)

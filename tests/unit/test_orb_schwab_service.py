@@ -73,6 +73,32 @@ def test_live_service_emits_one_open_two_reprices_and_no_paper_order(monkeypatch
     assert service._states == {}
 
 
+def test_live_decision_log_names_negative_macd_at_entry_cutoff(monkeypatch, caplog) -> None:
+    service = OrbSchwabService(
+        settings=Settings(
+            orb_enabled=True,
+            orb_live_schwab_orders_enabled=True,
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_broker_provider="schwab",
+        ),
+        session_factory=lambda: None,
+    )
+    service._universe = {"VEEA"}
+    monkeypatch.setattr(service, "_session_open_utc", lambda: OPEN)
+    monkeypatch.setattr(service, "_processing_time", lambda: OPEN - timedelta(seconds=30))
+    monkeypatch.setattr(
+        "project_mai_tai.services.orb_schwab_app.schwab_completed_bar_macd_gate",
+        lambda *_args: (MacdVerdict.NEGATIVE, "negative", -0.0013),
+    )
+    caplog.set_level(logging.INFO, logger="orb-schwab")
+    service._on_bar("VEEA", _bar(2, 5.5))
+    asyncio.run(service._process_closed_bars())
+    assert "reason=macd_negative_no_entry" in caplog.text
+    assert "symbol=VEEA" in caplog.text
+    assert "macd=negative histogram=-0.0013 action=none" in caplog.text
+    assert service._opening_orders["VEEA"].cancelled is True
+
+
 def test_negative_completed_schwab_bar_requests_cancel_not_reprice(monkeypatch) -> None:
     service = OrbSchwabService(
         settings=Settings(
