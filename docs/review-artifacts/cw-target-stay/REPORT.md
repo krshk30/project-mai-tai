@@ -7,7 +7,7 @@ Status: review only. No production install, restart, flag change, or watcher re-
 - A tagged `CW_TARGET` extended-hours LIMIT stays at its original broker limit despite the normal working-order refresh cadence and a bid below that limit. Untagged hard-stop, floor, flip, entry and native bracket orders retain their existing refresh paths.
 - Each account's open managed row supplies its own entry price. A fresh bid at or below `entry_price * 0.99` requests cancellation of that account's target. A session change also requests cancellation. Only broker-origin `cancelled` readback releases the reservation. A rejected, missing, or client-only cancellation leaves the target open and creates one critical incident per order.
 - A pending confirmation, a fresh ATR flip, or a hard-stop breach first requests target cancellation. Until the broker confirms it, no replacement software sell is sent. The confirmation decision remains pending. At 19:55 the existing operator rule takes precedence: request cancellation but submit the flatten even if the target's cancellation is unconfirmed; shares-unavailable refusal is handled by the existing overnight incident path.
-- Schwab and Webull evaluations for the same quote are scheduled together, with elapsed time logged separately. The target rule is enabled by default through `oms_v2_cw_target_stay_enabled`; the expected-flags catalog requires it ON.
+- Schwab and Webull evaluations for the same quote are scheduled together, with elapsed time recorded per leg at debug level and slow legs (at least 250 ms) warned. The target rule is enabled by default through `oms_v2_cw_target_stay_enabled`; the expected-flags catalog requires it ON.
 
 ## Evidence and verification
 
