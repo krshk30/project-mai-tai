@@ -89,6 +89,16 @@ class ServiceState:
 class TracebackEvidence:
     timestamped_records: int
     traceback_times_utc: tuple[datetime, ...]
+    pre_start_untimestamped_tracebacks: int = 0
+
+
+UNTIMESTAMPED_STARTUP_MARKERS = {
+    "market-data": (
+        "bootstrapped market-data subscription owners from ",
+        "restored market-data subscriptions from ",
+    ),
+    "orb-schwab": ("[ORB-SCHWAB] mode=",),
+}
 
 
 def run_checked(args: Sequence[str], *, timeout: int = 30) -> str:
@@ -181,16 +191,28 @@ def format_moment(value: datetime) -> str:
 
 
 def parse_log_files(
-    files: Iterable[tuple[str, Iterable[str]]], *, since: datetime
+    files: Iterable[tuple[str, Iterable[str]]], *, since: datetime, service: str | None = None
 ) -> TracebackEvidence:
-    """Scope traceback headers by their nearest preceding timestamped line in the same file."""
+    """Scope traceback headers within each file, never borrowing another file's context."""
 
     since = since.astimezone(UTC)
     timestamped_records = 0
     traceback_times: list[datetime] = []
+    pre_start_untimestamped = 0
+    startup_markers = UNTIMESTAMPED_STARTUP_MARKERS.get(service or "", ())
     for name, lines in files:
+        file_lines = list(lines)
+        # A later startup marker for this service proves an earlier untimestamped
+        # traceback belonged to a prior process, even when the log has no clock.
+        later_startup = [False] * len(file_lines)
+        seen_startup = False
+        for index in range(len(file_lines) - 1, -1, -1):
+            later_startup[index] = seen_startup
+            seen_startup |= any(marker in file_lines[index] for marker in startup_markers)
         preceding: datetime | None = None
-        for line in lines:
+        for index, line in enumerate(file_lines):
+            if any(marker in line for marker in startup_markers):
+                preceding = None
             match = LOG_TIMESTAMP.match(line)
             if match is not None:
                 preceding = datetime.strptime(match.group(1).split(",", 1)[0], "%Y-%m-%d %H:%M:%S").replace(
@@ -201,12 +223,15 @@ def parse_log_files(
             if "Traceback (most recent call last):" not in line:
                 continue
             if preceding is None:
+                if later_startup[index]:
+                    pre_start_untimestamped += 1
+                    continue
                 raise EvidenceUnknown(
                     f"{name} contains a traceback before any timestamp; its time scope is unknown"
                 )
             if preceding >= since:
                 traceback_times.append(preceding)
-    return TracebackEvidence(timestamped_records, tuple(traceback_times))
+    return TracebackEvidence(timestamped_records, tuple(traceback_times), pre_start_untimestamped)
 
 
 def _log_files(
@@ -1562,7 +1587,9 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     unexpected_silent_services: list[str] = []
     for service in sorted(restarted | (new_services & installed_optional - already_present)):
         start = datetime.fromisoformat(current[service].started_at_utc).astimezone(UTC)
-        evidence = parse_log_files(_log_files(service, runner, since=start), since=start)
+        evidence = parse_log_files(
+            _log_files(service, runner, since=start), since=start, service=service
+        )
         traceback_total += len(evidence.traceback_times_utc)
         timestamped_total += evidence.timestamped_records
         if evidence.timestamped_records == 0:
@@ -1577,16 +1604,22 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
                 f"{service}={len(evidence.traceback_times_utc)}/{evidence.timestamped_records}"
             )
         traceback_detail.extend(format_moment(stamp) for stamp in evidence.traceback_times_utc)
+        if evidence.pre_start_untimestamped_tracebacks:
+            traceback_detail.append(
+                f"{service}=historical_before_later_startup({evidence.pre_start_untimestamped_tracebacks})"
+            )
     if traceback_total:
         failures.append(f"{traceback_total} post-restart traceback(s) found")
     if unexpected_silent_services:
-        failures.append(
-            "no post-restart timestamped log records for unexpected-silent service(s): "
+        unknowns.append(
+            "no time-scoped post-restart log records for untimestamped/silent service(s): "
             + ",".join(unexpected_silent_services)
         )
     traceback_status = (
         "FAIL"
-        if traceback_total or unexpected_silent_services
+        if traceback_total
+        else "UNKNOWN"
+        if unexpected_silent_services
         else "PARTIAL_N/A"
         if services_without_records
         else "PASS"
