@@ -898,6 +898,17 @@ async def test_positions_non_ratelimit_error_is_unknown(fake_sdk) -> None:
 
 
 @pytest.mark.asyncio
+async def test_positions_unconfigured_account_is_unknown(fake_sdk) -> None:
+    client = _FakeClient(_positions_body())
+    adapter = _adapter(client)
+    adapter.accounts_by_name = {}
+
+    with pytest.raises(WebullPositionsUnavailable, match="not configured"):
+        await adapter.list_account_positions("live:orb")
+    assert client.calls.get("positions", 0) == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("error", [ConnectionResetError("reset"), TimeoutError("timed out")])
 async def test_positions_transport_error_is_unknown(fake_sdk, error: Exception) -> None:
     client = _FakeClient({})
