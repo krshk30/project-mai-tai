@@ -89,16 +89,42 @@ class ServiceState:
 class TracebackEvidence:
     timestamped_records: int
     traceback_times_utc: tuple[datetime, ...]
-    pre_start_untimestamped_tracebacks: int = 0
+    prior_process_exit_tracebacks: int = 0
 
 
-UNTIMESTAMPED_STARTUP_MARKERS = {
-    "market-data": (
-        "bootstrapped market-data subscription owners from ",
-        "restored market-data subscriptions from ",
-    ),
-    "orb-schwab": ("[ORB-SCHWAB] mode=",),
+BOUNDED_STARTUP_MARKERS = {
+    "market-data": ("[MARKET-DATA] process starting", "mai-tai-market-data"),
+    "orb-schwab": ("[ORB-SCHWAB] mode=", "mai-tai-orb-schwab"),
 }
+STARTUP_MARKER_BOUND_SECONDS = 60
+
+
+def _log_timestamp(line: str) -> datetime | None:
+    match = LOG_TIMESTAMP.match(line)
+    if match is None:
+        return None
+    return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S,%f").replace(tzinfo=UTC)
+
+
+def _prior_process_exit_before_bounded_startup(
+    lines: list[str], header_index: int, *, since: datetime, service: str | None
+) -> bool:
+    marker_and_script = BOUNDED_STARTUP_MARKERS.get(service or "")
+    if marker_and_script is None or header_index + 2 >= len(lines):
+        return False
+    marker, script = marker_and_script
+    first_frame = lines[header_index + 1].strip()
+    if not re.fullmatch(rf'File "[^"]*/{re.escape(script)}", line \d+, in <module>', first_frame):
+        return False
+    if lines[header_index + 2].strip() != "sys.exit(run())":
+        return False
+    for line in lines[header_index + 3 :]:
+        stamp = _log_timestamp(line)
+        if stamp is not None:
+            return marker in line and 0 <= (stamp - since).total_seconds() <= STARTUP_MARKER_BOUND_SECONDS
+        if "Traceback (most recent call last):" in line:
+            return False
+    return False
 
 
 def run_checked(args: Sequence[str], *, timeout: int = 30) -> str:
@@ -198,40 +224,30 @@ def parse_log_files(
     since = since.astimezone(UTC)
     timestamped_records = 0
     traceback_times: list[datetime] = []
-    pre_start_untimestamped = 0
-    startup_markers = UNTIMESTAMPED_STARTUP_MARKERS.get(service or "", ())
+    prior_process_exits = 0
     for name, lines in files:
         file_lines = list(lines)
-        # A later startup marker for this service proves an earlier untimestamped
-        # traceback belonged to a prior process, even when the log has no clock.
-        later_startup = [False] * len(file_lines)
-        seen_startup = False
-        for index in range(len(file_lines) - 1, -1, -1):
-            later_startup[index] = seen_startup
-            seen_startup |= any(marker in file_lines[index] for marker in startup_markers)
         preceding: datetime | None = None
         for index, line in enumerate(file_lines):
-            if any(marker in line for marker in startup_markers):
-                preceding = None
-            match = LOG_TIMESTAMP.match(line)
-            if match is not None:
-                preceding = datetime.strptime(match.group(1).split(",", 1)[0], "%Y-%m-%d %H:%M:%S").replace(
-                    tzinfo=UTC
-                )
+            stamp = _log_timestamp(line)
+            if stamp is not None:
+                preceding = stamp
                 if preceding >= since:
                     timestamped_records += 1
             if "Traceback (most recent call last):" not in line:
                 continue
             if preceding is None:
-                if later_startup[index]:
-                    pre_start_untimestamped += 1
+                if _prior_process_exit_before_bounded_startup(
+                    file_lines, index, since=since, service=service
+                ):
+                    prior_process_exits += 1
                     continue
                 raise EvidenceUnknown(
                     f"{name} contains a traceback before any timestamp; its time scope is unknown"
                 )
             if preceding >= since:
                 traceback_times.append(preceding)
-    return TracebackEvidence(timestamped_records, tuple(traceback_times), pre_start_untimestamped)
+    return TracebackEvidence(timestamped_records, tuple(traceback_times), prior_process_exits)
 
 
 def _log_files(
@@ -1604,9 +1620,9 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
                 f"{service}={len(evidence.traceback_times_utc)}/{evidence.timestamped_records}"
             )
         traceback_detail.extend(format_moment(stamp) for stamp in evidence.traceback_times_utc)
-        if evidence.pre_start_untimestamped_tracebacks:
+        if evidence.prior_process_exit_tracebacks:
             traceback_detail.append(
-                f"{service}=historical_before_later_startup({evidence.pre_start_untimestamped_tracebacks})"
+                f"{service}=prior_process_exit_before_bounded_startup({evidence.prior_process_exit_tracebacks})"
             )
     if traceback_total:
         failures.append(f"{traceback_total} post-restart traceback(s) found")
