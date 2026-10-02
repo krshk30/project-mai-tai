@@ -1,9 +1,0 @@
-{
-  "pr_number": 1083,
-  "range_base": "ed3c84a8e930ea75bf5bddfe1edc45057d8ba26c",
-  "range_head": "8ddac119938e7876c8df0fa456958b516d82b694",
-  "reviewed_at": "2026-10-02T14:42:41Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "Fix for the 2026-10-02 07:01 ET guard death (snapshot_intervals did XREVRANGE snapshot-batches COUNT 180 = 1.13 GB; watchdog kill; Redis peak 2.14 G, 5 evictions). Round 1 (28bf5bde) rejected: I measured its XINFO-in-Lua probe on the box at 200-427 ms wall and 175-272 ms in SLOWLOG per call at 1 Hz. This head bootstraps with one XREVRANGE COUNT 1 then polls XRANGE (last_id + COUNT 1, at most 3 nonempty reads per tick else Blind, payload discarded, entry size bounded; codex measurement file: 20 nonempty reads p50 23 ms max 36 ms, empty poll 0.7 ms, evictions 23->23. Adds RedisSafety (eviction increase or used_memory > 1.6 GB stops paper; unreadable = Blind). My mutations red: bootstrap COUNT 180, poll COUNT 180, inclusive cursor, per-tick cap 300, entry-count check removed, entry-size bound removed, sampling skipped, and earlier memory threshold x10, eviction ignored, memory sample skipped. SURVIVOR accepted: warm-up lead (start minus 5m30s -> start) is not pinned by a test; effect is only that the first minute checks have fewer intervals, and the existing snapshot_warmup_complete rule covers it. 49 tests pass, both GitHub validate runs pass. Not exercised: a full 07:00-09:40 treatment window with this guard; other multi-entry snapshot readers (strategy warm-up ~660 MB, XREAD count=500 backlogs) are unchanged and listed with owner and next action in the audit doc."
-}
