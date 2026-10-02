@@ -286,10 +286,17 @@ class MarketDataGatewayService:
         else:
             updated = current - symbols
 
-        checkpoint = {consumer: json.dumps(sorted(updated))}
-        if message_id is not None:
-            checkpoint["_last_applied_id"] = message_id
         candidate_owners = {**self._desired_symbols_by_consumer, consumer: updated}
+        stream = stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions")
+        checkpoint_id = message_id or self._subscription_offsets.get(stream, "0-0")
+        if checkpoint_id == "$":
+            checkpoint_id = "0-0"
+        checkpoint = {
+            name: json.dumps(sorted(owned))
+            for name, owned in candidate_owners.items()
+            if name != "static"
+        }
+        checkpoint.update(_migration_complete="1", _last_applied_id=checkpoint_id)
         next_symbols = set().union(*candidate_owners.values())
         added_symbols = next_symbols - self._active_symbols
         removed_symbols = self._active_symbols - next_symbols
@@ -423,7 +430,7 @@ class MarketDataGatewayService:
             raise
 
         migrated = saved.get("_migration_complete") == "1"
-        checkpoint = saved.get("_last_applied_id")
+        checkpoint = saved.get("_last_applied_id") if migrated else None
         if migrated:
             if latest and checkpoint is None:
                 raise RuntimeError("subscription owner state has no stream checkpoint")
@@ -446,6 +453,8 @@ class MarketDataGatewayService:
             event = MarketDataSubscriptionEvent.model_validate(json.loads(data))
             consumer = event.payload.consumer_name
             symbols = {symbol.upper() for symbol in event.payload.symbols if symbol}
+            if not migrated and consumer not in self._desired_symbols_by_consumer and event.payload.mode != "replace":
+                raise RuntimeError(f"retained history for {consumer} does not start with replace")
             current = self._desired_symbols_by_consumer.get(consumer, set())
             if event.payload.mode == "replace":
                 updated = symbols
