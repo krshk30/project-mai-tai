@@ -121,7 +121,12 @@ def _session_factory() -> sessionmaker[Session]:
 def _service(adapter: _DirectCancelAdapter) -> tuple[OmsRiskService, sessionmaker[Session]]:
     sessions = _session_factory()
     service = OmsRiskService(
-        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        settings=Settings(
+            redis_stream_prefix="test", oms_adapter="simulated",
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_entry_notional_usd=0,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=0,
+        ),
         redis_client=_Redis(),
         session_factory=sessions,
         broker_adapter=adapter,

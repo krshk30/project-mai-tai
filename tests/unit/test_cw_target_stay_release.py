@@ -12,12 +12,14 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from project_mai_tai.broker_adapters.protocols import ExecutionReport
+from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
+from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition, SystemIncident
+from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition, SystemIncident, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
+from tests.unit.test_webull_adapter import _FakeClient, _adapter, _order, fake_sdk  # noqa: F401
 
 
 def _service(**overrides) -> OmsRiskService:
@@ -296,6 +298,77 @@ async def test_webull_shaped_accepted_then_confirmed_cancel_stays_quiet(monkeypa
     with factory() as session:
         assert session.get(BrokerOrder, order_id).status == "cancelled"
         assert session.scalars(select(SystemIncident)).all() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", ["live:schwab_1m_v2", "live:orb"])
+@pytest.mark.usefixtures("fake_sdk")
+async def test_partially_filled_target_cancels_remaining_order_without_closing_remaining_position(
+    monkeypatch, account,
+):
+    service, factory, broker = _db_service(monkeypatch)
+    order_id, row_id = _seed_target(service, factory, account, "7.1569")
+    if account == "live:orb":
+        prior = _order(
+            client_order_id=f"target-{account}", strategy_code="schwab_1m_v2",
+            symbol="NXL", side="sell", intent_type="close", quantity=Decimal("100"),
+        )
+        parsed = await _adapter(_FakeClient({"detail": {
+            "order_id": f"broker-target-{account}",
+            "items": [{"order_status": "PARTIAL_FILLED", "filled_qty": "40", "filled_price": "7.48"}],
+        }})).fetch_order_update(prior)
+    else:
+        prior = OrderRequest(
+            client_order_id=f"target-{account}", broker_account_name=account,
+            strategy_code="schwab_1m_v2", symbol="NXL", side="sell",
+            intent_type="close", quantity=Decimal("100"), reason="CW_TARGET",
+        )
+        raw = {
+            "orderId": f"broker-target-{account}", "status": "PARTIALLY_FILLED",
+            "quantity": 100, "filledQuantity": 40, "enteredTime": "2026-10-01T15:00:00Z",
+            "orderActivityCollection": [{"executionLegs": [{
+                "quantity": 40, "price": 7.48, "time": "2026-10-01T15:00:01Z",
+            }]}],
+        }
+        parser = object.__new__(SchwabBrokerAdapter)
+        parsed = parser._execution_report_from_order(
+            request=prior, order=raw, event_type=parser._map_order_status(raw),
+            broker_order_id=f"broker-target-{account}",
+        )
+    assert parsed is not None and parsed.event_type == "partially_filled"
+    assert parsed.filled_quantity == Decimal("40")
+    remainder = prior.quantity - parsed.filled_quantity
+    with factory.begin() as session:
+        order = session.get(BrokerOrder, order_id)
+        order.quantity = Decimal("100")
+        order.status = parsed.event_type
+        row = session.get(OmsManagedPosition, row_id)
+        row.original_quantity = 100
+        row.current_quantity = int(remainder)
+    broker.cancel_outcomes = ["accepted", "cancelled"]
+
+    async def attempt() -> bool:
+        with factory.begin() as session:
+            order = session.get(BrokerOrder, order_id)
+            intent = session.get(TradeIntent, order.intent_id)
+            return await service._cancel_cw_target_for_release(
+                session, order=order, intent=intent,
+                account_name=account, reason="one_percent_release",
+            )
+
+    assert await attempt() is False
+    assert len(broker.cancels) == 1
+    assert broker.cancels[0].metadata["broker_order_id"] == f"broker-target-{account}"
+    assert broker.sells == []
+    with factory() as session:
+        assert session.get(BrokerOrder, order_id).status == "partially_filled"
+        assert session.get(OmsManagedPosition, row_id).current_quantity == remainder
+    service._cw_target_cancel_last_attempt[order_id] -= 1.1
+    assert await attempt() is True
+    with factory() as session:
+        assert session.get(BrokerOrder, order_id).status == "cancelled"
+        assert session.get(OmsManagedPosition, row_id).current_quantity == remainder
+    assert broker.sells == []
 
 
 @pytest.mark.asyncio

@@ -452,6 +452,8 @@ class ReconciliationService:
                             self.settings.strategy_schwab_1m_v2_webull_fanout_quantity
                             or self.settings.strategy_schwab_1m_v2_default_quantity
                         )
+                if configured_entry_notional_usd is not None and direction != "broker_only_manual":
+                    title = f"{title} (entry target ${configured_entry_notional_usd} per order)"
                 findings.append(
                     FindingSpec(
                         finding_type="position_quantity_mismatch",

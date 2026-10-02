@@ -19,6 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, ExitPairReleaseResult
+from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import (
@@ -918,13 +919,29 @@ class _PartialFillAdapter:
 
     def __init__(self, fill_qty: int) -> None:
         self.fill_qty = fill_qty
+        self.submitted = []
 
     async def submit_order(self, request):
+        self.submitted.append(request)
+        if self.fill_qty:
+            raw_order = {
+                "orderId": "wrk-1", "status": "PARTIALLY_FILLED",
+                "quantity": float(request.quantity), "filledQuantity": self.fill_qty,
+                "enteredTime": "2026-10-01T15:00:00Z",
+                "orderActivityCollection": [{"executionLegs": [{
+                    "quantity": self.fill_qty, "price": 9.85, "time": "2026-10-01T15:00:01Z",
+                }]}],
+            }
+            parser = object.__new__(SchwabBrokerAdapter)
+            return [parser._execution_report_from_order(
+                request=request, order=raw_order, event_type=parser._map_order_status(raw_order),
+                broker_order_id="wrk-1",
+            )]
         return [ExecutionReport(
-            event_type="partially_filled", client_order_id=request.client_order_id,
+            event_type="accepted", client_order_id=request.client_order_id,
             broker_order_id="wrk-1", broker_fill_id="f1", symbol=request.symbol, side=request.side,
             intent_type=request.intent_type, quantity=request.quantity,
-            filled_quantity=Decimal(str(self.fill_qty)), fill_price=Decimal("9.85"),
+            filled_quantity=Decimal("0"), fill_price=None,
             reason=request.reason, metadata=dict(request.metadata),
         )]
 
@@ -979,6 +996,30 @@ async def test_partial_fill_decrements_not_flat() -> None:
     r = _row(sf)
     assert r.status == "open" and r.current_quantity == 4   # 10 - 6 confirmed fill
     assert (ACCT, SYM) in svc._managed_v2_symbols              # remaining 4 still monitored
+
+
+@pytest.mark.asyncio
+async def test_partial_exit_reprices_only_the_remaining_shares() -> None:
+    sf = _make_sf()
+    adapter = _PartialFillAdapter(fill_qty=6)
+    svc = _svc(sf, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=10)
+    _quote(svc, bid=9.80)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    assert adapter.submitted[0].quantity == Decimal("10")
+    assert _row(sf).current_quantity == 4
+
+    with sf.begin() as session:
+        for order in session.scalars(
+            select(BrokerOrder).where(BrokerOrder.symbol == SYM, BrokerOrder.side == "sell")
+        ):
+            order.status = "cancelled"
+    adapter.fill_qty = 0
+    _quote(svc, bid=9.75)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    assert len(adapter.submitted) == 2
+    assert adapter.submitted[1].quantity == Decimal("4")
+    assert _row(sf).status == "open" and _row(sf).current_quantity == 4
 
 
 # --------------------------------------------------------------------------- (#6-3)

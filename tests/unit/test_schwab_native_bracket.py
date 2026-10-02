@@ -11,6 +11,7 @@ suite that never pinned the numbers would not catch it.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -84,6 +85,18 @@ def test_bracket_payload_matches_the_broker_accepted_shape() -> None:
     # Both legs sell the FULL position: a partial protective leg leaves a naked remainder.
     assert target["orderLegCollection"][0]["quantity"] == 1.0
     assert protective["orderLegCollection"][0]["quantity"] == 1.0
+
+
+def test_large_bracket_payload_names_full_child_size_but_not_partial_activation() -> None:
+    request = replace(_bracket_request(), quantity=Decimal("197"))
+    payload = _adapter(bracket_enabled=True)._build_bracket_payload(request)
+    parent = payload["orderLegCollection"][0]
+    target, stop = payload["childOrderStrategies"][0]["childOrderStrategies"]
+    assert parent["quantity"] == 197.0
+    assert target["orderLegCollection"][0]["quantity"] == 197.0
+    assert stop["orderLegCollection"][0]["quantity"] == 197.0
+    # A preview validates the submitted shape, not the broker's child quantity
+    # after, for example, 19 of 197 parent shares fill. That requires broker evidence.
 
 
 def test_protective_stop_is_below_entry_and_target_above() -> None:

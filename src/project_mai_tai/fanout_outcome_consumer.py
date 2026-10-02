@@ -31,7 +31,7 @@ _recorded_at_lock = Lock()
 _last_recorded_at: datetime | None = None
 
 PROVISIONAL_OUTCOMES = frozenset({"queued", "could_not_tell", "rejected_unclassified"})
-POSITIVE_HOLD_OUTCOMES = frozenset({"submitted", "working", "partially_filled"})
+POSITIVE_HOLD_OUTCOMES = frozenset({"submitted", "working"})
 TERMINAL_RELEASE_OUTCOMES = frozenset(
     {
         "dropped_no_emitter",

@@ -59,7 +59,7 @@ from project_mai_tai.v2_flip_entry_ownership import (
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.entry_gate import resolve_entry_window
-from project_mai_tai.strategy_core.v2_entry_sizing import sized_entry_quantity
+from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit, sized_entry_quantity
 
 logger = logging.getLogger(__name__)
 
@@ -2333,16 +2333,17 @@ class SchwabV2Strategy:
             or not record.attempt_id
             or record.attempt_id == state.fanout_claim_attempt_id
         )
-        if record.outcome == "filled":
+        if record.outcome in {"filled", "partially_filled"}:
             # A durable fill outranks virtual_positions and every stale cancel/reject, but it still
             # belongs to one economic slot. A late fill from another slot must not consume/hold the
             # current claim merely because both share a segment.
             if state.fanout_claim_slot_id and not exact:
                 logger.info(
-                    "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=filled applied=0 "
+                    "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s applied=0 "
                     "reason=wrong_slot active_slot_id=%s",
                     record.symbol,
                     record.slot_id,
+                    record.outcome,
                     state.fanout_claim_slot_id,
                 )
                 return "wrong_slot"
@@ -2377,11 +2378,12 @@ class SchwabV2Strategy:
                         reason="webull_first_rest_filled",
                     )
             logger.info(
-                "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=filled held=1 "
+                "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s held=1 "
                 "evidence=positive fill_rank=authoritative webull_slot_consumed=1 "
                 "webull_slot=%s resting_latch_cleared=%d — Schwab composition unchanged",
                 record.symbol,
                 record.slot_id,
+                record.outcome,
                 record.slot,
                 int(resting_latch_cleared),
             )
@@ -4870,9 +4872,19 @@ class SchwabV2Strategy:
         offset_pct = self._resting_offset_pct_value()
         limit = trigger * (1.0 + band_pct / 100.0)
         limit_s = f"{limit:.4f}"
-        soft_rest = self._eh_resting_enabled and self._resting_session_is_eh()
+        session_is_eh = self._resting_session_is_eh()
+        soft_rest = self._eh_resting_enabled and session_is_eh
+        raw_stop = Decimal(f"{trigger:.4f}")
+        raw_limit = Decimal(limit_s)
+        schwab_wire_limit = resting_wire_limit(
+            raw_stop, raw_limit, leg="schwab",
+            native_schwab_bracket=(
+                bool(getattr(getattr(self, "settings", None), "oms_v2_emit_native_oco_bracket_enabled", False))
+                and not session_is_eh
+            ),
+        )
         schwab_sized = None if soft_rest else self._sized_open(
-            state.symbol, leg="schwab", price=Decimal(limit_s), basis="stop_limit_limit"
+            state.symbol, leg="schwab", price=schwab_wire_limit, basis="stop_limit_wire_limit"
         )
         if not soft_rest and schwab_sized is None:
             return
@@ -4979,7 +4991,9 @@ class SchwabV2Strategy:
         # `_maybe_emit`, and the matching CANCEL must never be gated.
         if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled:
             webull_sized = self._sized_open(
-                state.symbol, leg="webull", price=Decimal(limit_s), basis="stop_limit_limit"
+                state.symbol, leg="webull",
+                price=resting_wire_limit(raw_stop, raw_limit, leg="webull"),
+                basis="stop_limit_wire_limit",
             )
             if webull_sized is None:
                 return

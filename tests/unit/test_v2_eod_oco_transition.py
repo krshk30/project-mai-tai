@@ -186,6 +186,41 @@ async def test_working_leg_blocks_1600_but_1955_submits_flatten():
 
 
 @pytest.mark.asyncio
+async def test_partial_exit_remainder_is_the_1600_handover_and_1955_flatten_quantity():
+    sf = _make_sf()
+    svc = _svc(sf)
+    _open_apus_row(sf)
+    with sf.begin() as session:
+        row = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM))
+        row.original_quantity = 100
+        row.current_quantity = 60
+    _arm_managed(svc)
+    _force_due(svc)
+    svc.settings.oms_v2_overnight_flatten_enabled = True
+    svc._v2_overnight_flatten_due = lambda now=None: True
+    svc._latest_quotes_by_symbol[SYM] = {
+        "bid": 5.50, "ask": 5.51, "received_at": datetime.now(timezone.utc),
+    }
+    releases = ["reserved", "released"]
+
+    async def release(*_args, **_kwargs):
+        return releases.pop(0) if releases else "released"
+
+    svc._release_native_oco_for_cw_flip = release
+    await svc._v2_eod_oco_transition()
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    with sf() as session:
+        assert session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all() == []
+        row = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM))
+        assert row.current_quantity == 60
+    await svc._v2_overnight_flatten()
+    with sf() as session:
+        intents = session.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all()
+        assert len(intents) == 1
+        assert intents[0].quantity == Decimal("60")
+
+
+@pytest.mark.asyncio
 async def test_missing_exit_pair_handle_is_unknown_not_permission_to_sell():
     sf = _make_sf()
     svc = _svc(sf)
