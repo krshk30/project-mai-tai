@@ -827,6 +827,122 @@ async def test_gateway_restart_replays_an_event_newer_than_durable_checkpoint() 
 
 
 @pytest.mark.asyncio
+async def test_deleted_owner_hash_is_fully_rebuilt_by_one_event_before_restart() -> None:
+    redis = FakeRedis()
+    settings = Settings(redis_stream_prefix="test", market_data_static_symbols="SPY")
+    first = MarketDataGatewayService(
+        settings=settings, redis_client=redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(), reference_cache=FakeReferenceCache(),
+    )
+    await first._restore_subscription_state()
+    initial = (
+        ("strategy-engine", ["SCAN"]),
+        ("schwab-1m-v2", ["V2SY"]),
+        ("orb", ["ORBSY"]),
+        ("orb-schwab", ["ORBSC"]),
+        ("momentum-paper", ["MOMO"]),
+    )
+    for index, (consumer, symbols) in enumerate(initial, start=1):
+        event = MarketDataSubscriptionEvent(
+            source_service=consumer,
+            payload=MarketDataSubscriptionPayload(
+                consumer_name=consumer, mode="replace", symbols=symbols,
+            ),
+        )
+        message_id = await redis.xadd(
+            "test:market-data-subscriptions", {"data": event.model_dump_json()},
+        )
+        await first.apply_subscription_event(event, message_id=message_id)
+        saved = redis.hashes["test:market-data-subscription-owners"]
+        assert saved["_migration_complete"] == "1"
+        assert saved["_last_applied_id"] == message_id
+        assert all(name in saved for name, _ in initial[:index])
+
+    redis.hashes.pop("test:market-data-subscription-owners")
+    release = MarketDataSubscriptionEvent(
+        source_service="momentum-paper",
+        payload=MarketDataSubscriptionPayload(
+            consumer_name="momentum-paper", mode="replace", symbols=[],
+        ),
+    )
+    message_id = await redis.xadd(
+        "test:market-data-subscriptions", {"data": release.model_dump_json()},
+    )
+    await first.apply_subscription_event(release, message_id=message_id)
+
+    saved = redis.hashes["test:market-data-subscription-owners"]
+    assert saved == {
+        "strategy-engine": '["SCAN"]',
+        "schwab-1m-v2": '["V2SY"]',
+        "orb": '["ORBSY"]',
+        "orb-schwab": '["ORBSC"]',
+        "momentum-paper": "[]",
+        "_migration_complete": "1",
+        "_last_applied_id": message_id,
+    }
+
+    # Retention can remove old events; the durable hash must carry all owners.
+    redis.entries[:-1] = [
+        ("retired-stream", payload, kwargs)
+        for _stream, payload, kwargs in redis.entries[:-1]
+    ]
+    restored = MarketDataGatewayService(
+        settings=settings, redis_client=redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(), reference_cache=FakeReferenceCache(),
+    )
+    await restored._restore_subscription_state()
+    assert restored.active_symbols() == {"SPY", "SCAN", "V2SY", "ORBSY", "ORBSC"}
+    assert restored._desired_symbols_by_consumer["momentum-paper"] == set()
+
+
+@pytest.mark.asyncio
+async def test_unmarked_owner_hash_rebuilds_from_all_retained_replace_events() -> None:
+    redis = FakeRedis()
+    settings = Settings(redis_stream_prefix="test", market_data_static_symbols="SPY")
+    for consumer, symbols in (("strategy-engine", ["SCAN"]), ("orb", ["ORBSY"])):
+        event = MarketDataSubscriptionEvent(
+            source_service=consumer,
+            payload=MarketDataSubscriptionPayload(
+                consumer_name=consumer, mode="replace", symbols=symbols,
+            ),
+        )
+        await redis.xadd("test:market-data-subscriptions", {"data": event.model_dump_json()})
+    redis.hashes["test:market-data-subscription-owners"] = {
+        "orb": '["STALE"]', "_last_applied_id": "2-0",
+    }
+    restored = MarketDataGatewayService(
+        settings=settings, redis_client=redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(), reference_cache=FakeReferenceCache(),
+    )
+    await restored._restore_subscription_state()
+    assert restored.active_symbols() == {"SPY", "SCAN", "ORBSY"}
+    assert redis.hashes["test:market-data-subscription-owners"]["_migration_complete"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_unmarked_owner_history_with_first_add_refuses_instead_of_guessing() -> None:
+    redis = FakeRedis()
+    event = MarketDataSubscriptionEvent(
+        source_service="orb",
+        payload=MarketDataSubscriptionPayload(
+            consumer_name="orb", mode="add", symbols=["ORBSY"],
+        ),
+    )
+    await redis.xadd("test:market-data-subscriptions", {"data": event.model_dump_json()})
+    restored = MarketDataGatewayService(
+        settings=Settings(redis_stream_prefix="test"), redis_client=redis,
+        snapshot_provider=FakeSnapshotProvider(), trade_stream=FakeTradeStream(),
+        reference_cache=FakeReferenceCache(),
+    )
+
+    with pytest.raises(RuntimeError, match="does not start with replace"):
+        await restored._restore_subscription_state()
+    assert "_migration_complete" not in redis.hashes.get(
+        "test:market-data-subscription-owners", {},
+    )
+
+
+@pytest.mark.asyncio
 async def test_failed_subscription_state_write_does_not_advance_owner_or_stream_offset() -> None:
     class FailingHashRedis(FakeRedis):
         async def hset(self, key: str, mapping: dict[str, str]) -> None:
