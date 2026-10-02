@@ -797,7 +797,8 @@ def test_dual_broker_fill_is_one_episode_and_waits_for_both_siblings_to_close() 
     assert state.flip_owner_phase == "idle"
 
 
-def test_tnon_position_book_waits_for_late_webull_fill_then_reconciles() -> None:
+@pytest.mark.parametrize("outcome_status", ["filled", "partially_filled"])
+def test_tnon_position_book_waits_for_late_webull_fill_then_reconciles(outcome_status) -> None:
     strategy, clock, _identity_writes, _owner_writes = _strategy(dual=True)
     state, opportunity = _place_first(strategy, clock, "TNON")
     mirror = strategy.drain_webull_direct_intents()[0]
@@ -824,7 +825,7 @@ def test_tnon_position_book_waits_for_late_webull_fill_then_reconciles() -> None
         slot=mirror.metadata["fanout_slot"],
         slot_id=mirror.metadata["fanout_slot_id"],
         attempt_id="tnon-webull",
-        outcome="filled",
+        outcome=outcome_status,
         evidence_id="tnon-webull-fill",
         broker_account_name=WEBULL,
     )

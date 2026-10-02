@@ -18,11 +18,12 @@ from project_mai_tai.broker_adapters.protocols import (
     ExitPairReleaseResult,
 )
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, OmsManagedPosition, TradeIntent
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, OmsManagedPosition, TradeIntent
 from project_mai_tai.oms import service as service_module
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
+from tests.unit.test_webull_adapter import _FakeClient, _adapter, _order, fake_sdk  # noqa: F401
 from tests.webull_confirmation_exit_fixtures import (
     bq_170729_not_tradable_reject,
     cancelled_leg,
@@ -1150,6 +1151,62 @@ async def test_shared_routine_takes_pair_back_for_full_close_not_scale_out(
         assert adapter.cancel_pair_calls == []
         assert _sell_accounts(sf) == []
         assert "reason=not_a_protective_exit" in "\n".join(service.logger.lines)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fake_sdk")
+async def test_webull_cancel_then_sell_uses_only_remainder_after_partial_exit() -> None:
+    prior_order = _order(
+        client_order_id="webull-prior-partial-exit", strategy_code="schwab_1m_v2",
+        symbol=SYMBOL, side="sell", intent_type="close", quantity=Decimal("100"),
+    )
+    partial = await _adapter(_FakeClient({"detail": {
+        "order_id": "webull-prior-partial-exit",
+        "items": [{"order_status": "PARTIAL_FILLED", "filled_qty": "40", "filled_price": "9.75"}],
+    }})).fetch_order_update(prior_order)
+    assert partial is not None and partial.event_type == "partially_filled"
+    assert partial.filled_quantity == Decimal("40")
+    adapter = _FanoutAdapter()
+    service, sf = _service(fanout=True, adapter=adapter)
+    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    remainder = prior_order.quantity - partial.filled_quantity
+    adapter.position_state[WEBULL] = remainder
+    with sf.begin() as session:
+        row = service.store.get_open_managed_position(
+            session, broker_account_name=WEBULL, symbol=SYMBOL
+        )
+        row.original_quantity = 100
+        row.current_quantity = int(remainder)
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == WEBULL))
+        strategy = service.store.ensure_strategy(session, "schwab_1m_v2", name="v2")
+        prior_exit = BrokerOrder(
+            intent_id=None, strategy_id=strategy.id, broker_account_id=account.id,
+            client_order_id="webull-prior-partial-exit", broker_order_id="webull-prior-partial-exit",
+            symbol=SYMBOL, side="sell", order_type="limit", time_in_force="day",
+            quantity=Decimal("100"), status="cancelled", payload={},
+        )
+        session.add(prior_exit)
+        session.flush()
+        session.add(BrokerOrderEvent(
+            order_id=prior_exit.id, event_type="partially_filled", event_source="broker",
+            payload={"filled_quantity": str(partial.filled_quantity), "raw_status": "PARTIAL_FILLED"},
+        ))
+        row_id = str(row.id)
+    decision = service_module._ConfirmationFanoutDecision(
+        symbol=SYMBOL, source_fill_id="partial-exit-remainder", accounts=(WEBULL,)
+    )
+
+    outcome = await service._webull_cancel_then_sell(
+        WEBULL, SYMBOL, exit_tag="CW_HARD_STOP", reason="oms_v2_managed_exit:CW_HARD_STOP",
+        kind="HARD", reference_bid=9.40, expected_row_id=row_id,
+        expires_at=datetime.now(UTC) + timedelta(seconds=60), decision=decision,
+    )
+
+    assert outcome in {"closed", "close_submitted"}
+    assert len(adapter.cancel_pair_calls) == 1
+    sells = [request for request in adapter.submitted if request.side == "sell"]
+    assert len(sells) == 1
+    assert sells[0].quantity == remainder
 
 
 @pytest.mark.asyncio

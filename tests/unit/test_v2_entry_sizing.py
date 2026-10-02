@@ -1,4 +1,5 @@
 from decimal import Decimal
+import inspect
 import logging
 from types import SimpleNamespace
 from datetime import UTC, datetime
@@ -7,6 +8,7 @@ import pytest
 
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import BrokerOrder, VirtualPosition
@@ -15,7 +17,7 @@ from project_mai_tai.settings import Settings
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.strategy_core.schwab_1m_v2 import TradeIntentDraft
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
-from project_mai_tai.strategy_core.v2_entry_sizing import sized_entry_quantity
+from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit, sized_entry_quantity
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -39,6 +41,23 @@ def test_fixed_dollar_rounds_each_leg_at_order_price(price, schwab, webull):
 def test_fixed_dollar_clamps_to_one_and_maximum():
     assert sized_entry_quantity(Decimal("600"), Decimal("0.01"), 2, 1000) == 1000
     assert sized_entry_quantity(Decimal("300"), Decimal("1000"), 1, 1000) == 1
+
+
+@pytest.mark.parametrize(
+    ("method", "expected_calls"),
+    [
+        ("_build_hold_draft", 1),
+        ("_maybe_atr_emit", 1),
+        ("_cw_entry", 1),
+        ("_cw_v2_quote", 1),
+        ("_queue_resting_place", 2),
+        ("_eh_resting_cross_check", 1),
+        ("_build_webull_fanout_draft", 1),
+    ],
+)
+def test_all_eight_v2_open_sites_delegate_to_shared_sizing(method, expected_calls):
+    source = inspect.getsource(getattr(SchwabV2Strategy, method))
+    assert source.count("self._sized_open(") == expected_calls
 
 
 @pytest.mark.parametrize("price", [None, Decimal("0"), Decimal("-1")])
@@ -83,6 +102,23 @@ def test_oms_refuses_oversized_v2_buy_before_broker():
     assert service._evaluate_risk(_v2_event("live:orb", 1001, "0.10")) == (
         False, "v2_entry_max_shares_exceeded"
     )
+
+
+def test_oms_cap_uses_the_webull_wire_tick_and_refuses_missing_price():
+    service = object.__new__(OmsRiskService)
+    service.settings = Settings(
+        _env_file=None,
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    service._manual_stop_symbols = set()
+    service.logger = logging.getLogger(__name__)
+    event = _v2_event("live:orb", 305, "1.2349")
+    event.payload.metadata["stop_price"] = "1.2240"
+    assert service._v2_entry_wire_price(event) == Decimal("1.23")
+    assert service._evaluate_risk(event) == (False, "v2_entry_notional_cap_exceeded")
+    event.payload.metadata.pop("limit_price")
+    assert service._evaluate_risk(event) == (False, "v2_entry_price_unavailable")
 
 
 def test_zero_notional_bypasses_new_oms_guard_byte_for_byte():
@@ -159,13 +195,59 @@ def test_resting_mirror_uses_its_own_notional_and_cancel_keeps_each_placed_quant
     assert webull.quantity == Decimal("98")
     assert schwab.metadata["entry_notional_target_usd"] == "600"
     assert webull.metadata["entry_notional_target_usd"] == "300"
-    assert webull.metadata["entry_size_price"] == schwab.metadata["entry_size_price"]
+    assert schwab.metadata["entry_size_price"] == "3.0652"
+    assert webull.metadata["entry_size_price"] == "3.07"
 
     strategy._queue_resting_cancel(state, reason="reprice")
     schwab_cancel = strategy.drain_pending_intents()[0]
     webull_cancel = strategy.drain_webull_direct_intents()[0]
     assert schwab_cancel.quantity == schwab.quantity
     assert webull_cancel.quantity == webull.quantity
+
+
+def test_native_resting_cancel_uses_quantity_at_final_schwab_wire_limit(monkeypatch):
+    monkeypatch.setattr("project_mai_tai.oms.service._is_regular_market_session", lambda now=None: True)
+    settings = Settings(
+        _env_file=None, oms_v2_emit_native_oco_bracket_enabled=True,
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_webull_account_name="live:orb",
+    )
+    strategy = SchwabV2Strategy(settings)
+    strategy._resting_session_is_eh = lambda now=None: False
+    state = strategy.watchlist_state("TEST")
+    strategy._queue_resting_place(state, 3.05)
+    placed = strategy.drain_pending_intents()[0]
+    assert placed.metadata["limit_price"] == "3.0652"
+    assert placed.metadata["entry_size_price"] == "3.07"
+    assert placed.quantity == Decimal("195")
+
+    service = object.__new__(OmsRiskService)
+    service.settings = settings
+    service.logger = logging.getLogger(__name__)
+    service._cw_target_pct = 5.0
+    service._cw_stop_pct = 8.0
+    event = _v2_event("live:schwab_1m_v2", 195, "3.0652")
+    event.payload.metadata.update(placed.metadata)
+    service._apply_v2_oco_bracket_entry(event=event)
+    intent = SimpleNamespace(quantity=Decimal("195"), payload={"metadata": {}})
+    assert service._finalize_v2_entry_quantity(event, intent) is None
+    assert event.payload.metadata["limit_price"] == "3.07"
+    assert event.payload.quantity == Decimal("195")
+
+    strategy._queue_resting_cancel(state, reason="reprice")
+    assert strategy.drain_pending_intents()[0].quantity == intent.quantity
+
+
+def test_resting_wire_limit_matches_webull_adapter_on_collapsed_band():
+    stop = Decimal("1.2166")
+    limit = Decimal("1.2227")
+    request = SimpleNamespace(side="buy", metadata={})
+    adapter_limit, _, _, refusal = WebullBrokerAdapter._prepare_single_leg_prices(
+        request=request, order_type="STOP_LIMIT", limit_price=limit, stop_price=stop,
+    )
+    assert refusal is None
+    assert resting_wire_limit(stop, limit, leg="webull") == adapter_limit == Decimal("1.23")
+    assert resting_wire_limit(stop, limit, leg="schwab", native_schwab_bracket=True) == Decimal("1.23")
 
 
 def test_partial_schwab_fill_claims_one_independently_sized_webull_leg():
@@ -306,3 +388,86 @@ async def test_large_partial_entry_books_only_filled_shares_and_leaves_remainder
         position = session.scalar(select(VirtualPosition).where(VirtualPosition.symbol == "TEST"))
         assert order is not None and order.status == "cancelled"
         assert position is not None and position.quantity == Decimal("19")
+
+    strategy = SchwabV2Strategy(Settings(_env_file=None))
+    strategy._resting_session_is_eh = lambda now=None: False
+    state = strategy.watchlist_state("TEST")
+    strategy._queue_resting_place(state, 3.05)
+    first = strategy.drain_pending_intents()[0]
+    strategy._queue_resting_cancel(state, reason="reprice")
+    assert strategy.drain_pending_intents()[0].quantity == first.quantity
+    strategy._queue_resting_place(state, 2.90)
+    fresh = strategy.drain_pending_intents()[0]
+    assert fresh.quantity == Decimal("206")
+    assert fresh.quantity != first.quantity
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("schwab_notional", "expected_replacement"),
+    [(600, Decimal("188")), (0, Decimal("178"))],
+)
+async def test_oms_refresh_recomputes_dollar_size_net_of_prior_fills_but_legacy_stays_fixed(
+    schwab_notional, expected_replacement,
+):
+    class Broker:
+        def __init__(self):
+            self.requests = []
+
+        async def submit_order(self, request):
+            self.requests.append(request)
+            return [ExecutionReport(
+                event_type="cancelled" if request.intent_type == "cancel" else "accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id="old-order" if request.intent_type == "cancel" else "new-order",
+                symbol=request.symbol, side="buy", intent_type=request.intent_type,
+                quantity=request.quantity, filled_quantity=Decimal("19") if request.intent_type == "cancel" else Decimal("0"),
+                origin="broker",
+            )]
+
+    service = object.__new__(OmsRiskService)
+    service.settings = Settings(
+        _env_file=None, strategy_schwab_1m_v2_entry_notional_usd=schwab_notional,
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+    )
+    service.logger = logging.getLogger(__name__)
+    service.broker_adapter = Broker()
+
+    async def refreshed(**_kwargs):
+        return {"order_type": "limit", "limit_price": "2.90"}
+
+    async def recorded(**_kwargs):
+        return []
+
+    service._build_refreshed_order_metadata = refreshed
+    service._direct_cancel_dead_target_bound_reached = lambda *_args, **_kwargs: False
+    service._record_direct_cancel_reports = lambda _session, **kwargs: kwargs["reports"][0]
+    service._replacement_client_order_id = lambda coid: f"{coid}-replacement"
+    service._record_order_reports = recorded
+    order = SimpleNamespace(
+        client_order_id="old-order", broker_order_id="old-order", symbol="TEST",
+        side="buy", quantity=Decimal("197"), order_type="limit", time_in_force="day",
+        strategy_id=None, broker_account_id=None, payload={"order_type": "limit", "limit_price": "3.05"},
+    )
+    intent = SimpleNamespace(intent_type="open", reason="ATR Flip")
+    partial = ExecutionReport(
+        event_type="partially_filled", client_order_id="old-order", broker_order_id="old-order",
+        symbol="TEST", side="buy", intent_type="open", quantity=Decimal("197"),
+        filled_quantity=Decimal("19"), fill_price=Decimal("3.04"), origin="broker",
+    )
+
+    result = await service._refresh_working_order(
+        session=None, order=order, intent=intent, strategy_code="schwab_1m_v2",
+        broker_account_name="live:schwab_1m_v2", report=partial,
+    )
+    assert result["orders"] == 1
+    cancel, replacement = service.broker_adapter.requests
+    assert cancel.quantity == Decimal("178")
+    assert replacement.quantity == expected_replacement
+    if schwab_notional:
+        assert replacement.metadata["entry_total_target_shares"] == "207"
+        assert replacement.metadata["entry_prior_filled_shares"] == "19"
+        assert replacement.metadata["entry_size_price"] == "2.90"
+        assert replacement.quantity * Decimal("2.90") <= Decimal("600") * Decimal("1.25")
+    else:
+        assert "entry_total_target_shares" not in replacement.metadata

@@ -76,7 +76,7 @@ from project_mai_tai.strategy_core.time_utils import (
     is_fillable_et_session,
     session_day_eastern_str,
 )
-from project_mai_tai.strategy_core.v2_entry_sizing import sized_entry_quantity
+from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit, sized_entry_quantity
 
 logger = logging.getLogger(__name__)
 
@@ -12408,6 +12408,14 @@ class OmsRiskService:
         max_shares = int(self.settings.strategy_schwab_1m_v2_entry_max_shares)
         if event.payload.quantity > max_shares or max_shares < 1:
             return "v2_entry_max_shares_exceeded"
+        price = self._v2_entry_wire_price(event)
+        if price is None:
+            return "v2_entry_price_unavailable"
+        if event.payload.quantity * price > notional * Decimal("1.25"):
+            return "v2_entry_notional_cap_exceeded"
+        return None
+
+    def _v2_entry_wire_price(self, event: TradeIntentEvent) -> Decimal | None:
         metadata = event.payload.metadata
         order_type = str(metadata.get("order_type", "market")).lower()
         price_raw = (
@@ -12416,13 +12424,23 @@ class OmsRiskService:
         )
         try:
             price = Decimal(str(price_raw))
-        except (InvalidOperation, ValueError):
-            return "v2_entry_price_unavailable"
-        if not price.is_finite() or price <= 0:
-            return "v2_entry_price_unavailable"
-        if event.payload.quantity * price > notional * Decimal("1.25"):
-            return "v2_entry_notional_cap_exceeded"
-        return None
+            if not price.is_finite() or price <= 0:
+                return None
+            if (
+                order_type in {"limit", "stop_limit"}
+                and event.payload.broker_account_name
+                == self.settings.strategy_schwab_1m_v2_webull_account_name
+            ):
+                stop = (
+                    Decimal(str(metadata.get("stop_price")))
+                    if order_type == "stop_limit" else price
+                )
+                if not stop.is_finite() or stop <= 0:
+                    return None
+                price = resting_wire_limit(stop, price, leg="webull")
+            return price
+        except (InvalidOperation, TypeError, ValueError, ArithmeticError):
+            return None
 
     def _finalize_v2_entry_quantity(
         self, event: TradeIntentEvent, intent: TradeIntent
@@ -12440,12 +12458,10 @@ class OmsRiskService:
             return None
         metadata = event.payload.metadata
         order_type = str(metadata.get("order_type", "market")).lower()
-        price_raw = (
-            metadata.get("limit_price") if order_type in {"limit", "stop_limit"}
-            else metadata.get("entry_size_price")
-        )
+        price = self._v2_entry_wire_price(event)
+        if price is None:
+            return "v2_entry_price_unavailable"
         try:
-            price = Decimal(str(price_raw))
             quantity = sized_entry_quantity(
                 notional, price, int(event.payload.quantity),
                 int(self.settings.strategy_schwab_1m_v2_entry_max_shares),
@@ -15722,6 +15738,56 @@ class OmsRiskService:
         if refreshed_metadata is None:
             return {"orders": 0, "terminal_orders": 0, "published_events": []}
 
+        v2_open_refresh = (
+            strategy_code == "schwab_1m_v2"
+            and intent.intent_type == "open"
+            and order.side == "buy"
+        )
+        notional = self._v2_entry_notional(broker_account_name) if v2_open_refresh else Decimal("0")
+        if v2_open_refresh and notional is None:
+            self.logger.warning(
+                "[OMS-V2-ENTRY-SIZE-REFUSED] symbol=%s account=%s code=v2_entry_account_unknown path=refresh",
+                order.symbol, broker_account_name,
+            )
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
+        v2_dollar_refresh = v2_open_refresh and notional != 0
+        target_shares: int | None = None
+        refresh_price: Decimal | None = None
+        if v2_dollar_refresh:
+            sizing_event = TradeIntentEvent(
+                source_service=SERVICE_NAME,
+                payload=TradeIntentPayload(
+                    strategy_code=strategy_code,
+                    broker_account_name=broker_account_name,
+                    symbol=order.symbol,
+                    side="buy",
+                    quantity=remaining_quantity,
+                    intent_type="open",
+                    reason=intent.reason,
+                    metadata=dict(refreshed_metadata),
+                ),
+            )
+            refresh_price = self._v2_entry_wire_price(sizing_event)
+            if refresh_price is None:
+                self.logger.warning(
+                    "[OMS-V2-ENTRY-SIZE-REFUSED] symbol=%s account=%s code=v2_entry_price_unavailable path=refresh",
+                    order.symbol, broker_account_name,
+                )
+                return {"orders": 0, "terminal_orders": 0, "published_events": []}
+            try:
+                target_shares = sized_entry_quantity(
+                    notional,
+                    refresh_price,
+                    int(order.quantity),
+                    int(self.settings.strategy_schwab_1m_v2_entry_max_shares),
+                )
+            except (InvalidOperation, ValueError, ArithmeticError):
+                self.logger.warning(
+                    "[OMS-V2-ENTRY-SIZE-REFUSED] symbol=%s account=%s code=v2_entry_sizing_invalid path=refresh",
+                    order.symbol, broker_account_name,
+                )
+                return {"orders": 0, "terminal_orders": 0, "published_events": []}
+
         existing_metadata = {str(k): str(v) for k, v in (order.payload or {}).items()}
         cancel_request = OrderRequest(
             client_order_id=order.client_order_id,
@@ -15759,6 +15825,30 @@ class OmsRiskService:
         if cancelled_report is None:
             return {"orders": 0, "terminal_orders": 0, "published_events": []}
 
+        replacement_quantity = remaining_quantity
+        if target_shares is not None:
+            filled = max(report.filled_quantity, cancelled_report.filled_quantity)
+            replacement_quantity = max(Decimal("0"), Decimal(target_shares) - filled)
+            if replacement_quantity <= 0:
+                return {"orders": 0, "terminal_orders": 1, "published_events": []}
+            refreshed_metadata.update({
+                "entry_notional_target_usd": str(notional),
+                "entry_size_price_basis": "wire_limit_price",
+                "entry_size_price": str(refresh_price),
+                "entry_computed_shares": str(int(replacement_quantity)),
+                "entry_total_target_shares": str(target_shares),
+                "entry_prior_filled_shares": str(filled),
+            })
+            sizing_event.payload.quantity = replacement_quantity
+            sizing_event.payload.metadata = dict(refreshed_metadata)
+            refusal = self._v2_entry_size_refusal(sizing_event)
+            if refusal is not None:
+                self.logger.error(
+                    "[OMS-V2-ENTRY-SIZE-REFUSED] symbol=%s account=%s code=%s path=refresh_after_cancel",
+                    order.symbol, broker_account_name, refusal,
+                )
+                return {"orders": 0, "terminal_orders": 1, "published_events": []}
+
         replacement_client_order_id = self._replacement_client_order_id(order.client_order_id)
         if str(refreshed_metadata.get("oms_v2_managed_exit", "")).strip().lower() == "true":
             _stamp_managed_exit_session(refreshed_metadata)
@@ -15776,7 +15866,7 @@ class OmsRiskService:
             symbol=order.symbol,
             side=order.side,  # type: ignore[arg-type]
             intent_type=intent.intent_type,  # type: ignore[arg-type]
-            quantity=remaining_quantity,
+            quantity=replacement_quantity,
             reason=intent.reason,
             metadata=refreshed_metadata,
             order_type=str(refreshed_metadata.get("order_type", order.order_type)),
@@ -15797,7 +15887,7 @@ class OmsRiskService:
                 broker_account_name=broker_account_name,
                 symbol=order.symbol,
                 side=order.side,  # type: ignore[arg-type]
-                quantity=remaining_quantity,
+                quantity=replacement_quantity,
                 intent_type=intent.intent_type,  # type: ignore[arg-type]
                 reason=intent.reason,
                 metadata=dict(refreshed_metadata),

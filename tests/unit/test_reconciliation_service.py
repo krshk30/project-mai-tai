@@ -413,6 +413,7 @@ def test_owned_fill_missing_from_live_books_is_critical() -> None:
     assert len(findings) == 1
     assert findings[0].severity == "critical"
     assert findings[0].payload["direction"] == "broker_position_untracked_by_live_books"
+    assert "entry target $300 per order" in findings[0].title
     assert findings[0].payload["strategy_codes"] == ["schwab_1m_v2"]
 
 

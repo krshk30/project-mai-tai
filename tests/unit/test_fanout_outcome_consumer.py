@@ -92,6 +92,21 @@ def test_fill_holds_without_reading_virtual_positions_and_is_monotonic() -> None
     assert state.fanout_claim_outcome == "filled"
 
 
+def test_partial_webull_fill_consumes_its_slot_and_later_cancel_cannot_release_it() -> None:
+    strategy, identity = _strategy()
+    state = strategy.watchlist_state("YYGH")
+    state.position_qty = 0
+    state.position_qty_held = 0
+
+    assert broker_outcome("partially_filled", "broker") == "partially_filled"
+    assert strategy.apply_fanout_outcome(_outcome(identity, "partially_filled")) == "consumed"
+    assert state.fanout_webull_claimed is True
+    assert state.fanout_claim_outcome == "filled"
+    assert strategy._fanout_webull_slot_taken(state, identity["fanout_slot"])
+    assert strategy.apply_fanout_outcome(_outcome(identity, "cancelled")) == "filled_wins"
+    assert state.fanout_webull_claimed is True
+
+
 def test_webull_fill_then_union_zero_keeps_the_claim_held() -> None:
     """The Webull fill can terminalize its own intent before position visibility catches up."""
 
