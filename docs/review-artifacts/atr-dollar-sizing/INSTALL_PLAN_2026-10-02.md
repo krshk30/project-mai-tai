@@ -9,9 +9,12 @@ document alone. The application SHA is intentionally unfilled until #1082 and
 
 - Current verified box HEAD: `fd69004a08c812429b5ba3ac01837c05b132a92b`, clean.
 - #1084 is merged at `ed3c84a8e930ea75bf5bddfe1edc45057d8ba26c`.
-- #1082 review candidate: `775e348a962ea050a7d621d1e402d04955960297`, four commits
-  patch-identical after rebase onto #1084. Pin and merge required.
-- #1083 candidate: `8ddac119938e7876c8df0fa456958b516d82b694`; include only its
+- #1082 merged at `e57a2fbde0c52332961b39a2b7030d71aa429832` from independently
+  pinned head `775e348a962ea050a7d621d1e402d04955960297`.
+- #1083 re-pin candidate: `edb98dd7929d0ea98e910272ceadcda561caf58b`, rebased onto
+  that main; both commits are patch-identical to pinned `8ddac119` (range-diff
+  2/2 equal), 49 guard/sampler tests pass, both Validate runs pass. Its new head
+  still needs the independent re-pin before merge. Include only its
   independently pinned, merged XRANGE COUNT 1 revision.
   The old Lua/XINFO revision is not eligible. Record its final head and merge SHA.
 - Restart **OMS, schwab-1m-v2 and the strategy companion** in the coordinated
@@ -23,12 +26,39 @@ document alone. The application SHA is intentionally unfilled until #1082 and
 - No orb or orb-schwab restart, watch reinstall, migration, replay, paper restart,
   or guard start tonight. The existing guard unit points at the checkout, so the
   merged #1083 file and narrowed #1077 sampler are loaded on its next invocation.
-  Starting the dated Monday guard and paper requires the separately reviewed
-  10-05 start procedure; do not invoke an old treatment date.
+  `MONDAY_GUARD_START_2026-10-05.md` requires separate review and starts only
+  Monday's dated guard before 03:50 ET. Active paper prepares at 03:55 and streams at
+  04:00 itself; that procedure does not start/restart paper. Do not invoke an
+  old treatment date.
 - A later gateway restart onto #1077/#1084 needs a separate plan: install and
   hash-verify every narrowed 1008 detector copy first (sampler, fleet-health and
   any installed pager reader), then fresh preserved-owner/content proof. This
   plan does not silently make that later restart safe.
+
+### Unplanned restart and installed 1008 readers
+
+Checkout advance changes disk code, not these running gateway/orb-schwab
+processes. An **unplanned auto-restart** would load #1077 timestamped INFO
+logging (and, for the gateway, #1084 owner persistence). That is identity drift:
+stop the install and page, not a restart silently covered by this plan. Bare
+`1008` matching can misclassify INFO counts such as `11008 records` as a kick;
+the actual vendor signature is `1008 (policy violation)`. Inspect the line and
+code before calling it a gateway policy event; do not disable any watch.
+
+Read-only box inventory on 2026-10-02, to recheck before execution:
+
+| Reader | Installed path and SHA256 before checkout advance | Treatment |
+| --- | --- | --- |
+| Fleet-health | `/home/trader/project-mai-tai/ops/health/fleet_health_check.py`; `02c248458ff232ca30a5be72935677d8b2c1b2c60f6012f9adf54bc7d981ddbf` | Old bare needle. Root cron invokes this checkout copy every 5 minutes; the next invocation after advance loads the narrowed #1077 code. Hash against APPROVED_SHA and record any in-flight old invocation. |
+| Guard's 1008 sampler | `/home/trader/project-mai-tai/scripts/option_a_treatment_1008_sampler.py`; `5e06e2f19c79bc4d211f452465d30a4b7ac4f324ad04705332f668ce97b511aa` | Old bare needle on disk now; next guard invocation loads the narrowed checkout copy. No running guard/sampler found in this audit; recheck for an unexpected old process before execution. |
+| INC1 watcher | `/home/trader/unexercised_watch/watch.py`; `45df60c60fe55af89406d20c29de277a44634d6bc6308586a4e0b62e718b8272` | Separate old sha-guarded copy remains untouched. This file has **no 1008 detector**; do not attribute a bare-needle page to it. Its missing new incident sources remain a separate accepted coverage gap. |
+
+Verify both checkout detector files against the exact approved Git blobs after
+advance. A long-lived pre-advance reader does not reload itself when its file
+changes. Any newly discovered standalone detector copy or old running sampler
+requires review, not an unapproved restart. The 10-02 guard is presently failed
+(MainPID=0, NRestarts=0); preserve its result and follow Monday's reset-or-note
+procedure, never start the old instance.
 
 ## Preconditions and evidence
 
@@ -94,9 +124,40 @@ PY
 ```
 
 Also query working bot BUY orders on both accounts (pending/submitted/accepted/
-partially_filled); any such order blocks. Record armed segments and v2's 15:45
-entry-window end from `/proc`. Arms alone are recorded, not a reason to alter
-them. No database write or manual position-row closure is allowed.
+partially_filled); any such order blocks. Record v2's 15:45 entry-window end from
+`/proc`, but it does not excuse armed segments: **the v2 restart preflight is
+blocking**, independently of fleet flatness. No database write, manual position
+row closure or armed-state edit is allowed.
+
+Immediately before stopping v2, run `ops/preflight/preflight_v2_restart.sh` and
+require exit 0. A nonempty arm set re-issues the entry cap on restart (Bug 2).
+Only the operator may name the exact live set and accept that cost at the
+instant of the run. Do not populate an override from a command's output, a prior
+run or an unattended retry. If the set moves, stop for a fresh ruling. The
+single gate invocation below reads the live published set, checks its freshness,
+compares it with the operator's literal set and applies the override together;
+there is no separate cached read-and-bypass. Its other gates still apply.
+
+```bash
+# Empty for the normal path. Set only to the operator's freshly named exact set.
+V2_ARM_OVERRIDE=''
+v2_restart_gate() {
+  local rc=0
+  local args=()
+  if [[ -n "$V2_ARM_OVERRIDE" ]]; then
+    args=(--operator-override "$V2_ARM_OVERRIDE" --i-accept-bug2)
+  fi
+  sudo bash "$REPO/ops/preflight/preflight_v2_restart.sh" "${args[@]}" \
+    | sudo tee "$RUN/v2-restart-preflight.txt" || rc=$?
+  printf 'v2_restart_preflight_rc=%s\n' "$rc" | sudo tee -a "$RUN/steps.log"
+  (( rc == 0 )) || return "$rc"
+}
+```
+
+The shell uses `pipefail`; a blocked gate cannot be hidden by `tee`. Copy the
+literal `[OVERRIDE] ... ARMED SEGMENT(S) accepted by the OPERATOR: ...` line and
+the ruling into the deployment journal when used. No override is pre-authorized
+by this document. A normal zero-arm read needs no override.
 
 Before the first write, rc 1/2 means wait and reread within the approved evening;
 after any stop/start, rc 1/2 halts remaining operations and pages with actual
@@ -217,7 +278,12 @@ sequence, with the working-entry query repeated alongside every `flat_now`, is:
 
 ```bash
 flat_now
+v2_restart_gate
 sudo systemctl stop project-mai-tai-schwab-1m-v2.service
+# Old v2 has exited: the following cursor cannot include its historical output.
+V2_LOG=/var/log/project-mai-tai/schwab-1m-v2.log
+V2_LOG_ID=$(sudo stat -c '%d:%i' "$V2_LOG")
+V2_LOG_OFFSET=$(sudo stat -c '%s' "$V2_LOG")
 flat_now
 sudo systemctl stop project-mai-tai-strategy.service
 flat_now
@@ -227,13 +293,16 @@ sudo systemctl is-active --quiet project-mai-tai-oms.service
 flat_now
 sudo systemctl start project-mai-tai-schwab-1m-v2.service
 sudo systemctl is-active --quiet project-mai-tai-schwab-1m-v2.service
-# Verify new v2 PID/start, NRestarts=0 and its loaded dollar settings.
+V2_NEW_PID=$(sudo systemctl show -p MainPID --value project-mai-tai-schwab-1m-v2.service)
+v2_post_restart_check startup
+# Verify loaded dollar settings below; repeat the log/identity proof at close-out.
 flat_now
 redis_strategy_proof before "$RUN/strategy-redis-before.json"
 sudo systemctl start project-mai-tai-strategy.service
 sudo systemctl is-active --quiet project-mai-tai-strategy.service
 STRATEGY_AFTER=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
 redis_strategy_proof after "$RUN/strategy-redis-before.json" "$STRATEGY_AFTER"
+v2_post_restart_check closeout
 ```
 
 Install an EXIT handler around this attended block that journals actual states of
@@ -242,6 +311,87 @@ pair after an error. No rollback or extra restart is pre-authorized by this plan
 an abort after checkout advance may leave old in-memory code on a new checkout,
 and an abort after stopping a unit may leave it stopped. Stay attended, name that
 state in the page, and obtain the operator's recovery instruction.
+
+### Mandatory v2 post-restart checklist
+
+Define this read-only function before the sequence. It records only bytes
+appended after the old v2 exited, with inode/size/PID stability checks; it does
+not count earlier tracebacks as current-process errors. A traceback stops the
+install for code/design inspection and a classified report, not a raw verdict.
+
+```bash
+v2_post_restart_check() {
+  sudo "$REPO/.venv/bin/python" - "$V2_LOG" "$V2_LOG_ID" "$V2_LOG_OFFSET" \
+    "$V2_NEW_PID" "$RUN/v2-$1.log" <<'PY'
+import subprocess
+import sys
+from pathlib import Path
+path, expected_id, offset, expected_pid, output = sys.argv[1:]
+unit = 'project-mai-tai-schwab-1m-v2.service'
+def identity():
+    raw = subprocess.check_output(['systemctl', 'show', unit, '-p', 'MainPID',
+        '-p', 'ActiveState', '-p', 'SubState', '-p', 'NRestarts',
+        '-p', 'ExecMainStartTimestamp'], text=True)
+    return dict(line.split('=', 1) for line in raw.splitlines())
+before = identity()
+assert before['ActiveState'] == 'active' and before['SubState'] == 'running', before
+assert int(expected_pid) > 0 and before['MainPID'] == expected_pid, before
+assert before['NRestarts'] == '0' and before['ExecMainStartTimestamp'], before
+p = Path(path)
+st = p.stat()
+assert f'{st.st_dev}:{st.st_ino}' == expected_id, 'UNKNOWN v2 log rotated'
+length = st.st_size - int(offset)
+assert 0 <= length <= 10_000_000, 'UNKNOWN v2 log range'
+with p.open('rb') as stream:
+    stream.seek(int(offset))
+    data = stream.read(length)
+after = p.stat()
+assert (after.st_dev, after.st_ino) == (st.st_dev, st.st_ino) and after.st_size >= st.st_size
+assert identity() == before, 'UNKNOWN v2 identity changed during check'
+with Path(output).open('xb') as out:
+    out.write(data)
+text = data.decode('utf-8', errors='replace')
+traces = text.count('Traceback (most recent call last):')
+holds = [line for line in text.splitlines() if '[V2-BOOT-HOLD]' in line]
+warmup = [line for line in text.splitlines() if
+          'schwab_v2 warmup feed for ' in line or '[V2-REST-WARMED]' in line]
+print(f'V2_POST_RESTART identity={before} tracebacks={traces} bytes={length} path={output}')
+print('V2_BOOT_HOLD latest=' + (holds[-1] if holds else 'UNEXERCISED no marker yet'))
+print(f'V2_WARMUP_LINES count={len(warmup)}')
+print('\n'.join(warmup))
+assert traces == 0, 'UNKNOWN until current-process traceback is inspected against code/design'
+PY
+}
+```
+
+Require active/running, NRestarts=0, a new PID/start and zero new-process
+tracebacks at startup and close-out. For BOOT-HOLD paste the literal
+`[V2-BOOT-HOLD] released` line when observed; do not replace it with `is-active`.
+The code's `_try_complete_boot_state_restoration` requires readable exclusions,
+a nonempty selected/tradeable scanner population, successful DB seeding for each
+selected symbol and resolved warm-up gates. With a stable seeded population but
+no fresh bars, `_release_seeded_boot_warmup_on_timeout` can release that warm-up
+gate after **369 seconds** (69 + 300), checked on the 5-second state cycle;
+`_cw_boot_hold_check` still requires no dangerous uncapped reconstructed segment.
+It is not an unconditional 369-second boot timer.
+
+An empty overnight watchlist therefore keeps BOOT-HOLD held **EXPECTED BY DESIGN**;
+there is no promised overnight release time. Record the live population and
+exact hold reason, not PASS. Codex-2 owns the read-only follow-up from Monday
+04:00 ET / the first nonempty watchlist: verify REST `schwab_v2 warmup feed for`
+lines for each added name, `[V2-REST-WARMED]` (or the explicitly logged bounded
+fallback), and the literal hold release. Any unresolved hold when the entry
+window opens is investigated and paged with the missing condition; no restart
+or forced release. Assign this follow-up when scheduling the approved install.
+
+The **20:10+ restart itself creates no live Schwab bar hole**, because Schwab
+bars stop at 20:00; that does not prove all prior gaps repaired. The separate
+bar-continuity query is owned by **claude-1, Monday 2026-10-05 about 07:10 ET**.
+It must grade actual REST/series evidence, not assume continuity from an idle
+overnight interval. Warm-up/release not yet exercised remains explicitly pending
+in the close-out and Monday handoff.
+
+### Strategy Redis proof function
 
 Define this function before running the sequence. `before` writes one new small
 metadata file; `after` checks immediately and once per second until initialization
@@ -477,10 +627,20 @@ Report exact application/plan SHAs; new OMS/v2/strategy PIDs and start times;
 unchanged gateway/orb/orb-schwab/paper identities; env before/after hashes and only
 the three-key diff; loaded sizing values on both processes; Redis before/after
 numbers and all owner fields; flag/numeric catalogs and checker hashes; numeric
-6/6 lines; preopen backup/diff/hash; all raw paths.
+6/6 lines; preopen backup/diff/hash; v2 preflight rc and any literal operator
+override; both new-process v2 log checks and BOOT-HOLD/warm-up outcome or named
+Monday verifier; installed detector inventory; all raw paths. Review the
+separate `MONDAY_GUARD_START_2026-10-05.md` before authorizing its one-shot.
 
 Case b, native OCO child activation/scaling after a partial parent, is accepted
 **UNEXERCISED** by the operator. Unit partial-fill tests are not live exercise.
 PARA1 is cancelled. Dollar sizing starts with the first eligible Monday session;
 no artificial orders are submitted to prove it tonight. Installed INC1 watch
 coverage, including oms_v2_cw_target_cancel_unconfirmed, is not expanded here.
+
+Documentation validation: 13 shell blocks pass `bash -n`; eight embedded Python
+blocks parse. Five mocked v2 log/identity checks cover historical-only versus
+current tracebacks, PID movement, NRestarts and inode rotation; seven mocked
+Monday readiness checks cover a healthy empty union, memory limit, missing
+owner/marker, count mismatch, PID mismatch and eviction increase. These are local
+helper checks, not an executed install or a live Monday guard proof.
