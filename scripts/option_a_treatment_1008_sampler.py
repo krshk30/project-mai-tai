@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 
 ET = ZoneInfo("America/New_York")
-MARKER = b"1008"
+MARKER = b"1008 (policy violation)"
 
 
 def start_deadline_utc(treatment_date: date) -> datetime:

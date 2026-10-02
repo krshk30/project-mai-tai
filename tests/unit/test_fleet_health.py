@@ -181,6 +181,35 @@ def test_market_data_1008_is_red_from_socket_evidence_even_if_a_heartbeat_says_h
     assert "new_matches=1" in market_row[2]
 
 
+def test_market_data_policy_detector_ignores_info_counts_but_sees_vendor_close(
+    tmp_path: Path,
+) -> None:
+    market = tmp_path / "market-data.log"
+    momentum = tmp_path / "momentum-paper.log"
+    state = tmp_path / "socket-offsets.json"
+    market.write_text(
+        "published snapshot batch with 11008 records\n"
+        "subscription count=1008 -> 1008 symbols\n",
+        encoding="utf-8",
+    )
+    momentum.write_text("", encoding="utf-8")
+
+    ordinary = fhc.check_massive_socket_policy_violations(
+        state_path=state, market_data_log=market, momentum_log=momentum,
+    )
+    ordinary_row = next(row for row in ordinary if row[1].endswith("market-data:massive-1008"))
+    assert ordinary_row[0] == "GREEN"
+
+    with market.open("a", encoding="utf-8") as stream:
+        stream.write("ConnectionClosedError: sent 1008 (policy violation)\n")
+    violation = fhc.check_massive_socket_policy_violations(
+        state_path=state, market_data_log=market, momentum_log=momentum,
+    )
+    violation_row = next(row for row in violation if row[1].endswith("market-data:massive-1008"))
+    assert violation_row[0] == "RED"
+    assert "new_matches=1" in violation_row[2]
+
+
 def test_socket_evidence_is_incremental_and_a_new_1008_rearms_after_a_clean_sample(
     tmp_path: Path,
 ) -> None:

@@ -78,6 +78,27 @@ def test_sampler_starts_at_end_of_old_log_and_stops_on_first_new_1008(tmp_path: 
     assert cursor.offset == event["size_bytes"]
 
 
+def test_sampler_ignores_snapshot_and_symbol_counts_that_contain_1008(tmp_path: Path) -> None:
+    log = tmp_path / "market-data.log"
+    log.write_bytes(b"baseline\n")
+    _, cursor = sample_log(log, None, sampled_at=WHEN)
+
+    with log.open("ab") as stream:
+        stream.write(
+            b"published snapshot batch with 11008 records\n"
+            b"subscription count=1008 -> 1008 symbols\n"
+        )
+    ordinary, cursor = sample_log(log, cursor, sampled_at=WHEN)
+    assert ordinary["status"] == "OK"
+    assert ordinary["new_1008_lines"] == 0
+
+    with log.open("ab") as stream:
+        stream.write(b"ConnectionClosedError: received 1008 (policy violation)\n")
+    violation, _ = sample_log(log, cursor, sampled_at=WHEN)
+    assert violation["status"] == "STOP_TRIGGER"
+    assert violation["new_1008_lines"] == 1
+
+
 def test_sampler_counts_split_line_once_and_marks_truncation_unknown(tmp_path: Path) -> None:
     log = tmp_path / "market-data.log"
     log.write_bytes(b"baseline\n")
@@ -89,7 +110,7 @@ def test_sampler_counts_split_line_once_and_marks_truncation_unknown(tmp_path: P
     assert partial["new_1008_lines"] == 0
 
     with log.open("ab") as stream:
-        stream.write(b"08\n")
+        stream.write(b"08 (policy violation)\n")
     complete, cursor = sample_log(log, cursor, sampled_at=WHEN)
     assert complete["status"] == "STOP_TRIGGER"
     assert complete["new_1008_lines"] == 1

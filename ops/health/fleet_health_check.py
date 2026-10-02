@@ -73,7 +73,7 @@ _MOMENTUM_LOG_PATH = Path(
         "/var/log/project-mai-tai/momentum-paper.log",
     )
 )
-_MARKET_DATA_POLICY_NEEDLE = b"1008"
+_MARKET_DATA_POLICY_NEEDLE = b"1008 (policy violation)"
 _MOMENTUM_POLICY_COOLOFF_NEEDLE = (
     b"[MOMENTUM-PAPER-FEED-POLICY] decision=cooloff reason=feed_policy_violation"
 )

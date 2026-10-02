@@ -136,6 +136,40 @@ def test_process_exit_marker_outside_start_bound_is_unknown() -> None:
         vre.parse_log_files([("orb-schwab.log", lines)], since=since, service="orb-schwab")
 
 
+def test_process_exit_nonmarker_line_inside_start_bound_is_unknown() -> None:
+    since = datetime(2026, 10, 2, 0, 1, tzinfo=UTC)
+    lines = (REAL_LOG_FIXTURES / "orb-schwab.log-20261002").read_text().splitlines()
+    lines[-1] = "2026-10-02 00:01:30,000 INFO [orb-schwab] ordinary status line"
+
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files([("orb-schwab.log", lines)], since=since, service="orb-schwab")
+
+
+def test_process_exit_second_traceback_before_startup_is_unknown() -> None:
+    since = datetime(2026, 10, 2, 0, 1, tzinfo=UTC)
+    exit_header = [
+        "Traceback (most recent call last):",
+        '  File "/home/trader/project-mai-tai/.venv/bin/mai-tai-orb-schwab", line 6, in <module>',
+        "    sys.exit(run())",
+        "asyncio.exceptions.CancelledError",
+    ]
+    lines = exit_header + exit_header + [
+        "2026-10-02 00:01:30,000 INFO [orb-schwab] [ORB-SCHWAB] mode=LIVE live_sending=True"
+    ]
+
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files([("orb-schwab.log", lines)], since=since, service="orb-schwab")
+
+
+def test_process_exit_marker_before_active_enter_is_unknown() -> None:
+    since = datetime(2026, 10, 2, 0, 1, tzinfo=UTC)
+    lines = (REAL_LOG_FIXTURES / "orb-schwab.log-20261002").read_text().splitlines()
+    lines[-1] = "2026-10-02 00:00:59,000 INFO [orb-schwab] [ORB-SCHWAB] mode=LIVE live_sending=True"
+
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files([("orb-schwab.log", lines)], since=since, service="orb-schwab")
+
+
 def test_current_process_exception_before_startup_marker_is_not_exempt() -> None:
     since = datetime(2026, 10, 2, 0, 1, tzinfo=UTC)
     lines = [
