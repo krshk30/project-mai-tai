@@ -28,12 +28,34 @@ LEVELONE is a separate path. The subscribed fields are `0,1,2,3,4,5,8,9,35`;
 timestamp. `_handle_stream_tick` does not replace the RTH strategy's `last_quote`.
 Its ask cache feeds the separate pre-market stream-cross path.
 
-**UNMEASURED:** whether Schwab advances REST `quoteTime` only when NBBO changes,
-and whether AMOD's particular old value was stable NBBO, a delayed response, or
-a missed poll. Neither a 40,151-share bar nor LEVELONE receipt time proves that.
-Do not substitute local poll-receipt time or a trade timestamp for the age of the
-ask used to approve a buy stop. This change retains the original REST quote time
-and the 10,000 ms limit.
+**Independent review replication:** own log read and 120 new Massive quote
+requests reproduce the reviewer's counts exactly, using `/tmp/qtime.py`'s cohort
+selection and its one-second grace after Schwab `quoteTime`:
+
+| Market updates after quoteTime + 1 second | Holds | Share |
+| --- | ---: | ---: |
+| No quote update | 46 | 38.3% |
+| Updates, bid/ask prices unchanged | 38 | 31.7% |
+| Bid or ask price changed | 36 | 30.0% |
+
+Two limitations matter. The script takes the last 120 in sorted **file** order,
+not timestamp order: the cohort actually spans September 23 15:09:02.611 ET to
+October 1 15:15:03.456 ET, and includes no October 2 AMOD example. Its labels also
+exclude the first second after `quoteTime`. With that margin removed, the same
+120 records classify as 1 no-update, 70 prices-unchanged updates, 49 price-changed.
+All 120 requests succeeded and had an earlier quote establishing a price basis.
+The evidence supports stale REST snapshots both with and without later price
+changes; it does not prove the vendor's general timestamp-update policy, nor
+AMOD's particular underlying cause. "Size-only" is the reviewer's shorthand for
+unchanged bid/ask prices; quote condition/exchange changes are not ruled out.
+
+Reproducer: `verify_quote_time.py`; cutoff fixed at the review script's mtime,
+`2026-10-02T20:30:07.460567Z`. Raw, credential-free evidence:
+`/Users/velkris/.codex/study-evidence/rpg1-nfq1-20261002/quote-time-review-fa194cbe.json`,
+SHA256 `e51c2660f2279e987e82ed60b163363417451d551ea38a3168d2567d2cac3164`.
+Largest reply was 543,059 bytes (4 MiB enforced cap); no Redis reads or production
+writes. Do not substitute local receipt time or trade time for ask age. The
+original REST `quoteTime` and 10,000 ms limit remain unchanged.
 
 ## Implemented behavior
 
@@ -75,10 +97,43 @@ In-memory mutations removing quote resume, freshness, segment expiry, the
 first-slot restriction, or quote-callback draining are each detected. These runs
 do not modify application files for mutation testing.
 
-Results: 29 new cases pass, and 467 tests pass across this file, the
+Initial results at fa194cbe: 29 new cases pass, and 467 tests pass across this file, the
 `test_schwab_1m_v2*.py` suites, entry-window, flip-owned-entry and RETRY_ONE suites.
 All five mutation controls fail as required. Ruff on the new test file and
-`git diff --check` pass. The full unit suite was not run for this scoped addition.
+`git diff --check` pass.
+
+Review M1/M4/M5 now have six extra cases (35 total). They assert **discarding** the
+wait, one reasoned log, and no resurrection after the blocking state clears:
+occupied/held/consumed slot (M1), boot/gap hold (M4), and watch removal while the
+flip-owner state must remain UNKNOWN (M5). These lines are not redundant: later
+entry gates block a current order but do not retire the stale opportunity.
+`check_first_quote_mutations.py` makes all three mutations RED in memory without
+editing application source. The full-suite SLOT2 fixture bypasses `__init__`;
+it now explicitly initializes the new per-instance pending dictionary. No
+production fallback or weakened assertion was added for that fixture.
+
+Full `tests/unit` rerun on the same host/interpreter, without skips or xfails:
+
+| Tree | Passed | Failed | Additional FAILED names vs base |
+| --- | ---: | ---: | ---: |
+| Isolated Git checkout of b8b0dafb | 4,936 | 56 | - |
+| This branch, including six review tests and the SLOT2 fixture update | 4,971 | 56 | **0** |
+
+The 56 matching failures are 44 fanout acceptance installer tests, nine
+sync-checkout tests, logrotate and unattended-upgrade shell tests, and one
+Momentum dead-consumer timeout. Host-tooling diagnostics include missing
+`/usr/bin/sha256sum` and shell-selected Python lacking `type | None` support;
+the Momentum timeout is a reproduced baseline timing failure, not called a
+proven tooling cause. No unrelated failure was suppressed. An initial
+archive-only base added a Git-index assertion failure; the reported comparison
+uses a real isolated Git checkout instead. The initial branch run exposed the
+three SLOT2 fixture initialization errors, which are fixed and absent on rerun.
+
+Raw full logs/JUnit and M1/M4/M5 mutation output:
+`/Users/velkris/.codex/study-evidence/rpg1-nfq1-20261002/first-quote-review-20261002/`.
+`head-final-tests.txt` and `base-final-tests.txt` contain the complete FAILED lists;
+sorted names compare byte-identical. M1 kills three cases, M4 two, M5 one. Ruff
+on the touched tests and verification scripts, and `git diff --check`, pass.
 
 This is an addition to RPG1, not completion of its broker replacement work.
 The 19 reported long-no-feed cases have not all been individually replayed.
