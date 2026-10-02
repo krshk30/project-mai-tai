@@ -1,4 +1,4 @@
-"""Run explicitly in the combined RPG1 + NFQ1 tree, not either PR in isolation.
+"""Collect on either branch; exercise only the combined RPG1 + NFQ1 tree.
 
 Uses recorded AMOD stale-hold inputs and a simulated OMS broker. This covers the
 first-entry quote wait, NOT the unfinished cancel/readback/re-place handoff.
@@ -7,6 +7,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
+
+pytest.importorskip(
+    "project_mai_tai.oms.mirror_fresh_price",
+    reason="Composition requires NFQ1 PR #1086 in addition to RPG1 PR #1085",
+)
 
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
@@ -32,6 +37,8 @@ async def composed_wait(monkeypatch):
     )
     factory = _session_factory()
     service, adapter = _integrated_service(factory, enabled=True, nfq_enabled=True)
+    service.settings.strategy_schwab_1m_v2_entry_window_end_hour_et = 15
+    service.settings.strategy_schwab_1m_v2_entry_window_end_minute_et = 45
     clock = [datetime.fromtimestamp(milliseconds[0] / 1000, UTC)]
     monkeypatch.setattr(oms, "utcnow", lambda: clock[0])
     monkeypatch.setattr(oms, "_is_regular_market_session", lambda now=None: True)
