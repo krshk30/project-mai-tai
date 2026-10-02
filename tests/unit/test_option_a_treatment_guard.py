@@ -96,33 +96,56 @@ def test_latest_25_heartbeats_without_gateway_are_blind():
         signals.heartbeat(NOW)
 
 
-def test_snapshot_cadence_uses_only_bounded_stream_id_replies():
-    stamps = [NOW - timedelta(seconds=105 - 5 * index) for index in range(22)]
-
-    class IdOnlyRedis:
-        def __init__(self):
-            self.ids = iter(f"{int(stamp.timestamp() * 1000)}-0" for stamp in stamps)
-            self.calls = 0
-
-        def eval(self, script, keys, key):
-            assert "XINFO" in script and "last-generated-id" in script
-            assert keys == 1 and key == "mai_tai:snapshot-batches"
-            self.calls += 1
-            return next(self.ids)
-
-        def xrevrange(self, *_args, **_kwargs):
-            pytest.fail("snapshot cadence must not read batch payloads")
-
-    redis = IdOnlyRedis()
+def _signals(redis):
     signals = object.__new__(LiveSignals)
     signals.redis = redis
     signals.prefix = "mai_tai"
     signals.last_snapshot_id = None
     signals.snapshot_stamps = []
+    return signals
+
+
+def test_snapshot_cadence_reads_one_entry_with_exclusive_cursor_and_discards_payload():
+    stamps = [NOW - timedelta(seconds=105 - 5 * index) for index in range(22)]
+
+    class OneEntryRedis:
+        def __init__(self):
+            self.available = []
+            self.reverse_calls = 0
+            self.forward_calls = 0
+            self.last_id = None
+
+        def xrevrange(self, key, *, max, min, count):
+            assert (key, max, min, count) == ("mai_tai:snapshot-batches", "+", "-", 1)
+            self.reverse_calls += 1
+            self.last_id = self.available.pop(0)
+            return [(self.last_id, {"data": "unused-payload"})]
+
+        def xrange(self, key, *, min, max, count):
+            assert (key, min, max, count) == (
+                "mai_tai:snapshot-batches", f"({self.last_id}", "+", 1,
+            )
+            self.forward_calls += 1
+            if not self.available:
+                return []
+            self.last_id = self.available.pop(0)
+            return [(self.last_id, {"data": "unused-payload"})]
+
+        def eval(self, *_args, **_kwargs):
+            pytest.fail("Lua materializes large snapshot entries inside Redis")
+
+        def xinfo_stream(self, *_args, **_kwargs):
+            pytest.fail("XINFO includes large first/last entries")
+
+    redis = OneEntryRedis()
+    signals = _signals(redis)
     for stamp in stamps:
+        redis.available.append(f"{int(stamp.timestamp() * 1000)}-0")
         signals.sample_snapshot_id(stamp)
 
-    assert redis.calls == 22
+    assert redis.reverse_calls == 1
+    assert redis.forward_calls == 42
+    assert "unused-payload" not in repr(vars(signals))
     assert signals.snapshot_intervals(NOW) == [5.0] * 21
     assert "redis_safety.sample()" in inspect.getsource(run_guard)
     assert "stop_paper(memory_trigger" in inspect.getsource(run_guard)
@@ -132,32 +155,27 @@ def test_snapshot_cadence_uses_only_bounded_stream_id_replies():
 @pytest.mark.parametrize("reply", ["9" * 65 + "-0", "not-an-id", {"data": "large payload"}])
 def test_snapshot_id_invalid_or_oversized_reply_is_blind(reply):
     class BadRedis:
-        def eval(self, *_args):
-            return reply
+        def xrevrange(self, *_args, **_kwargs):
+            return [(reply, {"data": "ignored"})]
 
-    signals = object.__new__(LiveSignals)
-    signals.redis = BadRedis()
-    signals.prefix = "mai_tai"
-    signals.last_snapshot_id = None
-    signals.snapshot_stamps = []
+    signals = _signals(BadRedis())
     with pytest.raises(Blind, match="invalid|oversized|malformed"):
         signals.sample_snapshot_id(NOW)
 
 
 def test_snapshot_id_stale_or_backwards_is_blind():
-    class IdRedis:
-        def __init__(self, ids):
-            self.ids = iter(ids)
-
-        def eval(self, *_args):
-            return next(self.ids)
-
     old = int((NOW - timedelta(seconds=20)).timestamp() * 1000)
-    signals = object.__new__(LiveSignals)
-    signals.redis = IdRedis([f"{old}-0", f"{old}-0", f"{old - 1000}-0"])
-    signals.prefix = "mai_tai"
-    signals.last_snapshot_id = None
-    signals.snapshot_stamps = []
+
+    class IdRedis:
+        replies = iter([[], [(f"{old - 1000}-0", {})]])
+
+        def xrevrange(self, *_args, **_kwargs):
+            return [(f"{old}-0", {})]
+
+        def xrange(self, *_args, **_kwargs):
+            return next(self.replies)
+
+    signals = _signals(IdRedis())
     signals.sample_snapshot_id(NOW)
     signals.sample_snapshot_id(NOW)
     assert len(signals.snapshot_stamps) == 1
@@ -165,6 +183,48 @@ def test_snapshot_id_stale_or_backwards_is_blind():
         signals.snapshot_intervals(NOW)
     with pytest.raises(Blind, match="backwards"):
         signals.sample_snapshot_id(NOW)
+
+
+def test_snapshot_catch_up_is_bounded_to_three_single_entry_reads():
+    class BackloggedRedis:
+        calls = 0
+
+        def xrange(self, key, *, min, max, count):
+            assert count == 1 and min.startswith("(") and max == "+"
+            self.calls += 1
+            return [(f"{int(min[1:].split('-')[0]) + 1000}-0", {})]
+
+    redis = BackloggedRedis()
+    signals = _signals(redis)
+    signals.last_snapshot_id = (int(NOW.timestamp() * 1000) - 10_000, 0)
+    with pytest.raises(Blind, match="exceeded 3 reads"):
+        signals.sample_snapshot_id(NOW)
+    assert redis.calls == 3
+
+
+def test_snapshot_payload_size_and_entry_count_are_bounded():
+    import ops.health.option_a_treatment_guard as guard
+
+    entry_id = f"{int(NOW.timestamp() * 1000)}-0"
+    with pytest.raises(Blind, match="exceeded COUNT 1"):
+        LiveSignals._snapshot_reply_id([(entry_id, {}), (entry_id, {})])
+    assert guard.MAX_SNAPSHOT_ENTRY_BYTES == 20_000_000
+    with pytest.raises(Blind, match="entry bytes"):
+        LiveSignals._snapshot_reply_id([(entry_id, {b"data": b"x" * 20_000_000})])
+
+
+def test_snapshot_empty_bootstrap_is_blind():
+    redis = SimpleNamespace(xrevrange=lambda *_args, **_kwargs: [])
+    with pytest.raises(Blind, match="empty or unavailable"):
+        _signals(redis).sample_snapshot_id(NOW)
+
+
+def test_live_signals_minute_values_remain_available_to_guard():
+    signals = _signals(None)
+    signals.probes = [(NOW, "SSM", 2.0), (NOW - timedelta(minutes=6), "OLD", 8.0)]
+    signals.replay_seconds = set()
+    signals.refusals = [NOW, NOW - timedelta(minutes=6)]
+    assert signals.minute_values(NOW) == ({"SSM": [2.0]}, 1)
 
 
 def test_redis_safety_stops_on_new_eviction_or_memory_pressure():
