@@ -1,0 +1,9 @@
+{
+  "pr_number": 1077,
+  "range_base": "fc7fb4b4fa148187634b9ea0cf8bbaf5be8caa47",
+  "range_head": "29baa7235abaa344c6f755962cd6cdada7380e75",
+  "reviewed_at": "2026-10-02T13:10:10Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Three review rounds. Ran parse_log_files on the two real box logs (market-data.log-20261002, orb-schwab.log) and confirmed the fixtures equal them (request_id redacted). Round 1 rejected the gateway-marker heuristic (mislabelled current-process startup tracebacks; markers dead in production). Round 2 found the bare-1008 detectors (sampler MARKER, fleet_health needle) would false-trigger on INFO lines once gateway logging is configured; now both require '1008 (policy violation)' (25/25 real September lines). My mutations all red at f2b7f19a: both needles back to bare 1008, startup marker not required, lower bound removed, 60s bound removed, intervening traceback allowed; earlier round also NOT_FOUND->exception, gateway configure_logging removed, orb-schwab basicConfig, non-NOT_FOUND silenced, exit-frame checks removed together. 29baa723 = f2b7f19a + test fixture using the real vendor line; 265 focused tests pass locally, both GitHub validate runs pass. Not exercised: orb-schwab marker as first timestamped line after restart; gateway INFO rate is code-derived. Install order in PR body: detector copies before any gateway restart onto INFO logging."
+}
