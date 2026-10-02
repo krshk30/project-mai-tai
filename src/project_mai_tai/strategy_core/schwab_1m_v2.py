@@ -843,6 +843,8 @@ class SchwabV2Strategy:
             int(getattr(self.settings, "strategy_schwab_1m_v2_eh_resting_stream_print_max_age_ms", 3000)),
         )
         self._pending_intents: list[TradeIntentDraft] = []
+        # Ephemeral only: a restart must re-derive eligibility from a new bar.
+        self._pending_first_rest_quotes: dict[str, tuple[float, int, int]] = {}
         # Dual-broker FAN-OUT (docs/per-broker-eligibility-webull-fallback-design.md). When ON, every
         # up-cross also produces a SECOND Webull MARKET-at-cross buy-open leg (reactive + EH-resting
         # piggyback on the existing cross; RTH-resting adds a software detector at resting_trigger).
@@ -2602,8 +2604,11 @@ class SchwabV2Strategy:
         identity for the cancellation. The cancel path retains ``last_resting_placed_slot`` for a
         late fill race; position and OMS exit state are intentionally untouched.
         """
+        quote_waiting = state.symbol in self._pending_first_rest_quotes
+        self._finish_first_rest_quote_wait(state, action="gave_up", reason=reason)
         had_entry_state = bool(
-            state.cw_armed
+            quote_waiting
+            or state.cw_armed
             or state.resting_active
             or state.webull_resting_active
             or state.cw_v2_emit_claimed
@@ -2659,6 +2664,7 @@ class SchwabV2Strategy:
         state = self._symbol_states.get(symbol)
         if state is None:
             return False
+        self._finish_first_rest_quote_wait(state, action="gave_up", reason=reason)
         if self._flip_owned_first_entry_enabled and (
             state.flip_owner_phase != "idle" or state.fanout_segment_id
         ):
@@ -3228,6 +3234,8 @@ class SchwabV2Strategy:
         # touch). See docs/intrabar-hold-confirmation-design.md.
         state = self.watchlist_state(symbol)
         state.last_quote = quote
+        if self._first_rest_quote_wait_valid(state):
+            self._cw_v2_resting_track(state, None)
         if self._gap_hold_enabled and state.gap_hold_active:
             return None
         # CW-v2: intrabar break entry (rule 6/7 + reclaim + ORB skip). When the sub-flag is on it
@@ -3609,6 +3617,7 @@ class SchwabV2Strategy:
             # independent clock-boundary proof. The time-driven sweep opts in explicitly.
             owner_boundary_is_current = self._fanout_identity_bar_is_live(state)
 
+        self._finish_first_rest_quote_wait(state, action="gave_up", reason="session_reset")
         self._reset_atr_indicator_state(state, anchor)
         state.atr_fired_in_short_seg = False
         if self._atr_rearm_enabled:
@@ -4433,7 +4442,7 @@ class SchwabV2Strategy:
             "flip_owner_evidence_at_ms=%d flip_owner_evidence_readable=%s "
             "flip_owner_open_positions=%d flip_owner_phase=%s "
             "retry_one_segment_id=%d retry_one_closes_in_segment=%d "
-            "retry_one_budget_readable=%s",
+            "retry_one_budget_readable=%s last_quote=%s",
             state.symbol, state.cw_armed, state.cw_bars_waited, state.cw_trigger,
             state.cw_segment_high, state.cw_flip_level, state.cw_entries_this_flip,
             self._cw_v2_max_entries_per_flip, state.cw_v2_emit_claimed,
@@ -4452,6 +4461,7 @@ class SchwabV2Strategy:
             state.flip_owner_phase,
             state.retry_one_segment_id, state.retry_one_closes_in_segment,
             state.retry_one_budget_readable,
+            state.last_quote.quote_time_ms if state.last_quote is not None else "missing",
         )
 
     def _liquidity_floor_ok(self, state: SymbolState) -> bool:
@@ -5192,6 +5202,66 @@ class SchwabV2Strategy:
                           "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
             ))
 
+    def _finish_first_rest_quote_wait(
+        self, state: SymbolState, *, action: str, reason: str
+    ) -> None:
+        pending = self._pending_first_rest_quotes.pop(state.symbol, None)
+        if pending is not None:
+            line, started_ms, segment = pending
+            logger.info(
+                "[V2-FIRST-REST-QUOTE-WAIT] %s slot=first action=%s reason=%s "
+                "line=%.6f segment_id=%d waited_ms=%d",
+                state.symbol, action, reason, line, segment,
+                max(0, self._now_ms() - started_ms),
+            )
+
+    def _first_rest_quote_wait_valid(
+        self, state: SymbolState, atr_signal: dict | None = None
+    ) -> bool:
+        pending = self._pending_first_rest_quotes.get(state.symbol)
+        if pending is None:
+            return False
+        line, started_ms, segment = pending
+        signal = atr_signal or {}
+        current_state = str(signal.get("state", state.atr_state) or "")
+        try:
+            current_line = float(signal.get("trail", state.atr_trail) or 0.0)
+        except (TypeError, ValueError, OverflowError):
+            current_line = 0.0
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        reason = ""
+        if not (self._resting_entry_enabled and self._cw_v2_enabled):
+            reason = "disabled"
+        elif self._entries_held or self.gap_hold_active(state.symbol):
+            reason = "entry_or_gap_hold"
+        elif (
+            not self._resting_in_window()
+            or self._entry_window_closed_for_session()
+            or self._resting_session_is_eh()
+        ):
+            reason = "window_closed"
+        elif current_state != "short" or segment != int(state.atr_short_flip_bar_ts or 0):
+            reason = "segment_ended"
+        elif state.resting_active or state.position_qty_held or state.cw_resting_taken:
+            reason = "slot_owned_or_consumed"
+        elif not self._liquidity_floor_ok(state):
+            reason = "liquidity_floor"
+        elif not bar_ms or not 0 <= self._now_ms() - bar_ms <= self._resting_max_bar_age_ms:
+            reason = "bar_not_live"
+        elif not math.isfinite(current_line) or current_line <= 0:
+            reason = "line_unavailable"
+        if reason:
+            self._finish_first_rest_quote_wait(state, action="gave_up", reason=reason)
+            return False
+        if abs(current_line - line) / line >= self._resting_reprice_frac:
+            self._pending_first_rest_quotes[state.symbol] = (current_line, started_ms, segment)
+            logger.info(
+                "[V2-FIRST-REST-QUOTE-WAIT] %s slot=first action=rederived "
+                "reason=line_moved line=%.6f segment_id=%d",
+                state.symbol, current_line, segment,
+            )
+        return True
+
     def _cw_v2_resting_track(self, state: SymbolState, atr_signal: dict | None) -> None:
         """Maintain a STABLE resting buy-stop-limit at the ATR SHORT trail. Redesigned 2026-07-23 from
         the live NVVE case (the resting order flickered and missed the cross by ~2%, then spammed ~30
@@ -5210,6 +5280,7 @@ class SchwabV2Strategy:
         after the liquidity-floor, minimum-short-bars, live-bar and stop<=ask gates, so a bar that
         fails any of those remains silent. The line means "would have rested but for the slot",
         not "every short bar"."""
+        self._first_rest_quote_wait_valid(state, atr_signal)
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
             return
         if self.gap_hold_active(state.symbol):
@@ -5271,6 +5342,14 @@ class SchwabV2Strategy:
             trail = float(raw) if raw else float(state.atr_trail or 0.0)
         except (TypeError, ValueError):
             trail = float(state.atr_trail or 0.0)
+        pending_quote = self._pending_first_rest_quotes.get(state.symbol)
+        if pending_quote is not None:
+            trail = pending_quote[0]
+            if state.last_quote is None:
+                return  # A prior stale-price wait never becomes the legacy no-quote exception.
+            ask, _, evidence = self._resting_ask_evidence(state.last_quote)
+            if evidence != "fresh_quote" or ask is None or not math.isfinite(ask) or ask <= 0:
+                return
         if st == "short" and trail > 0.0:
             if not state.resting_active:
                 # LIQUIDITY FLOOR (2026-07-28). ⛔ Gates the initial ARM only, never a reprice or a
@@ -5335,6 +5414,10 @@ class SchwabV2Strategy:
                     )
                     return
                 self._queue_resting_place(state, trail)
+                if state.resting_active:
+                    self._finish_first_rest_quote_wait(
+                        state, action="queued", reason="price_revalidated"
+                    )
                 return
             # ⛔⭐ LIQUIDITY RE-CHECK WHILE RESTING (2026-07-30). The arm-time floor above is a STALE
             # check: it judges the last completed bar at PLACEMENT, and a resting buy-stop can then
@@ -5607,6 +5690,16 @@ class SchwabV2Strategy:
                 reason, held = "nonpositive_ask_fail_open", False
             else:
                 reason, held = "allowed", False
+
+        if slot == "first" and held and reason in {"stale_quote", "missing_quote_time"}:
+            if state.symbol not in self._pending_first_rest_quotes:
+                segment = int(state.atr_short_flip_bar_ts or 0)
+                self._pending_first_rest_quotes[state.symbol] = (line, self._now_ms(), segment)
+                logger.info(
+                    "[V2-FIRST-REST-QUOTE-WAIT] %s slot=first action=held reason=%s "
+                    "line=%.6f segment_id=%d quote_age_ms=%s source=schwab_rest_quoteTime",
+                    state.symbol, reason, line, segment, age_ms,
+                )
 
         ask_text = f"{ask:.4f}" if ask is not None else "UNANSWERABLE"
         age_text = str(age_ms) if age_ms is not None else "UNANSWERABLE"
