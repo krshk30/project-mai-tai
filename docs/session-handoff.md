@@ -17,6 +17,11 @@
 | F8 | AMOD Webull leg dropped 08:32 | OMS prices the Webull leg ~0.39 s after Schwab (serial intents); ask ticked 2.58→2.59 for 0.43 s | box trace | — | operator DROPPED the parallel fix (pre-market only); known/accepted |
 | F9 | 06:20 gate | UNKNOWN on untimestamped gateway log lines only; flags 125/125 PASS | my run 06:34 ET | — | clears after #1077 is installed |
 | F10 | Momentum "stop the bot after 09:30 once flat" | noted by operator, parked | memory | — | none until he returns |
+| F11 | RPG1 — reprice leaves ~60 s with no resting order | card approved by operator 10-02; block sent (corrected ~17:30 ET with scenario sweep) | 848 reprices in logs: median 60 s, 0 under 10 s; flips lost to it: 1 of 205 (AMOD 10-02 13:56) | codex-2 builds, claude-1 reviews | codex own assessment → PR by 10:00 ET 10-03; re-confirm card before pin |
+| F12 | NFQ1 (row 38) — OMS drops the Webull rest with no price ≤2 s | card approved by operator 10-02 (~15:30 ET) | 56 of 2,584 mirrors refused; 56/56 had a market price ≤10.5 s old; costs 7 of 205 flips a Webull leg (3 with no leg at all) | codex-2 builds after RPG1 | mirror-only 10 s age + hold-and-send + tell v2; shared 2 s setting untouched |
+| F13 | Flip sweep 09-08→10-02 (205 RTH BUY flips) | DONE 10-02 | 130 traded; 18 lost to watchlist re-add (SLOTCLEAR1, open); 12 refused at both brokers; 17 thin volume; 10 after 15:45; 5 waiting-unfilled; 7 UNKNOWN (first slot consumed, 09-10→09-23) | claude-1 | trace the 7 UNKNOWN; SLOTCLEAR1 needs the operator's ruling |
+| F14 | Entry-context record + study gaps (floor test, bounce reconciliation) | NOT STARTED (codex, after RPG1) | codex reply 10-02 | codex-2 | codex estimate ~10 trading weeks of record before calm-tape can be judged (not verified) |
+| F15 | Working rules now load mechanically | DONE 10-02 | `~/.claude/CLAUDE.md` + per-message hook `recall_memory.py` | claude-1 | — |
 
 ### MACD PULLBACK study (operator's idea, 10-02) — OPEN, he will come back to it; do not park
 - Rule tested: scanner-confirmed stock, above the ATR line, 1-min MACD histogram fades ≥3 bars while positive then turns up, 3-bar avg volume ≥10k → buy.
