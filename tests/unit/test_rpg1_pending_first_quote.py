@@ -137,6 +137,61 @@ def test_reclaim_ownership_blocks_pending_first_entry(monkeypatch):
     assert state.resting_slot == "reclaim"
 
 
+@pytest.mark.parametrize("owner", ["resting", "held", "consumed"])
+def test_occupied_first_slot_discards_wait_not_merely_blocks_order(monkeypatch, owner, caplog):
+    strategy, state, clock = setup_wait(monkeypatch)
+    if owner == "resting":
+        state.resting_active = True
+        state.resting_slot = "first"
+    elif owner == "held":
+        state.position_qty_held = 1
+    else:
+        state.cw_resting_taken = True
+    with caplog.at_level("INFO"):
+        assert fresh(strategy, clock) == []
+    assert "AMOD" not in strategy._pending_first_rest_quotes
+    assert sum("action=gave_up reason=slot_owned_or_consumed" in r.message
+               for r in caplog.records) == 1
+    state.resting_active = False
+    state.position_qty_held = 0
+    state.cw_resting_taken = False
+    assert fresh(strategy, clock) == []  # A later bar must derive a new opportunity.
+
+
+@pytest.mark.parametrize("hold", ["boot", "gap"])
+def test_entry_hold_discards_wait_without_resuming_when_hold_clears(monkeypatch, hold, caplog):
+    strategy, state, clock = setup_wait(monkeypatch)
+    if hold == "boot":
+        strategy._entries_held = True
+    else:
+        strategy._gap_hold_enabled = True
+        state.gap_hold_active = True
+    with caplog.at_level("INFO"):
+        assert fresh(strategy, clock) == []
+    assert "AMOD" not in strategy._pending_first_rest_quotes
+    assert sum("action=gave_up reason=entry_or_gap_hold" in r.message
+               for r in caplog.records) == 1
+    strategy._entries_held = False
+    state.gap_hold_active = False
+    assert fresh(strategy, clock) == []
+
+
+def test_watch_removal_discards_wait_even_when_flip_owner_state_is_retained(monkeypatch, caplog):
+    strategy, state, clock = setup_wait(monkeypatch)
+    strategy._flip_owned_first_entry_enabled = True
+    state.flip_owner_phase = "provisional"
+    state.position_qty = 1
+    with caplog.at_level("INFO"):
+        strategy.release_and_drop_symbol("AMOD")
+        strategy.release_and_drop_symbol("AMOD")
+    assert strategy.watchlist_state("AMOD") is state
+    assert state.flip_owner_phase == "unknown"
+    assert "AMOD" not in strategy._pending_first_rest_quotes
+    assert sum("action=gave_up reason=watchlist-removed" in r.message
+               for r in caplog.records) == 1
+    assert fresh(strategy, clock) == []
+
+
 def test_pending_first_entry_is_not_restored_into_a_new_strategy(monkeypatch):
     strategy, state, clock = setup_wait(monkeypatch)
     restarted = SchwabV2Strategy(strategy.settings)
