@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from massive.exceptions import BadResponse
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
@@ -15,6 +16,64 @@ from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.market_data.models import HistoricalBarRecord, LiveBarRecord, SnapshotRecord, TradeTickRecord
 from project_mai_tai.settings import Settings
+
+
+def test_gateway_entrypoint_configures_logging_before_start(monkeypatch) -> None:
+    from project_mai_tai.services import market_data_gateway as entrypoint
+
+    calls = []
+    monkeypatch.setattr(entrypoint, "get_settings", lambda: SimpleNamespace(log_level="INFO"))
+    monkeypatch.setattr(
+        entrypoint,
+        "configure_logging",
+        lambda name, level: calls.append(("logging", name, level))
+        or SimpleNamespace(info=lambda message: calls.append(("startup", message))),
+    )
+
+    def close_main(coroutine):
+        calls.append(("run",))
+        coroutine.close()
+
+    monkeypatch.setattr(entrypoint.asyncio, "run", close_main)
+    entrypoint.run()
+
+    assert calls == [
+        ("logging", "market-data-gateway", "INFO"),
+        ("startup", "[MARKET-DATA] process starting"),
+        ("run",),
+    ]
+
+
+def test_reference_not_found_is_one_warning_without_traceback(caplog) -> None:
+    provider = MassiveSnapshotProvider(api_key="test")
+
+    def not_found(_ticker):
+        raise BadResponse('{"status":"NOT_FOUND","message":"Ticker not found."}')
+
+    provider._client = SimpleNamespace(get_ticker_details=not_found)
+    with caplog.at_level("WARNING"):
+        assert provider.get_ticker_details_batch(["ZEXIT"]) == {}
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].message == "Massive ticker details NOT_FOUND for ZEXIT"
+    assert caplog.records[0].exc_info is None
+
+
+@pytest.mark.parametrize(
+    "error", [BadResponse('{"status":"ERROR"}'), RuntimeError("network failed")]
+)
+def test_reference_other_errors_keep_traceback(caplog, error) -> None:
+    provider = MassiveSnapshotProvider(api_key="test")
+
+    def broken(_ticker):
+        raise error
+
+    provider._client = SimpleNamespace(get_ticker_details=broken)
+    with caplog.at_level("ERROR"):
+        assert provider.get_ticker_details_batch(["ZEXIT"]) == {}
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].exc_info is not None
 
 
 class FakeRedis:

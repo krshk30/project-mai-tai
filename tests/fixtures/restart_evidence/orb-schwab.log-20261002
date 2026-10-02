@@ -1,0 +1,58 @@
+Traceback (most recent call last):
+  File "/home/trader/project-mai-tai/.venv/bin/mai-tai-orb-schwab", line 6, in <module>
+    sys.exit(run())
+             ^^^^^
+  File "/home/trader/project-mai-tai/src/project_mai_tai/services/orb_schwab_app.py", line 529, in run
+    await self._sync_gateway_subscription(sorted(self._universe | self._exit_held_symbols))
+^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/base_events.py", line 687, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/src/project_mai_tai/services/orb_schwab_app.py", line 525, in main
+    or (now - self._last_universe_refresh_at).total_seconds()
+^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/src/project_mai_tai/services/orb_schwab_app.py", line 509, in run
+    return
+           
+  File "/home/trader/project-mai-tai/src/project_mai_tai/services/orb_app.py", line 498, in _drain_market_data
+    response = await self.redis.xread(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/redis/asyncio/client.py", line 646, in execute_command
+    return await conn.retry.call_with_retry(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/redis/asyncio/retry.py", line 59, in call_with_retry
+    return await do()
+           ^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/redis/asyncio/client.py", line 620, in _send_command_parse_response
+    return await self.parse_response(conn, command_name, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/redis/asyncio/client.py", line 667, in parse_response
+    response = await connection.read_response()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/redis/asyncio/connection.py", line 562, in read_response
+    response = await self._parser.read_response(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/redis/_parsers/resp2.py", line 82, in read_response
+    response = await self._read_response(disable_decoding=disable_decoding)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/redis/_parsers/resp2.py", line 90, in _read_response
+    raw = await self._readline()
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/redis/_parsers/base.py", line 219, in _readline
+    data = await self._stream.readline()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/streams.py", line 568, in readline
+    line = await self.readuntil(sep)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/streams.py", line 660, in readuntil
+    await self._wait_for_data('readuntil')
+  File "/usr/lib/python3.12/asyncio/streams.py", line 545, in _wait_for_data
+    await self._waiter
+asyncio.exceptions.CancelledError
+INFO:orb-schwab:[ORB-SCHWAB] mode=LIVE live_sending=True

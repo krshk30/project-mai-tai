@@ -30,6 +30,7 @@ SPEC.loader.exec_module(vre)
 
 
 _STOP = datetime(2026, 9, 11, 0, 25, tzinfo=UTC)
+REAL_LOG_FIXTURES = Path(__file__).parent.parent / "fixtures" / "restart_evidence"
 
 
 def _bars(
@@ -79,7 +80,9 @@ def test_traceback_is_scoped_by_its_nearest_preceding_timestamp() -> None:
     )
 
     assert evidence.timestamped_records == 2
-    assert evidence.traceback_times_utc == (datetime(2026, 9, 11, 0, 25, 1, tzinfo=UTC),)
+    assert evidence.traceback_times_utc == (
+        datetime(2026, 9, 11, 0, 25, 1, 1000, tzinfo=UTC),
+    )
 
 
 def test_traceback_without_a_preceding_timestamp_is_unmeasured() -> None:
@@ -90,24 +93,76 @@ def test_traceback_without_a_preceding_timestamp_is_unmeasured() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("service", "startup"),
-    [
-        ("market-data", "bootstrapped market-data subscription owners from 250 retained events"),
-        ("orb-schwab", "INFO:orb_schwab:[ORB-SCHWAB] mode=LIVE live_sending=True"),
-    ],
-)
-def test_untimestamped_traceback_before_later_same_file_startup_is_historical(
-    service: str, startup: str
-) -> None:
-    evidence = vre.parse_log_files(
-        [(f"{service}.log", ["Traceback (most recent call last):", "old error", startup])],
-        since=datetime(2026, 10, 1, tzinfo=UTC),
-        service=service,
-    )
+def test_real_gateway_startup_reference_tracebacks_are_not_historical() -> None:
+    lines = (REAL_LOG_FIXTURES / "market-data.log-20261002").read_text().splitlines()
+    assert lines.count("Traceback (most recent call last):") == 3
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files(
+            [("market-data.log-20261002", lines)],
+            since=datetime(2026, 10, 1, 21, 1, 4, tzinfo=UTC),
+            service="market-data",
+        )
 
+
+def test_real_orb_exit_traceback_needs_a_timestamped_bounded_startup() -> None:
+    lines = (REAL_LOG_FIXTURES / "orb-schwab.log-20261002").read_text().splitlines()
+    assert lines[0] == "Traceback (most recent call last):"
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files(
+            [("orb-schwab.log", lines)],
+            since=datetime(2026, 10, 1, tzinfo=UTC),
+            service="orb-schwab",
+        )
+
+
+def test_real_orb_exit_traceback_before_bounded_timestamped_startup_is_prior_process() -> None:
+    since = datetime(2026, 10, 2, 0, 1, tzinfo=UTC)
+    lines = (REAL_LOG_FIXTURES / "orb-schwab.log-20261002").read_text().splitlines()
+    lines[-1] = "2026-10-02 00:01:30,000 INFO [orb-schwab] [ORB-SCHWAB] mode=LIVE live_sending=True"
+
+    evidence = vre.parse_log_files([("orb-schwab.log", lines)], since=since, service="orb-schwab")
+
+    assert evidence.prior_process_exit_tracebacks == 1
+    assert evidence.timestamped_records == 1
     assert evidence.traceback_times_utc == ()
-    assert evidence.pre_start_untimestamped_tracebacks == 1
+
+
+def test_process_exit_marker_outside_start_bound_is_unknown() -> None:
+    since = datetime(2026, 10, 2, 0, 1, tzinfo=UTC)
+    lines = (REAL_LOG_FIXTURES / "orb-schwab.log-20261002").read_text().splitlines()
+    lines[-1] = "2026-10-02 00:02:01,000 INFO [orb-schwab] [ORB-SCHWAB] mode=LIVE live_sending=True"
+
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files([("orb-schwab.log", lines)], since=since, service="orb-schwab")
+
+
+def test_current_process_exception_before_startup_marker_is_not_exempt() -> None:
+    since = datetime(2026, 10, 2, 0, 1, tzinfo=UTC)
+    lines = [
+        "Traceback (most recent call last):",
+        '  File "/app/src/project_mai_tai/market_data/massive_provider.py", line 140, in get_ticker_details_batch',
+        "    raise RuntimeError('current startup')",
+        "RuntimeError: current startup",
+        "2026-10-02 00:01:30,000 INFO [market-data-gateway] [MARKET-DATA] process starting",
+    ]
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files([("market-data.log", lines)], since=since, service="market-data")
+
+
+def test_timestamped_current_process_exception_before_startup_marker_is_real() -> None:
+    since = datetime(2026, 10, 2, 0, 1, tzinfo=UTC)
+    lines = [
+        "2026-10-02 00:01:01,000 ERROR [market-data-gateway] reference fetch failed",
+        "Traceback (most recent call last):",
+        '  File "/app/src/project_mai_tai/market_data/massive_provider.py", line 140, in get_ticker_details_batch',
+        "RuntimeError: current startup",
+        "2026-10-02 00:01:30,000 INFO [market-data-gateway] [MARKET-DATA] process starting",
+    ]
+
+    evidence = vre.parse_log_files([("market-data.log", lines)], since=since, service="market-data")
+
+    assert evidence.traceback_times_utc == (datetime(2026, 10, 2, 0, 1, 1, tzinfo=UTC),)
+    assert evidence.prior_process_exit_tracebacks == 0
 
 
 def test_untimestamped_traceback_after_startup_remains_unknown() -> None:
@@ -122,16 +177,15 @@ def test_untimestamped_traceback_after_startup_remains_unknown() -> None:
         )
 
 
-def test_startup_clears_a_prior_process_timestamp() -> None:
+def test_old_owner_restore_line_never_exempts_a_gateway_traceback() -> None:
     with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
         vre.parse_log_files(
             [("market-data.log", [
-                "2026-09-30 23:00:00,000 INFO prior process",
-                "restored market-data subscriptions from 4 consumers -> 12 symbols",
                 "Traceback (most recent call last):",
+                "RuntimeError: current startup",
+                "restored market-data subscriptions from 4 consumers -> 12 symbols",
             ])],
-            since=datetime(2026, 10, 1, tzinfo=UTC),
-            service="market-data",
+            since=datetime(2026, 10, 1, tzinfo=UTC), service="market-data",
         )
 
 
@@ -141,7 +195,7 @@ def test_untimestamped_startup_in_another_file_cannot_scope_a_traceback() -> Non
             [
                 ("market-data.log.1", ["Traceback (most recent call last):"]),
                 ("market-data.log", [
-                    "bootstrapped market-data subscription owners from 250 retained events"
+                    "2026-10-01 00:00:00,000 INFO [market-data-gateway] [MARKET-DATA] process starting"
                 ]),
             ],
             since=datetime(2026, 10, 1, tzinfo=UTC),
@@ -565,8 +619,8 @@ def test_report_is_unknown_when_an_unexpected_service_has_no_time_scoped_log_rec
     assert "Final call: UNKNOWN" in output
 
 
-def test_report_scopes_old_gateway_traceback_but_does_not_call_silent_log_pass(
-    monkeypatch, tmp_path: Path, capsys
+def test_report_calls_real_gateway_startup_reference_traceback_unknown(
+    monkeypatch, tmp_path: Path
 ) -> None:
     args, current, logs = _report_fixture(monkeypatch, tmp_path)
     start = datetime(2026, 10, 1, 0, 25, tzinfo=UTC)
@@ -579,20 +633,12 @@ def test_report_scopes_old_gateway_traceback_but_does_not_call_silent_log_pass(
         started_at_utc=start.isoformat(),
     )
     logs["market-data"] = [
-        ("market-data.log", [
-            "Traceback (most recent call last):",
-            "RuntimeError: prior process",
-            "bootstrapped market-data subscription owners from 250 retained events",
-        ])
+        ("market-data.log", (REAL_LOG_FIXTURES / "market-data.log-20261002").read_text().splitlines())
     ]
     args.restarted.append("market-data")
 
-    assert vre.report(args, runner=lambda command: "") == 2
-
-    output = capsys.readouterr().out
-    assert "market-data=historical_before_later_startup(1)" in output
-    assert "Final call: UNKNOWN" in output
-    assert "Final call: REAL FAILURE" not in output
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.report(args, runner=lambda command: "")
 
 
 def test_expected_quiet_declaration_cannot_name_an_untouched_service(

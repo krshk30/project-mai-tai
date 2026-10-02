@@ -1,0 +1,34 @@
+Failed to fetch Massive ticker details for ZEXIT
+Traceback (most recent call last):
+  File "/home/trader/project-mai-tai/src/project_mai_tai/market_data/massive_provider.py", line 138, in get_ticker_details_batch
+    details = client.get_ticker_details(ticker)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/massive/rest/reference.py", line 154, in get_ticker_details
+    return self._get(
+           ^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/massive/rest/base.py", line 135, in _get
+    raise BadResponse(resp.data.decode("utf-8"))
+massive.exceptions.BadResponse: {"status":"NOT_FOUND","request_id":"<redacted>","message":"Ticker not found."}
+Failed to fetch Massive ticker details for ZIEXT
+Traceback (most recent call last):
+  File "/home/trader/project-mai-tai/src/project_mai_tai/market_data/massive_provider.py", line 138, in get_ticker_details_batch
+    details = client.get_ticker_details(ticker)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/massive/rest/reference.py", line 154, in get_ticker_details
+    return self._get(
+           ^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/massive/rest/base.py", line 135, in _get
+    raise BadResponse(resp.data.decode("utf-8"))
+massive.exceptions.BadResponse: {"status":"NOT_FOUND","request_id":"<redacted>","message":"Ticker not found."}
+Failed to fetch Massive ticker details for ZZZTT
+Traceback (most recent call last):
+  File "/home/trader/project-mai-tai/src/project_mai_tai/market_data/massive_provider.py", line 138, in get_ticker_details_batch
+    details = client.get_ticker_details(ticker)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/massive/rest/reference.py", line 154, in get_ticker_details
+    return self._get(
+           ^^^^^^^^^^
+  File "/home/trader/project-mai-tai/.venv/lib/python3.12/site-packages/massive/rest/base.py", line 135, in _get
+    raise BadResponse(resp.data.decode("utf-8"))
+massive.exceptions.BadResponse: {"status":"NOT_FOUND","request_id":"<redacted>","message":"Ticker not found."}
+bootstrapped market-data subscription owners from 87 retained events; verify every expected consumer before gateway deployment

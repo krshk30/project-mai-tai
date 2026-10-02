@@ -17,6 +17,7 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.fanout_outcome_consumer import session_anchor
+from project_mai_tai.log import configure_logging
 from project_mai_tai.orb_schwab_macd import (
     BAR_WAIT, MacdVerdict, last_closed_bar_close, schwab_completed_bar_macd_gate,
 )
@@ -31,6 +32,7 @@ from project_mai_tai.orb_schwab_order_route import (
     publish_orb_schwab_intent,
 )
 from project_mai_tai.services.orb_app import OrbService, _normalize_trade_ts_ns
+from project_mai_tai.settings import get_settings
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 from project_mai_tai.strategy_core.orb_schwab_bracket import build_orb_schwab_bracket_metadata
 from project_mai_tai.strategy_core.orb_schwab_open import OrbSchwabOpeningOrder
@@ -539,7 +541,8 @@ class OrbSchwabService(OrbService):
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    settings = get_settings()
+    configure_logging(_SERVICE, settings.log_level)
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

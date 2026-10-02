@@ -3,16 +3,38 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from project_mai_tai.services.orb_schwab_app import OrbSchwabService
-from project_mai_tai.orb_schwab_macd import MacdVerdict
 from project_mai_tai.fanout_outcome_consumer import session_anchor
+from project_mai_tai.orb_schwab_macd import MacdVerdict
+from project_mai_tai.services.orb_schwab_app import OrbSchwabService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 from project_mai_tai.strategy_core.orb_schwab_open import OrbSchwabOpeningOrder
+
+
+def test_orb_schwab_entrypoint_configures_timestamped_logging(monkeypatch) -> None:
+    from project_mai_tai.services import orb_schwab_app as entrypoint
+
+    calls = []
+    monkeypatch.setattr(entrypoint, "get_settings", lambda: SimpleNamespace(log_level="INFO"))
+    monkeypatch.setattr(
+        entrypoint,
+        "configure_logging",
+        lambda name, level: calls.append((name, level)),
+    )
+
+    class FakeService:
+        async def run(self):
+            calls.append(("service",))
+
+    monkeypatch.setattr(entrypoint, "OrbSchwabService", FakeService)
+    asyncio.run(entrypoint.main())
+
+    assert calls == [("orb-schwab", "INFO"), ("service",)]
 
 
 OPEN = datetime(2026, 9, 29, 13, 30, tzinfo=UTC)

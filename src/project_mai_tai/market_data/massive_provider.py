@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import time
 from collections.abc import Callable, Iterable
 from datetime import date, timedelta
+
+from massive.exceptions import BadResponse
 
 from project_mai_tai.market_data.models import (
     HistoricalBarRecord,
@@ -136,6 +139,16 @@ class MassiveSnapshotProvider:
             for ticker in batch:
                 try:
                     details = client.get_ticker_details(ticker)
+                except BadResponse as exc:
+                    try:
+                        not_found = json.loads(str(exc)).get("status") == "NOT_FOUND"
+                    except (ValueError, AttributeError):
+                        not_found = False
+                    if not_found:
+                        logger.warning("Massive ticker details NOT_FOUND for %s", ticker)
+                    else:
+                        logger.exception("Failed to fetch Massive ticker details for %s", ticker)
+                    continue
                 except Exception:
                     logger.exception("Failed to fetch Massive ticker details for %s", ticker)
                     continue
