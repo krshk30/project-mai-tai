@@ -13122,9 +13122,7 @@ class OmsRiskService(MirrorFreshPriceMixin):
             metadata["webull_shape_market_max_age_ms"] = str(self._mirror_max_age_ms())
         if self._nfq_enabled():
             metadata["nfq_price_feedback_owned"] = "true"
-            deadline = utcnow().astimezone(SESSION_TZ).replace(
-                hour=15, minute=45, second=0, microsecond=0,
-            )
+            deadline = self._nfq_entry_deadline()
             metadata["webull_mirror_entry_deadline_utc"] = deadline.astimezone(UTC).isoformat()
 
     def _emit_fanout_mirror_lag(

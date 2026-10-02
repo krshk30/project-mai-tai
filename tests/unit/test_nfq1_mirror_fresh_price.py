@@ -17,12 +17,12 @@ from uuid import uuid4
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
-from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill, TradeIntent
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, TradeIntent
 from project_mai_tai.fanout_outcome_consumer import FanoutOutcomeJournal, OUTCOME_SNAPSHOT_TYPE
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE as SEGMENT_SNAPSHOT
 from project_mai_tai.oms import service as oms
-from project_mai_tai.oms.mirror_fresh_price import GAVE_UP_PREFIX
+from project_mai_tai.oms.mirror_fresh_price import GAVE_UP_PREFIX, RETIRED_PREFIX
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 from project_mai_tai.settings import Settings
 from tests.unit.test_oms_webull_mirror_deferred_resubmit import (
@@ -67,6 +67,8 @@ def recorded_report(case):
 def lane(monkeypatch):
     factory = _session_factory()
     service, adapter = _integrated_service(factory, enabled=True, nfq_enabled=True)
+    service.settings.strategy_schwab_1m_v2_entry_window_end_hour_et = 15
+    service.settings.strategy_schwab_1m_v2_entry_window_end_minute_et = 45
     clock = [datetime(2026, 10, 2, 18, 0, tzinfo=UTC)]
     monkeypatch.setattr(oms, "utcnow", lambda: clock[0])
     monkeypatch.setattr(oms, "_is_regular_market_session", lambda now=None: True)
@@ -285,7 +287,7 @@ async def test_segment_end_retires_without_another_price(lane):
     await service._evaluate_nfq_holds()
     assert not service._nfq_holds
     assert not adapter.requests
-    assert outcomes(factory)[-1]["reason"] == GAVE_UP_PREFIX + "segment_ended"
+    assert outcomes(factory)[-1]["reason"] == RETIRED_PREFIX + "segment_ended"
 
 
 @pytest.mark.asyncio
@@ -308,6 +310,121 @@ async def test_oms_restart_restores_hold_and_invalidates_old_queue(lane, already
     retry = queued_events(restarted)[-1]
     await restarted._handle_stream_message({"data": retry.model_dump_json()})
     assert len(adapter.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restart", [False, True])
+async def test_recorded_expiry_requeue_rejects_old_token_even_when_hold_is_queued(lane, restart):
+    service, adapter, factory, clock = lane
+    case = next(c for c in CASES if "age_ms=2305" in c["record"]["event_payload"]["reason"])
+    original = event_for(case)
+    clock[0] = datetime.fromisoformat(case["record"]["submitted_at"])
+    seed_segment(factory, original, clock)
+    # Replay the recorded no-wire expiry. A repeated report or an OMS restart can
+    # invalidate its queued copy before the serial consumer receives that copy.
+    with factory() as session:
+        service._nfq_observe_reports(session, original, [recorded_report(case)])
+        session.commit()
+    set_quote(service, original, clock)
+    await service._evaluate_nfq_holds(original.payload.symbol)
+    stale = queued_events(service)[-1]
+    if restart:
+        service, adapter = _integrated_service(factory, enabled=True, nfq_enabled=True)
+        service._restore_nfq_holds()
+    else:
+        with factory() as session:
+            service._nfq_observe_reports(session, original, [recorded_report(case)])
+            session.commit()
+    set_quote(service, original, clock)
+    await service._evaluate_nfq_holds(original.payload.symbol)
+    current = queued_events(service)[-1]
+    for key in ("nfq_hold_id", "fanout_segment_id", "fanout_attempt_id"):
+        assert stale.payload.metadata[key] == current.payload.metadata[key]
+    assert stale.payload.metadata["nfq_retry_token"] != current.payload.metadata["nfq_retry_token"]
+    assert service._nfq_holds[original.payload.metadata["fanout_slot_id"]].phase == "queued"
+    await service._handle_stream_message({"data": stale.model_dump_json()})
+    assert not adapter.requests
+    await service._handle_stream_message({"data": current.model_dump_json()})
+    await service._handle_stream_message({"data": stale.model_dump_json()})
+    assert len(adapter.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("evidence", ["fill_row", "filled_status", "partial_status"])
+async def test_recorded_schwab_fill_in_ledger_retires_webull_hold_without_callback(lane, restart, evidence):
+    service, adapter, factory, clock = lane
+    row = OUTCOMES["schwab_fill"][0]
+    event = event_for()
+    event.payload.symbol = row["symbol"]
+    event.payload.metadata = {k: v for k, v in row["order_metadata"].items()
+                              if not k.startswith("bracket") and k != "native_oco_bracket"}
+    event.payload.metadata.update(fanout_leg="webull", fanout_source="rth_resting_mirror")
+    clock[0] = datetime.fromisoformat(row["event_at"])
+    event, stale = await hold_and_queue(lane, event)
+    # Project the real CYCU fill into the durable ledger, deliberately without the
+    # in-memory report callback. The partial/status-only variants are recovery states,
+    # not a claim that this recorded full fill was historically partial.
+    with factory() as session:
+        intent = session.scalar(select(TradeIntent))
+        account = BrokerAccount(name="live:schwab_1m_v2", provider="schwab", environment="live")
+        session.add(account)
+        session.flush()
+        order = BrokerOrder(
+            intent_id=intent.id, strategy_id=intent.strategy_id, broker_account_id=account.id,
+            client_order_id=row["payload"]["client_order_id"],
+            broker_order_id=row["payload"]["broker_order_id"],
+            symbol=row["symbol"], side=row["side"], quantity=Decimal(row["quantity"]),
+            order_type="STOP_LIMIT", time_in_force="day", payload=dict(row["order_metadata"]),
+            status={"fill_row": "accepted", "filled_status": "filled", "partial_status": "partially_filled"}[evidence],
+        )
+        session.add(order)
+        session.flush()
+        if evidence == "fill_row":
+            session.add(Fill(
+                order_id=order.id, strategy_id=order.strategy_id, broker_account_id=account.id,
+                broker_fill_id=row["payload"]["broker_fill_id"], symbol=row["symbol"], side="buy",
+                quantity=Decimal(row["quantity"]), price=Decimal("4.14"),
+                filled_at=clock[0], payload=row["payload"],
+            ))
+        session.commit()
+    if restart:
+        service, adapter = _integrated_service(factory, enabled=True, nfq_enabled=True)
+        service._restore_nfq_holds()
+    set_quote(service, event, clock)
+    await service._evaluate_nfq_holds(event.payload.symbol)
+    assert not service._nfq_holds
+    await service._handle_stream_message({"data": stale.model_dump_json()})
+    assert not adapter.requests
+    assert outcomes(factory)[-1]["reason"].endswith(":slot_filled")
+
+
+@pytest.mark.parametrize("start,end,at,allowed,deadline", [
+    ((10, 5), (15, 45), (10, 4), False, (15, 45)),
+    ((10, 5), (15, 45), (10, 5), True, (15, 45)),
+    ((7, 0), (14, 30), (14, 29), True, (14, 30)),
+    ((7, 0), (14, 30), (14, 30), False, (14, 30)),
+    ((7, 0), (16, 0), (15, 50), True, (16, 0)),
+    ((7, 0), (17, 0), (16, 0), False, (16, 0)),
+    ((7, 0), (16, 0), (9, 29), False, (16, 0)),
+    ((7, 0), (16, 0), (9, 30), True, (16, 0)),
+])
+def test_nfq_window_and_wire_deadline_follow_v2_configuration(lane, monkeypatch, start, end, at, allowed, deadline):
+    from project_mai_tai.strategy_core.entry_gate import within_entry_window
+    service, _, _, clock = lane
+    monkeypatch.setattr(oms, "_is_regular_market_session", lambda now=None: oms._extended_hours_session(now) is None)
+    settings = service.settings
+    settings.strategy_schwab_1m_v2_entry_window_start_hour_et, settings.strategy_schwab_1m_v2_entry_window_start_minute_et = start
+    settings.strategy_schwab_1m_v2_entry_window_end_hour_et, settings.strategy_schwab_1m_v2_entry_window_end_minute_et = end
+    clock[0] = clock[0].replace(hour=at[0] + 4, minute=at[1])
+    event = event_for()
+    strategy = SchwabV2Strategy(settings)
+    assert allowed == (within_entry_window(clock[0], settings)
+                       and not strategy._resting_session_is_eh(clock[0]))
+    assert service._nfq_window_open(event) is allowed
+    service._stamp_webull_resting_mirror_market(event)
+    actual = datetime.fromisoformat(event.payload.metadata["webull_mirror_entry_deadline_utc"])
+    assert actual == clock[0].replace(hour=deadline[0] + 4, minute=deadline[1], second=0, microsecond=0)
 
 
 def outcome_report(kind):
@@ -342,7 +459,7 @@ async def test_recorded_schwab_fill_while_webull_held_ends_retry(lane):
     await service._handle_stream_message({"data": retry.model_dump_json()})
     assert not adapter.requests
     assert not service._nfq_holds
-    assert outcomes(factory)[-1]["reason"] == GAVE_UP_PREFIX + "slot_filled"
+    assert outcomes(factory)[-1]["reason"] == RETIRED_PREFIX + "slot_filled"
 
 
 @pytest.mark.asyncio
@@ -594,7 +711,7 @@ async def test_unproven_or_ended_segment_cannot_resume(lane, evidence, restart):
     assert not queued_events(service)
     assert not adapter.requests
     assert not service._nfq_holds
-    assert outcomes(factory)[-1]["reason"] == GAVE_UP_PREFIX + (
+    assert outcomes(factory)[-1]["reason"] == (RETIRED_PREFIX if evidence == "ended" else GAVE_UP_PREFIX) + (
         "segment_ended" if evidence == "ended" else "segment_identity_unproven"
     )
 
@@ -671,6 +788,79 @@ async def test_old_generation_cancel_cannot_kill_repriced_hold(lane):
     service._nfq_observe_intent(cancel)
     hold = service._nfq_holds[replacement.payload.metadata["fanout_slot_id"]]
     assert hold.event.event_id == replacement.event_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["cancel_intent", "replacement", "cancelled", "expired"])
+async def test_ordinary_lifecycle_terminal_is_not_counted_as_nfq_give_up(lane, caplog, terminal):
+    service, adapter, factory, clock = lane
+    event, stale = await hold_and_queue(lane)
+    strategy, state, journal = consume_initial_hold(factory, event, clock)
+    if terminal in {"cancel_intent", "replacement"}:
+        next_event = event.model_copy(deep=True)
+        next_event.event_id = uuid4()
+        if terminal == "cancel_intent":
+            next_event.payload.intent_type = "cancel"
+        service._nfq_observe_intent(next_event)
+    else:
+        # Controlled terminal delivery tests classification, not broker behaviour.
+        report = ExecutionReport(
+            event_type=terminal, origin="broker", symbol=event.payload.symbol,
+            client_order_id=event.payload.metadata["fanout_attempt_id"], side="buy",
+            quantity=event.payload.quantity, intent_type="open", reason="controlled lifecycle " + terminal,
+            metadata=dict(event.payload.metadata),
+        )
+        with factory() as session:
+            service._nfq_observe_reports(session, event, [report])
+            session.commit()
+    journal.poll(strategy.apply_fanout_outcome)
+    assert not state.webull_resting_active and not state.fanout_webull_claimed
+    assert state.resting_active and state.resting_is_broker_order
+    await service._handle_stream_message({"data": stale.model_dump_json()})
+    assert not adapter.requests
+    assert len([r for r in outcomes(factory) if r["reason"].startswith(RETIRED_PREFIX)]) == 1
+    assert not [r for r in outcomes(factory) if r["reason"].startswith(GAVE_UP_PREFIX)]
+    assert any("decision=retired" in r.message for r in caplog.records)
+    assert not any("decision=gave_up" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held,orders,symbol,expected_selects", [
+    (False, 0, "AIXI", 0), (True, 0, "OTHER", 0),
+    (True, 0, "AIXI", 2), (True, 1, "AIXI", 4),
+])
+async def test_nfq_tick_database_read_cost(lane, held, orders, symbol, expected_selects):
+    from sqlalchemy import event as sql_event
+    service, _, factory, _ = lane
+    event = event_for()
+    if held:
+        await service.process_trade_intent(event)
+    if orders:
+        with factory() as session:
+            intent = session.scalar(select(TradeIntent))
+            account = BrokerAccount(name="live:schwab_1m_v2", provider="schwab", environment="live")
+            session.add(account)
+            session.flush()
+            session.add(BrokerOrder(
+                intent_id=intent.id, strategy_id=intent.strategy_id, broker_account_id=account.id,
+                client_order_id="controlled-live-schwab-sibling", symbol=event.payload.symbol, side="buy",
+                quantity=Decimal("2"), order_type="STOP_LIMIT", time_in_force="day", status="accepted",
+                payload=dict(event.payload.metadata),
+            ))
+            session.commit()
+    statements = []
+    engine = factory.kw["bind"]
+
+    def count_sql(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    sql_event.listen(engine, "before_cursor_execute", count_sql)
+    try:
+        await service._evaluate_nfq_holds(symbol)
+    finally:
+        sql_event.remove(engine, "before_cursor_execute", count_sql)
+    assert len(statements) == expected_selects
+    assert all(s.lstrip().startswith("SELECT") for s in statements)
 
 
 def consume_initial_hold(factory, event, clock):
@@ -808,7 +998,7 @@ async def test_retry_risk_refusal_first_terminal_clears_only_webull_with_actual_
     terminals = [r for r in outcomes(factory) if r["outcome"] in {"dropped_risk", "rejected_client_abort"}]
     assert len(terminals) == 1
     assert reason in terminals[0]["reason"]
-    assert any("decision=gave_up" in r.message and reason in r.message for r in caplog.records)
+    assert any("decision=retired" in r.message and reason in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -875,8 +1065,9 @@ async def test_first_terminal_family_is_scoped_and_cleanup_does_not_notify_twice
     with factory() as session:
         service._nfq_retire(session, service._nfq_holds[event.payload.metadata["fanout_slot_id"]], "serial_pipeline_ended")
         session.commit()
-    assert len([r for r in outcomes(factory) if r["reason"].startswith(GAVE_UP_PREFIX)]) == 1
-    assert any("decision=gave_up" in r.message and reason in r.message for r in caplog.records)
+    assert len([r for r in outcomes(factory) if r["reason"].startswith(RETIRED_PREFIX)]) == 1
+    assert not [r for r in outcomes(factory) if r["reason"].startswith(GAVE_UP_PREFIX)]
+    assert any("decision=retired" in r.message and reason in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio

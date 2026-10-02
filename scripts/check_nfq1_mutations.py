@@ -1,4 +1,4 @@
-"""Run NFQ1's four required destructive mutations in isolated Python processes.
+"""Run NFQ1's required destructive mutations in isolated Python processes.
 
 Only in-memory methods/defaults change. No checkout, fixture, or production file is edited.
 Run with the current worktree's src on PYTHONPATH and the approved test interpreter.
@@ -37,6 +37,16 @@ MUTANTS = {
         "mutate_method(nfq.MirrorFreshPriceMixin, '_nfq_retirement_reason', "
         "'return \"duplicate_buy\"', 'pass', vars(nfq))",
         "durable_duplicate_buy_guard_rechecks_before_serial_dispatch",
+    ),
+    "N3_stale_serial_token_admitted": (
+        "mutate_method(nfq.MirrorFreshPriceMixin, '_claim_nfq_retry', "
+        "'hold.token != token', 'False', vars(nfq))",
+        "recorded_expiry_requeue_rejects_old_token_even_when_hold_is_queued",
+    ),
+    "N5_schwab_fill_ignored": (
+        "mutate_method(nfq.MirrorFreshPriceMixin, '_nfq_retirement_reason', "
+        "'filled is not None or order.status in {\"filled\", \"partially_filled\"}', 'False', vars(nfq))",
+        "recorded_schwab_fill_in_ledger_retires_webull_hold_without_callback",
     ),
     "premarket_age_changed": (
         "mutate_method(service.OmsRiskService, '_apply_v2_eh_resting_entry', "

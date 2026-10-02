@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -13,16 +13,18 @@ from sqlalchemy import select
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill
 from project_mai_tai.events import TradeIntentEvent, stream_name
 from project_mai_tai.fanout_outcome_consumer import (
-    TERMINAL_RELEASE_OUTCOMES, append_outcome, broker_outcome,
+    NFQ_GAVE_UP_PREFIX, NFQ_RETIRED_PREFIX, TERMINAL_RELEASE_OUTCOMES, append_outcome, broker_outcome,
 )
 from project_mai_tai.fanout_segment_store import (
     SNAPSHOT_TYPE as SEGMENT_SNAPSHOT, current_session_anchor,
 )
+from project_mai_tai.strategy_core.entry_gate import resolve_entry_window, within_entry_window
 
 
 SNAPSHOT_TYPE = "oms_webull_mirror_price_hold"
 HELD_REASON = "webull_mirror_no_fresh_quote_held"
-GAVE_UP_PREFIX = "webull_mirror_nfq_gave_up:"
+GAVE_UP_PREFIX = NFQ_GAVE_UP_PREFIX
+RETIRED_PREFIX = NFQ_RETIRED_PREFIX
 EASTERN = ZoneInfo("America/New_York")
 
 
@@ -90,9 +92,23 @@ class MirrorFreshPriceMixin:
         )
 
     def _nfq_window_open(self, event: TradeIntentEvent) -> bool:
+        from project_mai_tai.oms.service import _is_regular_market_session
         now = self._nfq_now().astimezone(EASTERN)
-        return (now.weekday() < 5 and time(9, 30) <= now.time() < time(15, 45)
+        return (within_entry_window(now, self.settings) and _is_regular_market_session(now)
                 and event.produced_at.astimezone(EASTERN).date() == now.date())
+
+    def _nfq_entry_deadline(self) -> datetime:
+        _, _, end_hour, end_minute = resolve_entry_window(self.settings)
+        now = self._nfq_now().astimezone(EASTERN)
+        # A NORMAL-session mirror cannot outlive RTH even if the configured v2
+        # entry window extends into EH. v2's resting-session split has the same bound.
+        return min(now.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0),
+                   now.replace(hour=16, minute=0, second=0, microsecond=0))
+
+    def _nfq_log_release(self, event, reason: str, *, report=None) -> None:
+        decision = "gave_up" if reason.startswith(GAVE_UP_PREFIX) else "retired"
+        reason = reason.removeprefix(GAVE_UP_PREFIX).removeprefix(RETIRED_PREFIX)
+        self._nfq_log(event, decision, reason, report=report)
 
     def _nfq_log(self, event, decision: str, reason: str, *, report=None) -> None:
         reading = self._mirror_reading(event.payload.symbol)
@@ -139,12 +155,14 @@ class MirrorFreshPriceMixin:
         if gave_up:
             if reason == "duplicate_buy":
                 # Retire this retry, but preserve v2's ability to cancel the actual live leg.
-                self._nfq_outcome(session, hold.event, "working", "nfq1_existing_webull_buy")
+                reason = self._nfq_outcome(session, hold.event, "working", "nfq1_existing_webull_buy")
             else:
+                ordinary = reason in {"v2_cancel_intent", "v2_replaced_slot_or_attempt", "segment_ended", "slot_filled"}
                 reason = self._nfq_outcome(
-                    session, hold.event, "rejected_client_abort", GAVE_UP_PREFIX + reason,
-                ).removeprefix(GAVE_UP_PREFIX)
-            self._nfq_log(hold.event, "gave_up", reason)
+                    session, hold.event, "rejected_client_abort",
+                    (RETIRED_PREFIX if ordinary else GAVE_UP_PREFIX) + reason,
+                )
+            self._nfq_log_release(hold.event, reason)
 
     def _nfq_hold(self, session, event, reason: str, *, report=None) -> None:
         event.payload.metadata.setdefault("webull_mirror_generation_id", str(event.event_id))
@@ -272,9 +290,12 @@ class MirrorFreshPriceMixin:
                     outcome = broker_outcome(report.event_type, report.origin)
                     terminal = outcome in TERMINAL_RELEASE_OUTCOMES
                     reason = self._nfq_outcome(
-                        session, event, outcome, GAVE_UP_PREFIX + reason if terminal else reason,
-                    ).removeprefix(GAVE_UP_PREFIX)
-                    self._nfq_log(event, "gave_up" if terminal else "held", reason, report=report)
+                        session, event, outcome, reason,
+                    )
+                    if terminal:
+                        self._nfq_log_release(event, reason, report=report)
+                    else:
+                        self._nfq_log(event, "held", reason, report=report)
             else:
                 self._nfq_log(event, "sent", report.event_type, report=report)
 

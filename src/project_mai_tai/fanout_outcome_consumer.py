@@ -141,6 +141,11 @@ def broker_outcome(event_type: str, event_source: str) -> str:
     return "could_not_tell"
 
 
+NFQ_GAVE_UP_PREFIX = "webull_mirror_nfq_gave_up:"
+NFQ_RETIRED_PREFIX = "webull_mirror_nfq_retired:"
+NFQ_RELEASE_PREFIXES = (NFQ_GAVE_UP_PREFIX, NFQ_RETIRED_PREFIX)
+
+
 def append_outcome(
     session: Session,
     *,
@@ -160,7 +165,7 @@ def append_outcome(
         return None
     normalized_attempt = attempt_id or identity["fanout_attempt_id"]
     nfq_terminal = outcome in TERMINAL_RELEASE_OUTCOMES and (
-        str(reason).startswith("webull_mirror_nfq_gave_up:") or (
+        str(reason).startswith(NFQ_RELEASE_PREFIXES) or (
             (metadata or {}).get("nfq_price_feedback_owned") == "true"
             and (metadata or {}).get("fanout_source") == "rth_resting_mirror"
         )
@@ -169,8 +174,10 @@ def append_outcome(
         # The FIRST authoritative refusal owns release, including pre-submit risk/routing
         # and ordinary broker terminals. Keep its actual reason and one terminal per attempt;
         # later NFQ cleanup must not race the consumer with a second generic release.
-        if not str(reason).startswith("webull_mirror_nfq_gave_up:"):
-            reason = "webull_mirror_nfq_gave_up:" + str(reason or outcome)
+        if not str(reason).startswith(NFQ_RELEASE_PREFIXES):
+            # Ordinary v2 cancels/reprices, expiry and broker/risk refusals are not
+            # evidence that NFQ abandoned its price wait. Explicit NFQ give-ups opt in.
+            reason = NFQ_RETIRED_PREFIX + str(reason or outcome)
         existing = session.scalar(select(DashboardSnapshot).where(
             DashboardSnapshot.snapshot_type == OUTCOME_SNAPSHOT_TYPE,
             DashboardSnapshot.payload["symbol"].as_string() == str(symbol).upper(),
@@ -180,7 +187,8 @@ def append_outcome(
             DashboardSnapshot.payload["webull_mirror_generation_id"].as_string()
             == str((metadata or {}).get("webull_mirror_generation_id", "")),
             DashboardSnapshot.payload["outcome"].as_string().in_(TERMINAL_RELEASE_OUTCOMES),
-            DashboardSnapshot.payload["reason"].as_string().startswith("webull_mirror_nfq_gave_up:"),
+            (DashboardSnapshot.payload["reason"].as_string().startswith(NFQ_GAVE_UP_PREFIX)
+             | DashboardSnapshot.payload["reason"].as_string().startswith(NFQ_RETIRED_PREFIX)),
         ).order_by(DashboardSnapshot.created_at).limit(1))
         if existing is not None:
             return existing

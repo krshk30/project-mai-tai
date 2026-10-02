@@ -44,6 +44,7 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.fanout_identity import fanout_slot_for_source, fanout_slot_id
 from project_mai_tai.fanout_outcome_consumer import (
+    NFQ_RELEASE_PREFIXES,
     POSITIVE_HOLD_OUTCOMES,
     PROVISIONAL_OUTCOMES,
     TERMINAL_RELEASE_OUTCOMES,
@@ -2459,7 +2460,7 @@ class SchwabV2Strategy:
                 )
                 return "filled_wins"
             if exact and exact_attempt:
-                if record.reason.startswith("webull_mirror_nfq_gave_up:"):
+                if record.reason.startswith(NFQ_RELEASE_PREFIXES):
                     if (state.webull_resting_generation_id
                             and record.mirror_generation_id != state.webull_resting_generation_id):
                         return "wrong_generation"
