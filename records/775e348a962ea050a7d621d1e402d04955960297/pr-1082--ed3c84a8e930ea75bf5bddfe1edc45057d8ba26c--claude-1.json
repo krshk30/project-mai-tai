@@ -1,0 +1,9 @@
+{
+  "pr_number": 1082,
+  "range_base": "ed3c84a8e930ea75bf5bddfe1edc45057d8ba26c",
+  "range_head": "775e348a962ea050a7d621d1e402d04955960297",
+  "reviewed_at": "2026-10-02T14:41:14Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Fixed-dollar entry sizing for schwab_1m_v2 (operator card confirmed 2026-10-01 and re-confirmed before pin 2026-10-02: Schwab 600 USD / Webull 300 USD, nearest whole share, 1-1000 shares, exits and ORB unchanged). Read every changed service file: one shared helper at all eight strategy open sites; bot re-sizes after EH routing; OMS _finalize_v2_entry_quantity runs after every OMS reprice (calls at 2086/2107/2129/2139, finalize 2157) and is authoritative; refresh subtracts prior fills; cancels carry the placed per-leg quantity; OMS refuses above 1.25x notional, above max shares, unknown account, missing price; reconciler text and numeric morning gate (require_process_env for 600/300). My mutations all red: half-up->floor, cap 1.25->125, max-shares check removed, finalize no-resize, Schwab cancel legacy qty, Webull cancel legacy qty, Webull leg using Schwab notional, unknown account allowed, refresh ignoring prior fills, None price tolerated. 775e348a is patch-identical to reviewed 5f1294af (range-diff 4/4 equal); 339 focused tests pass locally; both GitHub validate runs pass. Checked production history: 0 split or partial fills in 422 Schwab and 543 Webull filled buys over 60 days, so partial-fill handling is unit-proven only. ACCEPTED UNEXERCISED by operator ruling 2026-10-02: native Schwab OCO child behaviour on a partially filled parent (case b) has no broker evidence; fetch_armed_native_oco_symbols does not compare child quantity to held quantity; Webull multi-part entry fill vs protective pair not tested. Defaults are ON in code: any v2 or OMS restart on this SHA enables sizing; v2 and OMS must restart together."
+}
