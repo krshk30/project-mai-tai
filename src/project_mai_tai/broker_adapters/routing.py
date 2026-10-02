@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
 from project_mai_tai.broker_adapters.protocols import (
     BrokerAdapter,
     BrokerPositionSnapshot,
@@ -52,6 +53,13 @@ class RoutingBrokerAdapter:
     async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
         adapter = self._adapter_for_account(request.broker_account_name)
         return await adapter.fetch_order_update(request)
+
+    async def read_atr_resting_buy_after_cancel(self, request: OrderRequest) -> AtrBuyReadback:
+        adapter = self._adapter_for_account(request.broker_account_name)
+        readback = getattr(adapter, "read_atr_resting_buy_after_cancel", None)
+        if readback is None:
+            return AtrBuyReadback("unknown", "adapter_has_no_atr_buy_readback")
+        return await readback(request)
 
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         adapter = self._adapter_for_account(broker_account_name)
