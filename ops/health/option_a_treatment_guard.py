@@ -50,6 +50,17 @@ SYMBOL_BOUNDS = {
 POOLED_BOUNDS = (6.096, 6.408, 6.086)
 SNAPSHOT_BOUNDS = (14.076, 14.168, 15.106)
 HEARTBEAT_AGE_BOUND = 30.819
+REDIS_USED_MEMORY_STOP_BYTES = 1_600_000_000
+MAX_SNAPSHOT_ID_REPLY_BYTES = 64
+SNAPSHOT_LAST_ID_SCRIPT = """
+local info = redis.call('XINFO', 'STREAM', KEYS[1])
+for index = 1, #info, 2 do
+    if info[index] == 'last-generated-id' then
+        return info[index + 1]
+    end
+end
+return redis.error_reply('snapshot stream has no last-generated-id')
+"""
 
 
 class Blind(RuntimeError):
@@ -250,6 +261,8 @@ class LiveSignals:
         self.probe_keys: set[tuple[str, int]] = set()
         self.replay_seconds: set[tuple[str, int]] = set()
         self.refusals: list[datetime] = []
+        self.last_snapshot_id: tuple[int, int] | None = None
+        self.snapshot_stamps: list[datetime] = []
 
     def read_logs(self, start: datetime, now: datetime) -> None:
         for line in self.v2.read():
@@ -296,14 +309,32 @@ class LiveSignals:
             return event["payload"]["status"], age, event
         raise Blind("no gateway heartbeat in latest 25 events")
 
-    def snapshot_intervals(self, now: datetime) -> list[float]:
+    def sample_snapshot_id(self, now: datetime) -> None:
         key = stream_name(self.prefix, "snapshot-batches")
-        stamps = []
-        for _, fields in self.redis.xrevrange(key, count=180):
-            event = json.loads(fields["data"])
-            if event.get("event_type") == "snapshot_batch":
-                stamps.append(parsed_time(event["produced_at"]))
-        stamps = sorted(set(stamps))
+        raw = self.redis.eval(SNAPSHOT_LAST_ID_SCRIPT, 1, key)
+        if isinstance(raw, bytes):
+            raw = raw.decode("ascii", errors="strict")
+        if not isinstance(raw, str) or len(raw.encode("ascii", errors="strict")) > MAX_SNAPSHOT_ID_REPLY_BYTES:
+            raise Blind("snapshot last-generated-id reply is invalid or oversized")
+        match = re.fullmatch(r"(\d+)-(\d+)", raw)
+        if match is None:
+            raise Blind("snapshot last-generated-id is malformed")
+        snapshot_id = int(match.group(1)), int(match.group(2))
+        if snapshot_id == (0, 0) or snapshot_id == self.last_snapshot_id:
+            return
+        if self.last_snapshot_id is not None and snapshot_id < self.last_snapshot_id:
+            raise Blind("snapshot last-generated-id moved backwards")
+        stamp = datetime.fromtimestamp(snapshot_id[0] / 1000, UTC)
+        if stamp > now + timedelta(seconds=2):
+            raise Blind("snapshot last-generated-id is in the future")
+        self.last_snapshot_id = snapshot_id
+        self.snapshot_stamps.append(stamp)
+        cutoff = now - timedelta(minutes=5)
+        while len(self.snapshot_stamps) > 1 and self.snapshot_stamps[1] <= cutoff:
+            self.snapshot_stamps.pop(0)
+
+    def snapshot_intervals(self, now: datetime) -> list[float]:
+        stamps = self.snapshot_stamps
         cutoff = now - timedelta(minutes=5)
         if not stamps or (now - stamps[-1]).total_seconds() > max(SNAPSHOT_BOUNDS):
             raise Blind("latest snapshot batch is too old or unavailable")
@@ -312,6 +343,33 @@ class LiveSignals:
             for earlier, later in zip(stamps, stamps[1:])
             if cutoff < later <= now
         ]
+
+
+class RedisSafety:
+    def __init__(self, redis: Redis):
+        self.redis = redis
+        self.initial_evicted_keys: int | None = None
+
+    def sample(self) -> tuple[str | None, dict[str, int]]:
+        stats = self.redis.info("stats")
+        memory = self.redis.info("memory")
+        try:
+            evicted = int(stats["evicted_keys"])
+            used = int(memory["used_memory"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Blind("Redis memory or eviction evidence unreadable") from exc
+        if evicted < 0 or used < 0:
+            raise Blind("Redis memory or eviction evidence invalid")
+        if self.initial_evicted_keys is None:
+            self.initial_evicted_keys = evicted
+        if evicted < self.initial_evicted_keys:
+            raise Blind("Redis eviction counter moved backwards")
+        detail = {"evicted_keys": evicted, "used_memory_bytes": used}
+        if evicted > self.initial_evicted_keys:
+            return f"redis_evicted_keys={evicted}>{self.initial_evicted_keys}", detail
+        if used > REDIS_USED_MEMORY_STOP_BYTES:
+            return f"redis_used_memory_bytes={used}>{REDIS_USED_MEMORY_STOP_BYTES}", detail
+        return None, detail
 
     def minute_values(self, now: datetime) -> tuple[dict[str, list[float]], int]:
         cutoff = now - timedelta(minutes=5)
@@ -532,9 +590,11 @@ def run_guard(treatment_date: date, output_dir: Path) -> int:
     sampler_output = output_dir / "option-a-1008.jsonl"
     start = datetime.combine(treatment_date, clock_time(7), tzinfo=ET).astimezone(UTC)
     end = datetime.combine(treatment_date, clock_time(9, 40), tzinfo=ET).astimezone(UTC)
+    snapshot_warmup_start = start - timedelta(minutes=5, seconds=30)
     if datetime.now(UTC) >= start:
         raise Blind("guard started at or after treatment start")
     signals = LiveSignals(redis, settings.redis_stream_prefix)
+    redis_safety = RedisSafety(redis)
     rules = SlowdownRules()
     launched_at = datetime.now(UTC)
     sampler = subprocess.Popen(
@@ -583,6 +643,11 @@ def run_guard(treatment_date: date, output_dir: Path) -> int:
             )
             if sampler_result is not None:
                 return sampler_result
+            memory_trigger, redis_detail = redis_safety.sample()
+            if memory_trigger:
+                return stop_paper(memory_trigger, redis, settings, audit)
+            if now >= snapshot_warmup_start:
+                signals.sample_snapshot_id(now)
             if now >= start:
                 if last_load_at and (now - last_load_at).total_seconds() > 2.5:
                     raise Blind(f"1Hz load sample gap after {last_load_at.isoformat()}")
@@ -607,7 +672,8 @@ def run_guard(treatment_date: date, output_dir: Path) -> int:
                         probe_lags=lags, oms_refusals=refusals,
                         snapshot_warmup_complete=now >= start + timedelta(minutes=5),
                     )
-                    detail.update({"load1": os.getloadavg()[0], "heartbeat_age_s": age})
+                    detail.update({"load1": os.getloadavg()[0], "heartbeat_age_s": age,
+                                   "redis": redis_detail})
                     if warning_load:
                         detail["cpu_contributors"] = _cpu_contributors()
                         warning_load = False

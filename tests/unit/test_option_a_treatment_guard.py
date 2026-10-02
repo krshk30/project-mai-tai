@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,7 @@ from ops.health.option_a_treatment_guard import (
     Blind,
     LiveSignals,
     LogTail,
+    RedisSafety,
     SamplerEvidence,
     SlowdownRules,
     _release_confirmed,
@@ -92,6 +94,108 @@ def test_latest_25_heartbeats_without_gateway_are_blind():
     signals.prefix = "mai_tai"
     with pytest.raises(Blind, match="no gateway heartbeat in latest 25 events"):
         signals.heartbeat(NOW)
+
+
+def test_snapshot_cadence_uses_only_bounded_stream_id_replies():
+    stamps = [NOW - timedelta(seconds=105 - 5 * index) for index in range(22)]
+
+    class IdOnlyRedis:
+        def __init__(self):
+            self.ids = iter(f"{int(stamp.timestamp() * 1000)}-0" for stamp in stamps)
+            self.calls = 0
+
+        def eval(self, script, keys, key):
+            assert "XINFO" in script and "last-generated-id" in script
+            assert keys == 1 and key == "mai_tai:snapshot-batches"
+            self.calls += 1
+            return next(self.ids)
+
+        def xrevrange(self, *_args, **_kwargs):
+            pytest.fail("snapshot cadence must not read batch payloads")
+
+    redis = IdOnlyRedis()
+    signals = object.__new__(LiveSignals)
+    signals.redis = redis
+    signals.prefix = "mai_tai"
+    signals.last_snapshot_id = None
+    signals.snapshot_stamps = []
+    for stamp in stamps:
+        signals.sample_snapshot_id(stamp)
+
+    assert redis.calls == 22
+    assert signals.snapshot_intervals(NOW) == [5.0] * 21
+    assert "redis_safety.sample()" in inspect.getsource(run_guard)
+    assert "stop_paper(memory_trigger" in inspect.getsource(run_guard)
+    assert "signals.sample_snapshot_id(now)" in inspect.getsource(run_guard)
+
+
+@pytest.mark.parametrize("reply", ["9" * 65 + "-0", "not-an-id", {"data": "large payload"}])
+def test_snapshot_id_invalid_or_oversized_reply_is_blind(reply):
+    class BadRedis:
+        def eval(self, *_args):
+            return reply
+
+    signals = object.__new__(LiveSignals)
+    signals.redis = BadRedis()
+    signals.prefix = "mai_tai"
+    signals.last_snapshot_id = None
+    signals.snapshot_stamps = []
+    with pytest.raises(Blind, match="invalid|oversized|malformed"):
+        signals.sample_snapshot_id(NOW)
+
+
+def test_snapshot_id_stale_or_backwards_is_blind():
+    class IdRedis:
+        def __init__(self, ids):
+            self.ids = iter(ids)
+
+        def eval(self, *_args):
+            return next(self.ids)
+
+    old = int((NOW - timedelta(seconds=20)).timestamp() * 1000)
+    signals = object.__new__(LiveSignals)
+    signals.redis = IdRedis([f"{old}-0", f"{old}-0", f"{old - 1000}-0"])
+    signals.prefix = "mai_tai"
+    signals.last_snapshot_id = None
+    signals.snapshot_stamps = []
+    signals.sample_snapshot_id(NOW)
+    signals.sample_snapshot_id(NOW)
+    assert len(signals.snapshot_stamps) == 1
+    with pytest.raises(Blind, match="too old"):
+        signals.snapshot_intervals(NOW)
+    with pytest.raises(Blind, match="backwards"):
+        signals.sample_snapshot_id(NOW)
+
+
+def test_redis_safety_stops_on_new_eviction_or_memory_pressure():
+    class InfoRedis:
+        evicted = 23
+        used = 1_100_000_000
+
+        def info(self, section):
+            return ({"evicted_keys": self.evicted} if section == "stats"
+                    else {"used_memory": self.used})
+
+    redis = InfoRedis()
+    safety = RedisSafety(redis)
+    assert safety.sample() == (None, {"evicted_keys": 23, "used_memory_bytes": 1_100_000_000})
+    redis.used = 1_600_000_001
+    assert safety.sample()[0] == "redis_used_memory_bytes=1600000001>1600000000"
+    redis.used = 1_100_000_000
+    redis.evicted = 24
+    assert safety.sample()[0] == "redis_evicted_keys=24>23"
+    redis.evicted = 22
+    with pytest.raises(Blind, match="moved backwards"):
+        safety.sample()
+
+
+def test_redis_safety_unreadable_info_is_blind():
+    class MissingInfo:
+        def info(self, _section):
+            return {}
+
+    with pytest.raises(Blind, match="evidence unreadable"):
+        RedisSafety(MissingInfo()).sample()
 
 
 def test_snapshot_rule_uses_matching_hour_and_five_distinct_minutes():
@@ -628,11 +732,17 @@ def _run_one_guard_tick(monkeypatch, tmp_path: Path, *, late: bool) -> tuple[int
             return 0
 
     class GatewayRedis:
+        def info(self, section):
+            return {"evicted_keys": 0} if section == "stats" else {"used_memory": 100}
+
         def close(self):
             pass
 
     class Signals:
         def __init__(self, *_args):
+            pass
+
+        def sample_snapshot_id(self, *_args):
             pass
 
         def read_logs(self, *_args):
