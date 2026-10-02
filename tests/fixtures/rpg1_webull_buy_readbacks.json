@@ -1,0 +1,96 @@
+{
+  "partial_event_counts_since_sep08": [],
+  "records": [
+    {
+      "body": {
+        "account_id": "REDACTED",
+        "client_order_id": "schwab_1m_v2-AIXI-open-a33b81f78e17",
+        "combo_ticker_type": "STOCK",
+        "combo_type": "NORMAL",
+        "extended_hours_trading": false,
+        "items": [
+          {
+            "category": "US_STOCK",
+            "commission": "0.000",
+            "currency": "USD",
+            "entrust_type": "QTY",
+            "filled_qty": "0",
+            "instrument_id": "950985170",
+            "limit_price": "1.85",
+            "order_status": "CANCELLED",
+            "order_type": "STOP_LOSS_LIMIT",
+            "place_time": "2026-10-02 19:37:02.586+0000",
+            "qty": "1",
+            "side": "BUY",
+            "stop_price": "1.84",
+            "symbol": "AIXI",
+            "transaction_fee": "0"
+          }
+        ],
+        "order_id": "76JG9I8ISRKL0RNT0C1BN2HFM9",
+        "order_type": "STP LMT",
+        "tif": "DAY"
+      },
+      "db_order": {
+        "broker_order_id": "76JG9I8ISRKL0RNT0C1BN2HFM9",
+        "client_order_id": "schwab_1m_v2-AIXI-open-a33b81f78e17",
+        "quantity": "1.00000000",
+        "status": "cancelled",
+        "submitted_at": "2026-10-02 19:37:02.629370+00:00",
+        "symbol": "AIXI",
+        "updated_at": "2026-10-02 19:41:05.601643+00:00"
+      },
+      "http_status": 200,
+      "read_completed": "2026-10-02 21:03:27.758419+00:00",
+      "read_started": "2026-10-02 21:03:27.609900+00:00",
+      "read_wall_ms": 148.51375855505466
+    },
+    {
+      "body": {
+        "account_id": "REDACTED",
+        "client_order_id": "schwab_1m_v2-AMOD-open-8fa64e9265b2",
+        "combo_ticker_type": "STOCK",
+        "combo_type": "NORMAL",
+        "extended_hours_trading": false,
+        "items": [
+          {
+            "category": "US_STOCK",
+            "commission": "0.000",
+            "currency": "USD",
+            "entrust_type": "QTY",
+            "filled_price": "3.41",
+            "filled_qty": "1",
+            "instrument_id": "950189523",
+            "last_filled_time": "2026-10-02 19:43:44.930+0000",
+            "limit_price": "3.43",
+            "order_status": "FILLED",
+            "order_type": "STOP_LOSS_LIMIT",
+            "place_time": "2026-10-02 19:26:03.546+0000",
+            "qty": "1",
+            "side": "BUY",
+            "stop_price": "3.41",
+            "symbol": "AMOD",
+            "transaction_fee": "0"
+          }
+        ],
+        "order_id": "LNI25QOKNF28ECJSSO8K9GONFA",
+        "order_type": "STP LMT",
+        "tif": "DAY"
+      },
+      "db_order": {
+        "broker_order_id": "LNI25QOKNF28ECJSSO8K9GONFA",
+        "client_order_id": "schwab_1m_v2-AMOD-open-8fa64e9265b2",
+        "quantity": "1.00000000",
+        "status": "filled",
+        "submitted_at": "2026-10-02 19:26:03.586591+00:00",
+        "symbol": "AMOD",
+        "updated_at": "2026-10-02 19:43:51.774072+00:00"
+      },
+      "http_status": 200,
+      "read_completed": "2026-10-02 21:03:29.984399+00:00",
+      "read_started": "2026-10-02 21:03:29.859334+00:00",
+      "read_wall_ms": 125.06445497274399
+    }
+  ],
+  "source": "historical exact-client-id Webull order-detail GET"
+}
