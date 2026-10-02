@@ -1,0 +1,401 @@
+{
+  "cohorts": {
+    "holdout": {
+      "raw_rows": 544,
+      "exclusions": {
+        "ok": 313,
+        "schwab_twin": 221,
+        "ambiguous_buy": 6,
+        "no_buy": 4
+      },
+      "raw_ten_bars": 313,
+      "cross_session": 1,
+      "cross_session_timestamp_eligible": 0,
+      "raw_sources": {
+        "live": 3012,
+        "rest": 118
+      },
+      "min_entry": "2026-08-03 09:21:09.314000-04:00",
+      "max_entry": "2026-10-02 11:05:53.240000-04:00",
+      "pre_0710": 0,
+      "created_late": 28,
+      "updated_late": 28,
+      "managed_price_differs_from_fill_vwap": 2,
+      "max_match_seconds": 74.369435,
+      "skip_count": 201,
+      "eligible_count": 285,
+      "skipped_winners": 103,
+      "all_winners": 157,
+      "actual_complete_n": 249,
+      "actual_missing_n": 36,
+      "actual_dollars_all": -6.2016,
+      "actual_dollars_skipped": -7.042199999999999,
+      "actual_dollars_retained": 0.8405999999999992,
+      "matched_outcome_and_actual": {
+        "calm": {
+          "entries": 72,
+          "wins": 47,
+          "win_rate": 0.6527777777777778,
+          "win_se": 0.05610740575713344,
+          "uniform": {
+            "n": 72,
+            "mean": 0.50267094017094,
+            "se": 0.7320026142798349,
+            "cluster_se": 0.9747131962560881
+          },
+          "actual_return": {
+            "n": 72,
+            "mean": 0.038343813833281386,
+            "se": 0.38733142298050616,
+            "cluster_se": 0.4189874862344255
+          },
+          "actual_dollars": {
+            "n": 72,
+            "mean": 0.01167499999999999,
+            "se": 0.015119053332460893,
+            "cluster_se": 0.016376446855827387
+          },
+          "actual_matched_uniform_return": {
+            "n": 72,
+            "mean": 0.038343813833281386,
+            "se": 0.38733142298050616,
+            "cluster_se": 0.4189874862344255
+          }
+        },
+        "other": {
+          "entries": 176,
+          "wins": 90,
+          "win_rate": 0.5113636363636364,
+          "win_se": 0.037679183106780464,
+          "uniform": {
+            "n": 176,
+            "mean": -1.3522727272727273,
+            "se": 0.4912268992919234,
+            "cluster_se": 0.620445991447564
+          },
+          "actual_return": {
+            "n": 176,
+            "mean": -0.774658922073959,
+            "se": 0.3386010555935881,
+            "cluster_se": 0.37734764414340166
+          },
+          "actual_dollars": {
+            "n": 176,
+            "mean": -0.040360795454545455,
+            "se": 0.019450478676953382,
+            "cluster_se": 0.01900150331594618
+          },
+          "actual_matched_uniform_return": {
+            "n": 176,
+            "mean": -0.774658922073959,
+            "se": 0.3386010555935881,
+            "cluster_se": 0.37734764414340166
+          }
+        },
+        "gap": 1.8549436674436675,
+        "gap_se": 0.8815507324598343
+      },
+      "placement_comparable_table": {
+        "calm": {
+          "entries": 81,
+          "wins": 49,
+          "win_rate": 0.6049382716049383,
+          "win_se": 0.054318216387443975,
+          "uniform": {
+            "n": 81,
+            "mean": -0.12108262108262116,
+            "se": 0.70864994377947,
+            "cluster_se": 0.8690709052154578
+          },
+          "actual_return": {
+            "n": 68,
+            "mean": -0.02636666519999422,
+            "se": 0.40148882084864995,
+            "cluster_se": 0.4829003761453206
+          },
+          "actual_dollars": {
+            "n": 68,
+            "mean": 0.012576470588235288,
+            "se": 0.016087605331203538,
+            "cluster_se": 0.018488448504519285
+          },
+          "actual_matched_uniform_return": {
+            "n": 68,
+            "mean": -0.02636666519999422,
+            "se": 0.40148882084864995,
+            "cluster_se": 0.4829003761453206
+          }
+        },
+        "other": {
+          "entries": 203,
+          "wins": 107,
+          "win_rate": 0.5297029702970297,
+          "win_se": 0.03511774632163293,
+          "uniform": {
+            "n": 202,
+            "mean": -1.113861386138614,
+            "se": 0.45766494169875566,
+            "cluster_se": 0.5457365313381746
+          },
+          "actual_return": {
+            "n": 180,
+            "mean": -0.7254760513060107,
+            "se": 0.33336276592457725,
+            "cluster_se": 0.3715221821445453
+          },
+          "actual_dollars": {
+            "n": 180,
+            "mean": -0.039509999999999997,
+            "se": 0.01901287164217801,
+            "cluster_se": 0.018443685247114195
+          },
+          "actual_matched_uniform_return": {
+            "n": 179,
+            "mean": -0.7466518951680555,
+            "se": 0.33455334236079454,
+            "cluster_se": 0.37275008338183396
+          }
+        },
+        "gap": 0.9927787650559928,
+        "gap_se": 0.8435887278044742
+      },
+      "all_uniform": {
+        "n": 284,
+        "mean": -0.8091820151679306,
+        "se": 0.38396848494293534,
+        "cluster_se": 0.49693121544434243
+      },
+      "feature_clock_changes": {
+        "calm_at_fill__calm_at_placement": 78,
+        "other_at_fill__other_at_placement": 197,
+        "other_at_fill__calm_at_placement": 3,
+        "calm_at_fill__other_at_placement": 6
+      },
+      "symbols": 84,
+      "ambiguous_entries": [
+        {
+          "id": "c5f9cf93-5701-47bf-bac9-d294adfc1e53",
+          "symbol": "RMCF",
+          "at": "2026-08-12 13:54:10.181000+00:00",
+          "outcome": "entry_second_ambiguous"
+        }
+      ]
+    },
+    "replication": {
+      "raw_rows": 419,
+      "exclusions": {
+        "ok": 417,
+        "ambiguous_buy": 2
+      },
+      "raw_ten_bars": 417,
+      "cross_session": 1,
+      "cross_session_timestamp_eligible": 0,
+      "raw_sources": {
+        "live": 4108,
+        "rest": 62
+      },
+      "min_entry": "2026-08-03 11:36:31-04:00",
+      "max_entry": "2026-10-02 12:36:19-04:00",
+      "pre_0710": 0,
+      "created_late": 22,
+      "updated_late": 22,
+      "managed_price_differs_from_fill_vwap": 0,
+      "max_match_seconds": 29.909533,
+      "skip_count": 247,
+      "eligible_count": 395,
+      "skipped_winners": 126,
+      "all_winners": 225,
+      "actual_complete_n": 350,
+      "actual_missing_n": 45,
+      "actual_dollars_all": -7.526137999999992,
+      "actual_dollars_skipped": -14.148337999999995,
+      "actual_dollars_retained": 6.622200000000005,
+      "matched_outcome_and_actual": {
+        "calm": {
+          "entries": 130,
+          "wins": 85,
+          "win_rate": 0.6538461538461539,
+          "win_se": 0.04172541753920648,
+          "uniform": {
+            "n": 130,
+            "mean": 0.8141448816930708,
+            "se": 0.5183445499819255,
+            "cluster_se": 0.6212812324264035
+          },
+          "actual_return": {
+            "n": 130,
+            "mean": 0.3854051822751213,
+            "se": 0.33437419609505736,
+            "cluster_se": 0.35458602533177375
+          },
+          "actual_dollars": {
+            "n": 130,
+            "mean": 0.050940000000000034,
+            "se": 0.030738716971426976,
+            "cluster_se": 0.03517218779957203
+          },
+          "actual_matched_uniform_return": {
+            "n": 130,
+            "mean": 0.3854051822751213,
+            "se": 0.33437419609505736,
+            "cluster_se": 0.35458602533177375
+          }
+        },
+        "other": {
+          "entries": 220,
+          "wins": 106,
+          "win_rate": 0.4818181818181818,
+          "win_se": 0.03368769815172644,
+          "uniform": {
+            "n": 220,
+            "mean": -1.6431581513857938,
+            "se": 0.43645592141188305,
+            "cluster_se": 0.43080959585889034
+          },
+          "actual_return": {
+            "n": 220,
+            "mean": -0.8281503391494148,
+            "se": 0.27831314253589495,
+            "cluster_se": 0.28545610082665474
+          },
+          "actual_dollars": {
+            "n": 220,
+            "mean": -0.06431062727272725,
+            "se": 0.03256279116232808,
+            "cluster_se": 0.03252665384785173
+          },
+          "actual_matched_uniform_return": {
+            "n": 220,
+            "mean": -0.8281503391494148,
+            "se": 0.27831314253589495,
+            "cluster_se": 0.28545610082665474
+          }
+        },
+        "gap": 2.4573030330788646,
+        "gap_se": 0.6776244120687069
+      },
+      "placement_comparable_table": {
+        "calm": {
+          "entries": 143,
+          "wins": 93,
+          "win_rate": 0.6503496503496503,
+          "win_se": 0.0398769946682845,
+          "uniform": {
+            "n": 143,
+            "mean": 0.8325473365315504,
+            "se": 0.4893987710543148,
+            "cluster_se": 0.6083454981738576
+          },
+          "actual_return": {
+            "n": 124,
+            "mean": 0.1449570100896321,
+            "se": 0.3456628084693607,
+            "cluster_se": 0.3379941543823145
+          },
+          "actual_dollars": {
+            "n": 124,
+            "mean": 0.024666129032258087,
+            "se": 0.031106844185206702,
+            "cluster_se": 0.031245796478919726
+          },
+          "actual_matched_uniform_return": {
+            "n": 124,
+            "mean": 0.1449570100896321,
+            "se": 0.3456628084693607,
+            "cluster_se": 0.3379941543823145
+          }
+        },
+        "other": {
+          "entries": 250,
+          "wins": 132,
+          "win_rate": 0.528,
+          "win_se": 0.031573153152639026,
+          "uniform": {
+            "n": 250,
+            "mean": -1.0539791732194985,
+            "se": 0.40874506729473215,
+            "cluster_se": 0.46935346308888465
+          },
+          "actual_return": {
+            "n": 224,
+            "mean": -0.658124495722639,
+            "se": 0.2767674410326244,
+            "cluster_se": 0.26921619909207173
+          },
+          "actual_dollars": {
+            "n": 224,
+            "mean": -0.04395061607142854,
+            "se": 0.03233723420688116,
+            "cluster_se": 0.029972046928063913
+          },
+          "actual_matched_uniform_return": {
+            "n": 224,
+            "mean": -0.658124495722639,
+            "se": 0.2767674410326244,
+            "cluster_se": 0.26921619909207173
+          }
+        },
+        "gap": 1.8865265097510489,
+        "gap_se": 0.6376391512032873
+      },
+      "all_uniform": {
+        "n": 395,
+        "mean": -0.40617854223003275,
+        "se": 0.31765145081846397,
+        "cluster_se": 0.38314407443320925
+      },
+      "feature_clock_changes": {
+        "other_at_fill__other_at_placement": 237,
+        "calm_at_fill__calm_at_placement": 134,
+        "calm_at_fill__other_at_placement": 13,
+        "other_at_fill__calm_at_placement": 9
+      },
+      "symbols": 81,
+      "ambiguous_entries": []
+    }
+  },
+  "paths": {
+    "symbol_days": 187,
+    "seconds": 2077288,
+    "status": {
+      "True": 187,
+      "HTTP_200": 187
+    },
+    "reply_bytes": 178919904,
+    "largest_reply_bytes": 2597596,
+    "first_request_asof": "2026-10-02 18:13:46.926661+00:00",
+    "last_request_asof": "2026-10-02 18:17:52.877764+00:00",
+    "earliest_day": "2026-08-03",
+    "latest_day": "2026-10-02"
+  },
+  "hashes": {
+    "db.ndjson": {
+      "bytes": 7084463,
+      "sha256": "f5a9801c3d2f8928beaf629fcd9569063659c1fbd745edbde19e1192ae9e9ad9"
+    },
+    "db-exact.ndjson": {
+      "bytes": 7091107,
+      "sha256": "cafdd49101760da0e2f237de4a3b5cb6c1738a2a899f7a63066a9925ef74e918"
+    },
+    "price_jobs.json": {
+      "bytes": 15417,
+      "sha256": "fad9da3dfa2cf4d3d6fddd328189fdb057145d6a640d982193dd019433a1f0b5"
+    },
+    "price_jobs_exact.json": {
+      "bytes": 15417,
+      "sha256": "fad9da3dfa2cf4d3d6fddd328189fdb057145d6a640d982193dd019433a1f0b5"
+    },
+    "paths.ndjson": {
+      "bytes": 212185017,
+      "sha256": "cf38dbb19ee78d3b967c8808deac30422098a9cc72d0e7a4dd4bc54a9df93498"
+    },
+    "result.json": {
+      "bytes": 29744,
+      "sha256": "990a65eda22e9b6ab16055edf5602d1d61a7cd65b923348dfc4c11b9e4fc169d"
+    },
+    "result.json.trades.json": {
+      "bytes": 8442829,
+      "sha256": "1b94594acf8a3fd65f3e22bd42aff2e8283b25249413017985442afdbfe003ea"
+    }
+  }
+}
