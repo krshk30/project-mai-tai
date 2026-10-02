@@ -14,6 +14,105 @@ Operator requirement: when OMS has a price from the last ten seconds, send
 the Webull waiting order; otherwise hold and send on the next eligible price.
 Never send without a price and never silently drop the order.
 
+## Round 1 Review Response
+
+Reviewed starting head: `8bed4ea193d500cc5b8bcf6b4d09543e361b3e30`.
+Production source commit: `fc86fff550ebb74756719bd3e5b9045da5b735f4`.
+No merge, deployment, runtime setting change or production write is authorized
+by these results. Tonight's install and the main freeze are unchanged.
+
+| Item | Change and proof |
+| --- | --- |
+| N3 stale serial token | Replays the recorded CYCU client no-wire expiry, queues, re-holds/restores, and queues again with the SAME durable hold, segment and attempt but a NEW token. Delivering the old copy while phase is again `queued` submits nothing. Current copy submits exactly once. Both live-process and OMS-restart cases pass; removing only `hold.token != token` makes both RED. |
+| N5 filled sibling | Projects the recorded CYCU Schwab fill into the ledger WITHOUT the in-memory report callback. Tests fill-row evidence, filled status and partially-filled status, each before/after OMS restart. All six stop Webull submission; disabling only the filled-slot branch makes all six RED. Status-only/partial recovery states are controlled variants of the recorded full fill, not claimed historical partial fills. |
+| F1 window | NFQ admission now calls the same `entry_gate.within_entry_window`/`resolve_entry_window` settings as v2, intersected with the existing OMS NORMAL-session check. Wire deadline is the configured end capped at RTH close. Tests cover custom 10:05 start, 14:30 cutoff, 15:50 allowed with a 16:00 cutoff, 09:29/09:30 and 16:00 session edges. The exchange RTH boundary agrees with v2's `_resting_session_is_eh`; it is not a configurable trading cutoff. Seven new assertions were RED on the old hardcoded implementation. |
+| F2 measurement | Ordinary v2 cancel/replacement, segment/fill retirement and generic broker/risk terminals use `decision=retired` and `webull_mirror_nfq_retired:`. Explicit NFQ price-wait give-ups retain `decision=gave_up` and `webull_mirror_nfq_gave_up:`. The first authoritative reason still wins; dedup and exact-generation Webull release accept both namespaces. Actual Schwab resting state remains untouched. Tests pin both paths, ordinary cancels/expiry, and current-versus-stale generations. |
+| F3 query cost | SQL statement-count tests measure **zero** NFQ DB statements with no holds, also zero for a different symbol. A waiting same-symbol hold with no matching order costs **two SELECTs per tick**; one unfilled Schwab sibling costs **four**. No broker reads occur. Details and limits below. |
+| Composition | Four recorded-price cases drive actual v2 mirror open/cancel/replacement emissions, NFQ holds, stale serial copies and the explicit simulator. Exactly one replacement reaches submission and produces one fill. This pins the shared reprice/hold seam, not unbuilt immediate broker-replace behavior. |
+
+The duplicate guards did not need loosening or replacement: their existing
+conditions now have isolated assertion tests rather than tests masked by an
+earlier phase check or the in-memory fill callback. The shared premarket
+reactive-price gate remains 2,000 ms and retains its mutation test.
+
+### Tick-Path Cost
+
+These are synchronous local DB reads on the tick path, not claimed free or
+constant work. For each matching held symbol, `_nfq_retirement_reason` reads
+the latest segment row and all buy orders for its slot (two SELECTs), then
+one fill-existence SELECT per matching-segment order visited and up to one
+account SELECT per unfilled order. Thus the read-only waiting path is at
+most **2 + 2N SELECTs per hold**, with early exit on fill/live-buy evidence;
+the account identity map can reduce the count. Matching historical orders
+are not LIMIT-bounded. Transition ticks additionally persist the hold and
+read/append outcomes; the quoted two/four counts are not transition totals.
+Multiple matching holds sum this work. No hold means immediate return and
+**zero** NFQ DB statements, pinned by test. Live PostgreSQL latency and
+tick-load cost remain UNMEASURED. No background or production benchmark was
+run for this change.
+
+### Writer Ownership
+
+The RPG1 commits are Codex work, not reviewer edits. This revision's tracked
+writer is confined to `codex/nfq1-mirror-fresh-price`; the composition sidecar
+owns only its new test file and the validation sidecar changes no tracked
+files. Neither writes `codex/rpg1-resting-reprice-gap`. RPG1's active branch
+is preserved; combined-source testing uses an immutable snapshot, not a
+second writer or a merge onto that branch. Prior wording that implicated
+the reviewer was incorrect.
+
+### Combined-Source Verification
+
+An isolated overlay applied the immutable RPG1 source delta
+`b8b0dafb..29410944b43488798c3f6fcd820e1fc459718d04` onto this NFQ source.
+The patch applied cleanly; all 86 loaded project modules resolved inside
+the overlay. **160 tests passed**, including the four new composition cases.
+The overlay, exact applied patch, import-path verification and run log are
+under `ops/local/nfq-review-round1/composition-overlay/`.
+
+This is the existing cancel/reprice/held-generation composition. RPG1's
+immediate broker-replace handoff is still unbuilt at that head; this result
+does not claim its latency, partial-fill recovery, or first-quote callback
+behavior is proved. No RPG1 application changes were added to this PR.
+
+### Final Local Validation
+
+Full `tests/unit`, no exclusions, skips or xfails:
+
+| Tree | Passed | Failed | Added / removed failed names |
+| --- | ---: | ---: | --- |
+| Real-Git b8 baseline from the own RPG1 lane, raw JUnit independently parsed | 4,936 | 56 | Baseline |
+| Revised NFQ real Git worktree, final tested source/tests | 5,049 | 56 | **0 / 0** |
+
+The exact sorted failed-name sets are byte-identical. The 56 are the same
+44 acceptance-installer tests, nine checkout-sync tests, two other shell
+installer tests and one Momentum dead-consumer timeout as the baseline.
+This is not a green-full-suite claim. The baseline recorded 311 warnings;
+NFQ recorded 312, including the disclosed unawaited protection coroutine.
+
+Focused reviewer selection: **511 passed**. NFQ-specific file: **109 passed**;
+composition: **4 passed**. Combined-source overlay selection: **160 passed**.
+All six scripted card mutations are killed: N3 gives **2** assertion failures,
+N5 gives **6**, original age/hold/live-buy/premarket controls give **4/1/2/3**.
+Additional isolated controls: ignoring the configured v2 window gives **2**
+assertion failures; misclassifying normal cancellation/replacement as NFQ
+give-up gives **2**. Ruff and whitespace checks pass.
+
+Harness diagnostics are retained, not silently subtracted. Independent exact-b8
+and old-NFQ archives each had 58 identical failed names: an absent archive-local
+Git index and a 1,047-character cron line caused two additional harness failures.
+The initial revision archive had 59: my new assertion put the production call
+on the expected-value side, tripping the project's meta-test. The final test
+puts the pinned literal-table expectation on the RHS; the rule/allowlist was
+not weakened. A real-worktree run interrupted for that correction is excluded
+from completion counts and retained. The subsequent complete run is the
+5,049/56 result above. No production source changed after `fc86fff5`.
+
+Raw logs, JUnit, input hashes and exact name comparisons:
+`ops/local/nfq-review-round1/`. Baseline provenance and all 56 names are in
+`nfq1-round1-validation-2026-10-02.json`. GitHub `validate` must separately be
+green on the final pushed head; the builder does not supply an independent pin.
+
 ## Independent Step 0
 
 **Issue: AGREE.** Independently collected read-only `db.ndjson`,
@@ -89,7 +188,7 @@ Confirmed live orders/fills remain under the existing ledger and management
 paths. Uncertain dispatch deliberately favors an addressable hold over a new
 buy until existing broker reconciliation/operator evidence resolves it.
 
-## Validation
+## Initial Validation at 8bed4ea
 
 All application runs use the approved orb-date-test-base virtual environment
 interpreter, with `PYTHONPATH` explicitly set to this branch's `src`. The b8
@@ -144,8 +243,10 @@ modified for the baseline comparison.
   latency or PostgreSQL crash-durability measurements.
 - Historical missing-stamp cache ages and the first live week's sent/held/give-up
   age distribution remain unmeasured; the new logs provide future evidence.
-- Held-symbol checks perform bounded local DB work on tick/control paths; live
-  load, DB-failure duration and dispatch latency have not been measured.
+- Held-symbol checks perform synchronous local DB work on tick/control paths;
+  the exact query pattern and unbounded historical-order cardinality are
+  disclosed above. Live load, DB-failure duration and dispatch latency have
+  not been measured.
 - Uncertain broker acceptance must not be auto-retried. The durable client id
   allows existing reconciliation/cancellation to address it; recovery timing
   and actual broker read outcomes remain unexercised here.

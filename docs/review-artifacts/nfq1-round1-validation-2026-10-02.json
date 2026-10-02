@@ -1,0 +1,251 @@
+{
+  "reviewed_head": "8bed4ea193d500cc5b8bcf6b4d09543e361b3e30",
+  "production_source_commit": "fc86fff550ebb74756719bd3e5b9045da5b735f4",
+  "tested_worktree_note": "Production source at fc86fff5; final test correction puts literal-table expectation on RHS, and composition docstring states coverage. These tested bytes are committed with this artifact.",
+  "full_unit_baseline": {
+    "revision": "b8b0dafbdf583ca4af9eddc8dbf922cbf887a482",
+    "counts": {
+      "tests": 4992,
+      "failures": 56,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 4936
+    },
+    "failed_names": [
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_differing_reinstall_preserves_a_pre_versioned_copy[check.py-fanout_outcome_acceptance.py]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_differing_reinstall_preserves_a_pre_versioned_copy[cron.py-fanout_outcome_acceptance_cron.py]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance.py-check.py]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance_cron.py-cron.py]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_lossy_successful_awk_is_refused_before_root_crontab_is_written",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_post_write_confirmation_failure_restores_root_cron_and_prior_artifacts",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_runtime_failure_rolls_back_every_target_mutation[new-install]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_runtime_failure_rolls_back_every_target_mutation[reinstall]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_succeeds_with_one_managed_schedule",
+      "tests/unit/test_log_retention_policy.py::test_installer_shell_fault_controls",
+      "tests/unit/test_momentum_gateway_throughput.py::test_real_dead_consumer_cannot_block_the_paced_producer",
+      "tests/unit/test_sync_checkout_only.py::test_live_reference_vetoes_a_declared_file_before_checkout_moves[current-crontab]",
+      "tests/unit/test_sync_checkout_only.py::test_live_reference_vetoes_a_declared_file_before_checkout_moves[root-crontab]",
+      "tests/unit/test_sync_checkout_only.py::test_live_reference_vetoes_a_declared_file_before_checkout_moves[systemd]",
+      "tests/unit/test_sync_checkout_only.py::test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/fanout_identity_acceptance.py]",
+      "tests/unit/test_sync_checkout_only.py::test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/field_acceptance.py]",
+      "tests/unit/test_sync_checkout_only.py::test_sync_only_fast_forwards_safe_delta_without_mutating_services",
+      "tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_behavioral_python_change_before_checkout_moves",
+      "tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_success_if_any_process_identity_moves",
+      "tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves",
+      "tests/unit/test_unattended_upgrade_policy.py::test_installer_and_notifier_fault_controls"
+    ],
+    "artifacts": {
+      "xml": "/Users/velkris/.codex/study-evidence/rpg1-nfq1-20261002/first-quote-review-20261002/base-final.xml",
+      "log": "/Users/velkris/.codex/study-evidence/rpg1-nfq1-20261002/first-quote-review-20261002/base-final-tests.txt"
+    },
+    "artifact_sha256": {
+      "base-final.xml": "67ce8daa64a537f0c7965116c13f173f35bd8066f58621d33dd49faa22dd9355",
+      "base-final-tests.txt": "f3fe237a1c6e1146300611644af2a95c6b9cd100ab236d76e006f380286295ea"
+    },
+    "provenance": "Pre-existing own RPG1 lane's real-Git b8 run, independently parsed from its raw JUnit; this revision's sidecar also independently ran exact-b8 and old-NFQ archives."
+  },
+  "full_unit_revised": {
+    "revision": "fc86fff550ebb74756719bd3e5b9045da5b735f4",
+    "counts": {
+      "tests": 5105,
+      "failures": 56,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 5049
+    },
+    "pytest_summary": "56 failed, 5049 passed, 312 warnings in 201.84s (0:03:21)",
+    "exit_code": 1,
+    "artifacts": {
+      "log": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/real-worktree.log",
+      "xml": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/real-worktree.xml",
+      "failed_names": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/real-worktree-failed-names.txt"
+    },
+    "archive_files_changed": [],
+    "worktree_provenance": {
+      "head_before": "fc86fff550ebb74756719bd3e5b9045da5b735f4",
+      "head_after": "fc86fff550ebb74756719bd3e5b9045da5b735f4",
+      "status_before": " M docs/review-artifacts/nfq1-review-card-2026-10-02.md\n M tests/unit/test_nfq1_mirror_fresh_price.py\n M tests/unit/test_rpg1_nfq1_composition.py\n",
+      "status_after": " M docs/review-artifacts/nfq1-review-card-2026-10-02.md\n M tests/unit/test_nfq1_mirror_fresh_price.py\n M tests/unit/test_rpg1_nfq1_composition.py\n",
+      "start_diff": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/real-worktree-start-diff.txt",
+      "note": "Real Git worktree; parent authorized documentation edits during run. Source/test changes, if any, are reported, not hidden."
+    },
+    "command": [
+      "/Users/velkris/.codex/worktrees/orb-date-test-base/project-mai-tai/.venv/bin/python",
+      "-m",
+      "pytest",
+      "tests/unit",
+      "-q",
+      "--tb=short",
+      "--junitxml=/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/real-worktree.xml",
+      "-o",
+      "addopts=",
+      "-o",
+      "cache_dir=/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/real-worktree-pytest-cache"
+    ],
+    "interpreter": "/Users/velkris/.codex/worktrees/orb-date-test-base/project-mai-tai/.venv/bin/python",
+    "pythonpath": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/src",
+    "import_verified": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/src/project_mai_tai/oms/service.py",
+    "started_at_utc": "2026-10-02T22:13:28.413976+00:00",
+    "elapsed_seconds": 205.954
+  },
+  "failed_name_comparison": {
+    "same_failed_name_set": true,
+    "shared_failure_count": 56,
+    "candidate_only_failed_names": [],
+    "reference_only_failed_names": [],
+    "reference_error_names": [],
+    "candidate_error_names": []
+  },
+  "archive_runs": {
+    "base": {
+      "revision": "b8b0dafbdf583ca4af9eddc8dbf922cbf887a482",
+      "counts": {
+        "tests": 4992,
+        "failures": 58,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 4934
+      },
+      "pytest_summary": "58 failed, 4934 passed, 311 warnings in 210.30s (0:03:30)",
+      "exit_code": 1,
+      "artifacts": {
+        "log": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/base.log",
+        "xml": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/base.xml",
+        "failed_names": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/base-failed-names.txt"
+      },
+      "archive_files_changed": []
+    },
+    "old-head": {
+      "revision": "8bed4ea193d500cc5b8bcf6b4d09543e361b3e30",
+      "counts": {
+        "tests": 5077,
+        "failures": 58,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 5019
+      },
+      "pytest_summary": "58 failed, 5019 passed, 312 warnings in 211.99s (0:03:31)",
+      "exit_code": 1,
+      "artifacts": {
+        "log": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/old-head.log",
+        "xml": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/old-head.xml",
+        "failed_names": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/old-head-failed-names.txt"
+      },
+      "archive_files_changed": []
+    },
+    "new-head": {
+      "revision": "fc86fff550ebb74756719bd3e5b9045da5b735f4",
+      "counts": {
+        "tests": 5105,
+        "failures": 59,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 5046
+      },
+      "pytest_summary": "59 failed, 5046 passed, 312 warnings in 204.25s (0:03:24)",
+      "exit_code": 1,
+      "artifacts": {
+        "log": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/new-head.log",
+        "xml": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/new-head.xml",
+        "failed_names": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/new-head-failed-names.txt"
+      },
+      "archive_files_changed": []
+    }
+  },
+  "archive_differences": {
+    "tests/unit/test_eod_cron_adoption.py::test_current_wrapper_and_installer_remain_executable": "Archive run has no archive-local Git index entry: staged is empty instead of starting with 100755.",
+    "tests/unit/test_low_priority_alerts.py::test_digest_install_plan_guards_both_sources_and_dst_candidates": "Archive baseline generated cron line is 1047 characters at the longer archive path; test requires at most 1000."
+  },
+  "initial_revision_issue": "fc86fff5 archive added one test-assertion-orientation lint failure. Literal expected values were not changed; expectation moved to RHS before the final full run. Initial archive and interrupted attempt retained.",
+  "interrupted_attempt": {
+    "status": "INTERRUPTED; excluded from completed full-suite comparisons",
+    "reason": "Sidecar paused for parent-authorized corrective test assertion orientation change.",
+    "exit_code": 2,
+    "partial_counts": {
+      "tests": 1026,
+      "failures": 44,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 982
+    },
+    "artifacts_directory": "/Users/velkris/.codex/worktrees/row38-independent-assessment/project-mai-tai/ops/local/nfq-review-round1/interrupted-real-worktree",
+    "note": "Files retained after relocation. Original result artifact paths refer to their previous locations."
+  },
+  "focused": {
+    "reviewer_selection_passed": 511,
+    "nfq_cases_passed": 109,
+    "composition_cases_passed": 4,
+    "combined_source_selection_passed": 160,
+    "rpg_overlay_commit": "29410944b43488798c3f6fcd820e1fc459718d04",
+    "coverage": "Existing cancel/reprice/hold-generation seam, not unbuilt immediate broker replace."
+  },
+  "mutations": {
+    "N3": {
+      "killed": true,
+      "assertion_failures": 2
+    },
+    "N5": {
+      "killed": true,
+      "assertion_failures": 6
+    },
+    "configured_window_ignored": {
+      "killed": true,
+      "assertion_failures": 2
+    },
+    "ordinary_retirement_miscounted": {
+      "killed": true,
+      "assertion_failures": 2
+    },
+    "original_card_mutations_killed": 4,
+    "log_paths": [
+      "ops/local/nfq-review-round1/mutations.log",
+      "ops/local/nfq-review-round1/f1-red.log",
+      "ops/local/nfq-review-round1/f2-red.log"
+    ]
+  },
+  "tick_select_count": {
+    "no_holds": 0,
+    "other_symbol": 0,
+    "waiting_hold_no_orders": 2,
+    "waiting_hold_one_unfilled_schwab_sibling": 4,
+    "waiting_path_upper_bound": "2 + 2N SELECTs per matching hold, N matching-segment slot buy orders visited; transition work additional; order query not LIMIT-bounded."
+  },
+  "ci": "Verify both validate runs on final pushed head; independent pin not requested from the builder.",
+  "production_changes": false,
+  "merged": false
+}
