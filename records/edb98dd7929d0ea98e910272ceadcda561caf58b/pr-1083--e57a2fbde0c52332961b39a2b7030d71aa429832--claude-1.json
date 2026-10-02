@@ -1,0 +1,9 @@
+{
+  "pr_number": 1083,
+  "range_base": "e57a2fbde0c52332961b39a2b7030d71aa429832",
+  "range_head": "edb98dd7929d0ea98e910272ceadcda561caf58b",
+  "reviewed_at": "2026-10-02T16:09:00Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after rebase onto main e57a2fbd (after #1082 merged). git range-diff ed3c84a8..8ddac119 vs e57a2fbd..edb98dd7 shows both commits equal (cd49ef1e = 401e454d, 8ddac119 = edb98dd7), so the review recorded for 8ddac119 carries: single-entry snapshot reads (XREVRANGE COUNT 1 bootstrap, XRANGE exclusive cursor COUNT 1, max 3 nonempty reads per tick), RedisSafety eviction and used_memory stops; my mutations red except the accepted warm-up-lead survivor; measured 23 ms typical / 36 ms max per nonempty read versus 175-430 ms for the rejected XINFO-in-Lua revision. 49 tests re-run at this head pass locally; both GitHub validate runs pass. Not exercised: a full guarded treatment window."
+}
