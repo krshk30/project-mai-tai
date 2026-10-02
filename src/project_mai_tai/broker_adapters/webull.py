@@ -35,6 +35,9 @@ from project_mai_tai.broker_adapters.protocols import (
     OrderRequest,
 )
 from project_mai_tai.settings import Settings
+from project_mai_tai.broker_adapters.atr_buy_readback import (
+    AtrBuyReadback, scoped_request, unknown, webull_buy_readback,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1056,6 +1059,36 @@ class WebullBrokerAdapter:
             if not last_instrument_id:
                 raise ValueError("Webull positions has_next without a page cursor")
         raise ValueError("Webull positions pagination exceeded the 20-page limit")
+
+    async def read_atr_resting_buy_after_cancel(self, request: OrderRequest) -> AtrBuyReadback:
+        """BUY-only readback; absence is UNKNOWN, never exit-pair release evidence."""
+        account = self.accounts_by_name.get(request.broker_account_name)
+        if account is None or not scoped_request(request):
+            return unknown("unconfigured_account_or_unbound_buy")
+        try:
+            status, body = await asyncio.to_thread(
+                self._atr_buy_order_detail, account, request.client_order_id
+            )
+        except Exception:
+            return unknown("order_detail_unreadable")
+        if status != 200:
+            return unknown(f"order_detail_http_{status}")
+        return webull_buy_readback(request, body)
+
+    def _atr_buy_order_detail(
+        self, account: WebullAccountConfig, client_order_id: str
+    ) -> tuple[int, object]:
+        # One fresh exact-order GET. The cached today-orders fallback cannot prove
+        # cancellation happened after this cancel request.
+        try:
+            from webull.trade.request.get_order_detail_request import OrderDetailRequest
+        except ImportError:  # pragma: no cover - SDK layout fallback
+            from webull.trade.request.v2.get_order_detail_request import OrderDetailRequest
+        detail = OrderDetailRequest()
+        detail.set_account_id(account.account_id)
+        detail.set_client_order_id(client_order_id)
+        response = self._get_client().get_response(detail)
+        return self._response_status(response), self._body(response)
 
     async def _cancel_order(
         self, account: WebullAccountConfig, request: OrderRequest
