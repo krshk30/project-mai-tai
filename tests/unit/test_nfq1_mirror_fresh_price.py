@@ -419,8 +419,8 @@ def test_nfq_window_and_wire_deadline_follow_v2_configuration(lane, monkeypatch,
     clock[0] = clock[0].replace(hour=at[0] + 4, minute=at[1])
     event = event_for()
     strategy = SchwabV2Strategy(settings)
-    assert allowed == (within_entry_window(clock[0], settings)
-                       and not strategy._resting_session_is_eh(clock[0]))
+    assert (within_entry_window(clock[0], settings)
+            and not strategy._resting_session_is_eh(clock[0])) is allowed
     assert service._nfq_window_open(event) is allowed
     service._stamp_webull_resting_mirror_market(event)
     actual = datetime.fromisoformat(event.payload.metadata["webull_mirror_entry_deadline_utc"])

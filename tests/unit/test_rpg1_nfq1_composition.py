@@ -5,12 +5,13 @@ Liquid SHORT bar state, the subsequent 1% trail decline, and delivery to the OMS
 cache are controlled counterfactual inputs, not historical strategy/OMS facts.
 Only SimulatedBrokerAdapter supplies execution reports; none are venue evidence.
 
-This exercises the shared v2 resting lifecycle seam on NFQ1. It does NOT cover
-RPG1 fa194cbe/4ed8dd58's pending-first-quote recovery or the bot's quote-callback
-drain. To cover that delta, apply those commits' strategy/bot changes over NFQ1
-in an isolated combined-source overlay, start with a stale first-entry quote,
-then drive the fresh quote through the bot callback before this hold/reprice
-sequence. Importing the whole RPG1 tree would omit NFQ1 and is not composition.
+This exercises the existing v2 cancel/reprice seam, including when run on an
+NFQ1 + RPG1 source overlay. It does NOT prove the unbuilt fast-replace handoff,
+RPG1's pending-first-quote recovery, or the bot's quote-callback drain. Those
+quote-wait changes at fa194cbe/4ed8dd58 are unchanged in RPG1 29410944. To cover
+that delta, start with a stale first-entry quote in the combined source, then
+drive a fresh quote through the bot callback before this hold/reprice sequence.
+Importing the whole RPG1 tree would omit NFQ1 and is not composition.
 """
 from __future__ import annotations
 
