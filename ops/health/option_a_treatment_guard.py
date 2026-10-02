@@ -52,15 +52,8 @@ SNAPSHOT_BOUNDS = (14.076, 14.168, 15.106)
 HEARTBEAT_AGE_BOUND = 30.819
 REDIS_USED_MEMORY_STOP_BYTES = 1_600_000_000
 MAX_SNAPSHOT_ID_REPLY_BYTES = 64
-SNAPSHOT_LAST_ID_SCRIPT = """
-local info = redis.call('XINFO', 'STREAM', KEYS[1])
-for index = 1, #info, 2 do
-    if info[index] == 'last-generated-id' then
-        return info[index + 1]
-    end
-end
-return redis.error_reply('snapshot stream has no last-generated-id')
-"""
+MAX_SNAPSHOT_ENTRY_BYTES = 20_000_000
+MAX_SNAPSHOT_READS_PER_TICK = 3
 
 
 class Blind(RuntimeError):
@@ -311,7 +304,43 @@ class LiveSignals:
 
     def sample_snapshot_id(self, now: datetime) -> None:
         key = stream_name(self.prefix, "snapshot-batches")
-        raw = self.redis.eval(SNAPSHOT_LAST_ID_SCRIPT, 1, key)
+        if self.last_snapshot_id is None:
+            entries = self.redis.xrevrange(key, max="+", min="-", count=1)
+            if not entries:
+                raise Blind("snapshot stream is empty or unavailable")
+            raw = self._snapshot_reply_id(entries)
+            del entries
+            self._record_snapshot_id(raw, now)
+            return
+        # One payload at a time. Three nonempty reads mean we cannot prove caught-up.
+        for _ in range(MAX_SNAPSHOT_READS_PER_TICK):
+            cursor = "-".join(map(str, self.last_snapshot_id))
+            entries = self.redis.xrange(key, min=f"({cursor}", max="+", count=1)
+            if not entries:
+                return
+            raw = self._snapshot_reply_id(entries)
+            del entries
+            self._record_snapshot_id(raw, now)
+        raise Blind(f"snapshot catch-up exceeded {MAX_SNAPSHOT_READS_PER_TICK} reads per tick")
+
+    @staticmethod
+    def _snapshot_reply_id(entries: list) -> str | bytes:
+        if len(entries) != 1:
+            raise Blind("snapshot reply exceeded COUNT 1")
+        raw, fields = entries[0]
+        if not isinstance(fields, dict):
+            raise Blind("snapshot fields are unreadable")
+        size = 0
+        for name, value in fields.items():
+            for part in (name, value):
+                if not isinstance(part, (str, bytes)):
+                    raise Blind("snapshot field is unreadable")
+                size += len(part.encode("utf-8") if isinstance(part, str) else part)
+        if size > MAX_SNAPSHOT_ENTRY_BYTES:
+            raise Blind(f"snapshot entry bytes={size}>{MAX_SNAPSHOT_ENTRY_BYTES}")
+        return raw
+
+    def _record_snapshot_id(self, raw: str | bytes, now: datetime) -> None:
         if isinstance(raw, bytes):
             raw = raw.decode("ascii", errors="strict")
         if not isinstance(raw, str) or len(raw.encode("ascii", errors="strict")) > MAX_SNAPSHOT_ID_REPLY_BYTES:
@@ -320,10 +349,10 @@ class LiveSignals:
         if match is None:
             raise Blind("snapshot last-generated-id is malformed")
         snapshot_id = int(match.group(1)), int(match.group(2))
-        if snapshot_id == (0, 0) or snapshot_id == self.last_snapshot_id:
-            return
-        if self.last_snapshot_id is not None and snapshot_id < self.last_snapshot_id:
-            raise Blind("snapshot last-generated-id moved backwards")
+        if snapshot_id == (0, 0):
+            raise Blind("snapshot id is zero")
+        if self.last_snapshot_id is not None and snapshot_id <= self.last_snapshot_id:
+            raise Blind("snapshot id moved backwards or repeated after exclusive cursor")
         stamp = datetime.fromtimestamp(snapshot_id[0] / 1000, UTC)
         if stamp > now + timedelta(seconds=2):
             raise Blind("snapshot last-generated-id is in the future")
@@ -343,6 +372,14 @@ class LiveSignals:
             for earlier, later in zip(stamps, stamps[1:])
             if cutoff < later <= now
         ]
+
+    def minute_values(self, now: datetime) -> tuple[dict[str, list[float]], int]:
+        cutoff = now - timedelta(minutes=5)
+        lags: dict[str, list[float]] = defaultdict(list)
+        for stamp, symbol, lag in self.probes:
+            if cutoff < stamp <= now and (symbol, int(stamp.timestamp())) not in self.replay_seconds:
+                lags[symbol].append(lag)
+        return dict(lags), sum(cutoff < stamp <= now for stamp in self.refusals)
 
 
 class RedisSafety:
@@ -370,15 +407,6 @@ class RedisSafety:
         if used > REDIS_USED_MEMORY_STOP_BYTES:
             return f"redis_used_memory_bytes={used}>{REDIS_USED_MEMORY_STOP_BYTES}", detail
         return None, detail
-
-    def minute_values(self, now: datetime) -> tuple[dict[str, list[float]], int]:
-        cutoff = now - timedelta(minutes=5)
-        lags: dict[str, list[float]] = defaultdict(list)
-        for stamp, symbol, lag in self.probes:
-            if cutoff < stamp <= now and (symbol, int(stamp.timestamp())) not in self.replay_seconds:
-                lags[symbol].append(lag)
-        return dict(lags), sum(cutoff < stamp <= now for stamp in self.refusals)
-
 
 def _owners(redis: Redis, prefix: str) -> dict[str, set[str]]:
     encoded = redis.hgetall(stream_name(prefix, "market-data-subscription-owners"))

@@ -1,0 +1,43 @@
+{"action": "before", "at_utc": "2026-10-02T14:21:22.811107+00:00", "evicted_keys": 23, "used_memory": 1182212232}
+{"action": "bootstrap", "wall_ms": 30.284, "id": "1790950877029-0", "payload_bytes": 5999385}
+{"action": "xrange_count1", "index": 1, "wall_ms": 21.474, "id": "1790950699991-0", "payload_bytes": 5994615}
+{"action": "xrange_count1", "index": 2, "wall_ms": 25.977, "id": "1790950706869-0", "payload_bytes": 5994711}
+{"action": "xrange_count1", "index": 3, "wall_ms": 19.842, "id": "1790950713286-0", "payload_bytes": 5994876}
+{"action": "xrange_count1", "index": 4, "wall_ms": 22.654, "id": "1790950720048-0", "payload_bytes": 5995344}
+{"action": "xrange_count1", "index": 5, "wall_ms": 23.674, "id": "1790950727141-0", "payload_bytes": 5993777}
+{"action": "xrange_count1", "index": 6, "wall_ms": 27.249, "id": "1790950733592-0", "payload_bytes": 5995650}
+{"action": "xrange_count1", "index": 7, "wall_ms": 35.788, "id": "1790950740631-0", "payload_bytes": 5995663}
+{"action": "xrange_count1", "index": 8, "wall_ms": 23.894, "id": "1790950747469-0", "payload_bytes": 5996967}
+{"action": "xrange_count1", "index": 9, "wall_ms": 16.029, "id": "1790950754266-0", "payload_bytes": 5996914}
+{"action": "xrange_count1", "index": 10, "wall_ms": 29.383, "id": "1790950760769-0", "payload_bytes": 5996504}
+{"action": "xrange_count1", "index": 11, "wall_ms": 18.033, "id": "1790950767482-0", "payload_bytes": 5997064}
+{"action": "xrange_count1", "index": 12, "wall_ms": 33.448, "id": "1790950774401-0", "payload_bytes": 5995392}
+{"action": "xrange_count1", "index": 13, "wall_ms": 26.069, "id": "1790950780964-0", "payload_bytes": 5997136}
+{"action": "xrange_count1", "index": 14, "wall_ms": 24.741, "id": "1790950787850-0", "payload_bytes": 5997372}
+{"action": "xrange_count1", "index": 15, "wall_ms": 18.508, "id": "1790950795011-0", "payload_bytes": 5995932}
+{"action": "xrange_count1", "index": 16, "wall_ms": 17.412, "id": "1790950804904-0", "payload_bytes": 5997839}
+{"action": "xrange_count1", "index": 17, "wall_ms": 23.237, "id": "1790950812485-0", "payload_bytes": 5998090}
+{"action": "xrange_count1", "index": 18, "wall_ms": 22.79, "id": "1790950819824-0", "payload_bytes": 5998305}
+{"action": "xrange_count1", "index": 19, "wall_ms": 16.965, "id": "1790950827261-0", "payload_bytes": 5998473}
+{"action": "xrange_count1", "index": 20, "wall_ms": 28.892, "id": "1790950834160-0", "payload_bytes": 5998396}
+{"action": "live_poll_count1", "index": 1, "wall_ms": 24.051, "entries": 1}
+{"action": "live_poll_count1", "index": 2, "wall_ms": 23.573, "entries": 1}
+{"action": "live_poll_count1", "index": 3, "wall_ms": 22.536, "entries": 1}
+{"action": "live_poll_count1", "index": 4, "wall_ms": 36.615, "entries": 1}
+{"action": "live_poll_count1", "index": 5, "wall_ms": 0.471, "entries": 0}
+{"action": "live_poll_count1", "index": 6, "wall_ms": 0.366, "entries": 0}
+{"action": "live_poll_count1", "index": 7, "wall_ms": 0.899, "entries": 0}
+{"action": "live_poll_count1", "index": 8, "wall_ms": 0.445, "entries": 0}
+{"action": "live_poll_count1", "index": 9, "wall_ms": 21.581, "entries": 1}
+{"action": "live_poll_count1", "index": 10, "wall_ms": 0.369, "entries": 0}
+{"action": "live_poll_count1", "index": 11, "wall_ms": 1.398, "entries": 0}
+{"action": "live_poll_count1", "index": 12, "wall_ms": 0.536, "entries": 0}
+{"action": "live_poll_count1", "index": 13, "wall_ms": 0.462, "entries": 0}
+{"action": "live_poll_count1", "index": 14, "wall_ms": 0.532, "entries": 0}
+{"action": "live_poll_count1", "index": 15, "wall_ms": 0.518, "entries": 0}
+{"action": "live_poll_count1", "index": 16, "wall_ms": 36.49, "entries": 1}
+{"action": "live_poll_count1", "index": 17, "wall_ms": 0.436, "entries": 0}
+{"action": "live_poll_count1", "index": 18, "wall_ms": 1.422, "entries": 0}
+{"action": "live_poll_count1", "index": 19, "wall_ms": 1.211, "entries": 0}
+{"action": "live_poll_count1", "index": 20, "wall_ms": 0.663, "entries": 0}
+{"action": "after", "at_utc": "2026-10-02T14:22:03.628077+00:00", "evicted_keys": 23, "used_memory": 1182152992}
