@@ -999,14 +999,34 @@ async def test_partial_fill_decrements_not_flat() -> None:
 
 
 @pytest.mark.asyncio
-async def test_partial_exit_reprices_only_the_remaining_shares() -> None:
+@pytest.mark.parametrize(
+    ("exit_tag", "first_bid", "second_bid"),
+    [
+        ("CW_TARGET", 10.50, 10.55),
+        ("CW_HARD_STOP", 9.10, 9.05),
+        ("CW_FLIP", 10.00, 9.95),
+    ],
+)
+async def test_partial_exit_reprices_only_the_remaining_shares(
+    exit_tag: str, first_bid: float, second_bid: float,
+) -> None:
     sf = _make_sf()
     adapter = _PartialFillAdapter(fill_qty=6)
     svc = _svc(sf, adapter=adapter)
+    svc._cw_exit_enabled = True
+    svc._cw_floor_exit_enabled = False
+    svc._cw_target_pct = 5.0
+    svc._cw_stop_pct = 8.0
     _arm(svc, sf, entry=10.0, qty=10)
-    _quote(svc, bid=9.80)
+    if exit_tag == "CW_FLIP":
+        svc._arm_cw_flip_pending(
+            (ACCT, SYM), bar_time_ms=int(datetime.now(UTC).timestamp() * 1000) - 1,
+            managed_row_id=str(_row(sf).id),
+        )
+    _quote(svc, bid=first_bid)
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
     assert adapter.submitted[0].quantity == Decimal("10")
+    assert adapter.submitted[0].reason == f"oms_v2_managed_exit:{exit_tag}"
     assert _row(sf).current_quantity == 4
 
     with sf.begin() as session:
@@ -1015,10 +1035,16 @@ async def test_partial_exit_reprices_only_the_remaining_shares() -> None:
         ):
             order.status = "cancelled"
     adapter.fill_qty = 0
-    _quote(svc, bid=9.75)
+    if exit_tag == "CW_FLIP":
+        svc._arm_cw_flip_pending(
+            (ACCT, SYM), bar_time_ms=int(datetime.now(UTC).timestamp() * 1000) - 1,
+            managed_row_id=str(_row(sf).id),
+        )
+    _quote(svc, bid=second_bid)
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
     assert len(adapter.submitted) == 2
     assert adapter.submitted[1].quantity == Decimal("4")
+    assert adapter.submitted[1].reason == f"oms_v2_managed_exit:{exit_tag}"
     assert _row(sf).status == "open" and _row(sf).current_quantity == 4
 
 
