@@ -31,7 +31,7 @@ _recorded_at_lock = Lock()
 _last_recorded_at: datetime | None = None
 
 PROVISIONAL_OUTCOMES = frozenset({"queued", "could_not_tell", "rejected_unclassified"})
-POSITIVE_HOLD_OUTCOMES = frozenset({"submitted", "working"})
+POSITIVE_HOLD_OUTCOMES = frozenset({"submitted", "working", "held_no_fresh_quote"})
 TERMINAL_RELEASE_OUTCOMES = frozenset(
     {
         "dropped_no_emitter",
@@ -89,6 +89,8 @@ class FanoutOutcome:
     reason: str = ""
     event_source: str = "unknown"
     broker_account_name: str = ""
+    predecessor_attempt_id: str = ""
+    mirror_generation_id: str = ""
 
 
 def identity_from_metadata(metadata: Mapping[str, object] | None) -> dict[str, str] | None:
@@ -157,6 +159,31 @@ def append_outcome(
     if identity is None:
         return None
     normalized_attempt = attempt_id or identity["fanout_attempt_id"]
+    nfq_terminal = outcome in TERMINAL_RELEASE_OUTCOMES and (
+        str(reason).startswith("webull_mirror_nfq_gave_up:") or (
+            (metadata or {}).get("nfq_price_feedback_owned") == "true"
+            and (metadata or {}).get("fanout_source") == "rth_resting_mirror"
+        )
+    )
+    if nfq_terminal:
+        # The FIRST authoritative refusal owns release, including pre-submit risk/routing
+        # and ordinary broker terminals. Keep its actual reason and one terminal per attempt;
+        # later NFQ cleanup must not race the consumer with a second generic release.
+        if not str(reason).startswith("webull_mirror_nfq_gave_up:"):
+            reason = "webull_mirror_nfq_gave_up:" + str(reason or outcome)
+        existing = session.scalar(select(DashboardSnapshot).where(
+            DashboardSnapshot.snapshot_type == OUTCOME_SNAPSHOT_TYPE,
+            DashboardSnapshot.payload["symbol"].as_string() == str(symbol).upper(),
+            DashboardSnapshot.payload["fanout_segment_id"].as_string() == identity["fanout_segment_id"],
+            DashboardSnapshot.payload["fanout_slot_id"].as_string() == identity["fanout_slot_id"],
+            DashboardSnapshot.payload["fanout_attempt_id"].as_string() == normalized_attempt,
+            DashboardSnapshot.payload["webull_mirror_generation_id"].as_string()
+            == str((metadata or {}).get("webull_mirror_generation_id", "")),
+            DashboardSnapshot.payload["outcome"].as_string().in_(TERMINAL_RELEASE_OUTCOMES),
+            DashboardSnapshot.payload["reason"].as_string().startswith("webull_mirror_nfq_gave_up:"),
+        ).order_by(DashboardSnapshot.created_at).limit(1))
+        if existing is not None:
+            return existing
     row = DashboardSnapshot(
         snapshot_type=OUTCOME_SNAPSHOT_TYPE,
         created_at=_next_recorded_at(),
@@ -171,6 +198,8 @@ def append_outcome(
             "reason": str(reason or ""),
             "event_source": str(event_source or "unknown"),
             "broker_account_name": str(broker_account_name or ""),
+            "fanout_predecessor_attempt_id": str((metadata or {}).get("fanout_predecessor_attempt_id", "")),
+            "webull_mirror_generation_id": str((metadata or {}).get("webull_mirror_generation_id", "")),
         },
     )
     session.add(row)
@@ -329,6 +358,8 @@ class FanoutOutcomeJournal:
                     reason=str(payload.get("reason", "")),
                     event_source=str(payload.get("event_source", "unknown")),
                     broker_account_name=str(payload.get("broker_account_name", "")),
+                    predecessor_attempt_id=str(payload.get("fanout_predecessor_attempt_id", "")),
+                    mirror_generation_id=str(payload.get("webull_mirror_generation_id", "")),
                 )
             )
         return out

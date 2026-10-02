@@ -1625,6 +1625,17 @@ class WebullBrokerAdapter:
             return order_type, wire_limit, wire_stop, metadata, None
 
         metadata["webull_resting_mirror_shape_checked"] = "true"
+        current = now or datetime.now(UTC)
+        deadline_raw = request.metadata.get("webull_mirror_entry_deadline_utc")
+        if deadline_raw:
+            try:
+                deadline = datetime.fromisoformat(str(deadline_raw))
+                expired = deadline.tzinfo is None or current >= deadline
+            except (ValueError, TypeError):
+                expired = True
+            if expired:
+                metadata["webull_resting_mirror_shape"] = "abandoned_window_ended"
+                return order_type, wire_limit, wire_stop, metadata, "RESTING_WINDOW_ENDED: Webull mirror deadline reached"
         try:
             market_price = Decimal(str(request.metadata["webull_shape_market_price"]))
             observed_at = datetime.fromisoformat(
@@ -1643,7 +1654,6 @@ class WebullBrokerAdapter:
                 "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot",
             )
 
-        current = now or datetime.now(UTC)
         age_ms = (current - observed_at.astimezone(UTC)).total_seconds() * 1000.0
         metadata["webull_shape_market_age_ms_at_wire"] = f"{age_ms:.0f}"
         metadata["webull_shape_market_price_at_wire"] = str(market_price)

@@ -91,6 +91,7 @@ def _settings(*, enabled: bool = True) -> SimpleNamespace:
     return SimpleNamespace(
         oms_v2_webull_mirror_deferred_resubmit_enabled=enabled,
         oms_v2_eh_resting_entry_quote_max_age_ms=2000,
+        oms_v2_webull_mirror_quote_max_age_ms=10000,
         redis_stream_prefix="mai-tai",
         redis_strategy_intent_stream_maxlen=1000,
         provider_for_account=lambda account: "webull" if account == ACCOUNT else "schwab",
@@ -122,6 +123,7 @@ def _integrated_service(
     factory: sessionmaker[Session],
     *,
     enabled: bool,
+    nfq_enabled: bool = False,
 ) -> tuple[OmsRiskService, _RecordingAdapter]:
     adapter = _RecordingAdapter()
     service = OmsRiskService(
@@ -131,6 +133,7 @@ def _integrated_service(
             redis_stream_prefix="test",
             oms_adapter="simulated",
             oms_v2_webull_mirror_deferred_resubmit_enabled=enabled,
+            oms_v2_webull_mirror_fresh_price_enabled=nfq_enabled,
             strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
             strategy_schwab_1m_v2_webull_account_name=ACCOUNT,
             strategy_schwab_1m_v2_webull_resting_mirror_enabled=True,
@@ -331,7 +334,7 @@ async def test_precheck_is_byte_identical_when_the_pa1_flag_is_off(
     "stamped_at",
     [
         None,
-        (datetime.now(UTC) - timedelta(seconds=3)).isoformat(),
+        (datetime.now(UTC) - timedelta(seconds=11)).isoformat(),
     ],
     ids=["missing", "stale"],
 )
@@ -661,12 +664,12 @@ async def test_market_more_than_eight_percent_below_the_stop_does_not_resubmit(
 
 
 @pytest.mark.asyncio
-async def test_market_older_than_two_seconds_does_not_resubmit(monkeypatch) -> None:
+async def test_market_older_than_ten_seconds_does_not_resubmit(monkeypatch) -> None:
     service = _service()
     _defer(service)
     service._latest_quotes_by_symbol[SYMBOL] = {
         "ask": Decimal("9.5"),
-        "received_at": datetime.now(UTC) - timedelta(seconds=3),
+        "received_at": datetime.now(UTC) - timedelta(seconds=11),
     }
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
 

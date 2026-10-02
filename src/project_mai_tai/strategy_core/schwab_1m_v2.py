@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Callable, Deque, Iterable, Literal, Mapping
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
@@ -383,6 +383,7 @@ class SymbolState:
     # cancel can be mirrored too -- an un-cancelled Webull rest is the 136-minute FRTT orphan
     # shape, on the broker whose order book we cannot even read reliably.
     webull_resting_active: bool = False
+    webull_resting_generation_id: str = ""
 
 
 @dataclass
@@ -2328,6 +2329,16 @@ class SchwabV2Strategy:
         state.fanout_outcome_evidence_ids.add(evidence_key)
 
         exact = record.slot_id == state.fanout_claim_slot_id
+        if (
+            exact and record.outcome == "queued" and record.event_source == "client"
+            and record.predecessor_attempt_id
+            and record.predecessor_attempt_id == state.fanout_claim_attempt_id
+            and record.mirror_generation_id
+            and record.mirror_generation_id == state.webull_resting_generation_id
+        ):
+            # OMS may retry this exact held generation under a new wire id. The predecessor
+            # authorizes the transition; an unrelated/stale attempt cannot take over the latch.
+            state.fanout_claim_attempt_id = record.attempt_id
         exact_attempt = bool(
             not state.fanout_claim_attempt_id
             or not record.attempt_id
@@ -2390,6 +2401,11 @@ class SchwabV2Strategy:
             return "consumed"
 
         if record.outcome in POSITIVE_HOLD_OUTCOMES:
+            if record.outcome == "held_no_fresh_quote" and exact and not exact_attempt:
+                return "wrong_attempt"
+            if (record.outcome == "held_no_fresh_quote" and state.webull_resting_generation_id
+                    and record.mirror_generation_id != state.webull_resting_generation_id):
+                return "wrong_generation"
             if state.fanout_claim_outcome == "filled":
                 logger.info(
                     "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s applied=0 "
@@ -2418,6 +2434,10 @@ class SchwabV2Strategy:
             state.fanout_webull_claimed = True
             state.fanout_claim_outcome = "held"
             state.fanout_claim_ms = self._now_ms()
+            if record.outcome == "held_no_fresh_quote" and record.slot == "resting":
+                state.webull_resting_active = True
+                state.webull_resting_generation_id = record.mirror_generation_id
+                state.fanout_claim_attempt_id = record.attempt_id
             logger.info(
                 "[V2-FANOUT-OUTCOME] %s slot_id=%s outcome=%s held=1 evidence=positive "
                 "exact_slot=%d — every held latch names its evidence",
@@ -2439,6 +2459,13 @@ class SchwabV2Strategy:
                 )
                 return "filled_wins"
             if exact and exact_attempt:
+                if record.reason.startswith("webull_mirror_nfq_gave_up:"):
+                    if (state.webull_resting_generation_id
+                            and record.mirror_generation_id != state.webull_resting_generation_id):
+                        return "wrong_generation"
+                    # NFQ1 owns only the waiting Webull leg. An actual Schwab rest must retain
+                    # its cancel/fill latch and composition, even when Webull never got an order.
+                    state.webull_resting_active = False
                 self._release_fanout_webull_claim(
                     state,
                     reason=f"durable_{record.outcome}",
@@ -2464,6 +2491,8 @@ class SchwabV2Strategy:
         if record.outcome in PROVISIONAL_OUTCOMES:
             if state.fanout_claim_outcome == "filled":
                 return "filled_wins"
+            if exact and state.webull_resting_generation_id and not exact_attempt:
+                return "wrong_attempt"
             if exact:
                 state.fanout_claim_outcome = (
                     "queued" if record.outcome == "queued" else "could_not_tell"
@@ -5004,6 +5033,7 @@ class SchwabV2Strategy:
             )
             if claimed:
                 state.webull_resting_active = True
+                state.webull_resting_generation_id = str(uuid4())
                 state.resting_webull_quantity = int(webull_sized[0])
                 # D20 observation edge: a fresh mirror level arms the below-edge so the FIRST
                 # live up-cross of this placement emits (price sits below a new stop by design).
@@ -5047,6 +5077,7 @@ class SchwabV2Strategy:
                             "resting_band_pct": f"{band_pct}",
                             "resting_offset_pct": f"{offset_pct}",
                             "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
+                            "webull_mirror_generation_id": state.webull_resting_generation_id,
                             "resting_entry": "true",
                             "cw_entry_n": str(entry_n),
                             "cw_entry_slot": slot,
@@ -5064,11 +5095,13 @@ class SchwabV2Strategy:
         was_trigger = self._active_resting_trigger(state)
         was_broker_order = state.resting_is_broker_order
         was_webull_resting = state.webull_resting_active
+        was_webull_generation = state.webull_resting_generation_id
         was_schwab_quantity = state.resting_schwab_quantity
         was_webull_quantity = state.resting_webull_quantity
         webull_reason = reason
         was_below_floor_bars = state.resting_below_floor_bars
         state.webull_resting_active = False
+        state.webull_resting_generation_id = ""
         was_slot = state.resting_slot
         state.resting_active = False
         state.resting_level = 0.0
@@ -5188,6 +5221,7 @@ class SchwabV2Strategy:
                 reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
                 metadata={"resting_entry_cancel": "true", "reason": webull_reason,
                           "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
+                          "webull_mirror_generation_id": was_webull_generation,
                           **identity_metadata,
                           "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
             ))
