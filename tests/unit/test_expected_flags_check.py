@@ -50,7 +50,7 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 121
+    assert len(entries) == 122
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
@@ -85,6 +85,7 @@ def test_fixed_dollar_numeric_catalog_covers_both_running_consumers() -> None:
         "strategy_schwab_1m_v2_entry_notional_usd",
         "strategy_schwab_1m_v2_webull_entry_notional_usd",
         "strategy_schwab_1m_v2_entry_max_shares",
+        "oms_v2_webull_mirror_quote_max_age_ms",
     }
 
     def process_env(service: str) -> flags.ServiceEnvironment:
@@ -96,11 +97,12 @@ def test_fixed_dollar_numeric_catalog_covers_both_running_consumers() -> None:
 
     rc, lines = flags.audit(entries, process_env)
     assert rc == 0
-    assert "checked=6/6" in lines[-1]
+    assert "checked=7/7" in lines[-1]
 
 
 def test_missing_or_wrong_live_notional_fails_numeric_gate() -> None:
-    entry = flags.load_numeric_catalog(NUMERIC_CATALOG)[0]
+    entry = next(e for e in flags.load_numeric_catalog(NUMERIC_CATALOG)
+                 if e["name"] == "strategy_schwab_1m_v2_entry_notional_usd")
     rc, lines = flags.audit([entry], lambda _: _reading(1234, {}))
     assert rc == 1
     assert "source=settings-default" in lines[0]

@@ -3,6 +3,13 @@
   "baseline": "2026-09-29 after 3389090a deploy; read-only /proc audit of owning processes",
   "flags": [
     {
+      "name": "oms_v2_webull_mirror_fresh_price_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "NFQ1 holds unpriced Webull mirrors and retries through the serial lane.",
+      "ruling": "Operator BUGS v3 FINAL 2026-10-02: on with the NFQ1 deploy, separate from tonight's b8 install."
+    },
+    {
       "name": "tradingview_alerts_enabled",
       "expected": true,
       "owning_service": "control",

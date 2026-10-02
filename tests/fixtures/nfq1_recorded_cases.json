@@ -1,0 +1,549 @@
+{
+  "provenance": "Readonly prices.ndjson 2026-10-02; original OMS client-side reports, not invented venue replies. Accounts omitted. Quote event_ts is gateway publication, received_at is capture receipt, neither proves OMS consumption. Historical cache age unknown for missing stamps.",
+  "cases": [
+    {
+      "record": {
+        "id": "e138b93d-5637-4dc6-9660-300f3b8494a8",
+        "intent_id": "6d4a8a69-125b-43cc-901a-1ca9c052e4ba",
+        "symbol": "IPDN",
+        "submitted_at": "2026-09-23 15:47:02.807807+00:00",
+        "intent_at": "2026-09-23 15:47:02.743312+00:00",
+        "payload": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-fanout",
+          "order_type": "STOP_LIMIT",
+          "stop_price": "5.3820",
+          "limit_price": "5.4089",
+          "reference_price": "5.3820",
+          "entry_price": "5.3820",
+          "cw_flip_level": "5.3820",
+          "fanout_leg": "webull",
+          "fanout_source": "rth_resting_mirror",
+          "resting_entry": "true",
+          "cw_entry_n": "1",
+          "cw_entry_slot": "first",
+          "cw_arm_bar_ts": "0",
+          "fanout_segment_id": "1790174462994",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "4a149d5e-4170-5635-8f4d-9b7a7b600d07",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "fanout_attempt_id": "schwab_1m_v2-IPDN-open-cc9f8b19b339",
+          "oms_fanout_primary_dispatch_at_utc": "2026-09-23T15:47:02.244+00:00",
+          "reject_reason": "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot"
+        },
+        "event_at": "2026-09-23 15:47:02.803767+00:00",
+        "event_payload": {
+          "client_order_id": "schwab_1m_v2-IPDN-open-cc9f8b19b339",
+          "broker_order_id": null,
+          "broker_fill_id": null,
+          "metadata": {
+            "path": "ATR Flip",
+            "atr_variant": "CW-v2-fanout",
+            "order_type": "STOP_LIMIT",
+            "stop_price": "5.3820",
+            "limit_price": "5.4089",
+            "reference_price": "5.3820",
+            "entry_price": "5.3820",
+            "cw_flip_level": "5.3820",
+            "fanout_leg": "webull",
+            "fanout_source": "rth_resting_mirror",
+            "resting_entry": "true",
+            "cw_entry_n": "1",
+            "cw_entry_slot": "first",
+            "cw_arm_bar_ts": "0",
+            "fanout_segment_id": "1790174462994",
+            "fanout_identity_schema": "entry_opportunity_v2",
+            "fanout_slot": "resting",
+            "fanout_slot_id": "4a149d5e-4170-5635-8f4d-9b7a7b600d07",
+            "source": "schwab_1m_v2",
+            "strategy_version": "v1.32",
+            "fanout_attempt_id": "schwab_1m_v2-IPDN-open-cc9f8b19b339",
+            "oms_fanout_primary_dispatch_at_utc": "2026-09-23T15:47:02.244+00:00",
+            "webull_wire_stop_price": "5.38",
+            "webull_wire_limit_price": "5.41",
+            "webull_buy_stop_limit_tick_adjusted": "false",
+            "webull_resting_mirror_shape_checked": "true",
+            "webull_resting_mirror_shape": "abandoned_no_fresh_quote"
+          },
+          "reason": "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot"
+        }
+      },
+      "quotes": {
+        "kind": "published_quotes",
+        "symbol": "IPDN",
+        "order": "e138b93d-5637-4dc6-9660-300f3b8494a8",
+        "at": "2026-09-23 15:47:02.807807+00:00",
+        "before": [
+          {
+            "event_ts": "2026-09-23 15:46:58.839015+00:00",
+            "received_at": "2026-09-23 15:47:00.448308+00:00",
+            "bid_price": "5.320000",
+            "ask_price": "5.390000"
+          },
+          {
+            "event_ts": "2026-09-23 15:46:58.837626+00:00",
+            "received_at": "2026-09-23 15:47:00.448307+00:00",
+            "bid_price": "5.330000",
+            "ask_price": "5.390000"
+          }
+        ],
+        "after": [
+          {
+            "event_ts": "2026-09-23 15:47:03.306894+00:00",
+            "received_at": "2026-09-23 15:47:03.419859+00:00",
+            "bid_price": "5.320000",
+            "ask_price": "5.380000"
+          },
+          {
+            "event_ts": "2026-09-23 15:47:03.307285+00:00",
+            "received_at": "2026-09-23 15:47:03.419860+00:00",
+            "bid_price": "5.320000",
+            "ask_price": "5.380000"
+          }
+        ]
+      }
+    },
+    {
+      "record": {
+        "id": "0baee461-49f7-46cd-ba9b-c619f13b4b9b",
+        "intent_id": "5763d508-d040-43d6-8f0f-1045bc896e20",
+        "symbol": "TNON",
+        "submitted_at": "2026-09-30 19:00:06.462488+00:00",
+        "intent_at": "2026-09-30 19:00:06.264719+00:00",
+        "payload": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-fanout",
+          "order_type": "STOP_LIMIT",
+          "stop_price": "4.1049",
+          "limit_price": "4.1254",
+          "reference_price": "4.1049",
+          "entry_price": "4.1049",
+          "cw_flip_level": "4.0845",
+          "resting_band_pct": "0.5",
+          "resting_offset_pct": "0.5",
+          "fanout_leg": "webull",
+          "fanout_source": "rth_resting_mirror",
+          "resting_entry": "true",
+          "cw_entry_n": "1",
+          "cw_entry_slot": "first",
+          "cw_arm_bar_ts": "0",
+          "fanout_segment_id": "1790793543163",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "d544b071-835d-5acd-b7ab-60ca8f1c1a2b",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "fanout_attempt_id": "schwab_1m_v2-TNON-open-fd4d151efe3d",
+          "oms_fanout_primary_dispatch_at_utc": "2026-09-30T19:00:05.640+00:00",
+          "reject_reason": "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot"
+        },
+        "event_at": "2026-09-30 19:00:06.449650+00:00",
+        "event_payload": {
+          "client_order_id": "schwab_1m_v2-TNON-open-fd4d151efe3d",
+          "broker_order_id": null,
+          "broker_fill_id": null,
+          "metadata": {
+            "path": "ATR Flip",
+            "atr_variant": "CW-v2-fanout",
+            "order_type": "STOP_LIMIT",
+            "stop_price": "4.1049",
+            "limit_price": "4.1254",
+            "reference_price": "4.1049",
+            "entry_price": "4.1049",
+            "cw_flip_level": "4.0845",
+            "resting_band_pct": "0.5",
+            "resting_offset_pct": "0.5",
+            "fanout_leg": "webull",
+            "fanout_source": "rth_resting_mirror",
+            "resting_entry": "true",
+            "cw_entry_n": "1",
+            "cw_entry_slot": "first",
+            "cw_arm_bar_ts": "0",
+            "fanout_segment_id": "1790793543163",
+            "fanout_identity_schema": "entry_opportunity_v2",
+            "fanout_slot": "resting",
+            "fanout_slot_id": "d544b071-835d-5acd-b7ab-60ca8f1c1a2b",
+            "source": "schwab_1m_v2",
+            "strategy_version": "v1.32",
+            "fanout_attempt_id": "schwab_1m_v2-TNON-open-fd4d151efe3d",
+            "oms_fanout_primary_dispatch_at_utc": "2026-09-30T19:00:05.640+00:00",
+            "webull_wire_stop_price": "4.10",
+            "webull_wire_limit_price": "4.13",
+            "webull_buy_stop_limit_tick_adjusted": "false",
+            "webull_resting_mirror_shape_checked": "true",
+            "webull_resting_mirror_shape": "abandoned_no_fresh_quote"
+          },
+          "reason": "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot"
+        }
+      },
+      "quotes": {
+        "kind": "published_quotes",
+        "symbol": "TNON",
+        "order": "0baee461-49f7-46cd-ba9b-c619f13b4b9b",
+        "at": "2026-09-30 19:00:06.462488+00:00",
+        "before": [
+          {
+            "event_ts": "2026-09-30 18:59:59.231506+00:00",
+            "received_at": "2026-09-30 18:59:59.678482+00:00",
+            "bid_price": "4.030000",
+            "ask_price": "4.040000"
+          },
+          {
+            "event_ts": "2026-09-30 18:59:59.231111+00:00",
+            "received_at": "2026-09-30 18:59:59.678481+00:00",
+            "bid_price": "4.030000",
+            "ask_price": "4.040000"
+          }
+        ],
+        "after": [
+          {
+            "event_ts": "2026-09-30 19:00:09.399616+00:00",
+            "received_at": "2026-09-30 19:00:10.697840+00:00",
+            "bid_price": "4.030000",
+            "ask_price": "4.040000"
+          },
+          {
+            "event_ts": "2026-09-30 19:00:09.509726+00:00",
+            "received_at": "2026-09-30 19:00:10.697953+00:00",
+            "bid_price": "4.030000",
+            "ask_price": "4.040000"
+          }
+        ]
+      }
+    },
+    {
+      "record": {
+        "id": "b2faecfc-27a4-4866-a591-d3c169c78ef1",
+        "intent_id": "fd932444-31d0-4f10-9dab-960855547552",
+        "symbol": "CYCU",
+        "submitted_at": "2026-10-02 16:00:06.047078+00:00",
+        "intent_at": "2026-10-02 16:00:05.473070+00:00",
+        "payload": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-fanout",
+          "order_type": "STOP_LIMIT",
+          "stop_price": "4.2138",
+          "limit_price": "4.2349",
+          "reference_price": "4.2138",
+          "entry_price": "4.2138",
+          "cw_flip_level": "4.1929",
+          "resting_band_pct": "0.5",
+          "resting_offset_pct": "0.5",
+          "fanout_leg": "webull",
+          "fanout_source": "rth_resting_mirror",
+          "resting_entry": "true",
+          "cw_entry_n": "1",
+          "cw_entry_slot": "first",
+          "cw_arm_bar_ts": "0",
+          "fanout_segment_id": "1790956803710",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "728000e8-464f-5af6-8c4c-745f71225c5c",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "fanout_attempt_id": "schwab_1m_v2-CYCU-open-625c302719ab",
+          "webull_shape_market_price": "3.8968",
+          "webull_shape_market_source": "last",
+          "webull_shape_market_at_utc": "2026-10-02T16:00:03.734+00:00",
+          "webull_shape_market_max_age_ms": "2000",
+          "oms_fanout_primary_dispatch_at_utc": "2026-10-02T16:00:04.347+00:00",
+          "reject_reason": "NO_FRESH_QUOTE: Webull resting mirror market snapshot age_ms=2305"
+        },
+        "event_at": "2026-10-02 16:00:06.039091+00:00",
+        "event_payload": {
+          "client_order_id": "schwab_1m_v2-CYCU-open-625c302719ab",
+          "broker_order_id": null,
+          "broker_fill_id": null,
+          "metadata": {
+            "path": "ATR Flip",
+            "atr_variant": "CW-v2-fanout",
+            "order_type": "STOP_LIMIT",
+            "stop_price": "4.2138",
+            "limit_price": "4.2349",
+            "reference_price": "4.2138",
+            "entry_price": "4.2138",
+            "cw_flip_level": "4.1929",
+            "resting_band_pct": "0.5",
+            "resting_offset_pct": "0.5",
+            "fanout_leg": "webull",
+            "fanout_source": "rth_resting_mirror",
+            "resting_entry": "true",
+            "cw_entry_n": "1",
+            "cw_entry_slot": "first",
+            "cw_arm_bar_ts": "0",
+            "fanout_segment_id": "1790956803710",
+            "fanout_identity_schema": "entry_opportunity_v2",
+            "fanout_slot": "resting",
+            "fanout_slot_id": "728000e8-464f-5af6-8c4c-745f71225c5c",
+            "source": "schwab_1m_v2",
+            "strategy_version": "v1.32",
+            "fanout_attempt_id": "schwab_1m_v2-CYCU-open-625c302719ab",
+            "webull_shape_market_price": "3.8968",
+            "webull_shape_market_source": "last",
+            "webull_shape_market_at_utc": "2026-10-02T16:00:03.734+00:00",
+            "webull_shape_market_max_age_ms": "2000",
+            "oms_fanout_primary_dispatch_at_utc": "2026-10-02T16:00:04.347+00:00",
+            "webull_wire_stop_price": "4.21",
+            "webull_wire_limit_price": "4.23",
+            "webull_buy_stop_limit_tick_adjusted": "false",
+            "webull_resting_mirror_shape_checked": "true",
+            "webull_shape_market_age_ms_at_wire": "2305",
+            "webull_shape_market_price_at_wire": "3.8968",
+            "webull_resting_mirror_shape": "abandoned_no_fresh_quote"
+          },
+          "reason": "NO_FRESH_QUOTE: Webull resting mirror market snapshot age_ms=2305"
+        }
+      },
+      "quotes": {
+        "kind": "published_quotes",
+        "symbol": "CYCU",
+        "order": "b2faecfc-27a4-4866-a591-d3c169c78ef1",
+        "at": "2026-10-02 16:00:06.047078+00:00",
+        "before": [
+          {
+            "event_ts": "2026-10-02 16:00:05.308659+00:00",
+            "received_at": "2026-10-02 16:00:07.477811+00:00",
+            "bid_price": "3.870000",
+            "ask_price": "3.900000"
+          },
+          {
+            "event_ts": "2026-10-02 16:00:05.305695+00:00",
+            "received_at": "2026-10-02 16:00:07.477809+00:00",
+            "bid_price": "3.870000",
+            "ask_price": "3.900000"
+          }
+        ],
+        "after": [
+          {
+            "event_ts": "2026-10-02 16:00:08.731337+00:00",
+            "received_at": "2026-10-02 16:00:10.786911+00:00",
+            "bid_price": "3.870000",
+            "ask_price": "3.900000"
+          },
+          {
+            "event_ts": "2026-10-02 16:00:12.467390+00:00",
+            "received_at": "2026-10-02 16:00:12.618499+00:00",
+            "bid_price": "3.880000",
+            "ask_price": "3.900000"
+          }
+        ]
+      }
+    },
+    {
+      "record": {
+        "id": "1e4ea069-c117-45ed-be70-39858302b877",
+        "intent_id": "348fcbf5-e7b9-4c98-80e8-66f8a821cb91",
+        "symbol": "AIXI",
+        "submitted_at": "2026-10-02 16:28:03.985876+00:00",
+        "intent_at": "2026-10-02 16:28:03.963504+00:00",
+        "payload": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-fanout",
+          "order_type": "STOP_LIMIT",
+          "stop_price": "1.6897",
+          "limit_price": "1.6981",
+          "reference_price": "1.6897",
+          "entry_price": "1.6897",
+          "cw_flip_level": "1.6813",
+          "resting_band_pct": "0.5",
+          "resting_offset_pct": "0.5",
+          "fanout_leg": "webull",
+          "fanout_source": "rth_resting_mirror",
+          "resting_entry": "true",
+          "cw_entry_n": "1",
+          "cw_entry_slot": "first",
+          "cw_arm_bar_ts": "0",
+          "fanout_segment_id": "1790956982703",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "0af63c79-5249-5692-9546-8c3ec6b6222a",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "fanout_attempt_id": "schwab_1m_v2-AIXI-open-5761d355b75a",
+          "reject_reason": "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot"
+        },
+        "event_at": "2026-10-02 16:28:03.984054+00:00",
+        "event_payload": {
+          "client_order_id": "schwab_1m_v2-AIXI-open-5761d355b75a",
+          "broker_order_id": null,
+          "broker_fill_id": null,
+          "metadata": {
+            "path": "ATR Flip",
+            "atr_variant": "CW-v2-fanout",
+            "order_type": "STOP_LIMIT",
+            "stop_price": "1.6897",
+            "limit_price": "1.6981",
+            "reference_price": "1.6897",
+            "entry_price": "1.6897",
+            "cw_flip_level": "1.6813",
+            "resting_band_pct": "0.5",
+            "resting_offset_pct": "0.5",
+            "fanout_leg": "webull",
+            "fanout_source": "rth_resting_mirror",
+            "resting_entry": "true",
+            "cw_entry_n": "1",
+            "cw_entry_slot": "first",
+            "cw_arm_bar_ts": "0",
+            "fanout_segment_id": "1790956982703",
+            "fanout_identity_schema": "entry_opportunity_v2",
+            "fanout_slot": "resting",
+            "fanout_slot_id": "0af63c79-5249-5692-9546-8c3ec6b6222a",
+            "source": "schwab_1m_v2",
+            "strategy_version": "v1.32",
+            "fanout_attempt_id": "schwab_1m_v2-AIXI-open-5761d355b75a",
+            "webull_wire_stop_price": "1.69",
+            "webull_wire_limit_price": "1.70",
+            "webull_buy_stop_limit_tick_adjusted": "false",
+            "webull_resting_mirror_shape_checked": "true",
+            "webull_resting_mirror_shape": "abandoned_no_fresh_quote"
+          },
+          "reason": "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot"
+        }
+      },
+      "quotes": {
+        "kind": "published_quotes",
+        "symbol": "AIXI",
+        "order": "1e4ea069-c117-45ed-be70-39858302b877",
+        "at": "2026-10-02 16:28:03.985876+00:00",
+        "before": [
+          {
+            "event_ts": "2026-10-02 16:27:57.476076+00:00",
+            "received_at": "2026-10-02 16:27:59.290514+00:00",
+            "bid_price": "1.660000",
+            "ask_price": "1.670000"
+          },
+          {
+            "event_ts": "2026-10-02 16:27:57.474866+00:00",
+            "received_at": "2026-10-02 16:27:59.290513+00:00",
+            "bid_price": "1.660000",
+            "ask_price": "1.670000"
+          }
+        ],
+        "after": [
+          {
+            "event_ts": "2026-10-02 16:28:06.572642+00:00",
+            "received_at": "2026-10-02 16:28:07.881143+00:00",
+            "bid_price": "1.660000",
+            "ask_price": "1.670000"
+          },
+          {
+            "event_ts": "2026-10-02 16:28:06.574350+00:00",
+            "received_at": "2026-10-02 16:28:07.881144+00:00",
+            "bid_price": "1.660000",
+            "ask_price": "1.670000"
+          }
+        ]
+      }
+    },
+    {
+      "record": {
+        "id": "a0d5d5bb-6269-43e3-8f8d-f00f428e68ec",
+        "intent_id": "3da44ecb-7dd6-466c-b987-4bd86582d39e",
+        "symbol": "CYCU",
+        "submitted_at": "2026-10-02 17:58:01.001175+00:00",
+        "intent_at": "2026-10-02 17:58:00.978508+00:00",
+        "payload": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-fanout",
+          "order_type": "STOP_LIMIT",
+          "stop_price": "4.0916",
+          "limit_price": "4.1120",
+          "reference_price": "4.0916",
+          "entry_price": "4.0916",
+          "cw_flip_level": "4.0712",
+          "resting_band_pct": "0.5",
+          "resting_offset_pct": "0.5",
+          "fanout_leg": "webull",
+          "fanout_source": "rth_resting_mirror",
+          "resting_entry": "true",
+          "cw_entry_n": "1",
+          "cw_entry_slot": "first",
+          "cw_arm_bar_ts": "0",
+          "fanout_segment_id": "1790963880380",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "8e0b21ed-9b29-56a5-a1fe-bc5ba2af5105",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "fanout_attempt_id": "schwab_1m_v2-CYCU-open-40ad383bdcb6",
+          "oms_fanout_primary_dispatch_at_utc": "2026-10-02T17:58:00.424+00:00",
+          "reject_reason": "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot"
+        },
+        "event_at": "2026-10-02 17:58:00.999132+00:00",
+        "event_payload": {
+          "client_order_id": "schwab_1m_v2-CYCU-open-40ad383bdcb6",
+          "broker_order_id": null,
+          "broker_fill_id": null,
+          "metadata": {
+            "path": "ATR Flip",
+            "atr_variant": "CW-v2-fanout",
+            "order_type": "STOP_LIMIT",
+            "stop_price": "4.0916",
+            "limit_price": "4.1120",
+            "reference_price": "4.0916",
+            "entry_price": "4.0916",
+            "cw_flip_level": "4.0712",
+            "resting_band_pct": "0.5",
+            "resting_offset_pct": "0.5",
+            "fanout_leg": "webull",
+            "fanout_source": "rth_resting_mirror",
+            "resting_entry": "true",
+            "cw_entry_n": "1",
+            "cw_entry_slot": "first",
+            "cw_arm_bar_ts": "0",
+            "fanout_segment_id": "1790963880380",
+            "fanout_identity_schema": "entry_opportunity_v2",
+            "fanout_slot": "resting",
+            "fanout_slot_id": "8e0b21ed-9b29-56a5-a1fe-bc5ba2af5105",
+            "source": "schwab_1m_v2",
+            "strategy_version": "v1.32",
+            "fanout_attempt_id": "schwab_1m_v2-CYCU-open-40ad383bdcb6",
+            "oms_fanout_primary_dispatch_at_utc": "2026-10-02T17:58:00.424+00:00",
+            "webull_wire_stop_price": "4.09",
+            "webull_wire_limit_price": "4.11",
+            "webull_buy_stop_limit_tick_adjusted": "false",
+            "webull_resting_mirror_shape_checked": "true",
+            "webull_resting_mirror_shape": "abandoned_no_fresh_quote"
+          },
+          "reason": "NO_FRESH_QUOTE: Webull resting mirror has no valid OMS market snapshot"
+        }
+      },
+      "quotes": {
+        "kind": "published_quotes",
+        "symbol": "CYCU",
+        "order": "a0d5d5bb-6269-43e3-8f8d-f00f428e68ec",
+        "at": "2026-10-02 17:58:01.001175+00:00",
+        "before": [
+          {
+            "event_ts": "2026-10-02 17:57:52.344666+00:00",
+            "received_at": "2026-10-02 17:57:54.180310+00:00",
+            "bid_price": "3.830000",
+            "ask_price": "3.840000"
+          },
+          {
+            "event_ts": "2026-10-02 17:57:47.900912+00:00",
+            "received_at": "2026-10-02 17:57:50.091544+00:00",
+            "bid_price": "3.830000",
+            "ask_price": "3.840000"
+          }
+        ],
+        "after": [
+          {
+            "event_ts": "2026-10-02 17:58:01.854364+00:00",
+            "received_at": "2026-10-02 17:58:02.748113+00:00",
+            "bid_price": "3.830000",
+            "ask_price": "3.840000"
+          },
+          {
+            "event_ts": "2026-10-02 17:58:01.860507+00:00",
+            "received_at": "2026-10-02 17:58:02.748114+00:00",
+            "bid_price": "3.830000",
+            "ask_price": "3.840000"
+          }
+        ]
+      }
+    }
+  ]
+}

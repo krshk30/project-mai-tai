@@ -555,6 +555,16 @@ class OmsStore:
         recorded_metadata = dict(getattr(order, "payload", {}) or {})
         if isinstance(metadata, dict):
             recorded_metadata.update(metadata)
+        if (
+            recorded_metadata.get("nfq_price_feedback_owned") == "true"
+            and recorded_metadata.get("fanout_source") == "rth_resting_mirror"
+            and recorded_metadata.get("fanout_leg") == "webull"
+            and report.event_type in {"rejected", "cancelled", "canceled", "expired"}
+        ):
+            # Keep the audit row, but let NFQ classify terminal versus still owned by PA1.
+            # A generic rejection first would release v2 before NFQ can re-hold or clear
+            # the exact Webull latch. NFQ publishes in this same report transaction.
+            return event
         # Non-fan-out events are the overwhelming population.  Return before resolving the account;
         # this keeps D2 additive and prevents its evidence lookup from becoming a dependency of the
         # existing order-event write.

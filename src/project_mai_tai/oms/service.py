@@ -60,6 +60,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.mirror_fresh_price import MirrorFreshPriceMixin
 from project_mai_tai.oms.orb_schwab_eod import close_orb_schwab_before_close, close_orb_schwab_on_signal
 from project_mai_tai.orb_schwab_macd import (
     BAR_WAIT, MacdVerdict, last_closed_bar_close, schwab_completed_bar_macd_gate,
@@ -537,7 +538,7 @@ def resolve_cancel_intent_status(intent_type: str, report_event_type: str) -> st
     return report_event_type
 
 
-class OmsRiskService:
+class OmsRiskService(MirrorFreshPriceMixin):
     # Operator manual-stop cache window. Short enough that a stop takes effect on the next intent
     # cycle (no restart, which was the whole point), long enough that it is not a per-intent query.
     _MANUAL_STOP_CACHE_SECS = 10.0
@@ -984,6 +985,7 @@ class OmsRiskService:
             seed_summary["broker_accounts"],
         )
         self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
+        self._restore_nfq_holds()
         await self._rehydrate_armed_hard_stops()  # F2: rebuild the ORB stop registry from the durable mirror
         await self._publish_heartbeat(
             "starting",
@@ -1033,6 +1035,7 @@ class OmsRiskService:
         last_orb_watch = 0.0
         while not stop_event.is_set():
             loop_now = asyncio.get_running_loop().time()
+            await self._evaluate_nfq_holds()  # expiry/segment retirement also runs without ticks
             try:
                 broker_sync_interval_secs = await self._broker_sync_interval_seconds()
             except asyncio.CancelledError:
@@ -1278,10 +1281,13 @@ class OmsRiskService:
             event = TradeIntentEvent.model_validate(payload)
             if not self._claim_webull_mirror_deferred_resubmit(event):
                 return
+            completed = False
             try:
                 await self.process_trade_intent(event)
+                completed = True
             finally:
                 self._finish_webull_mirror_deferred_resubmit(event)
+                self._finish_nfq_retry(event, completed=completed)
             return
         # Quote/trade ticks: must reach the handler even without armed hard
         # stops so the Tier 1 quote-drift cancel can fire on working open
@@ -1562,6 +1568,9 @@ class OmsRiskService:
                 event.event_id,
             )
             return []
+        if not self._claim_nfq_retry(event):
+            return []
+        self._nfq_observe_intent(event)
         self._observe_webull_mirror_deferred_intent(event)
         # Refresh the operator manual-stop cache BEFORE opening the intent transaction, never inside
         # it: a nested session shares the connection and fights the outer transaction. `_evaluate_risk`
@@ -2154,6 +2163,17 @@ class OmsRiskService:
                 return [*pre_submit_events, rth_reactive_abandon_event]
 
             self._stamp_webull_resting_mirror_market(event)
+            nfq_reason = self._nfq_pre_submit(session, event)
+            if nfq_reason is not None:
+                self.store.mark_intent_refused(
+                    intent, origin="skipped_before_submit", code=nfq_reason,
+                )
+                order_event = self._build_rejected_event(event, intent.id, reason=nfq_reason)
+                session.commit()
+                for prior_event in pre_submit_events:
+                    await self._publish_order_event(prior_event)
+                await self._publish_order_event(order_event)
+                return [*pre_submit_events, order_event]
             final_size_refusal = self._finalize_v2_entry_quantity(event, intent)
             if final_size_refusal is not None:
                 self.store.mark_intent_refused(
@@ -2285,6 +2305,18 @@ class OmsRiskService:
                     session.commit()
                     await self._publish_order_event(order_event)
                     return [order_event]
+            if event.payload.metadata.get("nfq_retry_token"):
+                # Persist the client id before the first possible wire write. If OMS dies or the
+                # transport is uncertain, normal order reconciliation/cancellation can still
+                # address this exact buy; a restored price hold must never blindly replay it.
+                self.store.get_or_create_order(
+                    session, intent=intent, strategy_id=strategy.id,
+                    broker_account_id=broker_account.id, client_order_id=request.client_order_id,
+                    symbol=request.symbol, side=request.side, quantity=request.quantity,
+                    metadata=dict(request.metadata), order_type=request.order_type,
+                    time_in_force=request.time_in_force, status="pending",
+                )
+                session.commit()
             reports = await self.broker_adapter.submit_order(request)
             self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
@@ -10035,6 +10067,7 @@ class OmsRiskService:
                         event=observed_event,
                         reports=[report],
                     )
+                    self._nfq_observe_reports(session, observed_event, [report])
                     self._update_hard_stop_registry_from_order_status(
                         strategy_code=strategy.code if strategy is not None else "",
                         broker_account_name=account.name,
@@ -10388,6 +10421,7 @@ class OmsRiskService:
             await self._evaluate_hard_stop_market_event(symbol)
         await self._cancel_drifted_working_orders(symbol)
         await self._evaluate_webull_mirror_deferred_resubmits(symbol)
+        await self._evaluate_nfq_holds(symbol)
         # Slice-3: run the v2 exit ladder on this quote, but ONLY for symbols with an
         # open v2 managed row (the in-memory guard keeps the hot path free of DB hits
         # for everything else; empty set when the flag is OFF → no-op).
@@ -10431,6 +10465,7 @@ class OmsRiskService:
         }
         await self._evaluate_hard_stop_market_event(symbol)
         await self._evaluate_webull_mirror_deferred_resubmits(symbol)
+        await self._evaluate_nfq_holds(symbol)
 
     @staticmethod
     def _event_time(event: object) -> datetime:
@@ -12704,6 +12739,15 @@ class OmsRiskService:
         pair_key = self._resting_fanout_pair_key(event)
         if pair_key is not None:
             _, slot_id = pair_key
+            previous = self.__dict__.setdefault("_webull_mirror_deferred_by_slot", {}).get(slot_id)
+            if (
+                previous is not None
+                and self._is_webull_resting_mirror_event(event)
+                and not self._is_webull_mirror_deferred_resubmit(event)
+                and not metadata.get("nfq_retry_token")
+                and previous.event.event_id != event.event_id
+            ):
+                self._forget_webull_mirror_deferred(slot_id, reason="new_mirror_attempt")
             self._forget_webull_mirror_deferred_symbol(
                 event.payload.symbol,
                 reason="new_segment_or_slot",
@@ -12717,6 +12761,14 @@ class OmsRiskService:
         ):
             slot_id = str(metadata.get("fanout_slot_id", "")).strip()
             if slot_id:
+                previous = self.__dict__.setdefault("_webull_mirror_deferred_by_slot", {}).get(slot_id)
+                if previous is not None:
+                    old = previous.event.payload
+                    if old.broker_account_name != event.payload.broker_account_name:
+                        return
+                    for key in ("fanout_segment_id", "fanout_attempt_id", "webull_mirror_generation_id"):
+                        if metadata.get(key) and metadata[key] != old.metadata.get(key):
+                            return
                 self._forget_webull_mirror_deferred(slot_id, reason="v2_cancel_intent")
             else:
                 # The production `cancel_target_not_found` shape can be unbound. Account+symbol
@@ -12792,7 +12844,7 @@ class OmsRiskService:
             observed_at = datetime.fromisoformat(observed_raw).astimezone(UTC)
         except (InvalidOperation, TypeError, ValueError):
             return False
-        max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
+        max_age_ms = self._mirror_max_age_ms()
         age_ms = (utcnow() - observed_at).total_seconds() * 1000.0
         if market_price <= 0 or stop_price <= 0 or age_ms < 0 or age_ms > max(0, max_age_ms):
             return False
@@ -12805,11 +12857,7 @@ class OmsRiskService:
         segment_id, slot_id = pair_key
         is_resubmit = self._is_webull_mirror_deferred_resubmit(event)
         try:
-            arriving_attempt = (
-                int(str(metadata.get("webull_deferred_resubmit_attempt", "0") or "0"))
-                if is_resubmit
-                else 0
-            )
+            arriving_attempt = int(str(metadata.get("webull_deferred_resubmit_attempt", "0") or "0"))
         except (TypeError, ValueError):
             arriving_attempt = 0
         existing = self.__dict__.setdefault("_webull_mirror_deferred_by_slot", {}).get(slot_id)
@@ -12845,6 +12893,7 @@ class OmsRiskService:
             self._WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS,
             self._WEBULL_MIRROR_PRECHECK_REARM_SECONDS if is_resubmit else 0.0,
         )
+        self._nfq_log(event, "held", "PRICE_AGGRESSIVE_precheck")
         return True
 
     def _observe_webull_mirror_deferred_reports(
@@ -12909,7 +12958,7 @@ class OmsRiskService:
             self._forget_webull_mirror_deferred(slot_id, reason="resubmit_accepted")
 
     def _fresh_webull_mirror_market(self, symbol: str) -> tuple[Decimal, str] | None:
-        max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
+        max_age_ms = self._mirror_max_age_ms()
         now = utcnow()
         candidates = (
             (
@@ -12985,8 +13034,11 @@ class OmsRiskService:
                 **payload.metadata,
                 "webull_deferred_resubmit": "true",
                 "webull_deferred_resubmit_attempt": str(state.attempts),
+                "fanout_predecessor_attempt_id": str(payload.metadata.get("fanout_attempt_id", "")),
             }
-            resubmit = TradeIntentEvent(source_service=SERVICE_NAME, payload=payload)
+            payload.metadata.pop("nfq_retry_token", None)
+            payload.metadata.pop("nfq_hold_id", None)
+            resubmit = TradeIntentEvent(source_service=SERVICE_NAME, produced_at=utcnow(), payload=payload)
             state.queued = True
             self.logger.info(
                 "[OMS-WEBULL-MIRROR-DEFERRED] sym=%s segment=%s slot_id=%s "
@@ -13059,49 +13111,21 @@ class OmsRiskService:
         ):
             return
 
-        max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
-        now = utcnow()
-        candidates = (
-            (
-                "ask",
-                self.__dict__.setdefault("_latest_quotes_by_symbol", {}).get(
-                    event.payload.symbol.upper()
-                ),
-            ),
-            (
-                "last",
-                self.__dict__.setdefault("_latest_trades_by_symbol", {}).get(
-                    event.payload.symbol.upper()
-                ),
-            ),
-        )
-        for source, reading in candidates:
-            if not reading:
-                continue
-            value = reading.get("ask" if source == "ask" else "price")
-            observed_at = reading.get("received_at")
-            if (
-                value in (None, 0)
-                or not isinstance(observed_at, datetime)
-                or observed_at.tzinfo is None
-            ):
-                continue
-            age_ms = (now - observed_at).total_seconds() * 1000.0
-            if age_ms < 0 or age_ms > max(0, max_age_ms):
-                continue
-            try:
-                price = Decimal(str(value))
-            except (InvalidOperation, ValueError):
-                continue
-            if price <= 0:
-                continue
-            metadata["webull_shape_market_price"] = str(price)
-            metadata["webull_shape_market_source"] = source
-            metadata["webull_shape_market_at_utc"] = observed_at.astimezone(UTC).isoformat(
-                timespec="milliseconds"
+        for key in list(metadata):
+            if key.startswith("webull_shape_market_"):
+                metadata.pop(key)
+        reading = self._mirror_reading(event.payload.symbol)
+        if reading.fresh:
+            metadata["webull_shape_market_price"] = str(reading.price)
+            metadata["webull_shape_market_source"] = reading.source
+            metadata["webull_shape_market_at_utc"] = reading.observed_at.astimezone(UTC).isoformat()
+            metadata["webull_shape_market_max_age_ms"] = str(self._mirror_max_age_ms())
+        if self._nfq_enabled():
+            metadata["nfq_price_feedback_owned"] = "true"
+            deadline = utcnow().astimezone(SESSION_TZ).replace(
+                hour=15, minute=45, second=0, microsecond=0,
             )
-            metadata["webull_shape_market_max_age_ms"] = str(max_age_ms)
-            return
+            metadata["webull_mirror_entry_deadline_utc"] = deadline.astimezone(UTC).isoformat()
 
     def _emit_fanout_mirror_lag(
         self, *, event: TradeIntentEvent, reports: list[ExecutionReport]
@@ -14495,6 +14519,7 @@ class OmsRiskService:
             event=intent_event,
             reports=reports,
         )
+        self._nfq_observe_reports(session, intent_event, reports)
         return published_events
 
     def _should_refresh_working_order(self, order: BrokerOrder) -> bool:
