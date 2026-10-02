@@ -42,9 +42,12 @@ def test_new_gateway_1008_route_is_not_a_successful_observation():
 
     with tempfile.TemporaryDirectory() as tmp:
         log = Path(tmp) / "market-data.log"
-        log.write_text("old received 1008\n")
+        log.write_text("old received 1008 (policy violation); then sent 1008 (policy violation)\n")
         _initial, cursor = sample_log(log, None, sampled_at=NOW)
-        log.write_text("old received 1008\nnew received 1008\n")
+        log.write_text(
+            "old received 1008 (policy violation); then sent 1008 (policy violation)\n"
+            "new received 1008 (policy violation); then sent 1008 (policy violation)\n"
+        )
         row, _ = sample_log(log, cursor, sampled_at=NOW)
     assert row["status"] == "STOP_TRIGGER"
     assert row["new_1008_lines"] == 1
