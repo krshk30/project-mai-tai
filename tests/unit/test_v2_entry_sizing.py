@@ -337,6 +337,37 @@ class _PartialEntryBroker:
 
 
 @pytest.mark.asyncio
+async def test_v2_dollar_open_refuses_unconfigured_account_before_broker():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    broker = _PartialEntryBroker()
+    service = OmsRiskService(
+        settings=Settings(
+            _env_file=None, redis_stream_prefix="test", oms_adapter="simulated",
+            strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            strategy_schwab_1m_v2_webull_account_name="live:orb",
+            strategy_schwab_1m_v2_entry_notional_usd=600,
+            strategy_schwab_1m_v2_webull_entry_notional_usd=300,
+        ),
+        redis_client=_Redis(),
+        session_factory=sessionmaker(bind=engine, expire_on_commit=False),
+        broker_adapter=broker,
+    )
+    event = _v2_event("live:unconfigured", 2, "3.05")
+    intent = SimpleNamespace(quantity=event.payload.quantity, payload={"metadata": {}})
+
+    assert service._evaluate_risk(event) == (False, "v2_entry_account_unknown")
+    assert service._finalize_v2_entry_quantity(event, intent) == "v2_entry_account_unknown"
+    outcomes = await service.process_trade_intent(event)
+    assert outcomes[0].payload.status == "rejected"
+    assert outcomes[0].payload.reason == "risk_rejected"
+    assert broker.submitted == []
+
+
+@pytest.mark.asyncio
 async def test_large_partial_entry_books_only_filled_shares_and_leaves_remainder_working():
     engine = create_engine(
         "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False},
