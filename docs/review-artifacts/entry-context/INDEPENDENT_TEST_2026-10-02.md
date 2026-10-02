@@ -1,5 +1,99 @@
 # Independent calm-tape entry test: 2026-10-02
 
+## Three-claim extension: frozen before new feature/outcome joins
+
+**EXTENSION DESIGN FROZEN; B/C RESULTS NOT YET READ.** The new operator card
+supersedes the single-claim scope. The completed A-only study below is retained
+as prior evidence, not relabeled as a blind three-claim result.
+
+The analyst has already seen August-October outcome labels for that study.
+Therefore the new blind primary population for **all three claims** is real
+Webull `live:orb` ATR entries dated **2026-06-17 through 2026-07-31 ET**, with no
+same-symbol Schwab ATR BUY first fill within inclusive +/-120 seconds. Neither
+this population's counts nor its outcomes have been extracted for this study.
+It is also outside the reviewer's stated Schwab-only population. If it is small,
+has no live fills, or lacks historical bot features, call it UNMEASURED; do not
+switch samples after seeing that. Entries before the resting-order rollout are
+an explicitly accepted transportability limitation, not evidence about the
+current rest mechanism.
+
+Separate supporting tables will use the **already-seen** untwinned Webull
+Aug 03-Oct 02 sample, and a **replication-only** Schwab Aug 03-Oct 02 sample.
+Those are not substitutes for the new blind primary gate. Their existing raw
+price paths/outcomes are reused with their original intraday cutoff; no quiet
+refresh or repeated threshold search. Matching, uniform +5/-8/19:55 outcomes,
+ambiguous seconds, actual-fill cashflows, and SE conventions stay as originally
+frozen below. New June-July paths are independently requested, unadjusted.
+
+### Frozen feature definitions
+
+| Claim | Exact feature before actual entry | Good | Bad | Middle |
+|---|---|---|---|---|
+| A: calm tape | Mean of 100*(high-low)/close over the last ten closed bot 1-min bars | <1.5% | >=1.5% | None |
+| B: bounce spent | 100*(real BUY fill VWAP / minimum low in the bot's last qualifying contiguous ATR-short segment - 1) | <4% | >=7% | [4%,7%) |
+| C: two-hour box | 100*(maximum high / minimum low - 1) over the last 120 closed bot 1-min bars | <20% | >=35% | [20%,35%) |
+
+Bar start+60 seconds must be strictly before the entry anchor. A and C require
+all 10/120 finite, valid rows; raw coverage, timestamp eligibility and strict
+historical-version limitations are reported separately. Do not interpolate
+missing minutes or substitute provider bars. The card says 120 bars: report
+their elapsed span and cross-session use rather than silently pretending they
+always cover exactly two clock hours.
+
+B uses **recorded V2-ATR-PROBE state**, never the reviewer's reconstructed ATR
+or an invented replay initialized at 04:00. The qualifying short segment ends
+at the last closed bot bar or at most three observed closed bars before it.
+Require an unambiguous probe for every included bar, captured before entry;
+require a complete short run with a `SELL`, age=0 start and monotonically
+incrementing ages through its end. Its lows come from those bot probes.
+Missing run start, missing probe, conflicting probe values, broken age sequence
+or ambiguous timestamp = UNMEASURED. This is deliberately not filled in with
+Massive ATR. An unknown in-memory/DB mismatch remains a strict fidelity limit.
+
+### Frozen per-claim gate
+
+Only good and bad observations with measurable features and resolved outcomes
+enter each claim's gate. Middle and unknown observations do not become bad.
+**PASS requires every condition** on the new blind primary population:
+
+1. At least 40 good observations and a nonempty bad group.
+2. Good +5%-first rate >=60%; bad +5%-first rate <=55%.
+3. Good-minus-bad uniform mean >=1.0 percentage point per trade.
+4. Positive mean gap after removing the largest summed-return contributor to
+   the good bucket (lexical tie break), with both groups still nonempty.
+5. Positive gap in at least two of [07:00,09:30), [09:30,11:00), [11:00,16:00) ET.
+
+Insufficient counts or missing instrument/robustness evidence = UNMEASURED.
+Adequate evidence violating a performance criterion = FAIL. A positive numeric
+proxy gate does not repair missing historical decision-time proof. Report both
+plainly. No sensitivity thresholds will be searched in this extension.
+
+### Frozen overlap, costs and pattern treatment
+
+- Cross-table only fully measured A/B/C observations; show all eight good/not-good
+  masks and counts good on 0/1/2/3, and unknown-feature counts separately.
+- Incremental value: within each other claim's good bucket, compare the target
+  claim's good versus bad buckets, with N, mean/SE, matched actual P&L and lost
+  winners. Also show the all-good intersection. These are descriptive tests of
+  redundancy, not a fourth optimized combination or a new pass gate.
+- Cost means **good-only retention**: skip bad AND middle among measurable
+  observations. Report both buckets separately, skipped winners, missing-feature
+  share, and completed actual-fill dollars. No unknown-feature trading policy
+  is presumed. Never infer hypothetical portfolio P&L from these sums.
+- At 07:10 or a new watchlist addition, report whether enough bars and a complete
+  bot ATR run actually exist. Actual entry price is not known before fill;
+  B at that price is not automatically a validated pre-placement rule.
+- The qualitative floor-held pattern is not uniquely defined by the card:
+  the reference for "floor held within 2%" is unspecified. A clarification is
+  requested before joining that pattern to outcomes. Until supplied, report
+  UNMEASURED, not a guessed replication. Segment start close, first-bar low,
+  segment minimum and entry distance can be retained as raw diagnostics only.
+- Keep the four previously proposed candidates unless one duplicates the newly
+  expanded exclusion list; none is promoted to a tested finding.
+
+All extension files remain on the same unmerged research branch. Main and
+production are untouched; tonight's approved install takes precedence.
+
 ## Plain-language status
 
 **Call: UNMEASURED for the strict decision-time test; the historical fill-time
