@@ -3,6 +3,28 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
+## 2026-10-02 (Fri) — LIVE DAY NOTES, as of 12:10 ET (claude-1)
+
+| # | Item | Status | Evidence (as-of, source) | Owner | Next action |
+|---|---|---|---|---|---|
+| F1 | Production | box `fd69004a`; OMS 2386879 / strategy 2387016 / orb-schwab 2387072 (installed 20:16 ET 10-01), gateway 2346625 (17:01 ET 10-01), v2 1664453, orb 1665228 | box 12:06 ET | — | tonight: sizing install (plan below) |
+| F2 | Momentum paper (Option A) | first session ran 05:24–09:40 (off 07:01–07:20); 1 detection (IART 08:05, no paper fill); running idle | `momentum_paper_events` (NOT the log) | claude-1 | Monday 04:00 start needs guard@2026-10-05 |
+| F3 | Guard died 07:01 ET | its minute check read `snapshot-batches` COUNT 180 (1.13 GB) → watchdog kill → paper stopped; Redis peak 2.14 G, evicted_keys 18→23; `heartbeats`, `strategy-state` and the owners HASH evicted | box 07:10 ET | codex-2 | fix = #1083 (pinned 8ddac119; rebased head edb98dd7 awaits re-pin) |
+| F4 | Owners hash repair | one reviewed watched HSET applied by codex; all five consumers + `_migration_complete=1` | box 09:09 ET | — | closed; durable fix #1084 MERGED ed3c84a8 (live at next gateway restart) |
+| F5 | #1077 timestamps + real 1008 signature | MERGED 19fc2aa0; not installed (needs gateway / orb-schwab restart) | GitHub | codex-2 | separate gateway plan, detector copies first |
+| F6 | ORB Schwab first live order | AMOD 09:28:04 preview ACCEPTED, Schwab order 1008146944692; cancelled 09:29:02 by the MACD-negative rule (card) | DB + logs | — | fill/exit still UNEXERCISED |
+| F7 | Fixed-dollar sizing #1082 | MERGED e57a2fbd (pinned 775e348a; card re-confirmed by operator 10:25 ET; case b ACCEPTED UNEXERCISED by ruling) | GitHub 12:06 ET | codex-2 | install tonight, plan `codex/1002-sizing-guard-install-plan` (873e0860 awaits my review; I asked for the v2 restart gate + checklist + Monday guard procedure) |
+| F8 | AMOD Webull leg dropped 08:32 | OMS prices the Webull leg ~0.39 s after Schwab (serial intents); ask ticked 2.58→2.59 for 0.43 s | box trace | — | operator DROPPED the parallel fix (pre-market only); known/accepted |
+| F9 | 06:20 gate | UNKNOWN on untimestamped gateway log lines only; flags 125/125 PASS | my run 06:34 ET | — | clears after #1077 is installed |
+| F10 | Momentum "stop the bot after 09:30 once flat" | noted by operator, parked | memory | — | none until he returns |
+
+### MACD PULLBACK study (operator's idea, 10-02) — OPEN, he will come back to it; do not park
+- Rule tested: scanner-confirmed stock, above the ATR line, 1-min MACD histogram fades ≥3 bars while positive then turns up, 3-bar avg volume ≥10k → buy.
+- **Pre-market 07:00–09:30 — works in every test.** 22 sessions, 114 signals. Room −3% / target +5%: +0.43% per trade after spread, +0.62% on our stored bid/ask quotes, 14 of 22 sessions positive. Hold to +5% then trail 2%: +0.70% / +0.97% (leans on a few runners). ≈100 trades; chance band ±0.4–0.8%.
+- **Regular hours 09:30–16:00 — does not work.** 505 signals, 36 floor/target/trail rules, all negative after spread (−2%/+3%: −0.62%, real quotes −0.79%; −3%/+5%: −0.62% / −0.95%); worst 09:30–11:00.
+- Next when he returns: confirm pre-market on July→August history (~55 sessions), then a requirement card, then codex's independent test. Full tables: claude memory `project_mai_tai_macd_pullback_study_1002.md`.
+
+
 ## 2026-10-01 (Thu) — LIVE DAY NOTES, as of 11:34 ET (claude-1; shared daily PR, both agents update)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
