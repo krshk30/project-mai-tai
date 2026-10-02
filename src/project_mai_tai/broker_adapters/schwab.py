@@ -17,6 +17,9 @@ from project_mai_tai.broker_adapters.protocols import (
     OrderRequest,
 )
 from project_mai_tai.broker_adapters import schwab_token_manager as token_manager
+from project_mai_tai.broker_adapters.atr_buy_readback import (
+    AtrBuyReadback, scoped_request, schwab_buy_readback, unknown,
+)
 from project_mai_tai.settings import Settings
 
 
@@ -996,6 +999,23 @@ class SchwabBrokerAdapter:
                 continue
         bars.sort(key=lambda bar: float(bar["timestamp"]))
         return bars
+
+    async def read_atr_resting_buy_after_cancel(self, request: OrderRequest) -> AtrBuyReadback:
+        """Read the exact BUY parent without the generic cancellation fill fallback."""
+        account = self.accounts_by_name.get(request.broker_account_name)
+        if account is None or not scoped_request(request):
+            return unknown("unconfigured_account_or_unbound_buy")
+        try:
+            status, _headers, body = await self._authorized_request_json(
+                "GET",
+                f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"
+                f"{quote(request.metadata['broker_order_id'], safe='')}",
+            )
+        except Exception:
+            return unknown("order_detail_unreadable")
+        if status != 200:
+            return unknown(f"order_detail_http_{status}")
+        return schwab_buy_readback(request, body)
 
     async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
         account = self.accounts_by_name.get(request.broker_account_name)

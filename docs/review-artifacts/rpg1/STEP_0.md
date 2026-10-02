@@ -1,5 +1,12 @@
 # RPG1 independent assessment, 2026-10-02
 
+Later build status: the operator selected dedicated cancel/strict-readback for
+both brokers, not native replace. The first-entry quote wait and standalone
+BUY readback methods are built; the immediate re-place handoff remains
+incomplete. See REPRICE_HANDOFF_REVIEW.md for current tests, recordings, NFQ1
+composition and explicit remaining limits. The original assessment below is
+retained as the evidence/design history, not the latest implementation status.
+
 ## Call and boundary
 
 Issue: **AGREE, real defect against the approved reprice card**. The strategy
