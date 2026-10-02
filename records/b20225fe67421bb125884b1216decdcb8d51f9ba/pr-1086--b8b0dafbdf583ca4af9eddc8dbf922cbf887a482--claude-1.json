@@ -1,0 +1,9 @@
+{
+  "pr_number": 1086,
+  "range_base": "b8b0dafbdf583ca4af9eddc8dbf922cbf887a482",
+  "range_head": "b20225fe67421bb125884b1216decdcb8d51f9ba",
+  "reviewed_at": "2026-10-02T22:35:45Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "NFQ1 row 38: read every src diff (mirror_fresh_price.py, service.py, store.py, fanout_outcome_consumer.py, schwab_1m_v2.py, webull.py, settings, expected_flags/numeric); mirror-only 10 s age, hold-and-send via the serial lane, v2 told on give-up, shared 2 s pre-market setting untouched (test pinned). Ran nfq1 + rpg1_nfq1 composition + deferred-resubmit + expected-flags + all test_schwab_1m_v2* = 515 pass. 12 own mutations all RED (store skip, stale-generation release, token check, live-buy guard, slot fill, configured window, v2-cancel retire, segment end, pre-market 2 s path, v2 latch on held, pre-wire order row, ordinary cancel labelled gave_up). Round-1 findings N3/N5/F1/F2/F3 closed at b20225fe. CI validate green. Operator card re-confirmed 10-02 (go ahead). Merge only after tonight's b8b0dafb install finishes; flag on at its own deploy."
+}
