@@ -1,0 +1,9 @@
+{
+  "pr_number": 1084,
+  "range_base": "19fc2aa0ab8178c50dd0d52868d1ae37f22b9d5f",
+  "range_head": "b7ba15f5ec91089b8d12a2e443bef3f0c8155460",
+  "reviewed_at": "2026-10-02T14:11:37Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Fix for the 2026-10-02 07:01 ET incident: Redis evicted the market-data-subscription-owners hash and the next event re-created it with one consumer and no _migration_complete, so a gateway restart would have restored no live consumers (verified on the box, repaired by a reviewed one-time HSET). Read the diff: apply_subscription_event now persists the full in-memory owner map + flag + checkpoint on every event; restore ignores a checkpoint when the flag is absent and replays the full retained stream, refusing a consumer history that does not start with replace. Verified all five publishers use mode=replace only (code grep) and 191/191 retained production events are replace. 33 tests pass; my mutations all red: persist only the one consumer, flag not written, unmarked hash trusts stale checkpoint, first-add refusal removed. Both GitHub validate runs pass. Not exercised live: takes effect only at the next gateway restart; a consumer whose whole history is trimmed and absent from hash and memory remains a stated hard stop."
+}
