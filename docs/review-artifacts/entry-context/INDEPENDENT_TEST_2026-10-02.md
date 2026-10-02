@@ -35,14 +35,14 @@ and 17 features; this test cannot make that original selection prospective.
    counts. The recorded managed-row entry price/time are retained for auditing.
 4. **Feature.** Arithmetic mean of `100 * (high-low)/close` for the last TEN
    one-minute `strategy_bar_history` rows with `strategy_code=schwab_1m_v2`,
-   `interval_secs=60`, same symbol/session (04:00 ET onward), and bar close
+   `interval_secs=60`, same symbol, and bar close
    strictly before actual entry time. The bar timestamp convention will be
    checked against the writer, not guessed. Require finite valid OHLC and close
    >0. Both live and REST provenance are reported; no Massive-bar substitution.
    Fewer than ten is UNMEASURED. Also require these ten bars to have been created
    by the entry and not revised after it; otherwise decision-time evidence is
    UNMEASURED. Report raw ten-bar coverage and stricter as-of coverage separately.
-   No interpolation or carrying yesterday's bars into a thin morning.
+   No interpolation. Cross-session rows are flagged and counted, not excluded.
 5. **Fixed groups.** Calm = feature strictly <1.5%; other = >=1.5%. No alternative
    threshold is a result. Boundary equality belongs in other.
 6. **Independent price-path construction.** Obtain raw one-second Massive
@@ -120,6 +120,16 @@ one connection and small symbol/time-bounded extracts. Run with nice 19 and idle
 I/O priority on the box. Compute locally. Raw price requests are sequential and
 throttled, bounded per symbol/day; no service, flag, owner-hash or production
 checkout changes. Do not query Redis snapshot-batches. Respect tonight's install.
+
+## Instrument correction before outcome scoring
+
+The original design commit `96de0ddda62a61fccd0d5548a4c51793bfbac5b3` added an
+unrequested same-session restriction. This correction removes it to match the
+operator's exact last-ten-closed-bars feature. It is made after the first DB
+coverage extract and while raw REST collection is running, but **before reading
+or computing outcome labels**. Neither the 1.5% threshold, cohort, dates nor
+performance gate changes. Keep cross-session counts/age visible. Original
+restricted extract is retained as `db.ndjson`; corrected extract is `db-exact.ndjson`.
 
 ## Results and candidates
 
