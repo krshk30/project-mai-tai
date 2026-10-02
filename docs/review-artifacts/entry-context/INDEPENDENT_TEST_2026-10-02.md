@@ -1,8 +1,307 @@
-# Independent calm-tape entry test: 2026-10-02
+# Independent entry-context tests: 2026-10-02
+
+## Three-claim result in plain language
+
+**A = UNMEASURED; B = UNMEASURED; C = UNMEASURED on the new blind test.**
+There are only 34 untouched June-July Webull entries, below the required 40
+**good** trades for any claim. I did not change the population after learning
+that. The earlier August-October outcomes were already seen during A's study,
+so the extension treats them as supporting evidence, not another blind test.
+
+| Claim | What the evidence says | Cost of good-only retention on supporting Webull sample |
+|---|---|---|
+| A: ten-bar calm tape <1.5% | Strongest supporting pattern; original numerical proxy gate passes, but original decision-time OHLC cannot be certified. Order-creation diagnostic misses the one-point gap. | Skip 201/285 entries (70.5%) and 103/157 known target-first winners (65.6%). |
+| B: bounce from real bot segment low <4% | Not enough low-bounce observations: only **1 good Webull trade and 8 good Schwab trades**. Real bot state does not substantiate the claimed 57-trade good bucket. | Skip 49/50 measurable entries (98.0%) and 25/26 known winners (96.2%); another 263/313 lack the required segment evidence. |
+| C: last-120-bar box <20% | A barely positive standalone proxy comparison, not a dependable added filter. After A is applied, C's incremental gap is negative in both supporting samples. Stored 120 bars can be much older than two hours. | Skip 196/260 measurable entries (75.4%) and 100/139 known winners (71.9%); another 53/313 are unmeasured. |
+
+The new blind A/C results have the favorable direction but only 8 and 6 good
+observations, respectively. B cannot be reconstructed there from retained bot
+probes. **None earns a new independent PASS or authorization to change entry
+rules.** In particular, do not combine three correlated descriptions and call
+that three independent confirmations. Exits remain +5% / -8%.
+
+Four candidates remain untested proposals: executable liquidity, bid resilience,
+overhead volume-at-price supply and peer-relative demand. Their mechanisms,
+real-fill test designs and falsifiers remain in the candidate table below.
+
+## Three-claim results and coverage
+
+The extension design was committed and pushed at `e43d83b9` before its database
+extraction, new price paths or B/C feature/outcome joins. The design and gates
+are retained below. No alternative cutoff was fitted. Means are percentages
+per trade, +/- one ordinary SE; `SE unavailable` means n<2, not zero risk.
+Full symbol-bootstrap SEs, same-subset P&L tables and robustness tests are in
+`THREE_CLAIM_RESULTS_2026-10-02.json` beside this report.
+
+| Population | Matched entries | A timestamp-eligible | B complete recorded segment | C timestamp-eligible | Role |
+|---|---:|---:|---:|---:|---|
+| Untwinned Webull Jun 17-Jul 31 | 34 | 33 | 0 | 29 | New blind primary; actual entries Jul 27-31 |
+| Untwinned Webull Aug 03-Oct 02 | 313 | 285 | 50 | 260 | Already-seen supporting sample |
+| Schwab Aug 03-Oct 02 | 417 | 395 | 120 | 368 | Replication only |
+
+The June-July extract had 56 Webull managed entries: 22 had a Schwab twin and
+34 remained, with no unmatched/ambiguous BUY mapping. It also contained 154
+Schwab entries used only to identify twins, not to enlarge the blind test.
+
+C raw 120-row coverage is 34/34, 289/313 and 389/417 respectively. Timestamp
+checks reject 5, 29 and 21 of those sets; another 24/28 recent Webull/Schwab
+entries lack 120 rows. A/C timestamps remain only proxies for original values:
+the OHLC revision-history problem in the prior study is unchanged.
+
+31 retained v2 log files yielded 119,940 parsable probes, observed from
+2026-09-05 00:05:07 UTC through 2026-10-02 18:43:02 UTC. No July entry has a
+pre-entry probe. In recent Webull, B has 262 missing-probe entries and one with
+no short segment within three bars; in Schwab, 289 and eight respectively.
+No vendor-ATR substitute or entry-minute-open proxy is used. B's actual fill
+VWAP and complete, age-checked bot short run differ materially from the
+reviewer's instruments; exact trade-ID reconciliation is still needed before
+attributing the different good-bucket count to one specific cause.
+
+### New blind primary
+
+| Claim / bucket | Resolved N | Target-first rate +/- SE | Uniform return +/- SE | Actual completed N; return +/- SE |
+|---|---:|---|---|---|
+| A good <1.5% | 8 | 5/8; 62.5% +/- 17.1 pp | +1.37% +/- 2.08% | 5; +0.26% +/- 1.38% |
+| A bad >=1.5% | 25 | 12/25; 48.0% +/- 10.0 pp | -1.76% +/- 1.33% | 22; -1.10% +/- 0.76% |
+| B good / bad | 0 / 0 | UNMEASURED | UNMEASURED | UNMEASURED |
+| C good <20% | 6 | 4/6; 66.7% +/- 19.2 pp | +0.67% +/- 2.74% | 2; -1.32% +/- 3.58% |
+| C middle [20%,35%) | 9 | Not used in gate | -0.78% +/- 2.28% | Included in cost, not relabeled bad |
+| C bad >=35% | 14 | 6/14; 42.9% +/- 13.2 pp | -2.43% +/- 1.78% | 14; -0.66% +/- 0.90% |
+
+A's gap is **+3.13 +/- 2.46 pp** and C's **+3.10 +/- 3.27 pp**. Neither has
+40 good trades. A has no good pre-11:00 observations, so only one time block
+is comparable. C is negative in 09:30-11:00 (one good trade, SE unavailable)
+and positive in 11:00-16:00; the required two favorable blocks do not hold.
+These are underpowered, not validated rejections of either hypothesis.
+
+Removing best name BIYA leaves A's gap **+2.64 +/- 2.70 pp**; removing ENTX
+leaves C's **+0.93 +/- 4.16 pp**. This does not repair the count/time-block gates.
+Good-only A would skip **25/33 entries and 12/17 winners**; C would skip
+**23/29 entries and 11/15 winners**. B's cost is unknown, not zero.
+
+### Supporting and replication tables: B and C
+
+A's unchanged full tables remain below. These B/C tables do not rescue the blind
+gate. All N are resolved uniform outcomes; actual P&L has its own denominator.
+
+| Sample / claim / bucket | N | Target-first rate +/- SE | Uniform return +/- SE | Actual N; return +/- SE |
+|---|---:|---|---|---|
+| Webull B good <4% | 1 | 1/1; 100%, uninformative single observation | +5.00%; SE unavailable | 0; UNMEASURED |
+| Webull B bad >=7% | 37 | 17/37; 45.9% +/- 8.2 pp | -2.03% +/- 1.08% | 31; -0.85% +/- 1.20% |
+| Schwab B good <4% | 8 | 5/8; 62.5% +/- 17.1 pp | +0.13% +/- 2.38% | 7; +0.91% +/- 1.59% |
+| Schwab B bad >=7% | 81 | 40/81; 49.4% +/- 5.6 pp | -1.55% +/- 0.72% | 77; -0.88% +/- 0.62% |
+| Webull C good <20% | 64 | 39/64; 60.9% +/- 6.1 pp | -0.06% +/- 0.80% | 55; -0.48% +/- 0.47% |
+| Webull C bad >=35% | 120 | 64/120; 53.3% +/- 4.6 pp | -1.07% +/- 0.59% | 109; -0.62% +/- 0.41% |
+| Schwab C good <20% | 113 | 68/113; 60.2% +/- 4.6 pp | +0.33% +/- 0.56% | 97; -0.42% +/- 0.34% |
+| Schwab C bad >=35% | 148 | 80/148; 54.1% +/- 4.1 pp | -0.97% +/- 0.53% | 134; -0.63% +/- 0.40% |
+
+The plug-in binomial SE for 1/1 is mechanically zero; it is not useful
+uncertainty evidence and is not presented as precision. The sole good Webull B
+trade is YMAT; removing it leaves no comparison. Schwab B has a
+**+1.67 +/- 2.49 pp** gap, only eight good trades, and no good observations in
+the first two time blocks: UNMEASURED, not a new confirmation.
+
+Middle-bucket uniform returns: Webull B n=12, **+0.77% +/- 1.81%**; Schwab B
+n=31, **+0.39% +/- 1.14%**; Webull C n=75, **-1.76% +/- 0.76%**; Schwab C
+n=107, **-0.31% +/- 0.62%**. Middle is skipped by good-only retention but is
+never inserted into the bad bucket to improve the gate.
+
+| Standalone C numerical robustness (not blind) | Webull | Schwab |
+|---|---|---|
+| Good-minus-bad gap | +1.007 +/- 0.994 pp | +1.308 +/- 0.774 pp |
+| Drop best name | YYGH: +0.63 +/- 1.03 pp | XOS: +1.00 +/- 0.79 pp |
+| 07:00-09:30 gap | -3.25 +/- 2.88 pp (8/16 good/bad) | -1.65 +/- 3.48 pp (9/7) |
+| 09:30-11:00 gap | +2.49 +/- 2.66 pp (8/30) | +6.24 +/- 1.33 pp (7/25) |
+| 11:00-16:00 gap | +1.22 +/- 1.18 pp (48/74) | +1.18 +/- 0.85 pp (97/116) |
+| Proxy numerical gate | PASS, barely | PASS |
+
+The drop-best requirement is positive sign, not a second >=1-point test.
+These passes do not supply missing decision-time fidelity or a blind sample.
+Schwab C direction holds across the two historical halves: good/bad means
+**+0.31% +/- 0.63% / -0.50% +/- 0.63%** (n=88/104) before September 14, and
+**+0.43% +/- 1.25% / -2.09% +/- 0.99%** (n=25/44) afterward. Webull C reverses
+in the latter half: **-1.50% +/- 2.91% / -0.32% +/- 1.39%** (n=6/22).
+
+Actual completed cashflows are at real historical share quantities, not the
+planned dollar sizing. Actual dollars/trade +/- SE:
+
+| Sample / claim | Good bucket | Bad bucket |
+|---|---|---|
+| Blind A | n=5; +$0.0261 +/- $0.0363 | n=22; -$0.0394 +/- $0.0332 |
+| Blind C | n=2; -$0.0525 +/- $0.1375 | n=14; -$0.0110 +/- $0.0383 |
+| Supporting Webull B | n=0; UNMEASURED | n=31; -$0.0737 +/- $0.0439 |
+| Supporting Webull C | n=55; -$0.0240 +/- $0.0239 | n=109; -$0.0203 +/- $0.0253 |
+| Replication Schwab B | n=7; +$0.0086 +/- $0.0798 | n=77; -$0.0568 +/- $0.0655 |
+| Replication Schwab C | n=97; -$0.0084 +/- $0.0302 | n=134; -$0.0386 +/- $0.0450 |
+
+On the identical completed-fill subset, Webull C uniform means are
+**-0.18% +/- 0.86%** (n=55 good) versus **-1.02% +/- 0.63%** (n=108 bad);
+actual means **-0.48% +/- 0.47%** versus **-0.65% +/- 0.41%**. Schwab C has
+n=97/134, uniform **+0.23% +/- 0.61% / -1.50% +/- 0.56%**, actual
+**-0.42% +/- 0.34% / -0.63% +/- 0.40%**. These are not demonstrated positive
+actual-profit buckets. Complete same-subset B tables are retained in the JSON.
+
+### Overlap and incremental information
+
+Only entries with all three measurable features appear in this cross-table.
+`1` means good; `0` means a measured bad OR middle bucket. An unknown feature
+does not become a zero. The blind sample has **zero complete triples**, so
+its cross-table is UNMEASURED, not eight zero-valued behavioral counts.
+
+| A/B/C good mask | Supporting Webull | Replication Schwab |
+|---|---:|---:|
+| 000 | 28 | 56 |
+| 001 | 4 | 4 |
+| 010 | 0 | 0 |
+| 011 | 0 | 0 |
+| 100 | 10 | 20 |
+| 101 | 4 | 20 |
+| 110 | 0 | 2 |
+| 111 | 1 | 6 |
+| Total complete triples | 47 | 108 |
+| Good on 0 / 1 / 2 / 3 | 28 / 14 / 4 / 1 | 56 / 24 / 22 / 6 |
+| At least one feature unknown | 266/313 | 309/417 |
+
+Conditional comparisons use pairwise feature availability, so missing B does
+not unnecessarily discard A/C evidence. The JSON also includes the stricter
+complete-triple versions. Rows below compare the added rule's good vs bad
+bucket **within the first rule's good bucket**; middle is omitted.
+
+| Conditional question | Webull: good/bad N; uniform gap +/- SE | Schwab: good/bad N; uniform gap +/- SE |
+|---|---|---|
+| Does C add after A? | 39/17; **-1.58 +/- 1.71 pp** | 84/17; **-0.64 +/- 1.61 pp** |
+| Does A add after C? | 39/25; +1.08 +/- 1.66 pp | 84/29; +0.78 +/- 1.35 pp |
+| Does B add after A? | 1/4; +9.75 pp, SE unavailable | 8/13; -1.09 +/- 2.90 pp |
+| Does B add after C? | 1/4; +9.75 pp, SE unavailable | 6/7; +2.70 +/- 3.72 pp |
+| Does A add after B? | 1/0; UNMEASURED | 8/0; UNMEASURED |
+| Does C add after B? | 1/0; UNMEASURED | 6/0; UNMEASURED |
+
+**Call: C has not demonstrated incremental benefit after A; B's incremental
+value is UNMEASURED.** These are descriptive comparisons with substantial SE,
+not evidence that any condition causally harms trades. Among A-good trades,
+Webull C-good actual mean is **+0.15% +/- 0.56%** (n=32) versus C-bad
+**+0.50% +/- 0.86%** (n=15); Schwab is **-0.44% +/- 0.38%** (n=71) versus
+**+1.63% +/- 1.66%** (n=17). Actual fills do not reverse the caution.
+
+Requiring all three keeps one supporting Webull trade (uniform +5%, SE and
+actual P&L unavailable) and six Schwab trades (uniform **+0.67% +/- 2.74%**;
+five completed actual cycles average **-0.82% +/- 1.64%**). Not a validated
+combined rule. No combination was optimized.
+
+### Cost and availability
+
+| Sample / claim | Measured good / middle / bad | Entries skipped | Winners forgone | Unknown features |
+|---|---|---|---|---|
+| Blind A | 8 / 0 / 25 | 25/33 (75.8%) | 12/17 (70.6%) | 1/34 |
+| Blind B | 0 / 0 / 0 | UNMEASURED | UNMEASURED | 34/34 |
+| Blind C | 6 / 9 / 14 | 23/29 (79.3%) | 11/15 (73.3%) | 5/34 |
+| Supporting A | 84 / 0 / 201 | 201/285 (70.5%) | 103/157 (65.6%) | 28/313 |
+| Supporting B | 1 / 12 / 37 | 49/50 (98.0%) | 25/26 (96.2%) | 263/313 |
+| Supporting C | 64 / 75 / 121 | 196/260 (75.4%) | 100/139 (71.9%) | 53/313 |
+| Replication A | 148 / 0 / 247 | 247/395 (62.5%) | 126/225 (56.0%) | 22/417 |
+| Replication B | 8 / 31 / 81 | 112/120 (93.3%) | 60/65 (92.3%) | 297/417 |
+| Replication C | 113 / 107 / 148 | 255/368 (69.3%) | 142/210 (67.6%) | 49/417 |
+
+One supporting Webull bad-bucket outcome is entry-second ambiguous, explaining
+the 201/200 and 121/120 entry/outcome differences. Unknown-feature policies are
+not specified or simulated. These counts are not a portfolio replay.
+
+At **07:10** or immediately after a watchlist add, A needs ten already-delivered
+closed bars; C needs 120; B needs the complete preceding short run and its low.
+Warm-up can supply them without waiting ten/120 new minutes, but it can also
+leave insufficient history. The current implementation consumes older REST
+bars in memory without persisting all of them. There are no pre-07:10 entries
+in these samples and no complete per-add memory inventory, so those edge cases
+remain UNMEASURED. B at the actual fill price also cannot be known exactly
+before placing an order; using the proposed wire limit would be a separately
+specified instrument, not silently substituted here.
+
+### C clock-span diagnostic and CYCU
+
+The card's literal last-120-observed-bars proxy can differ from its name,
+"two-hour box." Among raw 120-bar sets, 8/34 blind, 48/289 supporting, and
+56/389 replication sets cross a session date. Median span is 123, 120 and 120
+minutes, respectively; those medians hide very old tails. Of timestamp-eligible
+sets, 8, 45 and 51 cross sessions. This limits C's interpretation even when
+its numerical proxy gate passes.
+
+**Post-hoc instrument sensitivity, NOT the frozen result:** retain only 120
+consecutive minutes whose last close is >0 and <=60 seconds before entry.
+The feature and its <20/>=35 thresholds are unchanged; no threshold sweep.
+This diagnostic was added after seeing CYCU's stale-history case.
+
+| Exact-clock sensitivity | Good / bad N | Good mean +/- SE | Bad mean +/- SE | Gap +/- SE | Numerical diagnostic |
+|---|---|---|---|---|---|
+| Blind | 5 / 2 | +2.40% +/- 2.60% | +5.00% +/- 0.00% | -2.60 +/- 2.60 pp | UNMEASURED: too few |
+| Supporting Webull | 53 / 52 | -0.13% +/- 0.88% | -0.75% +/- 0.90% | +0.62 +/- 1.26 pp | FAIL: gap <1 and bad wins 55.8% >55 |
+| Replication Schwab | 101 / 53 | +0.36% +/- 0.59% | -2.11% +/- 0.90% | +2.48 +/- 1.07 pp | Proxy PASS, not independent validation |
+
+Zero sample SE for two identical +5 outcomes is not certainty. Exact-clock
+supporting C-good actual P&L remains **-0.48% +/- 0.53%** (n=45), and Schwab
+**-0.45% +/- 0.36%** (n=88).
+
+CYCU's three Schwab entries in the fixed replication extract illustrate the
+operator's concern without fitting a rule to them:
+
+| Entry ET / actual price | Bot short-segment start/end ET | Start-bar low / segment low | B: bounce already spent | C: raw box / span |
+|---|---|---|---|---|
+| 12:12:19 / $4.105 | 11:56-12:11 | $3.8200 / $3.8100 | 7.743% | 481.532% / 86,569 minutes: NOT a two-hour box |
+| 12:33:14 / $4.120 | 12:21-12:32 | $3.8000 / $3.7601 | 9.572% | 35.050% / 120 minutes |
+| 12:36:19 / $4.140 | 12:21-12:35 | $3.8000 / $3.7601 | 10.103% | 32.708% / 120 minutes |
+
+Thus the real entries were already 7.7-10.1% above their logged short-run lows.
+The first C value cannot describe the contemporaneous two-hour range. The
+qualitative "floor held within 2% / real downtrend / floor broken >8%" census
+remains **UNMEASURED pending the reference-floor definition** requested from
+the operator. I have not assigned those labels from a guessed reference.
+
+### Extension provenance and checks
+
+All raw files remain local under
+`/Users/velkris/.codex/study-evidence/entry-context-20261002/`.
+The extension retained the old population/trade IDs and intraday outcomes for
+support/replication. It acquired 15 July symbol-day paths plus one previously
+uncovered September SUNE path: 16 complete HTTP responses, 114,500 one-second
+bars, maximum response 2,123,185 bytes. The filename `three-blind-paths.ndjson`
+contains that one supporting path too. No bulk Redis read or production write.
+
+The 250-row collection ceiling is a read bound, not a new feature: A uses ten,
+C 120, and B is unmeasured if its run start lies outside the available rows.
+The June-July SQL extract was at 14:41:49 ET; the new recent-feature extract
+completed 14:43:46 ET. Probe collection ended after reading the current file
+at 14:43 ET. Original A features and earlier intraday price-path cutoff remain
+unchanged. This is not a complete October 2 session.
+
+| Artifact | SHA256 |
+|---|---|
+| `three-blind.ndjson` | `58c36c75187e9d77ea9042cf8cc77d50bd9f43c55f4f2a5544da12886a108d87` |
+| `three-support.ndjson` | `c39683a6c63a07c62a059f38cbf3725d67126f088a0115ab7a939572912b3de8` |
+| `probes.ndjson` | `5107d1c263bad58253779cc69bbc580b8874ea22da9888a89f70d5f864e31423` |
+| `three-blind-paths.ndjson` | `12752823db6d40c3c7e14a4f72efaee682c9fdaa5f2ae7dafc933db91748c05d` |
+| `three-result.json` | `a325c99c44ff81239c799ee1a7f12b029523f31fc7d01586ca394b5512d0280c` |
+| `three-ledger.json` | `a52d83f7c19f5f5d8b18774bc357cbb64bd283f7a2402b22f7a2af4561e806d1` |
+
+22 offline instrument tests pass, including exact bucket boundaries, 119 versus
+120 bars, post-entry data exclusion, use of real fill price, the three-bar limit,
+missing/late/conflicting probes, and missing or broken segment starts. No
+runtime code is changed. The separate Decimal first-touch implementation checks
+**714 eligible entries with zero outcome mismatches**: 400 targets, 297 stops,
+16 end-of-day outcomes and one ambiguous entry second. Its output is retained
+in `three-verification.json`. All three-claim tables can be rebuilt locally with:
+
+```sh
+"$PY" docs/review-artifacts/entry-context/three_claim_study.py /Users/velkris/.codex/study-evidence/entry-context-20261002
+"$PY" -m unittest discover -s docs/review-artifacts/entry-context -p 'test_*study.py' -v
+"$PY" docs/review-artifacts/entry-context/verify_raw_outcomes.py /Users/velkris/.codex/study-evidence/entry-context-20261002 --extension
+```
+
+The results JSON preserves all intermediate tables, the middle groups, both
+overlap denominators, same-subset actual P&L, symbol-bootstrap SEs and the
+explicitly post-hoc sensitivity. Large raw logs/bar extracts are not committed.
 
 ## Three-claim extension: frozen before new feature/outcome joins
 
-**EXTENSION DESIGN FROZEN; B/C RESULTS NOT YET READ.** The new operator card
+**FROZEN DESIGN at e43d83b9, before B/C results.** The new operator card
 supersedes the single-claim scope. The completed A-only study below is retained
 as prior evidence, not relabeled as a blind three-claim result.
 
@@ -94,7 +393,7 @@ plainly. No sensitivity thresholds will be searched in this extension.
 All extension files remain on the same unmerged research branch. Main and
 production are untouched; tonight's approved install takes precedence.
 
-## Plain-language status
+## Prior A-only result, retained for audit
 
 **Call: UNMEASURED for the strict decision-time test; the historical fill-time
 proxy passes every frozen numerical condition.** This is useful supporting
@@ -467,7 +766,7 @@ sample followed by a fresh, untouched time block; keep +5/-8 unchanged.
 |---|---|---|---|
 | **Executable liquidity:** take a rest only if the observed spread plus estimated entry impact at the intended share size is <=0.5% of price. | A chart cross can be genuine while a thin ask makes the attainable entry much worse; this measures execution cost, not candle range. | Reconstruct point-in-time bid/ask and depth before each original rest/reprice; freeze the cost model before a new holdout; compare both uniform and actual fill returns, unfilled opportunities, and slippage at matched candle range. Depth missing = UNMEASURED. | No improvement after execution costs, or the effect vanishes after spread/range matching or dropping the best symbol. A result based only on future fill spread is invalid. |
 | **Bid resilience:** permit entry only when the bid has recovered to its pre-event level within five seconds after the most recent clearly sell-initiated print in the preceding minute. | A bid that absorbs sellers may support a breakout; repeated bid erosion signals fragile demand even if total volume is high. | Use ordered trade/NBBO receipt data before the intent; predeclare trade classification and freshness; compare filled trades and skipped winners on an untouched period. Unknown aggressor or no qualifying event is UNMEASURED. | Matched high-range/low-range cohorts show no actual-return or slippage advantage, or the sign reverses on a second time block. |
-| **Overhead supply:** permit entry only when less than 20% of the day's prior executed volume lies between the proposed entry and its +5% target. | A large concentration of recent holders just overhead could supply selling before the target; this is a volume-at-price map, not distance from the high or VWAP. | Build the profile from only prints received before each original intent, replay the exact proposed price band, and compare the first-target outcome and actual P&L at matched range/spread. Freeze 20% before a new sample. | No separation after those controls, inconsistent sign after dropping the leading symbol/day, or results require post-entry prints. |
+| **Overhead supply:** permit entry only when less than 20% of the day's prior executed volume lies between the proposed entry and its +5% target. | A large concentration of recent holders just overhead could supply selling before the target; this is volume-at-price mass, not the already-tested price position inside a box, day-high distance or VWAP. | Build the profile from only prints received before each original intent, replay the exact proposed price band, and compare outcomes at matched range/spread AND matched position inside the two-hour range. Freeze 20% before a new sample. | No separation after those controls, inconsistent sign after dropping the leading symbol/day, or results require post-entry prints. |
 | **Peer-relative demand:** take the cross only if its preceding five-minute return exceeds the median of a preselected price/liquidity peer basket. | A stock-specific bid may be more durable than merely following a broad speculative burst; it is relative demand, not the already-tested absolute 30-minute change. | Freeze a survivorship-safe basket before each day, exclude the target stock, align receipt times, and test on new real fills while matching absolute return, range and spread. | The residual adds nothing after those matches or depends on a retrospectively chosen basket. |
 
 For each candidate, a better mean alone is insufficient: show entry retention,

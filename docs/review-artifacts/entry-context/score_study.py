@@ -40,7 +40,7 @@ def load_db(path):
         elif p['account']=='live:orb' and p['schwab_twin']: p['match_reason']='schwab_twin'
         if b:
             p['at']=b['time']; p['price']=float(b['price'])
-            p['feature'],p['feature_status']=feature(p.get('entry_bars',[]),dt(b['time']))
+            p['feature'],p['feature_status']=feature(p.get('entry_bars',[])[:10],dt(b['time']))
             placed=b['intent_at'] or b['submitted_at']
             p['placement_feature'],p['placement_status']=feature(p.get('placement_bars',[]),dt(placed)) if placed else (None,'no_timestamp')
             p['calm']=p['feature']<1.5 if p['feature'] is not None else None

@@ -1,6 +1,7 @@
 """Second local first-touch implementation using Decimal, independent of scorer."""
 import json
 import sys
+from itertools import chain
 from collections import Counter, defaultdict
 from datetime import datetime
 from decimal import Decimal
@@ -8,15 +9,25 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 root = Path(sys.argv[1])
-trades = json.loads((root / 'result.json.trades.json').read_text())
+extension = '--extension' in sys.argv
+trades = json.loads((root / ('three-ledger.json' if extension else 'result.json.trades.json')).read_text())
 by_day = defaultdict(list)
 for trade in trades:
-    if trade['match_reason'] == 'ok' and trade['feature_status'] == 'timestamp_eligible':
+    eligible = (any(f['bucket'] != 'unknown' for f in trade['features'].values()) if extension else
+                trade['match_reason'] == 'ok' and trade['feature_status'] == 'timestamp_eligible')
+    if eligible:
         by_day[(trade['symbol'], trade['day'])].append(trade)
 checks = Counter()
+extra = {}
+if extension:
+    with (root / 'three-blind-paths.ndjson').open() as stream:
+        for line in stream:
+            path = json.loads(line)
+            extra[(path['symbol'], path['day'])] = path
 with (root / 'paths.ndjson').open() as stream:
-    for line in stream:
-        path = json.loads(line)
+    originals = (json.loads(line) for line in stream)
+    originals = (p for p in originals if (p['symbol'], p['day']) not in extra)
+    for path in chain(originals, extra.values()):
         assert path['complete']
         for trade in by_day[(path['symbol'], path['day'])]:
             start = datetime.fromisoformat(trade['at'])

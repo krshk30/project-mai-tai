@@ -1,5 +1,6 @@
 """Study-only bounded extraction. Run via SSH stdin under nice/ionice; no DB writes."""
 import json
+import argparse
 import sys
 import time
 from collections import defaultdict
@@ -12,8 +13,15 @@ from psycopg.rows import dict_row
 from project_mai_tai.settings import Settings
 
 ET = ZoneInfo('America/New_York')
-START = datetime(2026, 8, 3, tzinfo=ET)
-CUTOFF = datetime(2026, 10, 2, 14, 40, tzinfo=ET)
+parser = argparse.ArgumentParser()
+parser.add_argument('--start', default='2026-08-03T00:00:00-04:00')
+parser.add_argument('--cutoff', default='2026-10-02T14:40:00-04:00')
+parser.add_argument('--bars', type=int, default=10)
+parser.add_argument('--entry-only', action='store_true')
+args = parser.parse_args()
+assert 10 <= args.bars <= 250
+START = datetime.fromisoformat(args.start)
+CUTOFF = datetime.fromisoformat(args.cutoff)
 s = Settings(_env_file='/etc/project-mai-tai/project-mai-tai.env')
 
 def emit(value):
@@ -51,7 +59,8 @@ with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5,
                 time=min(x['filled_at'] for x in group), quantity=qty,
                 price=sum(x['quantity']*x['price'] for x in group)/qty,
                 intent_at=group[0]['intent_at'], submitted_at=group[0]['submitted_at']))
-        emit({'type':'metadata', **stamp, 'cutoff':CUTOFF, 'positions':len(positions), 'fills':len(fills)})
+        emit({'type':'metadata', **stamp, 'cutoff':CUTOFF, 'positions':len(positions), 'fills':len(fills),
+              'bars_per_anchor':args.bars, 'entry_only':args.entry_only})
         emit({'type':'fills', 'rows':fills})
         for n, p in enumerate(positions):
             candidates = sorted((b for b in buys if b['account']==p['account'] and b['symbol']==p['symbol']
@@ -66,6 +75,8 @@ with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5,
                 p['schwab_twin'] = any(x['account']=='live:schwab_1m_v2' and x['symbol']==p['symbol']
                     and abs((x['time']-b['time']).total_seconds())<=120 for x in buys)
                 anchors = {'entry':b['time'], 'placement':b['intent_at'] or b['submitted_at']}
+                if args.entry_only:
+                    anchors.pop('placement')
                 for name, anchor in anchors.items():
                     if anchor is None:
                         p[name+'_bars']=[]
@@ -74,7 +85,7 @@ with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5,
                         volume,source,created_at,updated_at FROM strategy_bar_history
                         WHERE strategy_code='schwab_1m_v2' AND interval_secs=60 AND symbol=%s
                         AND bar_time < %s - interval '1 minute'
-                        ORDER BY bar_time DESC LIMIT 10''', (p['symbol'],anchor))
+                        ORDER BY bar_time DESC LIMIT %s''', (p['symbol'],anchor,args.bars))
                     p[name+'_bars']=c.fetchall()
             emit({'type':'position','row':p})
             time.sleep(.03)
