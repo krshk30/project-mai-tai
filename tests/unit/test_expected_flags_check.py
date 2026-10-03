@@ -86,18 +86,20 @@ def test_fixed_dollar_numeric_catalog_covers_both_running_consumers() -> None:
         "strategy_schwab_1m_v2_webull_entry_notional_usd",
         "strategy_schwab_1m_v2_entry_max_shares",
         "oms_v2_webull_mirror_quote_max_age_ms",
+        "redis_snapshot_batch_stream_maxlen",
     }
 
     def process_env(service: str) -> flags.ServiceEnvironment:
-        assert service in {"schwab-1m-v2", "oms"}
+        assert service in {"schwab-1m-v2", "oms", "market-data"}
         return _reading(1234, {
             "MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENTRY_NOTIONAL_USD": "600",
             "MAI_TAI_STRATEGY_SCHWAB_1M_V2_WEBULL_ENTRY_NOTIONAL_USD": "300",
+            "MAI_TAI_REDIS_SNAPSHOT_BATCH_STREAM_MAXLEN": "120",
         })
 
     rc, lines = flags.audit(entries, process_env)
     assert rc == 0
-    assert "checked=7/7" in lines[-1]
+    assert "checked=8/8" in lines[-1]
 
 
 def test_missing_or_wrong_live_notional_fails_numeric_gate() -> None:
