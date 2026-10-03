@@ -21,11 +21,11 @@ from zoneinfo import ZoneInfo
 from review_gate import BASE, PIN, ROOT, TREE, verify
 
 REPO = Path('/home/trader/project-mai-tai')
-RUN = Path('/home/trader/after-hours/2026-10-04/resize-run')
+RUN = Path('/home/trader/after-hours/2026-10-03/resize-run')
 ENV = Path('/etc/project-mai-tai/project-mai-tai.env')
 PREOPEN = Path('/home/trader/preopen.sh')
 MONDAY = Path('/home/trader/after-hours/2026-10-05/guard-start-job/start-guard-20261005.sh')
-JOURNAL = Path('/home/trader/fleet_health/deployments-20261004.md')
+JOURNAL = Path('/home/trader/fleet_health/deployments-20261003.md')
 KEY = 'MAI_TAI_REDIS_SNAPSHOT_BATCH_STREAM_MAXLEN'
 OWNER_NAMES = {'strategy-engine','schwab-1m-v2','orb','orb-schwab','momentum-paper'}
 APPS = ('control','market-capture','market-data','oms','orb','orb-schwab',
@@ -209,7 +209,7 @@ def capture_owners():
         tail=r.xrevrange(stream,count=1)
         bounded(tail,1024**2,'subscription tail COUNT1')
         need(tail and tail[0][0]==raw['_last_applied_id'] and owners(r,s.redis_stream_prefix)[0]==raw,'owner capture raced')
-        need(sets['momentum-paper']==[],'paper owns symbols before Sunday reboot')
+        need(sets['momentum-paper']==[],'paper owns symbols before Saturday reboot')
         events=sorted(latest.values(),key=lambda v:tuple(map(int,v['source_id'].split('-'))))
         return {'at_utc':now().isoformat(),'raw':raw,'sets':sets,'events':events,
                 'static':s.market_data_static_symbol_list,'safety':safety(r,expected=before['evicted_keys'])}
@@ -400,7 +400,7 @@ def idle_gates():
         def __getattr__(self,name):
             raise RuntimeError('idle probe attempted external I/O: '+name)
     results=[]
-    times=(now(),datetime(2026,10,4,10,0,tzinfo=ZoneInfo('America/New_York')))
+    times=(now(),datetime(2026,10,3,17,0,tzinfo=ZoneInfo('America/New_York')))
     for instant in times:
         need(instant.astimezone(ZoneInfo('America/New_York')).weekday()>=5,'not a weekend idle proof')
         v2=SchwabV2BotService.__new__(SchwabV2BotService)
@@ -462,7 +462,7 @@ def review_evidence(path):
 
 def before():
     et=now().astimezone(ZoneInfo('America/New_York'))
-    need(et.date().isoformat()=='2026-10-04' and 930<=int(et.strftime('%H%M'))<945,'prepare window')
+    need(et.date().isoformat()=='2026-10-03' and 1640<=int(et.strftime('%H%M'))<2100,'prepare window')
     need(git('rev-parse','HEAD')==BASE and not git('status','--porcelain'),'box base/clean drift')
     need(git('ls-remote','origin','refs/heads/main').split()[0]==BASE,'main moved before merge')
     for path,want in PINS.items():
@@ -561,18 +561,18 @@ def boot_setup():
     for unit in APP_UNITS+INFRA:
         directory=Path('/etc/systemd/system')/(unit+'.d')
         directory.mkdir(exist_ok=True)
-        path=directory/'90-resize-20261004-no-auto-retry.conf'
+        path=directory/'90-resize-20261003-no-auto-retry.conf'
         with path.open('x') as out:
             out.write('[Service]\nRestart=no\n')
         created.append({'path':str(path),'sha256':sha(path)})
     cmd('systemctl','daemon-reload')
-    cmd('systemctl','enable','project-mai-tai-resize-postboot-20261004.service')
+    cmd('systemctl','enable','project-mai-tai-resize-postboot-20261003.service')
     save('boot-setup.json',{'dropins':created,'postboot_enabled':True})
     need({u:identity(u) for u in APP_UNITS+INFRA}==load('before.json')['services'],'identity moved before quiesce')
 
 
 def quiesce_ready():
-    need(int(now().astimezone(ZoneInfo('America/New_York')).strftime('%H%M'))<958,'too late for 10:00 resize; no stop')
+    need(int(now().astimezone(ZoneInfo('America/New_York')).strftime('%H%M'))<2115,'too late for 21:15 quiesce window; no stop')
     need(git('rev-parse','HEAD')==target() and not git('status','--porcelain'),'checkout drift')
     r,_=client()
     with r:
@@ -599,7 +599,7 @@ def archive_rdb():
     path=Path('/var/lib/redis/dump.rdb')
     old=load('backups.json')[str(path)]
     need(sha(path)==old['sha256'],'offline RDB changed after backup; stop')
-    destination=path.with_name('dump.rdb.pre-resize-20261004.offline')
+    destination=path.with_name('dump.rdb.pre-resize-20261003.offline')
     need(not destination.exists(),'RDB archive exists')
     os.rename(path,destination)
     need(not path.exists() and sha(destination)==old['sha256'],'RDB archival proof')
@@ -611,7 +611,7 @@ def new_boot():
     before=load('PREPARED.json')
     need(boot_id()!=before['boot_id'],'no reboot observed')
     et=now().astimezone(ZoneInfo('America/New_York'))
-    need(et.date().isoformat()=='2026-10-04' and 1000<=int(et.strftime('%H%M'))<1800,'postboot window')
+    need(et.date().isoformat()=='2026-10-03' and 1640<=int(et.strftime('%H%M'))<2359,'postboot window')
     need(git('rev-parse','HEAD')==before['application'] and not git('status','--porcelain'),'booted checkout drift')
     need(int(cmd('nproc'))==8,'resize did not yield 8 cores')
     mem_kib=int(re.search(r'^MemTotal:\s+(\d+)',Path('/proc/meminfo').read_text(),re.M)[1])
@@ -663,7 +663,7 @@ def validate_replay(saved):
         need(eid>last,'replay not in source-ID order')
         last=eid
         seen.add(name)
-    need(seen==OWNER_NAMES and saved['sets']['momentum-paper']==[],'paper must stay unsubscribed Sunday')
+    need(seen==OWNER_NAMES and saved['sets']['momentum-paper']==[],'paper must stay unsubscribed Saturday')
 
 
 def fleet():
@@ -839,7 +839,7 @@ def closeout():
     # Durable normal-boot linkage, missing on the pre-resize box; no restart.
     cmd('systemctl','add-wants','project-mai-tai.target','project-mai-tai-orb-schwab.service')
     cmd('systemctl','add-wants','multi-user.target','project-mai-tai.target')
-    cmd('systemctl','disable','project-mai-tai-resize-postboot-20261004.service')
+    cmd('systemctl','disable','project-mai-tai-resize-postboot-20261003.service')
     need(fleet()==rows,'service changed during closeout')
     save('COMPLETE.json',{'at_utc':now().isoformat(),'boot_id':boot_id(),'services':rows,'redis':memory,
          'application':target(),'nproc':cmd('nproc'),'free_m':cmd('free','-m'),
@@ -868,7 +868,7 @@ def recovery_result(unit):
 
 def journal(result):
     with JOURNAL.open('a') as out:
-        out.write(f'\n## Sunday resize {now().isoformat()} {result}\n')
+        out.write(f'\n## Saturday resize {now().isoformat()} {result}\n')
         out.write(f'Plan {json.loads((ROOT/"release.json").read_text())["plan_commit"]}; raw `{RUN}`.\n')
         for path in sorted(RUN.glob('*.json')):
             out.write(f'- {path.name}: sha256={sha(path)} bytes={path.stat().st_size}\n')

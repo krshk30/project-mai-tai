@@ -2,15 +2,15 @@
 # Explicit staging after reviewer requests it; never writes approval or starts apps.
 set -euo pipefail
 PREFIX=docs/review-artifacts/snaphist1
-JOB=/home/trader/after-hours/2026-10-04/resize-job
+JOB=/home/trader/after-hours/2026-10-03/resize-job
 PLAN=$(git rev-parse HEAD)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 test -z "$(git status --porcelain)"
-git show "$PLAN:$PREFIX/RESIZE_PLAN_2026-10-04.md" > "$TMP/RESIZE_PLAN_2026-10-04.md"
+git show "$PLAN:$PREFIX/RESIZE_PLAN_2026-10-03.md" > "$TMP/RESIZE_PLAN_2026-10-03.md"
 for name in review_gate.py resize.py run_resize.sh merge_in_window.sh \
-  project-mai-tai-resize-prepare-20261004.service project-mai-tai-resize-prepare-20261004.timer \
-  project-mai-tai-resize-postboot-20261004.service; do
+  project-mai-tai-resize-prepare-20261003.service project-mai-tai-resize-prepare-20261003.timer \
+  project-mai-tai-resize-postboot-20261003.service; do
   git show "$PLAN:$PREFIX/resize_job/$name" > "$TMP/$name"
 done
 python3 - "$TMP" "$PLAN" <<'PY'
@@ -30,7 +30,7 @@ set -euo pipefail
 BEFORE=$(mktemp)
 systemctl show project-mai-tai-{control,market-capture,market-data,oms,orb,orb-schwab,reconciler,schwab-1m-v2,strategy,momentum-paper}.service \
   -p Id -p MainPID -p ExecMainStartTimestamp -p NRestarts > "$BEFORE"
-install -d -o root -g root -m 0700 /home/trader/after-hours/2026-10-04
+install -d -o root -g root -m 0700 /home/trader/after-hours/2026-10-03
 mkdir -m 0700 "$2"
 for path in "$1/"*; do install -o root -g root -m 0600 "$path" "$2/$(basename "$path")"; done
 systemd-analyze verify "$2/"*.service "$2/"*.timer
@@ -47,13 +47,13 @@ print('STAGED_HASHES_MATCH',release['plan_commit'])
 PY
 test ! -e "$2/approval.json"
 systemctl daemon-reload
-systemctl enable --now project-mai-tai-resize-prepare-20261004.timer
+systemctl enable --now project-mai-tai-resize-prepare-20261003.timer
 # Postboot is enabled only during approved preparation, never while merely staged.
-systemctl list-timers --all project-mai-tai-resize-prepare-20261004.timer --no-pager
+systemctl list-timers --all project-mai-tai-resize-prepare-20261003.timer --no-pager
 systemctl show project-mai-tai-{control,market-capture,market-data,oms,orb,orb-schwab,reconciler,schwab-1m-v2,strategy,momentum-paper}.service \
   -p Id -p MainPID -p ExecMainStartTimestamp -p NRestarts > "$2/staged-service-identities.txt"
 diff -u "$BEFORE" "$2/staged-service-identities.txt"
-test ! -e /home/trader/after-hours/2026-10-04/resize-run
+test ! -e /home/trader/after-hours/2026-10-03/resize-run
 test ! -e "$2/approval.json"
 printf 'STAGED_ONLY approval absent; no application action\n'
 SH

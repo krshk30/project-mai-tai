@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 077
 REPO=/home/trader/project-mai-tai
-JOB=/home/trader/after-hours/2026-10-04/resize-job
-RUN=/home/trader/after-hours/2026-10-04/resize-run
+JOB=/home/trader/after-hours/2026-10-03/resize-job
+RUN=/home/trader/after-hours/2026-10-03/resize-run
 PY="$REPO/.venv/bin/python"
 MODE=${1:?prepare, postboot, postcheck or recover}
 "$PY" "$JOB/review_gate.py"
@@ -17,7 +17,7 @@ abort() {
   set +e
   proof journal "STOPPED mode=$MODE rc=$rc; no automatic retry; operator do NOT resize unless PREPARED"
   curl -sS --fail-with-body --connect-timeout 10 --max-time 30 \
-    -H 'Title: Sunday resize STOP' -H 'Priority: urgent' \
+    -H 'Title: Saturday resize STOP' -H 'Priority: urgent' \
     -d "Resize $MODE stopped rc=$rc; inspect $RUN; no silent retry or reboot" \
     https://ntfy.sh/mai-tai-preopen-28806a5a97b7 >/dev/null || printf 'PAGE DELIVERY UNKNOWN\n'
   exit "$rc"
@@ -28,7 +28,7 @@ trap 'exit 130' INT
 if [[ "$MODE" == prepare ]]; then
   mkdir -m 0700 "$RUN"
   exec > >(tee -a "$RUN/prepare.log") 2>&1
-  systemctl disable --now project-mai-tai-resize-prepare-20261004.timer
+  systemctl disable --now project-mai-tai-resize-prepare-20261003.timer
   proof before
   proof flat
   proof idle-gates
@@ -52,9 +52,9 @@ if [[ "$MODE" == prepare ]]; then
   proof detectors-env
   proof boot-setup
   proof flat
-  # A clock-only Sunday exception; an armed-set override is NOT authorized.
+  # A clock-only Saturday exception; an armed-set override is NOT authorized.
   bash "$REPO/ops/preflight/preflight_v2_restart.sh" \
-    --clock-override 'Sun 2026-10-04, no session; zero armed, zero managed, both brokers flat' \
+    --clock-override 'Sat 2026-10-03, no session; zero armed, zero managed, both brokers flat' \
     --i-accept-clock | tee "$RUN/v2-restart-gate.txt"
   proof quiesce-ready
   systemctl stop project-mai-tai-schwab-1m-v2.service project-mai-tai-strategy.service \
@@ -68,7 +68,7 @@ if [[ "$MODE" == prepare ]]; then
   proof flat
   systemctl stop redis-server.service
   proof archive-rdb
-  proof journal 'PREPARED; Redis and apps stopped, persistence OFF; operator alone performs 10:00 resize/reboot'
+  proof journal 'PREPARED; Redis and apps stopped, persistence OFF; operator alone performs Saturday resize/reboot before 23:59 ET'
 elif [[ "$MODE" == postboot ]]; then
   exec > >(tee -a "$RUN/postboot.log") 2>&1
   proof new-boot

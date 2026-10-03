@@ -1,0 +1,13 @@
+[Unit]
+Description=Saturday approval-gated resize preparation (16:40-20:59 ET)
+
+[Timer]
+OnCalendar=2026-10-03 16:40..59:00 America/New_York
+OnCalendar=2026-10-03 17..20:*:00 America/New_York
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=project-mai-tai-resize-prepare-20261003.service
+
+[Install]
+WantedBy=timers.target

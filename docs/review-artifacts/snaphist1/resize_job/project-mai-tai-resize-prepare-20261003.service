@@ -1,0 +1,15 @@
+[Unit]
+Description=Reviewed Saturday resize preparation, one attempt
+After=network-online.target
+ConditionPathExists=/home/trader/after-hours/2026-10-03/resize-job/approval.json
+ConditionPathExists=!/home/trader/after-hours/2026-10-03/resize-run
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecCondition=/home/trader/project-mai-tai/.venv/bin/python /home/trader/after-hours/2026-10-03/resize-job/review_gate.py
+ExecStart=/bin/bash /home/trader/after-hours/2026-10-03/resize-job/run_resize.sh prepare
+Restart=no
+RemainAfterExit=yes
+TimeoutStartSec=1800

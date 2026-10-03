@@ -1,4 +1,4 @@
-"""Exact artifact approval for the Sunday resize; never approves itself."""
+"""Exact artifact approval for the Saturday resize; never approves itself."""
 import hashlib
 import json
 import re
@@ -8,14 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-ROOT = Path('/home/trader/after-hours/2026-10-04/resize-job')
+ROOT = Path('/home/trader/after-hours/2026-10-03/resize-job')
 BASE = '608339894a1cfb33284e695196df55c18f312889'
 PIN = 'bc59b220656b2ff24c4a557f4aa7b864334d4b14'
 TREE = 'fde43f820650e1237d860b84a6cde9c5166faa96'
-FILES = {'RESIZE_PLAN_2026-10-04.md', 'review_gate.py', 'resize.py', 'run_resize.sh',
-         'merge_in_window.sh', 'project-mai-tai-resize-prepare-20261004.service',
-         'project-mai-tai-resize-prepare-20261004.timer',
-         'project-mai-tai-resize-postboot-20261004.service'}
+FILES = {'RESIZE_PLAN_2026-10-03.md', 'review_gate.py', 'resize.py', 'run_resize.sh',
+         'merge_in_window.sh', 'project-mai-tai-resize-prepare-20261003.service',
+         'project-mai-tai-resize-prepare-20261003.timer',
+         'project-mai-tai-resize-postboot-20261003.service'}
 
 
 def read(path):
@@ -26,8 +26,8 @@ def read(path):
 
 def verify(root=ROOT, now=None):
     now = now or datetime.now(ZoneInfo('America/New_York'))
-    if now.astimezone(ZoneInfo('America/New_York')).date().isoformat() != '2026-10-04':
-        raise ValueError('Sunday-only approval expired or not yet in window')
+    if now.astimezone(ZoneInfo('America/New_York')).date().isoformat() != '2026-10-03':
+        raise ValueError('Saturday-only approval expired or not yet in window')
     release = read(root/'release.json')
     if (release['base_sha'], release['pinned_head'], release['pinned_tree']) != (BASE, PIN, TREE):
         raise ValueError('application binding changed')
@@ -46,12 +46,12 @@ def verify(root=ROOT, now=None):
     expected = {**release, 'reviewer':'claude-1', 'decision':'APPROVED',
                 'owner_replay':'five_preserved_replace_events_only',
                 'rdb_treatment':'archive_offline_keep_persistence_off',
-                'provider_resize':'operator_only_2026-10-04_10:00_ET',
+                'provider_resize':'operator_only_2026-10-03_after_PREPARED_before_23:59_ET',
                 'boot_registration':'explicit_stack_and_orb_schwab',
                 'manual_stop_disposition':'operator: none; no hand orders to preserve; 2026-10-03 15:40 ET',
                 'retained_intents':'archive_ids_and_raw_fields_not_replay_oms_starts_at_dollar',
                 'unknown_broker_orders':'list_as_preexisting_orphans_nonblocking_no_cancel',
-                'clock_override':'Sun 2026-10-04, no session; zero armed, zero managed, both brokers flat',
+                'clock_override':'Sat 2026-10-03, no session; zero armed, zero managed, both brokers flat',
                 'recovery':'one_failed_app_unit_start_once_no_redis_or_db_restart'}
     if read(root/'approval.json') != expected:
         raise ValueError('exact reviewed approval including cold-boot actions absent')

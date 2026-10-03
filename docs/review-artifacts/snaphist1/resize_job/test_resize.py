@@ -93,16 +93,16 @@ def test_unknown_redis_key_is_a_stop():
         r.inventory(Extra(), 'mai_tai')
 
 
-@pytest.mark.parametrize('when', ['2026-10-03T10:00:00-04:00', '2026-10-05T03:40:00-04:00'])
+@pytest.mark.parametrize('when', ['2026-10-02T10:00:00-04:00', '2026-10-05T03:40:00-04:00'])
 def test_approval_cannot_execute_another_day(when):
-    with pytest.raises(ValueError, match='Sunday-only'):
+    with pytest.raises(ValueError, match='Saturday-only'):
         gate.verify(now=datetime.fromisoformat(when))
 
 
 def test_content_uses_post_start_microsecond_bound_and_absolute_180_seconds(monkeypatch):
-    anchor = datetime.fromisoformat('2026-10-04T14:00:00.123456+00:00')
+    anchor = datetime.fromisoformat('2026-10-03T14:00:00.123456+00:00')
     monkeypatch.setattr(r, 'load', lambda name: {'content_after_utc': anchor.isoformat()} if 'bound' in name else {})
-    monkeypatch.setattr(r, 'now', lambda: datetime.fromisoformat('2026-10-04T14:03:00.123457+00:00'))
+    monkeypatch.setattr(r, 'now', lambda: datetime.fromisoformat('2026-10-03T14:03:00.123457+00:00'))
     with pytest.raises(RuntimeError, match='deadline already expired'):
         r.content()
 
@@ -156,7 +156,7 @@ def test_runner_never_reboots_or_restarts_gateway_as_retry():
 
 def test_release_absent_refuses_before_execution(tmp_path):
     with pytest.raises(FileNotFoundError):
-        gate.verify(root=tmp_path,now=datetime.fromisoformat('2026-10-04T09:30:00-04:00'))
+        gate.verify(root=tmp_path,now=datetime.fromisoformat('2026-10-03T16:40:00-04:00'))
 
 
 def test_approval_requires_exact_reviewed_dispositions():
@@ -173,7 +173,7 @@ def test_staging_does_not_write_approval_or_start_apps():
     assert 'test ! -e "$2/approval.json"' in source
     assert 'systemctl start' not in source
     assert 'systemctl restart' not in source
-    assert 'systemctl enable --now project-mai-tai-resize-prepare-20261004.timer' in source
+    assert 'systemctl enable --now project-mai-tai-resize-prepare-20261003.timer' in source
 
 
 @pytest.mark.parametrize('broker',['Schwab','Webull'])
