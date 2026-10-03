@@ -1,0 +1,12 @@
+[Unit]
+Description=October 3 only, install after exact-head plan approval
+
+[Timer]
+OnCalendar=2026-10-03 *:*:00 America/New_York
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=project-mai-tai-sizing-nfq1-install-20261003.service
+
+[Install]
+WantedBy=timers.target

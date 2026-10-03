@@ -1,0 +1,19 @@
+[Unit]
+Description=Reviewed October 3 sizing and NFQ1 one-time install
+After=network-online.target
+ConditionPathExists=/home/trader/after-hours/2026-10-03/sizing-nfq1-job/approval.json
+ConditionPathExists=!/home/trader/after-hours/2026-10-03/sizing-nfq1-install
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/home/trader/after-hours/2026-10-03/sizing-nfq1-job
+ExecCondition=/usr/bin/python3 /home/trader/after-hours/2026-10-03/sizing-nfq1-job/verify_install_approval.py
+ExecStart=/bin/bash /home/trader/after-hours/2026-10-03/sizing-nfq1-job/run_install_2026-10-03.sh
+RemainAfterExit=yes
+Restart=no
+TimeoutStartSec=infinity
+StandardOutput=journal
+StandardError=journal
