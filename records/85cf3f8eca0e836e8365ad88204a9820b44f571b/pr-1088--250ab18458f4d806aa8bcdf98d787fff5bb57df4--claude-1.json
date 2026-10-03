@@ -1,0 +1,9 @@
+{
+  "pr_number": 1088,
+  "range_base": "250ab18458f4d806aa8bcdf98d787fff5bb57df4",
+  "range_head": "85cf3f8eca0e836e8365ad88204a9820b44f571b",
+  "reviewed_at": "2026-10-03T23:20:11Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "COLDSTART1 (operator card 10-03, re-confirmed before pin): each of the five consumers announces its current subscription set on start, even when empty; publish caches advance only after ACK; lost ACK forces republish; v2 hydrates held+managed before its first publish (strict, refuses on unreadable DB); orb-schwab observe-only announces empty and never claims; paper cap 16 unchanged. Read all five publisher diffs + gateway apply_subscription_event (empty replace removes only that consumer's contribution; union decides unsubscribe). Ran 30 test files = 766 pass; 8 own mutations all RED (first-announce off x2, observe claims, finally-cleanup on failed publish, paper weekend skip, lost-ACK, startup-unknown-as-empty, cap). CI validate green. Impact: behaviour identical for non-empty sets; new only when the set is empty; flag market_data_subscription_startup_enabled default True, ON at install; rides the next install (all five consumers restart). Live cold-boot timing UNEXERCISED until that install."
+}
