@@ -21,6 +21,7 @@ or flips the enable flag.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -107,6 +108,7 @@ from project_mai_tai.strategy_core.order_routing import (
     extended_hours_session,
 )
 from project_mai_tai.strategy_core import entry_gate
+from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     FLIP_OWNER_ROW_SETTLE_MS,
     MAX_BAR_AGE_SECONDS_FOR_EMIT,
@@ -866,6 +868,8 @@ class SchwabV2BotService:
             "state_publish": asyncio.create_task(self._state_publish_loop()),
         }
         if self.enabled:
+            await self._rpg_handoff_pass()
+            self._tasks["atr_reprice"] = asyncio.create_task(self._rpg_handoff_loop())
             self._tasks["rest_client"] = asyncio.create_task(self.rest_client.run())
             self._tasks["scanner"] = asyncio.create_task(self._scanner_consumer_loop())
             self._tasks["position_poll"] = asyncio.create_task(self._position_poll_loop())
@@ -1351,6 +1355,39 @@ class SchwabV2BotService:
                 evaluated,
                 self._fanout_outcome_evaluations,
             )
+
+    async def _rpg_handoff_loop(self) -> None:
+        await run_resilient_loop(
+            stop_event=self._stop_event, tracker=self._loop_health,
+            name="atr_reprice", iteration=self._rpg_handoff_pass,
+            backoff_secs=self._loop_backoff_secs, logger=logger,
+            idle=lambda: sleep_or_stop(self._stop_event, 1.0),
+        )
+
+    async def _rpg_handoff_pass(self, *, refresh: bool = True) -> None:
+        factory = getattr(self, "session_factory", None)
+        if factory is None:
+            return
+        journal = HandoffJournal(factory)
+        if refresh:
+            jobs = await asyncio.to_thread(journal.jobs)
+            self._rpg_known_jobs = dict(jobs)
+        else:
+            tokens = [token for token, job in getattr(self, "_rpg_known_jobs", {}).items()
+                      if job["phase"] not in {"placed", "filled", "expired", "refused", "held_unknown", "submit_unknown"}]
+            jobs = [(token, await asyncio.to_thread(journal.read, token)) for token in tokens]
+        for token, job in jobs:
+            job = await asyncio.to_thread(journal.reconcile_feedback, token, job)
+            auth = self.strategy.rpg_handoff_authorization(str(token), job)
+            if job["phase"] not in {"clear", "price_wait", "submitting"}:
+                continue
+            updated = await asyncio.to_thread(journal.change, token, job["revision"], authorization=auth)
+            if updated is not None:
+                self._rpg_known_jobs[token] = updated
+            if updated is not None and job["phase"] != "submitting" and auth["verdict"] != "wait":
+                await self.redis.xadd(stream_name(self.settings.redis_stream_prefix, "strategy-intents"),
+                    {"data": json.dumps({"event_type": "atr_reprice_tick", "token": str(token)})},
+                    maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
 
     def _load_confirmation_entries(self) -> list[ConfirmationEntry]:
         """Read today's authoritative primary fills; never infer an entry from bars."""
@@ -4490,6 +4527,11 @@ class SchwabV2BotService:
         Keeping this drain shared with `_handle_bar` makes its cancel requests leave the process
         immediately. It deliberately does not drain fan-out entry legs; those remain bar-owned.
         """
+        # Bars/quotes revoke prior authorization immediately; the periodic pass also
+        # handles cancellation feedback arriving when no new bar is available.
+        handoff_pass = getattr(self, "_rpg_handoff_pass", None)
+        if callable(handoff_pass):
+            await handoff_pass(refresh=False)
         # Drain the RESTING flip-entry place/cancel drafts the strategy queued this bar. Emit them
         # DIRECTLY (bypassing _maybe_emit's reactive-only EH/entry-window gates): the resting manager
         # already gates a place to RTH + short + in-window, and a cancel must NEVER be gated. No-op

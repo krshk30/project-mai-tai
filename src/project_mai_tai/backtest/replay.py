@@ -929,6 +929,12 @@ def replay_symbol_day(
                     it = getattr(d, "intent_type", "")
                     if it == "cancel":
                         resting = None
+                        # This offline simulator clears its own synthetic order
+                        # immediately. It has no OMS/broker readback and retains
+                        # next-bar replacement timing, NOT the RPG runtime model.
+                        generation = d.metadata.get("rpg_generation")
+                        if generation:
+                            strat._rpg_handoffs.pop(generation, None)
                     elif (
                         it == "open"
                         and str(d.metadata.get("order_type", "")).upper() == "STOP_LIMIT"

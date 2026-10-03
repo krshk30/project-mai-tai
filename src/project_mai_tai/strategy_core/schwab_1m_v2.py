@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Callable, Deque, Iterable, Literal, Mapping
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
@@ -321,6 +321,8 @@ class SymbolState:
     resting_trigger: float = 0.0               # offset stop price the resting order sits at
     resting_schwab_quantity: int = 0            # quantity placed, never a current-price recomputation
     resting_webull_quantity: int = 0
+    resting_schwab_generation: str = ""
+    resting_webull_generation: str = ""
     resting_below_floor_bars: int = 0          # consecutive completed thin bars while the rest works
     # ⛔⭐ SET AT PLACEMENT, READ AT CANCEL. `resting_active` is True for BOTH an RTH broker order and
     # an EH in-memory soft-rest, so it cannot answer "is something live at the BROKER?". Asking the
@@ -845,6 +847,8 @@ class SchwabV2Strategy:
         self._pending_intents: list[TradeIntentDraft] = []
         # Ephemeral only: a restart must re-derive eligibility from a new bar.
         self._pending_first_rest_quotes: dict[str, tuple[float, int, int]] = {}
+        self._rpg_handoffs: dict[str, dict] = {}
+        self._rpg_feedback_applied: set[tuple[str, str]] = set()
         # Dual-broker FAN-OUT (docs/per-broker-eligibility-webull-fallback-design.md). When ON, every
         # up-cross also produces a SECOND Webull MARKET-at-cross buy-open leg (reactive + EH-resting
         # piggyback on the existing cross; RTH-resting adds a software detector at resting_trigger).
@@ -4487,6 +4491,8 @@ class SchwabV2Strategy:
         and the per-flip entry cap (`_cw_v2_max_entries_per_flip`: 1 when reclaim is off — the
         default — else the shipped 2). Cooldown is intentionally NOT gated (reclaim has no
         cooldown). No-op unless the sub-flag is on. Returns a market-buy open draft or None."""
+        if self._rpg_entry_owned(state):
+            return None
         if not self._cw_v2_enabled:
             return None
         if self._flip_owned_first_entry_enabled:
@@ -4873,6 +4879,8 @@ class SchwabV2Strategy:
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
     def _queue_resting_place(self, state: SymbolState, line: float, *, slot: str = "first") -> None:
+        if self._rpg_entry_owned(state):
+            return
         if not self._strict_first_rest_admitted(state, slot=slot):
             return
         if self._flip_owned_first_entry_enabled and self._ensure_flip_owner_opportunity(state) <= 0:
@@ -4920,6 +4928,9 @@ class SchwabV2Strategy:
         state.resting_schwab_quantity = int(schwab_sized[0]) if schwab_sized else 0
         state.resting_webull_quantity = 0
         state.resting_below_floor_bars = 0
+        generation = str(uuid4())
+        state.resting_schwab_generation = generation
+        state.resting_webull_generation = generation
         if soft_rest:
             state.resting_is_broker_order = False      # soft-rest: nothing goes to the broker
             # EH SOFTWARE REST (P-B2): a broker buy-stop-limit can't trigger in extended hours, so we do
@@ -4966,6 +4977,7 @@ class SchwabV2Strategy:
             reason="schwab_1m_v2 ATR Flip CW-v2-resting",   # keeps the ATR-only belt (has 'ATR Flip')
             metadata={
                 "path": "ATR Flip", "atr_variant": "CW-v2-resting",
+                "rpg_resting_generation": generation,
                 "order_type": "STOP_LIMIT",
                 "reference_price": f"{trigger:.4f}", "entry_price": f"{trigger:.4f}",
                 "stop_price": f"{trigger:.4f}", "limit_price": limit_s,
@@ -5049,6 +5061,7 @@ class SchwabV2Strategy:
                         reason="schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)",
                         metadata={
                             "path": "ATR Flip", "atr_variant": "CW-v2-fanout",
+                            "rpg_resting_generation": generation,
                             "order_type": "STOP_LIMIT",
                             "stop_price": f"{trigger:.4f}", "limit_price": f"{limit:.4f}",
                             "reference_price": f"{trigger:.4f}",
@@ -5076,10 +5089,33 @@ class SchwabV2Strategy:
         was_webull_resting = state.webull_resting_active
         was_schwab_quantity = state.resting_schwab_quantity
         was_webull_quantity = state.resting_webull_quantity
+        settings = getattr(self, "settings", None)
+        primary_account = str(getattr(settings, "strategy_schwab_1m_v2_account_name", ""))
+        webull_account = str(getattr(settings, "strategy_schwab_1m_v2_webull_account_name", ""))
+        skip_primary = reason == "reprice" and self._rpg_leg_owned(state, primary_account)
+        if reason == "reprice" and self._rpg_leg_owned(
+                state, webull_account):
+            was_webull_resting = False
         webull_reason = reason
         was_below_floor_bars = state.resting_below_floor_bars
         state.webull_resting_active = False
         was_slot = state.resting_slot
+        reprice_metadata = {}
+        if reason == "reprice" and was_broker_order:
+            generation = str(uuid4())
+            segment = int(state.fanout_segment_id or state.atr_short_flip_bar_ts or 0)
+            reprice_metadata = {
+                "atr_reprice": "true", "rpg_generation": generation,
+                "rpg_short_segment": str(int(state.atr_short_flip_bar_ts or 0)),
+                "cw_entry_slot": was_slot, "fanout_segment_id": str(segment),
+                "rpg_old_stop_price": f"{was_trigger:.4f}",
+            }
+            self.__dict__.setdefault("_rpg_handoffs", {})[generation] = {
+                "phase": "requested", "segment_id": segment,
+                "old": {"symbol": state.symbol, "metadata": reprice_metadata},
+                "accounts": ([] if skip_primary else [primary_account]) + (
+                    [webull_account] if was_webull_resting else []),
+            }
         state.resting_active = False
         state.resting_level = 0.0
         state.resting_trigger = 0.0
@@ -5128,7 +5164,7 @@ class SchwabV2Strategy:
                 self._resting_band_pct_value(),
                 self._resting_offset_pct_value(),
             )
-        else:
+        elif not skip_primary:
             logger.info(
                 "[V2-RESTING-CANCEL] %s slot=%s reason=%s "
                 "resting_below_floor_bars=%d line=%.4f trigger=%.4f "
@@ -5147,6 +5183,8 @@ class SchwabV2Strategy:
                 quantity=Decimal(was_schwab_quantity or self._atr_qty),
                 reason="schwab_1m_v2 resting-entry cancel",
                 metadata={"resting_entry_cancel": "true", "reason": reason,
+                          **reprice_metadata,
+                          "rpg_resting_generation": state.resting_schwab_generation,
                           "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
             ))
         # ⛔⭐⭐ CANCEL THE WEBULL MIRROR TOO. An un-cancelled mirrored rest is a live order nobody
@@ -5197,10 +5235,168 @@ class SchwabV2Strategy:
                 quantity=Decimal(was_webull_quantity or self._webull_fanout_qty),
                 reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
                 metadata={"resting_entry_cancel": "true", "reason": webull_reason,
+                          **reprice_metadata,
+                          "rpg_resting_generation": state.resting_webull_generation,
                           "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
                           **identity_metadata,
                           "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
             ))
+
+    def _rpg_leg_owned(self, state: SymbolState, account: str) -> bool:
+        return any(job["old"].get("broker_account_name") == account
+                   and job["old"]["symbol"] == state.symbol
+                   and job["phase"] not in {"requested", "placed", "filled", "expired", "refused"}
+                   for job in getattr(self, "_rpg_handoffs", {}).values())
+
+    def _rpg_entry_owned(self, state: SymbolState) -> bool:
+        jobs = getattr(self, "_rpg_handoffs", {})
+        for job in jobs.values():
+            if job["old"]["symbol"] != state.symbol:
+                continue
+            phase = job["phase"]
+            if phase == "requested":
+                generation = job["old"]["metadata"]["rpg_generation"]
+                acknowledged = {other["old"].get("broker_account_name") for other in jobs.values()
+                    if other["phase"] != "requested"
+                    and other["old"]["metadata"].get("rpg_generation") == generation}
+                if set(job["accounts"]) - acknowledged:
+                    return True
+            elif phase not in {"placed", "filled", "expired", "refused"}:
+                return True
+            elif phase in {"expired", "refused"} and job["segment_id"] == state.fanout_segment_id:
+                return True
+        return False
+
+    def rpg_handoff_authorization(self, token: str, job: dict) -> dict:
+        """Consume durable per-leg feedback and evaluate current first/reclaim gates.
+
+        A decision contains a draft only. OMS must still claim the durable ticket,
+        reject stale authorization, and use its ordinary serial/risk/adapter lane.
+        """
+        self._rpg_handoffs[token] = job
+        old, slot = job["old"], job["slot"]
+        state = self._symbol_states.get(old["symbol"])
+        now = datetime.fromtimestamp(self._now_ms() / 1000, UTC)
+        result = {"at": now.timestamp(), "verdict": "expired", "reason": "watch_removed"}
+        if state is None:
+            return {**result, "verdict": "wait", "reason": "watch_or_restart_state_unavailable"}
+        same_segment = int(state.fanout_segment_id or 0) == job["segment_id"]
+        feedback_key = (token, job["phase"])
+        webull = old["broker_account_name"] == self.settings.strategy_schwab_1m_v2_webull_account_name
+        if same_segment and feedback_key not in self._rpg_feedback_applied:
+            if job["phase"] == "placed" and not job.get("replacement_filled"):
+                md = job["replacement"]["metadata"]
+                state.resting_active = True
+                state.resting_is_broker_order = True
+                state.resting_slot = state.last_resting_placed_slot = slot
+                state.resting_level = float(md["cw_flip_level"])
+                state.resting_trigger = float(md["stop_price"])
+                if webull:
+                    state.webull_resting_active = True
+                    state.resting_webull_generation = md["rpg_resting_generation"]
+                    if hasattr(state, "webull_resting_generation_id"):
+                        state.webull_resting_generation_id = md["webull_mirror_generation_id"]
+                    state.resting_webull_quantity = int(Decimal(job["replacement"]["quantity"]))
+                    self._claim_fanout_webull(state, identity=md, reason="rpg_replacement_accepted")
+                    state.fanout_claim_outcome = "held"
+                else:
+                    state.resting_schwab_generation = md["rpg_resting_generation"]
+                    state.resting_schwab_quantity = int(Decimal(job["replacement"]["quantity"]))
+            elif job.get("no_rebuy") or job.get("replacement_filled"):
+                if slot == "first":
+                    state.cw_resting_taken = True
+                else:
+                    state.cw_reclaim_taken = True
+                self._clear_resting_fill_latch(state)
+                if webull:
+                    self._consume_fanout_webull_slot(state, "resting" if slot == "first" else "reclaim")
+            elif job["phase"] in {"clear", "expired", "refused"}:
+                current_generation = state.resting_webull_generation if webull else state.resting_schwab_generation
+                generations = {old["metadata"].get("rpg_resting_generation"),
+                               job.get("replacement", {}).get("metadata", {}).get("rpg_resting_generation")}
+                owns_latch = not current_generation or current_generation in generations
+                if webull and owns_latch:
+                    state.webull_resting_active = False
+                    state.resting_webull_quantity = 0
+                    self._release_fanout_webull_claim(state, reason="rpg_old_order_terminal_zero", persist=False)
+                elif owns_latch:
+                    state.resting_schwab_quantity = 0
+                if owns_latch and not state.resting_webull_quantity and not state.resting_schwab_quantity:
+                    state.resting_active = False
+                    state.resting_is_broker_order = False
+            self._rpg_feedback_applied.add(feedback_key)
+        reason = ""
+        et = now.astimezone(EASTERN_TZ)
+        if not same_segment:
+            reason = "segment_ended"
+        elif et.weekday() >= 5 or not 9 * 60 + 30 <= et.hour * 60 + et.minute < 15 * 60 + 45:
+            reason = "window_1545"
+        elif not self._resting_in_window() or self._entry_window_closed_for_session() or self._resting_session_is_eh():
+            reason = "window_closed"
+        elif self._entries_held or self.gap_hold_active(state.symbol):
+            return {**result, "verdict": "wait", "reason": "entry_or_gap_hold"}
+        elif not self._cw_v2_enabled or (slot == "first" and not self._resting_entry_enabled):
+            reason = "disabled"
+        elif state.position_qty_held or job.get("no_rebuy"):
+            reason = "filled_no_rebuy"
+        elif (slot == "first" and state.cw_resting_taken) or (slot == "reclaim" and state.cw_reclaim_taken):
+            reason = "slot_consumed"
+        elif state.resting_active and state.resting_slot != slot:
+            reason = "other_slot_owned"
+        elif not self._liquidity_floor_ok(state):
+            reason = "liquidity_floor"
+        elif not state.bars or not 0 <= self._now_ms() - state.bars[-1].timestamp_ms <= self._resting_max_bar_age_ms:
+            reason = "bar_not_live"
+        elif slot == "first" and (state.atr_state != "short"
+                or str(state.atr_short_flip_bar_ts) != old["metadata"].get("rpg_short_segment")):
+            reason = "buy_flip_or_short_segment_ended"
+        elif slot == "first" and int(state.atr_state_age or 0) < self._resting_min_short_bars:
+            reason = "short_not_established"
+        elif slot == "reclaim" and not (self._reactive_entry_enabled and state.cw_armed
+                and state.cw_bars_waited >= 2 and state.cw_segment_high > 0):
+            reason = "reclaim_not_armed"
+        if reason:
+            return {**result, "reason": reason}
+        if not self._strict_first_rest_admitted(state, slot=slot):
+            return {**result, "verdict": "wait", "reason": "current_owner_or_retry_gate"}
+        line = float(state.atr_trail or 0) if slot == "first" else float(state.cw_segment_high)
+        if not math.isfinite(line) or line <= 0:
+            return {**result, "reason": "line_unavailable"}
+        ask = self._fresh_resting_ask(state.last_quote) if state.last_quote else None
+        trigger = self._resting_trigger_for_line(line)
+        if ask is None or not math.isfinite(ask) or not 0 < ask < trigger:
+            return {**result, "verdict": "wait" if slot == "first" else "expired",
+                    "reason": "current_price_not_placeable"}
+        band, offset = self._resting_band_pct_value(), self._resting_offset_pct_value()
+        limit = trigger * (1 + band / 100)
+        leg = "webull" if webull else "schwab"
+        sized = self._sized_open(state.symbol, leg=leg,
+            price=resting_wire_limit(Decimal(f"{trigger:.4f}"), Decimal(f"{limit:.4f}"), leg=leg,
+                native_schwab_bracket=not webull and self.settings.oms_v2_emit_native_oco_bracket_enabled),
+            basis="stop_limit_wire_limit")
+        if sized is None:
+            return {**result, "reason": "entry_size_unavailable"}
+        md = {key: value for key, value in old["metadata"].items() if key not in {
+            "broker_order_id", "target_client_order_id", "resting_entry_cancel", "atr_reprice",
+            "nfq_retry_token", "nfq_hold_id", "fanout_attempt_id", "rpg_event_id",
+            "native_oco", "webull_deferred_resubmit", "webull_deferred_resubmit_attempt"}
+            and not key.startswith(("webull_shape_market_", "bracket_", "native_oco_"))}
+        md.update({"resting_entry": "true", "order_type": "STOP_LIMIT",
+            "cw_entry_slot": slot, "cw_flip_level": f"{line:.4f}",
+            "stop_price": f"{trigger:.4f}", "limit_price": f"{limit:.4f}",
+            "reference_price": f"{trigger:.4f}", "entry_price": f"{trigger:.4f}",
+            "resting_band_pct": str(band), "resting_offset_pct": str(offset),
+            "rpg_resting_generation": f"{token}:{job.get('attempt', 0)}",
+            "rpg_handoff_token": token, **sized[1]})
+        if webull:
+            md["webull_mirror_generation_id"] = token
+        event = TradeIntentEvent(source_service=SERVICE_NAME, produced_at=now,
+            payload=TradeIntentPayload(strategy_code=STRATEGY_CODE,
+                broker_account_name=old["broker_account_name"], symbol=state.symbol,
+                side="buy", intent_type="open", quantity=sized[0],
+                reason="schwab_1m_v2 ATR Flip resting reprice", metadata=md))
+        return {**result, "verdict": "ready", "reason": "current_strategy_gates",
+                "event": event.model_dump(mode="json")}
 
     def _finish_first_rest_quote_wait(
         self, state: SymbolState, *, action: str, reason: str

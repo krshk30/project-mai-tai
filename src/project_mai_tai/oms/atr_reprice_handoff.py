@@ -7,7 +7,8 @@ Cancellation acknowledgements are deliberately not clearance evidence.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from contextlib import nullcontext
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Awaitable, Callable, Literal
 from uuid import UUID, uuid5, NAMESPACE_URL
@@ -17,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback, scoped_request
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
-from project_mai_tai.db.models import DashboardSnapshot
+from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill
 
 
 SNAPSHOT_TYPE = "atr_reprice_handoff"
@@ -64,7 +65,7 @@ class HandoffJournal:
         self.session_factory = session_factory
 
     def prepare(self, old: OrderRequest, *, slot: str, segment_id: int, now: float) -> UUID:
-        if not scoped_request(old) or slot not in {"first", "reclaim"} or segment_id <= 0:
+        if not scoped_request(old, allow_webull_client_identity=True) or slot not in {"first", "reclaim"} or segment_id <= 0:
             raise ValueError("reprice requires a scoped old BUY, slot and segment")
         token = uuid5(NAMESPACE_URL, f"atr-reprice:{old.broker_account_name}:{old.client_order_id}")
         payload = {
@@ -84,12 +85,59 @@ class HandoffJournal:
             session.commit()
         return token
 
-    def read(self, token: UUID) -> dict:
-        with self.session_factory() as session:
-            row = session.get(DashboardSnapshot, token)
+    def read(self, token: UUID, *, session=None) -> dict:
+        with (nullcontext(session) if session is not None else self.session_factory()) as session:
+            row = session.get(DashboardSnapshot, token, populate_existing=True)
             if row is None or row.snapshot_type != SNAPSHOT_TYPE:
                 raise ValueError("reprice ownership unreadable")
             return dict(row.payload)
+
+    def prepare_local(self, old: OrderRequest, *, slot: str, segment_id: int,
+                      now: float, phase: str, reason: str, session, **evidence) -> UUID:
+        """Persist no-wire evidence or an unresolved target, never fake a broker read."""
+        if phase not in {"clear", "held_unknown"}:
+            raise ValueError("invalid local ownership phase")
+        token = uuid5(NAMESPACE_URL, f"atr-reprice:{old.broker_account_name}:{old.client_order_id}")
+        if session.get(DashboardSnapshot, token) is None:
+            session.add(DashboardSnapshot(id=token, snapshot_type=SNAPSHOT_TYPE, payload={
+                "revision": 0, "phase": phase, "old": _request_dict(old),
+                "slot": slot, "segment_id": segment_id, "created_at": now,
+                "next_read_at": now, "reads": 0, "reason": reason, **evidence,
+            }))
+            session.flush()
+        return token
+
+    def jobs(self, *, session=None) -> list[tuple[UUID, dict]]:
+        with (nullcontext(session) if session is not None else self.session_factory()) as session:
+            return [(row.id, dict(row.payload)) for row in session.scalars(
+                select(DashboardSnapshot).where(DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE)
+            )]
+
+    def reconcile_feedback(self, token: UUID, job: dict) -> dict:
+        """Use committed OMS accounting to avoid restoring a filled/dead resting latch.
+
+        This never sends or repeats an order. A pre-wire pending row cannot prove
+        acceptance, whereas a committed broker report can resolve submit-unknown.
+        """
+        if job["phase"] not in {"placed", "submitting", "submit_unknown"} or not job.get("replacement"):
+            return job
+        with self.session_factory() as session:
+            order = session.scalar(select(BrokerOrder).where(
+                BrokerOrder.client_order_id == job["replacement"]["client_order_id"]))
+            if order is None or order.status == "pending":
+                return job
+            filled = session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1))
+            if filled is not None or order.status in {"filled", "partially_filled"}:
+                updates = dict(phase="filled", replacement_filled=True, reason="replacement_fill_accounted")
+            elif order.status in {"cancelled", "canceled", "expired", "rejected"}:
+                updates = dict(phase="refused", reason="replacement_terminal_accounted")
+            elif order.broker_order_id and order.status in {"accepted", "working", "open"}:
+                updates = dict(phase="placed", reason="replacement_accepted_accounted")
+            else:
+                return job
+        if updates["phase"] == job["phase"]:
+            return job
+        return self.change(token, job["revision"], **updates) or self.read(token)
 
     def change(self, token: UUID, revision: int, **changes: object) -> dict | None:
         with self.session_factory() as session:
@@ -172,6 +220,11 @@ class AtrRepriceHandoff:
                 return current
             observed = {"reason": readback.reason, "readback_at": self.now(),
                         "broker_status": readback.broker_status}
+            if readback.broker_order_id and not old.metadata.get("broker_order_id"):
+                # Webull accepts with only the client id. Its exact fresh detail
+                # binds the broker id before accounting or any replacement.
+                old = replace(old, metadata={**old.metadata, "broker_order_id": readback.broker_order_id})
+                observed["old"] = _request_dict(old)
             if readback.outcome == "fills":
                 cumulative = readback.cumulative_filled
                 if cumulative is None or not cumulative.is_finite() or not 0 < cumulative <= old.quantity:
@@ -190,7 +243,8 @@ class AtrRepriceHandoff:
                     broker_order_id=old.metadata["broker_order_id"],
                     symbol=old.symbol, side="buy", intent_type="open", quantity=old.quantity,
                     filled_quantity=cumulative, fill_price=price, origin="broker",
-                    metadata={**old.metadata, "atr_reprice_readback": str(token)},
+                    metadata={**old.metadata, "atr_reprice_readback": str(token),
+                              "atr_reprice_terminal_cancel": str(readback.terminal_cancel).lower()},
                     reason="atr_reprice_cancel_raced_fill",
                 )
                 try:
@@ -242,10 +296,18 @@ class AtrRepriceHandoff:
         accepted = any(report.event_type in {"accepted", "filled", "partially_filled"}
                        and report.origin == "broker" for report in attributable)
         rejected = bool(attributable) and all(report.event_type == "rejected" for report in attributable)
+        deferred = rejected and any(report.metadata.get("rpg_price_wait_owner") == "true"
+                                    for report in attributable)
+        # Current-gate feedback can advance the revision during the awaited submit.
+        current = self.journal.read(token)
+        if current["phase"] != "submitting" or current.get("replacement") != job["replacement"]:
+            return current
+        job = current
         return self.journal.change(token, job["revision"],
-            phase="placed" if accepted else "refused" if rejected else "submit_unknown",
+            phase="placed" if accepted else "price_wait" if deferred else "refused" if rejected else "submit_unknown",
             reason="replacement_accepted" if accepted else "replacement_refused" if rejected else "replacement_unproven",
             completed_at=self.now(),
+            replacement_filled=any(r.event_type in {"filled", "partially_filled"} for r in attributable),
             replacement_reasons=[report.reason for report in attributable],
         ) or self.journal.read(token)
 

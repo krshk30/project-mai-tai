@@ -1,4 +1,8 @@
-# RPG1 immediate reprice: coordinator staged, runtime handoff incomplete
+# RPG1 coordinator-stage review (historical 352da22a checkpoint)
+
+The stage below is retained as historical evidence. The runtime implementation,
+scenario matrix, combined-source verification, and remaining evidence limits are
+now documented in [RUNTIME_HANDOFF_REVIEW.md](RUNTIME_HANDOFF_REVIEW.md).
 
 This is a draft implementation boundary, not a pin request. Dedicated BUY
 readbacks and a durable, per-leg coordinator are built and tested. They are

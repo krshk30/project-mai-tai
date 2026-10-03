@@ -355,7 +355,7 @@ def test_resting_identity_is_persisted_before_either_broker_draft_is_queued():
     assert all(primary.metadata[key] == webull.metadata[key] for key in SHARED_IDENTITY_KEYS)
 
 
-def test_resting_replacement_keeps_the_same_identity_on_both_broker_legs():
+def test_resting_reprice_handoff_keeps_identity_and_blocks_ordinary_duplicate_on_both_legs():
     strat = _strat(
         strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True,
         strategy_schwab_1m_v2_webull_resting_mirror_enabled=True,
@@ -369,16 +369,17 @@ def test_resting_replacement_keeps_the_same_identity_on_both_broker_legs():
     first_primary = strat.drain_pending_intents()[0]
     first_webull = strat.drain_webull_direct_intents()[0]
     strat._queue_resting_cancel(state, reason="reprice")
-    strat.drain_pending_intents()
-    strat.drain_webull_direct_intents()
+    cancel_primary, = strat.drain_pending_intents()
+    cancel_webull, = strat.drain_webull_direct_intents()
     strat._queue_resting_place(state, 9.6, slot="first")
-    replacement_primary = strat.drain_pending_intents()[0]
-    replacement_webull = strat.drain_webull_direct_intents()[0]
+    assert strat.drain_pending_intents() == []
+    assert strat.drain_webull_direct_intents() == []
 
     for key in SHARED_IDENTITY_KEYS:
         assert first_primary.metadata[key] == first_webull.metadata[key]
-        assert replacement_primary.metadata[key] == replacement_webull.metadata[key]
-        assert replacement_primary.metadata[key] == first_primary.metadata[key]
+    assert cancel_primary.metadata["rpg_generation"] == cancel_webull.metadata["rpg_generation"]
+    assert cancel_primary.metadata["fanout_segment_id"] == first_primary.metadata["fanout_segment_id"]
+    assert cancel_webull.metadata["fanout_slot_id"] == first_webull.metadata["fanout_slot_id"]
 
 
 def test_rth_resting_no_leg_below_level_or_when_held():
