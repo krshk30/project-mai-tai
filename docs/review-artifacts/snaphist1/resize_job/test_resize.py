@@ -154,18 +154,65 @@ def test_runner_never_reboots_or_restarts_gateway_as_retry():
     assert script.index('proof drain') < script.index('systemctl stop redis-server.service')
 
 
-def test_unproven_state_loss_cannot_be_approved_in_json():
-    with pytest.raises(ValueError, match='resize NOT EXECUTABLE'):
-        gate.require_execution_ready()
+def test_release_absent_refuses_before_execution(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        gate.verify(root=tmp_path,now=datetime.fromisoformat('2026-10-04T09:30:00-04:00'))
 
 
-def test_approval_verifier_calls_unconditional_readiness_gate():
+def test_approval_requires_exact_reviewed_dispositions():
     import inspect
-    assert 'require_execution_ready()' in inspect.getsource(gate.verify)
+    source=inspect.getsource(gate.verify)
+    assert "read(root/'approval.json') != expected" in source
+    assert 'manual_stop_disposition' in source
+    assert 'retained_intents' in source
+    assert 'unknown_broker_orders' in source
 
 
-def test_blocked_draft_staging_never_contacts_box():
-    import subprocess
-    result = subprocess.run(['bash', str(HERE/'stage_review.sh')], capture_output=True, text=True)
-    assert result.returncode == 2
-    assert 'do not stage or schedule' in result.stderr
+def test_staging_does_not_write_approval_or_start_apps():
+    source=(HERE/'stage_review.sh').read_text()
+    assert 'test ! -e "$2/approval.json"' in source
+    assert 'systemctl start' not in source
+    assert 'systemctl restart' not in source
+    assert 'systemctl enable --now project-mai-tai-resize-prepare-20261004.timer' in source
+
+
+@pytest.mark.parametrize('broker',['Schwab','Webull'])
+def test_known_order_blocks_but_unknown_orphan_does_not(broker):
+    r.refuse_known_order(broker,{'orphan'},{'our-order'})
+    with pytest.raises(RuntimeError,match='known order still live'):
+        r.refuse_known_order(broker,{'our-order'},{'our-order'})
+
+
+@pytest.mark.parametrize('changes',[False,True])
+def test_archive_keeps_special_envelopes_without_inventing_ack(monkeypatch,changes):
+    from types import SimpleNamespace
+    class History:
+        count_reads=0
+        page_reads=0
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def xlen(self,key):
+            self.count_reads+=1
+            return 1 if self.count_reads==1 else 1+int(changes)
+        def xrange(self,key,**kwargs):
+            assert kwargs['count']==25
+            self.page_reads+=1
+            return [('1-0',{'data':'{"confirmation_exit":true}'})] if self.page_reads==1 else []
+    monkeypatch.setattr(r,'client',lambda:(History(),SimpleNamespace(redis_stream_prefix='mai_tai')))
+    if changes:
+        with pytest.raises(RuntimeError,match='archive changed'):
+            r.archive_intents()
+    else:
+        result=r.archive_intents()
+        assert result['count']==1 and result['stream_ids']==['1-0']
+        assert result['entries'][0]['fields']['data']=='{"confirmation_exit":true}'
+        assert 'never replay' in result['disposition']
+
+
+def test_no_year_wide_history_or_complete_enumeration_assumption():
+    import inspect
+    source=inspect.getsource(r.direct_open_orders)
+    assert 'timedelta(days=' not in source
+    assert 'maxResults=500' in source
+    assert 'list_open_orders_for_sync' in source
+    assert 'not whole-history completeness' in source

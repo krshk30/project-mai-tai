@@ -16,23 +16,12 @@ FILES = {'RESIZE_PLAN_2026-10-04.md', 'review_gate.py', 'resize.py', 'run_resize
          'merge_in_window.sh', 'project-mai-tai-resize-prepare-20261004.service',
          'project-mai-tai-resize-prepare-20261004.timer',
          'project-mai-tai-resize-postboot-20261004.service'}
-# Do not convert reviewer acceptance of owner replay into a waiver for unrelated
-# lost orders/controls. These need evidence and a new reviewed commit, not JSON.
-READINESS_BLOCKERS = (
-    'complete broker open-order enumeration not proven',
-    'Redis transport/draft disposition and manual-stop preservation not proven',
-)
 
 
 def read(path):
     if path.is_symlink() or path.stat().st_uid != 0 or stat.S_IMODE(path.stat().st_mode) != 0o600:
         raise ValueError(f'not root-only: {path}')
     return json.loads(path.read_text())
-
-
-def require_execution_ready():
-    if READINESS_BLOCKERS:
-        raise ValueError('resize NOT EXECUTABLE: '+'; '.join(READINESS_BLOCKERS))
 
 
 def verify(root=ROOT, now=None):
@@ -59,11 +48,13 @@ def verify(root=ROOT, now=None):
                 'rdb_treatment':'archive_offline_keep_persistence_off',
                 'provider_resize':'operator_only_2026-10-04_10:00_ET',
                 'boot_registration':'explicit_stack_and_orb_schwab',
+                'manual_stop_disposition':'operator: none; no hand orders to preserve; 2026-10-03 15:40 ET',
+                'retained_intents':'archive_ids_and_raw_fields_not_replay_oms_starts_at_dollar',
+                'unknown_broker_orders':'list_as_preexisting_orphans_nonblocking_no_cancel',
                 'clock_override':'Sun 2026-10-04, no session; zero armed, zero managed, both brokers flat',
                 'recovery':'one_failed_app_unit_start_once_no_redis_or_db_restart'}
     if read(root/'approval.json') != expected:
         raise ValueError('exact reviewed approval including cold-boot actions absent')
-    require_execution_ready()
     return release
 
 

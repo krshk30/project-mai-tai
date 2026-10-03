@@ -31,7 +31,8 @@ if [[ "$MODE" == prepare ]]; then
   systemctl disable --now project-mai-tai-resize-prepare-20261004.timer
   proof before
   proof flat
-  proof intents-settled
+  proof idle-gates
+  proof archive-intents intents-before.json
   proof backups
   "$PY" "$REPO/ops/health/v2_restart_evidence.py" snapshot --output "$RUN/before-reboot.json"
   proof ready

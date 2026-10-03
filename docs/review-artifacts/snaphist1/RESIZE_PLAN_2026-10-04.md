@@ -1,19 +1,18 @@
 # Sunday resize: one cold boot, SNAPHIST1, logging and full owner persistence
 
-Status: BLOCKED REVIEW DRAFT. Not executable, not staged, no approval file written.
-The runner approval gate and staging script deliberately refuse this version.
-Two independent blockers remain: complete broker-order enumeration, and proof
-that no unrecoverable intent/draft/manual-stop state is lost. They require a new
-reviewed implementation/evidence, not an approval JSON that waives UNKNOWN.
+Status: STAGING AUTHORIZED 10-03 15:40 ET; execution still requires claude-1's
+exact staged-hash approval Sunday morning. No approval file is written by Codex.
+The review dispositions below replace the two former draft blockers. Fresh
+flat/readability/idle checks still run at preparation; a new ambiguity stops it.
 This replaces the standalone gateway plan at 6b3aae95. The operator performs
 the provider resize/reboot at 10:00 ET Sunday 2026-10-04, only after the runner
 prints PREPARED. If preparation refuses, DO NOT resize/reboot. No permission
 carries to another date. RPG1 is excluded and remains a separate build/install.
 
-The operator authorized including bounded owner replay and offline RDB archival
-FOR REVIEW. Those answers do not authorize either write before plan approval.
+The operator authorized staging the bounded owner replay and offline RDB archival.
+Neither production write is authorized before Sunday's exact plan approval.
 Cold-boot execution, owner migration, replay writes, recovery and new boot links
-are UNEXERCISED, not PASS. This runner has not been installed or executed.
+are UNEXERCISED, not PASS. Staging/timer installation is not execution.
 
 ## 1. Exact scope and release
 
@@ -43,7 +42,10 @@ the plan commit, exact application bindings and SHA256 of eight deployed files
 cold-boot authorizations in `review_gate.py`, reviewer=claude-1,
 decision=APPROVED. Root-only JSON, non-writable/root-owned artifacts, hashes of
 installed units, date and app bindings are checked before every invocation.
-No script generates its own approval.
+No script generates its own approval. Approval also records the 15:40 operator
+disposition: no manual stops or hand orders to preserve; archive retained intent
+history without replay; list unknown broker orders as pre-existing orphans,
+non-blocking and never cancelled by this plan.
 
 Paths:
 
@@ -59,7 +61,8 @@ Paths:
 Preparation timer runs each minute 09:30-09:40 ET, but no approval means no
 execution. The first attempt creates the exclusive directory and disables the
 timer. No automatic attempt two. systemd calendar/units were syntax-verified
-read-only on the box: NEXT Sunday 13:30 UTC, 09:30 ET. Not installed yet.
+read-only on the box: NEXT Sunday 13:30 UTC, 09:30 ET. The staging receipt must
+show the installed timer's NEXT value; this text alone is not a schedule proof.
 
 ## 2. Independent findings and Redis state audit
 
@@ -83,16 +86,16 @@ the one-shot postboot unit. These boot-policy edits are explicit review scope.
 | Gateway: subscriptions/owner hash, quotes/trades, heartbeat, snapshot-batches | Owner hash and streams are Redis-only; #1084 reconstructs from retained replace events, but reboot removes that stream too. Quotes/snapshots are reacquired from provider. | Preserve/replay five raw replaces; gateway itself rebuilds hash and marker. No direct HSET. Fresh heartbeat and cadence required; ticks Monday. |
 | Strategy: alert history, strategy-state, subscription debounce | DB scanner/watchlist snapshots and bar/history data survive. In-memory alert window and recent Redis snapshots do not. | Empty boot prefill is expected; live history accumulates. Five-/ten-minute readiness and scanner validation Monday, not invented from weekend zeroes. |
 | v2: watch/flip/retry/armed state, drafted intents | DB watchlist/strategy state and durable budgets survive. In-memory drafts and Redis intent transport do not. | Zero armed segments, no active/draft work; restart gate blocks. BOOT-HOLD literal population/release recorded, Monday verification assigned. |
-| OMS: held positions, orders, NFQ holds, pending closes | Managed rows, orders, fills and NFQ dashboard rows survive in Postgres. Serial intent cursor/queues, retry/liveness caches and pacing latches do not. Ordinary broker submit can precede DB commit. | Direct brokers flat AND zero live orders, zero DB pending orders/holds/outbox. Every retained intent must have a durable treated record. Unknown/unmatched work STOP, not replayed as a buy. |
+| OMS: held positions, orders, NFQ holds, pending closes | Managed rows, orders, fills and NFQ dashboard rows survive in Postgres. Serial intent cursor/queues, retry/liveness caches and pacing latches do not. Ordinary broker submit can precede DB commit. | Direct brokers flat AND zero known working orders, zero DB pending orders/holds/outbox. Supplemental broker discoveries outside our records are listed as pre-existing orphans, non-blocking per review. Unreadable broker data remains STOP. |
 | ORB / orb-schwab | Paper decisions/positions and managed broker orders are DB-backed; minute aggregators, pending callbacks and entry drafts are process memory. | Flat, no live order, no unresolved intent. New process IDs recorded; Sunday is not execution evidence. |
 | Momentum paper | Paper store/candidate/trade records in Postgres; stream offset/window in memory. Sunday `_tick` immediately takes weekend stop path. | Starts Sunday but does not prepare/claim symbols/stream; owner set must remain empty. Monday 03:55 prepare/04:00 streaming needs guard at 03:40. |
 | Control | DB/control settings and dashboard snapshots; runtime-controls transport is volatile. | Inventory unknown Redis state; do not rely on old transient commands as a maintenance lock. |
-| Global/per-bot manual stops | DB snapshots exist but strategy startup deletes prior-session stops. OMS only has global stop handling and a volatile last-good cache. | Preservation/disposition is NOT yet proven by this runner. Any active stop requiring survival is a pre-resize STOP, not implicitly cleared by Sunday. |
+| Global/per-bot manual stops | DB snapshots exist but strategy startup deletes prior-session stops. OMS only has global stop handling and a volatile last-good cache. | Operator 10-03 15:40 ET: "No" manual stops or hand orders to preserve. Record "operator: none". A later contradictory instruction/state must be escalated, not silently covered by this disposition. |
 | Market capture | Captured trades/quotes in Postgres; live subscriptions/cursor reconnect. | No backfill of lost Redis ticks claimed; Monday delivery proof. |
 | Reconciler | Postgres/broker truth and incident rows persist; transient last-good caches lost. | Direct flat/readability; unresolved active order/position work blocks. Existing incident records preserved, never auto-resolved by this plan. |
 | tv-alerts | Intentionally inactive; retained journals/DB untouched. | Must stay PID 0, explicitly classified deliberately untouched. |
 | Redis `symbol-block:*`, unknown keys | Some intraday rejection blocks exist only in Redis. | Unknown key inventory, including any current symbol-block, STOP. No assumption that a block will rebuild. |
-| Redis strategy-intents/order-events | Transport is not an authoritative durable queue with restart ACKs. OMS begins at `$`; confirmation outbox does not replay everything historically published. | Producer stop, bounded audit of ALL retained intents, 20s stable tail, fresh DB/broker proofs while OMS still alive. Stable tail alone is not accepted as drain proof. Any unmatched or pending item STOP before Redis stop. |
+| Redis strategy-intents/order-events | Transport is not an authoritative durable queue with restart ACKs. OMS begins at `$`; confirmation outbox does not replay everything historically published. | Archive every retained intent's stream ID/raw fields, including special exit envelopes. Do not call these historical entries lost or pretend to acknowledge them. Review accepts weekend idle gates + producer stop +20s stable tail +fresh DB/broker flat proofs. New pending work or unreadable checks STOP. No historical buy replay. |
 
 Four publishers suppress their initial empty replace; only v2 reliably sends
 an initial empty set. Sunday paper also does not send one. Thus all-five-owner
@@ -120,13 +123,21 @@ The executable commands are `resize_job/run_resize.sh`; the helpers are in
 1. Validate release/approval/date, obtain exclusive deploy lock, check clean
    box/main/base, all twelve app/infrastructure identities, file pins, loaded
    scan interval, no concurrent deploy/guard/sampler, Redis margin/config/keys.
-2. Fresh direct broker positions and complete open-order reads; managed/virtual
+2. Fresh direct broker positions and reviewed open-order reads; managed/virtual
    rows/net fills zero on both accounts, no named manual exception, no DB pending
-   orders, no active NFQ hold, no unpublished confirmation exit. Audit retained
-   intents against durable results. This proposed gate is not yet complete for
-   special exit events, trimmed events or unpublished in-memory drafts; the
-   unconditional review gate therefore blocks execution. Read failure/unknown/
-   missing result STOP. Do not interpret this section as a certified drain.
+   orders, no active NFQ hold, no unpublished confirmation exit. Use the real
+   OmsStore.list_open_orders_for_sync selector on both accounts; zero known
+   orders means zero fetch_order_update detail requests, not an account scan.
+   Supplemental Schwab discovery is the native-OCO sync reader's exact12h GET
+   request (maxResults500), including working/queued/accepted and other
+   nonterminal nested legs. Webull uses GET v2 /trade/orders/list-open,
+   page_size100; malformed/truncated/unreadable remains STOP. No year-long read.
+   Known bot orders block. Unknown broker-side orders are listed for the operator
+   as pre-existing orphans, not reboot losses, and do not block. Record exact
+   requests in root-only evidence and decoded-response byte sizes; do not claim
+   global historical broker enumeration. Archive all retained intent IDs/raw
+   fields, prove the three idle gates using current code/config, and record
+   "operator: none" for manual-stop preservation.
 3. Copy/hash env, preopen, Monday script, Redis config, stale RDB, detector/gate
    files and unit definitions. Capture restart snapshot and original identities.
    Root-only backups and JSON; no passwords are printed. These are config/state
@@ -270,40 +281,52 @@ session, all denominators/raw paths. Codex-2 produces, claude-1 independently
 checks; missing readiness, lost additions or qualifying inputs with no alerts
 is escalated under Rule1 before declaring scanner validation complete.
 
-## 7. Review evidence and remaining blockers
+## 7. Review dispositions and fresh evidence
 
-- Offline verification: 27 tests PASS; Python compile and all three shell
-  syntax checks PASS. Both service units and the timer passed systemd-analyze
-  verify using temporary files only; no units were installed. Tests cover
-  altered/duplicate/missing replay owners, source order, Redis safety, reply
-  limits, date expiry, offline archival restriction, single recovery scope,
-  exclusive evidence, COUNT1 reads and the unconditional execution block.
+- Former blockers are closed to the reviewed scope, not by claiming a complete
+  broker-history census or a universal in-memory ACK. No application code is
+  changed. Operator 10-03 15:40 ET: "No" manual stops or hand orders to preserve.
+  The approval schema records that disposition explicitly.
+- Offline verification: 32 tests PASS; Python compile and all shell syntax
+  checks PASS. Tests cover altered/duplicate/missing replay owners, source order,
+  Redis safety, reply limits, date expiry, offline archival restriction, single
+  recovery scope, exclusive evidence, COUNT1 reads and exact approval gating.
+  Syntax and final test results are reported with the staged commit.
 - Standalone Saturday service/timer LoadState=not-found, inactive, PID0 at15:22ET.
   No standalone restart job ran. Finished sizing timer remains disabled.
 - Read-only new flat proof: direct holding rows0/0, open managed0/0, virtual[],
   netfills[], working DB orders0, NFQ holds0, unpublished confirmation exits0.
-- Broader complete Schwab order-history read currently returned HTTP599
-  `The read operation timed out` after correction of an invalid366-day request.
-  **UNKNOWN and blocking**, not zero working orders. It must pass independently
-  before any runner preparation/merge; no override or narrowing to today's
-  orders is permitted to hide old GTC/child orders.
-- A response shorter than maxResults is NOT established proof of completeness;
-  the existing Schwab adapter explicitly warns about this. Therefore even a
-  later HTTP200 on the draft probe is not sufficient to certify the resize.
-- The new retained-intent probe encounters a special event without ordinary
-  event_id (353 retained intent entries, 277 order events at read time).
-  Its disposition is UNKNOWN, not a malformed entry to discard. Published
-  confirmation-exit outbox state is not an OMS ACK. Already-trimmed events and
-  unpublished in-memory drafts also need a disposition; stable tail for20s is
-  not proof. No complete no-loss gate is claimed. Manual-stop preservation is
-  separately unproven. These findings enforce STOP before merge/service writes.
-- V2 normal-open path is weekend-blocked; direct resting-draft paths rely on
-  bar/arm freshness, not one universal weekend interlock. ORB-Schwab rejects
-  Friday universe and after09:29:30 entries; paper is broker-disconnected.
-  Do not use "Sunday" alone to certify absence of unpublished order work.
-- No reboot, archival, replay write, merge, approval, timer install or service
-  change was performed while preparing this document. Only read-only API/DB/Redis
-  checks and `/tmp` copies for syntax/helper checks were used.
-- Root approval and independent review still owed. Do not schedule execution
-  from a passing offline test count. First real cold-boot content proof,
-  migration, replay, startup ordering and recovery remain UNEXERCISED.
+- Fresh read 10-03 15:56 ET: OMS sync selector0/0, detail requests0. Supplemental
+  Schwab GET `/trader/v1/accounts/<hash>/orders?fromEnteredTime=2026-10-03T07:56:23.000Z&toEnteredTime=2026-10-03T20:56:23.000Z&maxResults=500`
+  and Webull GET v2 `/trade/orders/list-open?account_id=<id>&page_size=100` both
+  HTTP200, rows0; compact decoded JSON sizes2 and42 bytes respectively. Exact
+  request/account identifiers are in the root-only evidence. Byte counts are
+  labelled decoded JSON, not guessed network size. No orphan discovered.
+  No year-long request remains. The12h listing is discovery, not proof of every
+  historical broker order; orphan risk is explicitly disposed by the reviewer.
+- Idle probes exercised loaded code with real scanner DB input at actual
+  2026-10-03T19:56:25.445214Z and simulated Sunday2026-10-04T14:00:00Z:
+  v2 market_session=closed, within_entry_window=false; ORB-Schwab universe=[],
+  cold-start bars0/opening orders0; paper engine=None, gateway_task=None,
+  subscriptions=[], external I/O calls0. Source scanner session was
+  2026-10-03T08:00:00Z. These are code probes, not inspection of another
+  process's memory. Weekend idle disposition plus fresh books/broker checks is
+  the accepted pre-reboot proof; no universal new weekend trading rule is added.
+- All353 retained strategy-intent stream IDs and raw fields, including special
+  exit envelopes without event_id, are archived for audit. They are historical
+  transport that OMS would not reread from `$`, not declared lost or replayed.
+  The count is freshly remeasured Sunday, not hardcoded353. Before/after producer
+  quiescence archives are exclusive files; changed capture or new work stops.
+- Redis evicted_keys23->23; used_memory1,175,614,040->1,181,950,544 bytes during
+  the read-only evidence pass. No Redis write or bulk snapshot read.
+- Evidence file: `/home/trader/after-hours/2026-10-04/resize-review/review-evidence-1540-ruling.json`,
+  SHA256 `343209147691f21d9b91846692250cd83b6451496415db2826fbba8d2930b740`.
+  This is outside the eight-file release manifest; it contains private raw
+  request/history details and is root-only, not committed to Git.
+- Staging installs only the three new unit/timer files and root-only release.
+  It starts the approval-gated prep TIMER, not preparation or an app. Postboot
+  unit is installed but disabled until approved preparation. It compares all
+  ten app identities before/after staging and requires no approval/run directory.
+- Sunday exact staged-hash approval remains owed. No merge/restart/archival/
+  owner replay/reboot occurs during staging. Cold-boot content, migration,
+  replay, startup ordering and recovery remain UNEXERCISED.

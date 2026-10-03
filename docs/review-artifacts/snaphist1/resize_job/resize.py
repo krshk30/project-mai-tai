@@ -237,40 +237,63 @@ def flat():
     engine.dispose()
     print('DURABLE_PENDING',json.dumps(values),flush=True)
     need(not any(values.values()),'unresolved orders/holds/outbox; no lossy reboot')
-    asyncio.run(direct_open_orders(s))
+    order_proof=asyncio.run(direct_open_orders(s))
+    print('OPEN_ORDER_READ',json.dumps(order_proof,sort_keys=True),flush=True)
     print('STRICT_FLAT_PASS both_accounts=1 manual_override_used=0',flush=True)
+    return order_proof
 
 
 async def direct_open_orders(settings):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+    from project_mai_tai.db.models import BrokerOrder
+    from project_mai_tai.db.session import build_engine
+    from project_mai_tai.oms.store import OmsStore
     from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
     from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
     from webull.trade.request.get_open_orders_request import OpenOrdersListRequest
     broker=SchwabBrokerAdapter(settings)
     account=broker.accounts_by_name['live:schwab_1m_v2']
-    # Include GTC/nested children, not only today's orders or database-known IDs.
-    # Any truncated response or unsupported history request is UNKNOWN, never empty.
-    end=now()
-    start=end-timedelta(days=365)
-    query=f'fromEnteredTime={quote(start.isoformat())}&toEnteredTime={quote(end.isoformat())}&maxResults=3000'
-    status,_,body=await broker._authorized_request_json('GET',
-        f'/trader/v1/accounts/{quote(account.account_hash,safe="")}/orders?{query}')
-    print('SCHWAB_ORDER_READ',json.dumps({'http_status':status,'shape':type(body).__name__,
-          'rows':len(body) if isinstance(body,list) else None,
-          'error':str(body)[:600] if status>=400 else None}),flush=True)
-    need(200<=status<300 and isinstance(body,list) and len(body)<3000,'Schwab history unreadable/truncated')
+    # Exactly the store selector used by OMS sync, without calling its mutating
+    # sync/persist routine. With no known orders, OMS makes zero detail calls.
+    engine=build_engine(settings.database_url,connect_timeout_s=5,statement_timeout_ms=5000)
+    known={}
+    store=OmsStore()
+    with Session(engine) as session:
+        accounts=store.list_named_broker_accounts(session,['live:schwab_1m_v2','live:orb'])
+        need({a.name for a in accounts}=={'live:schwab_1m_v2','live:orb'},'OMS sync accounts incomplete')
+        sync_counts={}
+        for a in accounts:
+            sync_counts[a.name]=len(store.list_open_orders_for_sync(session,broker_account_ids=[a.id]))
+            ids=session.execute(select(BrokerOrder.broker_order_id,BrokerOrder.client_order_id)
+                                .where(BrokerOrder.broker_account_id==a.id)).all()
+            known[a.name]={str(x) for row in ids for x in row if x}
+    engine.dispose()
+    need(not any(sync_counts.values()),'known OMS working order; wait, do not reboot')
+    # Supplemental discovery uses the same bounded 12h account-list request as
+    # the native-OCO sync reader. NOT a proof of all historical broker orders.
+    current=now()
+    frm=(current-timedelta(hours=12)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    to=(current+timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    query=f'fromEnteredTime={frm}&toEnteredTime={to}&maxResults=500'
+    exact_request=f'/trader/v1/accounts/{quote(account.account_hash,safe="")}/orders?{query}'
+    status,headers,body=await broker._authorized_request_json('GET',exact_request)
+    need(200<=status<300 and isinstance(body,list),'Schwab open-order discovery unreadable HTTP '+str(status))
+    body_bytes=len(json.dumps(body,separators=(',',':'),ensure_ascii=False).encode())
     terminal={'FILLED','CANCELED','CANCELLED','REJECTED','EXPIRED','REPLACED'}
     nonterminal=[]
     def walk(row):
         need(isinstance(row,dict) and isinstance(row.get('status'),str),'Schwab order missing status')
         if row['status'].upper() not in terminal:
-            nonterminal.append({'order_id':row.get('orderId'),'status':row['status']})
+            nonterminal.append({'order_id':str(row.get('orderId','')),'status':row['status'],
+                                'legs':row.get('orderLegCollection',[])})
         children=row.get('childOrderStrategies',[])
         need(isinstance(children,list),'Schwab malformed children')
         for child in children:
             walk(child)
     for row in body:
         walk(row)
-    need(not nonterminal,'Schwab live/unknown orders: '+json.dumps(nonterminal))
+    refuse_known_order('Schwab',{x['order_id'] for x in nonterminal},known['live:schwab_1m_v2'])
     webull=WebullBrokerAdapter(settings)
     cfg=webull.accounts_by_name['live:orb']
     request=OpenOrdersListRequest()
@@ -282,9 +305,30 @@ async def direct_open_orders(settings):
     need(isinstance(orders,dict) and isinstance(orders.get('orders'),list),'Webull open-order body unreadable')
     more=orders.get('has_next',orders.get('hasNext',False))
     need(isinstance(more,bool),'Webull page status unreadable')
-    need(not more and not orders['orders'],'Webull working order/pagination; stop, not partial flat')
-    print(f'BROKER_OPEN_ORDERS schwab_nonterminal=0 history_rows={len(body)} lookback_days=365 '
-          'webull_open=0 complete_page=1',flush=True)
+    need(not more and len(orders['orders'])<100,'Webull open-order discovery truncated; report before proceeding')
+    for row in orders['orders']:
+        need(isinstance(row,dict),'Webull unreadable order')
+        row_ids={str(row.get(k,'')) for k in ('order_id','orderId','client_order_id','clientOrderId')}- {''}
+        need(row_ids,'Webull order identity unreadable')
+        refuse_known_order('Webull',row_ids,known['live:orb'])
+    raw_content=getattr(response,'content',None)
+    result={'at_utc':now().isoformat(),'oms_sync_selector_counts':sync_counts,'oms_detail_requests':0,
+        'schwab':{'request_method':'GET','request':'/trader/v1/accounts/<account_hash>/orders?'+query,
+            'exact_request_root_only_evidence':exact_request,
+            'exact_request_sha256':hashlib.sha256(exact_request.encode()).hexdigest(),'http_status':status,
+            'response_decoded_json_bytes':body_bytes,'content_length_header':headers.get('Content-Length'),
+            'returned_rows':len(body),'working_queued_accepted_and_other_nonterminal':len(nonterminal),
+            'preexisting_orphans_nonblocking':nonterminal,'scope':'12h sync/OCO discovery, not whole-history completeness'},
+        'webull':{'request_method':'GET','request':'/trade/orders/list-open','api_version':'v2',
+            'query':{'account_id':cfg.account_id,'page_size':100},
+            'http_status':int(response.status_code),'response_decoded_json_bytes':len(json.dumps(orders,separators=(',',':')).encode()),
+            'response_content_bytes':len(raw_content) if isinstance(raw_content,bytes) else None,
+            'returned_rows':len(orders['orders']),'has_next':more,'preexisting_orphans_nonblocking':orders['orders']}}
+    return result
+
+
+def refuse_known_order(broker, observed, known):
+    need(not observed & known,broker+' known order still live; no reboot')
 
 
 def drain():
@@ -300,45 +344,120 @@ def drain():
         need(current==prior,'intent tail moved after producer stop; no blind interruption')
         safety(r,expected=load('before.json')['redis']['evicted_keys'])
     flat()
-    settled=retained_intents_settled()
+    idle_gates()
+    archived=archive_intents()
+    save('intents-final.json',archived)
     need(active(identity('project-mai-tai-oms.service')),'OMS unavailable during drain')
     save('drained.json',{'at_utc':now().isoformat(),'quiet_seconds':20,'intent_tail':current,
-         'both_brokers_positions_and_open_orders':'zero','database_working_orders_holds_outbox':'zero',
-         'retained_intents':settled})
+         'both_brokers_positions_and_known_orders':'zero; unknown orphan discoveries logged separately',
+         'database_working_orders_holds_outbox':'zero',
+         'retained_intents_archived':len(archived['entries'])})
 
 
-def retained_intents_settled():
-    """Stable Redis tail is not an ACK. Require durable treatment of every retained intent."""
-    from sqlalchemy import text
-    from project_mai_tai.db.session import build_engine
+def archive_intents():
+    """Approved history disposition; do not replay old intents or invent ACKs."""
     r,s=client()
-    ids=set()
+    entries=[]
     with r:
         stream=s.redis_stream_prefix+':strategy-intents'
-        need(r.xlen(stream)<=2000,'too many retained intents for bounded audit')
+        initial_count=r.xlen(stream)
+        need(initial_count<=2000,'too many retained intents for bounded audit')
         cursor='-'
         for _ in range(81):
             page=r.xrange(stream,min=cursor,count=25)
             bounded(page,1024**2,'intent audit COUNT25')
             if not page:
                 break
-            for _,fields in page:
-                event=json.loads(fields['data'])
-                need('event_id' in event,'special intent has no ordinary event_id; durable disposition unproven')
-                ids.add(str(event['event_id']))
+            for entry_id,fields in page:
+                entries.append({'stream_id':entry_id,'fields':fields})
             cursor='('+page[-1][0]
         else:
             raise RuntimeError('STOP: intent audit exceeded 2000 entries')
-    engine=build_engine(s.database_url,connect_timeout_s=5,statement_timeout_ms=5000)
-    with engine.connect() as conn:
-        rows=conn.execute(text("SELECT payload->>'event_id', status FROM trade_intents "
-                               "WHERE payload->>'event_id'=ANY(:ids)"),{'ids':sorted(ids)}).all() if ids else []
+        need(len(entries)==initial_count==r.xlen(stream),'intent archive changed during capture')
+    return {'at_utc':now().isoformat(),'disposition':'archived history; OMS starts at $; never replay',
+            'count':len(entries),'stream_ids':[x['stream_id'] for x in entries],'entries':entries}
+
+
+def idle_gates():
+    """Exercise current code with no publish route, using real read-only DB input."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+    from project_mai_tai.db.models import DashboardSnapshot
+    from project_mai_tai.db.session import build_engine
+    from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+    from project_mai_tai.services.orb_schwab_app import OrbSchwabService
+    from project_mai_tai.services.momentum_paper_app import MomentumPaperService
+    _,settings=client()
+    engine=build_engine(settings.database_url,connect_timeout_s=5,statement_timeout_ms=5000)
+    factory=sessionmaker(bind=engine)
+    with factory() as session:
+        snapshot=session.scalar(select(DashboardSnapshot).where(
+            DashboardSnapshot.snapshot_type=='scanner_confirmed_last_nonempty'))
+        need(snapshot is not None and isinstance(snapshot.payload,dict),'scanner snapshot unreadable')
+        source_session=snapshot.payload.get('scanner_session_start_utc')
+        need(isinstance(source_session,str),'scanner source session unreadable')
+    class NoIO:
+        def __getattr__(self,name):
+            raise RuntimeError('idle probe attempted external I/O: '+name)
+    results=[]
+    times=(now(),datetime(2026,10,4,10,0,tzinfo=ZoneInfo('America/New_York')))
+    for instant in times:
+        need(instant.astimezone(ZoneInfo('America/New_York')).weekday()>=5,'not a weekend idle proof')
+        v2=SchwabV2BotService.__new__(SchwabV2BotService)
+        v2.settings=settings
+        session_kind=v2._market_session(instant)
+        entry=v2._within_entry_window(instant)
+        need(session_kind=='closed' and not entry,'v2 weekend entry gate did not close')
+        orb=OrbSchwabService(settings=settings,redis_client=NoIO(),session_factory=factory)
+        universe=orb._pre_open_universe(now=instant)
+        need(universe==[] and orb._closed_bars==[] and orb._opening_orders=={},'ORB cold-start entry state not idle')
+        paper=MomentumPaperService(settings=settings,redis_client=NoIO(),clock=lambda:instant)
+        asyncio.run(paper._tick())
+        need(paper._engine is None and paper._gateway_task is None and not paper._subscribed_symbols,
+             'paper prepared or streamed on weekend')
+        results.append({'probe_at_utc':instant.astimezone(UTC).isoformat(),
+            'v2':{'market_session':session_kind,'within_entry_window':entry},
+            'orb_schwab':{'scanner_source_session':source_session,'universe':universe,
+                          'cold_start_closed_bars':0,'cold_start_opening_orders':0},
+            'paper':{'engine':None,'gateway_task':None,'subscribed_symbols':[],
+                     'external_io_calls':0,'broker_route':'none (paper service code)'},
+            'scope':'read-only code probes, not inspection of another process memory'})
     engine.dispose()
-    known={str(row[0]) for row in rows if str(row[1]).lower() in
-           {'accepted','filled','cancelled','canceled','rejected','expired','completed'}}
-    missing=sorted(ids-known)
-    need(not missing,'retained intents lack durable settled result: '+str(missing[:20]))
-    return {'retained_event_ids':len(ids),'durably_treated':len(known)}
+    print('IDLE_GATES',json.dumps(results,sort_keys=True),flush=True)
+    print('MANUAL_STOP_DISPOSITION operator: none; no hand orders to preserve; 2026-10-03 15:40 ET',flush=True)
+    return results
+
+
+def review_evidence(path):
+    import contextlib
+    import io
+    r,_=client()
+    with r:
+        before=safety(r)
+    output=io.StringIO()
+    with contextlib.redirect_stdout(output):
+        orders=flat()
+        gates_result=idle_gates()
+        intents=archive_intents()
+    r,_=client()
+    with r:
+        after=safety(r,expected=before['evicted_keys'])
+    data={'at_utc':now().isoformat(),'application':git('rev-parse','HEAD'),'orders':orders,
+          'idle_gates':gates_result,'archived_intents':intents,'redis_before':before,'redis_after':after,
+          'manual_stops':'operator: none; no hand orders to preserve; 2026-10-03 15:40 ET',
+          'stdout':output.getvalue()}
+    with path.open('x') as out:
+        json.dump(data,out,sort_keys=True,indent=2)
+        out.write('\n')
+    path.chmod(0o600)
+    print('REVIEW_EVIDENCE',path,'sha256='+sha(path))
+    for account,detail in (('schwab',orders['schwab']),('webull',orders['webull'])):
+        print('OPEN_ORDERS',account,'http='+str(detail['http_status']),
+              'rows='+str(detail['returned_rows']),'json_bytes='+str(detail['response_decoded_json_bytes']))
+    print('OMS_SYNC',orders['oms_sync_selector_counts'],'detail_requests=0')
+    print('IDLE_GATES',json.dumps(gates_result,sort_keys=True))
+    print('HISTORY_ARCHIVED count='+str(intents['count'])+' manual_stops=operator:none')
+    print('REDIS',before,'->',after)
 
 
 def before():
@@ -763,7 +882,9 @@ if __name__=='__main__':
     actions={'before':before,'flat':flat,'backups':backups,'ready':ready,'receipt':receipt,
              'target':lambda:print(target()),'detectors-env':detectors_env,'boot-setup':boot_setup,
              'quiesce-ready':quiesce_ready,'stopped':stopped,'drain':drain,
-             'intents-settled':lambda:print(json.dumps(retained_intents_settled())),
+             'idle-gates':idle_gates,
+             'archive-intents':lambda:save(sys.argv[2],archive_intents()),
+             'review-evidence':lambda:review_evidence(Path(sys.argv[2])),
              'preserve-final-owners':lambda:save('owners-final.json',capture_owners()),
              'archive-rdb':archive_rdb,'new-boot':new_boot,'replay-owners':replay_owners,
              'gateway-start-bound':lambda:save('gateway-start-bound.json',{'content_after_utc':now().isoformat()}),
@@ -773,7 +894,7 @@ if __name__=='__main__':
              'recovered':lambda:need((RUN/'recovery-result.json').exists(),'no successful recovery'),
              'journal':lambda:journal(sys.argv[2])}
     try:
-        if sys.argv[1] not in {'flat','intents-settled','fleet'}:
+        if sys.argv[1] not in {'flat','idle-gates','review-evidence','fleet'}:
             verify()
         actions[sys.argv[1]]()
     except Exception as exc:
