@@ -5,6 +5,7 @@ import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -302,6 +303,7 @@ async def test_after_close_start_does_not_create_an_empty_paper_session() -> Non
         Settings(momentum_paper_enabled=True),
         store=_store(),
         rest_client_factory=forbidden,
+        redis_client=AsyncMock(),
         clock=lambda: datetime(2026, 9, 16, 20, 0, tzinfo=UTC),
     )
 
@@ -309,6 +311,8 @@ async def test_after_close_start_does_not_create_an_empty_paper_session() -> Non
 
     assert service._engine is None
     assert touched is False
+    service.redis.xadd.assert_awaited_once()
+    assert json.loads(service.redis.xadd.call_args.args[1]["data"])["payload"]["symbols"] == []
 
 
 def test_gateway_disconnect_opens_a_fail_closed_gap() -> None:

@@ -237,6 +237,7 @@ class OrbService:
         self.session_factory = session_factory  # built lazily when enabled (no DB connect when off)
         self._aggregators: dict[str, OrbTickAggregator] = {}
         self._last_gateway_symbols: list[str] = []
+        self._gateway_subscription_announced = False
         self._md_offset: str = "$"  # tail new ticks only
         self._states: dict[str, _SymbolState] = {}
         self._universe: set[str] = set()
@@ -462,21 +463,31 @@ class OrbService:
     # ----- gateway consumer registration (mirrors the v2 / strategy-engine pattern) -----
     async def _sync_gateway_subscription(self, symbols: list[str]) -> None:
         desired = sorted({str(s).upper() for s in symbols if str(s).strip()})
-        if desired == self._last_gateway_symbols:
+        first_announcement = (
+            self.settings.market_data_subscription_startup_enabled
+            and not self._gateway_subscription_announced
+        )
+        if (
+            desired == self._last_gateway_symbols and not first_announcement
+            and not getattr(self, "_gateway_subscription_uncertain", False)
+        ):
             return  # debounce — publish only on change
-        self._last_gateway_symbols = desired
         event = MarketDataSubscriptionEvent(
             source_service=SERVICE_NAME,
             payload=MarketDataSubscriptionPayload(
                 consumer_name=SERVICE_NAME, mode="replace", symbols=desired
             ),
         )
+        self._gateway_subscription_uncertain = True
         await self.redis.xadd(
             stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
             {"data": event.model_dump_json()},
             maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
             approximate=True,
         )
+        self._last_gateway_symbols = desired
+        self._gateway_subscription_announced = True
+        self._gateway_subscription_uncertain = False
         logger.info("[ORB-GATEWAY-SUBSCRIBE] consumer=%s symbols=%d", SERVICE_NAME, len(desired))
 
     # ----- market-data drain -> aggregate -> bar -----

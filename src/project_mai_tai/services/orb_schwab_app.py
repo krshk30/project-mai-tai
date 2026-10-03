@@ -106,19 +106,28 @@ class OrbSchwabService(OrbService):
 
     async def _sync_gateway_subscription(self, symbols: list[str]) -> None:
         desired = sorted({str(symbol).upper() for symbol in symbols if str(symbol).strip()})
+        first_announcement = (
+            self.settings.market_data_subscription_startup_enabled
+            and not self._gateway_subscription_announced
+        )
         if self._observe_only:
-            # Observe only feeds other consumers already requested. No warm-up or
-            # gateway owner changes are caused by the rehearsal.
+            # Observation never claims symbols. COLDSTART1 registers only its
+            # empty owner, while retaining the local filter for observed ticks.
             self._last_gateway_symbols = desired
-            return
-        if desired == self._last_gateway_symbols:
+            if not first_announcement and not getattr(self, "_gateway_subscription_uncertain", False):
+                return
+        elif (
+            desired == self._last_gateway_symbols and not first_announcement
+            and not getattr(self, "_gateway_subscription_uncertain", False)
+        ):
             return
         event = MarketDataSubscriptionEvent(
             source_service=_SERVICE,
             payload=MarketDataSubscriptionPayload(
-                consumer_name=_SERVICE, mode="replace", symbols=desired
+                consumer_name=_SERVICE, mode="replace", symbols=[] if self._observe_only else desired
             ),
         )
+        self._gateway_subscription_uncertain = True
         await self.redis.xadd(
             stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
             {"data": event.model_dump_json()},
@@ -126,6 +135,8 @@ class OrbSchwabService(OrbService):
             approximate=True,
         )
         self._last_gateway_symbols = desired
+        self._gateway_subscription_announced = True
+        self._gateway_subscription_uncertain = False
 
     def _handle_market_data(self, fields: dict) -> None:
         raw = fields.get("data")
@@ -518,6 +529,13 @@ class OrbSchwabService(OrbService):
             "OBSERVE_ONLY" if self._observe_only else "LIVE",
             self.settings.orb_live_schwab_orders_enabled,
         )
+        if self.settings.market_data_subscription_startup_enabled and not self._observe_only:
+            # Hydrate ownership before any replacement, including outside RTH.
+            # A failed read must escape BEFORE the finally block can release it.
+            entries = await asyncio.to_thread(
+                open_entries, self.session_factory, self.settings.strategy_schwab_1m_v2_account_name
+            )
+            self._exit_held_symbols = {entry["symbol"] for entry in entries}
         try:
             while True:
                 self._maybe_roll_session()
@@ -537,7 +555,10 @@ class OrbSchwabService(OrbService):
                 if processed == 0:
                     await asyncio.sleep(1)
         finally:
-            await self._sync_gateway_subscription([])
+            # A failed/ambiguous first XADD is not permission to clear retained
+            # coverage. Only a successfully announced instance may release it.
+            if not self.settings.market_data_subscription_startup_enabled or self._gateway_subscription_announced:
+                await self._sync_gateway_subscription([])
 
 
 async def main() -> None:

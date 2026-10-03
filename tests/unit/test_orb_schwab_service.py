@@ -248,8 +248,13 @@ def test_on_time_market_timestamp_does_not_hide_late_processing(monkeypatch) -> 
 
 
 class _ReadOnlyRedis:
-    async def xadd(self, *_args, **_kwargs):
-        pytest.fail("Observation must not write intents or gateway subscriptions")
+    async def xadd(self, stream, fields, **_kwargs):
+        # COLDSTART1 may announce identity, never claim feeds or publish orders.
+        event = json.loads(fields["data"])
+        assert stream.endswith(":market-data-subscriptions")
+        assert event["payload"] == {
+            "consumer_name": "orb-schwab", "mode": "replace", "symbols": [],
+        }
 
 
 def _observer(monkeypatch):

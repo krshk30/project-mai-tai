@@ -168,6 +168,7 @@ class MomentumPaperService:
         self._gateway_task: asyncio.Task[None] | None = None
         self._subscribed_symbols: set[str] = set()
         self._gateway_owner_claimed = False
+        self._gateway_subscription_announced = False
         self._last_subscription_sync: datetime | None = None
         self._last_snapshot_at: datetime | None = None
         self._connected = False
@@ -207,6 +208,12 @@ class MomentumPaperService:
     async def _tick(self) -> None:
         now = self._clock()
         et = now.astimezone(_ET)
+        if (
+            self.settings.market_data_subscription_startup_enabled
+            and not self._gateway_subscription_announced
+        ):
+            # Also runs before the weekend/pre-03:55 idle returns; no feed starts.
+            await self._sync_gateway_subscriptions()
         if et.weekday() >= 5 or et.date() in US_MARKET_HOLIDAYS:
             await self._stop_gateway()
             return
@@ -449,11 +456,15 @@ class MomentumPaperService:
         )
         if len(desired) > _MAX_SUBSCRIBED_SYMBOLS:
             raise RuntimeError("Momentum subscription cap breached")
-        if not force and desired == self._subscribed_symbols:
+        first_announcement = (
+            self.settings.market_data_subscription_startup_enabled
+            and not self._gateway_subscription_announced
+        ) or getattr(self, "_gateway_subscription_uncertain", False)
+        if not force and not first_announcement and desired == self._subscribed_symbols:
             return
         now = self._clock()
         if (
-            not force and desired.issubset(self._subscribed_symbols)
+            not force and not first_announcement and desired.issubset(self._subscribed_symbols)
             and self._last_subscription_sync is not None
             and (now - self._last_subscription_sync).total_seconds() < _SUBSCRIPTION_DEBOUNCE_SECONDS
         ):
@@ -467,6 +478,7 @@ class MomentumPaperService:
         if desired:
             # Cancellation can land after xadd but before local symbols are updated.
             self._gateway_owner_claimed = True
+        self._gateway_subscription_uncertain = True
         await self.redis.xadd(
             stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
             {"data": event.model_dump_json()},
@@ -475,6 +487,8 @@ class MomentumPaperService:
         )
         self._subscribed_symbols = set(desired)
         self._gateway_owner_claimed = bool(desired)
+        self._gateway_subscription_announced = True
+        self._gateway_subscription_uncertain = False
         self._last_subscription_sync = now
 
     def _mark_gateway_disconnected(self) -> None:
