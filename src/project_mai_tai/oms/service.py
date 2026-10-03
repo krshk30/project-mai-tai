@@ -61,6 +61,7 @@ from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.mirror_fresh_price import MirrorFreshPriceMixin
+from project_mai_tai.oms.atr_reprice_runtime import AtrRepriceRuntimeMixin
 from project_mai_tai.oms.orb_schwab_eod import close_orb_schwab_before_close, close_orb_schwab_on_signal
 from project_mai_tai.orb_schwab_macd import (
     BAR_WAIT, MacdVerdict, last_closed_bar_close, schwab_completed_bar_macd_gate,
@@ -538,7 +539,7 @@ def resolve_cancel_intent_status(intent_type: str, report_event_type: str) -> st
     return report_event_type
 
 
-class OmsRiskService(MirrorFreshPriceMixin):
+class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
     # Operator manual-stop cache window. Short enough that a stop takes effect on the next intent
     # cycle (no restart, which was the whole point), long enough that it is not a per-intent query.
     _MANUAL_STOP_CACHE_SECS = 10.0
@@ -1006,11 +1007,14 @@ class OmsRiskService(MirrorFreshPriceMixin):
         # eval rejects event-time-stale quotes, so the call is always made on the FRESHEST
         # price, never a backlogged one.
         tick_task = asyncio.create_task(self._run_tick_consumer(stop_event))
+        rpg_task = asyncio.create_task(self._run_rpg_retry_loop(stop_event))
         try:
             await self._run_control_loop(stop_event)
         finally:
             stop_event.set()
             tick_task.cancel()
+            rpg_task.cancel()
+            await asyncio.gather(rpg_task, return_exceptions=True)
             try:
                 await tick_task
             except asyncio.CancelledError:
@@ -1277,8 +1281,13 @@ class OmsRiskService(MirrorFreshPriceMixin):
 
         payload = json.loads(data)
         event_type = str(payload.get("event_type", "")).strip().lower()
+        if event_type == "atr_reprice_tick":
+            await self._rpg_advance(UUID(payload["token"]))
+            return
         if event_type == "trade_intent":
             event = TradeIntentEvent.model_validate(payload)
+            if self._rpg_external_retry(event):
+                return
             if not self._claim_webull_mirror_deferred_resubmit(event):
                 return
             completed = False
@@ -1507,7 +1516,12 @@ class OmsRiskService(MirrorFreshPriceMixin):
             return
 
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
+        if self._rpg_external_retry(event):
+            return []
         strategy_code = str(event.payload.strategy_code).strip().lower()
+        if (strategy_code == "schwab_1m_v2" and event.payload.intent_type == "cancel"
+                and event.payload.metadata.get("atr_reprice") == "true"):
+            return await self._rpg_begin_cancel(event)
         if strategy_code == "orb":
             self.logger.error(
                 "[OMS-ORB-PAPER-REFUSED] OMS blocked ORB intent before intent/order "
@@ -1632,6 +1646,9 @@ class OmsRiskService(MirrorFreshPriceMixin):
             )
 
             passed, risk_reason = self._evaluate_risk(event)
+            rpg_refusal = self._rpg_open_refusal(event, session=session)
+            if rpg_refusal:
+                passed, risk_reason = False, rpg_refusal
             outcome = "pass" if passed else "reject"
             self.store.record_risk_check(
                 session,
@@ -2305,11 +2322,14 @@ class OmsRiskService(MirrorFreshPriceMixin):
                     session.commit()
                     await self._publish_order_event(order_event)
                     return [order_event]
-            if event.payload.metadata.get("nfq_retry_token"):
-                # Persist the client id before the first possible wire write. If OMS dies or the
-                # transport is uncertain, normal order reconciliation/cancellation can still
-                # address this exact buy; a restored price hold must never blindly replay it.
-                self.store.get_or_create_order(
+            rpg_refusal = self._rpg_open_refusal(event, session=session)
+            if rpg_refusal:
+                self.store.mark_intent_refused(intent, origin="client_abort", code=rpg_refusal)
+                session.commit()
+                return [self._build_rejected_event(event, intent.id, reason=rpg_refusal)]
+            if event.payload.metadata.get("rpg_handoff_token") or event.payload.metadata.get("nfq_retry_token"):
+                # Both durable lanes must record the exact client id before wire.
+                pending_order = self.store.get_or_create_order(
                     session, intent=intent, strategy_id=strategy.id,
                     broker_account_id=broker_account.id, client_order_id=request.client_order_id,
                     symbol=request.symbol, side=request.side, quantity=request.quantity,
@@ -2317,6 +2337,12 @@ class OmsRiskService(MirrorFreshPriceMixin):
                     time_in_force=request.time_in_force, status="pending",
                 )
                 session.commit()
+                rpg_refusal = self._rpg_open_refusal(event, session=session)
+                if rpg_refusal:
+                    pending_order.status = "rejected"
+                    self.store.mark_intent_refused(intent, origin="client_abort", code=rpg_refusal)
+                    session.commit()
+                    return [self._build_rejected_event(event, intent.id, reason=rpg_refusal)]
             reports = await self.broker_adapter.submit_order(request)
             self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
@@ -9882,6 +9908,8 @@ class OmsRiskService(MirrorFreshPriceMixin):
                 # broker_order_id by this point, so this is behaviour-identical for them.
                 if account is None or not (order.broker_order_id or order.client_order_id):
                     continue
+                if self._rpg_owns_old_order(session, order, account.name):
+                    continue  # The strict, bounded read lane owns this old BUY.
 
                 intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
                 if intent is None:
@@ -9902,6 +9930,8 @@ class OmsRiskService(MirrorFreshPriceMixin):
                     time_in_force=str((order.payload or {}).get("time_in_force", order.time_in_force)),
                 )
                 report = await self.broker_adapter.fetch_order_update(request)
+                if self._rpg_owns_old_order(session, order, account.name):
+                    continue  # Ownership may have changed during this GET.
                 if report is None:
                     continue
 
@@ -15748,6 +15778,8 @@ class OmsRiskService(MirrorFreshPriceMixin):
         report: ExecutionReport,
     ) -> dict[str, object]:
         if strategy_code == "orb_schwab" and (order.payload or {}).get("orb_replace_hold"):
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
+        if self._rpg_owns_old_order(session, order, broker_account_name):
             return {"orders": 0, "terminal_orders": 0, "published_events": []}
         remaining_quantity = max(Decimal("0"), order.quantity - report.filled_quantity)
         if remaining_quantity <= 0:
