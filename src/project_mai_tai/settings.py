@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     # Isolated raw-trade paper study. Default OFF: no Massive connection, DB read,
     # dashboard registration, or runtime process is created until explicitly enabled.
     momentum_paper_enabled: bool = False
+    # COLDSTART1: announce the current owner set once, including an empty set.
+    market_data_subscription_startup_enabled: bool = True
     market_data_snapshot_interval_seconds: int = 5
     market_data_reference_cache_path: str = "data/cache/reference_data.json"
     # PERIODIC REFERENCE REFRESH (2026-07-27, the DFNS/LGHL incident). `_ensure_reference_data()` was

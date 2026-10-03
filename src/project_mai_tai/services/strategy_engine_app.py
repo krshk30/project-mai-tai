@@ -6126,6 +6126,7 @@ class StrategyEngineService:
             **{stream: "$" for stream in self._priority_streams},
         }
         self._last_market_data_symbols: set[str] = set()
+        self._market_data_subscription_announced = False
         self._last_schwab_stream_symbols: set[str] = set()
         self._last_schwab_chart_symbols: set[str] = set()
         self._last_schwab_timesale_symbols: set[str] = set()
@@ -7649,10 +7650,16 @@ class StrategyEngineService:
 
     async def _sync_market_data_subscriptions(self, symbols: Sequence[str]) -> None:
         normalized = {symbol.upper() for symbol in symbols if symbol}
-        if normalized == self._last_market_data_symbols:
+        first_announcement = (
+            self.settings.market_data_subscription_startup_enabled
+            and not self._market_data_subscription_announced
+        )
+        if (
+            normalized == self._last_market_data_symbols and not first_announcement
+            and not getattr(self, "_market_data_subscription_uncertain", False)
+        ):
             return
 
-        self._last_market_data_symbols = normalized
         stream = stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions")
         event = MarketDataSubscriptionEvent(
             source_service=SERVICE_NAME,
@@ -7662,12 +7669,16 @@ class StrategyEngineService:
                 symbols=sorted(normalized),
             ),
         )
+        self._market_data_subscription_uncertain = True
         await self.redis.xadd(
             stream,
             {"data": event.model_dump_json()},
             maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
             approximate=True,
         )
+        self._last_market_data_symbols = normalized
+        self._market_data_subscription_announced = True
+        self._market_data_subscription_uncertain = False
         self._spawn_background_hydration(
             kind="generic",
             symbols=normalized,

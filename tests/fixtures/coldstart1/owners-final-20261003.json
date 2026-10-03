@@ -1,0 +1,61 @@
+{
+  "at_utc": "2026-10-03T20:59:57.890696+00:00",
+  "events": [
+    {
+      "fields": {
+        "data": "{\"event_id\":\"7816d86d-4893-4c49-9777-7b49e67ca9e5\",\"event_type\":\"market_data_subscription\",\"source_service\":\"momentum-paper\",\"produced_at\":\"2026-10-02T12:05:46.316323Z\",\"correlation_id\":null,\"payload\":{\"consumer_name\":\"momentum-paper\",\"mode\":\"replace\",\"symbols\":[]}}"
+      },
+      "source_id": "1790942746316-0",
+      "symbols": []
+    },
+    {
+      "fields": {
+        "data": "{\"event_id\":\"da3535f9-6fd8-4b0d-8bd1-3ea8bb8629cb\",\"event_type\":\"market_data_subscription\",\"source_service\":\"orb-schwab\",\"produced_at\":\"2026-10-03T08:00:04.399188Z\",\"correlation_id\":null,\"payload\":{\"consumer_name\":\"orb-schwab\",\"mode\":\"replace\",\"symbols\":[]}}"
+      },
+      "source_id": "1791014404417-0",
+      "symbols": []
+    },
+    {
+      "fields": {
+        "data": "{\"event_id\":\"e8b79669-6636-4dcf-85d3-236b57eacc14\",\"event_type\":\"market_data_subscription\",\"source_service\":\"orb\",\"produced_at\":\"2026-10-03T08:00:05.348831Z\",\"correlation_id\":null,\"payload\":{\"consumer_name\":\"orb\",\"mode\":\"replace\",\"symbols\":[]}}"
+      },
+      "source_id": "1791014405349-0",
+      "symbols": []
+    },
+    {
+      "fields": {
+        "data": "{\"event_id\":\"e6fce17e-c12b-45c0-b9e2-72c24bfe0d48\",\"event_type\":\"market_data_subscription\",\"source_service\":\"strategy-engine\",\"produced_at\":\"2026-10-03T08:00:06.227254Z\",\"correlation_id\":null,\"payload\":{\"consumer_name\":\"strategy-engine\",\"mode\":\"replace\",\"symbols\":[]}}"
+      },
+      "source_id": "1791014406227-0",
+      "symbols": []
+    },
+    {
+      "fields": {
+        "data": "{\"event_id\":\"46e59a60-7717-4561-ba9a-b08a95b78ca5\",\"event_type\":\"market_data_subscription\",\"source_service\":\"schwab-1m-v2\",\"produced_at\":\"2026-10-03T14:22:12.271144Z\",\"correlation_id\":null,\"payload\":{\"consumer_name\":\"schwab-1m-v2\",\"mode\":\"replace\",\"symbols\":[]}}"
+      },
+      "source_id": "1791037332271-0",
+      "symbols": []
+    }
+  ],
+  "raw": {
+    "_last_applied_id": "1791037332271-0",
+    "_migration_complete": "1",
+    "momentum-paper": "[]",
+    "orb": "[]",
+    "orb-schwab": "[]",
+    "schwab-1m-v2": "[]",
+    "strategy-engine": "[]"
+  },
+  "safety": {
+    "evicted_keys": 23,
+    "used_memory": 1175469416
+  },
+  "sets": {
+    "momentum-paper": [],
+    "orb": [],
+    "orb-schwab": [],
+    "schwab-1m-v2": [],
+    "strategy-engine": []
+  },
+  "static": []
+}

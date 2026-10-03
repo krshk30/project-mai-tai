@@ -856,6 +856,17 @@ class SchwabV2BotService:
                 # the SIGTERM path on Linux is the production case.
                 pass
 
+        if (
+            self.enabled
+            and self.settings.market_data_subscription_startup_enabled
+            and (
+                self.settings.strategy_schwab_1m_v2_gateway_register_enabled
+                or self.settings.oms_v2_exit_management_enabled
+            )
+        ):
+            # Finish ownership hydration before scanner/position tasks can race
+            # the first replace. Do not run the position poll's order actions.
+            self._exit_coverage = await asyncio.to_thread(self._startup_gateway_exit_coverage)
         await self._publish_heartbeat("starting")
         self._data_health["status"] = "healthy" if self.enabled else "degraded"
         self._log_atr_massive_seed_census(force=True)
@@ -1926,7 +1937,18 @@ class SchwabV2BotService:
             await self._sync_gateway_subscription()
             self._push_desired_symbols()
 
-    def _fetch_managed_symbols(self) -> set[str]:
+    def _startup_gateway_exit_coverage(self) -> set[str]:
+        if self.session_factory is None:
+            raise RuntimeError("COLDSTART1 v2 ownership UNKNOWN: no database")
+        maps = self._fetch_position_maps()
+        if maps is None:
+            raise RuntimeError("COLDSTART1 v2 ownership UNKNOWN: position read failed")
+        _, held = maps
+        return {symbol for symbol, qty in held.items() if qty > 0} | self._fetch_managed_symbols(
+            strict=True
+        )
+
+    def _fetch_managed_symbols(self, *, strict: bool = False) -> set[str]:
         """Symbols we own, from EVERY layer that can assert ownership. **ADD-only union.**
 
         Three sources, because the fix's own premise is *"if we hold it, we watch it"* and NO single
@@ -1946,9 +1968,12 @@ class SchwabV2BotService:
         ⛔ Protected symbols (e.g. the operator's standing CYN) are EXCLUDED: v2 must never watch,
         subscribe to or act on them, and coverage is not a back door to that.
 
-        Never raises — a DB blip must not SHRINK coverage, so the caller keeps the previous set.
+        Normal polling never raises: a DB blip retains previous coverage. Startup
+        uses strict=True because its constructor-empty cache is not known flat.
         """
         if self.session_factory is None:
+            if strict:
+                raise RuntimeError("COLDSTART1 v2 ownership UNKNOWN: no database")
             return set(self._exit_coverage)
         owned: set[str] = set()
         try:
@@ -1985,6 +2010,8 @@ class SchwabV2BotService:
                         if ap.symbol
                     }
         except Exception:  # noqa: BLE001
+            if strict:
+                raise
             logger.warning(
                 "[V2-EXIT-COVERAGE] ownership read failed; KEEPING the previous coverage set "
                 "(shrinking it on a DB blip would unsubscribe a held symbol)",
@@ -2900,27 +2927,39 @@ class SchwabV2BotService:
         # CW_FLIP on a live position at once. The rules are not watchlist-gated; their INPUT is.
         # ⛔ EXIT-ONLY: this union must never reach an entry decision. See
         # docs/design/held-symbol-exit-coverage.md §2.
-        desired = sorted(self._subscription_symbols())
-        if desired == self._last_gateway_symbols:
-            return  # debounce — only publish on change
-        self._last_gateway_symbols = desired
-        event = MarketDataSubscriptionEvent(
-            source_service=SERVICE_NAME,
-            payload=MarketDataSubscriptionPayload(
-                consumer_name=SERVICE_NAME,
-                mode="replace",
-                symbols=desired,
-            ),
-        )
-        await self.redis.xadd(
-            stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
-            {"data": event.model_dump_json()},
-            maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
-            approximate=True,
-        )
-        logger.info(
-            "[V2-GATEWAY-SUBSCRIBE] consumer=%s symbols=%d", SERVICE_NAME, len(desired)
-        )
+        lock = getattr(self, "_gateway_subscription_lock", None)
+        if lock is None:
+            lock = self._gateway_subscription_lock = asyncio.Lock()
+        # Scanner and position polling can overlap across XADD. Recompute the
+        # union inside the lock so a newer held set cannot be lost to debounce.
+        async with lock:
+            desired = sorted(self._subscription_symbols())
+            if desired == self._last_gateway_symbols:
+                return  # debounce — only publish on change
+            event = MarketDataSubscriptionEvent(
+                source_service=SERVICE_NAME,
+                payload=MarketDataSubscriptionPayload(
+                    consumer_name=SERVICE_NAME,
+                    mode="replace",
+                    symbols=desired,
+                ),
+            )
+            try:
+                await self.redis.xadd(
+                    stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
+                    {"data": event.model_dump_json()},
+                    maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
+                    approximate=True,
+                )
+            except (asyncio.CancelledError, Exception):
+                # Redis may have accepted the replace despite a lost ACK. The
+                # next caller must republish, even if it matches the older cache.
+                self._last_gateway_symbols = None
+                raise
+            self._last_gateway_symbols = desired
+            logger.info(
+                "[V2-GATEWAY-SUBSCRIBE] consumer=%s symbols=%d", SERVICE_NAME, len(desired)
+            )
 
     def _persisted_current_bar_boundaries(self, symbols: set[str]) -> dict[str, int]:
         if (

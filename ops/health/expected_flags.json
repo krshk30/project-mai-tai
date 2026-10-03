@@ -10,6 +10,14 @@
       "ruling": "Operator 2026-10-03: RPG flag ON in the reviewed joint install; no deployment authority from this catalog."
     },
     {
+      "name": "market_data_subscription_startup_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "also_check_services": ["schwab-1m-v2", "orb", "orb-schwab", "momentum-paper"],
+      "reason": "COLDSTART1 announces each consumer's current subscription set on startup, even when empty.",
+      "ruling": "2026-10-03 operator: every bot tells the gateway its watchlist on startup; Redis persistence stays OFF. Ships ON with the next reviewed RPG1/COLDSTART1 install."
+    },
+    {
       "name": "oms_v2_webull_mirror_fresh_price_enabled",
       "expected": true,
       "owning_service": "oms",
