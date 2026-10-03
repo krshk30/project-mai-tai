@@ -1,7 +1,8 @@
 """Collect on either branch; exercise only the combined RPG1 + NFQ1 tree.
 
 Uses recorded AMOD stale-hold inputs and a simulated OMS broker. This covers the
-first-entry quote wait, NOT the unfinished cancel/readback/re-place handoff.
+first-entry quote wait only. The production cancel/readback/re-place handoff is
+covered separately by test_rpg1_runtime_nfq.py and test_rpg1_nfq1_composition.py.
 """
 from datetime import UTC, datetime
 from decimal import Decimal

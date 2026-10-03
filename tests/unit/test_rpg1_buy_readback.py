@@ -72,6 +72,34 @@ def test_recorded_webull_filled_buy_never_replaces():
     assert not result.can_replace
 
 
+@pytest.mark.parametrize("change", [None, "client", "missing_broker", "side", "quantity", "fills"])
+def test_webull_explicit_client_identity_scope_still_requires_exact_complete_parent(change):
+    request, body, decode = recorded("webull")
+    request = replace(request, metadata={"resting_entry_cancel": "true",
+        "atr_reprice_identity": "webull_client_order_id"})
+    if change == "client":
+        body["client_order_id"] = "different-order"
+    elif change == "missing_broker":
+        body.pop("order_id")
+    elif change == "side":
+        body["items"][0]["side"] = "SELL"
+    elif change == "quantity":
+        body["items"][0]["qty"] = "1000"
+    elif change == "fills":
+        body["items"][0].pop("filled_qty")
+    result = decode(request, body)
+    assert result.can_replace is (change is None)
+    if change is None:
+        assert result.broker_order_id == body["order_id"]
+
+
+def test_webull_client_identity_scope_does_not_relax_schwab_identity():
+    request, body, decode = recorded("schwab")
+    request = replace(request, metadata={"resting_entry_cancel": "true",
+        "atr_reprice_identity": "webull_client_order_id"})
+    assert decode(request, body).outcome == "unknown"
+
+
 @pytest.mark.parametrize("broker", ["schwab", "webull"])
 @pytest.mark.parametrize("value", [None, "", "NaN", "Infinity", "-1", "bad", True])
 def test_synthetic_missing_or_invalid_cumulative_quantity_is_unknown(broker, value):
@@ -212,8 +240,12 @@ async def test_webull_dedicated_read_no_exit_helper_no_today_cache(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("fake_sdk")
-async def test_webull_recorded_body_through_sdk_exact_order_get(monkeypatch):
+@pytest.mark.parametrize("client_only", [False, True])
+async def test_webull_recorded_body_through_sdk_exact_order_get(monkeypatch, client_only):
     request, body, _ = recorded("webull")
+    if client_only:
+        request = replace(request, metadata={"resting_entry_cancel": "true",
+            "atr_reprice_identity": "webull_client_order_id"})
     adapter = object.__new__(WebullBrokerAdapter)
     adapter.accounts_by_name = {request.broker_account_name: WebullAccountConfig("configured-id")}
     calls = []

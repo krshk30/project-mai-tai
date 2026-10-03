@@ -5,7 +5,7 @@ readbacks never submit an order or turn an unreadable order into permission.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
@@ -20,6 +20,7 @@ class AtrBuyReadback:
     fill_price: Decimal | None = None
     terminal_cancel: bool = False
     broker_status: str = ""
+    broker_order_id: str | None = None
 
     @property
     def can_replace(self) -> bool:
@@ -44,13 +45,15 @@ def _number(value: object) -> Decimal | None:
     return number if number.is_finite() and number >= 0 else None
 
 
-def scoped_request(request: OrderRequest) -> bool:
+def scoped_request(request: OrderRequest, *, allow_webull_client_identity: bool = False) -> bool:
     return (
         request.strategy_code == "schwab_1m_v2"
         and request.side == "buy"
         and request.intent_type == "cancel"
         and request.metadata.get("resting_entry_cancel") == "true"
-        and bool(request.metadata.get("broker_order_id", "").strip())
+        and (bool(request.metadata.get("broker_order_id", "").strip())
+             or (allow_webull_client_identity
+                 and request.metadata.get("atr_reprice_identity") == "webull_client_order_id"))
         and bool(request.client_order_id.strip())
         and request.quantity.is_finite()
         and request.quantity > 0
@@ -127,13 +130,16 @@ def schwab_buy_readback(request: OrderRequest, body: object) -> AtrBuyReadback:
 
 
 def webull_buy_readback(request: OrderRequest, body: object) -> AtrBuyReadback:
-    if not scoped_request(request):
+    if not scoped_request(request, allow_webull_client_identity=True):
         return unknown("not_atr_resting_buy_cancel")
     if not isinstance(body, dict):
         return unknown("unreadable_order")
+    broker_id = str(body.get("order_id") or "").strip()
+    expected_id = request.metadata.get("broker_order_id")
     if (
         body.get("client_order_id") != request.client_order_id
-        or str(body.get("order_id", "")) != request.metadata["broker_order_id"]
+        or not broker_id
+        or (expected_id and broker_id != expected_id)
     ):
         return unknown("parent_identity_mismatch")
     items = body.get("items")
@@ -152,4 +158,5 @@ def webull_buy_readback(request: OrderRequest, body: object) -> AtrBuyReadback:
     price = _number(item.get("filled_price"))
     if price == 0:
         price = None
-    return _result(str(item.get("order_status", "")).upper(), filled, price)
+    result = _result(str(item.get("order_status", "")).upper(), filled, price)
+    return replace(result, broker_order_id=broker_id) if result.outcome != "unknown" else result

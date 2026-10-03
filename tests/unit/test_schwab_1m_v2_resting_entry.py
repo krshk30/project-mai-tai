@@ -103,7 +103,7 @@ def test_band_is_tunable() -> None:
 # --------------------------------------------------------------------------- STABLE-REST cadence
 def test_reprice_only_on_a_large_move() -> None:
     """⭐ STABLE-REST (the NVVE lesson). The order stays OUT THERE through small wiggles; it re-places
-    only on a >= 1% trail move (cancel one bar, re-place the next -- no overlap). The old code cancelled
+    only on a >= 1% trail move (the durable handoff owns replacement). The old code cancelled
     on every 0.2% wiggle so no order was ever resting when price crossed."""
     strat = _strat()
     st = strat.watchlist_state("TEST")
@@ -112,9 +112,8 @@ def test_reprice_only_on_a_large_move() -> None:
     out = _tick(strat, st, trail=9.40)                               # 1.05% move -> reprice: CANCEL
     assert len(out) == 1 and out[0].intent_type == "cancel"
     assert st.resting_active is False
-    out2 = _tick(strat, st, trail=9.40)                             # next bar: re-place at 9.40
-    assert len(out2) == 1 and out2[0].intent_type == "open"
-    assert out2[0].metadata["stop_price"] == "9.4000"
+    assert out[0].metadata["atr_reprice"] == "true"
+    assert _tick(strat, st, trail=9.40) == []  # No bar-driven duplicate while OMS owns the gap.
 
 
 def test_reprice_threshold_is_tunable() -> None:
@@ -136,8 +135,9 @@ def test_offset_keeps_the_first_rest_reprice_boundary_on_the_raw_line() -> None:
 
     out = _tick(strat, st, trail=101.0)
     assert [draft.intent_type for draft in out] == ["cancel"]
-    replaced = _tick(strat, st, trail=101.0)[0]
-    assert replaced.metadata["stop_price"] == "101.5050"
+    assert out[0].metadata["atr_reprice"] == "true"
+    assert _tick(strat, st, trail=101.0) == []
+    assert strat._resting_trigger_for_line(101.0) == pytest.approx(101.505)
 
 
 def test_small_trail_move_does_not_replace() -> None:

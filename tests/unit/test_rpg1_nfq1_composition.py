@@ -5,22 +5,19 @@ Liquid SHORT bar state, the subsequent 1% trail decline, and delivery to the OMS
 cache are controlled counterfactual inputs, not historical strategy/OMS facts.
 Only SimulatedBrokerAdapter supplies execution reports; none are venue evidence.
 
-This exercises the existing v2 cancel/reprice seam, including when run on an
-NFQ1 + RPG1 source overlay. It does NOT prove the unbuilt fast-replace handoff,
-RPG1's pending-first-quote recovery, or the bot's quote-callback drain. Those
-quote-wait changes at fa194cbe/4ed8dd58 are unchanged in RPG1 29410944. To cover
-that delta, start with a stale first-entry quote in the combined source, then
-drive a fresh quote through the bot callback before this hold/reprice sequence.
-Importing the whole RPG1 tree would omit NFQ1 and is not composition.
+This extends the original shared-seam replay through the production RPG runtime
+handoff and current-gate callback. RPG and NFQ are both required: a missing
+production composition must fail collection rather than silently skip.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 import json
 from pathlib import Path
 
 import pytest
+
 from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
@@ -30,6 +27,8 @@ from project_mai_tai.fanout_outcome_consumer import FanoutOutcomeJournal
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.oms import service as oms
+from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
+from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     OHLCVBar,
     SchwabV2IntentEmitter,
@@ -56,7 +55,7 @@ CASES = [
 def _retry_events(service):
     return [
         event for stream, data in service.redis.entries
-        if stream.endswith("strategy-intents")
+        if stream.endswith("strategy-intents") and data.get("event_type") == "trade_intent"
         and (event := TradeIntentEvent.model_validate(data)).payload.metadata.get("nfq_retry_token")
     ]
 
@@ -174,7 +173,7 @@ async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monk
     assert old_retry.payload.metadata["webull_mirror_generation_id"] == generation
     assert simulated_adapter.requests == []
 
-    # Two real lifecycle passes: trail movement cancels, the next pass re-arms.
+    # Real v2 trail movement cancels; RPG, not the next bar, owns replacement.
     state.atr_trail *= 0.99
     strategy._cw_v2_resting_track(state, None)
     cancel = await _emit_lifecycle(strategy, emitter, clock, "cancel")
@@ -186,50 +185,58 @@ async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monk
     assert not state.fanout_webull_claimed
     assert simulated_adapter.requests == []
 
-    strategy._cw_v2_resting_track(state, None)
-    replacement = await _emit_lifecycle(strategy, emitter, clock, "open")
-    replacement_md = replacement.payload.metadata
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings = strategy, settings
+    bot.session_factory, bot.redis = factory, service.redis
+    handoffs = HandoffJournal(factory)
+    token, job = handoffs.jobs()[0]
+    assert job["local_no_wire"]  # This old generation NEVER reached a broker.
+
+    async def current_feedback():
+        await bot._rpg_handoff_pass()
+        for _, data in list(service.redis.entries):
+            if data.get("event_type") == "atr_reprice_tick":
+                await service._handle_stream_message({"data": json.dumps(data)})
+
+    service._latest_quotes_by_symbol.clear()
+    await current_feedback()
+    job = handoffs.read(token)
+    assert job["phase"] == "price_wait"
+    replacement_md = job["replacement"]["metadata"]
     assert replacement_md["fanout_slot_id"] == slot
     assert replacement_md["fanout_segment_id"] == original_md["fanout_segment_id"]
     assert replacement_md["webull_mirror_generation_id"] != generation
     assert Decimal(replacement_md["stop_price"]) < Decimal(original_md["stop_price"])
-    service._latest_quotes_by_symbol.clear()
-    await service._handle_stream_message({"data": replacement.model_dump_json()})
     journal.poll(strategy.apply_fanout_outcome)
-    current_hold = service._nfq_holds[slot]
-    assert current_hold.phase == "held"
     assert state.fanout_claim_outcome == "held"
-    assert state.webull_resting_generation_id == replacement_md["webull_mirror_generation_id"]
 
-    deliver_recorded_quote()
-    for _ in range(3):
-        await service._evaluate_nfq_holds(state.symbol)
-        strategy._cw_v2_resting_track(state, None)
-    assert strategy.drain_pending_intents() == []
-    assert strategy.drain_webull_direct_intents() == []
-    assert len(emitter.redis.entries) == 3  # original, real cancel, one replacement
-    assert len(_retry_events(service)) == 2
+    # Controlled later delivery of the recorded price, with a NEW receipt/quote
+    # timestamp. This is not evidence of a historical OMS cache observation.
+    clock[0] += timedelta(seconds=1)
+    state.last_quote.quote_time_ms = strategy._now_ms()
+    service._latest_quotes_by_symbol[state.symbol] = {
+        "ask": Decimal(quote["ask_price"]), "received_at": clock[0],
+    }
+    await service._evaluate_nfq_holds(state.symbol)
     new_retry = _retry_events(service)[1]
     assert new_retry.payload.metadata["nfq_retry_token"] != old_retry.payload.metadata["nfq_retry_token"]
-    assert new_retry.payload.metadata["nfq_hold_id"] != old_retry.payload.metadata["nfq_hold_id"]
+    for retry in (old_retry, new_retry, old_retry):
+        await service._handle_stream_message({"data": retry.model_dump_json()})
+    assert simulated_adapter.requests == []  # Neither queued token can bypass RPG.
 
-    for _ in range(2):
-        await service._handle_stream_message({"data": old_retry.model_dump_json()})
-    assert simulated_adapter.requests == []
-    assert service._nfq_holds[slot] is current_hold
-    assert current_hold.phase == "queued"
-
-    await service._handle_stream_message({"data": new_retry.model_dump_json()})
-    assert service._nfq_holds == {}
+    await current_feedback()
     for retry in (old_retry, new_retry, new_retry):
         await service._handle_stream_message({"data": retry.model_dump_json()})
-    await service._evaluate_nfq_holds(state.symbol)
+    strategy._cw_v2_resting_track(state, None)
+    assert strategy.drain_pending_intents() == []
+    assert strategy.drain_webull_direct_intents() == []
+    assert len(emitter.redis.entries) == 2  # original and real cancel; RPG owns replacement
+    assert service._nfq_holds == {}
     request, = simulated_adapter.requests
     assert request.intent_type == "open"
     assert request.metadata["webull_mirror_generation_id"] == replacement_md["webull_mirror_generation_id"]
     assert request.metadata["stop_price"] == replacement_md["stop_price"]
-    assert request.client_order_id == service._build_client_order_id(new_retry)
-    assert len(_retry_events(service)) == 2
+    assert request.client_order_id == handoffs.read(token)["replacement"]["client_order_id"]
     with factory() as session:
         order, = session.scalars(select(BrokerOrder)).all()
         fill, = session.scalars(select(Fill)).all()

@@ -174,9 +174,9 @@ def test_reprice_sizes_fresh_order_and_cancels_placed_quantity():
     assert cancel.quantity == first.quantity
 
     strategy._queue_resting_place(state, 2.90)
-    second = strategy.drain_pending_intents()[0]
-    assert second.quantity == Decimal("206")
-    assert second.metadata["limit_price"] == "2.9145"
+    assert strategy.drain_pending_intents() == []  # RPG owns the replacement now.
+    # Current-price sizing through the actual OMS callback is covered by
+    # test_rpg1_runtime::test_replacement_uses_current_dollar_size_and_preserves_economic_slot.
 
 
 def test_resting_mirror_uses_its_own_notional_and_cancel_keeps_each_placed_quantity():
@@ -428,9 +428,7 @@ async def test_large_partial_entry_books_only_filled_shares_and_leaves_remainder
     strategy._queue_resting_cancel(state, reason="reprice")
     assert strategy.drain_pending_intents()[0].quantity == first.quantity
     strategy._queue_resting_place(state, 2.90)
-    fresh = strategy.drain_pending_intents()[0]
-    assert fresh.quantity == Decimal("206")
-    assert fresh.quantity != first.quantity
+    assert strategy.drain_pending_intents() == []  # Never mint a bar-driven remainder BUY.
 
 
 @pytest.mark.asyncio

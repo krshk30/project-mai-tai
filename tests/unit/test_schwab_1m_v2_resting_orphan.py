@@ -100,21 +100,19 @@ def test_own_inflight_intent_does_not_orphan_the_resting_order() -> None:
     )
 
 
-def test_the_orphaned_order_actually_gets_repriced_down() -> None:
-    """Not just 'still tracked' — the order must FOLLOW the trail down. EGG sat at 3.93 while the
-    market fell to 3.55; that gap is the whole complaint."""
+def test_orphaned_rest_transfers_reprice_ownership_once_despite_virtual_position() -> None:
+    """The actual replacement/current trail is exercised in test_rpg1_runtime."""
     strat = _strat()
     st = _rested(strat)
     strat.update_position("EGG", 2, held_qty=0)
 
-    levels = []
+    drafts = []
     for trail in (3.8000, 3.7000, 3.6000, 3.5500):
-        for d in _tick(strat, st, trail=trail):
-            if d.intent_type == "open":
-                levels.append(float(d.metadata["stop_price"]))
+        drafts.extend(_tick(strat, st, trail=trail))
 
-    assert levels, "no re-place at all — the order is stuck at its original level"
-    assert levels[-1] < 3.9327, f"the order never followed the trail down: {levels}"
+    assert len(drafts) == 1 and drafts[0].intent_type == "cancel"
+    assert drafts[0].metadata["atr_reprice"] == "true"
+    assert strat._rpg_entry_owned(st)
 
 
 # ---------------------------------------------------------------- the other direction

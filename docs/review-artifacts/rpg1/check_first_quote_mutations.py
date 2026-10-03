@@ -12,8 +12,8 @@ MUTATIONS = {
         "test_occupied_first_slot_discards_wait_not_merely_blocks_order",
     ),
     "M4": (
-        "elif self._entries_held or self.gap_hold_active(state.symbol):",
-        "elif False:",
+        'elif self._entries_held or self.gap_hold_active(state.symbol):\n            reason = "entry_or_gap_hold"',
+        'elif False:\n            reason = "entry_or_gap_hold"',
         "test_entry_hold_discards_wait_without_resuming_when_hold_clears",
     ),
     "M5": (

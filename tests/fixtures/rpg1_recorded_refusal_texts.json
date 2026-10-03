@@ -1,0 +1,26 @@
+{
+  "provenance": "Read-only captures in study-evidence/rpg1-nfq1-20261002. These are persisted refusal texts, NOT raw broker response bodies. Tests project them onto controlled replacement identities; any structured code added by the simulator is explicitly controlled.",
+  "records": [
+    {
+      "broker": "webull",
+      "source": "db.ndjson:mirror_orders",
+      "row_id": "ff87c816-299a-449e-87e0-c2d877f8cde6",
+      "symbol": "USDE",
+      "submitted_at": "2026-08-21 13:45:48.126829+00:00",
+      "reason": "Webull order rejected: STOP_PRICE_MUST_BE_GREAT_THAN_MARKET_PRICE STOP_PRICE_MUST_BE_GREAT_THAN_MARKET_PRICE (http 417)"
+    },
+    {
+      "broker": "webull",
+      "source": "db.ndjson:mirror_orders",
+      "row_id": "1e21b987-b64c-40e9-a59a-2eace715cc8e",
+      "symbol": "BMGL",
+      "submitted_at": "2026-09-14 13:40:05.734370+00:00",
+      "reason": "Webull order rejected: ORDER_RISK_RULE_PRICE_AGGRESSIVE ORDER_RISK_RULE_PRICE_AGGRESSIVE (http 417)"
+    },
+    {
+      "broker": "schwab",
+      "source": "v3-flip-sweep.json:assessment excerpt only; full raw response absent",
+      "reason": "refused: The stop price must be above the current ask for buy stop or"
+    }
+  ]
+}

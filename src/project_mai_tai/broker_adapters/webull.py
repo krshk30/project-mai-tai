@@ -1063,7 +1063,7 @@ class WebullBrokerAdapter:
     async def read_atr_resting_buy_after_cancel(self, request: OrderRequest) -> AtrBuyReadback:
         """BUY-only readback; absence is UNKNOWN, never exit-pair release evidence."""
         account = self.accounts_by_name.get(request.broker_account_name)
-        if account is None or not scoped_request(request):
+        if account is None or not scoped_request(request, allow_webull_client_identity=True):
             return unknown("unconfigured_account_or_unbound_buy")
         try:
             status, body = await asyncio.to_thread(
