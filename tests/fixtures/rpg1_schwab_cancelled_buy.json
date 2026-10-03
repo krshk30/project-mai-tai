@@ -1,0 +1,191 @@
+{
+  "source": "db.ndjson/amod_events; full broker body with accountNumber/tag redacted",
+  "body": {
+    "session": "NORMAL",
+    "duration": "DAY",
+    "orderType": "STOP_LIMIT",
+    "complexOrderStrategyType": "NONE",
+    "quantity": 2.0,
+    "filledQuantity": 0.0,
+    "remainingQuantity": 0.0,
+    "requestedDestination": "AUTO",
+    "destinationLinkName": "JNST",
+    "stopPrice": 3.3,
+    "stopType": "STANDARD",
+    "price": 3.32,
+    "orderLegCollection": [
+      {
+        "orderLegType": "EQUITY",
+        "legId": 1,
+        "instrument": {
+          "assetType": "EQUITY",
+          "cusip": "020952206",
+          "symbol": "AMOD",
+          "uniformSymbol": "AMOD",
+          "instrumentId": 253741029
+        },
+        "instruction": "BUY",
+        "positionEffect": "OPENING",
+        "quantity": 2.0
+      }
+    ],
+    "orderStrategyType": "TRIGGER",
+    "orderId": 1008159036414,
+    "cancelable": false,
+    "editable": false,
+    "status": "CANCELED",
+    "enteredTime": "2026-10-02T17:49:02+0000",
+    "closeTime": "2026-10-02T17:50:05+0000",
+    "tag": "REDACTED",
+    "accountNumber": "REDACTED",
+    "orderActivityCollection": [
+      {
+        "activityType": "EXECUTION",
+        "activityId": 132450737312,
+        "executionType": "CANCELED",
+        "quantity": 2.0,
+        "orderRemainingQuantity": 0.0,
+        "executionLegs": [
+          {
+            "legId": 1,
+            "quantity": 2.0,
+            "mismarkedQuantity": 0.0,
+            "price": 0.0,
+            "time": "2026-10-02T17:50:05+0000",
+            "instrumentId": 253741029
+          }
+        ]
+      }
+    ],
+    "childOrderStrategies": [
+      {
+        "orderStrategyType": "OCO",
+        "orderId": 1008159036415,
+        "cancelable": false,
+        "editable": false,
+        "status": "CANCELED",
+        "enteredTime": "2026-10-02T17:49:02+0000",
+        "closeTime": "2026-10-02T17:50:05+0000",
+        "tag": "REDACTED",
+        "accountNumber": "REDACTED",
+        "childOrderStrategies": [
+          {
+            "session": "NORMAL",
+            "duration": "DAY",
+            "orderType": "LIMIT",
+            "complexOrderStrategyType": "NONE",
+            "quantity": 2.0,
+            "filledQuantity": 0.0,
+            "remainingQuantity": 0.0,
+            "requestedDestination": "AUTO",
+            "destinationLinkName": "AutoRoute",
+            "price": 3.46,
+            "orderLegCollection": [
+              {
+                "orderLegType": "EQUITY",
+                "legId": 1,
+                "instrument": {
+                  "assetType": "EQUITY",
+                  "cusip": "020952206",
+                  "symbol": "AMOD",
+                  "uniformSymbol": "AMOD",
+                  "instrumentId": 253741029
+                },
+                "instruction": "SELL",
+                "positionEffect": "CLOSING",
+                "quantity": 2.0
+              }
+            ],
+            "orderStrategyType": "SINGLE",
+            "orderId": 1008159036416,
+            "cancelable": false,
+            "editable": false,
+            "status": "CANCELED",
+            "firmActionType": "CANCELED_BY_FIRM",
+            "enteredTime": "2026-10-02T17:49:02+0000",
+            "closeTime": "2026-10-02T17:50:05+0000",
+            "tag": "REDACTED",
+            "accountNumber": "REDACTED",
+            "orderActivityCollection": [
+              {
+                "activityType": "EXECUTION",
+                "activityId": 132450737306,
+                "executionType": "CANCELED",
+                "quantity": 2.0,
+                "orderRemainingQuantity": 0.0,
+                "executionLegs": [
+                  {
+                    "legId": 1,
+                    "quantity": 2.0,
+                    "mismarkedQuantity": 0.0,
+                    "price": 0.0,
+                    "time": "2026-10-02T17:50:05+0000",
+                    "instrumentId": 253741029
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "session": "NORMAL",
+            "duration": "DAY",
+            "orderType": "STOP",
+            "complexOrderStrategyType": "NONE",
+            "quantity": 2.0,
+            "filledQuantity": 0.0,
+            "remainingQuantity": 0.0,
+            "requestedDestination": "AUTO",
+            "destinationLinkName": "AutoRoute",
+            "stopPrice": 3.04,
+            "stopType": "STANDARD",
+            "orderLegCollection": [
+              {
+                "orderLegType": "EQUITY",
+                "legId": 1,
+                "instrument": {
+                  "assetType": "EQUITY",
+                  "cusip": "020952206",
+                  "symbol": "AMOD",
+                  "uniformSymbol": "AMOD",
+                  "instrumentId": 253741029
+                },
+                "instruction": "SELL",
+                "positionEffect": "CLOSING",
+                "quantity": 2.0
+              }
+            ],
+            "orderStrategyType": "SINGLE",
+            "orderId": 1008159036417,
+            "cancelable": false,
+            "editable": false,
+            "status": "CANCELED",
+            "firmActionType": "CANCELED_BY_FIRM",
+            "enteredTime": "2026-10-02T17:49:02+0000",
+            "closeTime": "2026-10-02T17:50:05+0000",
+            "tag": "REDACTED",
+            "accountNumber": "REDACTED",
+            "orderActivityCollection": [
+              {
+                "activityType": "EXECUTION",
+                "activityId": 132450737308,
+                "executionType": "CANCELED",
+                "quantity": 2.0,
+                "orderRemainingQuantity": 0.0,
+                "executionLegs": [
+                  {
+                    "legId": 1,
+                    "quantity": 2.0,
+                    "mismarkedQuantity": 0.0,
+                    "price": 0.0,
+                    "time": "2026-10-02T17:50:05+0000",
+                    "instrumentId": 253741029
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

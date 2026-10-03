@@ -4714,6 +4714,7 @@ class SchwabV2BotService:
         except Exception:
             logger.exception("schwab_1m_v2 on_quote failed for %s", symbol)
             return
+        await self._drain_direct_strategy_intents()
         await self._maybe_emit(draft)
         # Dual-broker fan-out: emit any Webull legs the strategy queued this quote (no-op if off).
         await self._emit_webull_fanout_legs()

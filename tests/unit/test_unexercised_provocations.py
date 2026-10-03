@@ -56,6 +56,7 @@ NOW_MS = 1_788_000_000_000
 
 def _resting_strategy(placed: list) -> SchwabV2Strategy:
     s = object.__new__(SchwabV2Strategy)
+    s._pending_first_rest_quotes = {}
     s._resting_entry_enabled = True
     s._cw_v2_enabled = True
     s._entries_held = False
