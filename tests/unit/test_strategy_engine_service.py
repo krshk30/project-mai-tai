@@ -49,8 +49,9 @@ from project_mai_tai.services.strategy_engine_app import (
     snapshot_from_payload,
 )
 from project_mai_tai.settings import Settings
+from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.market_data.massive_indicator_provider import MassiveIndicatorProvider
-from project_mai_tai.market_data.models import HistoricalBarRecord, LiveBarRecord, QuoteTickRecord, TradeTickRecord
+from project_mai_tai.market_data.models import HistoricalBarRecord, LiveBarRecord, QuoteTickRecord, SnapshotRecord, TradeTickRecord
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
 from project_mai_tai.strategy_core import IndicatorConfig, OHLCVBar, ReferenceData, TradingConfig
 from project_mai_tai.strategy_core.exit import ExitEngine
@@ -1877,13 +1878,22 @@ def test_alert_engine_state_persists_and_restores_from_dashboard_snapshot() -> N
         assert restored.state._first_seen_by_ticker == {"MASK": "06:00:30 AM ET"}
 
 
-def test_snapshot_batch_stream_default_covers_alert_warmup_window() -> None:
-    settings = make_test_settings()
-    state = StrategyEngineState(now_provider=fixed_now)
+def test_snapshot_batch_stream_default_covers_alert_warmup_window(monkeypatch) -> None:
+    monkeypatch.delenv("MAI_TAI_REDIS_SNAPSHOT_BATCH_STREAM_MAXLEN", raising=False)
+    settings = make_test_settings(_env_file=None, market_data_snapshot_interval_seconds=5)
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    required_cycles = int(service.state.alert_engine.get_warmup_status()["squeeze_10min_needs"])
 
-    required_cycles = int(state.alert_engine.get_warmup_status()["squeeze_10min_needs"])
-
-    assert settings.redis_snapshot_batch_stream_maxlen >= required_cycles
+    assert settings.redis_snapshot_batch_stream_maxlen == 120
+    assert required_cycles == 120
+    catalog = json.loads(
+        (Path(__file__).resolve().parents[2] / "ops/health/expected_numeric.json").read_text()
+    )
+    entry = next(item for item in catalog["settings"]
+                 if item["name"] == "redis_snapshot_batch_stream_maxlen")
+    assert entry["expected"] == 120
+    assert entry["owning_service"] == "market-data"
+    assert entry["require_process_env"] is True
 
 
 def test_snapshot_batch_replays_restored_recent_alerts_into_confirmed_candidates() -> None:
@@ -5198,6 +5208,57 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
     assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 2
     assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 2
     assert len(service.state.bots["runner"].builder_manager.get_bars("UGRO")) == 2
+
+
+@pytest.mark.asyncio
+async def test_snapshot_retention_prefills_both_squeezes_at_live_five_second_interval(monkeypatch) -> None:
+    monkeypatch.delenv("MAI_TAI_REDIS_SNAPSHOT_BATCH_STREAM_MAXLEN", raising=False)
+    settings = make_test_settings(
+        _env_file=None,
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        market_data_snapshot_interval_seconds=5,
+    )
+
+    class RetentionRedis(FakeRedis):
+        async def xadd(self, stream, fields, *, maxlen, approximate):
+            assert approximate is True
+            message_id = f"{(len(self.entries) + 1) * 5000}-0"
+            self.entries.append((stream, fields["data"]))
+            rows = self.stream_entries.setdefault(stream, [])
+            rows.insert(0, (message_id, dict(fields)))
+            # Exact trimming exercises the minimum retained count; do not rely on MAXLEN ~ slack.
+            del rows[maxlen:]
+            return message_id
+
+    redis = RetentionRedis()
+    gateway = MarketDataGatewayService(
+        settings=settings, redis_client=redis,
+        snapshot_provider=object(), trade_stream=object(), reference_cache=object(),
+    )
+    for index in range(181):
+        await gateway.publisher.publish_snapshot_batch(
+            [SnapshotRecord(symbol="UGRO", last_trade_price=2.40, day_volume=900_000 + index * 1000)],
+            [],
+        )
+
+    restarted = StrategyEngineService(settings=settings, redis_client=redis)
+    messages = []
+    monkeypatch.setattr(restarted.logger, "info", lambda message, *args: messages.append(message % args))
+    needs = int(restarted.state.alert_engine.get_warmup_status()["squeeze_10min_needs"])
+    assert needs == 120
+    await restarted._prefill_alert_history_from_snapshot_batches()
+    warmup = restarted.state.alert_warmup
+    assert warmup["history_cycles"] >= needs
+    assert warmup["squeeze_5min_ready"] is True
+    assert warmup["squeeze_10min_ready"] is True
+    assert "prefilled momentum alert history from 120 snapshot batches" in messages
+
+    alerts = restarted.state.alert_engine.check_alerts(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=3.60, volume=2_000_000))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+    assert {"SQUEEZE_5MIN", "SQUEEZE_10MIN"} <= {alert["type"] for alert in alerts}
 
 
 @pytest.mark.asyncio

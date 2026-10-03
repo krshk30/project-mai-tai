@@ -2,6 +2,14 @@
   "schema_version": 1,
   "settings": [
     {
+      "name": "redis_snapshot_batch_stream_maxlen",
+      "expected": 120,
+      "owning_service": "market-data",
+      "require_process_env": true,
+      "reason": "SNAPHIST1: the gateway publisher owns retention; 120 batches cover scanner warm-up at the live 5-second interval.",
+      "ruling": "Operator 2026-10-03 decision 5: scanner history 15 to 10 minutes; validate scanner and activate with the next reviewed gateway restart."
+    },
+    {
       "name": "oms_v2_webull_mirror_quote_max_age_ms",
       "expected": 10000,
       "owning_service": "oms",
