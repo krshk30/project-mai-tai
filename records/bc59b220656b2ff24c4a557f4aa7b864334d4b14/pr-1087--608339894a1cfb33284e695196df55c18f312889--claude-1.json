@@ -1,0 +1,9 @@
+{
+  "pr_number": 1087,
+  "range_base": "608339894a1cfb33284e695196df55c18f312889",
+  "range_head": "bc59b220656b2ff24c4a557f4aa7b864334d4b14",
+  "reviewed_at": "2026-10-03T17:45:43Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "SNAPHIST1 (operator decision 5, 10-03): redis_snapshot_batch_stream_maxlen 180->120; owner market-data in expected_numeric (require_process_env). Read settings/numeric/test diffs; ran strategy_engine + market_data_gateway + expected_flags tests = 284 pass; mutations 120->60 and 120->180 both RED. Readers verified: strategy warm-up needs 120 at the live 5 s interval; publisher owns MAXLEN (gateway). MERGE HOLD: merge only inside the reviewed gateway-restart window (the numeric gate would read 180/no-env on the live gateway, and main-vs-box would block other installs)."
+}
