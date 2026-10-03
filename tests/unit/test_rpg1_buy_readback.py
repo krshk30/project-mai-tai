@@ -22,8 +22,18 @@ from tests.unit.test_webull_adapter import fake_sdk  # noqa: F401
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 
 
-def recorded(broker, *, filled=False):
+def recorded(broker, *, filled=False, amod_1356=False):
     if broker == "schwab":
+        if amod_1356:
+            record = json.loads((FIXTURES / "rpg1_amod_1356_recorded.json").read_text())["schwab"]
+            body = record["body"]
+            request = OrderRequest(
+                client_order_id=record["client_order_id"], broker_account_name=record["broker_account_name"],
+                strategy_code="schwab_1m_v2", symbol="AMOD", side="buy", intent_type="cancel",
+                quantity=Decimal(str(body["quantity"])), reason="reprice", order_type="stop_limit",
+                metadata={**record["original_metadata"], "broker_order_id": str(body["orderId"]),
+                          "resting_entry_cancel": "true"})
+            return request, body, schwab_buy_readback
         body = json.loads((FIXTURES / "rpg1_schwab_cancelled_buy.json").read_text())["body"]
         request = OrderRequest(
             client_order_id="recorded-amod-parent", broker_account_name="live:schwab_1m_v2",
@@ -70,6 +80,14 @@ def test_recorded_webull_filled_buy_never_replaces():
     assert result.cumulative_filled == 1
     assert result.fill_price == Decimal("3.41")
     assert not result.can_replace
+
+
+def test_exact_amod_1356_recorded_parent_not_the_earlier_1350_cancel():
+    request, body, decode = recorded("schwab", amod_1356=True)
+    assert request.client_order_id == "schwab_1m_v2-AMOD-open-0fa77151f873"
+    assert body["orderId"] == 1008159036751
+    assert body["closeTime"] == "2026-10-02T17:56:03+0000"
+    assert decode(request, body).can_replace
 
 
 @pytest.mark.parametrize("change", [None, "client", "missing_broker", "side", "quantity", "fills"])

@@ -174,8 +174,26 @@ class AtrRepriceRuntimeMixin:
             if job is None:
                 return journal.read(token)
         job = await self._rpg_controller().advance(token)
-        self.logger.info("[OMS-RPG1] token=%s phase=%s reason=%s reads=%s",
-                         token, job["phase"], job["reason"], job["reads"])
+        if job["phase"] == "held_unknown":
+            if job.get("blocked_notice_at") is not None:
+                return job
+            # Claim before logging so replay/restart cannot repeat the terminal
+            # notice. Ownership and v2 feedback do not depend on log delivery.
+            job = journal.change(token, job["revision"], blocked_notice_at=self._rpg_now().timestamp())
+            if job is None:
+                return journal.read(token)
+        started = job.get("cancel_started_at")
+
+        def elapsed(field):
+            end = job.get(field)
+            return round((end - started) * 1000, 3) if started is not None and end is not None and end >= started else -1
+
+        self.logger.info("[OMS-RPG1] token=%s phase=%s reason=%s reads=%s account=%s symbol=%s "
+                         "segment=%s slot=%s cancel_to_read_ms=%s cancel_to_submit_ms=%s "
+                         "cancel_to_report_ms=%s timing=local_observation",
+                         token, job["phase"], job["reason"], job["reads"],
+                         job["old"]["broker_account_name"], job["old"]["symbol"], job["segment_id"], job["slot"],
+                         elapsed("readback_at"), elapsed("submit_started_at"), elapsed("completed_at"))
         return job
 
     def _rpg_retire_price_wait(self, job):
