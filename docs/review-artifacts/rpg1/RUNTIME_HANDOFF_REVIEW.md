@@ -1,5 +1,9 @@
 # RPG1 piece 3: runtime handoff
 
+This is the d38a86a4 implementation checkpoint. The subsequent fourteen-scenario
+request, exact AMOD 13:56 fixture, unknown-notice fix and current-main verification
+are recorded in [PIECE3_14_SCENARIOS.md](PIECE3_14_SCENARIOS.md).
+
 Scope starts at `352da22a4169f7d9d6cfa77e938e2d1004bee008` on
 `codex/rpg1-resting-reprice-gap`. No rebase, main merge, broker write, production
 change, timer change, or deployment. Draft PR #1085 remains a review boundary.

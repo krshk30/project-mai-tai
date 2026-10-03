@@ -59,7 +59,7 @@ class RecordedReadbackSimulator:
 async def runtime(monkeypatch, broker, *, filled=False, quantity=None, slot="first", amod=False, notional=0):
     factory = _session_factory()
     service, _ = _integrated_service(factory, enabled=True)
-    old, body, decode = recorded(broker, filled=filled)
+    old, body, decode = recorded(broker, filled=filled, amod_1356=amod and broker == "schwab")
     if quantity is not None:
         old = replace(old, quantity=Decimal(quantity))  # Explicit controlled dollar-size race.
     clock = [datetime(2026, 10, 2, 17, 56, 2, 899000, tzinfo=UTC)]
@@ -95,6 +95,8 @@ async def runtime(monkeypatch, broker, *, filled=False, quantity=None, slot="fir
         # lines 37261-37262; captured v3-all-retained-v2.ndjson on 2026-10-02.
         # Open and bid were NOT in the ATR probe: those are controlled replay inputs.
         state.atr_trail, state.atr_state_age = 3.220137, 49
+        if "fanout_segment_id" in old.metadata:
+            state.fanout_segment_id = state.atr_short_flip_bar_ts = int(old.metadata["fanout_segment_id"])
         state.bars.clear()
         state.bars.append(OHLCVBar(1790963700000, 3.135, 3.14, 3.13, 3.135, 23522))
         state.last_quote = Quote(old.symbol, 3.13, 3.14, 3.135, strategy._now_ms())

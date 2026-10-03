@@ -1,0 +1,275 @@
+{
+  "source": "retained db.ndjson/amod_events, 2026-10-02 exact 13:56 ET episode",
+  "source_sha256": "e564c6c532e88200f2f11de973a993a50531a31ed46e3c735f09220064a489c1",
+  "schwab": {
+    "client_order_id": "schwab_1m_v2-AMOD-open-0fa77151f873",
+    "broker_account_name": "live:schwab_1m_v2",
+    "event_at": "2026-10-02 17:56:03+00:00",
+    "original_metadata": {
+      "path": "ATR Flip",
+      "atr_variant": "CW-v2-resting",
+      "order_type": "STOP_LIMIT",
+      "reference_price": "3.2603",
+      "entry_price": "3.2603",
+      "stop_price": "3.2603",
+      "limit_price": "3.2766",
+      "cw_flip_level": "3.2441",
+      "resting_entry": "true",
+      "resting_band_pct": "0.5",
+      "resting_offset_pct": "0.5",
+      "cw_entry_n": "1",
+      "cw_entry_slot": "first",
+      "cw_arm_bar_ts": "0",
+      "fanout_segment_id": "1790961003217",
+      "fanout_identity_schema": "entry_opportunity_v2",
+      "fanout_slot": "resting",
+      "fanout_slot_id": "0ef23ade-a241-57c4-9965-387d8cae8200",
+      "source": "schwab_1m_v2",
+      "strategy_version": "v1.32",
+      "fanout_attempt_id": "schwab_1m_v2-AMOD-open-0fa77151f873"
+    },
+    "body": {
+      "session": "NORMAL",
+      "duration": "DAY",
+      "orderType": "STOP_LIMIT",
+      "complexOrderStrategyType": "NONE",
+      "quantity": 2.0,
+      "filledQuantity": 0.0,
+      "remainingQuantity": 0.0,
+      "requestedDestination": "AUTO",
+      "destinationLinkName": "HRTF",
+      "stopPrice": 3.26,
+      "stopType": "STANDARD",
+      "price": 3.28,
+      "orderLegCollection": [
+        {
+          "orderLegType": "EQUITY",
+          "legId": 1,
+          "instrument": {
+            "assetType": "EQUITY",
+            "cusip": "020952206",
+            "symbol": "AMOD",
+            "uniformSymbol": "AMOD",
+            "instrumentId": 253741029
+          },
+          "instruction": "BUY",
+          "positionEffect": "OPENING",
+          "quantity": 2.0
+        }
+      ],
+      "orderStrategyType": "TRIGGER",
+      "orderId": 1008159036751,
+      "cancelable": false,
+      "editable": false,
+      "status": "CANCELED",
+      "enteredTime": "2026-10-02T17:54:03+0000",
+      "closeTime": "2026-10-02T17:56:03+0000",
+      "tag": "REDACTED",
+      "accountNumber": "REDACTED",
+      "orderActivityCollection": [
+        {
+          "activityType": "EXECUTION",
+          "activityId": 132450740530,
+          "executionType": "CANCELED",
+          "quantity": 2.0,
+          "orderRemainingQuantity": 0.0,
+          "executionLegs": [
+            {
+              "legId": 1,
+              "quantity": 2.0,
+              "mismarkedQuantity": 0.0,
+              "price": 0.0,
+              "time": "2026-10-02T17:56:03+0000",
+              "instrumentId": 253741029
+            }
+          ]
+        }
+      ],
+      "childOrderStrategies": [
+        {
+          "orderStrategyType": "OCO",
+          "orderId": 1008159036752,
+          "cancelable": false,
+          "editable": false,
+          "status": "CANCELED",
+          "enteredTime": "2026-10-02T17:54:03+0000",
+          "closeTime": "2026-10-02T17:56:03+0000",
+          "tag": "REDACTED",
+          "accountNumber": "REDACTED",
+          "childOrderStrategies": [
+            {
+              "session": "NORMAL",
+              "duration": "DAY",
+              "orderType": "LIMIT",
+              "complexOrderStrategyType": "NONE",
+              "quantity": 2.0,
+              "filledQuantity": 0.0,
+              "remainingQuantity": 0.0,
+              "requestedDestination": "AUTO",
+              "destinationLinkName": "AutoRoute",
+              "price": 3.42,
+              "orderLegCollection": [
+                {
+                  "orderLegType": "EQUITY",
+                  "legId": 1,
+                  "instrument": {
+                    "assetType": "EQUITY",
+                    "cusip": "020952206",
+                    "symbol": "AMOD",
+                    "uniformSymbol": "AMOD",
+                    "instrumentId": 253741029
+                  },
+                  "instruction": "SELL",
+                  "positionEffect": "CLOSING",
+                  "quantity": 2.0
+                }
+              ],
+              "orderStrategyType": "SINGLE",
+              "orderId": 1008159036753,
+              "cancelable": false,
+              "editable": false,
+              "status": "CANCELED",
+              "firmActionType": "CANCELED_BY_FIRM",
+              "enteredTime": "2026-10-02T17:54:03+0000",
+              "closeTime": "2026-10-02T17:56:03+0000",
+              "tag": "REDACTED",
+              "accountNumber": "REDACTED",
+              "orderActivityCollection": [
+                {
+                  "activityType": "EXECUTION",
+                  "activityId": 132450740517,
+                  "executionType": "CANCELED",
+                  "quantity": 2.0,
+                  "orderRemainingQuantity": 0.0,
+                  "executionLegs": [
+                    {
+                      "legId": 1,
+                      "quantity": 2.0,
+                      "mismarkedQuantity": 0.0,
+                      "price": 0.0,
+                      "time": "2026-10-02T17:56:03+0000",
+                      "instrumentId": 253741029
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "session": "NORMAL",
+              "duration": "DAY",
+              "orderType": "STOP",
+              "complexOrderStrategyType": "NONE",
+              "quantity": 2.0,
+              "filledQuantity": 0.0,
+              "remainingQuantity": 0.0,
+              "requestedDestination": "AUTO",
+              "destinationLinkName": "AutoRoute",
+              "stopPrice": 3.0,
+              "stopType": "STANDARD",
+              "orderLegCollection": [
+                {
+                  "orderLegType": "EQUITY",
+                  "legId": 1,
+                  "instrument": {
+                    "assetType": "EQUITY",
+                    "cusip": "020952206",
+                    "symbol": "AMOD",
+                    "uniformSymbol": "AMOD",
+                    "instrumentId": 253741029
+                  },
+                  "instruction": "SELL",
+                  "positionEffect": "CLOSING",
+                  "quantity": 2.0
+                }
+              ],
+              "orderStrategyType": "SINGLE",
+              "orderId": 1008159036754,
+              "cancelable": false,
+              "editable": false,
+              "status": "CANCELED",
+              "firmActionType": "CANCELED_BY_FIRM",
+              "enteredTime": "2026-10-02T17:54:03+0000",
+              "closeTime": "2026-10-02T17:56:03+0000",
+              "tag": "REDACTED",
+              "accountNumber": "REDACTED",
+              "orderActivityCollection": [
+                {
+                  "activityType": "EXECUTION",
+                  "activityId": 132450740519,
+                  "executionType": "CANCELED",
+                  "quantity": 2.0,
+                  "orderRemainingQuantity": 0.0,
+                  "executionLegs": [
+                    {
+                      "legId": 1,
+                      "quantity": 2.0,
+                      "mismarkedQuantity": 0.0,
+                      "price": 0.0,
+                      "time": "2026-10-02T17:56:03+0000",
+                      "instrumentId": 253741029
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "webull_envelopes_only": [
+    {
+      "event_at": "2026-10-02 17:56:03.825140+00:00",
+      "event_type": "accepted",
+      "payload": {
+        "client_order_id": "schwab_1m_v2-AMOD-open-62d4d1d73075",
+        "broker_order_id": null,
+        "broker_fill_id": null,
+        "metadata": {
+          "resting_entry_cancel": "true",
+          "reason": "reprice",
+          "fanout_leg": "webull",
+          "fanout_source": "rth_resting_mirror",
+          "fanout_segment_id": "1790961003217",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "0ef23ade-a241-57c4-9965-387d8cae8200",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "target_client_order_id": "schwab_1m_v2-AMOD-open-62d4d1d73075",
+          "fanout_attempt_id": "schwab_1m_v2-AMOD-open-62d4d1d73075",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "cancel_outcome": "requested"
+        },
+        "reason": "cancel requested; awaiting order-detail confirmation"
+      }
+    },
+    {
+      "event_at": "2026-10-02 17:56:16.286793+00:00",
+      "event_type": "cancelled",
+      "payload": {
+        "client_order_id": "schwab_1m_v2-AMOD-open-62d4d1d73075",
+        "broker_order_id": "M2G2UF6PH4VI6MG8HVB3M1QQFA",
+        "broker_fill_id": null,
+        "metadata": {
+          "resting_entry_cancel": "true",
+          "reason": "reprice",
+          "fanout_leg": "webull",
+          "fanout_source": "rth_resting_mirror",
+          "fanout_segment_id": "1790961003217",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "0ef23ade-a241-57c4-9965-387d8cae8200",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "target_client_order_id": "schwab_1m_v2-AMOD-open-62d4d1d73075",
+          "fanout_attempt_id": "schwab_1m_v2-AMOD-open-62d4d1d73075",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "cancel_outcome": "requested",
+          "broker_order_id": "",
+          "webull_broker_place_time": "2026-10-02 17:54:04.069+0000"
+        },
+        "reason": "schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)"
+      }
+    }
+  ],
+  "limits": "Webull envelopes are ACK/poll observations, NOT a raw strict-zero readback. No full cancel-to-replacement latency sample."
+}
