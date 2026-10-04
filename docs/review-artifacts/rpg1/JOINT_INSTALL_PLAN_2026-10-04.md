@@ -9,9 +9,13 @@ An unresolved release field means NOT READY, never permission to use branch tips
 ## 1. Scope and release boundary
 
 - Starting main/box: `250ab18458f4d806aa8bcdf98d787fff5bb57df4`, clean.
-- #1085 RPG1: rebase onto that base, resolve NFQ1/SNAPHIST1 conflicts, run the
-  actual composition test without skips, address P3/P4/P8/F1, pass independent
-  review and both Validate checks. The old `6f3f000c` is NOT an approved release.
+- #1085 RPG1: rebased candidate `7a9957bfef8a7e0be624bbeb9d04e9d6fd1b3bbf`
+  on that base resolves NFQ1/SNAPHIST1 conflicts and addresses P3/P4/P8/F1.
+  Local evidence: 907 focused pass, 12 actual composition cases without skips,
+  39 mutations RED; full5303 pass/56 fail with the exact untouched baseline
+  failed-name set. Independent new-head pin and exact-head green CI must still
+  be verified before merge. Neither this candidate nor old6f3f000c is approved
+  for installation by this draft.
 - #1088 COLDSTART1: pinned `85cf3f8eca0e836e8365ad88204a9820b44f571b`.
   HOLD merge until this joint plan is reviewed and the install window opens.
 - Restart only OMS and the five subscription consumers: strategy, schwab-1m-v2,
@@ -36,6 +40,14 @@ merge changes the second PR's base/range, or a conflict/new head is required,
 STOP for the second exact-head/base re-pin. A reviewed integrated test tree is
 not a substitute for the repository's pin procedure. Delete superseded records
 only in separate records-only commits under that procedure.
+
+Dry `git merge-tree` of candidate7a9957bf and pinned85cf3f8e on October3
+found one content conflict: `ops/health/expected_flags.json` (both add their new
+flag near the start). Settings, v2 startup and flag tests auto-merge, but that
+does not certify their composition. Preserve BOTH catalog entries in a reviewed
+resolution. Do not touch the pinned COLDSTART branch before its rebase is
+authorized; the resulting changed head requires a fresh exact-head/base pin.
+This dry check did not alter any branch, index, worktree or production state.
 
 After both approved merges, record `RPG_MERGE_SHA`, `COLDSTART_MERGE_SHA`, final
 `APPROVED_SHA`, tree, ordered commits and full path diff from BOX_SHA. Require
