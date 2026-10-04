@@ -1,0 +1,9 @@
+{
+  "pr_number": 1085,
+  "range_base": "250ab18458f4d806aa8bcdf98d787fff5bb57df4",
+  "range_head": "7a9957bfef8a7e0be624bbeb9d04e9d6fd1b3bbf",
+  "reviewed_at": "2026-10-04T00:59:50Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RPG1 (operator card final 10-03 19:40 ET: new order within seconds of the cancel, never the next bar; partial fill = position, remainder not re-bought; 0.5%/prices/sizes unchanged; broker one-step swap NOT used). Pieces: stale-quote hold (first slot), strict BUY read-after-cancel both brokers (real recorded bodies), durable cancel->readback->current-gate authorization->serial place handoff (OMS runtime + v2 1 s callback). Read src diffs across three heads (fa194cbe, 29410944, 6f3f000c, 7a9957bf). Ran 33 files = 737 pass incl. 12 composition cases with NFQ1; 9 own mutations ALL RED on 7a9957bf (bar path ignoring handoff, segment end, configured window, dispatch-token guard, authorization age, fills->no re-buy, generic sync bypass, readback terminal_cancel, filled position). F1 fixed: configured RTH window via entry_gate.within_rth_entry_window. Codex: full suite 5,303 / same 56; CI green. Live cancel->place seconds UNMEASURED until the first session; installs only via the reviewed joint plan with #1088 (OMS + five consumers restart)."
+}
