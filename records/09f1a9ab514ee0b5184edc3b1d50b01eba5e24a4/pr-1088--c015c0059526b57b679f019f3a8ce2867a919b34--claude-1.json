@@ -1,0 +1,9 @@
+{
+  "pr_number": 1088,
+  "range_base": "c015c0059526b57b679f019f3a8ce2867a919b34",
+  "range_head": "09f1a9ab514ee0b5184edc3b1d50b01eba5e24a4",
+  "reviewed_at": "2026-10-04T02:26:39Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "COLDSTART1 re-pin after rebase onto main c015c005 (#1085 merged): range-diff vs the pinned 85cf3f8e shows only the expected_flags.json conflict resolution (both catalog entries kept; catalog count 122->123 in the test). Re-ran 30 files = 766 pass; 8 own mutations all RED again. Operator card re-confirmed 10-03. Installs via the joint plan tonight (OMS + five consumers restart; flag on)."
+}
