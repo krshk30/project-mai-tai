@@ -1,0 +1,9 @@
+{
+  "pr_number": 1080,
+  "range_base": "bbb4360453eb38570a3eb988122d73f97a886a61",
+  "range_head": "65dba81a54020000b3105bef3f34984c1efc58e2",
+  "reviewed_at": "2026-10-04T16:04:09Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independent re-pin after clean rebase of shared handoff1080 onto bbb43604. All40 commits range-diff equal, three reviewed document blobs identical to passed a212ceaa, no non-doc changes. First35 commits are Claude-only. Prior review read final handoff and deployment journals; final corrections retain row46 open design/proof, WBREAD1 live10-01, and10:22 incomplete vs12:09:56 COMPLETE. Rebased manifest byte-matches live generator48/48; no journal or production change."
+}

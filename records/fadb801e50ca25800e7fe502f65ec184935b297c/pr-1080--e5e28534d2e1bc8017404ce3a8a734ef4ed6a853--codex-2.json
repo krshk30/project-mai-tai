@@ -1,0 +1,9 @@
+{
+  "pr_number": 1080,
+  "range_base": "e5e28534d2e1bc8017404ce3a8a734ef4ed6a853",
+  "range_head": "fadb801e50ca25800e7fe502f65ec184935b297c",
+  "reviewed_at": "2026-10-04T16:04:09Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independent re-pin of final Claude-only range after clean rebase. All40 range-diff entries equal; final three doc blobs identical to passed a212ceaa. P2 corrections preserved; rows47/49 accepted UNKNOWN and template fixes retained; joint completion23:22:53, six identities,140/140 flags,8/8 numeric,zero evictions and repins match box journal. Manifest byte-identical BALANCED48/48. My e5e28534 is excluded and separately pinned by Claude in ed001936. No new findings, no production/journal edits."
+}

@@ -1,9 +1,0 @@
-{
-  "pr_number": 1080,
-  "range_base": "781e15925e92f4b29b236322dcc8cf97cf2103d3",
-  "range_head": "a212ceaa9e528ccf3d2c881c3e9c2c5d3209cd19",
-  "reviewed_at": "2026-10-04T15:40:10Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed a212ceaa: all three P2s resolved. BoardB46 preserves accepted partial-fill risk and Codex design/proof; row33 installed with failed-read unexercised; rows22/30 watch-only. F7/F12/F16/F17, log and manifest distinguish10:22 margin stop from12:09:56 COMPLETE. Joint23:22:53 completion, six PIDs,140/140 flags,8/8 numeric,zero evictions and Monday repins match box journal. Rows47/49 retain UNKNOWN/template fixes. Manifest byte-matches generator,BALANCED48/48. Excludes my781e1592 independently pinned by Claude2af6bb66."
-}
