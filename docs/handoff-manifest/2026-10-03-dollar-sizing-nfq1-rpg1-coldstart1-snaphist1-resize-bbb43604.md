@@ -16,7 +16,7 @@
 
 ## DEPLOY (3)
 ```
-2026-10-04T15:23:40.285Z | claude-1 | DEPLOY | 10-03 10:22 ET install 60833989 (dollar sizing #1082 + NFQ1 #1086) COMPLETE; verified 12:40 ET; FLAGGATE 133/133, numeric 7/7 | box
+2026-10-04T15:23:40.285Z | claude-1 | DEPLOY | 10-03 install 60833989 (dollar sizing #1082 + NFQ1 #1086): code loaded + services restarted 10:22 ET, then STOPPED on the Redis 1.6 GB margin; approved no-restart continuation ⇒ INSTALL COMPLETE 12:09:56 ET; verified 12:40 ET; FLAGGATE 133/133, numeric 7/7 | box
 2026-10-04T15:23:40.370Z | claude-1 | DEPLOY | 10-03 18:05:52 ET BOX RESIZE 8 vCPU/16 GB cold boot at 250ab184 (#1087 #1077 #1084 live); dump.rdb archived; owners hash five+marker; evictions 0 | box; codex report
 2026-10-04T15:23:40.413Z | claude-1 | DEPLOY | 10-03 23:22:53 ET JOINT INSTALL bbb43604 (RPG1 #1085 + COLDSTART1 #1088) COMPLETE; verified 23:25 ET: six services new PIDs, both switches in /proc, FLAGGATE 140/140, numeric 8/8, evictions 0, Monday re-pins | box; three plan-defect stops (60 s bound, orb-paper.env, row 47)
 ```
