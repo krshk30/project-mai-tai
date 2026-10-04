@@ -1,0 +1,9 @@
+{
+  "pr_number": 1080,
+  "range_base": "65dba81a54020000b3105bef3f34984c1efc58e2",
+  "range_head": "e5e28534d2e1bc8017404ce3a8a734ef4ed6a853",
+  "reviewed_at": "2026-10-04T16:00:00Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Shared 10-02\u219210-03 handoff PR rebased onto main bbb43604 (tree identical to the reviewed a212ceaa; docs-only). codex-2's one docs commit (Board B row 47 \u2014 joint-install log coverage UNKNOWN accepted by design, completion 23:22:53 ET at bbb43604) reviewed by diff against the box 23:25 ET \u2014 accurate, one file. Close-out carrier: manifest BALANCED 48/48 matching the frozen journals; codex-2 re-review PASS at a212ceaa."
+}
