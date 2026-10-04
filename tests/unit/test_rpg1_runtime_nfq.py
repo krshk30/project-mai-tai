@@ -1,6 +1,5 @@
-"""Actual RPG handoff + NFQ production lanes on an isolated combined source.
+"""Actual RPG handoff + NFQ production lanes on their rebased combined source.
 
-NFQ is absent at RPG's immutable base, so this module explicitly skips there.
 Recorded parent reads are from RPG fixtures. Cache delivery, cancellation timing,
 and replacement acceptances are controlled simulator scenarios, not live evidence.
 """
@@ -8,8 +7,6 @@ import json
 
 import pytest
 from sqlalchemy import delete
-
-pytest.importorskip("project_mai_tai.oms.mirror_fresh_price", reason="requires combined RPG + NFQ source")
 
 from project_mai_tai.db.models import BrokerOrder
 from project_mai_tai.events import TradeIntentEvent
@@ -89,6 +86,8 @@ async def test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends(mo
     if gate == "buy_flip":
         h.state.atr_state = "long"
     else:
+        h.service.settings.strategy_schwab_1m_v2_entry_window_end_hour_et = 15
+        h.service.settings.strategy_schwab_1m_v2_entry_window_end_minute_et = 45
         h.clock[0] = h.clock[0].replace(hour=19, minute=45)
     await feedback(h)
     await h.service._handle_stream_message({"data": queued.model_dump_json()})

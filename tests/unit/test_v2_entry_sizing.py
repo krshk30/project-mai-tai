@@ -159,7 +159,7 @@ def test_zero_notional_leaves_bot_routed_draft_byte_for_byte():
 
 
 def test_reprice_sizes_fresh_order_and_cancels_placed_quantity():
-    strategy = SchwabV2Strategy(Settings(_env_file=None))
+    strategy = SchwabV2Strategy(Settings(_env_file=None, strategy_schwab_1m_v2_atr_reprice_handoff_enabled=True))
     strategy._resting_session_is_eh = lambda now=None: False
     state = strategy.watchlist_state("TEST")
 
@@ -420,7 +420,7 @@ async def test_large_partial_entry_books_only_filled_shares_and_leaves_remainder
         assert order is not None and order.status == "cancelled"
         assert position is not None and position.quantity == Decimal("19")
 
-    strategy = SchwabV2Strategy(Settings(_env_file=None))
+    strategy = SchwabV2Strategy(Settings(_env_file=None, strategy_schwab_1m_v2_atr_reprice_handoff_enabled=True))
     strategy._resting_session_is_eh = lambda now=None: False
     state = strategy.watchlist_state("TEST")
     strategy._queue_resting_place(state, 3.05)

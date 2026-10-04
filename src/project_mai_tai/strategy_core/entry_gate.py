@@ -69,6 +69,13 @@ def within_entry_window(now: datetime, settings: Any) -> bool:
     )
 
 
+def within_rth_entry_window(now: datetime, settings: Any) -> bool:
+    """Configured entry admission intersected with the regular broker session."""
+    return within_entry_window(now, settings) and is_fillable_et_session(
+        now, 9, 16, start_minute=30,
+    )
+
+
 def route_extended_hours(
     draft: Any,
     now: datetime,

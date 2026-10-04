@@ -44,6 +44,7 @@ def _strat(*, fanout=True, **overrides) -> SchwabV2Strategy:
         "strategy_schwab_1m_v2_webull_entry_notional_usd": 0,
         "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
+        "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": True,
         "strategy_schwab_1m_v2_dual_broker_fanout_enabled": fanout,
     }
     kwargs.update(overrides)

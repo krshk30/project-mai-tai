@@ -50,13 +50,15 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 122
+    assert len(entries) == 123
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
         if field.annotation is bool or bool in get_args(field.annotation)
     }
     by_name = {entry["name"]: entry for entry in entries}
+    assert by_name["strategy_schwab_1m_v2_atr_reprice_handoff_enabled"]["expected"] is True
+    assert by_name["strategy_schwab_1m_v2_atr_reprice_handoff_enabled"]["owning_service"] == "schwab-1m-v2"
     assert by_name["strategy_schwab_1m_v2_retry_one_enabled"]["expected"] is True
     assert by_name["strategy_schwab_1m_v2_gap_hold_enabled"]["expected"] is True
     assert by_name["orb_schwab_observe_enabled"]["expected"] is False

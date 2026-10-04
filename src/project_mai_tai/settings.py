@@ -562,6 +562,9 @@ class Settings(BaseSettings):
     # cancel). Independent of the reactive flag; the OMS one-position-per-symbol rule keeps them from
     # both holding the same name. Kill = flag OFF + restart (cancel any resting order first).
     strategy_schwab_1m_v2_cw_v2_resting_entry_enabled: bool = False
+    # RPG1: admit new durable fast-reprice handoffs. OFF preserves legacy new
+    # reprices; already emitted/owned handoffs still drain under all safety gates.
+    strategy_schwab_1m_v2_atr_reprice_handoff_enabled: bool = False
     # CONF1 live-money exit. Enabled by operator decision 2026-09-03 after the dark deployment.
     # Override false + restart is the kill switch. While OFF, evaluations remain durable but their
     # outbox rows are terminalized so a later enable cannot release stale dark-period exits.

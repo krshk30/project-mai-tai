@@ -70,6 +70,7 @@ async def runtime(monkeypatch, broker, *, filled=False, quantity=None, slot="fir
         "strategy_schwab_1m_v2_account_name": "live:schwab_1m_v2",
         "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
+        "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": True,
         "strategy_schwab_1m_v2_flip_owned_first_entry_enabled": False,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct": 0.5,
@@ -291,6 +292,8 @@ async def test_current_gate_ends_cleared_candidate_without_fallback(monkeypatch,
     elif gate == "liquidity":
         h.state.bars[-1] = replace(h.state.bars[-1], volume=0)
     elif gate in {"1545", "1600"}:
+        h.service.settings.strategy_schwab_1m_v2_entry_window_end_hour_et = 15 if gate == "1545" else 16
+        h.service.settings.strategy_schwab_1m_v2_entry_window_end_minute_et = 45 if gate == "1545" else 0
         h.clock[0] = h.clock[0].replace(hour=19 if gate == "1545" else 20, minute=45 if gate == "1545" else 0)
     elif gate == "stale_bar":
         tick_clock(h, 180)
@@ -375,6 +378,8 @@ async def test_amod_1356_recorded_state_replay_and_1357_flip_boundary(monkeypatc
 @pytest.mark.parametrize("age", [1.001, 6537.101])
 async def test_final_wire_guard_rechecks_authorization_age_and_1545(monkeypatch, age):
     h = await runtime(monkeypatch, "schwab")
+    h.service.settings.strategy_schwab_1m_v2_entry_window_end_hour_et = 15
+    h.service.settings.strategy_schwab_1m_v2_entry_window_end_minute_et = 45
     token, _ = await begin(h, "schwab")
     original = h.service._finalize_v2_entry_quantity
 
