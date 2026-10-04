@@ -97,6 +97,7 @@ async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monk
     settings = service.settings.model_copy(update={
         "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
+        "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_quote_max_age_ms": 10_000,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct": 0.5,

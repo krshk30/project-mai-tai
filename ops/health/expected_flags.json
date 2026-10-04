@@ -3,6 +3,13 @@
   "baseline": "2026-09-29 after 3389090a deploy; read-only /proc audit of owning processes",
   "flags": [
     {
+      "name": "strategy_schwab_1m_v2_atr_reprice_handoff_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "RPG1 admits new durable fast-reprice handoffs; OFF never abandons existing ownership.",
+      "ruling": "Operator 2026-10-03: RPG flag ON in the reviewed joint install; no deployment authority from this catalog."
+    },
+    {
       "name": "oms_v2_webull_mirror_fresh_price_enabled",
       "expected": true,
       "owning_service": "oms",

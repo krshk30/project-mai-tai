@@ -24,6 +24,9 @@ class AtrBuyReadback:
 
     @property
     def can_replace(self) -> bool:
+        # _result emits cancelled_empty only for terminal cancellation. Keep the
+        # explicit check as a defensive contract for independently constructed
+        # readbacks; an outcome label alone is never replacement authority.
         return (
             self.outcome == "cancelled_empty"
             and self.terminal_cancel

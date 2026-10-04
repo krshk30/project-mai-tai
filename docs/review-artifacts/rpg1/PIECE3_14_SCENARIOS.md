@@ -1,5 +1,10 @@
 # RPG1 piece 3: fourteen-scenario review
 
+Historical follow-up at `6f3f000c`. Current rebased review fixes, configured-window
+semantics, operator-final card and new admission switch are in
+[`REBASE_REVIEW.md`](REBASE_REVIEW.md). Its verification supersedes the overlay
+results and pre-reconfirmation status below.
+
 ## Step 0, before further changes
 
 Starting RPG head: `d38a86a4ff68273af15f27533d1236d0e1dede93`.

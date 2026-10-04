@@ -7,11 +7,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
 import json
 from uuid import UUID, uuid5, NAMESPACE_URL
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -21,15 +19,11 @@ from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.atr_reprice_handoff import (
     AtrRepriceHandoff, HandoffJournal, ReplacementDecision, SNAPSHOT_TYPE, _request,
 )
+from project_mai_tai.strategy_core.entry_gate import within_rth_entry_window
 
 
 ACTIVE_PHASES = {"prepared", "waiting", "fills_waiting", "clear", "held_unknown",
                  "submitting", "submit_unknown", "price_wait"}
-
-
-def reprice_window_open(now: datetime) -> bool:
-    et = now.astimezone(ZoneInfo("America/New_York"))
-    return et.weekday() < 5 and time(9, 30) <= et.time() < time(15, 45)
 
 
 class AtrRepriceRuntimeMixin:
@@ -228,8 +222,8 @@ class AtrRepriceRuntimeMixin:
             token = uuid5(NAMESPACE_URL, f"atr-reprice:{old.broker_account_name}:{old.client_order_id}")
             self._rpg_journal().change(token, job["revision"], clear_recorded=True)
             return ReplacementDecision("wait", "terminal_zero_recorded")
-        if not reprice_window_open(self._rpg_now()):
-            return ReplacementDecision("expired", "window_1545")
+        if not within_rth_entry_window(self._rpg_now(), self.settings):
+            return ReplacementDecision("expired", "window_closed")
         auth = job.get("authorization", {})
         if not 0 <= self._rpg_now().timestamp() - auth.get("at", 0) <= 1.0:
             return ReplacementDecision("wait", "current_strategy_authorization_required")
@@ -315,7 +309,7 @@ class AtrRepriceRuntimeMixin:
             job = self._rpg_journal().read(UUID(token), session=session)
             if (job["phase"] != "submitting"
                     or self.__dict__.get("_rpg_dispatch_token") != token
-                    or not reprice_window_open(self._rpg_now())):
+                    or not within_rth_entry_window(self._rpg_now(), self.settings)):
                 return "rpg_unclaimed_or_expired_replacement"
             auth = job.get("authorization", {})
             if (auth.get("verdict") != "ready" or

@@ -25,6 +25,7 @@ def _strat(resting=True, **overrides):
     kwargs = {
         "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
+        "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": resting,
     }
     kwargs.update(overrides)

@@ -59,7 +59,7 @@ from project_mai_tai.v2_flip_entry_ownership import (
 )
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
-from project_mai_tai.strategy_core.entry_gate import resolve_entry_window
+from project_mai_tai.strategy_core.entry_gate import resolve_entry_window, within_rth_entry_window
 from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit, sized_entry_quantity
 
 logger = logging.getLogger(__name__)
@@ -5135,7 +5135,10 @@ class SchwabV2Strategy:
         state.webull_resting_generation_id = ""
         was_slot = state.resting_slot
         reprice_metadata = {}
-        if reason == "reprice" and was_broker_order:
+        # This switch only admits new tickets. Existing durable ownership and
+        # callbacks remain authoritative after OFF, including in-flight cancels.
+        if (reason == "reprice" and was_broker_order
+                and getattr(settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False)):
             generation = str(uuid4())
             segment = int(state.fanout_segment_id or state.atr_short_flip_bar_ts or 0)
             reprice_metadata = {
@@ -5361,11 +5364,10 @@ class SchwabV2Strategy:
                     state.resting_is_broker_order = False
             self._rpg_feedback_applied.add(feedback_key)
         reason = ""
-        et = now.astimezone(EASTERN_TZ)
         if not same_segment:
             reason = "segment_ended"
-        elif et.weekday() >= 5 or not 9 * 60 + 30 <= et.hour * 60 + et.minute < 15 * 60 + 45:
-            reason = "window_1545"
+        elif not within_rth_entry_window(now, self.settings):
+            reason = "window_closed"
         elif not self._resting_in_window() or self._entry_window_closed_for_session() or self._resting_session_is_eh():
             reason = "window_closed"
         elif self._entries_held or self.gap_hold_active(state.symbol):
