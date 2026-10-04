@@ -1,0 +1,9 @@
+{
+  "pr_number": 1080,
+  "range_base": "2c155b86971e0f441e468466754326ed565444c4",
+  "range_head": "ea26ade750ab2f35891510b620cb010fa919c361",
+  "reviewed_at": "2026-10-04T15:40:09Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independent review of the first Claude-only docs segment for PR1080. Read full final handoff/log diff against deployment journals. Historical notes retained as dated records; final a212ceaa corrects row46 ownership, WBREAD1 installed10-01, and10:22 incomplete vs12:09:56 completion. Base2c155b86 is actual PR merge-base; 0115cdff parent would omit five earlier Claude commits. No production or fleet-journal changes."
+}
