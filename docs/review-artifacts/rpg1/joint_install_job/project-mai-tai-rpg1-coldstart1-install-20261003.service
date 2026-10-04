@@ -1,0 +1,25 @@
+[Unit]
+Description=Approval-bound October 3 RPG1 and COLDSTART1 one-time install
+After=network-online.target
+ConditionPathExists=/home/trader/after-hours/2026-10-03/rpg1-coldstart1-job/approval.json
+ConditionPathExists=!/home/trader/after-hours/2026-10-03/rpg1-coldstart1-run
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+Environment=TZ=UTC PYTHONDONTWRITEBYTECODE=1
+WorkingDirectory=/home/trader/after-hours/2026-10-03/rpg1-coldstart1-job
+ExecCondition=/usr/bin/python3 -s /home/trader/after-hours/2026-10-03/rpg1-coldstart1-job/review_gate.py --prepare
+ExecStart=/bin/bash /home/trader/after-hours/2026-10-03/rpg1-coldstart1-job/run_install.sh
+RemainAfterExit=yes
+Restart=no
+TimeoutStartSec=45min
+TimeoutStopSec=15s
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

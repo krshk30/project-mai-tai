@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "ready": false,
+  "job": "project-mai-tai-rpg1-coldstart1-install-20261003",
+  "window": {
+    "date": "2026-10-03",
+    "timezone": "America/New_York",
+    "prepare_deadline": "2026-10-03T23:00:00-04:00",
+    "run_deadline": "2026-10-03T23:59:00-04:00"
+  },
+  "denominators": {"boolean": 132, "numeric": 8, "combined": 140},
+  "flags": {
+    "MAI_TAI_MARKET_DATA_SUBSCRIPTION_STARTUP_ENABLED": "true",
+    "MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_REPRICE_HANDOFF_ENABLED": "true"
+  },
+  "application": {
+    "box_sha": "250ab18458f4d806aa8bcdf98d787fff5bb57df4",
+    "approved_sha": null,
+    "tree": null,
+    "rpg_merge_sha": "c015c0059526b57b679f019f3a8ce2867a919b34",
+    "coldstart_merge_sha": null,
+    "commits": [],
+    "changed_paths": [],
+    "source_sha256": {}
+  },
+  "plan": {
+    "commit": null,
+    "path": "docs/review-artifacts/rpg1/JOINT_INSTALL_PLAN_2026-10-03.md",
+    "sha256": null
+  },
+  "reviews": [],
+  "host": {
+    "captured_at": null,
+    "services": {},
+    "tv_alerts": {},
+    "files": {},
+    "units": {},
+    "subscription_inputs": {},
+    "accepted_unexplained_orders": [],
+    "intent_ids": [],
+    "status_contract": {},
+    "pager_url": null
+  },
+  "artifacts": {}
+}

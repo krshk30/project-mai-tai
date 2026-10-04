@@ -1,23 +1,28 @@
-# RPG1 + COLDSTART1 joint install, Sunday 2026-10-04
+# RPG1 + COLDSTART1 joint install, Saturday 2026-10-03
 
-Status: DRAFT FOR INDEPENDENT REVIEW. No approval receipt, production staging,
-timer installation, merge or restart is performed by this document. Target is
-Sunday 2026-10-04 10:00 America/New_York. The executable release and its exact
-merged application SHA must be reviewed before the timer is enabled for execution.
+Status: EXECUTABLE RELEASE FOR INDEPENDENT REVIEW. Operator moved the joint
+install to tonight at approximately 20:35 ET. Preparation ends at 23:00 ET;
+execution ends before 23:59 ET, Saturday 2026-10-03 America/New_York. No
+permission carries to Sunday. The staged timer is approval-gated: application
+writes require the final release's independent approval receipt.
 An unresolved release field means NOT READY, never permission to use branch tips.
 
 ## 1. Scope and release boundary
 
-- Starting main/box: `250ab18458f4d806aa8bcdf98d787fff5bb57df4`, clean.
-- #1085 RPG1: rebased candidate `7a9957bfef8a7e0be624bbeb9d04e9d6fd1b3bbf`
+- Starting box: `250ab18458f4d806aa8bcdf98d787fff5bb57df4`, clean.
+- #1085 RPG1: independently pinned `7a9957bfef8a7e0be624bbeb9d04e9d6fd1b3bbf`
   on that base resolves NFQ1/SNAPHIST1 conflicts and addresses P3/P4/P8/F1.
   Local evidence: 907 focused pass, 12 actual composition cases without skips,
   39 mutations RED; full5303 pass/56 fail with the exact untouched baseline
-  failed-name set. Independent new-head pin and exact-head green CI must still
-  be verified before merge. Neither this candidate nor old6f3f000c is approved
-  for installation by this draft.
-- #1088 COLDSTART1: pinned `85cf3f8eca0e836e8365ad88204a9820b44f571b`.
-  HOLD merge until this joint plan is reviewed and the install window opens.
+  failed-name set. Exact-head independent pin and both Validate checks passed;
+  rebase-merged at `c015c0059526b57b679f019f3a8ce2867a919b34` (21:08:50 ET).
+  Its tree equals the pinned tree. Merge does not authorize this runner.
+- #1088 COLDSTART1: old pin `85cf3f8eca0e836e8365ad88204a9820b44f571b`;
+  rebased head `09f1a9ab514ee0b5184edc3b1d50b01eba5e24a4` on c015c005.
+  Both flag entries preserved; catalog assertion changes 123 to 124. Extended
+  focused/composition tests: 906 pass, no skips. Full units: 5,362 pass/56 fail,
+  exact baseline failed-name set (added=[], removed=[]). Both Validate checks
+  green. Await exact-head re-pin; final APPROVED_SHA binds its approved merge.
 - Restart only OMS and the five subscription consumers: strategy, schwab-1m-v2,
   orb, orb-schwab, momentum-paper. Gateway, control/token refresher, market-capture,
   reconciler, Redis and PostgreSQL stay running. No reboot or gateway restart.
@@ -33,7 +38,7 @@ An unresolved release field means NOT READY, never permission to use branch tips
 
 ### Two approvals, not a moving-main deployment
 
-First review this plan and authorize the two in-window repository merges.
+The operator authorized the two in-window repository merges in the 20:35 ruling.
 Recheck exact head/base, independent-review-pin and both Validate checks before
 each merge. Use rebase-merge, never Update branch or admin bypass. If the first
 merge changes the second PR's base/range, or a conflict/new head is required,
@@ -41,13 +46,13 @@ STOP for the second exact-head/base re-pin. A reviewed integrated test tree is
 not a substitute for the repository's pin procedure. Delete superseded records
 only in separate records-only commits under that procedure.
 
-Dry `git merge-tree` of candidate7a9957bf and pinned85cf3f8e on October3
+The pre-rebase `git merge-tree` of candidate7a9957bf and pinned85cf3f8e on October3
 found one content conflict: `ops/health/expected_flags.json` (both add their new
 flag near the start). Settings, v2 startup and flag tests auto-merge, but that
 does not certify their composition. Preserve BOTH catalog entries in a reviewed
-resolution. Do not touch the pinned COLDSTART branch before its rebase is
-authorized; the resulting changed head requires a fresh exact-head/base pin.
-This dry check did not alter any branch, index, worktree or production state.
+resolution. The authorized rebase is now complete at09f1a9ab; the resulting
+changed head still requires a fresh exact-head/base pin before merge.
+The dry check itself did not alter any branch, index, worktree or production state.
 
 After both approved merges, record `RPG_MERGE_SHA`, `COLDSTART_MERGE_SHA`, final
 `APPROVED_SHA`, tree, ordered commits and full path diff from BOX_SHA. Require
@@ -63,20 +68,20 @@ inside the window, leave the box unchanged and report the missed window.
 
 ### Listable approval-gated job contract
 
-Names reserved for the reviewed runner, not installed by this draft:
+Names for the release; actual staging must be proven by list-timers and hashes:
 
 ```text
-project-mai-tai-rpg1-coldstart1-install-20261004.service
-project-mai-tai-rpg1-coldstart1-install-20261004.timer
-/home/trader/after-hours/2026-10-04/rpg1-coldstart1-job/release.json
-/home/trader/after-hours/2026-10-04/rpg1-coldstart1-job/approval.json
-/home/trader/after-hours/2026-10-04/rpg1-coldstart1-run/
-/home/trader/fleet_health/deployments-20261004.md
+project-mai-tai-rpg1-coldstart1-install-20261003.service
+project-mai-tai-rpg1-coldstart1-install-20261003.timer
+/home/trader/after-hours/2026-10-03/rpg1-coldstart1-job/release.json
+/home/trader/after-hours/2026-10-03/rpg1-coldstart1-job/approval.json
+/home/trader/after-hours/2026-10-03/rpg1-coldstart1-run/
+/home/trader/fleet_health/deployments-20261003.md
 ```
 
-Proposed window: 10:00-11:59 ET, with no service action starting after 11:30.
-The reviewer must approve that end time as well as the target start. Timer:
-`OnCalendar=2026-10-04 10..11:*:00 America/New_York`, `Persistent=false`,
+Preparation: next minutes through 23:00 ET; execution through 23:59 ET. Timer:
+`OnCalendar=2026-10-03 20..22:*:00 America/New_York`, plus one 23:00:00 check,
+`Persistent=false`,
 `AccuracySec=1s`, `RandomizedDelaySec=0`. Root oneshot, `Restart=no`,
 `RemainAfterExit=yes`, restrictive umask, deploy lock, exclusive attempt claim.
 Missing approval skips; an attempted run never automatically retries. Disable
@@ -84,11 +89,11 @@ the timer after completion/refusal, not merely the application service.
 
 The receipt is root-owned mode 0600, reviewer `claude-1`, decision `APPROVED`,
 exact date/window, final application/plan hashes, artifact manifest and explicit
-Sunday clock-only exception below. An invalid/missing receipt or changed
+idle/order dispositions below. An invalid/missing receipt or changed
 artifact prevents all writes. Do not ship approval.json as a committed artifact.
 Staging must show `systemctl cat`, `list-timers --all`, NEXT and all file hashes.
-This draft does not claim a timer exists; literal runner/validator, tests and
-staged hashes are a mandatory next review artifact before execution.
+This document does not claim a timer exists until the staging transcript shows
+it; literal runner/validator, tests and staged hashes must be reviewed before execution.
 
 ## 2. Verified starting evidence and hard stops
 
@@ -112,7 +117,7 @@ Read-only October 3 evidence, to re-verify immediately before execution:
 All had NRestarts=0 in the resize completion journal. Latest small read during
 this draft: Redis evicted_keys=0, used_memory=758850064, maxmemory=2147483648;
 five empty owner sets, `_migration_complete=1`, checkpoint `1791065000836-0`.
-These are starting observations, NOT Sunday preflight or startup proof.
+These are starting observations, NOT Saturday preflight or startup proof.
 
 Before any write require no competing install, clean BOX_SHA, unchanged
 identities/start/InvocationID, fresh healthy gateway heartbeat and readable
@@ -133,7 +138,7 @@ Use reviewed `/home/trader/after-hours/2026-10-01/option-a-strict-flat-check.py`
 SHA256 `831913206678c5bd2fa6718173c4c5d7b5887c62e44217ad10b6776851f0381e`.
 Require fresh direct **both broker** reads, zero holdings, zero managed rows,
 zero nonzero virtual positions, zero net bot fills, no unreadable/partial read.
-No NXL/manual-close override is authorized for Sunday. Run before checkout/env
+No NXL/manual-close override is authorized for Saturday. Run before checkout/env
 writes and immediately before EVERY stop/start/restart. A nonzero rc stops;
 there is no unattended 300-second loop after the first service action.
 
@@ -153,24 +158,22 @@ Intent drainage is a separate execution blocker: OMS starts its stream reader
 at `$`, advances a cursor before handling, and can submit before DB commit.
 Empty books and stable stream tail alone do NOT prove all submitted intents
 were processed. Before any writes the release review must establish a bounded
-drain proof or explicitly accept the Sunday-idle disposition used in the resize:
+drain proof or explicitly accept the Saturday-idle disposition used in the resize:
 fresh v2 weekend/entry-window probe, ORB rejection/universe probe, paper
 disconnected/no-engine probe, no pending drafts, and archive/disposition of
 retained intent IDs (not replay). The prior Saturday disposition is evidence,
-not automatic Sunday approval. After quiescence, a new actionable/unaccounted
+not automatic approval for this release. After quiescence, a new actionable/unaccounted
 intent or ambiguous submit always stops. Preserve all DB state and never claim
 that archiving tail IDs itself proves safe drainage.
 
-Immediately before stopping v2 require `preflight_v2_restart.sh` rc0. Sunday
-10:00 is before its 18:00 proxy, so final approval must explicitly authorize:
+Immediately before stopping v2 require `preflight_v2_restart.sh` rc0. Tonight
+is after its 18:00 proxy; no clock override is needed or supplied:
 
 ```bash
-sudo bash /home/trader/project-mai-tai/ops/preflight/preflight_v2_restart.sh \
-  --clock-override 'Sun 2026-10-04, no session; zero armed, zero managed, both brokers flat' \
-  --i-accept-clock
+sudo bash /home/trader/project-mai-tai/ops/preflight/preflight_v2_restart.sh
 ```
 
-This overrides CLOCK ONLY. Record all three gate lines and the exact override.
+Record all three gate lines and rc. Clock refusal is STOP, not permission to override.
 Armed segments remain blocking. If nonzero, STOP for the operator's newly named
 live set and explicit Bug 2 acceptance; do not synthesize or reuse an arm override.
 The same invocation must observe/compare that exact set if separately authorized.
@@ -189,7 +192,7 @@ single-writer refresh/atomic-write continuation needs operator review first.
 
 ## 3. Ordered install and abort behavior
 
-The eventual runner must implement this exact sequence with dated approval,
+The committed runner must implement this exact sequence with dated approval,
 exclusive attempt claim, `flock /run/lock/project-mai-tai-deploy.lock`, pipefail,
 timeouts and an EXIT trap. No undefined helper may be accepted in the runnable
 release. All proof functions below must be committed, tested and hash-bound.
@@ -246,11 +249,11 @@ MAI_TAI_MARKET_DATA_SUBSCRIPTION_STARTUP_ENABLED=true
 MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_REPRICE_HANDOFF_ENABLED=true
 ```
 
-The revised RPG candidate adds the second switch to v2's admission of NEW
+The merged RPG code adds the second switch to v2's admission of NEW
 handoffs. Its code default is false; this install explicitly turns it ON.
 Existing durable ownership continues draining under the safety gates when OFF;
 it must not be abandoned by a rollback switch. This new setting and its OFF
-behavior are part of the new head's independent review, not the old approval.
+behavior are covered by the exact-head RPG independent review.
 Verify explicit process env plus effective Settings(_env_file=None),
 using only that PID's environment with identity checks on both sides of the read.
 COLDSTART is checked on all five consumers; RPG is checked on its v2 reader.
@@ -263,8 +266,12 @@ states, stage/last successful command, page result and raw paths; mark INCOMPLET
 Never silently restart stopped producers into mixed code, advance to later
 services, roll back, repair state or repeat an attempt. Operator continuation
 is required. Keep the install attended through the final snapshot. Row-47
-CancelledError on a stopped orb-schwab is investigated by code/design; neither
-reset-failed nor ignoring exit1 is automatically authorized by this plan.
+CancelledError has one narrow pre-authorization: after the requested SIGTERM
+stop, MainPID must be0, result exit-code/exit1, and this stop's journal/log must
+show the known row-47 CancelledError shutdown stack. Only then run
+`systemctl reset-failed project-mai-tai-orb-schwab.service`; record the proof
+and verify inactive/PID0. Any other failed stop is STOP. No other reset or
+additional restart is authorized.
 
 ## 4. Bounded proofs and denominators
 
@@ -303,7 +310,7 @@ age<30s, active_symbols exactly size(union of five sets + configured static).
 Gateway PID/start/NRestarts/InvocationID must remain unchanged throughout.
 This is a five-consumer warm-restart proof. The separate empty-Redis cold-boot
 scenario remains unit-tested/live-UNEXERCISED; do not clear Redis to demonstrate it.
-No event replay to manufacture this evidence. No trading ticks on Sunday is
+No event replay to manufacture this evidence. No trading ticks on Saturday is
 UNEXERCISED by design, not a delivery failure or live-trading PASS.
 
 v2 startup and close-out: new PID/start, active/running, NRestarts0, zero traceback
@@ -321,7 +328,8 @@ observefalse; strategy polygon_30sfalse; unchanged gateway retention120.
 Install isolated expected_flags_check.py/expected_flags.json/expected_numeric.json
 from exact APPROVED_SHA, back up and compare Git blob/file hashes.
 Numeric expectation remains8/8 unless reviewed RPG settings add numeric readers.
-Combined FLAGGATE baseline134 (126 boolean +8 numeric readings) plus COLDSTART
+The requested136/136 is not the complete catalog denominator. Combined
+FLAGGATE baseline134 (126 boolean +8 numeric readings) plus COLDSTART
 five +RPG one =140 (132 boolean +8 numeric). Derive and freeze exact
 denominators from the FINAL merged catalogs in release.json, then require ALL
 entries match. Any difference from140/140 plus numeric-only8/8 needs review;
@@ -341,12 +349,12 @@ and restarted arguments together, preserving the checked three-way routing.
 One backed-up preopen replacement: date2026-10-05, final APPROVED_SHA, new
 OMS/strategy/v2/orb/orb-schwab pins and unchanged gateway2907/start. Preserve
 trader ownership0700, bash-n, full diff/hash. Do not run the date-fixed full gate
-on Sunday as proof of Monday readiness; run the component checks and preserve
+on Saturday as proof of Monday readiness; run the component checks and preserve
 their actual results. Monday06:20 as trader reads the final state, no force-green.
 
 Back up/re-pin existing Monday start script once: final APPROVED_SHA, new paper
 PID/start, unchanged gateway2907/start and /proc path. Re-check unit/source hashes,
-bash-n and diff. Timer date stays2026-10-05 03:40ET; no Sunday guard launch.
+bash-n and diff. Timer date stays2026-10-05 03:40ET; no Saturday guard launch.
 Capture `systemctl list-timers --all` showing NEXT and ensure exactly one timer.
 The existing failure action stops ONLY paper and pages. Do not reuse expired
 guard@2026-10-02 or clear its history. Guard checks sampler + RedisSafety before
@@ -357,7 +365,7 @@ checks), with raw paths and valid-minute denominators:
 
 1. Read actual strategy scan interval and compute squeeze_10min_needs using
    MomentumAlertEngine, not a guessed120. Require needs<=120 at live5s. Record
-   retained history count using XLEN only. After Sunday restart require log
+   retained history count using XLEN only. After Saturday restart require log
    `prefilled momentum alert history from N snapshot batches` with N>=needs
    when that many populated batches existed. Unlike the empty resize boot,
    do not excuse a short warm-up automatically on this running gateway.
@@ -390,7 +398,7 @@ checks), with raw paths and valid-minute denominators:
 
 Return journal path, release/approval hashes, both merges and final SHA/tree;
 six new and six untouched identities with starts/NRestarts; flat/order/token
-results; v2 preflight/clock override; six post-start log/identity checks plus
+results; v2 preflight rc/all three gate lines; six post-start log/identity checks plus
 the service-specific heartbeat evidence (paper/ORB-Schwab exception above);
 five startup event IDs/sets and gateway union; Redis before/peak/after with
 unchanged evictions; explicit /proc flags and numeric/FLAGGATE exact denominators;
@@ -399,14 +407,39 @@ diffs/hashes/NEXT; accepted unexercised gaps and Monday owners. Say INSTALL
 COMPLETE only when all mandatory evidence is present. Preserve current INC1
 coverage gaps; installing code does not install its pager sources.
 
-Before this draft can become executable: resolve RPG review findings and pin
-the final RPG head including its new switch, review combined tree/merge order, resolve broker-order
-enumeration and intent-drain/idle dispositions, commit and test
-literal runner/approval validator/proofs/re-pin helpers and named unit/timer,
-stage exact hashes, then obtain final release approval. No such execution
-approval is inferred from this drafting request. No production write occurred.
+Before execution: re-pin and merge COLDSTART1, bind the combined application
+SHA/tree and both pin records, review the broker-order and intent-idle
+dispositions, then independently approve the committed/tested runner release
+and exact staged hashes. No execution approval is inferred from staging.
 
-Draft validation: the two embedded Bash blocks parse with `bash -n`.
-The live host's read-only `systemd-analyze calendar --iterations=3` resolves the
-proposed timer to 2026-10-04 14:00/14:01/14:02 UTC (10:00/10:01/10:02 ET).
-This verifies calendar syntax, not an installed or scheduled job.
+The runner, proof helpers, approval validator and named service/timer are in
+`joint_install_job/`. `stage_joint_review.py --approved-sha <full-merged-SHA>`
+runs only from a clean committed plan branch, verifies both exact merged PR
+heads/trees, both green Validate runs and their immutable independent records,
+then derives the complete catalog denominators and every application source
+hash. It extracts committed artifacts, captures fresh read-only host evidence,
+and stages nine artifacts plus this plan and the generated release manifest.
+It checks unchanged application identities across staging. No approval is
+created; the timer cannot run an application step without the review receipt.
+The release manifest binds their committed blob hashes,
+this plan and the final application SHA/tree. Approval is not shipped in Git.
+Staging output must include actual unit definitions, NEXT time, unchanged app
+identities and every artifact hash. Missing approval is a quiet no-action
+check; a claimed attempt never repeats itself.
+
+### Runner verification before release binding
+
+201 offline runner/staging tests passed on October3. Read-only host capture
+at22:13:50 ET returned rc0 with all twelve starting identities unchanged,
+five empty restored/current consumer sets, no retained intent IDs and no
+observed broker orders in the explicitly bounded discovery. The capture also
+required the strict both-broker flat helper, readable durable state, Redis
+safety and the token checks. Local raw output:
+`/tmp/joint-readonly-host-20261003.txt`; remote helpers only:
+`/tmp/joint-readonly.xSbSgGRJ/`. No unit, env, checkout or application mutation
+was performed. Final release staging must capture these facts again.
+The row-47 exception's file/function fingerprint was read from
+`orb-schwab.log-20261004`; the actual20:59 UTC stop journal binds invocation
+`a14bf297def14153a0554a1c1259793f`. The test accepts that stack and rejects an
+unrelated error/stack or another invocation. New service starts, five startup
+announcements and the live runner abort paths remain UNEXERCISED until execution.
