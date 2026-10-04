@@ -1,0 +1,9 @@
+{
+  "pr_number": 1080,
+  "range_base": "ea26ade750ab2f35891510b620cb010fa919c361",
+  "range_head": "781e15925e92f4b29b236322dcc8cf97cf2103d3",
+  "reviewed_at": "2026-10-04T15:36:46Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Shared 10-02\u219210-03 handoff PR: codex-2's one docs-only commit 781e1592 (docs/session-handoff.md Board B row 47 \u2014 joint-install log coverage UNKNOWN accepted by design, completion 23:22:53 ET at bbb43604). Reviewed by diff against the box (23:25 ET: PIDs, /proc switches, FLAGGATE 140/140, evictions 0) \u2014 accurate, one file. Close-out carrier: manifest BALANCED 48/48 matching the frozen journals; codex-2 review of 3aee9814 fixed at a212ceaa (row 46 restored, WBREAD1 live 10-01, sizing install COMPLETE 12:09:56 ET)."
+}
