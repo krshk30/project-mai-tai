@@ -153,6 +153,12 @@ LGHL 09-30 08:23:58.103: print/raw ask 7.07 exceeds the 7.0500 cap. At 08:23:59.
 
 ## Session Assessments: No Exit or Reactive Build
 
+### VEEA Item 3: Separate Flip-Latch Assessment, No Build
+
+Own fresh bounded SQL/log read at 09:05 ET reproduces the incident described in handoff row M20. **AGREE with the mechanism; OLD code, not introduced by today's sizing/PMREST work.** VEEA armed at 08:29:02.769 with line 5.2351 / trigger 5.2613. The 08:32 bar high 5.2569 never reached that trigger, although its close 5.2404 crossed the ATR line. BUY flip logged at 08:33:02.504; the next state probe records the settle latch starting at 08:33:02.515. First qualifying trade arrived at 08:33:04.184, price 5.27 / size 280 / bid 5.26 / ask 5.27, 1.680 seconds after the flip log. Own counts: zero qualifying trades among 95 in 08:31-08:32, then 30/45 in 08:33 and 41/52 in 08:34. Zero broker_orders in the bounded 08:29-08:35 window. The rest was still active but latched, then disarmed at 08:34:02.972 with flip_no_fill_soft_rest.
+
+Source at deployed base e1ce3b39 explains the silence: _cw_v2_resting_track treats st=long as a fill and sets resting_flip_ms; both streamed and shared premarket cross checks refuse a nonzero latch. Git blame dates that first assignment to 961bd5793 (07-23), shared latch refusal to b8a392188 (07-24), and offset-trigger lookup to 70253e4ac (09-23). An ATR flip above the line is not proof that the later offset trigger has traded. This is independent confirmation of this one missed order opportunity, **not** proof of a counterfactual fill/profit or a complete historical incidence count. The exact "three problems" instruction block was requested because it is absent from the available context; no PMFLIP1 rule/build is inferred from the handoff row. Raw own read pmprint1-own-veea.json, query script pmprint1-veea-read.py; SQL READ ONLY, five-second timeouts, aggregate counts and at most 10 rows per detail query, current v2 log only, no Redis read.
+
 ### A1 Broker Resting Stops, Both Accounts
 
 Own fill-linked resting STOP_LIMIT census 08-14..10-05: 501 orders, all first fills in 09:30-16:00 ET; 250 Schwab / 251 Webull. Each has a bot 1-minute high. Minimum fill price is compared with the actual wire stop where available. "Well below" is explicitly defined here as >0.5% below, not a trading-rule change.
