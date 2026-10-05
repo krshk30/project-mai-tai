@@ -1,6 +1,6 @@
 # PMPRINT + durable-ticket recovery: October 5 candidate
 
-**DRAFT AWAITING FRESH PINS, FINAL CI AND EXACT-SHA OPERATOR GO.
+**DRAFT AWAITING FRESH PINS AND EXACT-SHA OPERATOR GO.
 NOT EXECUTABLE, NOT SCHEDULED, NO PRODUCTION AUTHORIZATION.**
 
 This new document supersedes the folded three-PM-switch plan and the v2-only
@@ -16,7 +16,7 @@ ticket release, or additional trading-rule change is permitted.
 |---|---|---|---|
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
 | 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | merged at 13:09:07 ET to main 7e10baf0319da796b84934fe38994f6db4fcfc0b; whole tree equals pinned tree 736a540cac3c2724fa116216913331f532ecdfa9 | still dark on the box; proposed PMPRINT ON and PMFLIP OFF |
-| 2 | RPGSTUCK #1093, c6548875bab15fb52bf35ca491e2e0ea63cc7148 | NOT pinned; final fixture evidence, tests/source equal29a17b1f; Validate x2 in progress; final composition verified below | existing ticket recovery active; no NEW hand-offs |
+| 2 | RPGSTUCK #1093, c6548875bab15fb52bf35ca491e2e0ea63cc7148 | NOT pinned; final fixture evidence, tests/source equal29a17b1f; Validate x2 PASS at13:59:31/14:01:01 ET; final composition verified below | existing ticket recovery active; no NEW hand-offs |
 | 3, optional | OWNMIX #1094, 55563e6f3abe004d484195c202b5118ea75e0169 | NOT pinned; F1/F2/U1-U4 plus Q2 complete; standalone Validate x2 PASS at13:27:34/13:27:56 | entry binding; additive schema only if included |
 
 No merge is authorized by this draft. Final exact heads, all required checks,
@@ -76,7 +76,7 @@ RPG/NFQ composition, tonight's flag set and both ownership accounts. Thus the
 extra fill-reconciliation failure is resolved by fixture isolation, not a
 production change. The56 baseline failures remain; do not call the entire
 suite green. COMPOSITION_RESULT_2026-10-05.md retains commands, counts and hashes.
-Fresh review pins, final CI and operator GO remain blocking. No merge/install
+Fresh review pins and operator GO remain blocking. No merge/install
 eligibility is inferred from a clean rehearsal tree.
 
 The previous three PM characterization failures are corrected only in the
@@ -153,8 +153,10 @@ That initial head's Validate x2 passed; it is superseded byc6548875.
 Final fixture/source standalone =5683 passed/same56 failed;1369 focusedPASS,
 67 fresh assertion-controls RED. Parent independently verifies its failed names
 against the main XML. REPORT_FIXTURE_ISOLATION.md retains final pair, exact
-rollback trace, tests and all67 controls. Current final-head CI is pending;
-fresh pins remain required. No eligibility is inferred from a prior-head check.
+rollback trace, tests and all67 controls. Current final-head Validate x2 is PASS,
+verified14:01 ET, runs37351785657 and37351790055. Fresh pins remain required;
+the independent-review-pin check is not yet PASS. No eligibility is inferred
+from a prior-head check or CI alone.
 
 B5 proof work is bounded, not ownership: one startup scan; exact-generation
 committed writes wake only matching held tickets, durable hashes suppress repeats.

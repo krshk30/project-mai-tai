@@ -74,6 +74,11 @@ unit composition and `tests/composition/test_rpg1_nfq1.py`. Zero skips.
 | /tmp/oct5-composed-isolated-connection-focused.xml | ca62b8ee168c835c47f608403b85ed7451f7504eb6693f9666ed6d485e08fedc |
 | /tmp/oct5-parent-composed-fill50.xml | a54b7b9b4fb0e5b305a9a99fab17c73f58f9c53c79b1623cdc861d8a254fd526 |
 
-Fresh exact-head reviewer mutations/pins, final CI and an operator exact-SHA
+Final exact-head RPG Validate x2 PASS: runs37351785657 at13:59:31 ET and
+37351790055 at14:01:01 ET. OWN Validate x2 PASS at13:27:34/13:27:56 ET.
+Both independent-review-pin checks still await new records for the changed
+heads. No fresh pin is inferred from the old reviewed segments.
+
+Fresh exact-head reviewer mutations/pins and an operator exact-SHA
 GO remain necessary. No production service, env, ledger, database or watch
 change was made. Restoration and pause lanes remain outside this candidate.
