@@ -5447,3 +5447,11 @@ and5thloop-onlyPLACED afterrealbotauthorization; L7fourrecordedlocalholds
 clear->placed/after20expired; APUSold4.78refusalseparatefromlatercontrolled
 5.25same-segment normalWebullwireonce across4duplicateintents. Rawl57targeted
 andcontrols files retained. Finalhead/full/CI pending, no runtime/prod write.
+
+2026-10-05 15:59 ET codex-2 C73: RPG8cfb704c frozen/published, tests/evidence
+only since5ddb; full5869/same56 vs ownmain5577/56, ownXMLadd0/remove0,
+focus1555,target5,82controlRED. L5explicit fifthloopPLACED/L7clearprogress
+and amendedAPUSsame-segmentlaterwireonce covered. Plan49e6544c published,
+sixguards53PASS/18RED/helperce3ab15b freshOMS/strategy/flat0 andevictions0->0.
+Freshpush37366739332/pull37366743088 queued, pinabsent, notgreen/notinstalled.
+No source/default/catalogchange inRPGfollowup, no production/schema/ledger.
