@@ -33,6 +33,8 @@
 
 | C6 | PMREST1 independent assessment and build | C1-C4 AGREE (C4 tape-high only); A1 REAL Schwab boundary gap; A2 ORB latency UNMEASURED; software-move build local, not installed | 08:11 ET 10-05: own 31 v2 log census 130 reprices/127 paired (min 57.194 s, median 60.169 s, max 240.072 s), 127/127 bot-bar coverage; SAIQ two 60 s gaps, TNON one tape-high crossing; DCOY 09-23 software arm 09:28 to primary broker place 09:35; /tmp/pmrest1-own-db-evidence.json and /tmp/pmrest1-gap-assessment.json; 60 targeted PASS before extra edge tests, full suite running | codex-2 | Finish mutations/full-suite/PR and v2-only reviewed plan; separate pre-existing stream Webull defect (ask lost before dollar sizing) characterized, not changed; no live install |
 
+| C7 | PMREST1 replay and mutation proof | 912 focused PASS; 8/8 mutation cases RED; full-unit final comparison still running, not installed | 08:19 ET 10-05: /tmp/pmrest1-focused-final2.txt, /tmp/pmrest1-mutations.txt; 32 named PMREST cases cover first/reclaim, REST/stream, state and RTH conversion. Denominator correction to C6: later 08:06 DB pull has 129/129 bar-covered pairs (two more after initial 08:02 127-pair census), not the same snapshot | codex-2 | Finish final full run/CI and submit exact head + v2-only plan; stream Webull missing draft remains separate reported defect |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
