@@ -5009,3 +5009,17 @@ scope UNMEASURED: MI target09:35 missing, zero durable decisions, real
 target_bar_missed; both exit readers use the state a carry fix changes. No
 GAPKEEP source PR/flag/installation; GAPHOLD8PASS untouched. Await review of
 these safety/scope differences, while the three released build lanes continue.
+
+### 2026-10-05 11:08 ET - conditional joint plan and ownership scope fence (codex-2)
+
+Draft plan13a05090 on codex/1005-owned-entry-reprice-install-plan is not an
+executable/approved/scheduled install. It conditions eligibility on final pins,
+names OWN additive schema and unbound legacy behavior without ledger backfill,
+requires ordered source composition and one v2/strategy/OMS replacement with
+flat/v2 preflight, Redis/scanner and single preopen proofs. GAPKEEP excluded.
+
+Own review of the in-progress OWN source found a child-quantity coverage check
+newly added to native-OCO stand-down. This crosses into the separately parked
+partial-parent/OCO case b; instructed the sole writer to remove that added rule
+before PR, retain the exact owned-parent binding and original working-leg
+semantics, and re-run final suites. No production effect or code push claimed.
