@@ -5391,3 +5391,12 @@ fail-closed install policy; Pauli sole RPGwriter, Mencius independent PM tests.
 No production action. Fresh overview15:07:30 completed recon count2/degraded,
 only MI/NXL; direct-flat proof not yet rerun under new policy. L5/L7 exact text
 not in visible block/GitHub comments, being located, not invented. C65 only.
+
+2026-10-05 15:19 ET codex-2 C66: parent standing helper34PASS/7assertion-RED
+mutations; exact liveOMS/strategy/flat rc0 under namedstandingaudit, no unrelated
+waiver. Initialstrategy429UNKNOWN retained, spacedretryrc0. Daytimev2clock
+stillNO-GO/nooverride; OMSfencerc0. Mencius36PMALLONcases/467focusedPASS,
+6mutantsRED, localtestcommit430686a3 sentsoleRPGwriterforintegration. ALLON
+catalogworkingdenominator147, no livecertification. ActualAPUS09:32Webull
+ask4.78trigger5.2720 remainsdistance-refused: literalbothPLACEDnotclaimed.
+ExactL5/L7textrequestedhuman; no guessing. No production/ledger/schema action.
