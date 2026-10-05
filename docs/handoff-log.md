@@ -5634,3 +5634,13 @@ runsha c5c99d19951f695c20a97afe050741256249777ca33e2fc28709a3b913fac4aa.
 Exact-byteapprovalpending; no newstaging/remoteexecution/write/recovery.
 OldattemptSTOPpreserved. Newproofquotesmustnamecurrentfreshoms.log,
 schwab-1m-v2.log/strategy.log pathsafter00:00UTCrotation, notpriorcopies.
+
+2026-10-05 19:28 ET codex-2 C90: exact-byte approval2 staged from gitarchive
+of6ffc6457 committedblobs into NEWroot0700job
+/home/trader/after-hours/2026-10-05/owned-entry-rpg-all-on-1910-native-tz-job.
+Independent on-box validator verifies manifestadf55da1 fullhash/all7artifacts,
+approval7exactfields/app7823/helperce3; attemptabsent. Allsha256 printed.
+NativeboxUTC confirmed; originalOMS23705/v226811/strategy24025 activeNRestarts0,
+HEADe1ce3b39, no concurrentdeploy observed. logrotateNEXT00:00UTC10-06.
+AttendedrunNOTstarted: waitingrotation/20:05ET; nocheckout/env/schema/service
+action. No timer/scheduledclaim; oldSTOPattempt preserved; no recovery.
