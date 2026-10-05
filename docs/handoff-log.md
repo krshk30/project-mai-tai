@@ -5175,3 +5175,13 @@ atop b94bd0ff (Mencius sole writer); RPG startup proof released atop28952463
 candidate plan. #1092 exact5ee9f416 pin/Validate x2 verified; merge held pending
 operator before-merge yes. Old v2-only two-switch draft superseded: OMS recovery
 code is required, hand-off stays OFF. No production/ledger/DB action. C40 only.
+
+2026-10-05 12:15 ET codex-2: own bounded startup census found eight tickets,
+including extra RETO Webullba108172. Five oldorder rows/five deferred intents
+captured16:13:20Z; four exact SchwabGETs16:13:55Z returned200, maximum3507bytes.
+RETO parent1008171127230 isREJECTED/filledQuantity0; later VEEA/APUS retry
+refusals areclient_abort/rpg_old_buy_still_owned. Both classes need exact
+recovery proof on candidate code, not omitted rows or age/purge. Newdocument
+tonight-candidate/INSTALL_PLAN_2026-10-05.md pushed ineb110c2d, conditional
+#1092+#1093 withOWNonlyifpinned. Draftsupersedesv2-only/all-PM-ON plans,
+not scheduled/approved. Rawpaths/SHA256 inSTARTUP_TICKETS.md. C41 only.
