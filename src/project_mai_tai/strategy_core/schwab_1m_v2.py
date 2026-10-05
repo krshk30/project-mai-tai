@@ -4463,6 +4463,11 @@ class SchwabV2Strategy:
         docs/atr-30s-and-cw-parity-2026-07-21.md."""
         if not (self._macd_probe_all or state.symbol in self._macd_probe_symbols):
             return
+        if self.settings.strategy_schwab_1m_v2_pm_rest_reprice_enabled:
+            logger.info(
+                "[V2-PMREST-STATE] sym=%s resting_is_broker_order=%s",
+                state.symbol, state.resting_is_broker_order,
+            )
         logger.info(
             "[V2-CW-STATE-PROBE] sym=%s armed=%s bars_waited=%d trig=%.4f seg_high=%.4f "
             "flip_level=%.4f entries_this_flip=%d max_per_flip=%d emit_claimed=%s "
@@ -5114,6 +5119,50 @@ class SchwabV2Strategy:
                     )
                 )
 
+    def _reprice_resting(self, state: SymbolState, line: float) -> None:
+        if not (
+            getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_pm_rest_reprice_enabled", False)
+            and state.resting_active
+            and not state.resting_is_broker_order
+        ):
+            self._queue_resting_cancel(state, reason="reprice")
+            return
+        if self._entries_held or self.gap_hold_active(state.symbol):
+            return
+        if not self._resting_in_window() or self._entry_window_closed_for_session():
+            return
+        old_line, old_trigger = state.resting_level, self._active_resting_trigger(state)
+        try:
+            trigger = self._resting_trigger_for_line(line)
+            if not all(math.isfinite(value) and value > 0 for value in (line, trigger)):
+                return
+        except (TypeError, ValueError, OverflowError):
+            return
+        if not self._resting_session_is_eh():
+            now = datetime.fromtimestamp(self._now_ms() / 1000.0, UTC)
+            bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+            if not within_rth_entry_window(now, self.settings):
+                return
+            if not bar_ms or not 0 <= self._now_ms() - bar_ms <= self._resting_max_bar_age_ms:
+                return
+            if not self._resting_stop_ask_allows(state, line, slot=state.resting_slot):
+                return
+            streak = state.resting_below_floor_bars
+            # The old software rest stays armed if normal placement refuses.
+            self._queue_resting_place(state, line, slot=state.resting_slot)
+            state.resting_below_floor_bars = streak
+            if not state.resting_is_broker_order:
+                return
+        else:
+            # Both callbacks execute synchronously on the bot loop: no await, cancel,
+            # admission, persistence or latch reset can expose an unarmed midpoint.
+            state.resting_level, state.resting_trigger = line, trigger
+        logger.info(
+            "[V2-RESTING-EH-MOVE] %s slot=%s old_line=%.4f old_trigger=%.4f "
+            "new_line=%.4f new_trigger=%.4f gap_ms=0",
+            state.symbol, state.resting_slot, old_line, old_trigger, line, trigger,
+        )
+
     def _queue_resting_cancel(self, state: SymbolState, *, reason: str) -> None:
         was_level = state.resting_level
         was_trigger = self._active_resting_trigger(state)
@@ -5677,7 +5726,7 @@ class SchwabV2Strategy:
             # STABLE-REST: re-place only on a meaningful trail move; else leave it out there.
             if (state.resting_level > 0.0
                     and abs(trail - state.resting_level) / state.resting_level >= self._resting_reprice_frac):
-                self._queue_resting_cancel(state, reason="reprice")
+                self._reprice_resting(state, trail)
             return
         if st == "long":
             # HOLD-THROUGH-FLIP: the up-flip is the fill. Do NOT cancel; start the settle grace.
@@ -5736,9 +5785,13 @@ class SchwabV2Strategy:
         # band-capped EH-LIMIT via `_eh_resting_cross_check` + the OMS EH pricer. Resting here
         # competed with that deployed path and turned a working EH reactive fill into an
         # `ASK_PAST_BAND` abandon (caught by test_p3_premarket_reactive_eh_marketable_fill).
-        # There is nothing to win in EH — the slippage this change targets was measured on RTH
-        # MARKET orders — and a broker stop cannot trigger in EH anyway.
-        if self._resting_session_is_eh():
+        # Initial EH reclaim admission remains disabled. PMREST1 only manages an
+        # already-active software reclaim; it never admits a new one here.
+        if self._resting_session_is_eh() and not (
+            self.settings.strategy_schwab_1m_v2_pm_rest_reprice_enabled
+            and state.resting_active and state.resting_slot == "reclaim"
+            and not state.resting_is_broker_order
+        ):
             if state.resting_active and state.resting_slot == "reclaim":
                 self._queue_resting_cancel(state, reason="session_eh")
             return
@@ -5866,7 +5919,7 @@ class SchwabV2Strategy:
         # STABLE-REST: re-place only on a meaningful move, else leave it out there (#547/NVVE).
         if (state.resting_level > 0.0
                 and abs(level - state.resting_level) / state.resting_level >= self._resting_reprice_frac):
-            self._queue_resting_cancel(state, reason="reprice")
+            self._reprice_resting(state, level)
 
     def _fresh_resting_ask(self, quote: Quote) -> float | None:
         """Return a usable ask only when the present quote is current enough for placement."""
