@@ -30,12 +30,15 @@ def main():
         result["jobs"] = jobs
         order_ids = set()
         client_ids = set()
+        generations = set()
         def collect(payload):
             for key, value in payload.items():
                 if key.endswith("order_id") and value:
                     order_ids.add(str(value))
                 if "client" in key and value and isinstance(value, str):
                     client_ids.add(value)
+                if key == "rpg_resting_generation" and value:
+                    generations.add(str(value))
                 if isinstance(value, dict):
                     collect(value)
 
@@ -54,15 +57,22 @@ def main():
                 "WHERE CAST(b.id AS text)=ANY(:ids) "
                 "OR b.client_order_id=ANY(:clients) "
                 "OR (s.code='schwab_1m_v2' AND a.name='live:orb' "
-                "AND b.side='buy' AND b.payload->>'rpg_resting_generation' IN "
-                "('cf1c5bef-1928-49aa-91e2-506bf44478be', "
-                "'233fccff-aea6-4607-9fbc-a1737adf1781', "
-                "'5ba6122b-7e8a-4d3a-afe1-bc741f1f96cd')) "
+                "AND b.side='buy' AND b.payload->>'rpg_resting_generation'=ANY(:generations)) "
                 "ORDER BY b.submitted_at LIMIT 65"
-            ), {"ids": sorted(order_ids), "clients": sorted(client_ids)}).mappings()
+            ), {"ids": sorted(order_ids), "clients": sorted(client_ids),
+                "generations": sorted(generations)}).mappings()
         ]
         if len(result["orders"]) > 64:
             raise RuntimeError("order capture exceeded the declared 64-row bound")
+        result["fills"] = [dict(row) for row in conn.execute(text(
+            "SELECT f.id, f.order_id, f.broker_fill_id, f.symbol, f.side, "
+            "f.quantity, f.price, f.filled_at, f.payload, s.code strategy, a.name account "
+            "FROM fills f JOIN strategies s ON s.id=f.strategy_id "
+            "JOIN broker_accounts a ON a.id=f.broker_account_id "
+            "WHERE CAST(f.order_id AS text)=ANY(:ids) ORDER BY f.filled_at LIMIT 65"
+        ), {"ids": [str(row["id"]) for row in result["orders"]]}).mappings()]
+        if len(result["fills"]) > 64:
+            raise RuntimeError("fill capture exceeded the declared 64-row bound")
         result["deferred_intents"] = [
             dict(row)
             for row in conn.execute(text(
@@ -73,12 +83,9 @@ def main():
                 "WHERE s.code='schwab_1m_v2' AND a.name='live:orb' "
                 "AND t.intent_type='open' AND t.side='buy' "
                 "AND t.created_at >= '2026-10-05T04:00:00Z' "
-                "AND t.payload->'metadata'->>'rpg_resting_generation' IN "
-                "('cf1c5bef-1928-49aa-91e2-506bf44478be', "
-                "'233fccff-aea6-4607-9fbc-a1737adf1781', "
-                "'5ba6122b-7e8a-4d3a-afe1-bc741f1f96cd') "
+                "AND t.payload->'metadata'->>'rpg_resting_generation'=ANY(:generations) "
                 "ORDER BY t.created_at LIMIT 65"
-            )).mappings()
+            ), {"generations": sorted(generations)}).mappings()
         ]
         if len(result["deferred_intents"]) > 64:
             raise RuntimeError("intent capture exceeded the declared 64-row bound")

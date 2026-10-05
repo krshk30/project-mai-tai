@@ -12,6 +12,33 @@ No snapshot-batches read. The credential-protected Settings read ran as root;
 the remote process used nice19. Failed first invocation as trader could not
 read the protected env and made no database call; rerun as root succeeded.
 
+### Later complete capture
+
+The refreshed collector derives generation IDs from every captured ticket rather
+than a hard-coded three-generation list, and includes exact linked Fill rows.
+The same read-only, timeout and per-table sentinel limits apply.
+Own read at **13:17:02 ET (17:17:02.125832Z)** returned **14 jobs, 11
+BrokerOrder rows, 15 TradeIntent rows and 1 Fill row**. Raw:
+`/Users/velkris/.codex/ownmix-rpgstuck-evidence-20261005/tonight-startup-later-with-fills-own-read.json`.
+SHA256: `120fc475d5620d2bbf8d55a7888a06abfb226350d669db20f315d0ca682145d2`.
+This supersedes the eight-ticket population below, not the four exact broker
+GETs. It is an as-of capture, not a promise that no later tickets will exist.
+
+| Later ticket | Account / symbol | Stored phase / reason |
+|---|---|---|
+| c539a57f-6111-59ae-8b79-79b7fee1700a | live:schwab_1m_v2 MI | refused / replacement_refused |
+| 4be7cb2d-406b-56db-b597-3783f6e956ff | live:orb MI | held_unknown / exact_old_order_unproven; NFQ hold is not standalone local no-wire evidence |
+| a9eac442-d340-59ab-8c26-9c04d3453f1d | live:schwab_1m_v2 SCKT | refused / replacement_refused |
+| 6fb89c93-a101-5200-b569-320acf5f4f85 | live:orb SCKT | refused / replacement_terminal_accounted |
+| 889889cd-2de7-59ca-997f-fc546b728ec9 | live:orb SCKT | refused / replacement_terminal_accounted |
+| d86d5d38-200b-52b6-8147-6eecfe13698b | live:orb SCKT | filled / replacement_fill_accounted |
+
+The actual linked SCKT live:orb BUY fill is 280 shares at 1.06, order UUID
+`d5227349-a40c-4cbb-b381-7cc3a7c4919c`. Recovery must not re-buy its remainder
+or infer no-wire from a rejected intent when a generation has a broker row.
+The RPG sole writer received this complete raw capture for the follow-up tests.
+No ledger, order, service, configuration or Redis write was performed.
+
 Raw local artifact:
 `/Users/velkris/.codex/ownmix-rpgstuck-evidence-20261005/tonight-startup-complete-own-read.json`
 

@@ -14,7 +14,7 @@ ticket release, or additional trading-rule change is permitted.
 | Order | Candidate | Review state | Runtime change |
 |---|---|---|---|
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
-| 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | pin and Validate x2 PASS; operator before-merge yes still required | PMPRINT ON; PMFLIP OFF |
+| 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | merged at 13:09:07 ET to main 7e10baf0319da796b84934fe38994f6db4fcfc0b; whole tree equals pinned tree 736a540cac3c2724fa116216913331f532ecdfa9 | still dark on the box; proposed PMPRINT ON and PMFLIP OFF |
 | 2 | RPGSTUCK #1093, 7f0729ef67e97566d7c254273802665c760adf08 | NOT pinned; eight-ticket startup proof complete locally; Validate pending | existing ticket recovery active; no NEW hand-offs |
 | 3, optional | OWNMIX #1094, 0e896505e7372233132c03749da752e098572a7b | NOT pinned; F1/F2/U1-U4 follow-up complete locally; Validate pending | entry binding; additive schema only if included |
 
@@ -23,6 +23,14 @@ ordered integration rehearsal and fresh pins after any rebase/conflict must be
 recorded before the operator names APPROVED_SHA (40 hex). Never Update branch.
 Exclude #1094 entirely if it is unpinned. Do not substitute a moving branch tip.
 LINE=CHART is an active separate build concern, not in this candidate.
+
+As of 13:17 ET the authorized rebase checkpoints are RPG
+`d68651686a72200913c6e7e498c574d22907ea18` and OWN
+`bb4a6b22d592f350f0e851faae6a86d989944f3e`, each onto merged main
+`7e10baf0319da796b84934fe38994f6db4fcfc0b`; range-diff 3/3 equal for each.
+These are NOT final review heads: B1-B6 work bounding / fourteen-ticket replay
+and OWN Q2 measured call-budget / hint filtering are in progress. The earlier
+test pairs below remain historical, not results for those new final heads.
 
 **Integration blocker:** the immutable pinned #1092 contains three old-code
 characterization assertions that require proven-clear tickets to remain owned.
@@ -119,6 +127,12 @@ The ticket census is frozen at12:13 ET. A fresh bounded read immediately before
 execution must include later tickets (handoff M56/M58 report MI/SCKT after that
 capture). Do not describe these eight fixtures as the whole live day's census.
 Any new shape not covered by reviewed recovery proof is UNKNOWN/STOP.
+
+The refreshed own read at 13:17:02 ET contains fourteen jobs, eleven orders,
+fifteen intents and one actual SCKT Webull BUY fill (280 shares at 1.06).
+STARTUP_TICKETS.md records the exact raw path/hash and six later MI/SCKT tickets.
+The fresh follow-up must replay this entire captured population; the eight-job
+proof alone is no longer enough. No disposition is inferred from elapsed age.
 
 ## Preflight Before Any Write
 
