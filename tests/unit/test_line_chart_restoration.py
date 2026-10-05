@@ -15,7 +15,7 @@ import pytest
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.strategy_core.schwab_1m_v2 import session_start_ts_ms
 from project_mai_tai.strategy_core.session_line_restore import (
-    SessionCoverage, SessionLineRestoration,
+    SessionCoverage, SessionLineRestoration, history_fingerprint,
 )
 
 RAW = json.loads((Path(__file__).parents[1] / "fixtures/line_chart_restoration_bars.json").read_text())
@@ -41,6 +41,7 @@ def _ledger(symbol="RETO", epoch=1):
     ledger.attest(SessionCoverage(
         "schwab_rest_full_session", ledger.anchor_ms, ledger.current_bar_ms + 60_000,
         tuple(bar.timestamp_ms for _, bar in pairs), True,
+        history_fingerprint(bar for _, bar in pairs),
     ))
     return ledger
 
@@ -59,6 +60,7 @@ def test_recorded_reto_late_111019_bars_are_required_before_admission():
     ledger.attest(SessionCoverage(
         "schwab_rest_full_session", ledger.anchor_ms, ledger.current_bar_ms + 60_000,
         tuple(bar.timestamp_ms for _, bar in pairs), True,
+        history_fingerprint(bar for _, bar in pairs),
     ))
     assert ledger.prepare() is None
     assert ledger.incomplete_reason == "history_missing_or_conflicting"
@@ -79,7 +81,8 @@ def test_source_window_and_current_closed_bar_must_be_proven(source, complete, s
     ledger = _ledger()
     proof = ledger._coverage
     ledger.attest(SessionCoverage(source, proof.start_ms + start_shift,
-                                  proof.end_ms + end_shift, proof.closed_ids, complete))
+                                  proof.end_ms + end_shift, proof.closed_ids, complete,
+                                  proof.bars_sha256))
     assert ledger.prepare() is None
 
 
@@ -112,7 +115,8 @@ def test_worker_is_off_callback_and_a_late_revision_invalidates_its_result():
     # is in flight. No invented prices or trading callbacks are involved.
     proof = ledger._coverage
     ledger.attest(SessionCoverage(proof.source, proof.start_ms - 60_000,
-                                  proof.end_ms, proof.closed_ids, proof.complete))
+                                  proof.end_ms, proof.closed_ids, proof.complete,
+                                  proof.bars_sha256))
     assert ledger.admit(result) is None
 
 
@@ -125,3 +129,13 @@ def test_provider_chart_objects_cannot_mutate_frozen_worker_input():
     mutable.close = 999
     assert request.bars[0].close == original_close
     assert ledger.prepare() == request
+
+
+def test_recorded_ids_without_matching_source_values_cannot_admit_a_line():
+    ledger = _ledger()
+    proof = ledger._coverage
+    other = _ledger("JAGX")
+    ledger.attest(SessionCoverage(proof.source, proof.start_ms, proof.end_ms,
+                                  proof.closed_ids, True, other._coverage.bars_sha256))
+    assert ledger.prepare() is None
+    assert ledger.incomplete_reason == "source_values_unproven"

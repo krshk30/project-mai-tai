@@ -12,7 +12,9 @@ Restoration is first; the pause lane is not built here. Neither is tonight.
 session_line_restore.py separates immutable session input, off-event-loop
 rebuild and revision/epoch-checked admission. A DB read cannot attest coverage.
 The provider must supply a complete full-session request/response manifest,
-including the current closed bar and candle IDs. Missing/conflicting history,
+including the current closed bar, candle IDs and a value fingerprint computed
+from the provider's own response. Matching IDs with different candle values
+cannot authorize publication. Missing/conflicting history,
 wrong source/window, a new revision or a re-add epoch prevents admission.
 The worker receives frozen bar copies, not mutable provider objects. It has
 no trading callbacks, order mutations, slot resets or historical flip emit.
@@ -46,10 +48,12 @@ rebuild scenario is not yet asserted by this primitive.
 
 ## Checkpoint Verification
 
-9 tests PASS in test_line_chart_restoration.py; scoped Ruff PASS. Tests pin
+10 tests PASS in test_line_chart_restoration.py; scoped Ruff PASS. Tests pin
 late-bar admission, source/start/end/completeness,255-row retention, re-add
 epoch fencing, off-callback worker execution, revision invalidation and frozen
-provider values. No full-suite pair, mutation census or implementation PR yet.
+provider values and source-value mismatch refusal. No full-suite pair, mutation
+census or implementation PR yet. The fingerprint test uses two recorded symbol
+histories, not invented candle prices; coverage manifests remain controlled.
 
 Next: provider manifest + service epoch integration, ordered session mathematics
 and atomic snapshot publication without replaying entry state; then recorded
