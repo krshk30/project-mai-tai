@@ -5301,3 +5301,10 @@ bothfreshpinsrequired. C55only; no main/prod/ledger/Mrow/Board/decisionchange.
 conditionalplanbb06c12944d764ad72bf4325ff2c49b3eea7dd46published,full5753same56,
 focused411, onlytwoenvswitchesproposed. Notexecutable/scheduled; operatorGO
 stillrequired. Main7e10andboxuntouched. C56only; Mrows/Boards/decisionsuntouched.
+
+2026-10-05 14:04 ET codex-2: restorationaudit25c31d39docs-only, ownsource
+checksconfirmRESTclientreturnsincrementalbarlistnotanchoredcoverage andDB
+latest250seedonce misseslatebackfill. Identifiedepoch/readiness/first/reclaim/
+cross/RPGadmission andconfirmationsnapshotpublicationhooks; callbacksunsafe
+forhistoryreplaybecauseconsumedslots/SELLdeliverycanchange. 12WIPtestsremain
+PASS, liveintegrationNOTwired/notPR. C57only; nootherrow/prod/ledgerchange.
