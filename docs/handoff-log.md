@@ -5192,3 +5192,12 @@ theoldpermanentblocker on proven-clear tickets; recovery correctly changes
 ownership. Raw/tmp/oct5-pm-rpg-characterization.txt. Pin remainsfrozen;
 askedreviewdisposition for separatetest-only integrationversusnewPMhead.
 No testdisabled/hidden and no globallygreencompositionclaim. C42only.
+
+2026-10-05 12:50 ET codex-2: #1093 follow-up pushed7f0729ef (onecommit,
+no rebase). Recordedstartup54PASS, focused1165PASS,32/32mutantsRED,
+fullmain5412/56 vshead5515/same56; noadded/removedfailedIDs.
+FinalPM5ee9+RPG7f0729 targeted composition76PASS/3old-characterizationFAIL,
+verified worktree source import, raw/tmp/oct5-final-rpg-pm-composition-verified.txt.
+BothValidate runs pending; nofreshpin. Census frozen12:13, freshpreinstall
+mustinclude newMI/SCKT ifstilldurable. NoPMchange, merge orproductionaction.
+C43only; noMrow, board oropen-decisionedit.
