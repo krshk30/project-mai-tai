@@ -1,5 +1,7 @@
 # RPGSTUCK1: canonical prices and proven-clear handoff endings
 
+Latest runtime follow-up: [R20 exhaustion-edge wake](REPORT_R20.md).
+
 Latest fixture-only follow-up: [connection-isolation proof](REPORT_FIXTURE_ISOLATION.md).
 
 Latest rebased review follow-up: [complete B1-B6 report](REPORT_B_REVIEW.md),
