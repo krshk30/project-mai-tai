@@ -1,5 +1,25 @@
 # October 5 ALL-ON candidate: PM entry, RPG recovery and owned-entry binding
 
+## 17:30 GO And 17:39 Read-Only STOP
+
+The operator's 17:30 ET GO names application7823a6fa and reviewer-approved
+plan690775af. It replaces the after20:00 timing: prepare now, then require
+the unchanged v2 gate at/after18:00, with no clock/armed override. Only the
+three PM keys are newly set true; hand-off remains true. The literal runner
+must be read by the reviewer BEFORE the first box write.
+
+At17:39:49 ET the independent all-date ticket/direct-parent census STOPPED
+with `unreadable evidence: ServerException` from Webull. All14 reviewed
+tickets matched; eight of11 linked broker parents were proven terminal;
+three remain unproven. This is UNKNOWN, not proof of live exposure. No retry,
+checkout/env/schema/service change or staging occurred. The STOP page was
+accepted as ntfy id`nCuuMym1iFSP`. The local `job/` artifacts below are a
+review draft, NOT an approved executable continuation. See
+`RUNNER_REVIEW_1730_GO.md` for literal files, evidence and open decisions.
+
+The earlier draft/GO statements below are historical; this STOP takes
+precedence. No migration, restart, rollback or recovery has run.
+
 **DRAFT, NOT EXECUTABLE OR SCHEDULED. No install, migration, restart or
 rollback GO is inferred from the operator's 15:00 flag/gate rulings.**
 This supersedes d390d080's OFF set and per-install MI/NXL exception request.
