@@ -8271,8 +8271,9 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         key = (acct, symbol)
         pending = self.__dict__.get("_oco_exit_fill_pending", {}).get(key)
         if pending is not None:
-            if pending.row_id != str(getattr(row, "id", "")):
-                self._oco_exit_fill_pending.pop(key, None)
+            if pending.row_id == str(getattr(row, "id", "")):
+                return False  # The exact episode's pending fill writer owns completion.
+            self._oco_exit_fill_pending.pop(key, None)
         self._v2_exit_close_failures[key] = self._v2_exit_close_failures.get(key, 0) + 1
         if self._v2_exit_close_failures[key] < self._V2_EXIT_RECONCILE_AFTER_FAILURES:
             return False
@@ -8293,6 +8294,12 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 entry_broker_order_id=str(getattr(entry_order, "broker_order_id", "") or ""),
                 entry_quantity=getattr(entry_order, "quantity", None),
             )
+            if detail is _EXIT_FETCH_FAILED:
+                if self._defer_for_exit_fetch(acct, symbol):
+                    return False
+                detail = None  # Positive flat ends the episode after bounded attribution retries.
+            else:
+                self._oco_exit_fetch_deferrals.pop(key, None)
             if not self._close_confirmed_flat_episode(
                 session, acct, symbol, expected_row_id=str(row.id),
                 entry=entry_order, detail=detail,

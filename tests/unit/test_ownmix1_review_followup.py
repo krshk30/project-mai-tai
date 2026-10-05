@@ -64,6 +64,12 @@ async def test_f1_confirmed_flat_closes_exact_episode_without_unproven_fill(
     if path == "reject":
         service._v2_exit_close_failures[(account, "MI")] = service._V2_EXIT_RECONCILE_AFTER_FAILURES - 1
         with sessions() as session:
+            if proof == "transient":
+                for _ in range(service._MAX_EXIT_FETCH_DEFERRALS):
+                    assert not await service._v2_close_reconcile_flat(
+                        session, account, "MI", session.get(OmsManagedPosition, row_id)
+                    )
+                    assert session.get(OmsManagedPosition, row_id).status == "open"
             assert await service._v2_close_reconcile_flat(session, account, "MI", session.get(OmsManagedPosition, row_id))
             session.commit()
     else:
@@ -82,6 +88,140 @@ async def test_f1_confirmed_flat_closes_exact_episode_without_unproven_fill(
     lines = [r.message for r in caplog.records if "ENTRY-OWNERSHIP-MISMATCH" in r.message]
     assert len(lines) == 1
     assert (account, "MI") not in service._managed_v2_symbols
+
+
+async def _f3_exit_setup(replay, monkeypatch, account):
+    service, sessions, _, _ = replay
+    coid = V2_COID if account == ACCT else WEB_COID
+    with sessions() as session:
+        row, entry = _row(service, session, account), _entry(session, coid)
+        entry.payload = {**entry.payload, "native_oco_bracket": "true"}
+        row_id, position = str(row.id), service._hydrate_v2_position(row)
+        detail = _detail(str(entry.broker_order_id), coid, str(row.current_quantity))
+        session.commit()
+    reads, submits, answers = [], [], []
+
+    async def child(acct, symbol, base, **kwargs):
+        reads.append((acct, symbol, base, kwargs["entry_broker_order_id"]))
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    async def submit(request):
+        submits.append(request)
+        return [ExecutionReport(
+            event_type="rejected", client_order_id=request.client_order_id,
+            symbol=request.symbol, side="sell", intent_type="close",
+            quantity=request.quantity, reason="CONTROLLED broker close rejection",
+            origin="broker",
+        )]
+
+    async def flat(*_args, **_kwargs):
+        return _PositionRead.FLAT_CONFIRMED
+
+    monkeypatch.setattr(service.broker_adapter, "fetch_oco_exit_fill", child)
+    monkeypatch.setattr(service.broker_adapter, "submit_order", submit, raising=False)
+    monkeypatch.setattr(service, "_broker_symbol_position_state", flat)
+    service._managed_v2_symbols.add((account, "MI"))
+    service._v2_exit_close_failures[(account, "MI")] = service._V2_EXIT_RECONCILE_AFTER_FAILURES - 1
+
+    async def exit_attempt():
+        return await service._emit_v2_exit_on_loop(
+            account, "MI", position, float(position.entry_price), kind="HARD",
+            reference_price=3.05, reason="oms_v2_managed_exit:HARD", bid=3.05,
+            close_on_fill=True, expected_managed_row_id=row_id,
+        )
+
+    return service, sessions, row_id, detail, answers, reads, submits, exit_attempt
+
+
+@pytest.mark.parametrize("account", [ACCT, WEBULL])
+@pytest.mark.asyncio
+async def test_f3_real_exit_flat_fetch_failure_then_owned_success_records_and_closes(
+    replay, monkeypatch, account
+):
+    service, sessions, row_id, detail, answers, reads, submits, attempt = await _f3_exit_setup(
+        replay, monkeypatch, account
+    )
+    answers.extend([RuntimeError("CONTROLLED HTTP 429"), detail])
+    assert await attempt() == "refused"
+    with sessions() as session:
+        assert session.get(OmsManagedPosition, UUID(row_id)).status == "open"
+        assert session.scalars(select(Fill)).all() == []
+        assert session.scalars(select(SystemIncident)).all() == []
+    assert service._oco_exit_fetch_deferrals[(account, "MI")] == 1
+    assert (account, "MI") in service._managed_v2_symbols
+    assert await attempt() == "closed"
+    with sessions() as session:
+        assert session.get(OmsManagedPosition, UUID(row_id)).status == "closed"
+        fill, = session.scalars(select(Fill)).all()
+        child = session.get(BrokerOrder, fill.order_id)
+        assert child.broker_order_id == detail["broker_order_id"]
+        assert fill.quantity == detail["quantity"] and fill.price == detail["price"]
+        assert child.strategy_id == _entry(session, reads[-1][2]).strategy_id
+        assert session.scalars(select(SystemIncident)).all() == []
+    assert len(submits) == len(reads) == 2
+    assert all(read == reads[0] for read in reads)
+    assert (account, "MI") not in service._oco_exit_fetch_deferrals
+
+
+@pytest.mark.parametrize("account", [ACCT, WEBULL])
+@pytest.mark.asyncio
+async def test_f3_real_exit_confirmed_flat_fetch_failures_close_only_after_bound(
+    replay, monkeypatch, caplog, account
+):
+    service, sessions, row_id, _, answers, reads, submits, attempt = await _f3_exit_setup(
+        replay, monkeypatch, account
+    )
+    answers.extend(RuntimeError("CONTROLLED HTTP 429") for _ in range(service._MAX_EXIT_FETCH_DEFERRALS + 1))
+    for count in range(1, service._MAX_EXIT_FETCH_DEFERRALS + 1):
+        assert await attempt() == "refused"
+        assert service._oco_exit_fetch_deferrals[(account, "MI")] == count
+        with sessions() as session:
+            assert session.get(OmsManagedPosition, UUID(row_id)).status == "open"
+            assert session.scalars(select(Fill)).all() == []
+            assert session.scalars(select(SystemIncident)).all() == []
+    assert await attempt() == "closed"
+    with sessions() as session:
+        assert session.get(OmsManagedPosition, UUID(row_id)).status == "closed"
+        assert session.scalars(select(Fill)).all() == []
+        incident, = session.scalars(select(SystemIncident)).all()
+        assert incident.payload["broker_flat"] and not incident.payload["attributed"]
+        assert incident.payload["managed_row_id"] == row_id
+        assert incident.payload["owned_entry_coid"] == reads[0][2]
+        assert incident.payload["candidate_entry_coid"] == ""
+    assert len([r for r in caplog.records if "ENTRY-OWNERSHIP-MISMATCH" in r.message]) == 1
+    assert len(submits) == len(reads) == service._MAX_EXIT_FETCH_DEFERRALS + 1
+    assert (account, "MI") not in service._oco_exit_fetch_deferrals
+
+
+@pytest.mark.parametrize("account", [ACCT, WEBULL])
+@pytest.mark.asyncio
+async def test_f3_real_exit_preserves_same_episode_pending_fill_writer(replay, monkeypatch, account):
+    service, sessions, row_id, detail, answers, reads, submits, attempt = await _f3_exit_setup(
+        replay, monkeypatch, account
+    )
+    answers.append(RuntimeError("CONTROLLED HTTP 429"))
+    assert not await service._close_resolved_oco_managed_row(account, "MI", expected_row_id=row_id)
+    pending = service._oco_exit_fill_pending[(account, "MI")]
+    assert pending.row_id == row_id
+    count = service._v2_exit_close_failures[(account, "MI")]
+    assert await attempt() == "refused"
+    assert service._oco_exit_fill_pending.get((account, "MI")) is pending
+    assert service._v2_exit_close_failures[(account, "MI")] == count
+    assert len(reads) == len(submits) == 1
+    with sessions() as session:
+        assert session.get(OmsManagedPosition, UUID(row_id)).status == "open"
+        assert session.scalars(select(Fill)).all() == []
+    assert await service._close_resolved_oco_managed_row(
+        account, "MI", detail=detail, expected_row_id=row_id
+    )
+    with sessions() as session:
+        assert session.get(OmsManagedPosition, UUID(row_id)).status == "closed"
+        fill, = session.scalars(select(Fill)).all()
+        assert session.get(BrokerOrder, fill.order_id).broker_order_id == detail["broker_order_id"]
+    assert (account, "MI") not in service._oco_exit_fill_pending
 
 
 @pytest.mark.asyncio

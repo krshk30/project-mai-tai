@@ -1,14 +1,14 @@
 {
   "base_commit": "7e10baf0319da796b84934fe38994f6db4fcfc0b",
   "branch": "codex/ownmix1-owned-entry-binding",
-  "scope": "rebase onto merged PM main7e10; Q2 hint-first exact-parent stand-down; F1/F2/U1-U4 retained",
+  "scope": "F3 bounded flat-fetch deferral and exact-episode pending-writer priority; H4 account/symbol isolation; no rebase atop55563",
   "independent_baseline_base_commit": "a80b51816abf0aefc269f0fdfc473468fd3fe62c",
   "baseline": {
-    "log": ".ownmix1-main7e10-unit.log",
-    "sha256": "e78bdda88adcf87abb3b662f32a015de01c6e87f8b2174e328ed45d913aed756",
+    "log": ".ownmix1-f3-main-unit.log",
+    "sha256": "e84722f33a78157e419aade80fd5a66f539098332bbc5477c0db1fee76e19c76",
     "failed": 56,
     "passed": 5500,
-    "seconds": 224.83,
+    "seconds": 243.8,
     "failed_ids": [
       "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]",
       "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal]",
@@ -66,14 +66,16 @@
       "tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_success_if_any_process_identity_moves",
       "tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves",
       "tests/unit/test_unattended_upgrade_policy.py::test_installer_and_notifier_fault_controls"
-    ]
+    ],
+    "junit_xml": ".ownmix1-f3-main-unit.xml",
+    "junit_sha256": "a3c4ba79fcb8e988765d77b5aec18f609e69e79eb223d3a7fb0853071b346d18"
   },
   "head": {
-    "log": ".ownmix1-q2-head-final-unit.log",
-    "sha256": "369345ed8a627310a0b094828ea6802f5cc6e43ee4e4318588fd321b2efc5fed",
+    "log": ".ownmix1-f3-head-final-unit.log",
+    "sha256": "e40f5c3eff8b1499cbdebdd500eb092e2d62ee3d570d9ca696fd61e11ed640bd",
     "failed": 56,
-    "passed": 5570,
-    "seconds": 197.79,
+    "passed": 5577,
+    "seconds": 200.91,
     "failed_ids": [
       "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]",
       "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal]",
@@ -131,7 +133,9 @@
       "tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_success_if_any_process_identity_moves",
       "tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves",
       "tests/unit/test_unattended_upgrade_policy.py::test_installer_and_notifier_fault_controls"
-    ]
+    ],
+    "junit_xml": ".ownmix1-f3-head-final-unit.xml",
+    "junit_sha256": "e695e51b07a6253c39555c8040fe9a68b286530089ac54fd5a54ab266d8781c2"
   },
   "independent_baseline": {
     "log": "/tmp/pmprint-main-unit.txt",
@@ -202,8 +206,8 @@
   "resolved_failed_ids": [],
   "independent_failed_ids_equal": true,
   "focused": {
-    "passed": 569,
-    "seconds": 34.09
+    "passed": 576,
+    "seconds": 35.84
   },
   "mutations": [
     "order_id: KILLED",
@@ -246,6 +250,8 @@
     "FAILED tests/unit/test_ownmix1_review_followup.py::test_f1_confirmed_flat_closes_exact_episode_without_unproven_fill[transient-reject-live:orb]",
     "FAILED tests/unit/test_ownmix1_review_followup.py::test_f1_confirmed_flat_closes_exact_episode_without_unproven_fill[transient-no_bid-live:schwab_1m_v2]",
     "FAILED tests/unit/test_ownmix1_review_followup.py::test_f1_confirmed_flat_closes_exact_episode_without_unproven_fill[transient-no_bid-live:orb]",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f3_real_exit_confirmed_flat_fetch_failures_close_only_after_bound[live:schwab_1m_v2]",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f3_real_exit_confirmed_flat_fetch_failures_close_only_after_bound[live:orb]",
     "FAILED tests/unit/test_ownmix1_review_followup.py::test_f1_prior_unrecorded_page_is_updated_not_duplicated_on_positive_flat",
     "f2_poll_entry_id: KILLED",
     "FAILED tests/unit/test_ownmix1_review_followup.py::test_f2_recorded_fill_through_real_path_binds_and_exit_poll_owns_child[poll-live:schwab_1m_v2]",
@@ -257,10 +263,21 @@
     "FAILED tests/unit/test_ownmix1_review_followup.py::test_u1_foreign_memory_handle_never_authorizes_bound_entry",
     "u2_webull_standdown: KILLED",
     "FAILED tests/unit/test_ownmix1_review_followup.py::test_u2_webull_parent_is_never_queried_for_native_standdown",
+    "FAILED tests/unit/test_ownmix1_oco_hint.py::test_h4_two_account_hints_and_standdown_are_symbol_isolated",
     "u3_one_working_leg: KILLED",
     "FAILED tests/unit/test_ownmix1_review_followup.py::test_u3_one_owned_working_leg_cannot_stand_down",
     "u4_absent_row_uuid: KILLED",
     "FAILED tests/unit/test_ownmix1_review_followup.py::test_u4_absent_bound_row_uuid_refuses_before_child_read",
-    "ownership_mutations_killed=15/15"
+    "f3_fetch_deferral_priority: KILLED",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f1_confirmed_flat_closes_exact_episode_without_unproven_fill[transient-reject-live:schwab_1m_v2]",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f1_confirmed_flat_closes_exact_episode_without_unproven_fill[transient-reject-live:orb]",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f3_real_exit_flat_fetch_failure_then_owned_success_records_and_closes[live:schwab_1m_v2]",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f3_real_exit_flat_fetch_failure_then_owned_success_records_and_closes[live:orb]",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f3_real_exit_confirmed_flat_fetch_failures_close_only_after_bound[live:schwab_1m_v2]",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f3_real_exit_confirmed_flat_fetch_failures_close_only_after_bound[live:orb]",
+    "f3_pending_writer_priority: KILLED",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f3_real_exit_preserves_same_episode_pending_fill_writer[live:schwab_1m_v2]",
+    "FAILED tests/unit/test_ownmix1_review_followup.py::test_f3_real_exit_preserves_same_episode_pending_fill_writer[live:orb]",
+    "ownership_mutations_killed=17/17"
   ]
 }
