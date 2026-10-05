@@ -1,0 +1,727 @@
+{
+  "read_at": "2026-10-05T16:13:55.182715+00:00",
+  "orders": [
+    {
+      "request": "GET /trader/v1/accounts/REDACTED/orders/1008165370341",
+      "http_status": 200,
+      "response_bytes": 3507,
+      "body": {
+        "session": "NORMAL",
+        "duration": "DAY",
+        "orderType": "STOP_LIMIT",
+        "complexOrderStrategyType": "NONE",
+        "quantity": 112.0,
+        "filledQuantity": 0.0,
+        "remainingQuantity": 0.0,
+        "requestedDestination": "AUTO",
+        "destinationLinkName": "HRTF",
+        "stopPrice": 5.35,
+        "stopType": "STANDARD",
+        "price": 5.37,
+        "orderLegCollection": [
+          {
+            "orderLegType": "EQUITY",
+            "legId": 1,
+            "instrument": {
+              "assetType": "EQUITY",
+              "cusip": "03771D201",
+              "symbol": "APUS",
+              "uniformSymbol": "APUS",
+              "instrumentId": 255872256
+            },
+            "instruction": "BUY",
+            "positionEffect": "OPENING",
+            "quantity": 112.0
+          }
+        ],
+        "orderStrategyType": "TRIGGER",
+        "orderId": 1008165370341,
+        "cancelable": false,
+        "editable": false,
+        "status": "CANCELED",
+        "enteredTime": "2026-10-05T13:30:05+0000",
+        "closeTime": "2026-10-05T13:32:03+0000",
+        "tag": "TA_krshk30gmailcom1773690950",
+        "accountNumber": "REDACTED",
+        "orderActivityCollection": [
+          {
+            "activityType": "EXECUTION",
+            "activityId": 132505406628,
+            "executionType": "CANCELED",
+            "quantity": 112.0,
+            "orderRemainingQuantity": 0.0,
+            "executionLegs": [
+              {
+                "legId": 1,
+                "quantity": 112.0,
+                "mismarkedQuantity": 0.0,
+                "price": 0.0,
+                "time": "2026-10-05T13:32:03+0000",
+                "instrumentId": 255872256
+              }
+            ]
+          }
+        ],
+        "childOrderStrategies": [
+          {
+            "orderStrategyType": "OCO",
+            "orderId": 1008165370342,
+            "cancelable": false,
+            "editable": false,
+            "status": "CANCELED",
+            "enteredTime": "2026-10-05T13:30:05+0000",
+            "closeTime": "2026-10-05T13:32:03+0000",
+            "tag": "TA_krshk30gmailcom1773690950",
+            "accountNumber": "REDACTED",
+            "childOrderStrategies": [
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "STOP",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 112.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "AutoRoute",
+                "stopPrice": 4.92,
+                "stopType": "STANDARD",
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "03771D201",
+                      "symbol": "APUS",
+                      "uniformSymbol": "APUS",
+                      "instrumentId": 255872256
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 112.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008165370344,
+                "cancelable": false,
+                "editable": false,
+                "status": "CANCELED",
+                "firmActionType": "CANCELED_BY_FIRM",
+                "enteredTime": "2026-10-05T13:30:05+0000",
+                "closeTime": "2026-10-05T13:32:03+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132505406618,
+                    "executionType": "CANCELED",
+                    "quantity": 112.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 112.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 0.0,
+                        "time": "2026-10-05T13:32:03+0000",
+                        "instrumentId": 255872256
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "LIMIT",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 112.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "AutoRoute",
+                "price": 5.61,
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "03771D201",
+                      "symbol": "APUS",
+                      "uniformSymbol": "APUS",
+                      "instrumentId": 255872256
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 112.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008165370343,
+                "cancelable": false,
+                "editable": false,
+                "status": "CANCELED",
+                "firmActionType": "CANCELED_BY_FIRM",
+                "enteredTime": "2026-10-05T13:30:05+0000",
+                "closeTime": "2026-10-05T13:32:03+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132505406620,
+                    "executionType": "CANCELED",
+                    "quantity": 112.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 112.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 0.0,
+                        "time": "2026-10-05T13:32:03+0000",
+                        "instrumentId": 255872256
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request": "GET /trader/v1/accounts/REDACTED/orders/1008165371009",
+      "http_status": 200,
+      "response_bytes": 3507,
+      "body": {
+        "session": "NORMAL",
+        "duration": "DAY",
+        "orderType": "STOP_LIMIT",
+        "complexOrderStrategyType": "NONE",
+        "quantity": 107.0,
+        "filledQuantity": 0.0,
+        "remainingQuantity": 0.0,
+        "requestedDestination": "AUTO",
+        "destinationLinkName": "NITE",
+        "stopPrice": 5.59,
+        "stopType": "STANDARD",
+        "price": 5.62,
+        "orderLegCollection": [
+          {
+            "orderLegType": "EQUITY",
+            "legId": 1,
+            "instrument": {
+              "assetType": "EQUITY",
+              "cusip": "693489205",
+              "symbol": "VEEA",
+              "uniformSymbol": "VEEA",
+              "instrumentId": 257729543
+            },
+            "instruction": "BUY",
+            "positionEffect": "OPENING",
+            "quantity": 107.0
+          }
+        ],
+        "orderStrategyType": "TRIGGER",
+        "orderId": 1008165371009,
+        "cancelable": false,
+        "editable": false,
+        "status": "CANCELED",
+        "enteredTime": "2026-10-05T13:34:03+0000",
+        "closeTime": "2026-10-05T13:36:03+0000",
+        "tag": "TA_krshk30gmailcom1773690950",
+        "accountNumber": "REDACTED",
+        "orderActivityCollection": [
+          {
+            "activityType": "EXECUTION",
+            "activityId": 132507281088,
+            "executionType": "CANCELED",
+            "quantity": 107.0,
+            "orderRemainingQuantity": 0.0,
+            "executionLegs": [
+              {
+                "legId": 1,
+                "quantity": 107.0,
+                "mismarkedQuantity": 0.0,
+                "price": 0.0,
+                "time": "2026-10-05T13:36:03+0000",
+                "instrumentId": 257729543
+              }
+            ]
+          }
+        ],
+        "childOrderStrategies": [
+          {
+            "orderStrategyType": "OCO",
+            "orderId": 1008165371010,
+            "cancelable": false,
+            "editable": false,
+            "status": "CANCELED",
+            "enteredTime": "2026-10-05T13:34:03+0000",
+            "closeTime": "2026-10-05T13:36:03+0000",
+            "tag": "TA_krshk30gmailcom1773690950",
+            "accountNumber": "REDACTED",
+            "childOrderStrategies": [
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "STOP",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 107.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "AutoRoute",
+                "stopPrice": 5.14,
+                "stopType": "STANDARD",
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "693489205",
+                      "symbol": "VEEA",
+                      "uniformSymbol": "VEEA",
+                      "instrumentId": 257729543
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 107.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008165371012,
+                "cancelable": false,
+                "editable": false,
+                "status": "CANCELED",
+                "firmActionType": "CANCELED_BY_FIRM",
+                "enteredTime": "2026-10-05T13:34:03+0000",
+                "closeTime": "2026-10-05T13:36:03+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132507281082,
+                    "executionType": "CANCELED",
+                    "quantity": 107.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 107.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 0.0,
+                        "time": "2026-10-05T13:36:03+0000",
+                        "instrumentId": 257729543
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "LIMIT",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 107.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "AutoRoute",
+                "price": 5.87,
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "693489205",
+                      "symbol": "VEEA",
+                      "uniformSymbol": "VEEA",
+                      "instrumentId": 257729543
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 107.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008165371011,
+                "cancelable": false,
+                "editable": false,
+                "status": "CANCELED",
+                "firmActionType": "CANCELED_BY_FIRM",
+                "enteredTime": "2026-10-05T13:34:03+0000",
+                "closeTime": "2026-10-05T13:36:03+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132507281084,
+                    "executionType": "CANCELED",
+                    "quantity": 107.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 107.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 0.0,
+                        "time": "2026-10-05T13:36:03+0000",
+                        "instrumentId": 257729543
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request": "GET /trader/v1/accounts/REDACTED/orders/1008168139729",
+      "http_status": 200,
+      "response_bytes": 3506,
+      "body": {
+        "session": "NORMAL",
+        "duration": "DAY",
+        "orderType": "STOP_LIMIT",
+        "complexOrderStrategyType": "NONE",
+        "quantity": 112.0,
+        "filledQuantity": 0.0,
+        "remainingQuantity": 0.0,
+        "requestedDestination": "AUTO",
+        "destinationLinkName": "GTSM",
+        "stopPrice": 5.32,
+        "stopType": "STANDARD",
+        "price": 5.35,
+        "orderLegCollection": [
+          {
+            "orderLegType": "EQUITY",
+            "legId": 1,
+            "instrument": {
+              "assetType": "EQUITY",
+              "cusip": "03771D201",
+              "symbol": "APUS",
+              "uniformSymbol": "APUS",
+              "instrumentId": 255872256
+            },
+            "instruction": "BUY",
+            "positionEffect": "OPENING",
+            "quantity": 112.0
+          }
+        ],
+        "orderStrategyType": "TRIGGER",
+        "orderId": 1008168139729,
+        "cancelable": false,
+        "editable": false,
+        "status": "CANCELED",
+        "enteredTime": "2026-10-05T14:25:03+0000",
+        "closeTime": "2026-10-05T14:27:03+0000",
+        "tag": "TA_krshk30gmailcom1773690950",
+        "accountNumber": "REDACTED",
+        "orderActivityCollection": [
+          {
+            "activityType": "EXECUTION",
+            "activityId": 132529118670,
+            "executionType": "CANCELED",
+            "quantity": 112.0,
+            "orderRemainingQuantity": 0.0,
+            "executionLegs": [
+              {
+                "legId": 1,
+                "quantity": 112.0,
+                "mismarkedQuantity": 0.0,
+                "price": 0.0,
+                "time": "2026-10-05T14:27:03+0000",
+                "instrumentId": 255872256
+              }
+            ]
+          }
+        ],
+        "childOrderStrategies": [
+          {
+            "orderStrategyType": "OCO",
+            "orderId": 1008168139730,
+            "cancelable": false,
+            "editable": false,
+            "status": "CANCELED",
+            "enteredTime": "2026-10-05T14:25:03+0000",
+            "closeTime": "2026-10-05T14:27:02+0000",
+            "tag": "TA_krshk30gmailcom1773690950",
+            "accountNumber": "REDACTED",
+            "childOrderStrategies": [
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "LIMIT",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 112.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "AutoRoute",
+                "price": 5.59,
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "03771D201",
+                      "symbol": "APUS",
+                      "uniformSymbol": "APUS",
+                      "instrumentId": 255872256
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 112.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008168139731,
+                "cancelable": false,
+                "editable": false,
+                "status": "CANCELED",
+                "firmActionType": "CANCELED_BY_FIRM",
+                "enteredTime": "2026-10-05T14:25:03+0000",
+                "closeTime": "2026-10-05T14:27:02+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132529118664,
+                    "executionType": "CANCELED",
+                    "quantity": 112.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 112.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 0.0,
+                        "time": "2026-10-05T14:27:02+0000",
+                        "instrumentId": 255872256
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "STOP",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 112.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "AutoRoute",
+                "stopPrice": 4.9,
+                "stopType": "STANDARD",
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "03771D201",
+                      "symbol": "APUS",
+                      "uniformSymbol": "APUS",
+                      "instrumentId": 255872256
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 112.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008168139732,
+                "cancelable": false,
+                "editable": false,
+                "status": "CANCELED",
+                "firmActionType": "CANCELED_BY_FIRM",
+                "enteredTime": "2026-10-05T14:25:03+0000",
+                "closeTime": "2026-10-05T14:27:02+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132529118666,
+                    "executionType": "CANCELED",
+                    "quantity": 112.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 112.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 0.0,
+                        "time": "2026-10-05T14:27:02+0000",
+                        "instrumentId": 255872256
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request": "GET /trader/v1/accounts/REDACTED/orders/1008171127230",
+      "http_status": 200,
+      "response_bytes": 3266,
+      "body": {
+        "session": "NORMAL",
+        "duration": "DAY",
+        "orderType": "STOP_LIMIT",
+        "complexOrderStrategyType": "NONE",
+        "quantity": 252.0,
+        "filledQuantity": 0.0,
+        "remainingQuantity": 0.0,
+        "requestedDestination": "AUTO",
+        "destinationLinkName": "AutoRoute",
+        "stopPrice": 2.36,
+        "stopType": "STANDARD",
+        "price": 2.38,
+        "orderLegCollection": [
+          {
+            "orderLegType": "EQUITY",
+            "legId": 1,
+            "instrument": {
+              "assetType": "EQUITY",
+              "cusip": "G75271158",
+              "symbol": "RETO",
+              "uniformSymbol": "RETO",
+              "instrumentId": 259742259
+            },
+            "instruction": "BUY",
+            "positionEffect": "OPENING",
+            "quantity": 252.0
+          }
+        ],
+        "orderStrategyType": "TRIGGER",
+        "orderId": 1008171127230,
+        "cancelable": false,
+        "editable": false,
+        "status": "REJECTED",
+        "firmActionType": "CANCELED_BY_FIRM",
+        "enteredTime": "2026-10-05T15:21:03+0000",
+        "closeTime": "2026-10-05T15:21:03+0000",
+        "tag": "TA_krshk30gmailcom1773690950",
+        "accountNumber": "REDACTED",
+        "childOrderStrategies": [
+          {
+            "orderStrategyType": "OCO",
+            "orderId": 1008171127231,
+            "cancelable": false,
+            "editable": false,
+            "status": "REJECTED",
+            "enteredTime": "2026-10-05T15:21:03+0000",
+            "closeTime": "2026-10-05T15:21:03+0000",
+            "tag": "TA_krshk30gmailcom1773690950",
+            "accountNumber": "REDACTED",
+            "childOrderStrategies": [
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "LIMIT",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 252.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "AutoRoute",
+                "price": 2.48,
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "G75271158",
+                      "symbol": "RETO",
+                      "uniformSymbol": "RETO",
+                      "instrumentId": 259742259
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 252.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008171127232,
+                "cancelable": false,
+                "editable": false,
+                "status": "REJECTED",
+                "firmActionType": "CANCELED_BY_FIRM",
+                "enteredTime": "2026-10-05T15:21:03+0000",
+                "closeTime": "2026-10-05T15:21:03+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "statusDescription": "Opening transactions for this security must be placed with a broker. Contact us at 1-800-435-4000; Order Rejected due to Order: 1008171127230"
+              },
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "STOP",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 252.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "AutoRoute",
+                "stopPrice": 2.17,
+                "stopType": "STANDARD",
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "G75271158",
+                      "symbol": "RETO",
+                      "uniformSymbol": "RETO",
+                      "instrumentId": 259742259
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 252.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008171127233,
+                "cancelable": false,
+                "editable": false,
+                "status": "REJECTED",
+                "firmActionType": "CANCELED_BY_FIRM",
+                "enteredTime": "2026-10-05T15:21:03+0000",
+                "closeTime": "2026-10-05T15:21:03+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "statusDescription": "Opening transactions for this security must be placed with a broker. Contact us at 1-800-435-4000; Order Rejected due to Order: 1008171127230"
+              }
+            ],
+            "statusDescription": "Opening transactions for this security must be placed with a broker. Contact us at 1-800-435-4000; Order Rejected due to Order: 1008171127230"
+          }
+        ],
+        "statusDescription": "Opening transactions for this security must be placed with a broker. Contact us at 1-800-435-4000"
+      }
+    }
+  ],
+  "source_path": "/Users/velkris/.codex/ownmix-rpgstuck-evidence-20261005/tonight-schwab-ticket-orders-own-read.json",
+  "source_sha256": "8e067d93d0a569aa4151dba1109806ef64ea25a9924bdbc782c374f408059234"
+}
