@@ -46,6 +46,8 @@
 
 | C11 | PMPRINT1 replay gate and session assessment | Assessment complete, BUILD STOPPED; non-blind replication accepted; same-moment 14/14 preservation NOT established | 08:54 ET 10-05: assessment branch d3182ec780d42000272be8e8b3df0e99b2cb790d; 16 OMS-priced attempts, 25 upward/20 downward outliers across 279,734 Schwab ticks; routed/event-time price proxies 12/14 real eligible (YMAT/IMCC ask past cap), 5/5 trigger-reaching outliers blocked; CLRO raw second-print ask 5.55 vs test 5.57; existing stream file 43 PASS; own read scripts/raw evidence in /Users/velkris/.codex/pmprint1-evidence-20261005 | codex-2 | Review preserved-cross/card conflict and missing decision-cache timing before build; C8 operational silence confirmed but literal rest-down state disputed; A1 broker-trigger attribution and after-hours A3 UNMEASURED; no runtime PR/install |
 
+| C12 | PMREST1 #1091 review follow-up | S1 conversion streak pinned; S2 redundant helper guard removed; local tests green, full comparison running, NOT pushed/merged/installed | 08:59 ET 10-05: tests/unit/test_pmrest1.py now 40 PASS; same eight-file review harness 224 PASS; /tmp/pmrest1-review-mutations.txt = S1 deletion 4 failures, caller-cutoff deletion 5 failures, eight prior mutations RED; only two-line guard removal plus tests, base e1ce3b39 unchanged | codex-2 | Finish full-suite failed-name comparison and send new exact head; unchanged 09:30 software-rest boundary remains assessment-only; no production action |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
