@@ -54,7 +54,10 @@ def _svc(state: _PositionRead):
 
 
 class _Row:
+    id = "retry-bound-episode"
     entry_time = None
+    entry_order_id = entry_client_order_id = None
+    broker_account_name, symbol, strategy_code = ACCT, SYM, "schwab_1m_v2"
 
 
 # ⛔ Hard cap so a BAD BOUND fails fast instead of HANGING. Mutating
@@ -129,11 +132,15 @@ def test_a_confirmed_flat_still_closes_the_row() -> None:
     svc._persist_oco_exit_fill = lambda *a, **k: False
 
     class _Store:
+        def get_open_managed_position(self, *a, **k):
+            return _Row()
+
         def close_managed_position(self, *a, **k):
             pass
     svc.store = _Store()
     _reject(svc, OmsRiskService._V2_EXIT_RECONCILE_AFTER_FAILURES - 1)
-    assert asyncio.run(svc._v2_close_reconcile_flat(None, ACCT, SYM, _Row())) is True
+    session = SimpleNamespace(scalars=lambda *a: SimpleNamespace(all=lambda: []), add=lambda *a: None)
+    assert asyncio.run(svc._v2_close_reconcile_flat(session, ACCT, SYM, _Row())) is True
 
 
 async def _noop():

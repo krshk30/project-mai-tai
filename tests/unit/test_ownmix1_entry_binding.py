@@ -44,8 +44,9 @@ def replay(monkeypatch):
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     service = OmsRiskService(
-        settings=Settings(oms_adapter="simulated", oms_v2_exit_management_enabled=True,
+        settings=Settings(_env_file=None, oms_adapter="simulated", oms_v2_exit_management_enabled=True,
                           strategy_schwab_1m_v2_account_name=ACCT,
+                          strategy_schwab_1m_v2_webull_account_name="live:orb",
                           oms_native_oco_exit_poll_enabled=True,
                           oms_native_oco_exit_poll_min_secs=0,
                           oms_record_native_oco_exit_fills_enabled=True,

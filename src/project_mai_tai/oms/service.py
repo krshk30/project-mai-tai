@@ -3384,6 +3384,9 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 # not the filled entry coid. Without it the pair can be placed but never released,
                 # and its eventual child fill can never be attributed after a restart.
                 self._webull_protect_base[(broker_account_name, symbol.upper())] = coid
+                await self._bind_webull_protect_memory(
+                    broker_account_name, symbol, coid, entry_client_order_id
+                )
                 self.__dict__.setdefault("_webull_protect_failed", set()).discard(
                     (broker_account_name, symbol.upper())
                 )
@@ -3525,6 +3528,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         except Exception:  # noqa: BLE001 - never release an unbound pair
             return ExitPairReleaseResult(outcome="unanswerable")
         if not base:
+            if self.__dict__.get("_webull_protect_base", {}).get(key):
+                return ExitPairReleaseResult(outcome="unanswerable")
             return ExitPairReleaseResult(outcome="unsupported")
         now = time.monotonic()
         last_try = self.__dict__.setdefault("_exit_reservation_last_try", {}).get(key)
@@ -3839,6 +3844,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         )
         OmsRiskService._clear_exit_reservation_retry_state(self, key)
         self._webull_protect_base.pop(key, None)
+        self.__dict__.get("_webull_protect_entry_binding", {}).pop(key, None)
         intervals = self.__dict__.setdefault("_confirmation_unprotected_since", {})
         started_at = intervals.pop(key, None)
         if started_at is not None:
@@ -5405,6 +5411,12 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             return "refused"
         base = str(base or "")
         if not base:
+            if self.__dict__.get("_webull_protect_base", {}).get((acct, symbol.upper())):
+                self.logger.warning(
+                    "[OMS-WEBULL-PAIR-HANDLE-UNBOUND] sym=%s acct=%s row=%s "
+                    "pair_known=1 sell_allowed=0", symbol, acct, expected_row_id,
+                )
+                return "refused"
             self.logger.info(
                 "[OMS-V2-CONFIRMATION-EXIT-WEBULL-NO-PAIR] sym=%s acct=%s "
                 "status=BARE_POSITION_PROCEEDING",
@@ -7326,6 +7338,9 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         if entry is None:
             self._log_entry_ownership_mismatch(row, candidate_coid=entry_coid,
                                                reason="bound_entry_identity_mismatch")
+        else:
+            # Transient episode proof for a handle captured before its DB write completes.
+            entry._ownmix_managed_row_id = str(row.id)
         return entry
 
     def _log_entry_ownership_mismatch(
@@ -7341,7 +7356,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         self.logger.warning(
             "[OMS-ENTRY-OWNERSHIP-MISMATCH] acct=%s sym=%s row=%s strategy=%s "
             "owned_entry_id=%s owned_entry_coid=%s candidate_entry_coid=%s "
-            "candidate_entry_oid=%s reason=%s row_stays_open=1",
+            "candidate_entry_oid=%s reason=%s attributed=0",
             row.broker_account_name, row.symbol, row.id, row.strategy_code,
             getattr(row, "entry_order_id", None) or "-",
             getattr(row, "entry_client_order_id", None) or "-",
@@ -7357,8 +7372,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         *separate* exit-only pair, so using the entry coid polls two orders that never existed. That
         was DAIC 2026-08-25: the real pair used ``...-protect-9fea4541aa97`` while every poll asked
         for ``...-open-a2f8fc2f3f24T/S`` and therefore could never name the child that flattened it.
-        The attach handle must be persisted into the bound filled entry order payload;
-        an account/symbol memory handle cannot establish entry ownership.
+        A memory handle is usable only with the exact entry UUID/coid binding captured
+        from the managed episode. An account/symbol handle alone proves nothing.
         """
         if entry_order is None:
             return ""
@@ -7369,10 +7384,52 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         )
         if not is_bare_webull:
             return str(getattr(entry_order, "client_order_id", "") or "")
+        key = (broker_account_name, symbol.upper())
+        memory = self.__dict__.get("_webull_protect_entry_binding", {}).get(key)
+        if memory is not None:
+            row_id, entry_id, entry_coid, base = memory
+            if (entry_id == str(entry_order.id)
+                    and entry_coid == str(entry_order.client_order_id or "")
+                    and row_id == getattr(entry_order, "_ownmix_managed_row_id", "")):
+                return base
+            # A newer attach on another episode must not fall back to an older pair.
+            return ""
         persisted = str(payload.get("webull_protect_base_client_order_id", "") or "")
+        unbound_memory = self.__dict__.get("_webull_protect_base", {}).get(key)
+        if unbound_memory and unbound_memory != persisted:
+            return ""
         if persisted:
             return persisted
         return ""
+
+    async def _bind_webull_protect_memory(self, acct, symbol, base, entry_coid) -> None:
+        if not entry_coid:
+            return
+
+        def _read(session):
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            entry = self._find_oco_entry_order(
+                session, acct, symbol, client_order_id=entry_coid, row=row
+            )
+            if row is None or entry is None:
+                return None
+            return str(row.id), str(entry.id), str(entry.client_order_id), base
+
+        try:
+            binding = await self._run_db(_read, commit=False)
+            if binding is not None:
+                self.__dict__.setdefault("_webull_protect_entry_binding", {})[
+                    (acct, symbol.upper())
+                ] = binding
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.warning(
+                "[OMS-WEBULL-PAIR-HANDLE-UNBOUND] sym=%s acct=%s base=%s "
+                "pair_known=1 sell_allowed=0", symbol, acct, base,
+            )
 
     async def _persist_webull_protect_base(
         self, broker_account_name: str, symbol: str, base_client_order_id: str, *,
@@ -7394,7 +7451,13 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             payload = dict(entry.payload or {})
             payload["webull_protect_base_client_order_id"] = base_client_order_id
             # A pair IS resting again: the only thing that may clear a durable released/failed mark.
-            payload[self._WEBULL_PROTECT_STATE_KEY] = "resting"
+            released_episode = self.__dict__.get("_confirmation_webull_released_episode", {}).get(
+                (broker_account_name, symbol.upper())
+            )
+            payload[self._WEBULL_PROTECT_STATE_KEY] = (
+                "released" if released_episode == (str(getattr(entry, "_ownmix_managed_row_id", "")), base_client_order_id)
+                else "resting"
+            )
             payload[f"{self._WEBULL_PROTECT_STATE_KEY}_at"] = utcnow().isoformat()
             entry.payload = payload
             session.flush()
@@ -8208,11 +8271,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         key = (acct, symbol)
         pending = self.__dict__.get("_oco_exit_fill_pending", {}).get(key)
         if pending is not None:
-            if pending.row_id == str(getattr(row, "id", "")):
-                # A broker child already resolved this episode. Its fill writer owns the close;
-                # the reject-driven flat backstop must not discard it after a string of 429s.
-                return False
-            self._oco_exit_fill_pending.pop(key, None)
+            if pending.row_id != str(getattr(row, "id", "")):
+                self._oco_exit_fill_pending.pop(key, None)
         self._v2_exit_close_failures[key] = self._v2_exit_close_failures.get(key, 0) + 1
         if self._v2_exit_close_failures[key] < self._V2_EXIT_RECONCILE_AFTER_FAILURES:
             return False
@@ -8225,8 +8285,6 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             # pair. This path is broker-agnostic (it fires for Schwab and Webull alike), which is
             # why it is the primary hook: Webull has no armed-OCO tracking to drive the fast path.
             entry_order = self._find_oco_entry_order(session, acct, symbol, row=row)
-            if entry_order is None:
-                return False
             base_coid = self._oco_exit_base_for_entry(
                 entry_order, broker_account_name=acct, symbol=symbol
             )
@@ -8235,18 +8293,11 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 entry_broker_order_id=str(getattr(entry_order, "broker_order_id", "") or ""),
                 entry_quantity=getattr(entry_order, "quantity", None),
             )
-            if detail is _EXIT_FETCH_FAILED:
-                # Transient — hold the row so the next cycle can retry rather than book unpaired.
-                if self._defer_for_exit_fetch(acct, symbol):
-                    return False
-                detail = None
-            else:
-                self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
-            if detail:
-                if not self._owned_exit_detail_matches(row, entry_order, detail):
-                    return False
-                self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
-            self.store.close_managed_position(session, row)
+            if not self._close_confirmed_flat_episode(
+                session, acct, symbol, expected_row_id=str(row.id),
+                entry=entry_order, detail=detail,
+            ):
+                return False
             self._managed_v2_symbols.discard(key)
             self._clear_cw_flip_pending(key)
             self._cw_floor_armed.discard(key)
@@ -8851,10 +8902,124 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
     async def _close_broker_flat_phantom_managed_row(
         self, acct: str, symbol: str, *, expected_row_id: str
     ) -> bool:
-        """A flat positions read cannot substitute for this episode's child execution."""
-        return await self._close_resolved_oco_managed_row(
-            acct, symbol, expected_row_id=expected_row_id
+        """Caller has confirmed flat; child ownership gates attribution, not lifecycle."""
+        def _read(session):
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != expected_row_id:
+                return None
+            entry = self._find_oco_entry_order(session, acct, symbol, row=row)
+            return (
+                self._oco_exit_base_for_entry(entry, broker_account_name=acct, symbol=symbol),
+                str(getattr(entry, "broker_order_id", "") or ""),
+                getattr(entry, "quantity", None),
+            )
+
+        binding = await self._run_db(_read, commit=False)
+        if binding is None:
+            return False
+        detail = await self._fetch_oco_exit_detail(
+            acct, symbol, binding[0], entry_broker_order_id=binding[1],
+            entry_quantity=binding[2],
         )
+
+        def _close(session):
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or str(row.id) != expected_row_id:
+                return False
+            entry = self._find_oco_entry_order(session, acct, symbol, row=row)
+            return self._close_confirmed_flat_episode(
+                session, acct, symbol, expected_row_id=expected_row_id, entry=entry, detail=detail
+            )
+
+        closed = await self._run_db(_close, commit=True)
+        if closed:
+            self._managed_v2_symbols.discard((acct, symbol))
+            self._clear_cw_flip_pending((acct, symbol))
+            self._cw_floor_armed.discard((acct, symbol))
+            self._v2_exit_end_episode((acct, symbol))
+            self._clear_exit_reservation_release(acct, symbol)
+            self._a2_clear(acct, symbol)
+        return closed
+
+    def _close_confirmed_flat_episode(
+        self, session, acct, symbol, *, expected_row_id, entry, detail
+    ) -> bool:
+        row = self.store.get_open_managed_position(
+            session, broker_account_name=acct, symbol=symbol
+        )
+        if row is None or str(row.id) != expected_row_id:
+            return False
+        attributed = False
+        if self._owned_exit_detail_matches(row, entry, detail):
+            try:
+                # Bookkeeping failure must not poison the lifecycle transaction.
+                with session.begin_nested():
+                    attributed = self._persist_oco_exit_fill(session, acct, symbol, entry, detail)
+                    if not attributed:
+                        child = str(detail.get("broker_order_id") or "")
+                        attributed = session.scalar(
+                            select(Fill.id).join(BrokerOrder, BrokerOrder.id == Fill.order_id).where(
+                                BrokerOrder.client_order_id == oco_exit_client_order_id(
+                                    entry.client_order_id, child
+                                ),
+                                BrokerOrder.broker_order_id == child,
+                                Fill.broker_account_id == entry.broker_account_id,
+                                Fill.side == "sell", Fill.symbol == symbol.upper(),
+                                Fill.quantity == Decimal(str(detail["quantity"])),
+                                Fill.price == Decimal(str(detail["price"])),
+                            )
+                        ) is not None
+            except Exception:
+                self.logger.exception("[OMS-OCO-EXIT-FILL] attribution failed on confirmed-flat row")
+        if not attributed:
+            candidate = detail if isinstance(detail, dict) else {}
+            reason = "child_read_failed" if detail is _EXIT_FETCH_FAILED else "flat_exit_unproven"
+            self._log_entry_ownership_mismatch(
+                row, candidate_coid=str(candidate.get("exit_base_client_order_id") or ""),
+                candidate_oid=str(candidate.get("entry_broker_order_id") or ""), reason=reason,
+            )
+            incidents = session.scalars(select(SystemIncident).where(
+                SystemIncident.service_name == SERVICE_NAME
+            )).all()
+            incident = next((i for i in incidents if
+                isinstance(i.payload, dict)
+                and i.payload.get("source") == "oco_exit_fill_unrecorded"
+                and i.payload.get("managed_row_id") == expected_row_id
+            ), None)
+            page_payload = {
+                "source": "oco_exit_fill_unrecorded", "broker_account_name": acct,
+                "symbol": symbol, "managed_row_id": expected_row_id, "reason": reason,
+                "owned_entry_id": str(row.entry_order_id or ""),
+                "owned_entry_coid": str(row.entry_client_order_id or ""),
+                "candidate_entry_oid": str(candidate.get("entry_broker_order_id") or ""),
+                "candidate_entry_coid": str(candidate.get("exit_base_client_order_id") or ""),
+                "broker_flat": True, "attributed": False,
+            }
+            if incident is None:
+                incident = SystemIncident(
+                    service_name=SERVICE_NAME, severity="critical", status="open",
+                    title=f"OCO EXIT FILL UNRECORDED: {symbol} on {acct}; broker flat"[:255],
+                    opened_at=utcnow(), payload=page_payload,
+                )
+                session.add(incident)
+                self.logger.error(
+                    "[OMS-OCO-EXIT-FILL-UNRECORDED] sym=%s acct=%s row=%s "
+                    "status=PAGE broker_flat=1 row_closed=1 attributed=0", symbol, acct, expected_row_id,
+                )
+            else:
+                incident.payload = {**incident.payload, **page_payload}
+                incident.status = "open"
+        self.store.close_managed_position(session, row)
+        key = (acct, symbol)
+        self.__dict__.get("_oco_exit_fill_pending", {}).pop(key, None)
+        self.__dict__.get("_oco_exit_fetch_deferrals", {}).pop(key, None)
+        self.__dict__.get("_native_oco_armed_confirmed_at", {}).pop(key, None)
+        self.__dict__.get("_native_oco_resolving", {}).pop(key, None)
+        return True
 
     async def _emit_v2_exit_on_loop(
         self,
@@ -11962,8 +12127,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 #   (b) the broker holds NOTHING and the row may be a PHANTOM.
                 # Live 2026-07-27: two phantom QBTX rows (hand-closed earlier) produced 58 ERROR
                 # lines in four minutes, every 15s, and cleared nothing — a human had to delete the
-                # rows. A flat positions read is not a child-fill record, so (b) can close
-                # only through the durable child-fill path; otherwise hold and page.
+                # rows. Positive flat ends this episode; an unproven child remains unrecorded
+                # and paged, never a guessed fill.
                 #
                 # Distinguishing them needs no quote: ASK THE BROKER. `_broker_symbol_is_flat` is
                 # the same positive-confirmation helper the reject-driven reconcile already uses to
@@ -11985,7 +12150,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                     if closed:
                         self.logger.info(
                             "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID but the broker "
-                            "confirms FLAT and its child fill was recorded -> row closed",
+                            "confirms FLAT -> exact row closed (child attribution independently gated)",
                             acct, symbol, snapshot.current_quantity,
                         )
                     continue

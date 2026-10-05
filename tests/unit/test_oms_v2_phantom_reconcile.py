@@ -48,10 +48,14 @@ def test_v2_reconcile_below_threshold_does_not_read_or_clear():
 
 def test_v2_reconcile_clears_phantom_when_broker_flat():
     svc, closed = _svc(broker_flat=True)
-    row = object()
+    row = SimpleNamespace(id="phantom-episode", entry_order_id=None, entry_client_order_id=None,
+                          broker_account_name=ACCT, symbol=SYM, strategy_code="schwab_1m_v2")
+    svc.store.get_open_managed_position = lambda *a, **k: row
+    svc.logger.error = lambda *a, **k: None
+    session = SimpleNamespace(scalars=lambda *a: SimpleNamespace(all=lambda: []), add=lambda *a: None)
     res = False
     for _ in range(OmsRiskService._V2_EXIT_RECONCILE_AFTER_FAILURES):
-        res = asyncio.run(svc._v2_close_reconcile_flat(None, ACCT, SYM, row))
+        res = asyncio.run(svc._v2_close_reconcile_flat(session, ACCT, SYM, row))
     assert res is True
     assert closed == [row]
     assert (ACCT, SYM) not in svc._managed_v2_symbols

@@ -264,8 +264,8 @@ def _flat_says(svc, verdict):
 
 
 @pytest.mark.asyncio
-async def test_no_bid_broker_flat_without_child_fill_holds_and_pages() -> None:
-    """Flat positions alone cannot authorize an unpaired close of a managed episode."""
+async def test_no_bid_broker_flat_without_child_fill_closes_and_pages() -> None:
+    """Flat ends the episode without manufacturing an attributed child fill."""
     sf = _make_sf()
     svc = _svc(sf)
     _arm(svc, sf)
@@ -273,11 +273,11 @@ async def test_no_bid_broker_flat_without_child_fill_holds_and_pages() -> None:
     _flat_says(svc, True)                       # broker positively confirms flat
     await svc._v2_overnight_flatten()
     row = _row(sf)
-    assert row.current_quantity == 100
-    assert row.status == "open"
+    assert row.current_quantity == 0
+    assert row.status == "closed"
     assert _sell_intents(sf) == []
-    assert (ACCT, SYM) in svc._managed_v2_symbols
-    assert svc._oco_exit_fill_pending[(ACCT, SYM)].row_id == str(row.id)
+    assert (ACCT, SYM) not in svc._managed_v2_symbols
+    assert (ACCT, SYM) not in svc._oco_exit_fill_pending
     with sf() as session:
         incidents = session.scalars(select(SystemIncident)).all()
     assert len(incidents) == 1
