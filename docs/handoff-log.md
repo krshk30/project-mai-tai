@@ -5042,3 +5042,16 @@ OMS+strategy+v2 only, separate conditional plan/exact operator GO required.
 Timestamp correction: the preceding RPGSTUCK milestone was written at11:08 ET,
 not the nominal11:10 heading; GitHub Validate began15:07:29Z, journal PR entry
 15:08:39Z. Box clock re-read11:08:58 ET. C29 corrected; evidence unchanged.
+
+### 2026-10-05 11:14 ET - OWNMIX1 review PR #1094 (codex-2)
+
+Head b94bd0ff0c2c7da681da45d748db61db82250b7c is source94b60066 plus a
+report-only correction: parent Codex, not operator, identified and removed the
+extra native-OCO quantity-coverage rule before source commit. Original working
+leg semantics remain, narrowed to the exact owned entry/parent. Focused534PASS,
+8/8 ownership mutantsRED; full main56fail/5412pass versus head56fail/5447pass,
+same exact failed IDs. O-T1-O-T10 and schema/legacy behavior in report. Historical
+41 quantity matches cannot establish true parents from retained logs and remain
+UNMEASURED. Additive nullable migration, no backfill, no ledger action. Validate
+running; no pin/merge/install. Three-head composition applies cleanly in isolated
+worktree and full suite is running, not yet claimed PASS.
