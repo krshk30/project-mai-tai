@@ -627,6 +627,8 @@ class Settings(BaseSettings):
     # 09:30 and no EH emulation runs. ⚠ Not yet attended-tested live; enable only after an after-hours
     # validation of the Webull/Schwab EH fill.
     strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled: bool = False
+    # PMREST1 changes only software-rest reprices; broker handoffs remain RPG1-owned.
+    strategy_schwab_1m_v2_pm_rest_reprice_enabled: bool = False
     # PRE-MARKET ONLY (operator 2026-09-28, CLRO 07:24 ET). The EH soft rest above watches REST quote
     # polls taken every `quote_poll_interval_seconds` (5 s), so a print through the trigger that lasts
     # less than one poll gap is never seen. ON => each STREAMED trade print (LEVELONE, arrives only

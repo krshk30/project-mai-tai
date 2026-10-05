@@ -1,0 +1,280 @@
+{
+  "source": "Own read-only pull 2026-10-05 ~08:05 ET; UTC log stamps, bot strategy_bar_history, and the captured Schwab TNON quote in tnon_quotes; adversarial scheduling is controlled in tests",
+  "tnon_quotes": [
+  {
+    "event_ts": "2026-09-10 11:47:30.993000+00:00",
+    "received_at": "2026-09-10 11:47:32.114201+00:00",
+    "bid_price": "3.540000",
+    "ask_price": "3.550000",
+    "last_price": "3.550000"
+  }
+],
+  "bars": [
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:34:00+00:00",
+      "open_price": "7.02000000",
+      "high_price": "7.32000000",
+      "low_price": "7.00000000",
+      "close_price": "7.20000000",
+      "volume": 132931,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:35:00+00:00",
+      "open_price": "7.20000000",
+      "high_price": "7.41000000",
+      "low_price": "7.15000000",
+      "close_price": "7.34000000",
+      "volume": 73529,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:36:00+00:00",
+      "open_price": "7.34000000",
+      "high_price": "7.98990000",
+      "low_price": "7.34000000",
+      "close_price": "7.90000000",
+      "volume": 128341,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:37:00+00:00",
+      "open_price": "7.88670000",
+      "high_price": "7.88670000",
+      "low_price": "7.60000000",
+      "close_price": "7.72000000",
+      "volume": 69674,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:38:00+00:00",
+      "open_price": "7.72000000",
+      "high_price": "8.09000000",
+      "low_price": "7.54000000",
+      "close_price": "7.62320000",
+      "volume": 110453,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:39:00+00:00",
+      "open_price": "7.53800000",
+      "high_price": "7.63000000",
+      "low_price": "7.28000000",
+      "close_price": "7.58000000",
+      "volume": 62509,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:40:00+00:00",
+      "open_price": "7.59260000",
+      "high_price": "7.60000000",
+      "low_price": "7.43000000",
+      "close_price": "7.50000000",
+      "volume": 32374,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:41:00+00:00",
+      "open_price": "7.50000000",
+      "high_price": "7.70000000",
+      "low_price": "7.46000000",
+      "close_price": "7.65000000",
+      "volume": 37947,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:42:00+00:00",
+      "open_price": "7.62000000",
+      "high_price": "7.66000000",
+      "low_price": "7.50000000",
+      "close_price": "7.54000000",
+      "volume": 23261,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:43:00+00:00",
+      "open_price": "7.52000000",
+      "high_price": "7.54000000",
+      "low_price": "7.43000000",
+      "close_price": "7.50140000",
+      "volume": 30346,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:44:00+00:00",
+      "open_price": "7.50000000",
+      "high_price": "7.51130000",
+      "low_price": "7.44710000",
+      "close_price": "7.46000000",
+      "volume": 18428,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:45:00+00:00",
+      "open_price": "7.46000000",
+      "high_price": "7.60000000",
+      "low_price": "7.30000000",
+      "close_price": "7.48000000",
+      "volume": 37155,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:46:00+00:00",
+      "open_price": "7.49000000",
+      "high_price": "7.49000000",
+      "low_price": "7.03000000",
+      "close_price": "7.05000000",
+      "volume": 45849,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:47:00+00:00",
+      "open_price": "7.05000000",
+      "high_price": "7.21000000",
+      "low_price": "6.95000000",
+      "close_price": "7.02000000",
+      "volume": 121175,
+      "source": "live"
+    },
+    {
+      "symbol": "SAIQ",
+      "bar_time": "2026-10-05 11:48:00+00:00",
+      "open_price": "7.00000000",
+      "high_price": "7.09000000",
+      "low_price": "6.83000000",
+      "close_price": "7.06000000",
+      "volume": 91554,
+      "source": "live"
+    },
+    {
+      "symbol": "TNON",
+      "bar_time": "2026-09-10 11:43:00+00:00",
+      "open_price": "3.52000000",
+      "high_price": "3.52000000",
+      "low_price": "3.48000000",
+      "close_price": "3.48000000",
+      "volume": 14335,
+      "source": "live"
+    },
+    {
+      "symbol": "TNON",
+      "bar_time": "2026-09-10 11:44:00+00:00",
+      "open_price": "3.48980000",
+      "high_price": "3.48980000",
+      "low_price": "3.47000000",
+      "close_price": "3.47030000",
+      "volume": 15292,
+      "source": "live"
+    },
+    {
+      "symbol": "TNON",
+      "bar_time": "2026-09-10 11:45:00+00:00",
+      "open_price": "3.48000000",
+      "high_price": "3.48000000",
+      "low_price": "3.46880000",
+      "close_price": "3.47000000",
+      "volume": 12106,
+      "source": "live"
+    },
+    {
+      "symbol": "TNON",
+      "bar_time": "2026-09-10 11:46:00+00:00",
+      "open_price": "3.47120000",
+      "high_price": "3.49000000",
+      "low_price": "3.46000000",
+      "close_price": "3.48030000",
+      "volume": 7814,
+      "source": "live"
+    },
+    {
+      "symbol": "TNON",
+      "bar_time": "2026-09-10 11:47:00+00:00",
+      "open_price": "3.50000000",
+      "high_price": "3.57000000",
+      "low_price": "3.49010000",
+      "close_price": "3.53110000",
+      "volume": 48061,
+      "source": "live"
+    },
+    {
+      "symbol": "TNON",
+      "bar_time": "2026-09-10 11:48:00+00:00",
+      "open_price": "3.54190000",
+      "high_price": "3.56000000",
+      "low_price": "3.53000000",
+      "close_price": "3.55030000",
+      "volume": 24392,
+      "source": "live"
+    },
+    {
+      "symbol": "TNON",
+      "bar_time": "2026-09-10 11:49:00+00:00",
+      "open_price": "3.56000000",
+      "high_price": "3.59000000",
+      "low_price": "3.55880000",
+      "close_price": "3.57000000",
+      "volume": 50826,
+      "source": "live"
+    }
+  ],
+  "sequence": [
+    "2026-10-05 11:35:02,519 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-ARM] SAIQ slot=first line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)",
+    "2026-10-05 11:45:02,368 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] SAIQ slot=first reason=reprice resting_below_floor_bars=0 line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50",
+    "2026-10-05 11:46:02,617 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-ARM] SAIQ slot=first line=8.2381 trigger=8.2793 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)",
+    "2026-10-05 11:47:02,102 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] SAIQ slot=first reason=reprice resting_below_floor_bars=0 line=8.2381 trigger=8.2793 band_pct=0.50 offset_pct=0.50",
+    "2026-10-05 11:48:02,463 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-ARM] SAIQ slot=first line=7.9699 trigger=8.0097 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)"
+  ],
+  "tnon": {
+    "old": {
+      "at": "2026-09-10 11:46:02.275000+00:00",
+      "symbol": "TNON",
+      "raw": "2026-09-10 11:46:02,275 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] TNON slot=first reason=reprice level=3.5714",
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260911.gz"
+    },
+    "new": {
+      "at": "2026-09-10 11:48:02.462000+00:00",
+      "symbol": "TNON",
+      "raw": "2026-09-10 11:48:02,462 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-ARM] TNON slot=first soft-rest at level=3.5454 (EH; broker stop dead, watching quotes)",
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260911.gz"
+    },
+    "trigger": 3.5454,
+    "bars": [
+      {
+        "bar_time": "2026-09-10 11:46:00+00:00",
+        "high_price": "3.49000000"
+      },
+      {
+        "bar_time": "2026-09-10 11:47:00+00:00",
+        "high_price": "3.57000000"
+      }
+    ]
+  },
+  "boundary": {
+    "arm": {
+      "at": "2026-09-23 13:28:02.888000+00:00",
+      "symbol": "DCOY",
+      "raw": "2026-09-23 13:28:02,888 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-ARM] DCOY slot=first soft-rest at level=4.6717 (EH; broker stop dead, watching quotes)",
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz"
+    },
+    "next": {
+      "at": "2026-09-23 13:35:03.378000+00:00",
+      "symbol": "DCOY",
+      "raw": "2026-09-23 13:35:03,378 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-PLACE] DCOY slot=first stop=4.6717 limit=4.6950 (band 0.50%)",
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz"
+    }
+  }
+}
