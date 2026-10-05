@@ -5492,3 +5492,8 @@ attempt1 cancelled with runner_id0, empty name and steps[]; exact GitHub
 annotation reports hosted-runner acquisition failure. Failed job retried on
 same frozen head, PR comment6002469027 records it. BOTH Validate passes and
 fresh pin remain required; no branch change, merge or production action.
+
+2026-10-05 16:38 ET codex-2 C78 correction: exact successful run log says
+integration/replay/backtest86PASS/1XFAIL, not87PASS (87 collected). Corrected
+own C78 row only; original narrative retained append-only. Unit5941PASS and
+Ruff success unchanged. Source: gh run view37369239742 --log summary lines.
