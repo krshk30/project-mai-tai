@@ -1,0 +1,9 @@
+{
+  "pr_number": 1091,
+  "range_base": "e1ce3b3978fbcb1ff00daecdf6dc2618e6b5fb89",
+  "range_head": "1135f8d9e288ed86667fdcd880c4f6d28990a341",
+  "reviewed_at": "2026-10-05T13:23:16Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "PMREST1: pre-market software-rest reprice moves line and trigger in the same bar evaluation (flag strategy_schwab_1m_v2_pm_rest_reprice_enabled, default false). Card (operator 10-05 ~07:55 ET) re-read against built behaviour: matches - in-place move in extended hours, 0.5 pct threshold unchanged, thin-bar streak / slot / flip-owner state preserved, held rests not moved, broker orders stay on the RPG1 path, a software rest still armed at or after 09:30 is converted to a broker order in the same evaluation through the normal placement checks. Read the full src diff at both heads (fa14d46e and the delta to 1135f8d9: redundant helper window guard removed, both trackers check the window before the reprice site, cut-off handled upstream in on_bar and pinned by test). My run at the exact head with PYTHONPATH = worktree src (import path verified): 224 tests in 8 files pass; control = main strategy file under the PR tests -> 37 fail; my 13 mutations all RED (old cancel, stale trigger, streak reset, flag ignored, broker order moved in place, held rest moved, slot reset, stop-vs-ask check skipped at conversion, streak lost at conversion, settle grace started by a move, reclaim admitted pre-market, cut-off ignored, tracker window check removed). Full unit suite controlled pair on this host: main tree 48 failed/5380 passed, head 48 failed/5420 passed, failing-name sets identical. Codex independent assessment C1-C4 AGREE read. NOT covered by this PR and reported to the operator: stream-path Webull sizing drop (PMPRINT1), flip latch (PMFLIP1), unchanged-rest 09:30 boundary (handoff M19). Install plan read: v2-only, after 20:00 ET, flat, flag on, one restart."
+}
