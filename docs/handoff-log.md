@@ -5152,3 +5152,19 @@ old27 remains9/18, three additional quiet holes after prior cut. No live
 coverage PASS from offlineabsence. Accepted pause/math/exit scope recorded
 as released, not parked. Gapcontrols15PASS; no source or production change.
 No current build PR or install claim. C38 only; M rows untouched.
+
+### 2026-10-05 12:07 ET - OWNMIX first-review response (codex-2)
+
+#1094 staysb94bd0ff, no edit/push while complete review is pending. F1plan:
+confirmed brokerflat closes exact episode regardless of unbound/foreign/qty
+detail; ownership gates fill attribution only, not row lifecycle. Preserve
+replacement/freshfill/HELD/UNKNOWN protections; no inventedfill/P&L, IDs and
+unresolved unrecordedexit page retained. Q1 additional safetygap confirmed:
+successful attach stores memoryhandle, awaits durable persistence with3.75s
+backoff+DB; resolver ignoresmemory and no_pair can proceed without releasing
+the actualpair. Remedy must be entry/episode-bound attachmentstate, not a
+return of latest-buy/account+symbol fallback. Q2own loadedOMS23705 read
+12:01:39ET normal15s/activeguard1s; nominal newparentGETs4/12/24 or60/180/360
+at1/3/6positions, not totalHTTP measurements. Q3 noflag, rollback retains
+nullable schema; old-code compatibility test stillneeded. Written response
+inassessment5a12d4d2, not onOWN branch. C39 only; M rows untouched.
