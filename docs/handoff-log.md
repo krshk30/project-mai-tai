@@ -5532,3 +5532,15 @@ accepted allowance helper unchanged; ROUNDUP excluded. Released its sole
 writer to rebase draft onto actual main and publish diagnostic, not activate.
 Future literal runner still needs all-date ticket/broker-order census and
 exact execution GO; no install, migration, process, env or production action.
+
+2026-10-05 17:16 ET codex-2 C83: published ROUNDUP draft rebase6b47c461 on
+actual main7823a6fa. Six conflict hunks include genuine per-leg ownership and
+catalog integration changes, explicitly disclosed for fresh review. Parent
+verified GitHub draft/head/base, local ancestry and parsed raw current XML:
+diagnostic8FAIL/0errors, ROUNDUP395PASS/5FAIL, composition663PASS. Full pair
+stopped in owned sessions for early blocked-state publication, INCOMPLETE;
+no current pair/mutation claim. Five assertions concern per-account semantics
+and remain unresolved; generic no-ticket restoration separately remains unsafe.
+No proven venue duplicate or historical occurrence claimed. Bound plan5ac5f26b
+excludes ROUNDUP and corrects old-base focus wording; accepted helper unchanged.
+No production, migration, restart, env, flag or ledger action.
