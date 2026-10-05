@@ -5265,3 +5265,12 @@ RPGsolewriterinvestigates, OWNreadonlyanalysis supportsbutdoesnotprove.
 BothstandaloneValidatex2PASS; freshpinsrequired. Plan11195c33explicitly
 BLOCKED; norunner/GO/schedule/install. Restoration475fe844admission11tests
 PASS/scopedRuff, fullATR/runtimeNOTwired/notPR. C51only; Mrowsuntouched.
+
+2026-10-05 13:49 ET codex-2: independentlyreadfailedR-T5SQLtrace251-253:
+serialfilledUPDATE, backgroundrollbackonSAMEphysicalconnection, serialcommit;
+newrevisionlost. StaticPool44/50pass versusfileindependentconnections50/50pass
+withsamecomposedproductioncode. Fixture-onlyfixand50norebuychecksbeingfrozen;
+exactfinalcomposedfullsuitepending, installstillBLOCKED. Restorationc9aca7c0
+recordedRETO255barworker/oraclecontrol long2.0639/noSELL11:17/11:18 andlong11:21,
+12testsPASS/scopedRuff. Pureoracleproof, notlivepublication/fullrestoration.
+C52only; no Mrow/Board/decision/production/ledger changes.
