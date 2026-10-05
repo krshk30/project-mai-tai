@@ -16,7 +16,7 @@ ticket release, or additional trading-rule change is permitted.
 |---|---|---|---|
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
 | 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | merged at 13:09:07 ET to main 7e10baf0319da796b84934fe38994f6db4fcfc0b; whole tree equals pinned tree 736a540cac3c2724fa116216913331f532ecdfa9 | still dark on the box; proposed PMPRINT ON and PMFLIP OFF |
-| 2 | RPGSTUCK #1093, 271314defe4079517869d0dec9e1366e36dfa7c4 | NOT pinned; standalone Validate x2 PASS at13:38:34/13:39:33; composition blocker below | existing ticket recovery active; no NEW hand-offs |
+| 2 | RPGSTUCK #1093, 29a17b1fafe354ca230d677578a00f3fe25f14cc | NOT pinned; fixture-only follow-up to271314de; fresh Validate x2 in progress; final composition below | existing ticket recovery active; no NEW hand-offs |
 | 3, optional | OWNMIX #1094, 55563e6f3abe004d484195c202b5118ea75e0169 | NOT pinned; F1/F2/U1-U4 plus Q2 complete; standalone Validate x2 PASS at13:27:34/13:27:56 | entry binding; additive schema only if included |
 
 No merge is authorized by this draft. Final exact heads, all required checks,
@@ -49,6 +49,24 @@ repeated raw output `/tmp/oct5-composition-fill-5-reruns.txt`.
 The first tail-only diagnosis incorrectly named unattended-upgrade; exact
 failed-ID comparison corrected it. That missing-Linux-tool failure belongs
 to the baseline and is not the added failure. Do not label this run green.
+
+**Fixture-only continuation,13:52 ET:** the failed SQL trace shows a serial
+`phase=filled` UPDATE, another thread's rollback on the SAME physical SQLite
+connection, then serial commit; the update is lost. This is the StaticPool
+test fixture sharing a single DBAPI connection, not a changed production CAS
+rule. With the same composed production source, the old fixture fails6/50
+fresh processes; separate file-backed connections pass50/50. Checkpoint
+29a17b1f changes only tests/docs, with empty production-source diff from271314de.
+Parent applies that exact delta to the OWN55563e6f rehearsal; new staged tree
+`8394d099bd464306a35028e9d2c47e9f4075b451`. The independent parent50-repeat
+fill/no-rebuy cases plus connection-isolation test PASS51/51, raw
+`/tmp/oct5-parent-composed-fill50.xml` and `.txt`. Reverting the fixture to
+StaticPool is assertion-RED; exact R13 and R16 remain assertion-RED.
+The new combined full suite is RUNNING, raw
+`/tmp/oct5-composed-isolated-connection-full.xml` and `.txt`. Do not clear
+the draft blocker until its exact failed-ID set matches the baseline and
+the final frozen heads/CI/fresh review records are verified. No production
+workaround, weakened guard, sleep or suppressed protection task is introduced.
 
 The previous three PM characterization failures are corrected only in the
 RPG follow-up after the authorized PM merge. The four recorded fixtures remain:
