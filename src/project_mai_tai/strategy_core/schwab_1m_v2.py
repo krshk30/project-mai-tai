@@ -5129,8 +5129,6 @@ class SchwabV2Strategy:
             return
         if self._entries_held or self.gap_hold_active(state.symbol):
             return
-        if not self._resting_in_window() or self._entry_window_closed_for_session():
-            return
         old_line, old_trigger = state.resting_level, self._active_resting_trigger(state)
         try:
             trigger = self._resting_trigger_for_line(line)
