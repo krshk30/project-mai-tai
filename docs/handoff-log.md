@@ -5618,3 +5618,19 @@ STOPjournal written. FreshHEADe1ce3b39 confirmed. Remote runnerlog path
 sha256e15a1060714481b424f216d44f89198a5943d88a44790485dc36eaff69b7fc45.
 No restart/recovery/manualretry/byteschanged. Literal correctedtimezone path
 requires new exact-byte review/continuation; executionclosed, notCOMPLETE.
+
+2026-10-05 18:55 ET codex-2 C89: reviewer18:50 runner-only correction
+implemented locally and pushed plan6ffc6457ba0d82024ed5ac961da1dc40d3b04dae.
+Removed globalTZexport; explicitETdate only in runnerdisplay/window/wait;
+firststop20:05:00 through21:30:00 Oct5; no fenceafterfirststop. Existing29
+plus10newtests39PASS, Ruff/bash-n PASS. NYparenttest proves callerTZpreserved,
+notUTCoutputunderNYcaller. NativeverifiedUTCbox tools no longer inherit a
+runnerNYoverride. Auditdoc coversUTC/GMTparser, both preflightclocks,
+preopenrouter, proofidentity/start/repin, actionsrecord/repin, awarehelpers,
+legacyunused actionhooks. Onlyrun.sh runtimechanges; allother executable
+hashes/allowancece3 retained. NewcommittedblobmanifestSHA256
+adf55da162108620de57f5d92c6b99868a49732a53ebfda5c697d0232fc0e4ed,
+runsha c5c99d19951f695c20a97afe050741256249777ca33e2fc28709a3b913fac4aa.
+Exact-byteapprovalpending; no newstaging/remoteexecution/write/recovery.
+OldattemptSTOPpreserved. Newproofquotesmustnamecurrentfreshoms.log,
+schwab-1m-v2.log/strategy.log pathsafter00:00UTCrotation, notpriorcopies.
