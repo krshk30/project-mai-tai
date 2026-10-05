@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
+from project_mai_tai.backtest.atr_oracle import Bar, compute_atr_trail
 from project_mai_tai.strategy_core.schwab_1m_v2 import session_start_ts_ms
 from project_mai_tai.strategy_core.session_line_restore import (
     SessionCoverage, SessionLineRestoration, history_fingerprint,
@@ -166,3 +167,22 @@ def test_recorded_ids_without_matching_source_values_cannot_admit_a_line():
                                   proof.closed_ids, True, other._coverage.bars_sha256))
     assert ledger.prepare() is None
     assert ledger.incomplete_reason == "source_values_unproven"
+
+
+def test_recorded_reto_full_history_worker_replay_has_no_1117_sell():
+    ledger = _ledger("RETO")
+
+    def rebuild(request):
+        return compute_atr_trail([
+            Bar(bar.timestamp_ms, bar.open, bar.high, bar.low, bar.close, bar.volume)
+            for bar in request.bars
+        ])
+
+    result = asyncio.run(ledger.rebuild(rebuild))
+    rows = ledger.admit(result)
+    assert len(rows) == 255
+    by_time = {row["et"]: row for row in rows}
+    for minute in ("11:17", "11:18", "11:21"):
+        assert by_time[minute]["state"] == "long"
+        assert by_time[minute]["trail"] == 2.0639
+        assert by_time[minute]["flip"] is None

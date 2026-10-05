@@ -51,12 +51,18 @@ manifest proof; the full source response remains a controlled test input.
 
 ## Checkpoint Verification
 
-11 tests PASS in test_line_chart_restoration.py; scoped Ruff PASS. Tests pin
+12 tests PASS in test_line_chart_restoration.py; scoped Ruff PASS. Tests pin
 late-bar admission, source/start/end/completeness,255-row retention, re-add
 epoch fencing, off-callback worker execution, revision invalidation and frozen
 provider values and source-value mismatch refusal. No full-suite pair, mutation
 census or implementation PR yet. The fingerprint test uses two recorded symbol
 histories, not invented candle prices; coverage manifests remain controlled.
+
+The full255-row RETO worker/oracle control now pins long/trail2.0639 with no
+SELL at11:17 or11:18 and still long at11:21. The11:05 oracle trail is1.9629;
+2.0639 refers to the later continuous line, not the re-add instant. This is a
+pure recorded-bar replay through the admission worker; no live ATR publication,
+order gate or historical provider coverage is claimed by that test.
 
 Next: provider manifest + service epoch integration, ordered session mathematics
 and atomic snapshot publication without replaying entry state; then recorded
