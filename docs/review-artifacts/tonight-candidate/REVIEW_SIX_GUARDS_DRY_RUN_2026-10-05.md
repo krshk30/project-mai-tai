@@ -57,13 +57,16 @@ Recorded-clock bindings at host16:05:33 restore both drafts for the three
 proven-clear tickets. The unknown ticket remains blocked. A test-only correction
 and hostile-clock regression are underway; no production gate or assertion is
 weakened. Corrected exact head is
-`af06bf9dc58d09d96b40f1e44678e75a2f29e406`: main5577PASS/56FAIL vs
+`3b4e193ee1399c08045944ef79ce6ff67e4fbb41`: main5577PASS/56FAIL vs
 head5885PASS/the identical56 names, added[]/removed[], zero skips;
 focused1571PASS, restart/legacy targeted32PASS, all82 previous controls rerun
 RED plus three clock-removal executions RED. REPORT_CI_CLOCK.md retains raw
 output and the corrected distinction between CI's primary0 assertion and the
 independent reproduction's primary0/mirror0. Both new Validate runs must pass
 before fresh pin; no source/settings/catalog change was made to fix the test.
+The final3b4e report-only commit corrects the preceding af06 report's inference:
+CI proved primary0 before evaluating mirror count; independent controlled
+reproduction proved both0. All tested code/fixture bytes are identical to af06.
 
 ## Exact New-Byte Dry Runs
 

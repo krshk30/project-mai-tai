@@ -14,7 +14,7 @@ combined tree, required A/B tests, fresh pins and an exact-SHA operator GO.
    `4987353be54c4be15d4196907dec4dd0d6103236`; whole tree
    `e6403bdafdc7b9670ecadbc6dbeccdcb6650c96c` equals pinned76c3b4f7.
 3. #1093 RPG ALL-ON follow-up is published at
-   `af06bf9dc58d09d96b40f1e44678e75a2f29e406`, based on main4987353b.
+   `3b4e193ee1399c08045944ef79ce6ff67e4fbb41`, based on main4987353b.
    A fresh independent pin and both Validate passes are required before merge.
    Its REPORT_CI_CLOCK.md and verification-ci-clock.json bind the final follow-up;
    REPORT_ALL_ON.md retains the earlier ALL-ON tables. Literal L5/L7 and the
@@ -90,7 +90,7 @@ catalog, restart paper or turn this UNKNOWN into PASS.
 | C catalog/process | ALL-ON catalog, derived denominator, all four keys from BOTH final process environments | Working147 audit; expected paper UNKNOWN2 while inactive acknowledged15:45; real /proc/gates only after separately authorized install |
 | D rollback | each switch keyOFF plus owning coordinated replacement; separate operator recovery GO | Written below; NOT pre-authorized |
 
-Reviewer15:45 follow-up test names retained on exactaf06 head:
+Reviewer15:45 follow-up test names retained on exact3b4e head:
 
 - L5: test_l5_idle_real_retry_loop_actual_new_begin_wakes_four_ticks_in_four_seconds.
   Four-tick idle-wake and fifth-loop-tick PLACED variants; helper tick discarded.
