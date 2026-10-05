@@ -41,6 +41,30 @@ No slow or hanging test is implicated because no runner executed the job.
 This diagnosis does NOT substitute for BOTH Validate PASS on the new exact head.
 Do not pin/merge a queued, cancelled or otherwise non-green validation.
 
+### Fresh 8cfb head: actual test failure, separately diagnosed
+
+Push run37366739332 DID acquire a runner and executed the unit tests:
+3FAILED/5922PASSED in340.23s. The three failures are the legacy OFF-startup
+proven tickets fbfd692d, bd6ac0b9 and a007716c, not the new L5/L7 cases.
+This failure is NOT infrastructure and is not excused by the earlier cancelled
+run. Raw /tmp/rpgstuck-l57-ci-push-failed.txt is retained. Its pull run
+37366743088 separately failed to acquire a hosted runner (no test steps).
+
+Independent read-only reproduction16:16 ET confirms the restart fixture binds
+only _now_ms, while the original runtime fixture also binds three real session
+predicates. Host15:59:59 produces both drafts; host16:00 produces neither.
+Recorded-clock bindings at host16:05:33 restore both drafts for the three
+proven-clear tickets. The unknown ticket remains blocked. A test-only correction
+and hostile-clock regression are underway; no production gate or assertion is
+weakened. Corrected exact head is
+`af06bf9dc58d09d96b40f1e44678e75a2f29e406`: main5577PASS/56FAIL vs
+head5885PASS/the identical56 names, added[]/removed[], zero skips;
+focused1571PASS, restart/legacy targeted32PASS, all82 previous controls rerun
+RED plus three clock-removal executions RED. REPORT_CI_CLOCK.md retains raw
+output and the corrected distinction between CI's primary0 assertion and the
+independent reproduction's primary0/mirror0. Both new Validate runs must pass
+before fresh pin; no source/settings/catalog change was made to fix the test.
+
 ## Exact New-Byte Dry Runs
 
 Each command serialized and awaited before the next broker call, root/nice19,

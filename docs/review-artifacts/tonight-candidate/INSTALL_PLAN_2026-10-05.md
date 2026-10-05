@@ -14,9 +14,9 @@ combined tree, required A/B tests, fresh pins and an exact-SHA operator GO.
    `4987353be54c4be15d4196907dec4dd0d6103236`; whole tree
    `e6403bdafdc7b9670ecadbc6dbeccdcb6650c96c` equals pinned76c3b4f7.
 3. #1093 RPG ALL-ON follow-up is published at
-   `8cfb704c4724ecfc846be11ba649464c965d9fb4`, based on main4987353b.
+   `af06bf9dc58d09d96b40f1e44678e75a2f29e406`, based on main4987353b.
    A fresh independent pin and both Validate passes are required before merge.
-   Its REPORT_L57.md and verification-l57.json bind the final follow-up;
+   Its REPORT_CI_CLOCK.md and verification-ci-clock.json bind the final follow-up;
    REPORT_ALL_ON.md retains the earlier ALL-ON tables. Literal L5/L7 and the
    amended APUS later-placement requirement now pass without a source change.
 4. #1095 ROUND_UP is EXCLUDED unless independently pinned and merged before
@@ -90,7 +90,7 @@ catalog, restart paper or turn this UNKNOWN into PASS.
 | C catalog/process | ALL-ON catalog, derived denominator, all four keys from BOTH final process environments | Working147 audit; expected paper UNKNOWN2 while inactive acknowledged15:45; real /proc/gates only after separately authorized install |
 | D rollback | each switch keyOFF plus owning coordinated replacement; separate operator recovery GO | Written below; NOT pre-authorized |
 
-Reviewer15:45 follow-up test names on exact8cfb head:
+Reviewer15:45 follow-up test names retained on exactaf06 head:
 
 - L5: test_l5_idle_real_retry_loop_actual_new_begin_wakes_four_ticks_in_four_seconds.
   Four-tick idle-wake and fifth-loop-tick PLACED variants; helper tick discarded.
@@ -105,13 +105,27 @@ produce exactly one real-adapter SDK placement. No primary draft is dispatched.
 L7 drops the strategy's own extra tick deliveries, so they cannot rescue a
 broken OMS retry wake; only loop-emitted deliveries progress the four clear jobs.
 
-Final #1093 source has full5869PASS/same56FAIL vs own main5577PASS/56FAIL;
-failed-name diff added[]/removed[], zero skips. Final focus1555PASS,
-new literal-loop/APUS targeted5PASS; earlier ALL-ON targeted140PASS retained.
-82 assertion-red control executions (not 82 distinct falsifiers); the five new
-L5/L7/APUS cases all pass, no skips. Raw paths, final full/focused IDs, complete
-failed names/diff and source/catalog hashes are in REPORT_L57.md and
-verification-l57.json. Full head249.03s, main206.86s. Neither full suite is green.
+Final #1093 source has full5885PASS/same56FAIL vs own main5577PASS/56FAIL;
+failed-name diff added[]/removed[], zero skips. Final focus1571PASS,
+restart-clock regression/legacy module32PASS; literal-loop/APUS targeted5PASS
+retained. All82 earlier assertion-red control executions rerun fresh plus
+three clock-removal controls =85 executions, not85 distinct falsifiers. The
+five L5/L7/APUS cases still pass, no skips. Exact current counts, complete
+failed names/diff and source/catalog hashes are in REPORT_CI_CLOCK.md and
+verification-ci-clock.json; REPORT_L57.md retains the literal wake proofs.
+Full head252.08s, main192.71s. Neither local full suite is globally green.
+
+The 8cfb push Validate37366739332 executed tests and failed three legacy
+OFF-startup assertions after16:00 ET: this was an actual failure, not the
+earlier pull run's proven runner-acquisition failure. Independent reproduction
+identified a test-only clock leak on the NEW restored strategy. Four fixture
+lines bind its existing real session predicates to the recorded clock, without
+changing assertions or production guards. Regression
+test_recorded_restart_real_session_gates_ignore_host_after_window covers all
+four recorded tickets under UTC/Eastern and hostile16:05/20:05 host clocks.
+Removing the new bindings produces assertion failures in all16 regression
+cases; explicit hostile time still reaches and is blocked by real predicates.
+Both Validate runs must PASS on the corrected exact head before fresh pin.
 Fresh full-unit pair on exact source plus failed-name diff is required. Local
 Mac baseline56 and reviewer Linux baseline48 are different platforms: compare
 like-for-like, never claim full green. Old combined5769/same56 proves the old
