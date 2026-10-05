@@ -17,7 +17,10 @@ Push Validate `37366739332` on8cf acquired a runner and ran unit tests:
 - `bd6ac0b9-727c-500b-8581-aabdd95992d4`
 - `a007716c-4b50-5759-a354-ddc5b8961154`
 
-Each expected one primary and one mirror draft, but got primary0/mirror1.
+Each expected one primary and one mirror draft. The CI assertion proves only
+primary0; it fails before proving the restarted mirror count. Mencius's independent
+controlled restarted reproduction shows primary0/mirror0. The AMOD mirror logs
+belong to the original setup, not restarted placement evidence.
 Raw actual CI output is retained in `ci-clock-prior-push-failed.txt`. This is
 an actual assertion failure, NOT the separate hosted-runner acquisition failure
 on the old pull run. No test failure is waived as infrastructure.
