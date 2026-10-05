@@ -5201,3 +5201,13 @@ verified worktree source import, raw/tmp/oct5-final-rpg-pm-composition-verified.
 BothValidate runs pending; nofreshpin. Census frozen12:13, freshpreinstall
 mustinclude newMI/SCKT ifstilldurable. NoPMchange, merge orproductionaction.
 C43only; noMrow, board oropen-decisionedit.
+
+2026-10-05 12:53 ET codex-2: #1094 onefollowup0e896505 atopb94 pushed,
+563focusedPASS/15mutantsRED, freshpair5412/56 vs5476/same56failedIDs.
+Publicsubmit andrealpoll route tests bothaccounts retainentryUUID/coid and
+pollownedchild; F1flatcloseswithoutunprovedfill. ParentindependentSQLite
+actualoldmain+actual0022 create/read/closePASS bothaccounts. Q2normal4/12/24
+parentGET/min oractive60/180/360 pluspostintent syncs, nottotaltraffic.
+Threeheadscomposecleanly but210PASS/3oldPMblockerassertionsFAIL; pinnedPM
+frozen. Plancfa2cc0a pushed tocodex/1005-owned-entry-reprice-install-plan,
+explicitDRAFTBLOCKED,norunner, noGO/merge/prod. C44only, Mrowsuntouched.
