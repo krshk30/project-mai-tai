@@ -5090,3 +5090,13 @@ focused PASS is negative characterization, not a successful safety proof. No
 ticket deletion, DB edit, extra restart, or RPGSTUCK source folded into tonight.
 Reviewer disposition needed before execution. S5/S6 exact-set tests and catalog
 edits underway; OFF/NFQ composition is being measured separately. M rows untouched.
+
+### 2026-10-05 11:34 ET - standalone RPGSTUCK wire-path tests (codex-2)
+
+#1093 updated to289524631f91f26e922a964067f3ef9907cbc188, test/report-only,
+source unchanged. Three actual APUS/VEEA recorded sequences run from strategy
+four-decimal authorization through OMS rounding to simulated Schwab wire payload.
+Focused1111PASS,21/21mutantsRED; fullpair5412/56 vs5461/same56, zero skips.
+CI pending; new independent pin required. Separate later night, NOT tonight;
+live venue latency remains UNEXERCISED. No PM branch edit by the RPG writer,
+no production ledger/service action. C34 only; M rows unchanged.
