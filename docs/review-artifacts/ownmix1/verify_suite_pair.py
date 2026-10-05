@@ -13,8 +13,12 @@ def suite(path: Path) -> dict:
     matches = re.findall(r"(\d+) failed, (\d+) passed.*?in ([0-9.]+)s", output)
     assert len(matches) == 1, f"missing or ambiguous completed suite: {path}"
     failed, passed, seconds = matches[0]
-    ids = sorted(line.removeprefix("FAILED ").split(" - ")[0]
-                 for line in output.splitlines() if line.startswith("FAILED "))
+    # Async shutdown warnings can be appended to pytest's summary without a newline.
+    # Parse the node ID itself, not that trailing stderr text.
+    ids = sorted(match[1] for line in output.splitlines() if line.startswith("FAILED ")
+                 and (match := re.match(
+                     r"FAILED (tests/\S+?::(?:\w+::)*\w+(?:\[[^\n]*?\])?)", line
+                 )))
     assert len(ids) == int(failed)
     return {"log": str(path), "sha256": hashlib.sha256(output.encode()).hexdigest(),
             "failed": int(failed), "passed": int(passed), "seconds": float(seconds),
@@ -37,11 +41,11 @@ def main() -> None:
     focused_passed = re.search(r"^(\d+) passed.*?in ([0-9.]+)s", focused, re.MULTILINE)
     assert focused_passed and "FAILED tests/" not in focused
     mutations = args.mutations.read_text()
-    assert "ownership_mutations_killed=8/8" in mutations
+    assert "ownership_mutations_killed=15/15" in mutations
     result = {
         "base_commit": "a80b51816abf0aefc269f0fdfc473468fd3fe62c",
         "branch": "codex/ownmix1-owned-entry-binding",
-        "scope": "after removing stand-down quantity coverage rule and broker plumbing",
+        "scope": "complete review F1/F2/U1-U4 follow-up atop b94bd0ff; no new trading rule",
         "baseline": baseline, "head": head, "independent_baseline": independent,
         "introduced_failed_ids": introduced, "resolved_failed_ids": resolved,
         "independent_failed_ids_equal": baseline["failed_ids"] == independent["failed_ids"],
@@ -50,6 +54,8 @@ def main() -> None:
     }
     print(json.dumps(result, indent=2))
     assert not introduced, f"new unit failures: {introduced}"
+    assert not resolved, f"paired failed names changed: {resolved}"
+    assert result["independent_failed_ids_equal"], "independent baseline failed names differ"
 
 
 if __name__ == "__main__":
