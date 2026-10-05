@@ -2,7 +2,32 @@
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
+
+
+def resting_buy_stop(raw_four_decimal_price: Decimal) -> Decimal:
+    """ROUNDUP1: ceiling the existing four-decimal input, never a float epsilon."""
+    if not raw_four_decimal_price.is_finite() or raw_four_decimal_price <= 0:
+        raise ValueError("resting buy price must be positive and finite")
+    tick = Decimal("0.01") if raw_four_decimal_price >= 1 else Decimal("0.0001")
+    stop = raw_four_decimal_price.quantize(tick, rounding=ROUND_CEILING)
+    # A sub-dollar ceiling can land on $1: the new tick is then a whole cent.
+    return stop.quantize(Decimal("0.01"), rounding=ROUND_CEILING) if stop >= 1 else stop
+
+
+def resting_buy_limit(stop: Decimal, band_pct: float, *, leg: str) -> Decimal:
+    """Keep today's four-decimal band formula and each adapter's formatter/lift."""
+    raw_limit = Decimal(f"{float(stop) * (1.0 + band_pct / 100.0):.4f}")
+    return resting_wire_limit(stop, raw_limit, leg=leg, native_schwab_bracket=True)
+
+
+def proven_resting_pair(wire: dict | None) -> bool:
+    """A restore must have usable recorded prices, not merely a nonempty object."""
+    try:
+        stop, limit = Decimal(wire["stop_price"]), Decimal(wire["limit_price"])
+        return stop.is_finite() and limit.is_finite() and 0 < stop < limit
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return False
 
 
 def sized_entry_quantity(

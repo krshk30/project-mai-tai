@@ -14286,6 +14286,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
     def _band_capped_marketable_limit(
         self, *, symbol: str, level: float, band_pct: float, max_age_ms: int,
         exact_cap_boundary: bool = False,
+        wire_cap: Decimal | None = None,
     ) -> tuple[str, float, float] | tuple[None, str, str]:
         """ONE implementation of the band-capped marketable buy limit, shared by the EH resting
         entry (P-B2, deployed 2026-07) and the RTH reactive entry (2026-08-10).
@@ -14298,9 +14299,12 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         # Pre-market rests compare decimal quotes against a decimal cap so ask == cap is admitted.
         # Keep the legacy float comparison for RTH and PM callers, whose behavior is out of scope.
         cap_decimal = (
+            wire_cap if wire_cap is not None else
             Decimal(str(level)) * (Decimal("1") + Decimal(str(band_pct)) / Decimal("100"))
             if exact_cap_boundary else None
         )
+        if wire_cap is not None:
+            cap_decimal = wire_cap
         cap = float(cap_decimal) if cap_decimal is not None else level * (1.0 + band_pct / 100.0)
         ask = self._fresh_ask(symbol, max_age_ms)
         if ask is None:
@@ -14434,7 +14438,9 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             band_pct = float(getattr(self.settings, "oms_v2_eh_resting_entry_band_pct", 0.5))
         max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
         limit_s, a, b = self._band_capped_marketable_limit(
-            symbol=symbol, level=anchor, band_pct=band_pct, max_age_ms=max_age_ms
+            symbol=symbol, level=anchor, band_pct=band_pct, max_age_ms=max_age_ms,
+            wire_cap=(Decimal(md["resting_wire_limit_price"])
+                      if md.get("resting_buy_round_up") == "true" else None),
         )
         if limit_s is None:
             reason_code, reason_detail = a, b
@@ -14603,6 +14609,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         limit_s, ask, cap = self._band_capped_marketable_limit(
             symbol=symbol, level=level, band_pct=band_pct, max_age_ms=max_age_ms,
             exact_cap_boundary=session_code == "AM",
+            wire_cap=(Decimal(md["resting_wire_limit_price"])
+                      if md.get("resting_buy_round_up") == "true" else None),
         )
         if limit_s is None:
             reason_code, reason_detail = ask, cap
@@ -14611,7 +14619,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             )
         md["order_type"] = "limit"
         md["limit_price"] = limit_s
-        md["reference_price"] = limit_s
+        md["reference_price"] = md["entry_price"] if md.get("resting_buy_round_up") == "true" else limit_s
         md["session"] = session_code
         md["extended_hours"] = "true"
         md["price_source"] = "ask"

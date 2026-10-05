@@ -1388,7 +1388,11 @@ class SchwabV2BotService:
                       if job["phase"] not in {"placed", "filled", "expired", "refused", "held_unknown", "submit_unknown"}]
             jobs = [(token, await asyncio.to_thread(journal.read, token)) for token in tokens]
         for token, job in jobs:
-            job = await asyncio.to_thread(journal.reconcile_feedback, token, job)
+            job = await asyncio.to_thread(
+                journal.reconcile_feedback, token, job,
+                include_wire_prices=bool(getattr(self.settings,
+                    "strategy_schwab_1m_v2_resting_buy_round_up_enabled", False)),
+            )
             auth = self.strategy.rpg_handoff_authorization(str(token), job)
             if job["phase"] not in {"clear", "price_wait", "submitting"}:
                 continue

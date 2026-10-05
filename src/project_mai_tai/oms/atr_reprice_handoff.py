@@ -18,7 +18,8 @@ from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback, scoped_request
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
-from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill
+from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill
+from project_mai_tai.strategy_core.v2_entry_sizing import proven_resting_pair
 
 
 SNAPSHOT_TYPE = "atr_reprice_handoff"
@@ -118,7 +119,7 @@ class HandoffJournal:
                 select(DashboardSnapshot).where(DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE)
             )]
 
-    def reconcile_feedback(self, token: UUID, job: dict) -> dict:
+    def reconcile_feedback(self, token: UUID, job: dict, *, include_wire_prices: bool = False) -> dict:
         """Use committed OMS accounting to avoid restoring a filled/dead resting latch.
 
         This never sends or repeats an order. A pre-wire pending row cannot prove
@@ -138,9 +139,28 @@ class HandoffJournal:
                 updates = dict(phase="refused", reason="replacement_terminal_accounted")
             elif order.broker_order_id and order.status in {"accepted", "working", "open"}:
                 updates = dict(phase="placed", reason="replacement_accepted_accounted")
+                if include_wire_prices:
+                    md = order.payload or {}
+                    if md.get("fanout_leg") == "webull":
+                        report = session.scalar(select(BrokerOrderEvent).where(
+                            BrokerOrderEvent.order_id == order.id,
+                            BrokerOrderEvent.event_type == "accepted",
+                            BrokerOrderEvent.event_source == "broker",
+                        ).order_by(BrokerOrderEvent.event_at.desc()).limit(1))
+                        wire_md = (report.payload or {}).get("metadata", {}) if report else {}
+                        stop = wire_md.get("webull_wire_stop_price") or wire_md.get(
+                            "webull_resting_mirror_original_stop_price")
+                        limit = wire_md.get("webull_wire_limit_price")
+                    else:
+                        # Schwab consumes these formatted request values without another price round.
+                        stop, limit = md.get("stop_price"), md.get("limit_price")
+                    if stop is not None and limit is not None:
+                        wire = {"stop_price": str(stop), "limit_price": str(limit)}
+                        if proven_resting_pair(wire) and wire != job.get("replacement_wire_prices"):
+                            updates["replacement_wire_prices"] = wire
             else:
                 return job
-        if updates["phase"] == job["phase"]:
+        if updates["phase"] == job["phase"] and "replacement_wire_prices" not in updates:
             return job
         return self.change(token, job["revision"], **updates) or self.read(token)
 

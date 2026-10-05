@@ -60,8 +60,10 @@ from project_mai_tai.v2_flip_entry_ownership import (
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.entry_gate import resolve_entry_window, within_rth_entry_window
-from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit, sized_entry_quantity
 from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear
+from project_mai_tai.strategy_core.v2_entry_sizing import (
+    proven_resting_pair, resting_buy_limit, resting_buy_stop, resting_wire_limit, sized_entry_quantity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +323,11 @@ class SymbolState:
     resting_active: bool = False               # a resting entry is armed (broker order OR EH soft-rest)
     resting_level: float = 0.0                 # raw ATR line; stable-rest reprice baseline
     resting_trigger: float = 0.0               # offset stop price the resting order sits at
+    resting_schwab_wire_stop: float = 0.0
+    resting_webull_wire_stop: float = 0.0
+    resting_schwab_wire_limit: float = 0.0
+    resting_webull_wire_limit: float = 0.0
+    resting_wire_cap: float = 0.0
     resting_schwab_quantity: int = 0            # quantity placed, never a current-price recomputation
     resting_webull_quantity: int = 0
     resting_schwab_generation: str = ""
@@ -2309,6 +2316,8 @@ class SchwabV2Strategy:
         state.resting_active = False
         state.resting_level = 0.0
         state.resting_trigger = 0.0
+        state.resting_schwab_wire_stop = state.resting_webull_wire_stop = state.resting_wire_cap = 0.0
+        state.resting_schwab_wire_limit = state.resting_webull_wire_limit = 0.0
         state.resting_schwab_quantity = 0
         state.resting_flip_ms = 0
         state.resting_below_floor_bars = 0
@@ -3245,6 +3254,8 @@ class SchwabV2Strategy:
             )
             return None
         cap = trigger * (1.0 + self._resting_band_pct_value() / 100.0)
+        if state.resting_wire_cap > 0:
+            cap = self._active_resting_cap(state)
         if ask > cap:
             logger.info(
                 "[V2-RESTING-EH-STREAM-SKIP] %s reason=ask_past_band ask=%.4f cap=%.4f "
@@ -3757,6 +3768,8 @@ class SchwabV2Strategy:
         state.resting_active = False
         state.resting_level = 0.0
         state.resting_trigger = 0.0
+        state.resting_schwab_wire_stop = state.resting_webull_wire_stop = state.resting_wire_cap = 0.0
+        state.resting_schwab_wire_limit = state.resting_webull_wire_limit = 0.0
         state.resting_schwab_quantity = 0
         state.resting_webull_quantity = 0
         state.resting_is_broker_order = False
@@ -4886,7 +4899,33 @@ class SchwabV2Strategy:
 
     def _resting_trigger_for_line(self, line: float) -> float:
         """Return the broker/software trigger while preserving the ATR line for repricing."""
-        return float(line) * (1.0 + self._resting_offset_pct_value() / 100.0)
+        raw = float(line) * (1.0 + self._resting_offset_pct_value() / 100.0)
+        if self._resting_round_up_enabled():
+            return float(resting_buy_stop(Decimal(f"{raw:.4f}")))
+        return raw
+
+    def _resting_round_up_enabled(self) -> bool:
+        return bool(getattr(getattr(self, "settings", None),
+                            "strategy_schwab_1m_v2_resting_buy_round_up_enabled", False))
+
+    def _resting_wire_metadata(self, trigger: float, *, leg: str = "schwab") -> dict[str, str]:
+        if not self._resting_round_up_enabled():
+            return {}
+        return {
+            "resting_buy_round_up": "true",
+            "entry_price": f"{trigger:.4f}", "reference_price": f"{trigger:.4f}",
+            "resting_wire_stop_price": f"{trigger:.4f}",
+            "resting_wire_limit_price": str(resting_buy_limit(
+                Decimal(f"{trigger:.4f}"), self._resting_band_pct_value(), leg=leg)),
+        }
+
+    def _active_resting_cap(self, state: SymbolState, *, leg: str = "schwab") -> float:
+        wire = float(getattr(state, f"resting_{leg}_wire_limit", 0.0) or 0.0)
+        if wire > 0:
+            return wire
+        cap = float(state.resting_wire_cap or 0.0)
+        return cap if cap > 0 else self._active_resting_trigger(state, leg=leg) * (
+            1.0 + self._resting_band_pct_value() / 100.0)
 
     def _resting_offset_pct_value(self) -> float:
         """Return the configured offset, including for legacy partial strategy fixtures."""
@@ -4897,8 +4936,11 @@ class SchwabV2Strategy:
         return float(getattr(self, "_resting_entry_band_pct", 0.5) or 0.5)
 
     @staticmethod
-    def _active_resting_trigger(state: SymbolState) -> float:
+    def _active_resting_trigger(state: SymbolState, *, leg: str = "schwab") -> float:
         """Read the placed trigger, falling back to the line for pre-offset in-memory fixtures."""
+        wire = float(getattr(state, f"resting_{leg}_wire_stop", 0.0) or 0.0)
+        if wire > 0:
+            return wire
         trigger = float(state.resting_trigger or 0.0)
         return trigger if trigger > 0.0 else float(state.resting_level or 0.0)
 
@@ -4964,6 +5006,10 @@ class SchwabV2Strategy:
         soft_rest = self._eh_resting_enabled and session_is_eh
         raw_stop = Decimal(f"{trigger:.4f}")
         raw_limit = Decimal(limit_s)
+        if self._resting_round_up_enabled():
+            raw_limit = resting_buy_limit(raw_stop, band_pct, leg="schwab")
+            limit_s = str(raw_limit)
+            limit = float(raw_limit)
         schwab_wire_limit = resting_wire_limit(
             raw_stop, raw_limit, leg="schwab",
             native_schwab_bracket=(
@@ -4996,8 +5042,14 @@ class SchwabV2Strategy:
         state.resting_level = line
         state.resting_trigger = trigger
         if not primary_blocked:
+            state.resting_schwab_wire_stop = trigger if self._resting_round_up_enabled() else 0.0
+            state.resting_wire_cap = limit if self._resting_round_up_enabled() else 0.0
+            state.resting_schwab_wire_limit = state.resting_wire_cap
             state.resting_schwab_quantity = int(schwab_sized[0]) if schwab_sized else 0
         if not webull_blocked:
+            state.resting_webull_wire_stop = trigger if self._resting_round_up_enabled() else 0.0
+            state.resting_webull_wire_limit = float(resting_buy_limit(
+                raw_stop, band_pct, leg="webull")) if self._resting_round_up_enabled() else 0.0
             state.resting_webull_quantity = 0
         state.resting_below_floor_bars = 0
         generation = str(uuid4())
@@ -5070,6 +5122,7 @@ class SchwabV2Strategy:
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
                 **schwab_sized[1],
+                **self._resting_wire_metadata(trigger),
             },
         ))
         # ⭐⭐ MIRROR THE REST TO WEBULL — same level, same instant, sitting at ITS broker too.
@@ -5087,9 +5140,10 @@ class SchwabV2Strategy:
         # ⛔ Goes on the DIRECT queue, not the fan-out queue: the fan-out queue is drained through
         # `_maybe_emit`, and the matching CANCEL must never be gated.
         if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled and not webull_blocked:
+            webull_limit = Decimal(str(state.resting_webull_wire_limit)) if self._resting_round_up_enabled() else raw_limit
             webull_sized = self._sized_open(
                 state.symbol, leg="webull",
-                price=resting_wire_limit(raw_stop, raw_limit, leg="webull"),
+                price=resting_wire_limit(raw_stop, webull_limit, leg="webull"),
                 basis="stop_limit_wire_limit",
             )
             if webull_sized is None:
@@ -5139,7 +5193,7 @@ class SchwabV2Strategy:
                             "path": "ATR Flip", "atr_variant": "CW-v2-fanout",
                             "rpg_resting_generation": generation,
                             "order_type": "STOP_LIMIT",
-                            "stop_price": f"{trigger:.4f}", "limit_price": f"{limit:.4f}",
+                            "stop_price": f"{trigger:.4f}", "limit_price": f"{webull_limit:.4f}",
                             "reference_price": f"{trigger:.4f}",
                             "entry_price": f"{trigger:.4f}",
                             "cw_flip_level": f"{line:.4f}",
@@ -5153,6 +5207,7 @@ class SchwabV2Strategy:
                             "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                             **shared_fanout_identity,
                             **webull_sized[1],
+                            **self._resting_wire_metadata(trigger, leg="webull"),
                             # ⛔ NO bracket_* keys on purpose -- see the note above.
                             "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
                         },
@@ -5160,6 +5215,20 @@ class SchwabV2Strategy:
                 )
 
     def _reprice_resting(self, state: SymbolState, line: float) -> None:
+        if self._resting_round_up_enabled() and state.resting_active and state.resting_is_broker_order:
+            trigger = self._resting_trigger_for_line(line)
+            pairs = []
+            if state.resting_schwab_quantity:
+                pairs.append(("schwab", state.resting_schwab_wire_stop, state.resting_schwab_wire_limit))
+            if state.webull_resting_active:
+                pairs.append(("webull", state.resting_webull_wire_stop, state.resting_webull_wire_limit))
+            if pairs and all(stop == trigger and limit == float(resting_buy_limit(
+                    Decimal(f"{trigger:.4f}"), self._resting_band_pct_value(), leg=leg))
+                    for leg, stop, limit in pairs):
+                state.resting_level = line
+                logger.info("[V2-RESTING-WIRE-UNCHANGED] %s line=%.4f trigger=%.4f quantities_retained=1",
+                            state.symbol, line, trigger)
+                return
         if not (
             getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_pm_rest_reprice_enabled", False)
             and state.resting_active
@@ -5195,6 +5264,13 @@ class SchwabV2Strategy:
             # Both callbacks execute synchronously on the bot loop: no await, cancel,
             # admission, persistence or latch reset can expose an unarmed midpoint.
             state.resting_level, state.resting_trigger = line, trigger
+            if self._resting_round_up_enabled():
+                state.resting_schwab_wire_stop = state.resting_webull_wire_stop = trigger
+                state.resting_wire_cap = float(resting_buy_limit(
+                    Decimal(f"{trigger:.4f}"), self._resting_band_pct_value(), leg="schwab"))
+                state.resting_schwab_wire_limit = state.resting_wire_cap
+                state.resting_webull_wire_limit = float(resting_buy_limit(
+                    Decimal(f"{trigger:.4f}"), self._resting_band_pct_value(), leg="webull"))
         logger.info(
             "[V2-RESTING-EH-MOVE] %s slot=%s old_line=%.4f old_trigger=%.4f "
             "new_line=%.4f new_trigger=%.4f gap_ms=0",
@@ -5204,6 +5280,7 @@ class SchwabV2Strategy:
     def _queue_resting_cancel(self, state: SymbolState, *, reason: str) -> None:
         was_level = state.resting_level
         was_trigger = self._active_resting_trigger(state)
+        was_webull_trigger = self._active_resting_trigger(state, leg="webull")
         was_broker_order = state.resting_is_broker_order
         was_webull_resting = state.webull_resting_active
         was_webull_generation = state.webull_resting_generation_id
@@ -5243,6 +5320,8 @@ class SchwabV2Strategy:
         state.resting_active = False
         state.resting_level = 0.0
         state.resting_trigger = 0.0
+        state.resting_schwab_wire_stop = state.resting_webull_wire_stop = state.resting_wire_cap = 0.0
+        state.resting_schwab_wire_limit = state.resting_webull_wire_limit = 0.0
         state.resting_schwab_quantity = 0
         state.resting_webull_quantity = 0
         state.resting_is_broker_order = False
@@ -5361,6 +5440,8 @@ class SchwabV2Strategy:
                 reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
                 metadata={"resting_entry_cancel": "true", "reason": webull_reason,
                           **reprice_metadata,
+                          **({"rpg_old_stop_price": f"{was_webull_trigger:.4f}"}
+                             if reprice_metadata else {}),
                           "rpg_resting_generation": state.resting_webull_generation,
                           "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
                           "webull_mirror_generation_id": was_webull_generation,
@@ -5384,6 +5465,9 @@ class SchwabV2Strategy:
             if job["old"]["symbol"] != state.symbol:
                 continue
             phase = job["phase"]
+            if (self._resting_round_up_enabled() and phase == "placed"
+                    and not proven_resting_pair(job.get("replacement_wire_prices")) and not job.get("replacement_filled")):
+                return True
             if phase == "requested":
                 generation = job["old"]["metadata"]["rpg_generation"]
                 acknowledged = {other["old"].get("broker_account_name") for other in jobs.values()
@@ -5419,11 +5503,22 @@ class SchwabV2Strategy:
         if same_segment and feedback_key not in self._rpg_feedback_applied:
             if job["phase"] == "placed" and not job.get("replacement_filled"):
                 md = job["replacement"]["metadata"]
+                wire = job.get("replacement_wire_prices")
+                if self._resting_round_up_enabled() and not proven_resting_pair(wire):
+                    return {**result, "verdict": "wait", "reason": "placed_wire_price_unproven"}
                 state.resting_active = True
                 state.resting_is_broker_order = True
                 state.resting_slot = state.last_resting_placed_slot = slot
                 state.resting_level = float(md["cw_flip_level"])
                 state.resting_trigger = float(md["stop_price"])
+                if self._resting_round_up_enabled():
+                    wire_stop = float(wire["stop_price"])
+                    if webull:
+                        state.resting_webull_wire_stop = wire_stop
+                        state.resting_webull_wire_limit = float(wire["limit_price"])
+                    else:
+                        state.resting_schwab_wire_stop = state.resting_trigger = wire_stop
+                        state.resting_schwab_wire_limit = state.resting_wire_cap = float(wire["limit_price"])
                 if webull:
                     state.webull_resting_active = True
                     state.resting_webull_generation = md["rpg_resting_generation"]
@@ -5503,6 +5598,8 @@ class SchwabV2Strategy:
         band, offset = self._resting_band_pct_value(), self._resting_offset_pct_value()
         limit = trigger * (1 + band / 100)
         leg = "webull" if webull else "schwab"
+        if self._resting_round_up_enabled():
+            limit = float(resting_buy_limit(Decimal(f"{trigger:.4f}"), band, leg=leg))
         sized = self._sized_open(state.symbol, leg=leg,
             price=resting_wire_limit(Decimal(f"{trigger:.4f}"), Decimal(f"{limit:.4f}"), leg=leg,
                 native_schwab_bracket=not webull and self.settings.oms_v2_emit_native_oco_bracket_enabled),
@@ -5513,6 +5610,7 @@ class SchwabV2Strategy:
             "broker_order_id", "target_client_order_id", "resting_entry_cancel", "atr_reprice",
             "nfq_retry_token", "nfq_hold_id", "fanout_attempt_id", "rpg_event_id",
             "native_oco", "webull_deferred_resubmit", "webull_deferred_resubmit_attempt"}
+            and key not in {"resting_buy_round_up", "resting_wire_stop_price", "resting_wire_limit_price"}
             and not key.startswith(("webull_shape_market_", "bracket_", "native_oco_"))}
         md.update({"resting_entry": "true", "order_type": "STOP_LIMIT",
             "cw_entry_slot": slot, "cw_flip_level": f"{line:.4f}",
@@ -5520,7 +5618,7 @@ class SchwabV2Strategy:
             "reference_price": f"{trigger:.4f}", "entry_price": f"{trigger:.4f}",
             "resting_band_pct": str(band), "resting_offset_pct": str(offset),
             "rpg_resting_generation": f"{token}:{job.get('attempt', 0)}",
-            "rpg_handoff_token": token, **sized[1]})
+            "rpg_handoff_token": token, **sized[1], **self._resting_wire_metadata(trigger, leg=leg)})
         if webull:
             md["webull_mirror_generation_id"] = token
         event = TradeIntentEvent(source_service=SERVICE_NAME, produced_at=now,
@@ -6162,6 +6260,8 @@ class SchwabV2Strategy:
                 "pm_confirming_ask_decision_ms": str(self._now_ms()),
             }
         cap = trigger * (1.0 + self._resting_band_pct_value() / 100.0)
+        if state.resting_wire_cap > 0:
+            cap = self._active_resting_cap(state)
         sized = self._sized_open(
             state.symbol, leg="schwab",
             price=Decimal(str(ask)) if confirm_ask else Decimal(f"{cap:.4f}"),
@@ -6244,6 +6344,7 @@ class SchwabV2Strategy:
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
                 **sizing_metadata,
                 **decision_ask_metadata,
+                **self._resting_wire_metadata(trigger),
             },
         )
 
@@ -6459,6 +6560,8 @@ class SchwabV2Strategy:
         if resting_line is not None and resting_line > 0:
             md["resting_band_pct"] = f"{self._resting_band_pct_value()}"
             md["resting_offset_pct"] = f"{self._resting_offset_pct_value()}"
+            md.update(self._resting_wire_metadata(
+                band_anchor if band_anchor is not None else entry_px, leg="webull"))
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",
@@ -6484,7 +6587,7 @@ class SchwabV2Strategy:
         if self._resting_session_is_eh():                   # EH -> the EH cross-check queues it instead
             return
         line = float(state.resting_level or 0.0)
-        trigger = self._active_resting_trigger(state)
+        trigger = self._active_resting_trigger(state, leg="webull")
         if not (state.resting_active and line > 0.0 and trigger > 0.0):
             return
         # ⭐⭐ RELEASE A CLAIM THAT NEVER BECAME A POSITION (2026-08-13).

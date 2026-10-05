@@ -1,0 +1,4302 @@
+{
+  "label": "recorded four-decimal entry input; wire/quantity/5%-8% geometry replay, NOT fills",
+  "read_at": "2026-10-05T17:48:56.406944+00:00",
+  "rows": [
+    {
+      "id": "91f9bd7c-d08b-4cbf-8fbd-f982c38e76e8",
+      "client_order_id": "schwab_1m_v2-PFSA-open-7f6f022b3c50",
+      "symbol": "PFSA",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.7736",
+        "stop": "3.77",
+        "limit": "3.79",
+        "shares": 2,
+        "target": "3.96",
+        "protection": "3.47"
+      },
+      "new": {
+        "trigger": "3.78",
+        "stop": "3.78",
+        "limit": "3.8",
+        "shares": 2,
+        "target": "3.97",
+        "protection": "3.48"
+      }
+    },
+    {
+      "id": "ece2c74c-3f14-42da-9b06-d0a7971b1983",
+      "client_order_id": "schwab_1m_v2-PFSA-open-46933b56bbd0",
+      "symbol": "PFSA",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.7736",
+        "stop": "3.77",
+        "limit": "3.79",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.78",
+        "stop": "3.78",
+        "limit": "3.80",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "055caefa-7414-4ce1-8236-5cd8ee85a6ac",
+      "client_order_id": "schwab_1m_v2-WETO-open-f546cb82efbf",
+      "symbol": "WETO",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "2.1276",
+        "stop": "2.13",
+        "limit": "2.14",
+        "shares": 2,
+        "target": "2.23",
+        "protection": "1.96"
+      },
+      "new": {
+        "trigger": "2.13",
+        "stop": "2.13",
+        "limit": "2.14",
+        "shares": 2,
+        "target": "2.24",
+        "protection": "1.96"
+      }
+    },
+    {
+      "id": "b2af17bc-b8fa-4446-932c-6479f5dee974",
+      "client_order_id": "schwab_1m_v2-WETO-open-0ddb71bbd36b",
+      "symbol": "WETO",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "2.1276",
+        "stop": "2.13",
+        "limit": "2.14",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "2.13",
+        "stop": "2.13",
+        "limit": "2.14",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "a2de2daf-d486-4e19-bcb8-7f323a427c5f",
+      "client_order_id": "schwab_1m_v2-GLND-open-b4569e3f1100",
+      "symbol": "GLND",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.5111",
+        "stop": "4.51",
+        "limit": "4.53",
+        "shares": 2,
+        "target": "4.74",
+        "protection": "4.15"
+      },
+      "new": {
+        "trigger": "4.52",
+        "stop": "4.52",
+        "limit": "4.54",
+        "shares": 2,
+        "target": "4.75",
+        "protection": "4.16"
+      }
+    },
+    {
+      "id": "c214b3e6-612c-4219-9bab-9cfe97fffb46",
+      "client_order_id": "schwab_1m_v2-GLND-open-710697131122",
+      "symbol": "GLND",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.5111",
+        "stop": "4.51",
+        "limit": "4.53",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.52",
+        "stop": "4.52",
+        "limit": "4.54",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "bfc8d23c-4f1d-4daa-a83a-5e411f8a5d54",
+      "client_order_id": "schwab_1m_v2-APUS-open-c54fbcc9c886",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.7259",
+        "stop": "5.73",
+        "limit": "5.75",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.73",
+        "stop": "5.73",
+        "limit": "5.76",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "9f53fa3f-67dc-4a50-9491-29ed9ce10682",
+      "client_order_id": "schwab_1m_v2-APUS-open-2893a1a6d1bd",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.6646",
+        "stop": "5.66",
+        "limit": "5.69",
+        "shares": 2,
+        "target": "5.95",
+        "protection": "5.21"
+      },
+      "new": {
+        "trigger": "5.67",
+        "stop": "5.67",
+        "limit": "5.7",
+        "shares": 2,
+        "target": "5.95",
+        "protection": "5.22"
+      }
+    },
+    {
+      "id": "8a430de2-8a8d-443f-9cb4-51e2a8e2c446",
+      "client_order_id": "schwab_1m_v2-APUS-open-bcd66d63c90f",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.6646",
+        "stop": "5.66",
+        "limit": "5.69",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.67",
+        "stop": "5.67",
+        "limit": "5.70",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "cfc83d0e-452c-4339-a6c5-cafdccd6980e",
+      "client_order_id": "schwab_1m_v2-PMAX-open-86e63b23ebc4",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.8718",
+        "stop": "1.87",
+        "limit": "1.88",
+        "shares": 2,
+        "target": "1.97",
+        "protection": "1.72"
+      },
+      "new": {
+        "trigger": "1.88",
+        "stop": "1.88",
+        "limit": "1.89",
+        "shares": 2,
+        "target": "1.97",
+        "protection": "1.73"
+      }
+    },
+    {
+      "id": "c5003f56-4799-4270-99af-7acc517582c2",
+      "client_order_id": "schwab_1m_v2-PMAX-open-575a0567382f",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.8491",
+        "stop": "1.85",
+        "limit": "1.86",
+        "shares": 2,
+        "target": "1.94",
+        "protection": "1.70"
+      },
+      "new": {
+        "trigger": "1.85",
+        "stop": "1.85",
+        "limit": "1.86",
+        "shares": 2,
+        "target": "1.94",
+        "protection": "1.70"
+      }
+    },
+    {
+      "id": "d7df1e7b-459b-4cf3-a8cf-a5306db14915",
+      "client_order_id": "schwab_1m_v2-PMAX-open-31cdb880a799",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.8047",
+        "stop": "1.8",
+        "limit": "1.81",
+        "shares": 2,
+        "target": "1.89",
+        "protection": "1.66"
+      },
+      "new": {
+        "trigger": "1.81",
+        "stop": "1.81",
+        "limit": "1.82",
+        "shares": 2,
+        "target": "1.90",
+        "protection": "1.67"
+      }
+    },
+    {
+      "id": "79735c33-7443-43b2-9cd4-2ddbd22117f2",
+      "client_order_id": "schwab_1m_v2-PMAX-open-2e3c6e28573e",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.7699",
+        "stop": "1.77",
+        "limit": "1.78",
+        "shares": 2,
+        "target": "1.86",
+        "protection": "1.63"
+      },
+      "new": {
+        "trigger": "1.77",
+        "stop": "1.77",
+        "limit": "1.78",
+        "shares": 2,
+        "target": "1.86",
+        "protection": "1.63"
+      }
+    },
+    {
+      "id": "49357a83-f7e2-41d5-bf32-337cf228f938",
+      "client_order_id": "schwab_1m_v2-PMAX-open-a144181b2fd3",
+      "symbol": "PMAX",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.7699",
+        "stop": "1.77",
+        "limit": "1.78",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.77",
+        "stop": "1.77",
+        "limit": "1.78",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "79d2abf7-fbca-43b6-b9a1-8213753313d9",
+      "client_order_id": "schwab_1m_v2-PMAX-open-aaae295a2178",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.7096",
+        "stop": "1.71",
+        "limit": "1.72",
+        "shares": 2,
+        "target": "1.80",
+        "protection": "1.57"
+      },
+      "new": {
+        "trigger": "1.71",
+        "stop": "1.71",
+        "limit": "1.72",
+        "shares": 2,
+        "target": "1.80",
+        "protection": "1.57"
+      }
+    },
+    {
+      "id": "2efff71c-591a-4595-b7cb-033cca98e35b",
+      "client_order_id": "schwab_1m_v2-PMAX-open-0c0522939383",
+      "symbol": "PMAX",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.7096",
+        "stop": "1.71",
+        "limit": "1.72",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.71",
+        "stop": "1.71",
+        "limit": "1.72",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "aaa0800e-f821-4209-886f-1d09b9e847ac",
+      "client_order_id": "schwab_1m_v2-APUS-open-e76486d43fbb",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.8253",
+        "stop": "5.83",
+        "limit": "5.85",
+        "shares": 2,
+        "target": "6.12",
+        "protection": "5.36"
+      },
+      "new": {
+        "trigger": "5.83",
+        "stop": "5.83",
+        "limit": "5.86",
+        "shares": 2,
+        "target": "6.12",
+        "protection": "5.36"
+      }
+    },
+    {
+      "id": "fe24edaf-38be-4c74-85cf-5e46def5c3b5",
+      "client_order_id": "schwab_1m_v2-APUS-open-7226b64655b9",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.8253",
+        "stop": "5.83",
+        "limit": "5.85",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.83",
+        "stop": "5.83",
+        "limit": "5.86",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "18eb3258-9f2f-42ba-8301-98d38a44c7be",
+      "client_order_id": "schwab_1m_v2-STAK-open-2f0f2d2d1e46",
+      "symbol": "STAK",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.4382",
+        "stop": "1.44",
+        "limit": "1.45",
+        "shares": 2,
+        "target": "1.51",
+        "protection": "1.32"
+      },
+      "new": {
+        "trigger": "1.44",
+        "stop": "1.44",
+        "limit": "1.45",
+        "shares": 2,
+        "target": "1.51",
+        "protection": "1.32"
+      }
+    },
+    {
+      "id": "3aa77f4d-9a8d-4b37-8fc0-09352b5d8bcd",
+      "client_order_id": "schwab_1m_v2-STAK-open-8fc0b5b05111",
+      "symbol": "STAK",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.4120",
+        "stop": "1.41",
+        "limit": "1.42",
+        "shares": 2,
+        "target": "1.48",
+        "protection": "1.30"
+      },
+      "new": {
+        "trigger": "1.42",
+        "stop": "1.42",
+        "limit": "1.43",
+        "shares": 2,
+        "target": "1.49",
+        "protection": "1.31"
+      }
+    },
+    {
+      "id": "48eba91a-ff9e-491d-936a-e3323e0bc4ec",
+      "client_order_id": "schwab_1m_v2-PMAX-open-acf196649e76",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.5878",
+        "stop": "1.59",
+        "limit": "1.6",
+        "shares": 2,
+        "target": "1.67",
+        "protection": "1.46"
+      },
+      "new": {
+        "trigger": "1.59",
+        "stop": "1.59",
+        "limit": "1.6",
+        "shares": 2,
+        "target": "1.67",
+        "protection": "1.46"
+      }
+    },
+    {
+      "id": "379a23ed-1ffc-4082-8ce2-d580d16db6d9",
+      "client_order_id": "schwab_1m_v2-PMAX-open-e5f61ea2d0bc",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.5773",
+        "stop": "1.58",
+        "limit": "1.59",
+        "shares": 2,
+        "target": "1.66",
+        "protection": "1.45"
+      },
+      "new": {
+        "trigger": "1.58",
+        "stop": "1.58",
+        "limit": "1.59",
+        "shares": 2,
+        "target": "1.66",
+        "protection": "1.45"
+      }
+    },
+    {
+      "id": "b0146989-2bb1-433f-b9bd-2dfbd3b769db",
+      "client_order_id": "schwab_1m_v2-PMAX-open-a018152286e0",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.5533",
+        "stop": "1.55",
+        "limit": "1.56",
+        "shares": 2,
+        "target": "1.63",
+        "protection": "1.43"
+      },
+      "new": {
+        "trigger": "1.56",
+        "stop": "1.56",
+        "limit": "1.57",
+        "shares": 2,
+        "target": "1.64",
+        "protection": "1.44"
+      }
+    },
+    {
+      "id": "c2f7041f-07c1-4623-8262-de0e5da49ba6",
+      "client_order_id": "schwab_1m_v2-PMAX-open-0899c3c490e1",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.5320",
+        "stop": "1.53",
+        "limit": "1.54",
+        "shares": 2,
+        "target": "1.61",
+        "protection": "1.41"
+      },
+      "new": {
+        "trigger": "1.54",
+        "stop": "1.54",
+        "limit": "1.55",
+        "shares": 2,
+        "target": "1.62",
+        "protection": "1.42"
+      }
+    },
+    {
+      "id": "fb5ca801-b2ef-452b-9fd9-ca4cfe2dc7c2",
+      "client_order_id": "schwab_1m_v2-PMAX-open-23e5b9f30bf7",
+      "symbol": "PMAX",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.5320",
+        "stop": "1.53",
+        "limit": "1.54",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.54",
+        "stop": "1.54",
+        "limit": "1.55",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "15fb8ae6-1f93-4442-bc5a-690976ef8920",
+      "client_order_id": "schwab_1m_v2-APUS-open-dfa36233ce02",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.3702",
+        "stop": "5.37",
+        "limit": "5.4",
+        "shares": 2,
+        "target": "5.64",
+        "protection": "4.94"
+      },
+      "new": {
+        "trigger": "5.38",
+        "stop": "5.38",
+        "limit": "5.41",
+        "shares": 2,
+        "target": "5.65",
+        "protection": "4.95"
+      }
+    },
+    {
+      "id": "4534e6fe-c8f8-410d-97af-81c044b04a65",
+      "client_order_id": "schwab_1m_v2-APUS-open-9637a234a5e2",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.3702",
+        "stop": "5.37",
+        "limit": "5.40",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.38",
+        "stop": "5.38",
+        "limit": "5.41",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "c5f1c343-507d-4ff4-8f56-a30322e077b9",
+      "client_order_id": "schwab_1m_v2-PMAX-open-a76c7b5db08b",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.6108",
+        "stop": "1.61",
+        "limit": "1.62",
+        "shares": 2,
+        "target": "1.69",
+        "protection": "1.48"
+      },
+      "new": {
+        "trigger": "1.62",
+        "stop": "1.62",
+        "limit": "1.63",
+        "shares": 2,
+        "target": "1.70",
+        "protection": "1.49"
+      }
+    },
+    {
+      "id": "fefb2136-8f02-43b3-b432-83172f82d083",
+      "client_order_id": "schwab_1m_v2-PMAX-open-7599c872138f",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.6108",
+        "stop": "1.61",
+        "limit": "1.62",
+        "shares": 2,
+        "target": "1.69",
+        "protection": "1.48"
+      },
+      "new": {
+        "trigger": "1.62",
+        "stop": "1.62",
+        "limit": "1.63",
+        "shares": 2,
+        "target": "1.70",
+        "protection": "1.49"
+      }
+    },
+    {
+      "id": "020e161f-8cab-40ba-b09f-196b325e2a59",
+      "client_order_id": "schwab_1m_v2-PMAX-open-db7679c07339",
+      "symbol": "PMAX",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.6108",
+        "stop": "1.61",
+        "limit": "1.62",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.62",
+        "stop": "1.62",
+        "limit": "1.63",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "182ae867-9cff-4e6b-8467-82338c7fd0ff",
+      "client_order_id": "schwab_1m_v2-APUS-open-b82aba625a3f",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.4691",
+        "stop": "5.47",
+        "limit": "5.5",
+        "shares": 2,
+        "target": "5.74",
+        "protection": "5.03"
+      },
+      "new": {
+        "trigger": "5.47",
+        "stop": "5.47",
+        "limit": "5.5",
+        "shares": 2,
+        "target": "5.74",
+        "protection": "5.03"
+      }
+    },
+    {
+      "id": "50ce7bc1-b681-4adc-960e-4b72b95c6cec",
+      "client_order_id": "schwab_1m_v2-APUS-open-257faff39cbc",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.4691",
+        "stop": "5.47",
+        "limit": "5.50",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.47",
+        "stop": "5.47",
+        "limit": "5.50",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "c71de722-6de9-4ba2-a8a8-12c62e08b8a4",
+      "client_order_id": "schwab_1m_v2-PFSA-open-3aa307d349d5",
+      "symbol": "PFSA",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.0405",
+        "stop": "3.04",
+        "limit": "3.06",
+        "shares": 2,
+        "target": "3.19",
+        "protection": "2.80"
+      },
+      "new": {
+        "trigger": "3.05",
+        "stop": "3.05",
+        "limit": "3.07",
+        "shares": 2,
+        "target": "3.20",
+        "protection": "2.81"
+      }
+    },
+    {
+      "id": "04fc99bb-e6d0-4704-8d62-fe21ed50d27a",
+      "client_order_id": "schwab_1m_v2-PFSA-open-cb410fefadf7",
+      "symbol": "PFSA",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "3.0405",
+        "stop": "3.04",
+        "limit": "3.06",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.05",
+        "stop": "3.05",
+        "limit": "3.07",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "d2890857-b2c6-4cc1-bd73-0126bdaf6154",
+      "client_order_id": "schwab_1m_v2-PMAX-open-6aaa71a0e541",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.7354",
+        "stop": "1.74",
+        "limit": "1.75",
+        "shares": 2,
+        "target": "1.82",
+        "protection": "1.60"
+      },
+      "new": {
+        "trigger": "1.74",
+        "stop": "1.74",
+        "limit": "1.75",
+        "shares": 2,
+        "target": "1.83",
+        "protection": "1.60"
+      }
+    },
+    {
+      "id": "b746fd1f-0754-410e-888e-1afd7dac55c5",
+      "client_order_id": "schwab_1m_v2-PMAX-open-7934aa2231af",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.6953",
+        "stop": "1.7",
+        "limit": "1.71",
+        "shares": 2,
+        "target": "1.78",
+        "protection": "1.56"
+      },
+      "new": {
+        "trigger": "1.70",
+        "stop": "1.7",
+        "limit": "1.71",
+        "shares": 2,
+        "target": "1.78",
+        "protection": "1.56"
+      }
+    },
+    {
+      "id": "bf2126eb-b0ac-4057-a107-62ab28f5c8e0",
+      "client_order_id": "schwab_1m_v2-PMAX-open-384dd2d98b4a",
+      "symbol": "PMAX",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.6753",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 2,
+        "target": "1.76",
+        "protection": "1.54"
+      },
+      "new": {
+        "trigger": "1.68",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 2,
+        "target": "1.76",
+        "protection": "1.55"
+      }
+    },
+    {
+      "id": "24ccec93-68f4-4d2f-ac47-3e46ff977286",
+      "client_order_id": "schwab_1m_v2-PMAX-open-776647d5697b",
+      "symbol": "PMAX",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.6753",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.68",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "5c3cafbb-6745-4dc1-bc06-7b9840658e50",
+      "client_order_id": "schwab_1m_v2-APUS-open-21535df9b30f",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.0901",
+        "stop": "5.09",
+        "limit": "5.12",
+        "shares": 2,
+        "target": "5.34",
+        "protection": "4.68"
+      },
+      "new": {
+        "trigger": "5.10",
+        "stop": "5.1",
+        "limit": "5.13",
+        "shares": 2,
+        "target": "5.35",
+        "protection": "4.69"
+      }
+    },
+    {
+      "id": "3cf34c23-a00d-4ab5-b85a-d76b4b618ae5",
+      "client_order_id": "schwab_1m_v2-APUS-open-425277ee9076",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.0901",
+        "stop": "5.09",
+        "limit": "5.12",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.10",
+        "stop": "5.10",
+        "limit": "5.13",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "f81dd5fc-3b4c-4c32-a772-14fbad9141e4",
+      "client_order_id": "schwab_1m_v2-INLF-open-a4df414f7eb8",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.1581",
+        "stop": "7.16",
+        "limit": "7.19",
+        "shares": 2,
+        "target": "7.52",
+        "protection": "6.59"
+      },
+      "new": {
+        "trigger": "7.16",
+        "stop": "7.16",
+        "limit": "7.2",
+        "shares": 2,
+        "target": "7.52",
+        "protection": "6.59"
+      }
+    },
+    {
+      "id": "f1ec6752-a10d-4cf9-bb18-973bdf651019",
+      "client_order_id": "schwab_1m_v2-INLF-open-e92db2795864",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "6.8243",
+        "stop": "6.82",
+        "limit": "6.86",
+        "shares": 2,
+        "target": "7.17",
+        "protection": "6.28"
+      },
+      "new": {
+        "trigger": "6.83",
+        "stop": "6.83",
+        "limit": "6.86",
+        "shares": 2,
+        "target": "7.17",
+        "protection": "6.28"
+      }
+    },
+    {
+      "id": "80eb6a56-b183-4d85-8b87-d10b90804478",
+      "client_order_id": "schwab_1m_v2-INLF-open-0afd4fe555b4",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "6.4059",
+        "stop": "6.41",
+        "limit": "6.44",
+        "shares": 2,
+        "target": "6.73",
+        "protection": "5.89"
+      },
+      "new": {
+        "trigger": "6.41",
+        "stop": "6.41",
+        "limit": "6.44",
+        "shares": 2,
+        "target": "6.73",
+        "protection": "5.90"
+      }
+    },
+    {
+      "id": "48cb5b95-1657-4cd7-96ec-395b36e1ae21",
+      "client_order_id": "schwab_1m_v2-INLF-open-862f88923541",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "6.0833",
+        "stop": "6.08",
+        "limit": "6.11",
+        "shares": 2,
+        "target": "6.39",
+        "protection": "5.60"
+      },
+      "new": {
+        "trigger": "6.09",
+        "stop": "6.09",
+        "limit": "6.12",
+        "shares": 2,
+        "target": "6.39",
+        "protection": "5.60"
+      }
+    },
+    {
+      "id": "ae8ac017-c01d-465b-b94a-c86c4a2d9476",
+      "client_order_id": "schwab_1m_v2-INLF-open-d20b79376d8b",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.9604",
+        "stop": "5.96",
+        "limit": "5.99",
+        "shares": 2,
+        "target": "6.26",
+        "protection": "5.48"
+      },
+      "new": {
+        "trigger": "5.97",
+        "stop": "5.97",
+        "limit": "6.0",
+        "shares": 2,
+        "target": "6.27",
+        "protection": "5.49"
+      }
+    },
+    {
+      "id": "cccb7137-da4e-48c6-a457-d352394192e1",
+      "client_order_id": "schwab_1m_v2-INLF-open-87e7c1cec358",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.8305",
+        "stop": "5.83",
+        "limit": "5.86",
+        "shares": 2,
+        "target": "6.12",
+        "protection": "5.36"
+      },
+      "new": {
+        "trigger": "5.84",
+        "stop": "5.84",
+        "limit": "5.87",
+        "shares": 2,
+        "target": "6.13",
+        "protection": "5.37"
+      }
+    },
+    {
+      "id": "a5b19a41-09c6-4b14-972f-86a0aaf2734b",
+      "client_order_id": "schwab_1m_v2-INLF-open-f0bb92431f67",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.7547",
+        "stop": "5.75",
+        "limit": "5.78",
+        "shares": 2,
+        "target": "6.04",
+        "protection": "5.29"
+      },
+      "new": {
+        "trigger": "5.76",
+        "stop": "5.76",
+        "limit": "5.79",
+        "shares": 2,
+        "target": "6.05",
+        "protection": "5.30"
+      }
+    },
+    {
+      "id": "76b5d69a-38e3-4be2-892d-865b8cef6318",
+      "client_order_id": "schwab_1m_v2-INLF-open-4f6b9894d17c",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.7059",
+        "stop": "5.71",
+        "limit": "5.73",
+        "shares": 2,
+        "target": "5.99",
+        "protection": "5.25"
+      },
+      "new": {
+        "trigger": "5.71",
+        "stop": "5.71",
+        "limit": "5.74",
+        "shares": 2,
+        "target": "6.00",
+        "protection": "5.25"
+      }
+    },
+    {
+      "id": "50ed89da-89bf-4c36-87e5-2aeb1671b689",
+      "client_order_id": "schwab_1m_v2-INLF-open-d45388f93994",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.5980",
+        "stop": "5.6",
+        "limit": "5.63",
+        "shares": 2,
+        "target": "5.88",
+        "protection": "5.15"
+      },
+      "new": {
+        "trigger": "5.60",
+        "stop": "5.6",
+        "limit": "5.63",
+        "shares": 2,
+        "target": "5.88",
+        "protection": "5.15"
+      }
+    },
+    {
+      "id": "91f04b73-6318-4c9e-915e-0df12f18663b",
+      "client_order_id": "schwab_1m_v2-INLF-open-450d7b90b142",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.5193",
+        "stop": "5.52",
+        "limit": "5.55",
+        "shares": 2,
+        "target": "5.80",
+        "protection": "5.08"
+      },
+      "new": {
+        "trigger": "5.52",
+        "stop": "5.52",
+        "limit": "5.55",
+        "shares": 2,
+        "target": "5.80",
+        "protection": "5.08"
+      }
+    },
+    {
+      "id": "a3d78a76-dbdc-4d23-a767-9fe2f587beeb",
+      "client_order_id": "schwab_1m_v2-INLF-open-7ba5d1fab992",
+      "symbol": "INLF",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.5193",
+        "stop": "5.52",
+        "limit": "5.55",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.52",
+        "stop": "5.52",
+        "limit": "5.55",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "9d823417-1df7-45ae-a25d-7186a7f95f27",
+      "client_order_id": "schwab_1m_v2-INLF-open-1c4b270981d6",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.4852",
+        "stop": "5.49",
+        "limit": "5.51",
+        "shares": 2,
+        "target": "5.76",
+        "protection": "5.05"
+      },
+      "new": {
+        "trigger": "5.49",
+        "stop": "5.49",
+        "limit": "5.52",
+        "shares": 2,
+        "target": "5.76",
+        "protection": "5.05"
+      }
+    },
+    {
+      "id": "b3f6ab9f-0090-4fc3-b704-117e63a01bb3",
+      "client_order_id": "schwab_1m_v2-INLF-open-afb196181e03",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.4323",
+        "stop": "5.43",
+        "limit": "5.46",
+        "shares": 2,
+        "target": "5.70",
+        "protection": "5.00"
+      },
+      "new": {
+        "trigger": "5.44",
+        "stop": "5.44",
+        "limit": "5.47",
+        "shares": 2,
+        "target": "5.71",
+        "protection": "5.00"
+      }
+    },
+    {
+      "id": "08b22dd6-2d07-4418-9a24-3a48562a0a62",
+      "client_order_id": "schwab_1m_v2-INLF-open-280a4c6674f3",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.3899",
+        "stop": "5.39",
+        "limit": "5.42",
+        "shares": 2,
+        "target": "5.66",
+        "protection": "4.96"
+      },
+      "new": {
+        "trigger": "5.39",
+        "stop": "5.39",
+        "limit": "5.42",
+        "shares": 2,
+        "target": "5.66",
+        "protection": "4.96"
+      }
+    },
+    {
+      "id": "17cf3c07-e0ce-44e9-8576-2f5fd73c280a",
+      "client_order_id": "schwab_1m_v2-INLF-open-51953b1a67da",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.2783",
+        "stop": "5.28",
+        "limit": "5.3",
+        "shares": 2,
+        "target": "5.54",
+        "protection": "4.86"
+      },
+      "new": {
+        "trigger": "5.28",
+        "stop": "5.28",
+        "limit": "5.31",
+        "shares": 2,
+        "target": "5.54",
+        "protection": "4.86"
+      }
+    },
+    {
+      "id": "6878bde4-d272-4918-9114-32d2e508336a",
+      "client_order_id": "schwab_1m_v2-INLF-open-437ce656b1ae",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.1668",
+        "stop": "5.17",
+        "limit": "5.19",
+        "shares": 2,
+        "target": "5.43",
+        "protection": "4.75"
+      },
+      "new": {
+        "trigger": "5.17",
+        "stop": "5.17",
+        "limit": "5.2",
+        "shares": 2,
+        "target": "5.43",
+        "protection": "4.76"
+      }
+    },
+    {
+      "id": "e47d76ba-1d42-4307-a5bc-a421d61d911e",
+      "client_order_id": "schwab_1m_v2-INLF-open-ddff39bfcff5",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.0860",
+        "stop": "5.09",
+        "limit": "5.11",
+        "shares": 2,
+        "target": "5.34",
+        "protection": "4.68"
+      },
+      "new": {
+        "trigger": "5.09",
+        "stop": "5.09",
+        "limit": "5.12",
+        "shares": 2,
+        "target": "5.34",
+        "protection": "4.68"
+      }
+    },
+    {
+      "id": "f95d34a1-e45a-48e9-81a7-07f7a6aad331",
+      "client_order_id": "schwab_1m_v2-INLF-open-d27c0257d19b",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.0042",
+        "stop": "5.0",
+        "limit": "5.03",
+        "shares": 2,
+        "target": "5.25",
+        "protection": "4.60"
+      },
+      "new": {
+        "trigger": "5.01",
+        "stop": "5.01",
+        "limit": "5.04",
+        "shares": 2,
+        "target": "5.26",
+        "protection": "4.61"
+      }
+    },
+    {
+      "id": "ef96ba9e-be15-4e20-9890-e09907b29531",
+      "client_order_id": "schwab_1m_v2-INLF-open-990e645b9f09",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.8995",
+        "stop": "4.9",
+        "limit": "4.92",
+        "shares": 2,
+        "target": "5.14",
+        "protection": "4.51"
+      },
+      "new": {
+        "trigger": "4.90",
+        "stop": "4.9",
+        "limit": "4.92",
+        "shares": 2,
+        "target": "5.15",
+        "protection": "4.51"
+      }
+    },
+    {
+      "id": "0c8a25da-fb5b-48b5-8569-bc83ebb10006",
+      "client_order_id": "schwab_1m_v2-INLF-open-3168e8877d70",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.8270",
+        "stop": "4.83",
+        "limit": "4.85",
+        "shares": 2,
+        "target": "5.07",
+        "protection": "4.44"
+      },
+      "new": {
+        "trigger": "4.83",
+        "stop": "4.83",
+        "limit": "4.85",
+        "shares": 2,
+        "target": "5.07",
+        "protection": "4.44"
+      }
+    },
+    {
+      "id": "427c2b6d-25f8-45c8-a817-8517bcbebd16",
+      "client_order_id": "schwab_1m_v2-INLF-open-059c4e2cd461",
+      "symbol": "INLF",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.8270",
+        "stop": "4.83",
+        "limit": "4.85",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.83",
+        "stop": "4.83",
+        "limit": "4.85",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "d62227a1-d2f7-4226-bc02-ea71e188205c",
+      "client_order_id": "schwab_1m_v2-INLF-open-d3a217b54f17",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.8660",
+        "stop": "4.87",
+        "limit": "4.89",
+        "shares": 2,
+        "target": "5.11",
+        "protection": "4.48"
+      },
+      "new": {
+        "trigger": "4.87",
+        "stop": "4.87",
+        "limit": "4.89",
+        "shares": 2,
+        "target": "5.11",
+        "protection": "4.48"
+      }
+    },
+    {
+      "id": "089942ee-fd01-4e30-b20e-ef0101595902",
+      "client_order_id": "schwab_1m_v2-INLF-open-fcf9e4af428e",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.8472",
+        "stop": "4.85",
+        "limit": "4.87",
+        "shares": 2,
+        "target": "5.09",
+        "protection": "4.46"
+      },
+      "new": {
+        "trigger": "4.85",
+        "stop": "4.85",
+        "limit": "4.87",
+        "shares": 2,
+        "target": "5.09",
+        "protection": "4.46"
+      }
+    },
+    {
+      "id": "260d05a6-9afa-4edb-a58f-48f58b771635",
+      "client_order_id": "schwab_1m_v2-INLF-open-6f858c72ab63",
+      "symbol": "INLF",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.8472",
+        "stop": "4.85",
+        "limit": "4.87",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.85",
+        "stop": "4.85",
+        "limit": "4.87",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "ed6d4991-00d8-4a1c-93b4-f712a928a283",
+      "client_order_id": "schwab_1m_v2-INLF-open-edb92fbd45c3",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.7750",
+        "stop": "4.78",
+        "limit": "4.8",
+        "shares": 2,
+        "target": "5.01",
+        "protection": "4.39"
+      },
+      "new": {
+        "trigger": "4.78",
+        "stop": "4.78",
+        "limit": "4.8",
+        "shares": 2,
+        "target": "5.02",
+        "protection": "4.40"
+      }
+    },
+    {
+      "id": "0db5a376-ef73-415b-9525-9c9ad391a367",
+      "client_order_id": "schwab_1m_v2-INLF-open-18631e187661",
+      "symbol": "INLF",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.7750",
+        "stop": "4.78",
+        "limit": "4.80",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.78",
+        "stop": "4.78",
+        "limit": "4.80",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "23fdc3eb-52fe-4b2f-95d1-712c19078fdd",
+      "client_order_id": "schwab_1m_v2-TDIC-open-129f5702d5d2",
+      "symbol": "TDIC",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "3.1601",
+        "stop": "3.16",
+        "limit": "3.18",
+        "shares": 2,
+        "target": "3.32",
+        "protection": "2.91"
+      },
+      "new": {
+        "trigger": "3.17",
+        "stop": "3.17",
+        "limit": "3.19",
+        "shares": 2,
+        "target": "3.33",
+        "protection": "2.92"
+      }
+    },
+    {
+      "id": "74cedf85-5f11-4e37-bf45-9ec0d1a160bf",
+      "client_order_id": "schwab_1m_v2-TDIC-open-a37ded246e4d",
+      "symbol": "TDIC",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "3.0649",
+        "stop": "3.06",
+        "limit": "3.08",
+        "shares": 2,
+        "target": "3.22",
+        "protection": "2.82"
+      },
+      "new": {
+        "trigger": "3.07",
+        "stop": "3.07",
+        "limit": "3.09",
+        "shares": 2,
+        "target": "3.22",
+        "protection": "2.82"
+      }
+    },
+    {
+      "id": "b59df24f-a058-47c3-b800-252a9b73bd2f",
+      "client_order_id": "schwab_1m_v2-TDIC-open-2b5a3b5ecb61",
+      "symbol": "TDIC",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "3.0066",
+        "stop": "3.01",
+        "limit": "3.02",
+        "shares": 2,
+        "target": "3.16",
+        "protection": "2.77"
+      },
+      "new": {
+        "trigger": "3.01",
+        "stop": "3.01",
+        "limit": "3.02",
+        "shares": 2,
+        "target": "3.16",
+        "protection": "2.77"
+      }
+    },
+    {
+      "id": "be000266-9107-4a7f-a954-da19f564a666",
+      "client_order_id": "schwab_1m_v2-MSGY-open-c52f84dde13b",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "8.3714",
+        "stop": "8.37",
+        "limit": "8.41",
+        "shares": 2,
+        "target": "8.79",
+        "protection": "7.70"
+      },
+      "new": {
+        "trigger": "8.38",
+        "stop": "8.38",
+        "limit": "8.42",
+        "shares": 2,
+        "target": "8.80",
+        "protection": "7.71"
+      }
+    },
+    {
+      "id": "3e67d587-c913-4578-9a03-8dae1a4afae8",
+      "client_order_id": "schwab_1m_v2-MSGY-open-7371f23af44a",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "8.1616",
+        "stop": "8.16",
+        "limit": "8.2",
+        "shares": 2,
+        "target": "8.57",
+        "protection": "7.51"
+      },
+      "new": {
+        "trigger": "8.17",
+        "stop": "8.17",
+        "limit": "8.21",
+        "shares": 2,
+        "target": "8.58",
+        "protection": "7.52"
+      }
+    },
+    {
+      "id": "398b64cb-d735-4e60-983c-3453d529bf0a",
+      "client_order_id": "schwab_1m_v2-TDIC-open-a329277f8166",
+      "symbol": "TDIC",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "2.9582",
+        "stop": "2.96",
+        "limit": "2.97",
+        "shares": 2,
+        "target": "3.11",
+        "protection": "2.72"
+      },
+      "new": {
+        "trigger": "2.96",
+        "stop": "2.96",
+        "limit": "2.97",
+        "shares": 2,
+        "target": "3.11",
+        "protection": "2.72"
+      }
+    },
+    {
+      "id": "ccb25f7f-4725-4642-8c4c-8b1486491b9e",
+      "client_order_id": "schwab_1m_v2-MSGY-open-b88e708e7431",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.8835",
+        "stop": "7.88",
+        "limit": "7.92",
+        "shares": 2,
+        "target": "8.28",
+        "protection": "7.25"
+      },
+      "new": {
+        "trigger": "7.89",
+        "stop": "7.89",
+        "limit": "7.93",
+        "shares": 2,
+        "target": "8.28",
+        "protection": "7.26"
+      }
+    },
+    {
+      "id": "e12d5284-0e11-4301-9405-625ea9a4ad7b",
+      "client_order_id": "schwab_1m_v2-MSGY-open-c25ad1643885",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.8426",
+        "stop": "7.84",
+        "limit": "7.88",
+        "shares": 2,
+        "target": "8.23",
+        "protection": "7.22"
+      },
+      "new": {
+        "trigger": "7.85",
+        "stop": "7.85",
+        "limit": "7.89",
+        "shares": 2,
+        "target": "8.24",
+        "protection": "7.22"
+      }
+    },
+    {
+      "id": "11bb4cfa-35a6-4a59-b62f-06d85b80ecbc",
+      "client_order_id": "schwab_1m_v2-MSGY-open-d32e3b65c6a0",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.7940",
+        "stop": "7.79",
+        "limit": "7.83",
+        "shares": 2,
+        "target": "8.18",
+        "protection": "7.17"
+      },
+      "new": {
+        "trigger": "7.80",
+        "stop": "7.8",
+        "limit": "7.84",
+        "shares": 2,
+        "target": "8.19",
+        "protection": "7.18"
+      }
+    },
+    {
+      "id": "d0b4a66b-b661-4a8e-822f-c999d9251bea",
+      "client_order_id": "schwab_1m_v2-MSGY-open-9edac9165185",
+      "symbol": "MSGY",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "7.7940",
+        "stop": "7.79",
+        "limit": "7.83",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "7.80",
+        "stop": "7.80",
+        "limit": "7.84",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "c6943d3f-1a48-41d3-959c-8061a8a65640",
+      "client_order_id": "schwab_1m_v2-MSGY-open-5672bb416c56",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.6654",
+        "stop": "7.67",
+        "limit": "7.7",
+        "shares": 2,
+        "target": "8.05",
+        "protection": "7.05"
+      },
+      "new": {
+        "trigger": "7.67",
+        "stop": "7.67",
+        "limit": "7.71",
+        "shares": 2,
+        "target": "8.05",
+        "protection": "7.06"
+      }
+    },
+    {
+      "id": "b41a48c6-b104-4b8f-a0e4-d8f7dee3b306",
+      "client_order_id": "schwab_1m_v2-MSGY-open-c4003c4c8d39",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.5605",
+        "stop": "7.56",
+        "limit": "7.6",
+        "shares": 2,
+        "target": "7.94",
+        "protection": "6.96"
+      },
+      "new": {
+        "trigger": "7.57",
+        "stop": "7.57",
+        "limit": "7.61",
+        "shares": 2,
+        "target": "7.95",
+        "protection": "6.96"
+      }
+    },
+    {
+      "id": "0c98402e-74f1-4f24-9805-5e1e84f3bd72",
+      "client_order_id": "schwab_1m_v2-MSGY-open-310e1323786f",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.4703",
+        "stop": "7.47",
+        "limit": "7.51",
+        "shares": 2,
+        "target": "7.84",
+        "protection": "6.87"
+      },
+      "new": {
+        "trigger": "7.48",
+        "stop": "7.48",
+        "limit": "7.52",
+        "shares": 2,
+        "target": "7.85",
+        "protection": "6.88"
+      }
+    },
+    {
+      "id": "905648d6-3bfa-4169-9eaf-f025a2a38635",
+      "client_order_id": "schwab_1m_v2-MSGY-open-7e1902bdec6f",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.3365",
+        "stop": "7.34",
+        "limit": "7.37",
+        "shares": 2,
+        "target": "7.70",
+        "protection": "6.75"
+      },
+      "new": {
+        "trigger": "7.34",
+        "stop": "7.34",
+        "limit": "7.38",
+        "shares": 2,
+        "target": "7.71",
+        "protection": "6.75"
+      }
+    },
+    {
+      "id": "b18e998a-6994-4892-b68b-9455d4f862dc",
+      "client_order_id": "schwab_1m_v2-MSGY-open-3743034bf984",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.1109",
+        "stop": "7.11",
+        "limit": "7.15",
+        "shares": 2,
+        "target": "7.47",
+        "protection": "6.54"
+      },
+      "new": {
+        "trigger": "7.12",
+        "stop": "7.12",
+        "limit": "7.16",
+        "shares": 2,
+        "target": "7.48",
+        "protection": "6.55"
+      }
+    },
+    {
+      "id": "66c7dff4-cda1-402a-b248-187e2b5959e6",
+      "client_order_id": "schwab_1m_v2-MSGY-open-ee7a66e2b49f",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "6.9613",
+        "stop": "6.96",
+        "limit": "7.0",
+        "shares": 2,
+        "target": "7.31",
+        "protection": "6.40"
+      },
+      "new": {
+        "trigger": "6.97",
+        "stop": "6.97",
+        "limit": "7.0",
+        "shares": 2,
+        "target": "7.32",
+        "protection": "6.41"
+      }
+    },
+    {
+      "id": "669442fb-4f82-4972-9c7c-78e54aa5697e",
+      "client_order_id": "schwab_1m_v2-MSGY-open-21c65d02fedf",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "6.8816",
+        "stop": "6.88",
+        "limit": "6.92",
+        "shares": 2,
+        "target": "7.23",
+        "protection": "6.33"
+      },
+      "new": {
+        "trigger": "6.89",
+        "stop": "6.89",
+        "limit": "6.92",
+        "shares": 2,
+        "target": "7.23",
+        "protection": "6.34"
+      }
+    },
+    {
+      "id": "330b97bb-58ac-46c1-b788-eaa736c9e107",
+      "client_order_id": "schwab_1m_v2-AIFF-open-8f5e059d8146",
+      "symbol": "AIFF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.6775",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 2,
+        "target": "1.76",
+        "protection": "1.54"
+      },
+      "new": {
+        "trigger": "1.68",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 2,
+        "target": "1.76",
+        "protection": "1.55"
+      }
+    },
+    {
+      "id": "87951ec1-db59-4702-bba2-9e2479b623cd",
+      "client_order_id": "schwab_1m_v2-AIFF-open-54da24c19dc5",
+      "symbol": "AIFF",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.6775",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.68",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "35d1c078-9c7e-4cdc-94e6-603bf1cc71e1",
+      "client_order_id": "schwab_1m_v2-AIFF-open-9be21a7a2d44",
+      "symbol": "AIFF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.6775",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 2,
+        "target": "1.76",
+        "protection": "1.54"
+      },
+      "new": {
+        "trigger": "1.68",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 2,
+        "target": "1.76",
+        "protection": "1.55"
+      }
+    },
+    {
+      "id": "b6fd56bf-edc4-44e4-810c-89d889ebf648",
+      "client_order_id": "schwab_1m_v2-AIFF-open-c87d47fca579",
+      "symbol": "AIFF",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.6775",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.68",
+        "stop": "1.68",
+        "limit": "1.69",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "95c62b2e-3afd-4186-b949-a2e62df889de",
+      "client_order_id": "schwab_1m_v2-MSGY-open-bd572ef55003",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "6.8407",
+        "stop": "6.84",
+        "limit": "6.87",
+        "shares": 2,
+        "target": "7.18",
+        "protection": "6.29"
+      },
+      "new": {
+        "trigger": "6.85",
+        "stop": "6.85",
+        "limit": "6.88",
+        "shares": 2,
+        "target": "7.19",
+        "protection": "6.30"
+      }
+    },
+    {
+      "id": "82ea18cd-7fe2-42c7-a386-39c2ae20e436",
+      "client_order_id": "schwab_1m_v2-MSGY-open-a4f9ce439168",
+      "symbol": "MSGY",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "6.8407",
+        "stop": "6.84",
+        "limit": "6.87",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "6.85",
+        "stop": "6.85",
+        "limit": "6.88",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "ec8a0f98-d563-4a26-a85f-903f59fafc73",
+      "client_order_id": "schwab_1m_v2-TDIC-open-91a71bb16a22",
+      "symbol": "TDIC",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "2.8170",
+        "stop": "2.82",
+        "limit": "2.83",
+        "shares": 2,
+        "target": "2.96",
+        "protection": "2.59"
+      },
+      "new": {
+        "trigger": "2.82",
+        "stop": "2.82",
+        "limit": "2.83",
+        "shares": 2,
+        "target": "2.96",
+        "protection": "2.59"
+      }
+    },
+    {
+      "id": "f998516b-0739-4f49-9ccd-25db3e9ce635",
+      "client_order_id": "schwab_1m_v2-INLF-open-f503ee886905",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.4275",
+        "stop": "5.43",
+        "limit": "5.45",
+        "shares": 2,
+        "target": "5.70",
+        "protection": "4.99"
+      },
+      "new": {
+        "trigger": "5.43",
+        "stop": "5.43",
+        "limit": "5.46",
+        "shares": 2,
+        "target": "5.70",
+        "protection": "5.00"
+      }
+    },
+    {
+      "id": "784eb8d6-b94b-4bda-89d0-579a3d74bca1",
+      "client_order_id": "schwab_1m_v2-INLF-open-20e7c49d47a1",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.3532",
+        "stop": "5.35",
+        "limit": "5.38",
+        "shares": 2,
+        "target": "5.62",
+        "protection": "4.92"
+      },
+      "new": {
+        "trigger": "5.36",
+        "stop": "5.36",
+        "limit": "5.39",
+        "shares": 2,
+        "target": "5.63",
+        "protection": "4.93"
+      }
+    },
+    {
+      "id": "03881422-976e-4733-9ef3-7f439277bcbf",
+      "client_order_id": "schwab_1m_v2-INLF-open-2f4d42ff882f",
+      "symbol": "INLF",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.3532",
+        "stop": "5.35",
+        "limit": "5.38",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.36",
+        "stop": "5.36",
+        "limit": "5.39",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "c1069a80-e34e-4e37-a6dc-f5b2eb7a7674",
+      "client_order_id": "schwab_1m_v2-INLF-open-e85a5ded4566",
+      "symbol": "INLF",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.2974",
+        "stop": "5.3",
+        "limit": "5.32",
+        "shares": 2,
+        "target": "5.56",
+        "protection": "4.87"
+      },
+      "new": {
+        "trigger": "5.30",
+        "stop": "5.3",
+        "limit": "5.33",
+        "shares": 2,
+        "target": "5.57",
+        "protection": "4.88"
+      }
+    },
+    {
+      "id": "85ba092f-1d18-4fc2-84fc-43bd24cd5cc9",
+      "client_order_id": "schwab_1m_v2-CLRO-open-f9b7d28441fb",
+      "symbol": "CLRO",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "5.0773",
+        "stop": "5.08",
+        "limit": "5.10",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.08",
+        "stop": "5.08",
+        "limit": "5.11",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "819ec38e-cfb8-4e61-addc-aed140d2ff28",
+      "client_order_id": "schwab_1m_v2-EGG-open-b2c802781ed7",
+      "symbol": "EGG",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.4482",
+        "stop": "4.45",
+        "limit": "4.47",
+        "shares": 2,
+        "target": "4.67",
+        "protection": "4.09"
+      },
+      "new": {
+        "trigger": "4.45",
+        "stop": "4.45",
+        "limit": "4.47",
+        "shares": 2,
+        "target": "4.67",
+        "protection": "4.09"
+      }
+    },
+    {
+      "id": "059c4fab-e73e-424f-9321-7f5a6dd156d6",
+      "client_order_id": "schwab_1m_v2-EGG-open-8385dc64f24b",
+      "symbol": "EGG",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.4482",
+        "stop": "4.45",
+        "limit": "4.47",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.45",
+        "stop": "4.45",
+        "limit": "4.47",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "6df7bac9-9a92-4c4c-9778-b4c3c8f26bac",
+      "client_order_id": "schwab_1m_v2-CLRO-open-476b56026f8d",
+      "symbol": "CLRO",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.0039",
+        "stop": "5.0",
+        "limit": "5.03",
+        "shares": 2,
+        "target": "5.25",
+        "protection": "4.60"
+      },
+      "new": {
+        "trigger": "5.01",
+        "stop": "5.01",
+        "limit": "5.04",
+        "shares": 2,
+        "target": "5.26",
+        "protection": "4.61"
+      }
+    },
+    {
+      "id": "507134dd-8b4a-4332-9aed-b7f6898524a5",
+      "client_order_id": "schwab_1m_v2-CLRO-open-74825674d6b2",
+      "symbol": "CLRO",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "5.0039",
+        "stop": "5.00",
+        "limit": "5.03",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.01",
+        "stop": "5.01",
+        "limit": "5.04",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "52348d80-5aab-48a5-b4cd-617a9dba44b1",
+      "client_order_id": "schwab_1m_v2-MEDS-open-741700dfe42e",
+      "symbol": "MEDS",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.2556",
+        "stop": "4.26",
+        "limit": "4.28",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.26",
+        "stop": "4.26",
+        "limit": "4.28",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "353edae1-6051-4b00-bd3e-bb477838d9c1",
+      "client_order_id": "schwab_1m_v2-NAMI-open-f157f1fdbc6e",
+      "symbol": "NAMI",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "2.3382",
+        "stop": "2.34",
+        "limit": "2.35",
+        "shares": 2,
+        "target": "2.46",
+        "protection": "2.15"
+      },
+      "new": {
+        "trigger": "2.34",
+        "stop": "2.34",
+        "limit": "2.35",
+        "shares": 2,
+        "target": "2.46",
+        "protection": "2.15"
+      }
+    },
+    {
+      "id": "2b2628f6-c1a9-4e52-8432-15f309daf9cd",
+      "client_order_id": "schwab_1m_v2-NAMI-open-6c5cf4087328",
+      "symbol": "NAMI",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "2.2735",
+        "stop": "2.27",
+        "limit": "2.28",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "2.28",
+        "stop": "2.28",
+        "limit": "2.29",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "3ca8f3ae-bb12-48c3-b95f-0500175f9b49",
+      "client_order_id": "schwab_1m_v2-BKYI-open-92ffe964b074",
+      "symbol": "BKYI",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.4411",
+        "stop": "3.44",
+        "limit": "3.46",
+        "shares": 2,
+        "target": "3.61",
+        "protection": "3.17"
+      },
+      "new": {
+        "trigger": "3.45",
+        "stop": "3.45",
+        "limit": "3.47",
+        "shares": 2,
+        "target": "3.62",
+        "protection": "3.17"
+      }
+    },
+    {
+      "id": "27bfaf28-4ad7-4fd4-af3e-81521af94756",
+      "client_order_id": "schwab_1m_v2-BKYI-open-bec1a67a452b",
+      "symbol": "BKYI",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.4411",
+        "stop": "3.44",
+        "limit": "3.46",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.45",
+        "stop": "3.45",
+        "limit": "3.47",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "bf8981ea-2fdb-4e0e-95c6-abdca9313b9f",
+      "client_order_id": "schwab_1m_v2-DXST-open-ef37f7700002",
+      "symbol": "DXST",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.8246",
+        "stop": "4.82",
+        "limit": "4.85",
+        "shares": 2,
+        "target": "5.07",
+        "protection": "4.44"
+      },
+      "new": {
+        "trigger": "4.83",
+        "stop": "4.83",
+        "limit": "4.85",
+        "shares": 2,
+        "target": "5.07",
+        "protection": "4.44"
+      }
+    },
+    {
+      "id": "992ca5d4-c9da-4d40-aa0b-548c0161c2f9",
+      "client_order_id": "schwab_1m_v2-BKYI-open-8d3289ae2072",
+      "symbol": "BKYI",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.3680",
+        "stop": "3.37",
+        "limit": "3.38",
+        "shares": 2,
+        "target": "3.54",
+        "protection": "3.10"
+      },
+      "new": {
+        "trigger": "3.37",
+        "stop": "3.37",
+        "limit": "3.39",
+        "shares": 2,
+        "target": "3.54",
+        "protection": "3.10"
+      }
+    },
+    {
+      "id": "c19ad6b4-33d2-4d1f-829c-1e4adf232b36",
+      "client_order_id": "schwab_1m_v2-BKYI-open-89cd1826e51c",
+      "symbol": "BKYI",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.3680",
+        "stop": "3.37",
+        "limit": "3.38",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.37",
+        "stop": "3.37",
+        "limit": "3.39",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "0482335e-6e2d-4fb3-b895-34a46b90abef",
+      "client_order_id": "schwab_1m_v2-DXST-open-5a250d6c0b14",
+      "symbol": "DXST",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "2.8458",
+        "stop": "2.85",
+        "limit": "2.86",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "2.85",
+        "stop": "2.85",
+        "limit": "2.86",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "6c8d4c40-8591-43e0-b2e5-cf83188818ae",
+      "client_order_id": "schwab_1m_v2-DXST-open-8438e6d80737",
+      "symbol": "DXST",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "3.0709",
+        "stop": "3.07",
+        "limit": "3.09",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.08",
+        "stop": "3.08",
+        "limit": "3.10",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "8848890d-b05e-4644-b346-bcdb6e0c7db4",
+      "client_order_id": "schwab_1m_v2-DXST-open-7232c416557c",
+      "symbol": "DXST",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "3.0709",
+        "stop": "3.07",
+        "limit": "3.09",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.08",
+        "stop": "3.08",
+        "limit": "3.10",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "8e6fb0e4-2d9e-4717-a001-af188b59de36",
+      "client_order_id": "schwab_1m_v2-MSGY-open-527884dfcc6d",
+      "symbol": "MSGY",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.4890",
+        "stop": "4.49",
+        "limit": "4.51",
+        "shares": 2,
+        "target": "4.71",
+        "protection": "4.13"
+      },
+      "new": {
+        "trigger": "4.49",
+        "stop": "4.49",
+        "limit": "4.51",
+        "shares": 2,
+        "target": "4.71",
+        "protection": "4.13"
+      }
+    },
+    {
+      "id": "db5c9e0f-fcd2-46f9-aebd-4e85653af825",
+      "client_order_id": "schwab_1m_v2-LGHL-open-4b8234dd9ee4",
+      "symbol": "LGHL",
+      "account": "live:schwab_1m_v2",
+      "order_type": "limit",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.0149",
+        "stop": "N/A (LIMIT)",
+        "limit": "7.04",
+        "shares": 2,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "7.02",
+        "stop": "N/A (LIMIT)",
+        "limit": "7.04",
+        "shares": 2,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "e77df81b-6d08-4185-a99c-b91a8d59a487",
+      "client_order_id": "schwab_1m_v2-TGE-open-d4c4458a7484",
+      "symbol": "TGE",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.4187",
+        "stop": "1.42",
+        "limit": "1.43",
+        "shares": 2,
+        "target": "1.49",
+        "protection": "1.31"
+      },
+      "new": {
+        "trigger": "1.42",
+        "stop": "1.42",
+        "limit": "1.43",
+        "shares": 2,
+        "target": "1.49",
+        "protection": "1.31"
+      }
+    },
+    {
+      "id": "0c39ae87-0f40-44ef-8060-cae639194dc4",
+      "client_order_id": "schwab_1m_v2-TGE-open-a578beadae01",
+      "symbol": "TGE",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.4187",
+        "stop": "1.42",
+        "limit": "1.43",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.42",
+        "stop": "1.42",
+        "limit": "1.43",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "1d7c3a2e-3a8c-4c7d-ab5a-b2232b234a28",
+      "client_order_id": "schwab_1m_v2-TNON-open-f698f8545531",
+      "symbol": "TNON",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.9675",
+        "stop": "3.97",
+        "limit": "3.99",
+        "shares": 2,
+        "target": "4.17",
+        "protection": "3.65"
+      },
+      "new": {
+        "trigger": "3.97",
+        "stop": "3.97",
+        "limit": "3.99",
+        "shares": 2,
+        "target": "4.17",
+        "protection": "3.65"
+      }
+    },
+    {
+      "id": "886f1430-a1b7-4266-876f-b4d5c103410c",
+      "client_order_id": "schwab_1m_v2-TNON-open-47964d4b9196",
+      "symbol": "TNON",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.9675",
+        "stop": "3.97",
+        "limit": "3.99",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.97",
+        "stop": "3.97",
+        "limit": "3.99",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "0cdd5341-d390-45c3-8c1d-a42a22ae49bb",
+      "client_order_id": "schwab_1m_v2-TGE-open-7c91550a4be6",
+      "symbol": "TGE",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.4489",
+        "stop": "1.45",
+        "limit": "1.46",
+        "shares": 2,
+        "target": "1.52",
+        "protection": "1.33"
+      },
+      "new": {
+        "trigger": "1.45",
+        "stop": "1.45",
+        "limit": "1.46",
+        "shares": 2,
+        "target": "1.52",
+        "protection": "1.33"
+      }
+    },
+    {
+      "id": "974b6403-a38f-4d08-8ce1-c9e1686988d5",
+      "client_order_id": "schwab_1m_v2-TGE-open-fa04704ff4c9",
+      "symbol": "TGE",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.4489",
+        "stop": "1.45",
+        "limit": "1.46",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.45",
+        "stop": "1.45",
+        "limit": "1.46",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "af93ed91-01a2-48e8-a565-bcdf1d107197",
+      "client_order_id": "schwab_1m_v2-TNON-open-c9e817626ca3",
+      "symbol": "TNON",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.0816",
+        "stop": "4.08",
+        "limit": "4.1",
+        "shares": 2,
+        "target": "4.29",
+        "protection": "3.76"
+      },
+      "new": {
+        "trigger": "4.09",
+        "stop": "4.09",
+        "limit": "4.11",
+        "shares": 2,
+        "target": "4.29",
+        "protection": "3.76"
+      }
+    },
+    {
+      "id": "d09d6a22-583c-4945-9da4-dac0e4ea7446",
+      "client_order_id": "schwab_1m_v2-TNON-open-6c21c9ef2d6d",
+      "symbol": "TNON",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.0816",
+        "stop": "4.08",
+        "limit": "4.10",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.09",
+        "stop": "4.09",
+        "limit": "4.11",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "e0e6ad2b-eb33-4f58-b755-de8c6bb34d30",
+      "client_order_id": "schwab_1m_v2-TGE-open-be82902e26c4",
+      "symbol": "TGE",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.4974",
+        "stop": "1.5",
+        "limit": "1.51",
+        "shares": 2,
+        "target": "1.57",
+        "protection": "1.38"
+      },
+      "new": {
+        "trigger": "1.50",
+        "stop": "1.5",
+        "limit": "1.51",
+        "shares": 2,
+        "target": "1.58",
+        "protection": "1.38"
+      }
+    },
+    {
+      "id": "a878196a-a3d6-46f9-844a-d33bcdff5309",
+      "client_order_id": "schwab_1m_v2-TGE-open-5b30b0f8bc70",
+      "symbol": "TGE",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.4974",
+        "stop": "1.50",
+        "limit": "1.51",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.50",
+        "stop": "1.50",
+        "limit": "1.51",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "c749ef23-ff66-41d0-8b8f-f1330108f717",
+      "client_order_id": "schwab_1m_v2-GOW-open-1b76b7598b5c",
+      "symbol": "GOW",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "2.5515",
+        "stop": "2.55",
+        "limit": "2.56",
+        "shares": 2,
+        "target": "2.68",
+        "protection": "2.35"
+      },
+      "new": {
+        "trigger": "2.56",
+        "stop": "2.56",
+        "limit": "2.57",
+        "shares": 2,
+        "target": "2.69",
+        "protection": "2.36"
+      }
+    },
+    {
+      "id": "a2918d80-bf69-46d8-be38-ca62394d8863",
+      "client_order_id": "schwab_1m_v2-GOW-open-d97be22791f0",
+      "symbol": "GOW",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "2.5515",
+        "stop": "2.55",
+        "limit": "2.56",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "2.56",
+        "stop": "2.56",
+        "limit": "2.57",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "abacd545-9db1-4923-8ece-e659b59702e9",
+      "client_order_id": "schwab_1m_v2-TNON-open-b76613b1e711",
+      "symbol": "TNON",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.1049",
+        "stop": "4.1",
+        "limit": "4.13",
+        "shares": 2,
+        "target": "4.31",
+        "protection": "3.78"
+      },
+      "new": {
+        "trigger": "4.11",
+        "stop": "4.11",
+        "limit": "4.13",
+        "shares": 2,
+        "target": "4.32",
+        "protection": "3.78"
+      }
+    },
+    {
+      "id": "0baee461-49f7-46cd-ba9b-c619f13b4b9b",
+      "client_order_id": "schwab_1m_v2-TNON-open-fd4d151efe3d",
+      "symbol": "TNON",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.1049",
+        "stop": "4.10",
+        "limit": "4.13",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.11",
+        "stop": "4.11",
+        "limit": "4.13",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "ad9f63a7-c22c-46a5-b7b9-8a9fe5585169",
+      "client_order_id": "schwab_1m_v2-TNON-open-d511488f505a",
+      "symbol": "TNON",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "4.1049",
+        "stop": "4.1",
+        "limit": "4.13",
+        "shares": 2,
+        "target": "4.31",
+        "protection": "3.78"
+      },
+      "new": {
+        "trigger": "4.11",
+        "stop": "4.11",
+        "limit": "4.13",
+        "shares": 2,
+        "target": "4.32",
+        "protection": "3.78"
+      }
+    },
+    {
+      "id": "cb9f3db8-9a9f-4512-8a02-c7f9abfc2db0",
+      "client_order_id": "schwab_1m_v2-TGE-open-fc5ab53e89d5",
+      "symbol": "TGE",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.5537",
+        "stop": "1.55",
+        "limit": "1.56",
+        "shares": 2,
+        "target": "1.63",
+        "protection": "1.43"
+      },
+      "new": {
+        "trigger": "1.56",
+        "stop": "1.56",
+        "limit": "1.57",
+        "shares": 2,
+        "target": "1.64",
+        "protection": "1.44"
+      }
+    },
+    {
+      "id": "94839f31-5e66-40ad-86ac-fdf959db8cfe",
+      "client_order_id": "schwab_1m_v2-TGE-open-beb9c3b768bc",
+      "symbol": "TGE",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.5537",
+        "stop": "1.55",
+        "limit": "1.56",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.56",
+        "stop": "1.56",
+        "limit": "1.57",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "c7d2c679-fbc1-486a-9952-e38797ab7e2c",
+      "client_order_id": "schwab_1m_v2-MEDS-open-2ede8d74c86c",
+      "symbol": "MEDS",
+      "account": "live:schwab_1m_v2",
+      "order_type": "limit",
+      "status": "filled",
+      "old": {
+        "trigger": "4.6438",
+        "stop": "N/A (LIMIT)",
+        "limit": "4.66",
+        "shares": 2,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.65",
+        "stop": "N/A (LIMIT)",
+        "limit": "4.66",
+        "shares": 2,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "b696acb2-a877-428b-97ab-ca0ffe5cac24",
+      "client_order_id": "schwab_1m_v2-NXL-open-2a3d8472d70c",
+      "symbol": "NXL",
+      "account": "live:schwab_1m_v2",
+      "order_type": "limit",
+      "status": "filled",
+      "old": {
+        "trigger": "7.1412",
+        "stop": "N/A (LIMIT)",
+        "limit": "7.16",
+        "shares": 2,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "7.15",
+        "stop": "N/A (LIMIT)",
+        "limit": "7.16",
+        "shares": 2,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "64805ad1-1d8c-44dc-828a-ec41d6a6ca60",
+      "client_order_id": "schwab_1m_v2-NXL-open-e14630cec6f2",
+      "symbol": "NXL",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "7.7588",
+        "stop": "7.76",
+        "limit": "7.80",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "7.76",
+        "stop": "7.76",
+        "limit": "7.80",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "6a4deec6-0d1a-4c78-abe5-2f23805f90d4",
+      "client_order_id": "schwab_1m_v2-NXL-open-4fa183aafb38",
+      "symbol": "NXL",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "7.6672",
+        "stop": "7.67",
+        "limit": "7.71",
+        "shares": 2,
+        "target": "8.05",
+        "protection": "7.05"
+      },
+      "new": {
+        "trigger": "7.67",
+        "stop": "7.67",
+        "limit": "7.71",
+        "shares": 2,
+        "target": "8.05",
+        "protection": "7.06"
+      }
+    },
+    {
+      "id": "ce9eeb89-9dbb-474b-867c-ceae621e41f7",
+      "client_order_id": "schwab_1m_v2-NXL-open-bdc84b14af2f",
+      "symbol": "NXL",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "7.6672",
+        "stop": "7.67",
+        "limit": "7.71",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "7.67",
+        "stop": "7.67",
+        "limit": "7.71",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "f562f606-c1ba-413c-a108-2d480e5ff7f2",
+      "client_order_id": "schwab_1m_v2-VEEA-open-a9d3b4b02866",
+      "symbol": "VEEA",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.1306",
+        "stop": "3.13",
+        "limit": "3.15",
+        "shares": 2,
+        "target": "3.29",
+        "protection": "2.88"
+      },
+      "new": {
+        "trigger": "3.14",
+        "stop": "3.14",
+        "limit": "3.16",
+        "shares": 2,
+        "target": "3.30",
+        "protection": "2.89"
+      }
+    },
+    {
+      "id": "2d914f13-e121-4075-9496-f2af3963fbe2",
+      "client_order_id": "schwab_1m_v2-VEEA-open-5312e69928c3",
+      "symbol": "VEEA",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.1306",
+        "stop": "3.13",
+        "limit": "3.15",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.14",
+        "stop": "3.14",
+        "limit": "3.16",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "b3560f0a-331a-4c6a-8428-dcc4f0d08205",
+      "client_order_id": "schwab_1m_v2-VEEA-open-5f08c24ec32f",
+      "symbol": "VEEA",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.2122",
+        "stop": "3.21",
+        "limit": "3.23",
+        "shares": 2,
+        "target": "3.37",
+        "protection": "2.96"
+      },
+      "new": {
+        "trigger": "3.22",
+        "stop": "3.22",
+        "limit": "3.24",
+        "shares": 2,
+        "target": "3.38",
+        "protection": "2.96"
+      }
+    },
+    {
+      "id": "e8c0b099-241c-4eed-b102-52cc6d53a1f1",
+      "client_order_id": "schwab_1m_v2-VEEA-open-1c1f1d2e5800",
+      "symbol": "VEEA",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.2122",
+        "stop": "3.21",
+        "limit": "3.23",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.22",
+        "stop": "3.22",
+        "limit": "3.24",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "2291bf62-a00c-47e2-a424-79cc77c88a62",
+      "client_order_id": "schwab_1m_v2-NXL-open-13b381aab9cb",
+      "symbol": "NXL",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "7.5868",
+        "stop": "7.59",
+        "limit": "7.62",
+        "shares": 2,
+        "target": "7.97",
+        "protection": "6.98"
+      },
+      "new": {
+        "trigger": "7.59",
+        "stop": "7.59",
+        "limit": "7.63",
+        "shares": 2,
+        "target": "7.97",
+        "protection": "6.98"
+      }
+    },
+    {
+      "id": "f5f32a7c-379b-4f5e-9d8d-26a53e52fd6c",
+      "client_order_id": "schwab_1m_v2-NXL-open-5bcd4fec6519",
+      "symbol": "NXL",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "7.5868",
+        "stop": "7.59",
+        "limit": "7.62",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "7.59",
+        "stop": "7.59",
+        "limit": "7.63",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "53a71b46-fb02-4cee-abba-840f60bdb66e",
+      "client_order_id": "schwab_1m_v2-VEEA-open-51608f43b660",
+      "symbol": "VEEA",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.1720",
+        "stop": "3.17",
+        "limit": "3.19",
+        "shares": 2,
+        "target": "3.33",
+        "protection": "2.92"
+      },
+      "new": {
+        "trigger": "3.18",
+        "stop": "3.18",
+        "limit": "3.2",
+        "shares": 2,
+        "target": "3.34",
+        "protection": "2.93"
+      }
+    },
+    {
+      "id": "fba5d474-3dee-4f1c-b608-f119d04fab7f",
+      "client_order_id": "schwab_1m_v2-VEEA-open-f98fae2f9098",
+      "symbol": "VEEA",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.1720",
+        "stop": "3.17",
+        "limit": "3.19",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.18",
+        "stop": "3.18",
+        "limit": "3.20",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "c69fac87-4791-4d67-ab64-00a042a19a11",
+      "client_order_id": "schwab_1m_v2-AMOD-open-4355c5cbba77",
+      "symbol": "AMOD",
+      "account": "live:schwab_1m_v2",
+      "order_type": "limit",
+      "status": "filled",
+      "old": {
+        "trigger": "2.5693",
+        "stop": "N/A (LIMIT)",
+        "limit": "2.58",
+        "shares": 2,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "2.57",
+        "stop": "N/A (LIMIT)",
+        "limit": "2.58",
+        "shares": 2,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "a2dbfe31-526d-4ca9-ba85-1c446ac863bd",
+      "client_order_id": "schwab_1m_v2-AIXI-open-10282bbfc733",
+      "symbol": "AIXI",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.8277",
+        "stop": "1.83",
+        "limit": "1.84",
+        "shares": 2,
+        "target": "1.92",
+        "protection": "1.68"
+      },
+      "new": {
+        "trigger": "1.83",
+        "stop": "1.83",
+        "limit": "1.84",
+        "shares": 2,
+        "target": "1.92",
+        "protection": "1.68"
+      }
+    },
+    {
+      "id": "9e511cf5-5d87-4c16-b990-471b88bfb8c6",
+      "client_order_id": "schwab_1m_v2-AIXI-open-10b952a8b6d2",
+      "symbol": "AIXI",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.8277",
+        "stop": "1.83",
+        "limit": "1.84",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.83",
+        "stop": "1.83",
+        "limit": "1.84",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "fcadb2af-dfe1-4583-a11f-a2470a93b0aa",
+      "client_order_id": "schwab_1m_v2-AIXI-open-dc68b12eb4c4",
+      "symbol": "AIXI",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.7428",
+        "stop": "1.74",
+        "limit": "1.75",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.75",
+        "stop": "1.75",
+        "limit": "1.76",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "862260c3-746f-44f8-85b1-9715584524b5",
+      "client_order_id": "schwab_1m_v2-AMOD-open-c66e9ffe8ce5",
+      "symbol": "AMOD",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "3.5541",
+        "stop": "3.55",
+        "limit": "3.57",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.56",
+        "stop": "3.56",
+        "limit": "3.58",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "091293e1-9168-48ca-a67e-6b8f7f63ecad",
+      "client_order_id": "schwab_1m_v2-AMOD-open-72e3785b2f61",
+      "symbol": "AMOD",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.5185",
+        "stop": "3.52",
+        "limit": "3.54",
+        "shares": 2,
+        "target": "3.69",
+        "protection": "3.24"
+      },
+      "new": {
+        "trigger": "3.52",
+        "stop": "3.52",
+        "limit": "3.54",
+        "shares": 2,
+        "target": "3.70",
+        "protection": "3.24"
+      }
+    },
+    {
+      "id": "5b63e454-41d4-4ab3-a3ed-5eaefdea286b",
+      "client_order_id": "schwab_1m_v2-AMOD-open-f30aaea339f2",
+      "symbol": "AMOD",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.5185",
+        "stop": "3.52",
+        "limit": "3.54",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.52",
+        "stop": "3.52",
+        "limit": "3.54",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "b2faecfc-27a4-4866-a591-d3c169c78ef1",
+      "client_order_id": "schwab_1m_v2-CYCU-open-625c302719ab",
+      "symbol": "CYCU",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.2138",
+        "stop": "4.21",
+        "limit": "4.23",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.22",
+        "stop": "4.22",
+        "limit": "4.24",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "f816886c-bc7d-4daf-bcc2-9097885fca2f",
+      "client_order_id": "schwab_1m_v2-CYCU-open-9c7d95abab66",
+      "symbol": "CYCU",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.1072",
+        "stop": "4.11",
+        "limit": "4.13",
+        "shares": 2,
+        "target": "4.31",
+        "protection": "3.78"
+      },
+      "new": {
+        "trigger": "4.11",
+        "stop": "4.11",
+        "limit": "4.13",
+        "shares": 2,
+        "target": "4.32",
+        "protection": "3.78"
+      }
+    },
+    {
+      "id": "6558e675-7737-45c2-a229-477d34cae2bd",
+      "client_order_id": "schwab_1m_v2-CYCU-open-5fd20fcd9d80",
+      "symbol": "CYCU",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.1072",
+        "stop": "4.11",
+        "limit": "4.13",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.11",
+        "stop": "4.11",
+        "limit": "4.13",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "ab740809-4c93-4f47-9932-1420adec8d3e",
+      "client_order_id": "schwab_1m_v2-AMOD-open-73b1edbee6d7",
+      "symbol": "AMOD",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.4056",
+        "stop": "3.41",
+        "limit": "3.42",
+        "shares": 2,
+        "target": "3.58",
+        "protection": "3.13"
+      },
+      "new": {
+        "trigger": "3.41",
+        "stop": "3.41",
+        "limit": "3.43",
+        "shares": 2,
+        "target": "3.58",
+        "protection": "3.14"
+      }
+    },
+    {
+      "id": "b2c4eade-9323-4d06-9137-f291c1c8e492",
+      "client_order_id": "schwab_1m_v2-AMOD-open-8ae9c91274da",
+      "symbol": "AMOD",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.4056",
+        "stop": "3.41",
+        "limit": "3.42",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.41",
+        "stop": "3.41",
+        "limit": "3.43",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "948d83a1-8dd1-493a-8292-d215b2a6f426",
+      "client_order_id": "schwab_1m_v2-CYCU-open-539e7a0056ba",
+      "symbol": "CYCU",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.1196",
+        "stop": "4.12",
+        "limit": "4.14",
+        "shares": 2,
+        "target": "4.33",
+        "protection": "3.79"
+      },
+      "new": {
+        "trigger": "4.12",
+        "stop": "4.12",
+        "limit": "4.14",
+        "shares": 2,
+        "target": "4.33",
+        "protection": "3.79"
+      }
+    },
+    {
+      "id": "c90be99c-ea2e-4250-b0c2-c02b2016caa8",
+      "client_order_id": "schwab_1m_v2-CYCU-open-aa21c79335f6",
+      "symbol": "CYCU",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.1196",
+        "stop": "4.12",
+        "limit": "4.14",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.12",
+        "stop": "4.12",
+        "limit": "4.14",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "1e4ea069-c117-45ed-be70-39858302b877",
+      "client_order_id": "schwab_1m_v2-AIXI-open-5761d355b75a",
+      "symbol": "AIXI",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.6897",
+        "stop": "1.69",
+        "limit": "1.70",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.69",
+        "stop": "1.69",
+        "limit": "1.70",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "f1a30f16-2ec8-4c96-b076-a0f64685e0e3",
+      "client_order_id": "schwab_1m_v2-CYCU-open-e6e1acb7ec62",
+      "symbol": "CYCU",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.1196",
+        "stop": "4.12",
+        "limit": "4.14",
+        "shares": 2,
+        "target": "4.33",
+        "protection": "3.79"
+      },
+      "new": {
+        "trigger": "4.12",
+        "stop": "4.12",
+        "limit": "4.14",
+        "shares": 2,
+        "target": "4.33",
+        "protection": "3.79"
+      }
+    },
+    {
+      "id": "7cb93ac1-8b0c-4a9e-a962-c0f6b796d6a9",
+      "client_order_id": "schwab_1m_v2-CYCU-open-f02c61a9fffa",
+      "symbol": "CYCU",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "4.1196",
+        "stop": "4.12",
+        "limit": "4.14",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.12",
+        "stop": "4.12",
+        "limit": "4.14",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "a0d5d5bb-6269-43e3-8f8d-f00f428e68ec",
+      "client_order_id": "schwab_1m_v2-CYCU-open-40ad383bdcb6",
+      "symbol": "CYCU",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "4.0916",
+        "stop": "4.09",
+        "limit": "4.11",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "4.10",
+        "stop": "4.10",
+        "limit": "4.12",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "3aae5787-c5a9-4c50-a214-ce8a441ce34a",
+      "client_order_id": "schwab_1m_v2-CYCU-open-a4b6253ff21b",
+      "symbol": "CYCU",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "4.0188",
+        "stop": "4.02",
+        "limit": "4.04",
+        "shares": 2,
+        "target": "4.22",
+        "protection": "3.70"
+      },
+      "new": {
+        "trigger": "4.02",
+        "stop": "4.02",
+        "limit": "4.04",
+        "shares": 2,
+        "target": "4.22",
+        "protection": "3.70"
+      }
+    },
+    {
+      "id": "b665af32-b293-485d-a8ee-0ca778e5cbac",
+      "client_order_id": "schwab_1m_v2-AIXI-open-af600d01a6a2",
+      "symbol": "AIXI",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "1.9052",
+        "stop": "1.91",
+        "limit": "1.92",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.91",
+        "stop": "1.91",
+        "limit": "1.92",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "47568b79-8eba-4924-bb91-868833411b2d",
+      "client_order_id": "schwab_1m_v2-AIXI-open-707aa54de5dc",
+      "symbol": "AIXI",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.8420",
+        "stop": "1.84",
+        "limit": "1.85",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.85",
+        "stop": "1.85",
+        "limit": "1.86",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "669e4a4d-3e09-4607-a66b-ce96b8da35d8",
+      "client_order_id": "schwab_1m_v2-AMOD-open-b0c37801356d",
+      "symbol": "AMOD",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.4109",
+        "stop": "3.41",
+        "limit": "3.43",
+        "shares": 2,
+        "target": "3.58",
+        "protection": "3.14"
+      },
+      "new": {
+        "trigger": "3.42",
+        "stop": "3.42",
+        "limit": "3.44",
+        "shares": 2,
+        "target": "3.59",
+        "protection": "3.15"
+      }
+    },
+    {
+      "id": "f0d6abeb-70d2-4231-9640-df440dae83bf",
+      "client_order_id": "schwab_1m_v2-AMOD-open-8fa64e9265b2",
+      "symbol": "AMOD",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.4109",
+        "stop": "3.41",
+        "limit": "3.43",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "3.42",
+        "stop": "3.42",
+        "limit": "3.44",
+        "shares": 1,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "0e0003e7-d405-42d7-9e4e-cc6714c34669",
+      "client_order_id": "schwab_1m_v2-SAIQ-open-bda3ad57da92",
+      "symbol": "SAIQ",
+      "account": "live:schwab_1m_v2",
+      "order_type": "limit",
+      "status": "rejected",
+      "old": {
+        "trigger": "6.7928",
+        "stop": "N/A (LIMIT)",
+        "limit": "6.24",
+        "shares": 96,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "6.80",
+        "stop": "N/A (LIMIT)",
+        "limit": "6.24",
+        "shares": 96,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "cdca0853-d931-40cb-a91a-36a90af03a20",
+      "client_order_id": "schwab_1m_v2-MI-open-5f686b216fb4",
+      "symbol": "MI",
+      "account": "live:schwab_1m_v2",
+      "order_type": "limit",
+      "status": "cancelled",
+      "old": {
+        "trigger": "2.7288",
+        "stop": "N/A (LIMIT)",
+        "limit": "2.74",
+        "shares": 219,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "2.73",
+        "stop": "N/A (LIMIT)",
+        "limit": "2.74",
+        "shares": 219,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "137c0119-14e7-47cd-a7ff-c45353c16362",
+      "client_order_id": "schwab_1m_v2-APUS-open-ca105a42910f",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "5.3463",
+        "stop": "5.35",
+        "limit": "5.37",
+        "shares": 112,
+        "target": "5.61",
+        "protection": "4.92"
+      },
+      "new": {
+        "trigger": "5.35",
+        "stop": "5.35",
+        "limit": "5.38",
+        "shares": 112,
+        "target": "5.62",
+        "protection": "4.92"
+      }
+    },
+    {
+      "id": "a37e14f5-dce6-4215-ad87-0ed0909e8824",
+      "client_order_id": "schwab_1m_v2-APUS-open-dc8c75efb6c7",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "5.3463",
+        "stop": "5.35",
+        "limit": "5.37",
+        "shares": 56,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "5.35",
+        "stop": "5.35",
+        "limit": "5.38",
+        "shares": 56,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "f7ad3f3f-4e57-4124-a510-ab51b5da8e5c",
+      "client_order_id": "schwab_1m_v2-MI-open-2220fd5b2d58",
+      "symbol": "MI",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "3.3103",
+        "stop": "3.31",
+        "limit": "3.33",
+        "shares": 180,
+        "target": "3.48",
+        "protection": "3.05"
+      },
+      "new": {
+        "trigger": "3.32",
+        "stop": "3.32",
+        "limit": "3.34",
+        "shares": 180,
+        "target": "3.49",
+        "protection": "3.05"
+      }
+    },
+    {
+      "id": "365b4c6a-fc09-47b0-9f49-34a81e21a171",
+      "client_order_id": "schwab_1m_v2-VEEA-open-537edc9105ab",
+      "symbol": "VEEA",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "5.5918",
+        "stop": "5.59",
+        "limit": "5.62",
+        "shares": 107,
+        "target": "5.87",
+        "protection": "5.14"
+      },
+      "new": {
+        "trigger": "5.60",
+        "stop": "5.6",
+        "limit": "5.63",
+        "shares": 107,
+        "target": "5.88",
+        "protection": "5.15"
+      }
+    },
+    {
+      "id": "2fa0bacb-5479-4332-82ee-f45b07bda026",
+      "client_order_id": "schwab_1m_v2-APUS-open-eb0f432e543d",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "5.3220",
+        "stop": "5.32",
+        "limit": "5.35",
+        "shares": 112,
+        "target": "5.59",
+        "protection": "4.90"
+      },
+      "new": {
+        "trigger": "5.33",
+        "stop": "5.33",
+        "limit": "5.36",
+        "shares": 112,
+        "target": "5.60",
+        "protection": "4.90"
+      }
+    },
+    {
+      "id": "48d6964a-51ae-4367-a44c-ad7f083b205d",
+      "client_order_id": "schwab_1m_v2-RETO-open-7f273d444a66",
+      "symbol": "RETO",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "old": {
+        "trigger": "2.3632",
+        "stop": "2.36",
+        "limit": "2.38",
+        "shares": 252,
+        "target": "2.48",
+        "protection": "2.17"
+      },
+      "new": {
+        "trigger": "2.37",
+        "stop": "2.37",
+        "limit": "2.38",
+        "shares": 252,
+        "target": "2.49",
+        "protection": "2.18"
+      }
+    },
+    {
+      "id": "44937267-e139-47f0-96f9-3a7ed439544e",
+      "client_order_id": "schwab_1m_v2-MI-open-9549c40b8349",
+      "symbol": "MI",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "6.3877",
+        "stop": "6.39",
+        "limit": "6.42",
+        "shares": 93,
+        "target": "6.71",
+        "protection": "5.88"
+      },
+      "new": {
+        "trigger": "6.39",
+        "stop": "6.39",
+        "limit": "6.42",
+        "shares": 93,
+        "target": "6.71",
+        "protection": "5.88"
+      }
+    },
+    {
+      "id": "dfdde900-56b6-4b9f-a908-662b8c1793ff",
+      "client_order_id": "schwab_1m_v2-SCKT-open-1f63cbaaf087",
+      "symbol": "SCKT",
+      "account": "live:schwab_1m_v2",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "1.0944",
+        "stop": "1.09",
+        "limit": "1.1",
+        "shares": 545,
+        "target": "1.15",
+        "protection": "1.01"
+      },
+      "new": {
+        "trigger": "1.10",
+        "stop": "1.1",
+        "limit": "1.11",
+        "shares": 541,
+        "target": "1.16",
+        "protection": "1.01"
+      }
+    },
+    {
+      "id": "d9dbd8ee-27ce-49f1-8a78-7704d1ab2d0d",
+      "client_order_id": "schwab_1m_v2-SCKT-open-074e9d445a42",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "1.0944",
+        "stop": "1.09",
+        "limit": "1.10",
+        "shares": 273,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.10",
+        "stop": "1.10",
+        "limit": "1.11",
+        "shares": 270,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "bf1ca1ca-a948-43d6-806d-46328d6c3005",
+      "client_order_id": "schwab_1m_v2-SCKT-open-494aac58d0c2",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "1.0835",
+        "stop": "1.08",
+        "limit": "1.09",
+        "shares": 275,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.09",
+        "stop": "1.09",
+        "limit": "1.10",
+        "shares": 273,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "768aca73-1804-4692-ac29-02e59833225e",
+      "client_order_id": "schwab_1m_v2-SCKT-open-69a4f7276ad3",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "cancelled",
+      "old": {
+        "trigger": "1.0712",
+        "stop": "1.07",
+        "limit": "1.08",
+        "shares": 278,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.08",
+        "stop": "1.08",
+        "limit": "1.09",
+        "shares": 275,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    },
+    {
+      "id": "d5227349-a40c-4cbb-b381-7cc3a7c4919c",
+      "client_order_id": "schwab_1m_v2-SCKT-open-9a10bc5b0102",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "old": {
+        "trigger": "1.0636",
+        "stop": "1.06",
+        "limit": "1.07",
+        "shares": 280,
+        "target": "N/A",
+        "protection": "N/A"
+      },
+      "new": {
+        "trigger": "1.07",
+        "stop": "1.07",
+        "limit": "1.08",
+        "shares": 278,
+        "target": "N/A",
+        "protection": "N/A"
+      }
+    }
+  ]
+}
