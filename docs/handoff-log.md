@@ -5593,3 +5593,12 @@ Parent29tests/Ruff/bashsyntaxPASS, no whole-run or migrationproof. Generated
 committed-blob manifestd9f845f2 localonly, exactbytesawaitapproval. No staging,
 approvalfile,timer,checkout/env/schema/service/token/ledger action. Ifcutoff
 misses,reissueafterrotation20:05+reviewedactualstate; no automaticfallback.
+
+2026-10-05 18:28 ET codex-2 C87: exact-byte reviewer18:25 approval, staged
+ONLY committed950e9e42 seven runtimeartifacts plus exactmanifestd9f845f2 and
+approvalfields. Independent onboxstdlibhashvalidatorPASS beforejobcall;
+allchecksums printed. Exclusive/home/trader/after-hours/2026-10-05/owned-entry-
+rpg-all-on-1825-job. Attendeddirect runnerapprovalPASS and initialOMSgate
+started18:27:54.215ET; no timer/autonomoussecondattempt. InitialthreePIDs
+23705/26811/24025 activeNRestarts0. Supervision ongoing, notCOMPLETE, no
+service/schema/env/checkoutchange assertedyet. Trap page/norecovery unchanged.
