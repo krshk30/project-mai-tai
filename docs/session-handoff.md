@@ -39,6 +39,8 @@
 
 | C9 | PMREST1 Linux CI verification | #1091 fa14d46e exact head: Validate x2 PASS; independent pin still awaiting record; NOT merged/installed | 08:31 ET 10-05: runs 37309336688 and 37309342932 PASS; PR run 5,460 unit PASS, integration/replay/backtest 86 PASS + 1 existing xfail, Ruff/marker PASS; REPORT.md and v2-only INSTALL_PLAN.md in same head | codex-2 | claude-1 independent review/pin, operator exact-SHA evening GO; A1 unchanged boundary and stream Webull defect remain separate, A2 latency UNMEASURED |
 
+| C10 | PMPRINT1 independent replication, not blind | SAIQ print-only trigger and Webull synthetic-ask-zero sizing refusal independently reproduced; NO build; blind-gate limitation disclosed | 08:38 ET 10-05: own clean-box e1ce3b39 read, /tmp/pmprint1-own-read.json = 404 SAIQ trades, one high print 6.83 size 1 against 6.14/6.24; original retained intent /tmp/pmprint1-own-intent.json shows 97 shares at 6.19, OMS row repriced/resized to 96 at 6.24, zero fills; assessment commit 0fc7f02f; prior knowledge/full-attachment read disclosed, historical replay running | codex-2 | Ask-confirmation replay must preserve 14 real crosses and block five triggered strays; pending acceptance of non-blind replication; no runtime or production write |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
