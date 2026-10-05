@@ -4962,3 +4962,17 @@ unchanged QUOTE_DRIFT_CANCEL. Raw committed remaining-cases.json SHA256
 6893bb954131ce5233b60e1fd3d96d9f363c4d073f009c4d3570fef2774fd77c.
 Price-proxy replay14/14 eligible,5/5 strays blocked,CLRO ask5.55 blocked;
 decision-cache history UNMEASURED. Full final pair pending. No production action.
+
+## 2026-10-05 10:43 ET - Codex combined PMPRINT1/PMFLIP1 PR #1092
+
+Pushed head71f5f6bc5ae63a2a02b4a6fe5ed469b71cfbe1c8, one Codex-marked
+commit on exact PMREST merge a80b5181; range excludes PMREST commits. Full local
+tests/unit main56failed/5412passed versus head56failed/5468passed. Actual failed
+test names identical after stripping one asynchronously interleaved warning;
+this is unchanged baseline, not a green full local suite. Focused972pass,
+newcombinedmodule56pass, ten substantive mutations RED, Ruff and literal marker
+isolation PASS. GitHub Validate pending as of10:43ET. Report has complete named
+scenario map and price-proxy14/14eligible,5/5straysblocked,CLRO5.55blocked;
+historical decision-cache timing UNMEASURED. Folded PMREST install plan includes
+three switches ON, 143 boolean/8 numeric checks, one attended v2-only evening
+restart and one 10-06 preopen re-pin; no install authorization or service action.
