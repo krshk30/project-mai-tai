@@ -1,6 +1,7 @@
 # PMPRINT + durable-ticket recovery: October 5 candidate
 
-**DRAFT FOR REVIEW. NOT EXECUTABLE, NOT SCHEDULED, NO PRODUCTION AUTHORIZATION.**
+**DRAFT BLOCKED ON COMPOSED FILL RECONCILIATION. NOT EXECUTABLE, NOT SCHEDULED,
+NO PRODUCTION AUTHORIZATION.**
 
 This new document supersedes the folded three-PM-switch plan and the v2-only
 two-switch rollback draft. Turning hand-off OFF on the current code does not
@@ -15,8 +16,8 @@ ticket release, or additional trading-rule change is permitted.
 |---|---|---|---|
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
 | 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | merged at 13:09:07 ET to main 7e10baf0319da796b84934fe38994f6db4fcfc0b; whole tree equals pinned tree 736a540cac3c2724fa116216913331f532ecdfa9 | still dark on the box; proposed PMPRINT ON and PMFLIP OFF |
-| 2 | RPGSTUCK #1093, 7f0729ef67e97566d7c254273802665c760adf08 | NOT pinned; eight-ticket startup proof complete locally; Validate pending | existing ticket recovery active; no NEW hand-offs |
-| 3, optional | OWNMIX #1094, 55563e6f3abe004d484195c202b5118ea75e0169 | NOT pinned; F1/F2/U1-U4 plus Q2 conservative hint follow-up complete; Validate in progress as of 13:22 ET | entry binding; additive schema only if included |
+| 2 | RPGSTUCK #1093, 271314defe4079517869d0dec9e1366e36dfa7c4 | NOT pinned; standalone Validate x2 PASS at13:38:34/13:39:33; composition blocker below | existing ticket recovery active; no NEW hand-offs |
+| 3, optional | OWNMIX #1094, 55563e6f3abe004d484195c202b5118ea75e0169 | NOT pinned; F1/F2/U1-U4 plus Q2 complete; standalone Validate x2 PASS at13:27:34/13:27:56 | entry binding; additive schema only if included |
 
 No merge is authorized by this draft. Final exact heads, all required checks,
 ordered integration rehearsal and fresh pins after any rebase/conflict must be
@@ -24,29 +25,37 @@ recorded before the operator names APPROVED_SHA (40 hex). Never Update branch.
 Exclude #1094 entirely if it is unpinned. Do not substitute a moving branch tip.
 LINE=CHART is an active separate build concern, not in this candidate.
 
-As of 13:17 ET the authorized rebase checkpoints are RPG
-`d68651686a72200913c6e7e498c574d22907ea18` and OWN
-`bb4a6b22d592f350f0e851faae6a86d989944f3e`, each onto merged main
-`7e10baf0319da796b84934fe38994f6db4fcfc0b`; range-diff 3/3 equal for each.
-These are NOT final review heads: B1-B6 work bounding / fourteen-ticket replay
-and OWN Q2 measured call-budget / hint filtering are in progress. The earlier
-test pairs below remain historical, not results for those new final heads.
+The authorized rebase checkpoints were RPGd6865168 and OWNbb4a6b22, each
+onto merged main7e10; range-diff3/3 equal for each. Their subsequent follow-ups
+above require fresh review records. No pinned PM commit was amended.
 
-**Integration blocker:** the immutable pinned #1092 contains three old-code
-characterization assertions that require proven-clear tickets to remain owned.
-Those expectations conflict with the reviewed #1093 correction. Exact pinned
-#1092 plus this #1093 source applies cleanly, but the targeted combined run is
-76 passed / 3 failed, with no test skipped. Raw:
-`/tmp/oct5-final-rpg-pm-composition-verified.txt`. The three failing cases are
-fbfd692d, bd6ac0b9 and a007716c in
-`test_current_rpg_off_startup_still_restores_recorded_blocking_ticket`.
-The genuinely unproven faa55c1f case remains blocking. Keep #1092 frozen;
-a separately reviewed test-expectation integration or a fresh #1092 pin is
-required. Do not force production to preserve the defect to make tests green.
-This draft cannot become an executable release while that blocker remains.
-Adding exact OWN follow-up0e896505 to that rehearsal also applies cleanly;
-targeted three-head tests give210 passed / the same3 failed, zero skips.
-Raw `/tmp/oct5-three-head-composition-verified.txt`, as-of12:53 ET.
+**Exact-source rehearsal, 13:33 ET:** clean main7e10 plus generated patches
+for RPG271314de and OWN55563e6f applies cleanly in the isolated worktree
+oct5-reviewed-followup-composition. The source import path is verified.
+The staged rehearsal tree is `87f73bda73d9addc59f6543ca8642cb31f48fcc6`;
+360 focused tests PASS, no skips, raw
+`/tmp/oct5-final-composed-focused.xml` and `.txt`. This is a rehearsal tree,
+not a merge commit or APPROVED_SHA. Full combined units: **5701 passed/57 failed**
+versus clean main **5500 passed/56 failed**. Exact XML diff adds only
+`tests/unit/test_rpgstuck1.py::test_r_t5_uncertain_webull_dispatch_reconciles_exact_client_without_resubmit[fills]`;
+removed0. Actual phase remains `submit_unknown` instead of `filled`. This is a
+composition BLOCKER, despite the focused pass and standalone CI greens.
+An isolated five-run reproduction fails1/5. The shared SQLite StaticPool fixture
+is suspected, not yet proven; no test suppression, timing sleep or runtime
+workaround is authorized. The RPG sole writer is investigating. Raw XML:
+`/tmp/oct5-final-composed-full.xml`, SHA256
+`5120964296c48e3662d485265b8fe28318983b9580fe1e3331a55cfcb0e1865a`;
+repeated raw output `/tmp/oct5-composition-fill-5-reruns.txt`.
+The first tail-only diagnosis incorrectly named unattended-upgrade; exact
+failed-ID comparison corrected it. That missing-Linux-tool failure belongs
+to the baseline and is not the added failure. Do not label this run green.
+
+The previous three PM characterization failures are corrected only in the
+RPG follow-up after the authorized PM merge. The four recorded fixtures remain:
+three proven-clear tickets release by proof; truly unproven VEEA remains blocked.
+No source behavior is forced to preserve the old bug, no unknown guard is
+weakened, and no test is skipped. The earlier76/3 and210/3 results remain
+historical records, not this new composition's results. Fresh review is required.
 
 The execution window is October 5 after 20:00 ET and observed rotation, only
 on the operator's exact-SHA GO for the reviewed release. Bind BOX_SHA and clean
@@ -93,25 +102,33 @@ approval and print actual denominators. Neither #1093 nor #1094 adds a switch.
 
 | Proof | Required exact-set assertion | Current state |
 |---|---|---|
-| (a) legacy reprice | first and reclaim cancel then next-pass placement with hand-off OFF; PMPRINT true, PMFLIP/PMREST false, NFQ/GAP true | #1093 first/reclaim and gap-hold tests PASS locally; standalone settings are not a claim of PM source composition |
-| (b) durable startup | restore every October 5 ticket, prove per-leg ownership/disposition; rejected old order releases by exact identity and zero-fill proof, never age | all eight recorded tickets and five deferred intents tested; exact rejected-zero proof uses one durably claimed GET; after20:00 zero saved opens |
-| (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | targeted combined run 76 PASS / 3 obsolete-characterization FAIL; integration blocked pending review |
+| (a) legacy reprice | first and reclaim cancel then next-pass placement with hand-off OFF; PMPRINT true, PMFLIP/PMREST false, NFQ/GAP true | merged-PM RPG source and exact three-source rehearsal pass first/reclaim plus recorded cross/hold controls |
+| (b) durable startup | restore every captured October 5 ticket, prove per-leg ownership/disposition; rejected old order releases by exact identity and zero-fill proof, never age | all14 jobs/11 orders/15 intents/1 actual fill tested; strict RETO probe durably claimed once; after20:00 zero saved opens/cancels, true unknown stays blocked |
+| (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | 360 exact combined focused PASS; full5701/57 vsmain5500/56 adds uncertain-Webull-fill test, isolated1/5FAIL; BLOCKED until cause and reviewed fix |
 | OWN, if included | real submit and poll fill paths bind both IDs for both accounts; flat closes lifecycle without unsafe attribution; U1-U4, conservative hint and old-code/schema compatibility | local569 focused PASS;15/15 review-equivalent mutants RED; fresh pin and Validate required |
 
-Own source pull at 12:10:51 and 12:11:28 ET used read-only SQL, 8-second statement
-limit and at most64 rows per table. Raw paths are in STARTUP_TICKETS.md. It found
-eight tickets: the seven requested plus RETO Webull ba108172. Include the eighth
-in the disposition census; do not call seven-ticket proof complete while hiding
-it. Tests are not evidence that the production journal has already changed.
+Own source pull at13:17:02 ET uses READ ONLY SQL,8s and64-row/table sentinel
+limits. STARTUP_TICKETS.md retains paths/hashes and the previous exact broker
+GETs. It includes all14 captured tickets and the actual SCKT Webull BUY280@1.06
+Fill. Tests are not evidence that the production journal has already changed.
 
-#1093 local verification: exact main a80b5181 = 5412 passed / 56 failed;
-follow-up = 5515 passed / 56 failed, identical failed node IDs (zero added,
-zero removed). Broad focused 1165 passed; recorded startup module 54 passed;
-32/32 assertion-killed mutations. See its REPORT_STARTUP.md and
-verification-startup.json for frozen source/fixture hashes and exact names.
-Fresh four-parent broker GET bodies and the complete SQL pull are independently
-retained in STARTUP_TICKETS.md. These local results do not substitute for CI,
-a fresh exact-head pin, or the unresolved combined-tree expectation review.
+#1093 fresh verification: exact main7e10 =5500 passed/56 failed;
+follow-up271314de =5632 passed/same56 failed, introduced0/resolved0. Parent
+independently compares full XML failed-name sets. Broad focused1318 PASS,
+recorded/integration97 PASS,64 assertion-killed mutation controls; parent exact
+reviewer R13 guard removal gives1 assertion failure and R16 candidates removal
+gives6 assertion failures (accepted/rejected across APUS/VEEA/RETO).
+REPORT_B_REVIEW.md and verification-b-review.json retain exact tests/source
+hashes. No full suite is called green while the56 baseline failures remain.
+Standalone Validate x2 is now PASS. Fresh pins and resolution of the composed
+fill test are still required; no combined eligibility is inferred from CI.
+
+B5 proof work is bounded, not ownership: one startup scan; exact-generation
+committed writes wake only matching held tickets, durable hashes suppress repeats.
+No periodic unknown scan/xadd/DB retry and no age clearance. Failed scans use
+the existing configured broker-sync error cadence. A missed commit notification
+retains the block until matching evidence or next startup; it never creates a buy.
+The serial lane re-proves no-wire against all exact-generation broker rows.
 
 #1094 fresh paired unit result: exact main7e10 =5500 passed /56 failed;
 follow-up55563e6f =5570 passed /same56 failed; failed-name diff added0/removed0.
@@ -121,11 +138,12 @@ test runs public process_trade_intent, not a direct fill hook, plus real polling
 on both accounts, followed by owned-child exit polling. Broker replies are
 controlled recorded-shape inputs, not a live trading exercise. Actual old-main7e10
 nullable-schema compatibility passes on both accounts, offline in SQLite.
-CI is pending, not green; OWN remains optional and unpinned.
+OWN Validate x2 PASS at13:27:34/13:27:56 ET; its fresh independent pin remains
+required. OWN remains optional, not installed.
 
-The ticket census is frozen at12:13 ET. A fresh bounded read immediately before
-execution must include later tickets (handoff M56/M58 report MI/SCKT after that
-capture). Do not describe these eight fixtures as the whole live day's census.
+The ticket census is frozen at13:17:02 ET. A fresh bounded read immediately before
+execution must include any later tickets. Do not describe these14 fixtures as
+the whole live day's census.
 Any new shape not covered by reviewed recovery proof is UNKNOWN/STOP.
 
 The refreshed own read at 13:17:02 ET contains fourteen jobs, eleven orders,
