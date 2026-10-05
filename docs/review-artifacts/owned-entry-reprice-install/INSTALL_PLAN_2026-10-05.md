@@ -1,5 +1,8 @@
 # OWN MIX / RPG STUCK / PM cards - conditional single evening plan
 
+**SUPERSEDED: see ../tonight-candidate/INSTALL_PLAN_2026-10-05.md.**
+This earlier all-PM-ON/RPG-ON draft is retained as historical evidence only.
+
 **DRAFT FOR REVIEW, NOT EXECUTABLE APPROVAL OR A SCHEDULED JOB.**
 Monday October 5 after 20:00 ET and verified log rotation, both live accounts
 flat. Only independently pinned final heads may enter an operator-named exact

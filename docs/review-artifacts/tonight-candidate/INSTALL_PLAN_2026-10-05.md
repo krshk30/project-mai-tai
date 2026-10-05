@@ -15,14 +15,30 @@ ticket release, or additional trading-rule change is permitted.
 |---|---|---|---|
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
 | 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | pin and Validate x2 PASS; operator before-merge yes still required | PMPRINT ON; PMFLIP OFF |
-| 2 | RPGSTUCK #1093, follow-up to 289524631f91f26e922a964067f3ef9907cbc188 | NOT pinned; eight-ticket startup proof in progress | existing ticket recovery active; no NEW hand-offs |
-| 3, optional | OWNMIX #1094, follow-up to b94bd0ff0c2c7da681da45d748db61db82250b7c | NOT pinned; F1/F2/U1-U4 follow-up in progress | entry binding; additive schema only if included |
+| 2 | RPGSTUCK #1093, 7f0729ef67e97566d7c254273802665c760adf08 | NOT pinned; eight-ticket startup proof complete locally; Validate pending | existing ticket recovery active; no NEW hand-offs |
+| 3, optional | OWNMIX #1094, 0e896505e7372233132c03749da752e098572a7b | NOT pinned; F1/F2/U1-U4 follow-up complete locally; Validate pending | entry binding; additive schema only if included |
 
 No merge is authorized by this draft. Final exact heads, all required checks,
 ordered integration rehearsal and fresh pins after any rebase/conflict must be
 recorded before the operator names APPROVED_SHA (40 hex). Never Update branch.
 Exclude #1094 entirely if it is unpinned. Do not substitute a moving branch tip.
 LINE=CHART is an active separate build concern, not in this candidate.
+
+**Integration blocker:** the immutable pinned #1092 contains three old-code
+characterization assertions that require proven-clear tickets to remain owned.
+Those expectations conflict with the reviewed #1093 correction. Exact pinned
+#1092 plus this #1093 source applies cleanly, but the targeted combined run is
+76 passed / 3 failed, with no test skipped. Raw:
+`/tmp/oct5-final-rpg-pm-composition-verified.txt`. The three failing cases are
+fbfd692d, bd6ac0b9 and a007716c in
+`test_current_rpg_off_startup_still_restores_recorded_blocking_ticket`.
+The genuinely unproven faa55c1f case remains blocking. Keep #1092 frozen;
+a separately reviewed test-expectation integration or a fresh #1092 pin is
+required. Do not force production to preserve the defect to make tests green.
+This draft cannot become an executable release while that blocker remains.
+Adding exact OWN follow-up0e896505 to that rehearsal also applies cleanly;
+targeted three-head tests give210 passed / the same3 failed, zero skips.
+Raw `/tmp/oct5-three-head-composition-verified.txt`, as-of12:53 ET.
 
 The execution window is October 5 after 20:00 ET and observed rotation, only
 on the operator's exact-SHA GO for the reviewed release. Bind BOX_SHA and clean
@@ -51,7 +67,13 @@ OMS must also restart on the shared env with hand-off OFF: it runs the durable
 coordinator and recovery, and currently loaded settings do not change when the
 env file changes. Verify hand-off OFF on both new OMS and v2. PMPRINT is owned
 by v2; verify its new PID's /proc, not a Settings default. #1093 recovery must
-operate with OFF without preparing/submitting a new replacement hand-off.
+operate with OFF without admitting a NEW hand-off ticket. OFF does not erase
+existing coordinators: a recovered local no-wire ticket still owns that leg
+until fresh strategy authorization finishes or expires it. During the entry
+window it may finish its already-existing replacement; legacy placement must
+not race it. The requested after20:00 startup is outside the existing entry
+window, so prove those clear tickets expire by window/segment rules instead
+of submitting saved buys. The startup report must state this distinction.
 
 Install the isolated checker and both catalogs from APPROVED_SHA with hashes.
 Catalog must equal this live set, not the older all-PM-ON draft. Expected
@@ -63,16 +85,40 @@ approval and print actual denominators. Neither #1093 nor #1094 adds a switch.
 
 | Proof | Required exact-set assertion | Current state |
 |---|---|---|
-| (a) legacy reprice | first and reclaim cancel then next-pass placement with hand-off OFF; PMPRINT true, PMFLIP/PMREST false, NFQ/GAP true | existing tests require re-run on #1093 follow-up |
-| (b) durable startup | restore every October 5 ticket, prove per-leg ownership/disposition; rejected old order releases by exact identity and zero-fill proof, never age | real eight-ticket capture obtained; follow-up in progress |
-| (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | exact combined-tree run required |
-| OWN, if included | real submit and poll fill paths bind both IDs for both accounts; flat closes lifecycle without unsafe attribution; U1-U4 and old-code/schema compatibility | follow-up in progress; not PASS |
+| (a) legacy reprice | first and reclaim cancel then next-pass placement with hand-off OFF; PMPRINT true, PMFLIP/PMREST false, NFQ/GAP true | #1093 first/reclaim and gap-hold tests PASS locally; standalone settings are not a claim of PM source composition |
+| (b) durable startup | restore every October 5 ticket, prove per-leg ownership/disposition; rejected old order releases by exact identity and zero-fill proof, never age | all eight recorded tickets and five deferred intents tested; exact rejected-zero proof uses one durably claimed GET; after20:00 zero saved opens |
+| (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | targeted combined run 76 PASS / 3 obsolete-characterization FAIL; integration blocked pending review |
+| OWN, if included | real submit and poll fill paths bind both IDs for both accounts; flat closes lifecycle without unsafe attribution; U1-U4 and old-code/schema compatibility | local563 focused PASS;15/15 review-equivalent mutants RED; fresh pin and Validate required |
 
 Own source pull at 12:10:51 and 12:11:28 ET used read-only SQL, 8-second statement
 limit and at most64 rows per table. Raw paths are in STARTUP_TICKETS.md. It found
 eight tickets: the seven requested plus RETO Webull ba108172. Include the eighth
 in the disposition census; do not call seven-ticket proof complete while hiding
 it. Tests are not evidence that the production journal has already changed.
+
+#1093 local verification: exact main a80b5181 = 5412 passed / 56 failed;
+follow-up = 5515 passed / 56 failed, identical failed node IDs (zero added,
+zero removed). Broad focused 1165 passed; recorded startup module 54 passed;
+32/32 assertion-killed mutations. See its REPORT_STARTUP.md and
+verification-startup.json for frozen source/fixture hashes and exact names.
+Fresh four-parent broker GET bodies and the complete SQL pull are independently
+retained in STARTUP_TICKETS.md. These local results do not substitute for CI,
+a fresh exact-head pin, or the unresolved combined-tree expectation review.
+
+#1094 local paired unit result: exact main a80b5181 =5412 passed /56 failed;
+follow-up =5476 passed /same56 failed; failed-name diff added0/removed0.
+Its REPORT_2026-10-05.md maps F1/F2/U1-U4 to exact tests and verification.json
+retains both complete failed-ID sets and every mutation killer. The F2 submit
+test runs public process_trade_intent, not a direct fill hook, plus real polling
+on both accounts, followed by owned-child exit polling. Broker replies are
+controlled recorded-shape inputs, not a live trading exercise. SQLite old-code
+compatibility was independently rerun at12:53 ET and passes on both accounts.
+CI is pending, not green; OWN remains optional and unpinned.
+
+The ticket census is frozen at12:13 ET. A fresh bounded read immediately before
+execution must include later tickets (handoff M56/M58 report MI/SCKT after that
+capture). Do not describe these eight fixtures as the whole live day's census.
+Any new shape not covered by reviewed recovery proof is UNKNOWN/STOP.
 
 ## Preflight Before Any Write
 
@@ -146,6 +192,23 @@ proof: report actual process states, journal UNKNOWN, page and seek exact
 recovery instructions. No broker write, DB edit or extra restart inferred.
 Legacy unbound OWN rows may close on broker-confirmed flat; only attributing
 a child fill needs the binding. Unproven exit remains unrecorded and paged.
+
+OWN rollback compatibility must use the actual old code and actual additive
+migration, not a new-code mock. The follow-up's verify_old_code_schema.py
+reconstructs pinned a80b5181 via git archive, applies migration0022 to isolated
+SQLite, then old ORM/store create/read/close PASS on both live-account names.
+The old model has no binding columns; nullable columns remain present. This is
+an offline compatibility proof, not a production PostgreSQL rollback exercise.
+Code revert restores the old ownership defect and creates legacy unbound rows;
+it is not a data repair. Keep schema revision/columns, do not downgrade/backfill.
+Execution still requires explicit operator recovery GO and fresh flat/order proof.
+
+OWN per-position stand-down adds one exact Schwab-parent GET per eligible bound
+row per sync. Loaded OMS cadence at12:01:39 ET was15s normal and1s active-stop:
+nominal extra parent reads/min for1/3/6 rows are4/12/24 normal or60/180/360
+active, plus event-triggered syncs. These are not measured total HTTP rates;
+order/status/position traffic and retries are additional. No cadence change is
+included. This load cost must be accepted if OWN is in the exact-SHA release.
 
 ## Mandatory Close-Out
 
