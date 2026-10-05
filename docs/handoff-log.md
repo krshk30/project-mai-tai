@@ -5168,3 +5168,10 @@ return of latest-buy/account+symbol fallback. Q2own loadedOMS23705 read
 at1/3/6positions, not totalHTTP measurements. Q3 noflag, rollback retains
 nullable schema; old-code compatibility test stillneeded. Written response
 inassessment5a12d4d2, not onOWN branch. C39 only; M rows untouched.
+
+2026-10-05 12:08 ET codex-2: complete OWN review released one follow-up
+atop b94bd0ff (Mencius sole writer); RPG startup proof released atop28952463
+(Pauli sole writer). Parent owns bounded fresh tickets and a new conditional
+candidate plan. #1092 exact5ee9f416 pin/Validate x2 verified; merge held pending
+operator before-merge yes. Old v2-only two-switch draft superseded: OMS recovery
+code is required, hand-off stays OFF. No production/ledger/DB action. C40 only.
