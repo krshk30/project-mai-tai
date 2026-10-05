@@ -257,6 +257,11 @@ class AtrRepriceRuntimeMixin:
             if job is None:
                 return journal.read(token)
         job = await self._rpg_controller().advance(token)
+        if (starting_phase != "held_unknown" and job["phase"] == "held_unknown"
+                and await asyncio.to_thread(self._rpg_rejected_old_probe_eligible, job)):
+            # The active scan drops held tickets; wake this one eligible edge once.
+            self.__dict__.setdefault("_rpg_evidence_pending", set()).add(token)
+            self._rpg_retry_signal().set()
         if job["phase"] == "held_unknown":
             if job.get("blocked_notice_at") is not None:
                 return job
@@ -593,7 +598,7 @@ class AtrRepriceRuntimeMixin:
                     if (job["phase"] in ACTIVE_PHASES - {"held_unknown"}
                             or (job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven"
                                 and (startup or token in pending))
-                            or self._rpg_rejected_old_probe_eligible(job)):
+                            or await asyncio.to_thread(self._rpg_rejected_old_probe_eligible, job)):
                         await self.redis.xadd(f"{self.settings.redis_stream_prefix}:strategy-intents",
                             {"data": json.dumps({"event_type": "atr_reprice_tick", "token": str(token)})},
                             maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)

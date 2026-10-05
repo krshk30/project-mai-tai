@@ -1,0 +1,11 @@
+restore_blanket_later_intent_veto: KILLED rc=1
+drop_predecessor_proof: KILLED rc=1
+drop_generation_wire_fence: KILLED rc=1
+drop_local_identity_match: KILLED rc=1
+drop_terminal_probe_once_claim: KILLED rc=1
+drop_probe_committed_client_binding: KILLED rc=1
+drop_strict_read_parent_binding: KILLED rc=1
+drop_rejected_zero_fill_proof: KILLED rc=1
+drop_rejected_zero_remaining_proof: KILLED rc=1
+drop_concurrent_fill_fence: KILLED rc=1
+claim_fill_accounted_without_truth_path: KILLED rc=1

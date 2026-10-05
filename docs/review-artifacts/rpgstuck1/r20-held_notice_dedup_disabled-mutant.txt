@@ -1,0 +1,31 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_held_notice_replay_claims_once_and_preserves_unknown_ownership ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092456d0>
+
+    @pytest.mark.asyncio
+    async def test_held_notice_replay_claims_once_and_preserves_unknown_ownership(monkeypatch):
+        h = await startup_harness(monkeypatch)
+        journal = HandoffJournal(h.factory)
+        job = journal.read(RETO)
+        journal.change(RETO, job["revision"], blocked_notice_at=None,
+            terminal_rejection_probe_started_at=h.clock[0].timestamp())
+        notices = []
+        monkeypatch.setattr(h.service.logger, "info", lambda *args: notices.append(args))
+        for _ in range(10):
+            await h.service._rpg_advance(RETO)
+>       assert len(notices) == 1
+E       AssertionError: assert 10 == 1
+E        +  where 10 = len([('[OMS-RPG1] token=%s phase=%s reason=%s reads=%s account=%s symbol=%s segment=%s slot=%s cancel_to_read_ms=%s cancel...f6464ff-d65e-5657-8f47-1dc8d7b053c3'), 'held_unknown', 'readback_budget_exhausted', 30, 'live:schwab_1m_v2', ...), ...])
+
+tests/unit/test_rpgstuck1_runtime_exhaustion.py:113: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 14:12:25,499 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 14:12:25,499 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 14:12:25,500 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 14:12:25,500 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 14:12:25,500 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1_runtime_exhaustion.py::test_held_notice_replay_claims_once_and_preserves_unknown_ownership
+1 failed, 31 deselected in 0.61s
