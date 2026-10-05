@@ -1,5 +1,14 @@
 # GAPKEEP1 - independent Step 0, 2026-10-05
 
+## Later Disposition (12:05 ET)
+
+The operator/reviewer accepted the silence-scoped true-range and shared exit
+reader changes, and released the widened LINE=CHART lane at11:35ET. The
+earlier STOP/disagreement text below is historical, not a current parking
+instruction. Fresh RETO/re-add/restart evidence and limits are in
+LINE_CHART_READD_STEP0_2026-10-05.md. Missing/unknown data still resets;
+historical live coverage is not relabelled as proven by this disposition.
+
 ## Verdict Before Any Build
 
 **AGREE: APUS is an old, deliberate GAPHOLD reseed losing a continuous-line
