@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -133,36 +135,36 @@ SUMMARY: RED fleet-function-health checks=1 live_money_red=1
     assert "https://ntfy.sh/mai-tai-preopen-28806a5a97b7" in calls
 
 
-def test_existing_momentum_red_does_not_mask_a_later_oms_red(tmp_path: Path) -> None:
-    momentum_red = """VERDICT: RED service-runtime:momentum-paper:inactive class=FLEET_RUNTIME stopped
+def test_existing_gateway_red_does_not_mask_a_later_oms_red(tmp_path: Path) -> None:
+    gateway_red = """VERDICT: RED service-runtime:market-data:massive-1008 class=FLEET_RUNTIME new_matches=2
 VERDICT: GREEN service-runtime:oms:inactive class=FLEET_RUNTIME active
 SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=1
 """
-    both_red = """VERDICT: RED service-runtime:momentum-paper:inactive class=FLEET_RUNTIME stopped
+    both_red = """VERDICT: RED service-runtime:market-data:massive-1008 class=FLEET_RUNTIME new_matches=2
 VERDICT: RED service-runtime:oms:inactive class=FLEET_RUNTIME stopped
 SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=2
 """
 
-    _run_wrapper(tmp_path, momentum_red)
+    _run_wrapper(tmp_path, gateway_red)
     _run_wrapper(tmp_path, both_red)
 
     calls = _call_log(tmp_path)
     deliveries = [row for row in calls.split("CALL\n") if row]
     assert len(deliveries) == 2
-    assert "service-runtime:momentum-paper:inactive" in deliveries[0]
+    assert "service-runtime:market-data:massive-1008" in deliveries[0]
     assert "service-runtime:oms:inactive" not in deliveries[0]
     assert "service-runtime:oms:inactive" in deliveries[1]
-    assert "service-runtime:momentum-paper:inactive" not in deliveries[1]
+    assert "service-runtime:market-data:massive-1008" not in deliveries[1]
 
 
-def test_momentum_cooloff_and_gateway_1008_are_independent_once_only_pages(
+def test_momentum_restart_storm_and_gateway_1008_are_independent_once_only_pages(
     tmp_path: Path,
 ) -> None:
-    momentum_only = """VERDICT: RED service-runtime:momentum-paper:feed-policy-violation class=FLEET_RUNTIME new_matches=1
+    momentum_only = """VERDICT: RED service-runtime:momentum-paper:restart-storm class=FLEET_RUNTIME delta=5
 VERDICT: GREEN service-runtime:market-data:massive-1008 class=FLEET_RUNTIME new_matches=0
 SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=1
 """
-    both = """VERDICT: RED service-runtime:momentum-paper:feed-policy-violation class=FLEET_RUNTIME new_matches=0
+    both = """VERDICT: RED service-runtime:momentum-paper:restart-storm class=FLEET_RUNTIME delta=5
 VERDICT: RED service-runtime:market-data:massive-1008 class=FLEET_RUNTIME new_matches=1
 SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=2
 """
@@ -173,22 +175,22 @@ SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=2
 
     deliveries = [row for row in _call_log(tmp_path).split("CALL\n") if row]
     assert len(deliveries) == 2
-    assert "momentum-paper:feed-policy-violation" in deliveries[0]
+    assert "momentum-paper:restart-storm" in deliveries[0]
     assert "market-data:massive-1008" not in deliveries[0]
     assert "market-data:massive-1008" in deliveries[1]
-    assert "momentum-paper:feed-policy-violation" not in deliveries[1]
+    assert "momentum-paper:restart-storm" not in deliveries[1]
     receipts = (tmp_path / "state" / "alert.log").read_text(encoding="utf-8")
     assert receipts.count("[NTFY-DELIVERY] accepted=1") == 2
 
 
-def test_oms_recovery_clears_only_oms_fingerprint_while_momentum_stays_red(
+def test_oms_recovery_clears_only_oms_fingerprint_while_gateway_stays_red(
     tmp_path: Path,
 ) -> None:
-    both_red = """VERDICT: RED service-runtime:momentum-paper:inactive class=FLEET_RUNTIME stopped
+    both_red = """VERDICT: RED service-runtime:market-data:massive-1008 class=FLEET_RUNTIME new_matches=2
 VERDICT: RED service-runtime:oms:inactive class=FLEET_RUNTIME stopped
 SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=2
 """
-    oms_green = """VERDICT: RED service-runtime:momentum-paper:inactive class=FLEET_RUNTIME stopped
+    oms_green = """VERDICT: RED service-runtime:market-data:massive-1008 class=FLEET_RUNTIME new_matches=2
 VERDICT: GREEN service-runtime:oms:inactive class=FLEET_RUNTIME active
 SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=1
 """
@@ -198,8 +200,73 @@ SUMMARY: RED fleet-function-health checks=2 live_money_red=0 fleet_runtime_red=1
 
     assert _call_log(tmp_path).count("CALL") == 2
     assert (tmp_path / "state" / "paged.active").read_text(encoding="utf-8").strip() == (
-        "fleet-runtime:service-runtime:momentum-paper:inactive"
+        "fleet-runtime:service-runtime:market-data:massive-1008"
     )
+
+
+def _socket_check_output(tmp_path: Path) -> tuple[str, int]:
+    spec = importlib.util.spec_from_file_location("healthlatch_cron", WRAPPER.with_suffix(".py").with_name("fleet_health_check.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    rows = module.check_massive_socket_policy_violations(
+        state_path=tmp_path / "offsets.json",
+        market_data_log=tmp_path / "market-data.log",
+        momentum_log=tmp_path / "paper.log",
+    )
+    code = max(module._EXIT[row[0]] for row in rows)
+    level = "RED" if code == 2 else "GREEN"
+    output = "".join(f"VERDICT: {level} {name} class=FLEET_RUNTIME {detail}\n" for level, name, detail in rows)
+    output += f"SUMMARY: {level} fleet-function-health checks={len(rows)} live_money_red=0\n"
+    return output, code
+
+
+def test_stale_momentum_fingerprint_drops_without_page_or_alert_log_change(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "paged.active").write_text(
+        "fleet-runtime:service-runtime:momentum-paper:feed-policy-violation\n",
+    )
+    alert = state_dir / "alert.log"
+    alert.write_text("prior accepted page stays on disk\n")
+    fixtures = WRAPPER.parents[2] / "tests/fixtures/healthlatch1"
+    (tmp_path / "offsets.json").write_bytes((fixtures / "socket_evidence_offsets.json").read_bytes())
+    (tmp_path / "paper.log").write_bytes((fixtures / "momentum-paper.log").read_bytes())
+    (tmp_path / "market-data.log").write_text("healthy\n")
+    output, code = _socket_check_output(tmp_path)
+    assert code == 0 and "SUMMARY: GREEN" in output
+    assert _run_wrapper(tmp_path, output, check_exit=code, mode="runtime").returncode == 0
+    assert (state_dir / "paged.active").read_text() == ""
+    assert _call_log(tmp_path) == ""
+    assert alert.read_text() == "prior accepted page stays on disk\n"
+    assert "momentum_policy_active" not in json.loads((tmp_path / "offsets.json").read_text())
+
+
+def test_appended_real_gateway_policy_close_pages_exactly_once(tmp_path: Path) -> None:
+    market = tmp_path / "market-data.log"
+    market.write_text("healthy\n")
+    (tmp_path / "paper.log").write_text("")
+    output, code = _socket_check_output(tmp_path)
+    _run_wrapper(tmp_path, output, check_exit=code, mode="runtime")
+    with market.open("a") as stream:
+        stream.write("ConnectionClosedError: received 1008 (policy violation); then sent 1008 (policy violation)\n")
+    output, code = _socket_check_output(tmp_path)
+    assert code == 2 and "new_matches=2" in output
+    _run_wrapper(tmp_path, output, check_exit=code, mode="runtime")
+    _run_wrapper(tmp_path, output, check_exit=code, mode="runtime")
+    output, code = _socket_check_output(tmp_path)
+    _run_wrapper(tmp_path, output, check_exit=code, mode="runtime")
+    assert _call_log(tmp_path).count("CALL") == 1
+    assert "service-runtime:market-data:massive-1008" in _call_log(tmp_path)
+
+
+def test_momentum_unit_inactive_still_pages_once(tmp_path: Path) -> None:
+    output = """VERDICT: RED service-runtime:momentum-paper:inactive class=FLEET_RUNTIME stopped
+SUMMARY: RED fleet-function-health checks=1 live_money_red=0 fleet_runtime_red=1
+"""
+    _run_wrapper(tmp_path, output, mode="runtime")
+    _run_wrapper(tmp_path, output, mode="runtime")
+    assert _call_log(tmp_path).count("CALL") == 1
+    assert "service-runtime:momentum-paper:inactive" in _call_log(tmp_path)
 
 
 def test_same_service_flap_pages_on_each_new_red_transition(tmp_path: Path) -> None:

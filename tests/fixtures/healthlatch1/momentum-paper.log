@@ -1,0 +1,2 @@
+2026-10-05 07:55:00,807 INFO [momentum-paper] [MOMENTUM-PAPER-SESSION] ready date=2026-10-05 prior_close_date=2026-10-02 symbols=12599 condition_version=2026-10-05T07:55:00.131687+00:00 restored_terminal=0
+2026-10-05 08:00:00,291 INFO [momentum-paper] [MOMENTUM-PAPER-FEED] source=gateway snapshots+bounded_trades cap=16
