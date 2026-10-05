@@ -66,14 +66,15 @@ def test_s5_tonight_stream_and_rest_cross_size_both_legs_from_same_ask(stream):
 
 
 @pytest.mark.parametrize("stream", [True, False])
-def test_s5_tonight_flip_wait_off_keeps_recorded_veea_legacy_latch(stream):
-    strategy, state, clock = tonight_armed()
+@pytest.mark.parametrize("enabled", [False, True], ids=["historical-off", "all-on"])
+def test_s5_historical_off_and_all_on_flip_wait_keep_distinct_recorded_veea_latches(stream, enabled):
+    strategy, state, clock = (armed(VEEA, **{key: True for key in TONIGHT}) if enabled else tonight_armed())
     flip(strategy, state, clock)
-    assert state.resting_flip_ms == clock[0]
-    assert state.pm_resting_flip_seen_ms == 0
+    assert state.resting_flip_ms == (0 if enabled else clock[0])
+    assert state.pm_resting_flip_seen_ms == (clock[0] if enabled else 0)
     clock[0] = int(datetime.fromisoformat(VEEA[1].replace("Z", "+00:00")).timestamp() * 1000)
-    assert cross(strategy, state, clock, 5.27, 5.27, stream=stream) is None
-    assert not strategy.drain_webull_fanout_intents()
+    assert (cross(strategy, state, clock, 5.27, 5.27, stream=stream) is not None) is enabled
+    assert bool(strategy.drain_webull_fanout_intents()) is enabled
 
 
 def test_s5_tonight_pm_rest_off_keeps_recorded_saiq_disarm_rearm():
@@ -93,13 +94,13 @@ def test_s5_tonight_pm_rest_off_keeps_recorded_saiq_disarm_rearm():
     assert not strategy.drain_pending_intents()
 
 
-def test_s6_catalog_matches_tonights_live_set_and_143_checks():
+def test_s6_catalog_matches_all_on_live_set_and_147_checks():
     catalog = json.loads((Path(__file__).parents[2] / "ops/health/expected_flags.json").read_text())
     flags = {entry["name"]: entry["expected"] for entry in catalog["flags"]}
-    assert {key: flags[key] for key in TONIGHT} == TONIGHT
+    assert {key: flags[key] for key in TONIGHT} == {key: True for key in TONIGHT}
     numeric = json.loads((Path(__file__).parents[2] / "ops/health/expected_numeric.json").read_text())
     entries = catalog["flags"] + numeric["settings"]
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 143
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 147
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,22 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_catalog_covers_every_settings_bool_exactly_once _____________
+
+    def test_catalog_covers_every_settings_bool_exactly_once() -> None:
+        entries = flags.load_catalog(CATALOG)
+        assert len(entries) == 127
+        assert {entry["name"] for entry in entries} == {
+            name
+            for name, field in Settings.model_fields.items()
+            if field.annotation is bool or bool in get_args(field.annotation)
+        }
+        by_name = {entry["name"]: entry for entry in entries}
+        for suffix in ("pm_print_ask_confirm", "pm_flip_wait", "pm_rest_reprice", "atr_reprice_handoff"):
+            name = f"strategy_schwab_1m_v2_{suffix}_enabled"
+>           assert by_name[name]["expected"] is True
+E           assert False is True
+
+tests/unit/test_expected_flags_check.py:62: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_expected_flags_check.py::test_catalog_covers_every_settings_bool_exactly_once
+1 failed, 55 deselected in 0.06s

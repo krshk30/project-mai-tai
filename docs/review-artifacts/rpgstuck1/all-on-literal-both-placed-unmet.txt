@@ -1,0 +1,37 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__ test_all_on_actual_apus0932_distance_stays_no_wire_not_literal_both_placed __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bb802c0>
+fake_sdk = None
+
+    @pytest.mark.asyncio
+    async def test_all_on_actual_apus0932_distance_stays_no_wire_not_literal_both_placed(monkeypatch, fake_sdk):
+        row = next(row for row in AUTH_ROWS if row["id"].startswith("bd6ac0b9"))
+        source = next(row for row in LATER["deferred_intents"] if row["symbol"] == "APUS"
+            and row["payload"]["metadata"]["stop_price"] == "5.2720")
+        market = source["payload"]["metadata"]["webull_shape_market_price"]
+        h, token, md = await stage(monkeypatch, row, row, market=market)
+        wire_adapters(monkeypatch, h)
+        await feedback(h)
+        job = HandoffJournal(h.factory).read(token)
+        assert market == "4.78" and md["stop_price"] == "5.2720"
+>       assert job["phase"] == "refused" and "webull_mirror_precheck_deferred" in job["replacement_reasons"]
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_rpgstuck1_all_on.py:266: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:22:31,740 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:22:31,740 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:22:31,740 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:22:31,740 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:22:31,740 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:22:31,794 INFO [oms-risk] [V2-OCO-EMIT] APUS live:orb SKIPPED (webull stop-limit master) -- Webull accepts this shape only BARE; attaching a bracket makes it a combo master the broker refuses
+2026-10-05 15:22:31,794 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=APUS segment=1791205742380 slot_id=d2e53ba4-c3ed-5310-9c4c-7d9004706f97 decision=forgotten reason=attempt_cap_reached attempts=3 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit
+2026-10-05 15:22:31,794 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=APUS segment=1791205742380 slot_id=d2e53ba4-c3ed-5310-9c4c-7d9004706f97 decision=deferred reason=precheck_distance market=4.78 stop=5.2720 pct=9.3323 attempts=3/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order
+2026-10-05 15:22:31,794 INFO [oms-risk] [OMS-NFQ1] sym=APUS segment=1791205742380 slot_id=d2e53ba4-c3ed-5310-9c4c-7d9004706f97 attempt=schwab_1m_v2-APUS-open-e29929fb998f decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=0.000 cache_source=ask cache_timestamp=2026-10-05T13:32:11.617000+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask
+2026-10-05 15:22:31,801 INFO [oms-risk] [OMS-RPG1] token=bd6ac0b9-727c-500b-8581-aabdd95992d4 phase=refused reason=replacement_refused reads=3 account=live:orb symbol=APUS segment=1791205742380 slot=first cancel_to_read_ms=2709.842 cancel_to_submit_ms=7329.115 cancel_to_report_ms=7329.115 timing=local_observation
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1_all_on.py::test_all_on_actual_apus0932_distance_stays_no_wire_not_literal_both_placed
+1 failed, 31 deselected in 0.23s
