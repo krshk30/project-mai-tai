@@ -5602,3 +5602,19 @@ rpg-all-on-1825-job. Attendeddirect runnerapprovalPASS and initialOMSgate
 started18:27:54.215ET; no timer/autonomoussecondattempt. InitialthreePIDs
 23705/26811/24025 activeNRestarts0. Supervision ongoing, notCOMPLETE, no
 service/schema/env/checkoutchange assertedyet. Trap page/norecovery unchanged.
+
+2026-10-05 18:31 ET codex-2 C88: attended exact950e runner STOP rc2 at
+source-backup-and-advance18:29:45.05 before officialsnapshot succeeded.
+Checker UNKNOWN unparseablesystemdUTCtimestamp 'Sat2026-10-03 18:03:17 EDT'.
+Own code confirms run.sh exportsTZAmerica/New_York while checker parser
+acceptsUTC/GMTonly: runner/checker integrationdefect, notprocessfailure.
+Freshcensus11/11terminaltwice/14unchanged, initialOMS/strategy/flat0, strict
+OMSfence0, unmodifiedv2gate0/armed0/nooverride, Redis0/806992488B/allnine/
+fiveowners+marker. Gitfetchadvancedremote trackingmain, sourceblobproofPASS;
+snapshotfails before checkout switch/env edit/migration/anyserviceaction.
+Trapactual23705OMS/26811v2/24025strategy active/running NRestarts0, pageHTTP200,
+STOPjournal written. FreshHEADe1ce3b39 confirmed. Remote runnerlog path
+/home/trader/after-hours/2026-10-05/owned-entry-rpg-all-on-1825-job/attempt-1730-go/runner.log
+sha256e15a1060714481b424f216d44f89198a5943d88a44790485dc36eaff69b7fc45.
+No restart/recovery/manualretry/byteschanged. Literal correctedtimezone path
+requires new exact-byte review/continuation; executionclosed, notCOMPLETE.
