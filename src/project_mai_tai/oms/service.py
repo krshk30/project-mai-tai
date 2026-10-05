@@ -156,6 +156,7 @@ class _DeferredWebullRestingMirror:
     attempts: int = 0
     queued: bool = False
     retry_not_before_monotonic: float = 0.0
+    local_no_wire: bool = False
 
 
 @dataclass
@@ -2327,7 +2328,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 self.store.mark_intent_refused(intent, origin="client_abort", code=rpg_refusal)
                 session.commit()
                 return [self._build_rejected_event(event, intent.id, reason=rpg_refusal)]
-            if event.payload.metadata.get("rpg_handoff_token") or event.payload.metadata.get("nfq_retry_token"):
+            if (event.payload.metadata.get("rpg_handoff_token") or event.payload.metadata.get("nfq_retry_token")
+                    or self._is_webull_mirror_deferred_resubmit(event)):
                 # Both durable lanes must record the exact client id before wire.
                 pending_order = self.store.get_or_create_order(
                     session, intent=intent, strategy_id=strategy.id,
@@ -2343,6 +2345,11 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                     self.store.mark_intent_refused(intent, origin="client_abort", code=rpg_refusal)
                     session.commit()
                     return [self._build_rejected_event(event, intent.id, reason=rpg_refusal)]
+            deferred = self.__dict__.get("_webull_mirror_deferred_by_slot", {}).get(
+                request.metadata.get("fanout_slot_id"))
+            if (deferred is not None and deferred.event.payload.broker_account_name == request.broker_account_name
+                    and deferred.symbol == request.symbol):
+                deferred.local_no_wire = False
             reports = await self.broker_adapter.submit_order(request)
             self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
@@ -13162,6 +13169,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         stop_price: Decimal,
         attempts: int,
         retry_not_before_monotonic: float = 0.0,
+        local_no_wire: bool = False,
     ) -> None:
         deferred = self.__dict__.setdefault("_webull_mirror_deferred_by_slot", {})
         existing = deferred.get(slot_id)
@@ -13174,9 +13182,11 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 stop_price=stop_price,
                 attempts=attempts,
                 retry_not_before_monotonic=retry_not_before_monotonic,
+                local_no_wire=local_no_wire,
             )
             return
         existing.event = event.model_copy(deep=True)
+        existing.local_no_wire = local_no_wire
         existing.segment_id = segment_id
         existing.stop_price = stop_price
         # A serial-lane pre-check may see a newer quote than the market tick that queued this
@@ -13239,6 +13249,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             stop_price=stop_price,
             attempts=attempts,
             retry_not_before_monotonic=retry_not_before,
+            local_no_wire=True,
         )
         if attempts >= self._WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS:
             self._forget_webull_mirror_deferred(slot_id, reason="attempt_cap_reached")

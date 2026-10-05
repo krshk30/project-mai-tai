@@ -326,7 +326,7 @@ async def test_first_stale_quote_wait_resumes_without_bar_and_reclaim_armed_long
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("broker", ["schwab", "webull"])
-async def test_explicit_simulated_broker_refusal_never_becomes_resting_or_retries(monkeypatch, broker):
+async def test_explicit_simulated_broker_refusal_releases_only_proven_clear_leg(monkeypatch, broker):
     h = await runtime(monkeypatch, broker)
     h.adapter.refusal = "stop must exceed ask"
     token, _ = await begin(h, broker)
@@ -335,7 +335,8 @@ async def test_explicit_simulated_broker_refusal_never_becomes_resting_or_retrie
     assert HandoffJournal(h.factory).read(token)["phase"] == "refused"
     assert not h.state.resting_active and len(h.adapter.opens) == 1
     h.strategy._cw_v2_resting_track(h.state, None)
-    assert not h.strategy.drain_pending_intents()
+    drafts = h.strategy.drain_pending_intents() if broker == "schwab" else h.strategy.drain_webull_direct_intents()
+    assert len(drafts) == 1
 
 
 @pytest.mark.asyncio

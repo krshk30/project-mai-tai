@@ -14,12 +14,16 @@ from uuid import UUID, uuid5, NAMESPACE_URL
 from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, TradeIntent
+from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, TradeIntent, Strategy
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.atr_reprice_handoff import (
     AtrRepriceHandoff, HandoffJournal, ReplacementDecision, SNAPSHOT_TYPE, _request,
+    _request_dict, MAX_READS, READ_INTERVAL_SECONDS, READ_TIMEOUT_SECONDS,
+    old_buy_proven_clear,
 )
 from project_mai_tai.strategy_core.entry_gate import within_rth_entry_window
+from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit
 
 
 ACTIVE_PHASES = {"prepared", "waiting", "fills_waiting", "clear", "held_unknown",
@@ -27,6 +31,46 @@ ACTIVE_PHASES = {"prepared", "waiting", "fills_waiting", "clear", "held_unknown"
 
 
 class AtrRepriceRuntimeMixin:
+    @staticmethod
+    def _rpg_matches_local_open(opening, event):
+        md = event.payload.metadata
+        previous = opening.payload.metadata
+        return (opening.payload.symbol == event.payload.symbol
+                and opening.payload.broker_account_name == event.payload.broker_account_name
+                and opening.payload.strategy_code == "schwab_1m_v2"
+                and opening.payload.intent_type == "open"
+                and opening.payload.side == "buy"
+                and all(previous.get(key) == md.get(key) for key in
+                        ("fanout_slot_id", "fanout_segment_id", "cw_entry_slot"))
+                and all(not md.get(key) or previous.get(key) == md[key] for key in
+                        ("rpg_resting_generation", "webull_mirror_generation_id")))
+
+    def _rpg_persisted_local_open(self, session, event, candidates):
+        if candidates or not event.payload.metadata.get("rpg_resting_generation"):
+            return None
+        rows = session.scalars(select(TradeIntent).join(BrokerAccount).join(Strategy).where(
+            BrokerAccount.name == event.payload.broker_account_name,
+            Strategy.code == "schwab_1m_v2", TradeIntent.symbol == event.payload.symbol,
+            TradeIntent.intent_type == "open", TradeIntent.side == "buy",
+            TradeIntent.payload["metadata"]["rpg_resting_generation"].as_string() ==
+                event.payload.metadata["rpg_resting_generation"]).order_by(TradeIntent.created_at))
+        matches = []
+        for row in rows:
+            payload = row.payload or {}
+            if (row.status != "rejected" or payload.get("refusal_origin") != "skipped_before_submit"
+                    or payload.get("refusal_code") != "webull_mirror_precheck_deferred"):
+                return None
+            opening = TradeIntentEvent(event_id=UUID(payload["event_id"]),
+                source_service=payload["source_service"], payload=TradeIntentPayload(
+                    strategy_code="schwab_1m_v2", broker_account_name=event.payload.broker_account_name,
+                    symbol=row.symbol, side=row.side, intent_type=row.intent_type,
+                    quantity=row.quantity, reason=row.reason, metadata=payload["metadata"]))
+            if self._rpg_matches_local_open(opening, event):
+                matches.append(opening)
+            else:
+                return None
+        return matches[-1] if matches else None
+
     def _rpg_owns_old_order(self, session, order, account):
         if session is None:
             return False
@@ -70,22 +114,23 @@ class AtrRepriceRuntimeMixin:
                 await self._rpg_advance(token)
                 return []
         hold = self.__dict__.get("_nfq_price_holds", {}).get(md.get("fanout_slot_id"))
-        local = (hold is not None and hold.phase in {"held", "queued"}
-                 and hold.event.payload.symbol == event.payload.symbol
-                 and hold.event.payload.broker_account_name == event.payload.broker_account_name
-                 and hold.event.payload.metadata.get("fanout_segment_id") == md.get("fanout_segment_id")
-                 and (not md.get("rpg_resting_generation") or
-                      md["rpg_resting_generation"] == hold.event.payload.metadata.get("rpg_resting_generation"))
-                 and (not md.get("webull_mirror_generation_id") or
-                      md["webull_mirror_generation_id"] == hold.event.payload.metadata.get("webull_mirror_generation_id")))
+        deferred = self.__dict__.get("_webull_mirror_deferred_by_slot", {}).get(md.get("fanout_slot_id"))
+        opening = None
+        local_reason = "nfq_proven_no_wire"
+        if hold is not None and hold.phase in {"held", "queued"} and self._rpg_matches_local_open(hold.event, event):
+            opening = hold.event
+        elif (deferred is not None and deferred.local_no_wire
+              and self._rpg_matches_local_open(deferred.event, event)):
+            opening = deferred.event
+            local_reason = "distance_proven_no_wire"
         with self.session_factory() as session:
             account = session.scalar(select(BrokerAccount).where(
                 BrokerAccount.name == event.payload.broker_account_name))
-            candidates = [] if account is None else list(session.scalars(select(BrokerOrder).where(
+            all_orders = [] if account is None else list(session.scalars(select(BrokerOrder).where(
                 BrokerOrder.broker_account_id == account.id,
                 BrokerOrder.symbol == event.payload.symbol, BrokerOrder.side == "buy",
             ).order_by(BrokerOrder.submitted_at.desc())))
-            candidates = [order for order in candidates
+            candidates = [order for order in all_orders
                 if (order.payload or {}).get("resting_entry") == "true"
                 and str((order.payload or {}).get("fanout_segment_id")) == md.get("fanout_segment_id")
                 and (order.payload or {}).get("cw_entry_slot", "first") == md.get("cw_entry_slot")
@@ -106,8 +151,13 @@ class AtrRepriceRuntimeMixin:
             target = candidates[0] if candidates else None
             client_identity = self.settings.provider_for_account(event.payload.broker_account_name) == "webull"
             if target is None or (not target.broker_order_id and not client_identity) or len(candidates) > 1:
-                local = local and not candidates
-                opening = hold.event if local else event
+                wire_candidates = [order for order in all_orders if
+                    (order.payload or {}).get("rpg_resting_generation") == md.get("rpg_resting_generation")]
+                opening = (opening or self._rpg_persisted_local_open(session, event, wire_candidates)) if not wire_candidates else None
+                local = opening is not None
+                if local and hold is None:
+                    local_reason = "distance_proven_no_wire"
+                opening = opening or event
                 old = OrderRequest(client_order_id=self._build_client_order_id(opening),
                     broker_account_name=event.payload.broker_account_name,
                     strategy_code="schwab_1m_v2", symbol=event.payload.symbol, side="buy",
@@ -116,13 +166,15 @@ class AtrRepriceRuntimeMixin:
                 token = journal.prepare_local(old, slot=md["cw_entry_slot"],
                     segment_id=int(md["fanout_segment_id"]), now=self._rpg_now().timestamp(),
                     phase="clear" if local else "held_unknown",
-                    reason="nfq_proven_no_wire" if local else "exact_old_order_unproven", session=session,
+                    reason=local_reason if local else "exact_old_order_unproven", session=session,
                     local_no_wire=bool(local), cancel_event_id=str(event.event_id))
-                if local:
+                if local and hold is not None:
                     self._nfq_retire(session, hold, "v2_cancel_intent")
+                if local and deferred is not None:
+                    self._forget_webull_mirror_deferred(md.get("fanout_slot_id"), reason="rpg_proven_no_wire")
                 session.commit()
                 self.logger.warning("[OMS-RPG1] symbol=%s reason=%s", event.payload.symbol,
-                                    "nfq_proven_no_wire" if local else "exact_old_order_unproven")
+                                    local_reason if local else "exact_old_order_unproven")
                 return []
             old_md = {**dict(target.payload or {}), **md,
                       "broker_order_id": target.broker_order_id or "",
@@ -151,6 +203,26 @@ class AtrRepriceRuntimeMixin:
     async def _rpg_advance(self, token):
         journal = self._rpg_journal()
         job = journal.read(token)
+        if job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven":
+            old = _request(job["old"])
+            event = TradeIntentEvent(source_service="schwab-1m-v2", payload=TradeIntentPayload(
+                strategy_code=old.strategy_code, broker_account_name=old.broker_account_name,
+                symbol=old.symbol, side=old.side, intent_type="cancel", quantity=old.quantity,
+                reason=old.reason, metadata=old.metadata))
+            with self.session_factory() as session:
+                account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == old.broker_account_name))
+                candidates = [] if account is None else [order for order in session.scalars(select(BrokerOrder).where(
+                    BrokerOrder.broker_account_id == account.id, BrokerOrder.symbol == old.symbol,
+                    BrokerOrder.side == "buy")) if (order.payload or {}).get("rpg_resting_generation") ==
+                    old.metadata.get("rpg_resting_generation")]
+                opening = self._rpg_persisted_local_open(session, event, candidates)
+            if opening is not None:
+                recovered = replace(old, client_order_id=self._build_client_order_id(opening),
+                    metadata={**opening.payload.metadata, **old.metadata})
+                job = journal.change(token, job["revision"], phase="clear", local_no_wire=True,
+                    old=_request_dict(recovered), reason="persisted_distance_proven_no_wire") or journal.read(token)
+        if job["phase"] in {"submitting", "submit_unknown"}:
+            job = await self._rpg_reconcile_dispatch(token, job)
         if job["phase"] == "price_wait":
             auth = job.get("authorization", {})
             if (auth.get("verdict") == "wait" or
@@ -189,6 +261,54 @@ class AtrRepriceRuntimeMixin:
                          job["old"]["broker_account_name"], job["old"]["symbol"], job["segment_id"], job["slot"],
                          elapsed("readback_at"), elapsed("submit_started_at"), elapsed("completed_at"))
         return job
+
+    async def _rpg_reconcile_dispatch(self, token, job):
+        """Read the claimed replacement identity; never replay an uncertain submit."""
+        if (not job.get("replacement") or job.get("dispatch_reads", 0) >= MAX_READS
+                or self._rpg_now().timestamp() < job.get("dispatch_next_read_at", 0)):
+            return job
+        journal = self._rpg_journal()
+        request = _request(job["replacement"])
+        with self.session_factory() as session:
+            order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == request.client_order_id))
+            if order is None:
+                return job
+            broker_id = order.broker_order_id or ""
+        job = journal.change(token, job["revision"], dispatch_reads=job.get("dispatch_reads", 0) + 1,
+            dispatch_next_read_at=self._rpg_now().timestamp() + READ_INTERVAL_SECONDS)
+        if job is None:
+            return journal.read(token)
+        scoped = replace(request, intent_type="cancel", metadata={**request.metadata,
+            "resting_entry_cancel": "true", "broker_order_id": broker_id,
+            "atr_reprice_identity": "webull_client_order_id" if
+                self.settings.provider_for_account(request.broker_account_name) == "webull" else ""})
+        try:
+            readback = await asyncio.wait_for(self.broker_adapter.read_atr_resting_buy_after_cancel(scoped), READ_TIMEOUT_SECONDS)
+        except Exception:
+            return journal.read(token)
+        current = journal.read(token)
+        if current["revision"] != job["revision"] or not isinstance(readback, AtrBuyReadback):
+            return current
+        broker_id = readback.broker_order_id or broker_id
+        if readback.can_replace:
+            status, phase = "cancelled", "refused"
+        elif readback.outcome == "working" and readback.cumulative_filled == 0 and broker_id:
+            status, phase = "accepted", "placed"
+        elif (readback.outcome == "fills" and readback.cumulative_filled is not None
+              and 0 < readback.cumulative_filled <= request.quantity
+              and readback.fill_price is not None and readback.fill_price > 0 and broker_id):
+            status, phase = "filled" if readback.cumulative_filled == request.quantity else "partially_filled", "filled"
+        else:
+            return current
+        report = ExecutionReport(status, request.client_order_id, broker_order_id=broker_id,
+            symbol=request.symbol, side="buy", intent_type="open", quantity=request.quantity,
+            filled_quantity=readback.cumulative_filled if phase == "filled" else Decimal(0),
+            fill_price=readback.fill_price, origin="broker", reason="rpg_exact_dispatch_readback",
+            metadata={"atr_reprice_terminal_cancel": str(readback.terminal_cancel).lower()})
+        if not await self._rpg_record_fill(request, report):
+            return current
+        return journal.change(token, current["revision"], phase=phase,
+            replacement_filled=phase == "filled", reason="replacement_exact_dispatch_readback") or journal.read(token)
 
     def _rpg_retire_price_wait(self, job):
         request = job["replacement"]
@@ -317,9 +437,14 @@ class AtrRepriceRuntimeMixin:
                 return "rpg_stale_strategy_authorization"
             current = auth.get("event", {}).get("payload", {})
             current_md = current.get("metadata", {})
-            if (Decimal(str(current.get("quantity", 0))) != event.payload.quantity or any(
+            try:
+                prices_match = self._rpg_canonical_prices(current_md, event.payload.broker_account_name) == self._rpg_canonical_prices(
+                    event.payload.metadata, event.payload.broker_account_name)
+            except (InvalidOperation, ValueError, TypeError, KeyError):
+                prices_match = False
+            if (not prices_match or Decimal(str(current.get("quantity", 0))) != event.payload.quantity or any(
                     current_md.get(key) != event.payload.metadata.get(key) for key in
-                    ("stop_price", "limit_price", "cw_flip_level", "cw_entry_slot", "fanout_segment_id", "fanout_slot_id"))):
+                    ("cw_flip_level", "cw_entry_slot", "fanout_segment_id", "fanout_slot_id"))):
                 return "rpg_current_price_size_or_identity_changed"
             replacement = job.get("replacement", {})
             if (replacement.get("client_order_id") != self._build_client_order_id(event)
@@ -334,16 +459,29 @@ class AtrRepriceRuntimeMixin:
             return None
         for _, job in self._rpg_journal().jobs(session=session):
             old = job["old"]
-            if (job["phase"] in ACTIVE_PHASES and old["symbol"] == event.payload.symbol
+            if ((job["phase"] in ACTIVE_PHASES or (job["phase"] in {"expired", "refused"}
+                    and not old_buy_proven_clear(job))) and old["symbol"] == event.payload.symbol
                     and old["broker_account_name"] == event.payload.broker_account_name):
                 return "rpg_old_buy_still_owned"
         return None
+
+    def _rpg_canonical_prices(self, md, account):
+        stop, limit = Decimal(md["stop_price"]), Decimal(md["limit_price"])
+        if not all(price.is_finite() and price > 0 for price in (stop, limit)):
+            raise ValueError("invalid authorized price")
+        if (self.settings.oms_v2_emit_native_oco_bracket_enabled
+                and account == self.settings.strategy_schwab_1m_v2_account_name):
+            from project_mai_tai.oms.service import _schwab_round
+            return (Decimal(_schwab_round(float(stop))), resting_wire_limit(
+                stop, limit, leg="schwab", native_schwab_bracket=True))
+        return stop, limit
 
     async def _run_rpg_retry_loop(self, stop_event):
         while not stop_event.is_set():
             try:
                 for token, job in self._rpg_journal().jobs():
-                    if job["phase"] in {"prepared", "waiting", "fills_waiting", "clear", "price_wait"}:
+                    if (job["phase"] in {"prepared", "waiting", "fills_waiting", "clear", "price_wait", "submitting", "submit_unknown"}
+                            or (job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven")):
                         await self.redis.xadd(f"{self.settings.redis_stream_prefix}:strategy-intents",
                             {"data": json.dumps({"event_type": "atr_reprice_tick", "token": str(token)})},
                             maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)

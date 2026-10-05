@@ -1,0 +1,9 @@
+missing_runtime_dispatch: RED rc=1
+missing_final_wire_guard: RED rc=1
+fill_not_accounted: RED rc=1
+buy_flip_does_not_expire: RED rc=1
+liquidity_gate_removed: RED rc=1
+placed_latch_ignores_accounting: RED rc=1
+generic_reader_ignores_handoff: RED rc=1
+retained_identity_map_hides_revocation: RED rc=1
+webull_requires_late_broker_id: RED rc=1
