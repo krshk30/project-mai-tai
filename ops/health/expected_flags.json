@@ -6,29 +6,33 @@
       "name": "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled",
       "expected": true,
       "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
       "reason": "PMPRINT1 requires a fresh ask at the trigger before a pre-market software cross; both legs use that ask.",
-      "ruling": "Operator delegated sequencing to reviewer 2026-10-05 ~11:20 ET: tonight PMPRINT1 ON only, exact-SHA GO still required."
+      "ruling": "Operator 2026-10-05 15:00 ET: all four reviewed PMPRINT/PMFLIP/PMREST/RPG switches ON together. Exact-SHA install GO and fresh process verification still required; no default change."
     },
     {
       "name": "strategy_schwab_1m_v2_pm_flip_wait_enabled",
-      "expected": false,
+      "expected": true,
       "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
       "reason": "PMFLIP1 separates a pre-market BUY flip from a cross taken, preserving the existing take-down.",
-      "ruling": "Reviewer sequencing 2026-10-05 ~11:20 ET: PMFLIP1 remains dark OFF tonight; a later clean-day install needs its own GO."
+      "ruling": "Operator 2026-10-05 15:00 ET: PMFLIP1 ON with PMPRINT1, PMREST1 and RPG. Supersedes the earlier staged OFF ruling; no default change."
     },
     {
       "name": "strategy_schwab_1m_v2_pm_rest_reprice_enabled",
-      "expected": false,
+      "expected": true,
       "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
       "reason": "PMREST1 moves a software rest in the same evaluation without resetting its ownership or thin-bar streak.",
-      "ruling": "Reviewer sequencing 2026-10-05 ~11:20 ET: PMREST1 remains dark OFF tonight; a later clean-day install needs its own GO."
+      "ruling": "Operator 2026-10-05 15:00 ET: PMREST1 ON with PMPRINT1, PMFLIP1 and RPG. Supersedes the earlier staged OFF ruling; no default change."
     },
     {
       "name": "strategy_schwab_1m_v2_atr_reprice_handoff_enabled",
-      "expected": false,
+      "expected": true,
       "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
       "reason": "RPG1 admits new durable fast-reprice handoffs; OFF never abandons existing ownership.",
-      "ruling": "Reviewer sequencing 2026-10-05 ~11:20 ET: v2 hand-off admission OFF tonight; durable ownership is not erased by OFF and must be proven safe before install."
+      "ruling": "Operator 2026-10-05 15:00 ET: RPG handoff ON with all three PM switches. Supersedes staged OFF admission; durable ownership/proof guards and exact-SHA install GO remain required."
     },
     {
       "name": "market_data_subscription_startup_enabled",

@@ -1,0 +1,192 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_r20_recorded_reto_runtime_exhaustion_wakes_one_proof_then_quiet[eligible-rejected-zero] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ba71f70>
+answer = 'rejected-zero', eligibility = 'eligible'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("answer", ["rejected-zero", "unknown"])
+    @pytest.mark.parametrize("eligibility", ["eligible", "already-claimed", "accepted-row", "no-rebuy"])
+    async def test_r20_recorded_reto_runtime_exhaustion_wakes_one_proof_then_quiet(monkeypatch, answer, eligibility):
+        h = await startup_harness(monkeypatch)
+        await real_bot_startup(monkeypatch, h)
+        journal = HandoffJournal(h.factory)
+        job = journal.read(RETO)
+        changes = dict(phase="waiting", reads=29, next_read_at=0, reason="CONTROLLED rewind recorded RETO")
+        if eligibility == "already-claimed":
+            changes["terminal_rejection_probe_started_at"] = h.clock[0].timestamp()
+        elif eligibility == "no-rebuy":
+            changes["no_rebuy"] = True
+        journal.change(RETO, job["revision"], **changes)
+        if eligibility == "accepted-row":
+            with h.factory() as session:
+                session.get(BrokerOrder, UUID(job["original_order_id"])).status = "accepted"
+                session.commit()
+        body = deepcopy(next(row["body"] for row in BROKER["orders"] if row["body"]["status"] == "REJECTED"))
+    
+        async def broker_read(request):
+            h.adapter.reads.append(request)
+            assert request.client_order_id == job["old"]["client_order_id"]
+            return (schwab_buy_readback(request, body) if answer == "rejected-zero"
+                    else AtrBuyReadback("unknown", "CONTROLLED exact broker response unknown"))
+    
+        monkeypatch.setattr(h.adapter, "read_atr_resting_buy_after_cancel", broker_read)
+        statements, scans, ticks, phases, probes = [], [], [], [], []
+        sql_event.listen(h.factory.kw["bind"], "before_cursor_execute", lambda *args: statements.append(args[2]))
+        original_scan, original_probe = h.service._rpg_retry_jobs, h.service._rpg_probe_rejected_old
+    
+        def scan(**kwargs):
+            scans.append(kwargs["include_unknown"])
+            return original_scan(**kwargs)
+    
+        async def probe(token, current):
+            probes.append(token)
+            return await original_probe(token, current)
+    
+        stop = asyncio.Event()
+        quiet = []
+    
+        async def pause(stop_event, seconds):
+            rows, h.service.redis.entries = h.service.redis.entries, []
+            for _, data in rows:
+                if data.get("event_type") == "atr_reprice_tick":
+                    if data["token"] == str(RETO):
+                        ticks.append(data)
+                    await h.service._handle_stream_message({"data": json.dumps(data)})
+                    if data["token"] == str(RETO):
+                        phases.append(journal.read(RETO)["phase"])
+            if seconds is None:
+                if not quiet:
+                    quiet.append((len(statements), len(ticks), len(scans)))
+                else:
+                    assert (len(statements), len(ticks), len(scans)) == quiet[0]
+                quiet.append(None)
+                if len(quiet) > 180:
+                    stop_event.set()
+            h.clock[0] += timedelta(seconds=1)
+    
+        monkeypatch.setattr(h.service, "_rpg_retry_jobs", scan)
+        monkeypatch.setattr(h.service, "_rpg_probe_rejected_old", probe)
+        monkeypatch.setattr(h.service, "_rpg_retry_pause", pause)
+        await h.service._run_rpg_retry_loop(stop)
+        eligible = eligibility == "eligible"
+        proven = eligible and answer == "rejected-zero"
+        job = journal.read(RETO)
+        assert phases[:2] == ["waiting", "held_unknown"]
+>       assert len(ticks) == (3 if eligible else 2)
+E       AssertionError: assert 2 == 3
+E        +  where 2 = len([{'event_type': 'atr_reprice_tick', 'token': 'ff6464ff-d65e-5657-8f47-1dc8d7b053c3'}, {'event_type': 'atr_reprice_tick', 'token': 'ff6464ff-d65e-5657-8f47-1dc8d7b053c3'}])
+
+tests/unit/test_rpgstuck1_runtime_exhaustion.py:88: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:22:41,839 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:22:41,839 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:22:41,840 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:22:41,840 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:22:41,840 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:22:41,870 INFO [project_mai_tai.services.schwab_1m_v2_bot] schwab_1m_v2 bot starting pid=82124 (enabled=True)
+2026-10-05 15:22:41,872 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-IDENTITY-RESTORE] restored=0 could_not_tell=0
+2026-10-05 15:22:41,875 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=0
+2026-10-05 15:22:41,875 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account live:orb
+2026-10-05 15:22:41,896 INFO [oms-risk] [OMS-RPG1] token=faa55c1f-262b-52e2-adcc-280ab1e5e2ff phase=held_unknown reason=exact_old_order_unproven reads=0 account=live:orb symbol=VEEA segment=1791207242421 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:22:41,901 INFO [oms-risk] [OMS-RPG1] token=ee3d0d07-abea-5fe2-98c9-cace5c08d135 phase=held_unknown reason=exact_old_order_unproven reads=0 account=live:orb symbol=APUS segment=1791210302605 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:22:41,908 INFO [oms-risk] [OMS-RPG1] token=ff6464ff-d65e-5657-8f47-1dc8d7b053c3 phase=waiting reason=terminal_rejection_explicit_zero reads=30 account=live:schwab_1m_v2 symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=3078434.431 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:22:41,916 INFO [oms-risk] [OMS-RPG1] token=ba108172-04f6-5659-892b-a0fc10d22b15 phase=held_unknown reason=exact_old_order_unproven reads=0 account=live:orb symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+_ test_r20_recorded_reto_runtime_exhaustion_wakes_one_proof_then_quiet[eligible-unknown] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bcbc620>
+answer = 'unknown', eligibility = 'eligible'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("answer", ["rejected-zero", "unknown"])
+    @pytest.mark.parametrize("eligibility", ["eligible", "already-claimed", "accepted-row", "no-rebuy"])
+    async def test_r20_recorded_reto_runtime_exhaustion_wakes_one_proof_then_quiet(monkeypatch, answer, eligibility):
+        h = await startup_harness(monkeypatch)
+        await real_bot_startup(monkeypatch, h)
+        journal = HandoffJournal(h.factory)
+        job = journal.read(RETO)
+        changes = dict(phase="waiting", reads=29, next_read_at=0, reason="CONTROLLED rewind recorded RETO")
+        if eligibility == "already-claimed":
+            changes["terminal_rejection_probe_started_at"] = h.clock[0].timestamp()
+        elif eligibility == "no-rebuy":
+            changes["no_rebuy"] = True
+        journal.change(RETO, job["revision"], **changes)
+        if eligibility == "accepted-row":
+            with h.factory() as session:
+                session.get(BrokerOrder, UUID(job["original_order_id"])).status = "accepted"
+                session.commit()
+        body = deepcopy(next(row["body"] for row in BROKER["orders"] if row["body"]["status"] == "REJECTED"))
+    
+        async def broker_read(request):
+            h.adapter.reads.append(request)
+            assert request.client_order_id == job["old"]["client_order_id"]
+            return (schwab_buy_readback(request, body) if answer == "rejected-zero"
+                    else AtrBuyReadback("unknown", "CONTROLLED exact broker response unknown"))
+    
+        monkeypatch.setattr(h.adapter, "read_atr_resting_buy_after_cancel", broker_read)
+        statements, scans, ticks, phases, probes = [], [], [], [], []
+        sql_event.listen(h.factory.kw["bind"], "before_cursor_execute", lambda *args: statements.append(args[2]))
+        original_scan, original_probe = h.service._rpg_retry_jobs, h.service._rpg_probe_rejected_old
+    
+        def scan(**kwargs):
+            scans.append(kwargs["include_unknown"])
+            return original_scan(**kwargs)
+    
+        async def probe(token, current):
+            probes.append(token)
+            return await original_probe(token, current)
+    
+        stop = asyncio.Event()
+        quiet = []
+    
+        async def pause(stop_event, seconds):
+            rows, h.service.redis.entries = h.service.redis.entries, []
+            for _, data in rows:
+                if data.get("event_type") == "atr_reprice_tick":
+                    if data["token"] == str(RETO):
+                        ticks.append(data)
+                    await h.service._handle_stream_message({"data": json.dumps(data)})
+                    if data["token"] == str(RETO):
+                        phases.append(journal.read(RETO)["phase"])
+            if seconds is None:
+                if not quiet:
+                    quiet.append((len(statements), len(ticks), len(scans)))
+                else:
+                    assert (len(statements), len(ticks), len(scans)) == quiet[0]
+                quiet.append(None)
+                if len(quiet) > 180:
+                    stop_event.set()
+            h.clock[0] += timedelta(seconds=1)
+    
+        monkeypatch.setattr(h.service, "_rpg_retry_jobs", scan)
+        monkeypatch.setattr(h.service, "_rpg_probe_rejected_old", probe)
+        monkeypatch.setattr(h.service, "_rpg_retry_pause", pause)
+        await h.service._run_rpg_retry_loop(stop)
+        eligible = eligibility == "eligible"
+        proven = eligible and answer == "rejected-zero"
+        job = journal.read(RETO)
+        assert phases[:2] == ["waiting", "held_unknown"]
+>       assert len(ticks) == (3 if eligible else 2)
+E       AssertionError: assert 2 == 3
+E        +  where 2 = len([{'event_type': 'atr_reprice_tick', 'token': 'ff6464ff-d65e-5657-8f47-1dc8d7b053c3'}, {'event_type': 'atr_reprice_tick', 'token': 'ff6464ff-d65e-5657-8f47-1dc8d7b053c3'}])
+
+tests/unit/test_rpgstuck1_runtime_exhaustion.py:88: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:22:42,049 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:22:42,049 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:22:42,049 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:22:42,049 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:22:42,049 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:22:42,067 INFO [project_mai_tai.services.schwab_1m_v2_bot] schwab_1m_v2 bot starting pid=82124 (enabled=True)
+2026-10-05 15:22:42,068 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-IDENTITY-RESTORE] restored=0 could_not_tell=0
+2026-10-05 15:22:42,072 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=0
+2026-10-05 15:22:42,072 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account live:orb
+2026-10-05 15:22:42,087 INFO [oms-risk] [OMS-RPG1] token=faa55c1f-262b-52e2-adcc-280ab1e5e2ff phase=held_unknown reason=exact_old_order_unproven reads=0 account=live:orb symbol=VEEA segment=1791207242421 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:22:42,093 INFO [oms-risk] [OMS-RPG1] token=ee3d0d07-abea-5fe2-98c9-cace5c08d135 phase=held_unknown reason=exact_old_order_unproven reads=0 account=live:orb symbol=APUS segment=1791210302605 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:22:42,100 INFO [oms-risk] [OMS-RPG1] token=ff6464ff-d65e-5657-8f47-1dc8d7b053c3 phase=waiting reason=CONTROLLED exact broker response unknown reads=30 account=live:schwab_1m_v2 symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=3078434.431 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:22:42,107 INFO [oms-risk] [OMS-RPG1] token=ba108172-04f6-5659-892b-a0fc10d22b15 phase=held_unknown reason=exact_old_order_unproven reads=0 account=live:orb symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1_runtime_exhaustion.py::test_r20_recorded_reto_runtime_exhaustion_wakes_one_proof_then_quiet[eligible-rejected-zero]
+FAILED tests/unit/test_rpgstuck1_runtime_exhaustion.py::test_r20_recorded_reto_runtime_exhaustion_wakes_one_proof_then_quiet[eligible-unknown]
+2 failed, 30 deselected in 0.72s

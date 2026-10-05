@@ -1,0 +1,514 @@
+{
+  "test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_buy[recorded-proof-in-window]": [
+    {
+      "token": "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "a007716c-4b50-5759-a354-ddc5b8961154",
+      "symbol": "VEEA",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "faa55c1f-262b-52e2-adcc-280ab1e5e2ff",
+      "symbol": "VEEA",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "placed",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "7c7c5afb-30ff-539f-8baa-4c2e585c6e12",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "ee3d0d07-abea-5fe2-98c9-cace5c08d135",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "placed",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "ff6464ff-d65e-5657-8f47-1dc8d7b053c3",
+      "symbol": "RETO",
+      "account": "live:schwab_1m_v2",
+      "before": "held_unknown",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "ba108172-04f6-5659-892b-a0fc10d22b15",
+      "symbol": "RETO",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "placed",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "c539a57f-6111-59ae-8b79-79b7fee1700a",
+      "symbol": "MI",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "4be7cb2d-406b-56db-b597-3783f6e956ff",
+      "symbol": "MI",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "placed",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "a9eac442-d340-59ab-8c26-9c04d3453f1d",
+      "symbol": "SCKT",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "6fb89c93-a101-5200-b569-320acf5f4f85",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "889889cd-2de7-59ca-997f-fc546b728ec9",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "d86d5d38-200b-52b6-8147-6eecfe13698b",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "filled",
+      "after": "filled",
+      "proof": true,
+      "owned": false
+    }
+  ],
+  "test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_buy[recorded-proof-after-2000]": [
+    {
+      "token": "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "a007716c-4b50-5759-a354-ddc5b8961154",
+      "symbol": "VEEA",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "faa55c1f-262b-52e2-adcc-280ab1e5e2ff",
+      "symbol": "VEEA",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "expired",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "7c7c5afb-30ff-539f-8baa-4c2e585c6e12",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "ee3d0d07-abea-5fe2-98c9-cace5c08d135",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "expired",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "ff6464ff-d65e-5657-8f47-1dc8d7b053c3",
+      "symbol": "RETO",
+      "account": "live:schwab_1m_v2",
+      "before": "held_unknown",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "ba108172-04f6-5659-892b-a0fc10d22b15",
+      "symbol": "RETO",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "expired",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "c539a57f-6111-59ae-8b79-79b7fee1700a",
+      "symbol": "MI",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "4be7cb2d-406b-56db-b597-3783f6e956ff",
+      "symbol": "MI",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "expired",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "a9eac442-d340-59ab-8c26-9c04d3453f1d",
+      "symbol": "SCKT",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "6fb89c93-a101-5200-b569-320acf5f4f85",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "889889cd-2de7-59ca-997f-fc546b728ec9",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "d86d5d38-200b-52b6-8147-6eecfe13698b",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "filled",
+      "after": "filled",
+      "proof": true,
+      "owned": false
+    }
+  ],
+  "test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_buy[true-unknown-in-window]": [
+    {
+      "token": "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": true
+    },
+    {
+      "token": "a007716c-4b50-5759-a354-ddc5b8961154",
+      "symbol": "VEEA",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "faa55c1f-262b-52e2-adcc-280ab1e5e2ff",
+      "symbol": "VEEA",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "7c7c5afb-30ff-539f-8baa-4c2e585c6e12",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "ee3d0d07-abea-5fe2-98c9-cace5c08d135",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "ff6464ff-d65e-5657-8f47-1dc8d7b053c3",
+      "symbol": "RETO",
+      "account": "live:schwab_1m_v2",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "ba108172-04f6-5659-892b-a0fc10d22b15",
+      "symbol": "RETO",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "c539a57f-6111-59ae-8b79-79b7fee1700a",
+      "symbol": "MI",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "4be7cb2d-406b-56db-b597-3783f6e956ff",
+      "symbol": "MI",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "a9eac442-d340-59ab-8c26-9c04d3453f1d",
+      "symbol": "SCKT",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "6fb89c93-a101-5200-b569-320acf5f4f85",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "889889cd-2de7-59ca-997f-fc546b728ec9",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "d86d5d38-200b-52b6-8147-6eecfe13698b",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "filled",
+      "after": "filled",
+      "proof": true,
+      "owned": false
+    }
+  ],
+  "test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_buy[true-unknown-after-2000]": [
+    {
+      "token": "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": true
+    },
+    {
+      "token": "a007716c-4b50-5759-a354-ddc5b8961154",
+      "symbol": "VEEA",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "faa55c1f-262b-52e2-adcc-280ab1e5e2ff",
+      "symbol": "VEEA",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "7c7c5afb-30ff-539f-8baa-4c2e585c6e12",
+      "symbol": "APUS",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "ee3d0d07-abea-5fe2-98c9-cace5c08d135",
+      "symbol": "APUS",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "ff6464ff-d65e-5657-8f47-1dc8d7b053c3",
+      "symbol": "RETO",
+      "account": "live:schwab_1m_v2",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "ba108172-04f6-5659-892b-a0fc10d22b15",
+      "symbol": "RETO",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "c539a57f-6111-59ae-8b79-79b7fee1700a",
+      "symbol": "MI",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "4be7cb2d-406b-56db-b597-3783f6e956ff",
+      "symbol": "MI",
+      "account": "live:orb",
+      "before": "held_unknown",
+      "after": "held_unknown",
+      "proof": false,
+      "owned": true
+    },
+    {
+      "token": "a9eac442-d340-59ab-8c26-9c04d3453f1d",
+      "symbol": "SCKT",
+      "account": "live:schwab_1m_v2",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "6fb89c93-a101-5200-b569-320acf5f4f85",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "889889cd-2de7-59ca-997f-fc546b728ec9",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "refused",
+      "after": "refused",
+      "proof": true,
+      "owned": false
+    },
+    {
+      "token": "d86d5d38-200b-52b6-8147-6eecfe13698b",
+      "symbol": "SCKT",
+      "account": "live:orb",
+      "before": "filled",
+      "after": "filled",
+      "proof": true,
+      "owned": false
+    }
+  ]
+}

@@ -1,5 +1,9 @@
 # RPGSTUCK1: canonical prices and proven-clear handoff endings
 
+Current operator ALL-ON follow-up: [proofs, catalog and unmet requirements](REPORT_ALL_ON.md).
+This supersedes the historical staged OFF rollout values below; install approval
+is not implied. Production flag defaults remain OFF.
+
 Latest runtime follow-up: [R20 exhaustion-edge wake](REPORT_R20.md).
 
 Latest fixture-only follow-up: [connection-isolation proof](REPORT_FIXTURE_ISOLATION.md).
@@ -14,7 +18,7 @@ Scope: sole-writer branch `codex/rpgstuck1-canonical-handoff`, starting at
 the original card, and the operator's corrected requirements govern this change.
 OWNMIX1 and GAPKEEP are separate lanes; no shared handoff edit is included.
 
-**Latest explicit sequencing:** RPGSTUCK1 proceeds at normal pace as a standalone
+**Historical sequencing at the original sequence follow-up:** RPGSTUCK1 proceeds at normal pace as a standalone
 later change, **NOT tonight**. This supersedes the initial joint evening-plan
 references. The follow-up adds only tests, fixtures and report/evidence artifacts
 on top of `73e9e4c8f92f672ecc03e7c460b134123015840a`, with no rebase and no PM edits.

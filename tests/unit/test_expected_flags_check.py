@@ -57,10 +57,12 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
         if field.annotation is bool or bool in get_args(field.annotation)
     }
     by_name = {entry["name"]: entry for entry in entries}
-    assert by_name["strategy_schwab_1m_v2_pm_rest_reprice_enabled"]["expected"] is False
-    assert by_name["strategy_schwab_1m_v2_pm_rest_reprice_enabled"]["owning_service"] == "schwab-1m-v2"
-    assert by_name["strategy_schwab_1m_v2_atr_reprice_handoff_enabled"]["expected"] is False
-    assert by_name["strategy_schwab_1m_v2_atr_reprice_handoff_enabled"]["owning_service"] == "schwab-1m-v2"
+    for suffix in ("pm_print_ask_confirm", "pm_flip_wait", "pm_rest_reprice", "atr_reprice_handoff"):
+        name = f"strategy_schwab_1m_v2_{suffix}_enabled"
+        assert by_name[name]["expected"] is True
+        assert by_name[name]["owning_service"] == "schwab-1m-v2"
+        assert by_name[name]["also_check_services"] == ["oms"]
+        assert Settings.model_fields[name].default is False
     assert by_name["strategy_schwab_1m_v2_retry_one_enabled"]["expected"] is True
     assert by_name["strategy_schwab_1m_v2_gap_hold_enabled"]["expected"] is True
     assert by_name["orb_schwab_observe_enabled"]["expected"] is False
@@ -81,6 +83,42 @@ def test_new_unlisted_settings_bool_blocks_catalog(monkeypatch: pytest.MonkeyPat
     )
     with pytest.raises(flags.CatalogError, match="new_fix_enabled"):
         flags.load_catalog(CATALOG)
+
+
+@pytest.mark.parametrize("suffix", ["pm_print_ask_confirm", "pm_flip_wait", "pm_rest_reprice", "atr_reprice_handoff"])
+@pytest.mark.parametrize("service", ["schwab-1m-v2", "oms"])
+@pytest.mark.parametrize("bad", ["false", "missing", "invalid"])
+def test_all_on_catalog_checks_each_explicit_flag_on_both_consumers(suffix, service, bad):
+    names = [f"strategy_schwab_1m_v2_{item}_enabled" for item in (
+        "pm_print_ask_confirm", "pm_flip_wait", "pm_rest_reprice", "atr_reprice_handoff")]
+    entries = [entry for entry in flags.load_catalog(CATALOG) if entry["name"] in names]
+
+    def process_env(consumer):
+        environ = {"MAI_TAI_" + name.upper(): "true" for name in names}
+        if consumer == service:
+            key = f"MAI_TAI_STRATEGY_SCHWAB_1M_V2_{suffix.upper()}_ENABLED"
+            if bad == "missing":
+                environ.pop(key)
+            else:
+                environ[key] = bad
+        return _reading(1234, environ)
+
+    rc, lines = flags.audit(entries, process_env)
+    assert rc == (2 if bad == "invalid" else 1)
+    assert f"checked={7 if bad == 'invalid' else 8}/8" in lines[-1]
+    assert any(f"service={service}" in line and f"{suffix}_enabled" in line
+               and ("REAL FAILURE" in line or "UNKNOWN" in line) for line in lines)
+
+
+def test_all_on_catalog_eight_fresh_process_values_pass_without_defaults():
+    names = [f"strategy_schwab_1m_v2_{item}_enabled" for item in (
+        "pm_print_ask_confirm", "pm_flip_wait", "pm_rest_reprice", "atr_reprice_handoff")]
+    entries = [entry for entry in flags.load_catalog(CATALOG) if entry["name"] in names]
+    rc, lines = flags.audit(entries, lambda _: _reading(1234, {
+        "MAI_TAI_" + name.upper(): "true" for name in names}))
+    assert rc == 0 and "checked=8/8" in lines[-1]
+    assert sum(line.startswith("PASS flag=") for line in lines) == 8
+    assert all("source=env:" in line for line in lines[:-1])
 
 
 def test_fixed_dollar_numeric_catalog_covers_both_running_consumers() -> None:

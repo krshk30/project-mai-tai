@@ -1,0 +1,16 @@
+B1_global_webull_veto: KILLED rc=1
+B1_primary_generation_mutated: KILLED rc=1
+B1_primary_quantity_mutated: KILLED rc=1
+B2_generation_wire_ignored: KILLED rc=1
+B3_precheck_origin_ignored: KILLED rc=1
+B3_precheck_code_ignored: KILLED rc=1
+B4_unproven_hold_expires: KILLED rc=1
+B5_empty_turns_query: KILLED rc=1
+B5_notifications_dropped: KILLED rc=1
+B5_wrong_generation_wakes: KILLED rc=1
+B5_duplicate_hash_ignored: KILLED rc=1
+B5_hash_not_durable: KILLED rc=1
+B5_failed_scan_spins: KILLED rc=1
+B6_probe_repeats: KILLED rc=1
+B6_remaining_zero_ignored: KILLED rc=1
+later_accounted_fill_ignored: KILLED rc=1
