@@ -1,5 +1,9 @@
 # RPGSTUCK1: canonical prices and proven-clear handoff endings
 
+Latest tests-only follow-up: [literal L5/L7 liveness and later APUS wire](REPORT_L57.md).
+The exact reviewer wording has now been supplied and tested; the earlier
+missing-text limitation is historical. The original distance guard remains.
+
 Current operator ALL-ON follow-up: [proofs, catalog and unmet requirements](REPORT_ALL_ON.md).
 This supersedes the historical staged OFF rollout values below; install approval
 is not implied. Production flag defaults remain OFF.

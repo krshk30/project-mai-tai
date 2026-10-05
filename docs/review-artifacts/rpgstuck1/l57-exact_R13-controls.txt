@@ -1,0 +1,57 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_b1_recorded_reto_unknown_primary_clear_webull_places_webull_only _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092e8c80>
+
+    @pytest.mark.asyncio
+    async def test_b1_recorded_reto_unknown_primary_clear_webull_places_webull_only(monkeypatch):
+        h = await startup_harness(monkeypatch, with_deferred=True)
+        await real_bot_startup(monkeypatch, h)
+        await real_oms_startup(monkeypatch, h)
+        h.strategy._entries_held = True
+        await feedback(h)
+        await feedback(h)
+        h.strategy._entries_held = False
+        state = h.strategy.watchlist_state("RETO")
+        token = UUID("ff6464ff-d65e-5657-8f47-1dc8d7b053c3")
+        old = HandoffJournal(h.factory).read(token)
+        assert old["phase"] == "held_unknown" and old["reads"] == 30
+        state.resting_schwab_generation = old["old"]["metadata"]["rpg_resting_generation"]
+        state.resting_schwab_quantity = int(Decimal(old["old"]["quantity"]))
+        primary = (state.resting_schwab_generation, state.resting_schwab_quantity)
+        h.strategy._cw_v2_resting_track(state, None)
+>       assert not h.strategy.drain_pending_intents()
+E       AssertionError: assert not [TradeIntentDraft(symbol='RETO', side='buy', intent_type='open', quantity=Decimal('195'), reason='schwab_1m_v2 ATR Fli...00', 'entry_size_price_basis': 'stop_limit_wire_limit', 'entry_size_price': '3.0806', 'entry_computed_shares': '195'})]
+E        +  where [TradeIntentDraft(symbol='RETO', side='buy', intent_type='open', quantity=Decimal('195'), reason='schwab_1m_v2 ATR Fli...00', 'entry_size_price_basis': 'stop_limit_wire_limit', 'entry_size_price': '3.0806', 'entry_computed_shares': '195'})] = drain_pending_intents()
+E        +    where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108c1d070>.drain_pending_intents
+E        +      where <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108c1d070> = namespace(service=<project_mai_tai.oms.service.OmsRiskService object at 0x1092cffb0>, strategy=<project_mai_tai.strate...tegy': 'schwab_1m_v2'}], 'limits': 'Recorded database census only; no fresh strict broker detail or fill-zero proof.'}).strategy
+
+tests/unit/test_rpgstuck1_review_completion.py:36: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:06,569 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:06,570 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:06,570 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:06,570 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:06,570 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:06,630 INFO [project_mai_tai.services.schwab_1m_v2_bot] schwab_1m_v2 bot starting pid=1904 (enabled=True)
+2026-10-05 15:49:06,632 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-IDENTITY-RESTORE] restored=0 could_not_tell=0
+2026-10-05 15:49:06,636 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=0
+2026-10-05 15:49:06,636 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account live:orb
+2026-10-05 15:49:06,652 INFO [oms-risk] seeded runtime metadata: 2 strategies, 3 broker accounts
+2026-10-05 15:49:06,681 INFO [oms-risk] [OMS-RPG1] token=faa55c1f-262b-52e2-adcc-280ab1e5e2ff phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=VEEA segment=1791207242421 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:06,691 INFO [oms-risk] [OMS-RPG1] token=ee3d0d07-abea-5fe2-98c9-cace5c08d135 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=APUS segment=1791210302605 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:06,714 INFO [oms-risk] [OMS-RPG1] token=ba108172-04f6-5659-892b-a0fc10d22b15 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:06,734 INFO [oms-risk] [OMS-RPG1] token=faa55c1f-262b-52e2-adcc-280ab1e5e2ff phase=expired reason=entry_or_gap_hold reads=0 account=live:orb symbol=VEEA segment=1791207242421 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:06,740 INFO [oms-risk] [OMS-RPG1] token=ee3d0d07-abea-5fe2-98c9-cace5c08d135 phase=expired reason=entry_or_gap_hold reads=0 account=live:orb symbol=APUS segment=1791210302605 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:06,745 INFO [oms-risk] [OMS-RPG1] token=ba108172-04f6-5659-892b-a0fc10d22b15 phase=expired reason=entry_or_gap_hold reads=0 account=live:orb symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:06,753 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-STOP-ASK-PRICE-CHECK] symbol=RETO account=live:schwab_1m_v2 slot=first evaluated=1 held=0 reason=allowed line=3.0500 trigger=3.0652 band_pct=0.50 offset_pct=0.50 ask=2.9500 quote_age_ms=0 max_age_ms=10000
+2026-10-05 15:49:06,753 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-STOP-ASK-PRICE-CHECK] symbol=RETO account=live:orb slot=first evaluated=1 held=0 reason=allowed line=3.0500 trigger=3.0652 band_pct=0.50 offset_pct=0.50 ask=2.9500 quote_age_ms=0 max_age_ms=10000
+2026-10-05 15:49:06,753 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] RETO slot=first line=3.0500 trigger=3.0652 limit=3.0806 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:06,753 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] RETO source=rth_resting_mirror slot=resting slot_id=10ee8572-638d-5208-955e-222c38ae3cbd segment_id=1791213663149 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:06,753 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] RETO slot_id=10ee8572-638d-5208-955e-222c38ae3cbd outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:06,755 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] RETO source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1791213663149 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:06,755 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] RETO slot=first line=3.0500 trigger=3.0652 limit=3.0806 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1_review_completion.py::test_b1_recorded_reto_unknown_primary_clear_webull_places_webull_only
+1 failed in 0.55s

@@ -1,0 +1,38 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_l5_idle_real_retry_loop_actual_new_begin_wakes_four_ticks_in_four_seconds[four-tick-liveness] _
+tests/unit/test_rpgstuck1_loop_liveness.py:68: in test_l5_idle_real_retry_loop_actual_new_begin_wakes_four_ticks_in_four_seconds
+    assert ticks[:4] == [(str(token), started + timedelta(seconds=i)) for i in range(1, 5)]
+E   AssertionError: assert [] == [('e39ca8da-5...imezone.utc))]
+E     
+E     Right contains 4 more items, first extra item: ('e39ca8da-5f8e-5352-8d35-6cb4743f32c0', datetime.datetime(2026, 10, 2, 17, 56, 3, 899000, tzinfo=datetime.timezone.utc))
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:52:46,887 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:52:46,887 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:52:46,887 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:52:46,887 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:52:46,887 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:52:46,908 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AMOD slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:52:46,908 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AMOD reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:52:46,937 INFO [oms-risk] [OMS-RPG1] token=e39ca8da-5f8e-5352-8d35-6cb4743f32c0 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:schwab_1m_v2 symbol=AMOD segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+_ test_l5_idle_real_retry_loop_actual_new_begin_wakes_four_ticks_in_four_seconds[then-loop-placed] _
+tests/unit/test_rpgstuck1_loop_liveness.py:68: in test_l5_idle_real_retry_loop_actual_new_begin_wakes_four_ticks_in_four_seconds
+    assert ticks[:4] == [(str(token), started + timedelta(seconds=i)) for i in range(1, 5)]
+E   AssertionError: assert [] == [('e39ca8da-5...imezone.utc))]
+E     
+E     Right contains 4 more items, first extra item: ('e39ca8da-5f8e-5352-8d35-6cb4743f32c0', datetime.datetime(2026, 10, 2, 17, 56, 3, 899000, tzinfo=datetime.timezone.utc))
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:52:47,563 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:52:47,563 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:52:47,563 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:52:47,564 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:52:47,564 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:52:47,572 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AMOD slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:52:47,572 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AMOD reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:52:47,599 INFO [oms-risk] [OMS-RPG1] token=e39ca8da-5f8e-5352-8d35-6cb4743f32c0 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:schwab_1m_v2 symbol=AMOD segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1_loop_liveness.py::test_l5_idle_real_retry_loop_actual_new_begin_wakes_four_ticks_in_four_seconds[four-tick-liveness]
+FAILED tests/unit/test_rpgstuck1_loop_liveness.py::test_l5_idle_real_retry_loop_actual_new_begin_wakes_four_ticks_in_four_seconds[then-loop-placed]
+2 failed, 3 deselected in 1.66s
