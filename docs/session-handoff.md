@@ -3,6 +3,21 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
+## 2026-10-05 (Mon) — LIVE DAY NOTES (shared: both agents add rows as things happen; full sweep at close-out)
+
+| # | Item | Status | Evidence (as-of, source) | Owner | Next action |
+|---|---|---|---|---|---|
+| M1 | Start ritual | DONE 05:25 ET — checksums green, not frozen, box `bbb43604`, main ahead by 3 docs-only files, only open PR #1062 (draft study) | fleet board + `git diff --name-only bbb43604 origin/main` | claude-1 | — |
+| M2 | 03:41 read — Option A guard | **PASS** (read 05:28 ET, late: session started 05:25) — guard `option-a-guard@2026-10-05` active since 03:40:04 ET, pid 113287, NRestarts 0; sampler one row per second, 6,571 rows to 05:29 ET, 0 new 1008 lines; paper 27320 up | box systemd; `/home/trader/after-hours/2026-10-05/` guard files; steps.log `MONDAY_GUARD_START_COMPLETE application=bbb43604` | claude-1 | — |
+| M3 | 04:00 read — first live delivery through the rebuilt owners hash | **PASS** (read 05:28 ET) — hash = five consumers + `_migration_complete=1`; `_last_applied_id` moved from the 10-03 id to 04:51:53 ET; paper feed opened 04:00:00, subscribed SAIQ 04:35:51→04:48:22 and received 138,981 prints; gateway log 0 ERROR / 0 Traceback / 0 × 1008 in 4,847 lines since the 20:00 ET rotation | Redis `mai_tai:market-data-subscription-owners` + subscriptions stream (39 entries); `momentum_paper_events`; market-data.log | claude-1 | — |
+| M4 | Momentum paper — FIRST FILLS under Option A | 4 detections / 4 fills / 4 exits, all SAIQ (prior close 1.85): 04:35:49 buy 14.1264 → 14.8363 TARGET +5.03%; 04:36:58 buy 18.2705 → 15.48 STOP −15.27% (taken by both the 60 s and 30 s detectors = 2 rows); 04:38:21 buy 15.1971 → 12.87 STOP −15.31% | `momentum_paper_events` (NOT the log), session_date 10-05 | claude-1 | none — paper record |
+| M5 | v2 boot hold on the first symbol after the weekend restart | **RELEASED 04:19:12 ET — EXPECTED BY DESIGN.** One ERROR line `[V2-BOOT-REST-WARMUP-TIMEOUT]` (SAIQ, 370.7 s vs bound 369 s) = the bounded fallback at `schwab_1m_v2_bot.py:3548`; same line 09-28 and 09-30. SAIQ's reconstructed arm (arm bar Fri 10-02 18:48 ET) capped, slot consumed until a fresh SELL flip | schwab-1m-v2.log since the 20:00 ET rotation; code at bbb43604 | claude-1 | 07:10 read |
+| M6 | OMS — one failed Schwab positions read | 02:32:31 ET SSL handshake timeout, `BROKER-SYNC-UNREADABLE consecutive=1`; `BROKER-SYNC-OK` recovered 02:32:36 ET; census 19 ok / 1 failed in that window | oms.log | claude-1 | none (single, self-recovered) |
+| M7 | Redis after the resize | evictions 0; used 765 MB; peak since the Sat 18:05 boot 1.39 GB of the 2.00 GB cap — time of the peak NOT known | `INFO memory` / `INFO stats`, 05:30 ET | claude-1 | re-read at each scheduled read |
+| M8 | Operator question 05:35 ET: "v2 needs continuous bars from 07:09 to trade?" | ANSWERED: bars start 07:00 (0 bars before 07:00 on 12 of 12 sessions 09-17→10-02); 07:00–07:08 builds the line; first ATR reading 07:09 for the 07:08 bar on 5 of 5 sessions 09-28→10-02, `state=long flip=none`. Known 07:00–07:08 blind window; Massive seed is live-OFF (`ATR_MASSIVE_SEED_ENABLED=false` in /proc 26811) — open decision 2, parked | `strategy_bar_history`; rotated v2 logs; /proc | claude-1 | 07:10 read confirms for today |
+| M9 | Today's reads are SCHEDULED in the claude-1 session | 06:21 gate · 07:11 v2 bars · 09:46 scanner validation · every 30 min 07:13→15:43 first events · 15:55 ORB Schwab position. Session-only jobs: gone if the session is closed | CronList 05:40 ET | claude-1 | results land here as rows |
+| M10 | NOT YET JUDGED (belongs to the 07:10 read) | v2 log since 20:00 ET: `[V2-ATR-BAR-GAP] phase=replay` VEEA 547 / RETO 151 / SAIQ 118 lines; 551 Schwab streamer normal-close (1000) disconnects | schwab-1m-v2.log | claude-1 | 07:10 read |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
@@ -44,7 +59,7 @@
 | 03:41 | guard timer `option-a-guard-start-20261005` fired | guard active, paper service up |
 | 04:00 | first live delivery through the rebuilt owners hash (paper + gateway) | paper quotes flowing; gateway owners five + marker |
 | 06:20 | FLAGGATE + restart-evidence gate | 140/140; ORB reads UNKNOWN (row 47) — by design |
-| 07:10 | v2 bar continuity after the weekend restart | no bar hole; first bars at ~07:08 |
+| 07:10 | v2 bar continuity after the weekend restart | no bar hole; first bars at 07:00, first ATR reading 07:09 for the 07:08 bar (corrected 10-05: was "first bars at ~07:08") |
 | 09:30–09:45 | **SCANNER VALIDATION (operator 10-03: critical)** | 5-/10-min squeeze alerts present; watchlist adds in line with the prior 5 sessions; prefill N ≥ 120; 0 errors in strategy log |
 | first events | first dollar-sized fills (and any partial); `[OMS-NFQ1]` held/sent/retired; **first reprice cancel→place seconds per broker**; first COLDSTART1 announce on any restart | no NO_FRESH_QUOTE drop on a resting mirror; cancel→place a few seconds, not ~60 |
 
