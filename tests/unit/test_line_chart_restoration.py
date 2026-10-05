@@ -71,6 +71,33 @@ def test_recorded_reto_late_111019_bars_are_required_before_admission():
     assert tuple(bar.timestamp_ms for bar in prepared.bars) == tuple(bar.timestamp_ms for _, bar in pairs)
 
 
+def test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill():
+    pairs = [(row, bar) for row, bar in _bars("JAGX")
+             if bar.timestamp_ms <= _ms("2026-10-05T15:51:00+00:00")]
+    ledger = SessionLineRestoration("JAGX", session_start_ts_ms(pairs[0][1].timestamp_ms), 2)
+    late = []
+    for row, bar in pairs:
+        if _ms(row["created_at"]) > _ms("2026-10-05T15:52:15+00:00"):
+            late.append(bar)
+        else:
+            ledger.observe(bar)
+    assert len(late) == 33
+    assert late[0].timestamp_ms == _ms("2026-10-05T15:18:00+00:00")
+    assert late[-1].timestamp_ms == _ms("2026-10-05T15:50:00+00:00")
+    ledger.attest(SessionCoverage(
+        "schwab_rest_full_session", ledger.anchor_ms, ledger.current_bar_ms + 60_000,
+        tuple(bar.timestamp_ms for _, bar in pairs), True,
+        history_fingerprint(bar for _, bar in pairs),
+    ))
+    assert ledger.prepare() is None
+    assert ledger.incomplete_reason == "history_missing_or_conflicting"
+    assert all(_ms(row["created_at"]) == _ms("2026-10-05T16:20:12.521834+00:00")
+               for row, bar in pairs if bar in late)
+    for bar in late:
+        ledger.observe(bar)
+    assert ledger.prepare() is not None
+
+
 @pytest.mark.parametrize("source,complete,start_shift,end_shift", [
     ("database_read", True, 0, 0),
     ("schwab_rest_full_session", False, 0, 0),
