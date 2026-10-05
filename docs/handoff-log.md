@@ -5341,3 +5341,24 @@ OWN14:24:15/23. Fresh pins missing, not inferred. Plan066848f1028aa4b50b15f1b345
 published with finalbindings, currentproofs/rawhashes, historicalcorrection,
 held-transition limits andexecutioncensus requirement. Notexecutable/scheduled.
 C61 only; no Mrow/Board/decision/main/production/ledger changes.
+
+2026-10-05 14:49 ET codex-2: own low-priority READ ONLY gate audit,
+no production writes/restarts. General oms AND strategy preflights rc1 on
+two total/two critical findings plus fresh reconciler degraded. SQL latest
+fingerprints live:schwab_1m_v2:NXL balance2 and MI180; account/virtual/managed0.
+New candidate no-exception strict artifact (not yet independently approved)
+ddb29631 through stdin rc1: both direct brokers empty, no APUS, MI current
+session180 ONLY; NXL historical. Responses2151B/32B; DB READ ONLY5s/64-row
+sentinel. OMS all-account-flat fence rc0; v2 no-override rc1 ONLY clock<18,
+armed0/state1.1s and flat. Context18:44:59Z (14:44:59 ET) confirms
+clean boxe1ce3b39, nonterminal DB orders0/inflight intents0, Redis evictions
+0->0/memory813121400->813117224B, five owners+marker1. Fourteen ticket
+phase counts include5held_unknown; not a claim of exact broker order clearance.
+Paper inactive0 after guard09:40:01 coverage UNKNOWN stop/page; left alone.
+Plan c0dfa34fafef7b506e97074b3cc033b0f804b8ac includes exhaustive gate
+contract, actual raw commands/output, NO historical override, and exact
+TODAY-ONLY operator disposition needed for NXL2/MI180 and their reconciler
+degraded status. No whitelist built/granted, no MI ledger write, no runner
+staged/scheduled. Generic gate has no findings override; do not omit its call.
+GitHub14:49 verifies freshOWN76c3 pinPASS14:39:30, RPG7fe freshpin stillmissing;
+both heads frozen. C62 only; Mrows/Boards/open-decisions untouched.
