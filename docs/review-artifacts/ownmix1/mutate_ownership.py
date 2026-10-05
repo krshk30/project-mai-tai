@@ -23,6 +23,8 @@ MUTATIONS = {
     "u2_webull_standdown": ("refresh", "                if self._is_v2_webull_account(key[0]):\n                    continue  # Webull protection is addressed by its persisted pair handle.\n", ""),
     "u3_one_working_leg": ("refresh", "len(working) >= 2", "len(working) >= 1"),
     "u4_absent_row_uuid": ("resolved", "            if not bound_row_id:\n                return False\n", ""),
+    "f3_fetch_deferral_priority": ("reconcile", "                if self._defer_for_exit_fetch(acct, symbol):\n                    return False\n", ""),
+    "f3_pending_writer_priority": ("reconcile", "            if pending.row_id == str(getattr(row, \"id\", \"\")):\n                return False  # The exact episode's pending fill writer owns completion.\n", ""),
 }
 
 
@@ -36,7 +38,7 @@ def main():
             result = subprocess.run([sys.executable, __file__, "--mutant", name],
                                     capture_output=True, text=True)
             failures = [line for line in result.stdout.splitlines() if line.startswith("FAILED ")]
-            ok = result.returncode == 1 and bool(failures)
+            ok = result.returncode == 1 and bool(failures) and "AssertionError" in result.stdout
             print(f"{name}: {'KILLED' if ok else 'SURVIVED_OR_ERROR'}")
             for failure in failures:
                 print(failure)
@@ -59,6 +61,7 @@ def main():
         "base": (service.OmsRiskService, service, "_oco_exit_base_for_entry"),
         "refresh": (service.OmsRiskService, service, "_refresh_native_oco_armed_state"),
         "resolved": (service.OmsRiskService, service, "_close_resolved_oco_managed_row"),
+        "reconcile": (service.OmsRiskService, service, "_v2_close_reconcile_flat"),
     }[kind]
     source = inspect.getsource(getattr(cls, method))
     assert source.count(before) == 1

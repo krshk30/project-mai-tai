@@ -251,7 +251,7 @@ async def test_pending_child_fill_blocks_the_real_hard_stop_ladder() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reject_flat_backstop_closes_known_unrecorded_child_without_attribution() -> None:
+async def test_reject_flat_backstop_preserves_known_pending_child_writer() -> None:
     service, sessions, row_id = _service_with_weto()
 
     async def failed_fetch(*_args, **_kwargs):
@@ -275,13 +275,14 @@ async def test_reject_flat_backstop_closes_known_unrecorded_child_without_attrib
         assert row is not None
         for _ in range(service._V2_EXIT_RECONCILE_AFTER_FAILURES - 1):
             assert await service._v2_close_reconcile_flat(session, ACCOUNT, SYMBOL, row) is False
-        assert await service._v2_close_reconcile_flat(session, ACCOUNT, SYMBOL, row) is True
+        assert await service._v2_close_reconcile_flat(session, ACCOUNT, SYMBOL, row) is False
         session.commit()
 
     with sessions() as session:
         row = session.get(OmsManagedPosition, UUID(row_id))
-        assert row is not None and row.status == "closed" and row.current_quantity == 0
+        assert row is not None and row.status == "open" and row.current_quantity > 0
         assert session.scalars(select(Fill).where(Fill.symbol == SYMBOL, Fill.side == "sell")).all() == []
+        assert service._oco_exit_fill_pending[(ACCOUNT, SYMBOL)].row_id == row_id
 
 
 @pytest.mark.asyncio

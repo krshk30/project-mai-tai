@@ -1,3 +1,28 @@
+F3/H4 follow-up, one commit atop55563 with NO rebase/force.
+Source/tests frozen before final full runs completed. No Q2 redesign.
+All Python commands below use PYTHONPATH=src and the shared interpreter.
+
+Fresh paired full unit runs (baseline cwd .m at main7e10, head cwd own worktree):
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit -q --junitxml=../.ownmix1-f3-main-unit.xml > ../.ownmix1-f3-main-unit.log 2>&1
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit -q --junitxml=.ownmix1-f3-head-final-unit.xml > .ownmix1-f3-head-final-unit.log 2>&1
+
+Focused: identical21 file arguments to the historical focused command below,
+output .ownmix1-f3-focused-final.log; same arguments --collect-only -q regenerate focused-test-ids.txt.
+Mutations (original15 plus two F3 guard removals):
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/mutate_ownership.py > .ownmix1-f3-mutations-final.log 2>&1
+Fresh actual-old-main additive-schema proof:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/verify_old_code_schema.py > .ownmix1-f3-old-schema.log 2>&1
+XML/log exact failed-name comparison:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/verify_suite_pair.py .ownmix1-f3-main-unit.log .ownmix1-f3-head-final-unit.log --baseline-xml .ownmix1-f3-main-unit.xml --head-xml .ownmix1-f3-head-final-unit.xml --independent-baseline /tmp/pmprint-main-unit.txt --focused .ownmix1-f3-focused-final.log --mutations .ownmix1-f3-mutations-final.log > docs/review-artifacts/ownmix1/verification.json
+
+Initial head/focused/mutation logs without -final are superseded after the pending
+mutation initially produced KeyError rather than AssertionError. One safe-lookup
+test assertion was corrected; source unchanged; final head/focused/all17 rerun.
+Raw individual F3 traces:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/mutate_ownership.py --mutant f3_fetch_deferral_priority > .ownmix1-f3-fetch-mutant-final.log 2>&1
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/mutate_ownership.py --mutant f3_pending_writer_priority > .ownmix1-f3-pending-mutant-final.log 2>&1
+
+Historical Q2 verification at55563 (retained, not substituted for F3 pair):
 Q2 follow-up after human-authorized rebase bb4a6b22 onto main7e10.
 All commands use the sole-writer worktree except fresh clean baseline checkout .m.
 No unit test depends on .m/.b or any other untracked checkout.

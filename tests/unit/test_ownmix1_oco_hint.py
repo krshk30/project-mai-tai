@@ -117,6 +117,9 @@ async def test_six_bound_rows_use_one_hint_and_only_named_owned_parent(replay, m
     await service._refresh_native_oco_armed_state([ACCT])
     assert hints == [(ACCT, sorted(symbols))] and parents == [(ACCT, parent_id)]
     assert set(service._native_oco_armed_confirmed_at) == {(ACCT, "MI")}
+    assert service._native_oco_stand_down_active(ACCT, "MI")
+    for symbol in symbols[1:] + ["FOREIGN"]:
+        assert not service._native_oco_stand_down_active(ACCT, symbol)
 
 
 @pytest.mark.asyncio
@@ -140,3 +143,58 @@ async def test_hint_is_fresh_each_sync_and_never_stands_down_by_itself(replay, m
         await service._refresh_native_oco_armed_state([ACCT])
         assert not service._native_oco_stand_down_active(ACCT, "MI")
     assert len(hints) == 3 and len(parents) == 2
+
+
+@pytest.mark.asyncio
+async def test_h4_two_account_hints_and_standdown_are_symbol_isolated(replay, monkeypatch):
+    service, sessions, _, _ = replay
+    # A second controlled Schwab account exercises separate account-wide hints;
+    # the real configured Webull account remains excluded from native stand-down.
+    second = "live:schwab_hint_control"
+    expected_symbols = {ACCT: ["AAA", "MI"], second: ["BBB", "CCC"]}
+    expected_parents = {}
+    with sessions() as session:
+        source = _entry(session)
+        secondary = service.store.ensure_broker_account(
+            session, second, provider="schwab", environment="test"
+        )
+        expected_parents[(ACCT, "MI")] = source.broker_order_id
+        for account, symbol in [(ACCT, "AAA"), (second, "BBB"), (second, "CCC")]:
+            order = BrokerOrder(
+                intent_id=source.intent_id, strategy_id=source.strategy_id,
+                broker_account_id=source.broker_account_id if account == ACCT else secondary.id,
+                symbol=symbol, side="buy", quantity=Decimal("1"), status="filled",
+                client_order_id=f"h4-{account}-{symbol}", broker_order_id=f"h4-parent-{account}-{symbol}",
+                payload={"native_oco_bracket": "true"}, order_type="STOP_LIMIT", time_in_force="day",
+            )
+            session.add(order)
+            session.flush()
+            service.store.create_managed_position(
+                session, strategy_code="schwab_1m_v2", broker_account_name=account,
+                symbol=symbol, quantity=1, entry_price=Decimal("3.31"),
+                entry_order_id=order.id, entry_client_order_id=order.client_order_id,
+            )
+            expected_parents[(account, symbol)] = order.broker_order_id
+        session.commit()
+    service._managed_v2_symbols = set(expected_parents) | {("live:orb", "MI")}
+    hints, parents = [], []
+
+    async def hint(account, symbols):
+        hints.append((account, symbols))
+        assert symbols == expected_symbols[account]
+        return {"MI", "CCC"} if account == ACCT else {"BBB", "AAA"}
+
+    async def parent(account, parent_id):
+        parents.append((account, parent_id))
+        return {"working": ["T", "S"], "filled": False, "unsafe": False}
+
+    monkeypatch.setattr(service.broker_adapter, "fetch_armed_native_oco_symbols", hint)
+    monkeypatch.setattr(service.broker_adapter, "fetch_exit_legs_for_entry", parent)
+    await service._refresh_native_oco_armed_state([ACCT, second, "live:orb"])
+    assert sorted(hints) == sorted(expected_symbols.items())
+    armed = {(ACCT, "MI"), (second, "BBB")}
+    assert set(parents) == {(account, expected_parents[(account, symbol)]) for account, symbol in armed}
+    assert set(service._native_oco_armed_confirmed_at) == armed
+    for account in [ACCT, second, "live:orb"]:
+        for symbol in ["MI", "AAA", "BBB", "CCC"]:
+            assert service._native_oco_stand_down_active(account, symbol) == ((account, symbol) in armed)
