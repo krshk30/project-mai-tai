@@ -5371,3 +5371,16 @@ Whole maine6403bdafdc7b9670ecadbc6dbeccdcb6650c96c equals pinned76c3 tree.
 No production, env, restart or migration. Pauli sole RPGwriter instructed pure
 rebase7fe27daa onto newmain; stop on hand-edit conflict, equal range-diff and
 explicit expected-oldhead lease required. Parent owns plan/handoff. C63 only.
+
+2026-10-05 14:54 ET codex-2: Pauli pure RPGrebase7fe onto OWNmain4987353b
+published462c8aa1ffc2f5515f50ba14964fc38e839ddc89, explicit lease expecting7fe,
+no conflict/edit. Parent fetch independently verifies7/7 range-diff '=' and
+whole headtree17fcd4d927827825a70a3ae1b4f772911c7ddbe6, exactly prior combined
+full5769/same56 tested tree. No fresh suite claimed; newValidate2running,
+freshpinmissing. RPG frozen for reviewer experiment/full/mutations/re-pin.
+Plan d390d080c1b6acf8dbe7b4a0ae17eff256239211 published on
+codex/1005-owned-entry-reprice-install-plan: real OWNfirst/RPGsecond merge
+order, fullrange-diff, OWN now inherently in newtarget so additive migration
+explicitly REQUIRED in separateexact-SHAGO. Today's per-gate table and raw
+readonlydryrun retained; NXL2/MI180 named disposition notgranted. No production
+or schema/ledger action; no #1095 action before RPG's reviewedmerge. C64 only.
