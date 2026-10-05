@@ -1,7 +1,7 @@
 # PMPRINT + durable-ticket recovery: October 5 candidate
 
-**DRAFT BLOCKED ON COMPOSED FILL RECONCILIATION. NOT EXECUTABLE, NOT SCHEDULED,
-NO PRODUCTION AUTHORIZATION.**
+**DRAFT AWAITING FRESH PINS, FINAL CI AND EXACT-SHA OPERATOR GO.
+NOT EXECUTABLE, NOT SCHEDULED, NO PRODUCTION AUTHORIZATION.**
 
 This new document supersedes the folded three-PM-switch plan and the v2-only
 two-switch rollback draft. Turning hand-off OFF on the current code does not
@@ -16,7 +16,7 @@ ticket release, or additional trading-rule change is permitted.
 |---|---|---|---|
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
 | 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | merged at 13:09:07 ET to main 7e10baf0319da796b84934fe38994f6db4fcfc0b; whole tree equals pinned tree 736a540cac3c2724fa116216913331f532ecdfa9 | still dark on the box; proposed PMPRINT ON and PMFLIP OFF |
-| 2 | RPGSTUCK #1093, 29a17b1fafe354ca230d677578a00f3fe25f14cc | NOT pinned; fixture-only follow-up to271314de; fresh Validate x2 in progress; final composition below | existing ticket recovery active; no NEW hand-offs |
+| 2 | RPGSTUCK #1093, c6548875bab15fb52bf35ca491e2e0ea63cc7148 | NOT pinned; final fixture evidence, tests/source equal29a17b1f; Validate x2 in progress; final composition verified below | existing ticket recovery active; no NEW hand-offs |
 | 3, optional | OWNMIX #1094, 55563e6f3abe004d484195c202b5118ea75e0169 | NOT pinned; F1/F2/U1-U4 plus Q2 complete; standalone Validate x2 PASS at13:27:34/13:27:56 | entry binding; additive schema only if included |
 
 No merge is authorized by this draft. Final exact heads, all required checks,
@@ -29,7 +29,7 @@ The authorized rebase checkpoints were RPGd6865168 and OWNbb4a6b22, each
 onto merged main7e10; range-diff3/3 equal for each. Their subsequent follow-ups
 above require fresh review records. No pinned PM commit was amended.
 
-**Exact-source rehearsal, 13:33 ET:** clean main7e10 plus generated patches
+**Historical failed rehearsal, 13:33 ET:** clean main7e10 plus generated patches
 for RPG271314de and OWN55563e6f applies cleanly in the isolated worktree
 oct5-reviewed-followup-composition. The source import path is verified.
 The staged rehearsal tree is `87f73bda73d9addc59f6543ca8642cb31f48fcc6`;
@@ -62,11 +62,22 @@ Parent applies that exact delta to the OWN55563e6f rehearsal; new staged tree
 fill/no-rebuy cases plus connection-isolation test PASS51/51, raw
 `/tmp/oct5-parent-composed-fill50.xml` and `.txt`. Reverting the fixture to
 StaticPool is assertion-RED; exact R13 and R16 remain assertion-RED.
-The new combined full suite is RUNNING, raw
-`/tmp/oct5-composed-isolated-connection-full.xml` and `.txt`. Do not clear
-the draft blocker until its exact failed-ID set matches the baseline and
-the final frozen heads/CI/fresh review records are verified. No production
+The corrected source is frozen at29a17b1f; finalc6548875 adds evidence only,
+with empty source/test diff. No production
 workaround, weakened guard, sleep or suppressed protection task is introduced.
+
+**Final exact-source composition,13:55 ET:** main7e10 plus RPGc6548875 and
+OWN55563e6f gives staged tree `5e16cf4d13ca00e82dab91a4f4f8896fb19eb7cb`.
+`git merge-tree --write-tree` independently produces that EXACT tree with no
+conflict. Parent full units: **5753 passed /56 failed**, zero skipped, versus
+main **5500 passed /56 failed**; exact failed-ID added=[] /removed=[].
+Parent focused composition: **411 passed**, zero skipped, including recorded
+RPG/NFQ composition, tonight's flag set and both ownership accounts. Thus the
+extra fill-reconciliation failure is resolved by fixture isolation, not a
+production change. The56 baseline failures remain; do not call the entire
+suite green. COMPOSITION_RESULT_2026-10-05.md retains commands, counts and hashes.
+Fresh review pins, final CI and operator GO remain blocking. No merge/install
+eligibility is inferred from a clean rehearsal tree.
 
 The previous three PM characterization failures are corrected only in the
 RPG follow-up after the authorized PM merge. The four recorded fixtures remain:
@@ -122,7 +133,7 @@ approval and print actual denominators. Neither #1093 nor #1094 adds a switch.
 |---|---|---|
 | (a) legacy reprice | first and reclaim cancel then next-pass placement with hand-off OFF; PMPRINT true, PMFLIP/PMREST false, NFQ/GAP true | merged-PM RPG source and exact three-source rehearsal pass first/reclaim plus recorded cross/hold controls |
 | (b) durable startup | restore every captured October 5 ticket, prove per-leg ownership/disposition; rejected old order releases by exact identity and zero-fill proof, never age | all14 jobs/11 orders/15 intents/1 actual fill tested; strict RETO probe durably claimed once; after20:00 zero saved opens/cancels, true unknown stays blocked |
-| (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | 360 exact combined focused PASS; full5701/57 vsmain5500/56 adds uncertain-Webull-fill test, isolated1/5FAIL; BLOCKED until cause and reviewed fix |
+| (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | finalc654+55563 exacttree5e16:411focusedPASS; full5753/same56 vsmain5500/56, failed-IDdiff0/0;51repeat/isolationPASS. Extra fixture failure resolved; fresh review/CI/GO still required |
 | OWN, if included | real submit and poll fill paths bind both IDs for both accounts; flat closes lifecycle without unsafe attribution; U1-U4, conservative hint and old-code/schema compatibility | local569 focused PASS;15/15 review-equivalent mutants RED; fresh pin and Validate required |
 
 Own source pull at13:17:02 ET uses READ ONLY SQL,8s and64-row/table sentinel
@@ -130,7 +141,7 @@ limits. STARTUP_TICKETS.md retains paths/hashes and the previous exact broker
 GETs. It includes all14 captured tickets and the actual SCKT Webull BUY280@1.06
 Fill. Tests are not evidence that the production journal has already changed.
 
-#1093 fresh verification: exact main7e10 =5500 passed/56 failed;
+#1093 initial follow-up verification: exact main7e10 =5500 passed/56 failed;
 follow-up271314de =5632 passed/same56 failed, introduced0/resolved0. Parent
 independently compares full XML failed-name sets. Broad focused1318 PASS,
 recorded/integration97 PASS,64 assertion-killed mutation controls; parent exact
@@ -138,8 +149,12 @@ reviewer R13 guard removal gives1 assertion failure and R16 candidates removal
 gives6 assertion failures (accepted/rejected across APUS/VEEA/RETO).
 REPORT_B_REVIEW.md and verification-b-review.json retain exact tests/source
 hashes. No full suite is called green while the56 baseline failures remain.
-Standalone Validate x2 is now PASS. Fresh pins and resolution of the composed
-fill test are still required; no combined eligibility is inferred from CI.
+That initial head's Validate x2 passed; it is superseded byc6548875.
+Final fixture/source standalone =5683 passed/same56 failed;1369 focusedPASS,
+67 fresh assertion-controls RED. Parent independently verifies its failed names
+against the main XML. REPORT_FIXTURE_ISOLATION.md retains final pair, exact
+rollback trace, tests and all67 controls. Current final-head CI is pending;
+fresh pins remain required. No eligibility is inferred from a prior-head check.
 
 B5 proof work is bounded, not ownership: one startup scan; exact-generation
 committed writes wake only matching held tickets, durable hashes suppress repeats.
