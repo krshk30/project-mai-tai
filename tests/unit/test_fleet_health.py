@@ -247,7 +247,7 @@ def test_socket_evidence_is_incremental_and_a_new_1008_rearms_after_a_clean_samp
     ]
 
 
-def test_momentum_pages_only_on_the_fifth_close_cooloff_marker(tmp_path: Path) -> None:
+def test_retired_paper_policy_markers_do_not_latch_or_clear_gateway_evidence(tmp_path: Path) -> None:
     market = tmp_path / "market-data.log"
     momentum = tmp_path / "momentum-paper.log"
     state = tmp_path / "socket-offsets.json"
@@ -292,17 +292,18 @@ def test_momentum_pages_only_on_the_fifth_close_cooloff_marker(tmp_path: Path) -
         momentum_log=momentum,
     )
 
-    def momentum_level(rows):
-        return next(
-            row[0]
-            for row in rows
-            if row[1].endswith("momentum-paper:feed-policy-violation")
-        )
+    # Fifth-close cooloff/recovery no longer exists in the paper gateway feed.
+    # Retain the old sequence as proof that neither marker can affect the gateway.
+    for rows in (first, second, third, recovered):
+        assert len(rows) == 1
+        assert rows[0][0:2] == ("GREEN", "service-runtime:market-data:massive-1008")
 
-    assert momentum_level(first) == "GREEN"
-    assert momentum_level(second) == "RED"
-    assert momentum_level(third) == "RED"
-    assert momentum_level(recovered) == "GREEN"
+    market.write_text("received 1008 (policy violation)\n", encoding="utf-8")
+    with momentum.open("a", encoding="utf-8") as stream:
+        stream.write("[MOMENTUM-PAPER-FEED-POLICY] decision=recovered\n")
+    assert fhc.check_massive_socket_policy_violations(
+        state_path=state, market_data_log=market, momentum_log=momentum,
+    )[0][0] == "RED"
 
 
 def test_corrupt_socket_evidence_cursor_fails_closed_without_replaying_old_logs(

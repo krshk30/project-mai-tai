@@ -67,19 +67,7 @@ _MARKET_DATA_LOG_PATH = Path(
         "/var/log/project-mai-tai/market-data.log",
     )
 )
-_MOMENTUM_LOG_PATH = Path(
-    os.environ.get(
-        "FLEET_HEALTH_MOMENTUM_LOG",
-        "/var/log/project-mai-tai/momentum-paper.log",
-    )
-)
 _MARKET_DATA_POLICY_NEEDLE = b"1008 (policy violation)"
-_MOMENTUM_POLICY_COOLOFF_NEEDLE = (
-    b"[MOMENTUM-PAPER-FEED-POLICY] decision=cooloff reason=feed_policy_violation"
-)
-_MOMENTUM_POLICY_RECOVERED_NEEDLE = (
-    b"[MOMENTUM-PAPER-FEED-POLICY] decision=recovered"
-)
 
 # These units are expected to run continuously. Deliberately inactive units such as trade-coach
 # and tv-alerts stay out of the inventory so an intentional stop cannot become a page.
@@ -196,18 +184,18 @@ class LogCursor(NamedTuple):
 
 def _read_socket_evidence_state(
     path: Path,
-) -> tuple[dict[str, LogCursor], bool, str | None]:
+) -> tuple[dict[str, LogCursor], str | None]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return {}, False, None
+        return {}, None
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError) as exc:
-        return {}, False, type(exc).__name__
+        return {}, type(exc).__name__
     if not isinstance(raw, dict):
-        return {}, False, "invalid_root"
+        return {}, "invalid_root"
     raw_logs = raw.get("logs", raw)
     if not isinstance(raw_logs, dict):
-        return {}, False, "invalid_logs"
+        return {}, "invalid_logs"
     parsed: dict[str, LogCursor] = {}
     for key, value in raw_logs.items():
         if not isinstance(key, str) or not isinstance(value, dict):
@@ -222,14 +210,12 @@ def _read_socket_evidence_state(
             continue
         if cursor.offset >= 0:
             parsed[key] = cursor
-    return parsed, bool(raw.get("momentum_policy_active", False)), None
+    return parsed, None
 
 
 def _write_socket_evidence_state(
     path: Path,
     state: dict[str, LogCursor],
-    *,
-    momentum_policy_active: bool,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, tmp_name = tempfile.mkstemp(
@@ -248,7 +234,6 @@ def _write_socket_evidence_state(
                         }
                         for key, cursor in sorted(state.items())
                     },
-                    "momentum_policy_active": momentum_policy_active,
                 },
                 stream,
                 sort_keys=True,
@@ -286,7 +271,10 @@ def check_massive_socket_policy_violations(
     market_data_log: Path | None = None,
     momentum_log: Path | None = None,
 ) -> tuple[tuple[str, str, str], ...]:
-    """Grade new socket evidence, never a component heartbeat that can stay healthy."""
+    """Grade gateway socket evidence; paper uses that gateway, not its own socket.
+
+    momentum_log is an ignored compatibility argument for old callers, never read.
+    """
 
     path = _SOCKET_EVIDENCE_STATE_PATH if state_path is None else state_path
     logs = (
@@ -295,13 +283,8 @@ def check_massive_socket_policy_violations(
             _MARKET_DATA_LOG_PATH if market_data_log is None else market_data_log,
             "massive-1008",
         ),
-        (
-            "momentum-paper",
-            _MOMENTUM_LOG_PATH if momentum_log is None else momentum_log,
-            "feed-policy-violation",
-        ),
     )
-    prior, momentum_policy_active, state_error = _read_socket_evidence_state(path)
+    prior, state_error = _read_socket_evidence_state(path)
     if state_error is not None:
         return (
             (
@@ -310,7 +293,9 @@ def check_massive_socket_policy_violations(
                 f"socket evidence cursor state unreadable error={state_error} path={path}",
             ),
         )
-    updated = dict(prior)
+    # Drop retired paper cursors on the next write without replaying gateway evidence.
+    retained_paths = {str(log_path) for _slug, log_path, _condition in logs}
+    updated = {key: cursor for key, cursor in prior.items() if key in retained_paths}
     rows: list[tuple[str, str, str]] = []
     for slug, log_path, condition in logs:
         name = f"service-runtime:{slug}:{condition}"
@@ -329,18 +314,8 @@ def check_massive_socket_policy_violations(
             )
             continue
         updated[str(log_path)] = cursor
-        if slug == "market-data":
-            count = payload.count(_MARKET_DATA_POLICY_NEEDLE)
-            active = count > 0
-        else:
-            cooloffs = payload.count(_MOMENTUM_POLICY_COOLOFF_NEEDLE)
-            recoveries = payload.count(_MOMENTUM_POLICY_RECOVERED_NEEDLE)
-            if cooloffs or recoveries:
-                last_cooloff = payload.rfind(_MOMENTUM_POLICY_COOLOFF_NEEDLE)
-                last_recovery = payload.rfind(_MOMENTUM_POLICY_RECOVERED_NEEDLE)
-                momentum_policy_active = last_cooloff > last_recovery
-            count = cooloffs
-            active = momentum_policy_active
+        count = payload.count(_MARKET_DATA_POLICY_NEEDLE)
+        active = count > 0
         if active:
             rows.append(
                 (
@@ -363,7 +338,6 @@ def check_massive_socket_policy_violations(
         _write_socket_evidence_state(
             path,
             updated,
-            momentum_policy_active=momentum_policy_active,
         )
     except OSError as exc:
         rows.append(
