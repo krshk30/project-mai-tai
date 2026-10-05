@@ -61,6 +61,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.entry_gate import resolve_entry_window, within_rth_entry_window
 from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit, sized_entry_quantity
+from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear
 
 logger = logging.getLogger(__name__)
 
@@ -1982,6 +1983,11 @@ class SchwabV2Strategy:
             "retry_budget_exhausted",
         }:
             self._flip_owner_counts["admission_refused_unknown"] += 1
+        bar_key = self._now_ms() // 60000
+        logged = self.__dict__.setdefault("_flip_owner_admission_logged_bar", {})
+        if logged.get(state.symbol) == bar_key:
+            return allowed
+        logged[state.symbol] = bar_key
         logger.info(
             "[V2-FLIP-OWNER-ADMISSION] %s evaluated=%d refused_unknown=%d allowed=%d "
             "slot=%s reason=%s",
@@ -4929,7 +4935,21 @@ class SchwabV2Strategy:
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
     def _queue_resting_place(self, state: SymbolState, line: float, *, slot: str = "first") -> None:
-        if self._rpg_entry_owned(state):
+        settings = getattr(self, "settings", None)
+        primary_account = str(getattr(settings, "strategy_schwab_1m_v2_account_name", ""))
+        webull_account = str(getattr(settings, "strategy_schwab_1m_v2_webull_account_name", ""))
+        primary_blocked = self._rpg_entry_owned(state, account=primary_account)
+        webull_blocked = self._rpg_entry_owned(state, account=webull_account)
+        for job in getattr(self, "_rpg_handoffs", {}).values():
+            if job["old"]["symbol"] != state.symbol or job["phase"] != "placed" or job.get("replacement_filled"):
+                continue
+            generation = job.get("replacement", {}).get("metadata", {}).get("rpg_resting_generation")
+            if job["old"].get("broker_account_name") == primary_account:
+                primary_blocked |= bool(state.resting_active and generation and generation == state.resting_schwab_generation)
+            elif job["old"].get("broker_account_name") == webull_account:
+                webull_blocked |= bool(state.webull_resting_active and generation and generation == state.resting_webull_generation)
+        if primary_blocked and (webull_blocked or not (
+                self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled)):
             return
         if not self._strict_first_rest_admitted(state, slot=slot):
             return
@@ -4951,10 +4971,10 @@ class SchwabV2Strategy:
                 and not session_is_eh
             ),
         )
-        schwab_sized = None if soft_rest else self._sized_open(
+        schwab_sized = None if soft_rest or primary_blocked else self._sized_open(
             state.symbol, leg="schwab", price=schwab_wire_limit, basis="stop_limit_wire_limit"
         )
-        if not soft_rest and schwab_sized is None:
+        if not soft_rest and not primary_blocked and schwab_sized is None:
             return
         if self._flip_owned_first_entry_enabled:
             if state.flip_owner_phase == "idle":
@@ -4975,12 +4995,16 @@ class SchwabV2Strategy:
         state.last_resting_placed_slot = slot
         state.resting_level = line
         state.resting_trigger = trigger
-        state.resting_schwab_quantity = int(schwab_sized[0]) if schwab_sized else 0
-        state.resting_webull_quantity = 0
+        if not primary_blocked:
+            state.resting_schwab_quantity = int(schwab_sized[0]) if schwab_sized else 0
+        if not webull_blocked:
+            state.resting_webull_quantity = 0
         state.resting_below_floor_bars = 0
         generation = str(uuid4())
-        state.resting_schwab_generation = generation
-        state.resting_webull_generation = generation
+        if not primary_blocked:
+            state.resting_schwab_generation = generation
+        if not webull_blocked:
+            state.resting_webull_generation = generation
         if soft_rest:
             state.resting_is_broker_order = False      # soft-rest: nothing goes to the broker
             # EH SOFTWARE REST (P-B2): a broker buy-stop-limit can't trigger in extended hours, so we do
@@ -5021,7 +5045,8 @@ class SchwabV2Strategy:
                     else "rth_resting"
                 ),
             )
-        self._pending_intents.append(TradeIntentDraft(
+        if schwab_sized is not None:
+            self._pending_intents.append(TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="open",
             quantity=schwab_sized[0],
             reason="schwab_1m_v2 ATR Flip CW-v2-resting",   # keeps the ATR-only belt (has 'ATR Flip')
@@ -5061,7 +5086,7 @@ class SchwabV2Strategy:
         #
         # ⛔ Goes on the DIRECT queue, not the fan-out queue: the fan-out queue is drained through
         # `_maybe_emit`, and the matching CANCEL must never be gated.
-        if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled:
+        if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled and not webull_blocked:
             webull_sized = self._sized_open(
                 state.symbol, leg="webull",
                 price=resting_wire_limit(raw_stop, raw_limit, leg="webull"),
@@ -5344,13 +5369,17 @@ class SchwabV2Strategy:
             ))
 
     def _rpg_leg_owned(self, state: SymbolState, account: str) -> bool:
-        return any(job["old"].get("broker_account_name") == account
-                   and job["old"]["symbol"] == state.symbol
-                   and job["phase"] not in {"requested", "placed", "filled", "expired", "refused"}
-                   for job in getattr(self, "_rpg_handoffs", {}).values())
+        return self._rpg_entry_owned(state, account=account)
 
-    def _rpg_entry_owned(self, state: SymbolState) -> bool:
+    def _rpg_entry_owned(self, state: SymbolState, *, account: str | None = None) -> bool:
         jobs = getattr(self, "_rpg_handoffs", {})
+        if account is not None and not any(job["old"]["symbol"] == state.symbol
+                and (job["old"].get("broker_account_name") == account
+                     or account in job.get("accounts", [])) for job in jobs.values()):
+            # Missing feedback for a second leg is not clearance of that leg.
+            return any(job["old"]["symbol"] == state.symbol
+                       and job["phase"] not in {"placed", "filled", "expired", "refused"}
+                       for job in jobs.values())
         for job in jobs.values():
             if job["old"]["symbol"] != state.symbol:
                 continue
@@ -5360,11 +5389,14 @@ class SchwabV2Strategy:
                 acknowledged = {other["old"].get("broker_account_name") for other in jobs.values()
                     if other["phase"] != "requested"
                     and other["old"]["metadata"].get("rpg_generation") == generation}
-                if set(job["accounts"]) - acknowledged:
+                pending = set(job["accounts"]) - acknowledged
+                if pending and (account is None or account in pending):
                     return True
+            elif account is not None and job["old"].get("broker_account_name") != account:
+                continue
             elif phase not in {"placed", "filled", "expired", "refused"}:
                 return True
-            elif phase in {"expired", "refused"} and job["segment_id"] == state.fanout_segment_id:
+            elif phase in {"expired", "refused"} and not old_buy_proven_clear(job):
                 return True
         return False
 
@@ -5411,7 +5443,7 @@ class SchwabV2Strategy:
                 self._clear_resting_fill_latch(state)
                 if webull:
                     self._consume_fanout_webull_slot(state, "resting" if slot == "first" else "reclaim")
-            elif job["phase"] in {"clear", "expired", "refused"}:
+            elif job["phase"] in {"clear", "expired", "refused"} and old_buy_proven_clear(job):
                 current_generation = state.resting_webull_generation if webull else state.resting_schwab_generation
                 generations = {old["metadata"].get("rpg_resting_generation"),
                                job.get("replacement", {}).get("metadata", {}).get("rpg_resting_generation")}
@@ -5434,7 +5466,8 @@ class SchwabV2Strategy:
         elif not self._resting_in_window() or self._entry_window_closed_for_session() or self._resting_session_is_eh():
             reason = "window_closed"
         elif self._entries_held or self.gap_hold_active(state.symbol):
-            return {**result, "verdict": "wait", "reason": "entry_or_gap_hold"}
+            return {**result, "verdict": "expired" if old_buy_proven_clear(job) else "wait",
+                    "reason": "entry_or_gap_hold"}
         elif not self._cw_v2_enabled or (slot == "first" and not self._resting_entry_enabled):
             reason = "disabled"
         elif state.position_qty_held or job.get("no_rebuy"):

@@ -1,0 +1,55 @@
+{
+  "source": "/tmp/rpgstuck-main-git-pair/src/project_mai_tai/strategy_core/schwab_1m_v2.py",
+  "symbols": {
+    "APUS": {
+      "phases": [
+        "refused",
+        "refused"
+      ],
+      "global_owned": true,
+      "account_owned": {
+        "live:schwab_1m_v2": true,
+        "live:orb": true
+      },
+      "requested_durable": 0
+    },
+    "VEEA": {
+      "phases": [
+        "refused",
+        "held_unknown"
+      ],
+      "global_owned": true,
+      "account_owned": {
+        "live:schwab_1m_v2": true,
+        "live:orb": true
+      },
+      "requested_durable": 0
+    }
+  },
+  "canonical": {
+    "APUS": {
+      "refusal": "rpg_current_price_size_or_identity_changed",
+      "authorization_prices": [
+        "5.2720",
+        "5.2983"
+      ],
+      "wire_prices": [
+        "5.27",
+        "5.30"
+      ],
+      "quantity": "113"
+    },
+    "VEEA": {
+      "refusal": "rpg_current_price_size_or_identity_changed",
+      "authorization_prices": [
+        "5.5093",
+        "5.5368"
+      ],
+      "wire_prices": [
+        "5.51",
+        "5.54"
+      ],
+      "quantity": "108"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "source": "/Users/velkris/.codex/worktrees/rpgstuck1-canonical-handoff/project-mai-tai/src/project_mai_tai/strategy_core/schwab_1m_v2.py",
+  "symbols": {
+    "APUS": {
+      "phases": [
+        "refused",
+        "refused"
+      ],
+      "global_owned": false,
+      "account_owned": {
+        "live:schwab_1m_v2": false,
+        "live:orb": false
+      },
+      "requested_durable": 0
+    },
+    "VEEA": {
+      "phases": [
+        "refused",
+        "held_unknown"
+      ],
+      "global_owned": true,
+      "account_owned": {
+        "live:schwab_1m_v2": false,
+        "live:orb": true
+      },
+      "requested_durable": 0
+    }
+  },
+  "canonical": {
+    "APUS": {
+      "refusal": null,
+      "authorization_prices": [
+        "5.2720",
+        "5.2983"
+      ],
+      "wire_prices": [
+        "5.27",
+        "5.30"
+      ],
+      "quantity": "113"
+    },
+    "VEEA": {
+      "refusal": null,
+      "authorization_prices": [
+        "5.5093",
+        "5.5368"
+      ],
+      "wire_prices": [
+        "5.51",
+        "5.54"
+      ],
+      "quantity": "108"
+    }
+  }
+}

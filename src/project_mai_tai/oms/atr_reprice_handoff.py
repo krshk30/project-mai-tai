@@ -27,6 +27,11 @@ READ_TIMEOUT_SECONDS = 2.0
 MAX_READS = 30
 
 
+def old_buy_proven_clear(job: dict) -> bool:
+    return bool((job.get("local_no_wire") or job.get("cleared_at") is not None)
+                and not job.get("no_rebuy"))
+
+
 def _request_dict(request: OrderRequest) -> dict:
     return {
         "client_order_id": request.client_order_id,
