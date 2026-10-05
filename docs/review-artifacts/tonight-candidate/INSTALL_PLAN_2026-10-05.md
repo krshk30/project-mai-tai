@@ -3,7 +3,7 @@
 **DRAFT AWAITING FRESH PINS AND EXACT-SHA OPERATOR GO.
 NOT EXECUTABLE, NOT SCHEDULED, NO PRODUCTION AUTHORIZATION.**
 
-**14:22 ET follow-up checkpoint:** R20 and F3 are locally corrected on the
+**14:26 ET follow-up checkpoint:** R20 and F3 are locally corrected on the
 exact heads below, each one follow-up commit without rebase. Fresh main5500/56
 versus RPG5692/same56 and OWN5577/same56 has failed-ID added[]/removed[],
 independently checked from XML. Exact merged rehearsal tree
@@ -13,9 +13,13 @@ failures; F3 deferral removal four; exact-episode pending-writer removal two;
 H4 account-filter removal one; exact R15 unproven->expired two. The earlier
 provisional pending-writer mutant failed by KeyError, not an assertion; the
 final test uses .get and its exact rerun gives two AssertionErrors/no KeyError.
-Provisional full5769/same56 differed only that assertion lookup; the exact-head
-full/focused reruns are running. Validate x2 on both heads is pending, fresh
-pins are missing. Historical results below do not authorize this candidate.
+Provisional full5769/same56 differed only that assertion lookup; the final
+exact-head full rerun is5769/same56 with added[]/removed[], zero skips,257.85s.
+Final focused327PASS/zero skips and targeted51PASS/zero skips. Both exact-head
+Validate pairs are PASS: RPG14:25:42/14:25:45 ET; OWN14:24:15/14:24:23 ET.
+Fresh independent pins are missing. COMPOSITION_RESULT_2026-10-05.md records
+exact bindings, raw hashes and correction history. No local/CI pass authorizes
+this candidate without the review pins and operator's exact-SHA GO.
 Neither PR is merge/install eligible now. Re-read the bounded ticket census
 immediately before any separately approved execution; any later untested shape
 is UNKNOWN/STOP. No execution or scheduled install is authorized by this draft.
@@ -33,8 +37,8 @@ ticket release, or additional trading-rule change is permitted.
 |---|---|---|---|
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
 | 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | merged at 13:09:07 ET to main 7e10baf0319da796b84934fe38994f6db4fcfc0b; whole tree equals pinned tree 736a540cac3c2724fa116216913331f532ecdfa9 | still dark on the box; proposed PMPRINT ON and PMFLIP OFF |
-| 2 | RPGSTUCK #1093, 7fe27daaad522bb3aa7f921212a3179532117f7c | NOT pinned; R20 runtime one-time wake + full held-transition audit; full5692/same56, focused1378; Validate x2 pending | existing ticket recovery active; no NEW hand-offs |
-| 3, optional | OWNMIX #1094, 76c3b4f764c56baafed3d527a0a47dca8cbcb5b4 | NOT pinned; F3 bounded deferral and pending-writer guards restored; H4 per-account assertion; full5577/same56; Validate x2 pending | entry binding; additive schema only if included |
+| 2 | RPGSTUCK #1093, 7fe27daaad522bb3aa7f921212a3179532117f7c | NOT pinned; R20 runtime one-time wake + full held-transition audit; full5692/same56, focused1378; Validate x2 PASS14:25:42/14:25:45 ET | existing ticket recovery active; no NEW hand-offs |
+| 3, optional | OWNMIX #1094, 76c3b4f764c56baafed3d527a0a47dca8cbcb5b4 | NOT pinned; F3 bounded deferral and pending-writer guards restored; H4 per-account assertion; full5577/same56; Validate x2 PASS14:24:15/14:24:23 ET | entry binding; additive schema only if included |
 
 No merge is authorized by this draft. Final exact heads, all required checks,
 ordered integration rehearsal and fresh pins after any rebase/conflict must be
@@ -150,14 +154,16 @@ approval and print actual denominators. Neither #1093 nor #1094 adds a switch.
 |---|---|---|
 | (a) legacy reprice | first and reclaim cancel then next-pass placement with hand-off OFF; PMPRINT true, PMFLIP/PMREST false, NFQ/GAP true | merged-PM RPG source and exact three-source rehearsal pass first/reclaim plus recorded cross/hold controls |
 | (b) durable startup | restore every captured October 5 ticket, prove per-leg ownership/disposition; rejected old order releases by exact identity and zero-fill proof, never age | all14 jobs/11 orders/15 intents/1 actual fill tested; strict RETO probe durably claimed once; after20:00 zero saved opens/cancels, true unknown stays blocked |
-| (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | exact new-head tree17fcd4d9 targeted51PASS; final full/focused reruns pending; prior c654+55563 full5753/same56 is historical only |
+| (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | exact new-head tree17fcd4d9 full5769/same56 vs freshmain5500/56, added[]removed[],zero skips; focused327PASS and targeted51PASS. Prior c654+55563 results are historical only |
 | R20 | waiting/reads29 -> runtime exhaustion -> one proof tick without restart; rejected-zero clears, unknown remains held and 180 quiet turns issue no SQL/scan/tick | eight recorded-RETO real-loop variants PASS; wake removal assertion RED2; every held transition and next-check route in REPORT_R20.md; later-ineligible exhaustion remains startup-only, not aged clear |
-| OWN, if included | real submit and poll fill paths bind both IDs for both accounts; F3 bounded child-fetch retries and same-episode writer priority; no unsafe fill attribution; H4 account isolation | fresh full5577/same56; F3 real-exit tests PASS on both accounts, retry removal RED4 and writer removal RED2; H4 RED1; fresh pin and Validate required |
+| OWN, if included | real submit and poll fill paths bind both IDs for both accounts; F3 bounded child-fetch retries and same-episode writer priority; no unsafe fill attribution; H4 account isolation | fresh full5577/same56,focused576PASS; F3 real-exit tests PASS on both accounts, retry removal RED4 and writer removal RED2; H4 RED1; Validate x2 PASS, fresh pin required |
 
 Own source pull at13:17:02 ET uses READ ONLY SQL,8s and64-row/table sentinel
 limits. STARTUP_TICKETS.md retains paths/hashes and the previous exact broker
 GETs. It includes all14 captured tickets and the actual SCKT Webull BUY280@1.06
 Fill. Tests are not evidence that the production journal has already changed.
+
+Historical pre-R20/F3 verification below is retained, not current-head approval.
 
 #1093 initial follow-up verification: exact main7e10 =5500 passed/56 failed;
 follow-up271314de =5632 passed/same56 failed, introduced0/resolved0. Parent
