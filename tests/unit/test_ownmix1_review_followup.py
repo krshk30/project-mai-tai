@@ -223,7 +223,12 @@ async def test_u2_webull_parent_is_never_queried_for_native_standdown(replay, mo
         calls.append(args)
         return {"working": ["T", "S"], "filled": False, "unsafe": False}
 
+    async def hint(*args):
+        calls.append(("hint", *args))
+        return {"MI"}
+
     monkeypatch.setattr(service.broker_adapter, "fetch_exit_legs_for_entry", read)
+    monkeypatch.setattr(service.broker_adapter, "fetch_armed_native_oco_symbols", hint)
     await service._refresh_native_oco_armed_state([WEBULL])
     assert calls == [] and not service._native_oco_stand_down_active(WEBULL, "MI")
 
@@ -236,7 +241,11 @@ async def test_u3_one_owned_working_leg_cannot_stand_down(replay, monkeypatch):
     async def read(*_args):
         return {"working": ["T"], "filled": False, "unsafe": False}
 
+    async def hint(*_args):
+        return {"MI"}
+
     monkeypatch.setattr(service.broker_adapter, "fetch_exit_legs_for_entry", read)
+    monkeypatch.setattr(service.broker_adapter, "fetch_armed_native_oco_symbols", hint)
     await service._refresh_native_oco_armed_state([ACCT])
     assert not service._native_oco_stand_down_active(ACCT, "MI")
 

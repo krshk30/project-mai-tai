@@ -321,13 +321,15 @@ def test_binding_each_identity_component_is_required(replay, field):
 
 @pytest.mark.asyncio
 async def test_foreign_live_bracket_never_stands_down_owned_ladder(replay):
-    service, sessions, bodies, _ = replay
+    service, sessions, bodies, calls = replay
     # Sensitivity control: only the foreign parent's legs are live.
     for child in bodies["1008165370304"]["childOrderStrategies"][0]["childOrderStrategies"]:
         child["status"] = "WORKING"
     service._managed_v2_symbols = {(ACCT, "MI")}
     await service._refresh_native_oco_armed_state([ACCT])
     assert not service._native_oco_stand_down_active(ACCT, "MI")
+    parent_reads = [path for _, path in calls if "/orders/" in path]
+    assert len(parent_reads) == 1 and "1008165370999" in parent_reads[0]
     with sessions() as session:
         assert _row(service, session).current_quantity == 180
 
@@ -407,7 +409,10 @@ async def test_owned_parent_with_two_working_legs_stands_down(replay):
     service._managed_v2_symbols = {(ACCT, "MI")}
     await service._refresh_native_oco_armed_state([ACCT])
     assert service._native_oco_stand_down_active(ACCT, "MI")
-    assert calls and all("1008165370999" in path for _, path in calls)
+    parent_reads = [path for _, path in calls if "/orders/" in path]
+    hints = [path for _, path in calls if "/orders?" in path]
+    assert len(hints) == 1 and len(parent_reads) == 1
+    assert "1008165370999" in parent_reads[0]
 
 
 @pytest.mark.asyncio

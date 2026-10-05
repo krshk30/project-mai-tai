@@ -561,5 +561,11 @@ tests/unit/test_schwab_exit_only_oco.py::test_it_refuses_to_emit_half_an_OCO[bra
 tests/unit/test_schwab_exit_only_oco.py::test_it_refuses_to_emit_half_an_OCO[bracket_stop_price]
 tests/unit/test_schwab_exit_only_oco.py::test_the_entry_bracket_legs_are_unchanged_at_NORMAL
 tests/unit/test_schwab_exit_only_oco.py::test_exit_only_requests_are_recognised_and_plain_ones_are_not
+tests/unit/test_ownmix1_oco_hint.py::test_empty_or_foreign_symbol_hint_skips_exact_parent[hinted0]
+tests/unit/test_ownmix1_oco_hint.py::test_empty_or_foreign_symbol_hint_skips_exact_parent[hinted1]
+tests/unit/test_ownmix1_oco_hint.py::test_missing_hint_capability_has_no_per_row_fallback
+tests/unit/test_ownmix1_oco_hint.py::test_failed_hint_does_not_renew_or_fall_back
+tests/unit/test_ownmix1_oco_hint.py::test_six_bound_rows_use_one_hint_and_only_named_owned_parent
+tests/unit/test_ownmix1_oco_hint.py::test_hint_is_fresh_each_sync_and_never_stands_down_by_itself
 
-563 tests collected in 1.25s
+569 tests collected in 2.18s

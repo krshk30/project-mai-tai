@@ -1,0 +1,40 @@
+{
+  "scope": "bounded partial-day box log inspection, not complete REST instrumentation",
+  "oms_capture": {
+    "path": ".ownmix1-q2-oms-bounded.log",
+    "sha256": "c3deb1f098fca47005583296883ec62e97284740e7a4b5d2169a2f4d4e1fae8e",
+    "lines": 206,
+    "source_byte_cap": 3000000,
+    "filtered_line_cap": 400,
+    "first_rollup": {
+      "at": "2026-10-05 00:01:39,518",
+      "ok": 20,
+      "failed": 0
+    },
+    "last_rollup": {
+      "at": "2026-10-05 17:09:52,189",
+      "ok": 20,
+      "failed": 0
+    }
+  },
+  "market_data_capture": {
+    "path": ".ownmix1-q2-market-data-bounded.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "lines": 0,
+    "source_tail_line_cap": 4000
+  },
+  "schwab_position_rollups": 206,
+  "max_ok_in_five_minute_rollup": 21,
+  "position_rollup_is_total_rest_census": false,
+  "actual_peak_schwab_rest_calls_per_minute": null,
+  "actual_peak_status": "UNMEASURED",
+  "primary_documented_limit_per_minute": null,
+  "primary_limit_status": "UNPROVEN: public Schwab portal gave no readable limit document",
+  "primary_source_attempted": "https://developer.schwab.com/products/trader-api--individual",
+  "extra_24_calls_per_minute_proven_safe": false,
+  "limitations": [
+    "Successful HTTP attempts are not individually logged by the adapter transport.",
+    "Position rollups exclude other endpoints, retries and other app processes.",
+    "No authenticated portal, tokens, broker requests or production writes were used."
+  ]
+}

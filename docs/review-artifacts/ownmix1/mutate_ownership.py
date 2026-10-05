@@ -67,7 +67,8 @@ def main():
          module.__dict__, namespace)
     setattr(cls, method, namespace[method])
     return pytest.main(["tests/unit/test_ownmix1_entry_binding.py",
-                        "tests/unit/test_ownmix1_review_followup.py", "-q"])
+                        "tests/unit/test_ownmix1_review_followup.py",
+                        "tests/unit/test_ownmix1_oco_hint.py", "-q"])
 
 
 if __name__ == "__main__":
