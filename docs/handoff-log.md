@@ -5112,3 +5112,10 @@ still reproduce safety proof(b) FAIL. Replacement single plan explicitly BLOCKED
 not approved/executable/scheduled. Final fresh full pair running; no final head
 claimed yet. No PM source beyond redundant two-line gap-belt removal changed by
 this follow-up. No production action or durable-state deletion; M rows unchanged.
+
+### 2026-10-05 11:40 ET - RPG follow-up CI (codex-2)
+
+GitHub read at11:40ET: #1093 head289524631f91f26e922a964067f3ef9907cbc188
+bothValidateSUCCESS, runs37333749186/37333741893 completed15:39:35/13Z.
+Independent fresh pin still missing. No source change, no merge/install action;
+standalone later, excluded from tonight. C36 only; M rows untouched.
