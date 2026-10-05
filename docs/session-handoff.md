@@ -224,6 +224,8 @@
 
 | C77 | Final report-only head frozen and plan rebound | Tested code unchanged; both fresh validations required | As-of 16:24 ET 10-05, #1093 final head3b4e193ee1399c08045944ef79ce6ff67e4fbb41 adds only REPORT_CI_CLOCK.md correction atop af06: CI proves primary0 before evaluating mirror count, independent controlled replay proves both0. Parent verified only that report differs; full5885/same56/focus1571/controls85 evidence still binds identical tested bytes. Plan a8168b299c9db59c37a6c48205ba8e675b332d74 binds frozen final head. Current pull37369239742 running, push37369235161 queued; no fresh pin | codex-2 | No more branch writes during review; require both exact-head Validate green before pin/merge. No production action |
 
+| C78 | Exact final-head CI: pull green, push runner acquisition retried | One Validate PASS; second not yet green | As-of 16:37:30 ET 10-05 GitHub actions API: pull37369239742 SUCCESS on 3b4e193e, unit5941PASS plus integration/replay/backtest87PASS and Ruff SUCCESS. Push37369235161 attempt1 job111961915337 cancelled16:36:39, runner_id0/nameempty/steps[]; annotation says no hosted runner acquired after multiple attempts. Parent reran failed job on same head, no branch change, and posted raw diagnosis in PR comment6002469027 | codex-2 | Require push attempt2 SUCCESS too and fresh pin; no cancellation or failure called PASS. No merge/install/production action |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
