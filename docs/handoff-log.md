@@ -5522,3 +5522,13 @@ a primary strategy draft. Parent independently parsed XML. Not venue-double
 buy evidence and not claimed historical occurrence. Existing focus400PASS.
 Operator/reviewer told early that #1095 cannot be ready tonight on current
 proof; keep draft/OFF/excluded. No generic protocol expansion or runtime write.
+
+2026-10-05 17:10:40 ET codex-2 C82: merged#1093 as7823a6fa under standing
+operator authority after exact head/base/main checks, both Validate green,
+local committed pin verifier PASS and hosted pin37373604989 SUCCESS.
+Ledger4e12eca3 is claude-1's immutable review record. Whole treeee6f058c
+equals pinned3b4e tree, git diff quiet0. Plan1f55c042 binds actual merge,
+accepted allowance helper unchanged; ROUNDUP excluded. Released its sole
+writer to rebase draft onto actual main and publish diagnostic, not activate.
+Future literal runner still needs all-date ticket/broker-order census and
+exact execution GO; no install, migration, process, env or production action.
