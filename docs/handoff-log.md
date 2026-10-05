@@ -5575,3 +5575,21 @@ identity/failure receipts after failed live pull, not rerun. PaperPID0 remains
 real inactive: unchanged preopen identity logic would fail, distinct from
 accepted FLAGGATE UNKNOWN2, explicitly left for reviewer disposition. No
 automatic start/retry/gate waiver, no migration/env/ledger/token/service write.
+
+2026-10-05 18:10 ET codex-2 C86: reviewer18:01 D1 authorizes freshread,
+D2 truthfully accepts paperPID0/expectedidentityFAIL, R1/R2 corrections required.
+One serialized census18:05:06->18:05:22 with exact5d6007ad bytes succeeds11/11
+terminalparents and14reviewedtickets, unchangeddigestab242bfc. Previously
+unproven SCKT Webull494aac/69a4f/9a10bc arecancelled/cancelled/filled; nofailed
+id remains. Webulldetails2secondsapart, no grant/internalretry/write. Tool
+middle truncated: complete parsed exact-parentarray/vendorbodies retained in
+extractedJSON, not whole raw. Runner950e9e42 on sameplanbranch retriesONLY
+rc2atmost3attempts60secondsapart, logs everyturn, measuredrc1stopsimmediately;
+censusexplicitrcsplit tested7cases. No allowancepolicy/hash changece3. Clock
+fence only beforefirstv2stop (19:15cutoff); post-stop completion/proofs no
+clockabort, safetychecksunchanged. D2newapprovalfieldremoved, paperPID0 and
+identityFAIL retained, journal/reportannotation namesexpecteddisposition.
+Parent29tests/Ruff/bashsyntaxPASS, no whole-run or migrationproof. Generated
+committed-blob manifestd9f845f2 localonly, exactbytesawaitapproval. No staging,
+approvalfile,timer,checkout/env/schema/service/token/ledger action. Ifcutoff
+misses,reissueafterrotation20:05+reviewedactualstate; no automaticfallback.
