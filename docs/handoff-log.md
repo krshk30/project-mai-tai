@@ -5038,3 +5038,7 @@ REPORT.md names R-T1-R-T8 and accepted simulation versus recorded evidence;
 verification.json pins source/tests. CI running at11:10; no review pin, merge
 or deployment. OWN source composition not yet claimed. Restart proposal
 OMS+strategy+v2 only, separate conditional plan/exact operator GO required.
+
+Timestamp correction: the preceding RPGSTUCK milestone was written at11:08 ET,
+not the nominal11:10 heading; GitHub Validate began15:07:29Z, journal PR entry
+15:08:39Z. Box clock re-read11:08:58 ET. C29 corrected; evidence unchanged.
