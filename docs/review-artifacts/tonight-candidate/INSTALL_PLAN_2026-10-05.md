@@ -14,9 +14,11 @@ combined tree, required A/B tests, fresh pins and an exact-SHA operator GO.
    `4987353be54c4be15d4196907dec4dd0d6103236`; whole tree
    `e6403bdafdc7b9670ecadbc6dbeccdcb6650c96c` equals pinned76c3b4f7.
 3. #1093 RPG ALL-ON follow-up is published at
-   `5ddb50f55498232915bd54171d5cc21579f43240`, based on main4987353b.
+   `8cfb704c4724ecfc846be11ba649464c965d9fb4`, based on main4987353b.
    A fresh independent pin and both Validate passes are required before merge.
-   Its REPORT_ALL_ON.md and verification-all-on.json bind the proof below.
+   Its REPORT_L57.md and verification-l57.json bind the final follow-up;
+   REPORT_ALL_ON.md retains the earlier ALL-ON tables. Literal L5/L7 and the
+   amended APUS later-placement requirement now pass without a source change.
 4. #1095 ROUND_UP is EXCLUDED unless independently pinned and merged before
    execution. At15:07 it was unpinned/behind main, head38d21fa3. If included,
    rebase/re-pin after the RPG merge, rerun the combined proofs/catalog count,
@@ -73,25 +75,43 @@ therefore UNKNOWN while paper stays stopped: expected145/147 measured,
 unknown2 if every other post-install check passes. Numeric remains8/8.
 This is an offline code-derived expectation, NOT a live checker run. Do not
 report147/147 PASS, change/remove these rows, or restart paper to get green.
-The reviewer must acknowledge this precise coverage limit before execution.
+Reviewer15:45 acknowledged this precise coverage limit. Do not change the
+catalog, restart paper or turn this UNKNOWN into PASS.
 
 ## Reviewer Proof Gate (Before Plan Approval)
 
 | Requirement | Exact-set proof required | Status |
 |---|---|---|
 | A startup | ALL14 recorded tickets, handoffON; per-leg proof/ownership; genuine unknown blocked; after20:00 no saved buy; in-window recovered clear may finish only once | test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_buy: four scenarios PASS; controlled eligible future quote completes four clear mirror slots once; after20 zero opens; unknowns remain owned |
-| A recorded reprice | APUS09:32 and10:25-10:27, VEEA09:36, MI12:39, SCKT12:38-12:47 through broker wire/PLACED; actual12:55 Webull fill prevents rebuy | Literal BOTH-PLACED UNMET for actual APUS09:32 Webull ask4.78/trigger5.2720: distance guard correctly refuses/no wire. Separate controlled eligible-quote adapter tests PASS; no favorable quote substituted into recorded refusal. Full MI/SCKT ATR tape UNMEASURED; stored authorizations tested |
+| A recorded reprice | APUS09:32 and10:25-10:27, VEEA09:36, MI12:39, SCKT12:38-12:47 through broker wire/PLACED; actual12:55 Webull fill prevents rebuy | Reviewer15:45 amended actual APUS09:32 Webull end state to distance-refused/no-wire/released (ask4.78/trigger5.2720), not PLACED. Follow-on same-segment later in-distance authorization places Webull exactly once: test PASS below. Other controlled eligible-quote adapter tests PASS. Full MI/SCKT ATR tape UNMEASURED; stored authorizations tested |
 | A PM composition | print-confirm + flip-wait + rest-reprice + handoff + NFQ/GAPHOLD ON; SAIQ stray, VEEA08:32 bar flip/08:33 print, CLRO5.5689 print/ask5.55 blocked; both legs from same ask | 36 integrated unit cases PASS; VEEA both routes114/57 shares once; SAIQ/CLRO no cross/state; PMREST is strategy-owned and creates no RPG transaction |
 | A slots/sessions | first/reclaim, both accounts, software PM reprice ownership vs RTH broker handoff | Both brokers/slots controlled coverage PASS; existing reclaim flag remains OFF in live set, initial reclaim admission not newly enabled; software PM and broker RTH ownership distinguished |
-| B live loops | reviewer14:52 L5/L7 exact real-loop findings, handoffON; runtime wakes/probe exactly once, quiet unknowns remain quiet | Exact L5/L7 wording requested; not invented or certified by similar startup tests |
-| C catalog/process | ALL-ON catalog, derived denominator, all four keys from BOTH final process environments | Working147 audit; expected paper UNKNOWN2 while inactive, reviewer acknowledgement needed; real /proc/gates only after separately authorized install |
+| B live loops | ExactL5 idle loop receives new cancel envelope, wakes itself; exactL7 recovered held_unknown becomes clear and continues loop-driven progress to placed/window expiry; handoffON | Supplied15:45, final tests-only follow-up PASS. BOTH literal wake-block removals assertionRED on two variants each. No startup/helper ticks substituted for loop delivery |
+| C catalog/process | ALL-ON catalog, derived denominator, all four keys from BOTH final process environments | Working147 audit; expected paper UNKNOWN2 while inactive acknowledged15:45; real /proc/gates only after separately authorized install |
 | D rollback | each switch keyOFF plus owning coordinated replacement; separate operator recovery GO | Written below; NOT pre-authorized |
 
-Final #1093 source has full5864PASS/same56FAIL vs own main5577PASS/56FAIL;
-failed-name diff added[]/removed[], zero skips. Focus1550PASS, targeted140PASS,
-80 assertion-red control executions (not 80 distinct falsifiers). Raw paths,
-test IDs, full dispositions and hashes are in REPORT_ALL_ON.md and
-verification-all-on.json on that exact head. Neither full suite is green.
+Reviewer15:45 follow-up test names on exact8cfb head:
+
+- L5: test_l5_idle_real_retry_loop_actual_new_begin_wakes_four_ticks_in_four_seconds.
+  Four-tick idle-wake and fifth-loop-tick PLACED variants; helper tick discarded.
+- L7: test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_clear
+  (placed and expired-after-2000 parameters).
+- APUS: test_recorded_apus0932_distance_refusal_releases_then_later_same_segment_webull_places_once.
+
+The APUS original4.78 refusal is replayed unchanged. A DISTINCT later controlled
+5.25 quote in the same segment is labelled simulated, not a substituted historical
+quote; only the released Webull leg emits, four identical intent deliveries
+produce exactly one real-adapter SDK placement. No primary draft is dispatched.
+L7 drops the strategy's own extra tick deliveries, so they cannot rescue a
+broken OMS retry wake; only loop-emitted deliveries progress the four clear jobs.
+
+Final #1093 source has full5869PASS/same56FAIL vs own main5577PASS/56FAIL;
+failed-name diff added[]/removed[], zero skips. Final focus1555PASS,
+new literal-loop/APUS targeted5PASS; earlier ALL-ON targeted140PASS retained.
+82 assertion-red control executions (not 82 distinct falsifiers); the five new
+L5/L7/APUS cases all pass, no skips. Raw paths, final full/focused IDs, complete
+failed names/diff and source/catalog hashes are in REPORT_L57.md and
+verification-l57.json. Full head249.03s, main206.86s. Neither full suite is green.
 Fresh full-unit pair on exact source plus failed-name diff is required. Local
 Mac baseline56 and reviewer Linux baseline48 are different platforms: compare
 like-for-like, never claim full green. Old combined5769/same56 proves the old
@@ -153,15 +173,32 @@ Each admitted finding prints `[STANDING-ALLOWANCE] fingerprint=... balance=...`
 with direct-flat and SQL/overview times. MI fill allowance prints separately.
 Unreadable proof exits2; measured remaining general failures exit1; exit0 only
 with complete admitted evidence and no other blocker. No token refresh/write.
-Current gate-policy/parser tests47PASS and12/12 independent guard-removal mutations
+Current gate-policy/parser tests53PASS and18/18 independent guard-removal mutations
 assertion-RED; the live dry run is recorded separately in
-FINAL_ALLOWANCE_DRY_RUN_2026-10-05.md (helper SHA256
-5e9d236b0e139b5b59868dfc4a90b57eaa4edee6981b3a3f37dc183df0428b04):
-fresh exact-byte OMS/strategy/flat each0 at15:35-15:36 ET, evictions0->0,
-five owners+marker and all nine streams intact. Historical refusals and the
+REVIEW_SIX_GUARDS_DRY_RUN_2026-10-05.md (helper SHA256
+ce3ab15bf95a5910e9b84b147d1460c9c494bc359fa6facfa80ebf9884e55ab8).
+Helper semantics unchanged; only its docstring states the six pinned guards.
+Fresh exact-byte readings and per-guard negative tests are bound there.
+The accepted47-test helper's earlier dryrun remains historical in
+FINAL_ALLOWANCE_DRY_RUN_2026-10-05.md. Historical refusals and the
 superseded helper's successful reads remain in ALL_ON_GATE_DRY_RUN_2026-10-05.md,
 not reused or hidden. Independent final review found no remaining unsafe-pass
 finding; collector orchestration/transport-race coverage remains limited.
+
+Reviewer15:45 six controls now have independent assertion-RED tests: duplicate
+symbol, noncritical severity, wrong finding type, MI fill without MI finding,
+another symbol's180 fill, and published heartbeat status mismatch. Keep every
+other source coherent in these tests so a different guard cannot mask deletion.
+
+## CI Acquisition Evidence
+
+Oldhead5ddb push Validate37363490768 PASS; pull Validate37363497022 was
+cancelled before ANY step. Job111943287588 API: runner_id0, runner_name empty,
+steps[]. Check annotation explicitly says "The job was not acquired by Runner
+of type hosted even after multiple attempts". This is runner acquisition
+failure, not a slow/hanging test, and is NOT called a green Validate run.
+Both fresh-head Validate runs must finish PASS before the reviewer pins.
+API evidence/links are retained in REVIEW_SIX_GUARDS_DRY_RUN_2026-10-05.md.
 
 ## Every Runner Gate
 

@@ -62,6 +62,65 @@ def test_exact_measured_two_findings_allow_only_counts_degraded_and_mi_balance()
     assert gate.evaluate_live_deploy_preflight(adjusted, service_target="oms", now=NOW) == []
 
 
+def bind_findings(args, findings):
+    """Keep secondary evidence coherent so only the targeted guard can refuse."""
+    args[3][:] = copy.deepcopy(findings)
+    args[0]["overview_sql_findings"] = copy.deepcopy(findings)
+    args[1]["reconciliation"]["findings"] = [
+        {**{key: row[key] for key in ("symbol", "finding_type", "severity")},
+         "title": row["payload"]["title"]} for row in findings]
+    for summary in (args[2]["summary"], args[0]["overview_sql_run"]["summary"]):
+        summary.update(total_findings=len(findings), critical_findings=len(findings))
+    args[4]["payload"]["details"].update(total_findings=str(len(findings)),
+                                         critical_findings=str(len(findings)))
+
+
+def test_duplicate_exact_mi_finding_refused_even_when_all_counts_match():
+    args = evidence()
+    bind_findings(args, [args[3][0], args[3][0]])
+    with pytest.raises(ValueError, match="finding not an exact standing allowance"):
+        gate.standing_allowance(*args, NOW)
+
+
+def test_noncritical_finding_refused_even_when_cached_sql_and_overview_agree():
+    args = evidence()
+    findings = copy.deepcopy(args[3])
+    findings[0]["severity"] = "warning"
+    bind_findings(args, findings)
+    with pytest.raises(ValueError, match="finding not an exact standing allowance"):
+        gate.standing_allowance(*args, NOW)
+
+
+def test_other_finding_type_refused_even_when_all_identity_sources_agree():
+    args = evidence()
+    findings = copy.deepcopy(args[3])
+    findings[0]["finding_type"] = "unrecorded_exit"
+    bind_findings(args, findings)
+    with pytest.raises(ValueError, match="finding not an exact standing allowance"):
+        gate.standing_allowance(*args, NOW)
+
+
+def test_current_mi_180_requires_its_matching_finding_not_only_nxl():
+    args = evidence()
+    bind_findings(args, [args[3][1]])
+    with pytest.raises(ValueError, match="current-session net fills outside"):
+        gate.standing_allowance(*args, NOW)
+
+
+def test_other_symbol_180_never_uses_mi_current_session_allowance():
+    args = evidence()
+    args[0]["net_bot_fills"][0]["symbol"] = "APUS"
+    with pytest.raises(ValueError, match="current-session net fills outside"):
+        gate.standing_allowance(*args, NOW)
+
+
+def test_raw_heartbeat_status_must_agree_even_when_overview_is_degraded():
+    args = evidence()
+    args[4]["status"] = "healthy"
+    with pytest.raises(ValueError, match="degradation not attributable"):
+        gate.standing_allowance(*args, NOW)
+
+
 @pytest.mark.parametrize("field,value", [
     ("fingerprint", "position-quantity:live:orb:MI"), ("account_name", "live:orb"),
     ("net_fill_balance", "179"), ("account_quantity", "1"), ("virtual_quantity", "1"),

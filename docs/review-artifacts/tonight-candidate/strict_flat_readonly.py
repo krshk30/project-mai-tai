@@ -52,7 +52,10 @@ def fresh(value, now, label):
 
 
 def standing_allowance(result, overview, run, findings, heartbeat, now):
-    """Validate original evidence, then adjust only an in-memory gate input copy."""
+    """Require unique critical MI/NXL findings, matching MI fills and raw health.
+
+    Validate original evidence before adjusting only an in-memory input copy.
+    """
     for key in ("broker_holdings", "managed_rows", "virtual_rows", "account_rows",
                 "working_orders", "inflight_intents"):
         if result[key]:

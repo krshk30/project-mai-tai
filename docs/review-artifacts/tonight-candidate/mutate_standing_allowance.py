@@ -12,6 +12,12 @@ spec.loader.exec_module(module)
 mutations = {
     "fingerprint": ('or payload.get("fingerprint") != "position-quantity:" + ACCOUNTS[0] + ":" + symbol', "or False"),
     "balance": ('or quantity(payload.get("net_fill_balance")) != ALLOWANCES[symbol]', "or False"),
+    "duplicate-symbol": ('or symbol in symbols', 'or False'),
+    "severity": ('or finding["severity"] != "critical"', 'or False'),
+    "finding-type": ('or finding["finding_type"] != "position_quantity_mismatch"', 'or False'),
+    "mi-finding-required": ('or "MI" not in symbols', 'or False'),
+    "current-symbol": ('or row["symbol"] != "MI"', 'or False'),
+    "raw-heartbeat-status": ('heartbeat["status"] != expected_status', 'False'),
     "zero-account": ('"account_quantity", "virtual_quantity", "managed_quantity"))', '"virtual_quantity", "managed_quantity"))'),
     "current-session": ('for row in result["net_bot_fills"]:', "for row in []:"),
     "degraded-error": ('or set(details) != {"total_findings", "critical_findings", "run_status", "cutover_confidence"}', "or False"),
