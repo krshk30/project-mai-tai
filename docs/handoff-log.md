@@ -4889,3 +4889,6 @@ N2 is REAL as a latent consumption defect, not a proven historical missed page: 
 
 ## 2026-10-05 06:44 ET - Codex HEALTHLATCH1 review handoff
 #1090 is open at cf0385144bd71bdb297107ab2f8e5df6bfea5caa on current main 124c5f9f. Full units: 56 failed / 5,372 passed versus main 56 failed / 5,362 passed, exact failed-name sets equal (zero added/removed). 74 focused PASS, Ruff PASS, marker audit PASS. Report maps S1-S9 and records N2 as a separate latent shared-cursor defect. Install plan is submitted for review only; Validate x2 in progress and independent pin pending. No merge or production change.
+
+## 2026-10-05 06:50 ET - Codex HEALTHLATCH1 CI completion
+#1090 exact head cf0385144bd71bdb297107ab2f8e5df6bfea5caa: both Validate runs PASS, push 37298418060 (6m8s) and PR 37298474163 (6m17s), including all unit/integration/replay/backtest and Ruff gates. Independent review pin not yet recorded; the pin check is not PASS. No code push during review, no merge, no installation or production action. C1-C3 updated with measured status; M rows, boards and decisions untouched.
