@@ -5227,3 +5227,11 @@ contains onlyoffcallbackadmissionprimitive+9passingrecorded-bar tests;
 actualmath/runtimeflag/admissionNOTwired, noPR. OwnlowpriorityREADONLY
 17:13:34Z pull444rowsRETO/JAGX,5s/1920bounds,noRedis/broker/appwrites.
 ScopedRuffPASS. FullrestorationcardNOTclaimed. C46only; Mrowsuntouched.
+
+2026-10-05 13:17:02 ET codex-2: ownfreshbounded READONLY SQL captures14jobs,
+11orders,15intents,1actualFill. LaterMI/SCKTticketsadded; SCKTWebullBUY280@1.06
+mustnotberebought. Rawhash120fc475d5620d2bbf8d55a7888a06abfb226350d669db20f315d0ca682145d2.
+Collector derivesallcapturedgenerations,64rows/table/8s,rootprotectedSettings,
+noRedis/brokerwrite. RPGsolewriterreceivedraw. Plan345193b5 recordsPMmerge
+andnewcensusbutremainsDRAFTblockedonnewreviews/composition; notscheduled.
+C47only; Mrows/Boards/decisionsuntouched.
