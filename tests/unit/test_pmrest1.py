@@ -159,7 +159,7 @@ def test_p3_quote_before_and_after_move_never_sees_unarmed(stream, monkeypatch):
     bar(state, clock[0])
     observed = []
 
-    def observe(st, quote):
+    def observe(st, quote, **_evidence):
         observed.append((st.resting_active, st.resting_trigger))
         return None
 

@@ -4871,6 +4871,8 @@ class SchwabV2BotService:
             draft = self.strategy.on_stream_trade(
                 str(tick.symbol).upper(), float(tick.price or 0.0), trade_ms,
                 ask_price=ask,
+                bid_price=tick.raw.get("1"), print_size=tick.raw.get("9"),
+                ask_age_ms=now_ms - ask_entry[1] if ask_entry is not None else None,
             )
         except Exception:
             del queued_legs[queued_before:]
@@ -5313,6 +5315,20 @@ class SchwabV2BotService:
         THIS module's binding (keeping the existing monkeypatch seam), and ``logger``
         is passed so the skip-warning stays under this module's logger byte-identically.
         """
+        if draft.metadata.get("pm_confirming_ask"):
+            try:
+                elapsed = int(now.timestamp() * 1000) - int(draft.metadata["pm_confirming_ask_decision_ms"])
+                age = int(draft.metadata["pm_confirming_ask_age_ms"]) + elapsed
+            except (ValueError, KeyError):
+                return False
+            max_age = (
+                self._eh_stream_ask_max_age_ms
+                if draft.metadata.get("pm_confirming_ask_source") == "stream_ask_cache"
+                else self.strategy._resting_quote_max_age_ms
+            )
+            if not 0 <= age <= max_age or extended_hours_session(now) != "AM":
+                logger.warning("[V2-PM-ASK-EXPIRED] %s age_ms=%d", draft.symbol, age)
+                return False
         routed = entry_gate.route_extended_hours(
             draft,
             now,

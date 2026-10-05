@@ -3,6 +3,20 @@
   "baseline": "2026-09-29 after 3389090a deploy; read-only /proc audit of owning processes",
   "flags": [
     {
+      "name": "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "PMPRINT1 requires a fresh ask at the trigger before a pre-market software cross; both legs use that ask.",
+      "ruling": "Operator 2026-10-05 09:44 ET: yes to both cards, go ahead; default OFF, ON only at reviewed install."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_pm_flip_wait_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "PMFLIP1 separates a pre-market BUY flip from a cross taken, preserving the existing take-down.",
+      "ruling": "Operator 2026-10-05 09:44 ET: yes to both cards, go ahead; default OFF, ON only at reviewed install."
+    },
+    {
       "name": "strategy_schwab_1m_v2_pm_rest_reprice_enabled",
       "expected": true,
       "owning_service": "schwab-1m-v2",

@@ -92,24 +92,16 @@ def test_clro_rest_polls_either_side_of_the_spike_never_cross() -> None:
     assert strat.on_quote("CLRO", Quote("CLRO", 5.53, 5.57, 5.5362, _ms(7, 24, 59), 0)) is None
 
 
-def test_clro_out_of_band_print_does_not_burn_the_in_band_second_print() -> None:
-    """The first ask predicts an OMS no-chase refusal; the second is eligible to try."""
-    strat = SchwabV2Strategy(_settings())
+def test_clro_second_print_with_recorded_ask_below_trigger_does_not_cross() -> None:
+    """Operator 10-05: the recorded 5.55 ask, not the old 5.57 proxy, rules out this print."""
+    strat = SchwabV2Strategy(_settings(strategy_schwab_1m_v2_pm_print_ask_confirm_enabled=True))
     st = _armed_clro(strat)
     _at(strat, PRINT_1_RCV)
     assert strat.on_stream_trade("CLRO", 5.59, PRINT_1_TS, ask_price=5.59) is None
     assert st.resting_flip_ms == 0
     _at(strat, PRINT_2_RCV)
-    draft = strat.on_stream_trade("CLRO", 5.5689, PRINT_2_TS, ask_price=5.57)
-    assert draft is not None
-    assert draft.intent_type == "open" and draft.side == "buy"
-    md = draft.metadata
-    assert md["order_type"] == "limit" and md["eh_resting"] == "true"
-    assert md["entry_price"] == "5.5590"                  # the trigger, not the print
-    assert md["limit_price"] == "5.5868"                  # trigger*(1+0.5%); OMS re-caps off its ask
-    assert md["eh_cross_source"] == "stream_trade"
-    assert md["eh_cross_print_ts_ms"] == str(PRINT_2_TS)
-    assert st.resting_flip_ms == PRINT_2_RCV
+    assert strat.on_stream_trade("CLRO", 5.5689, PRINT_2_TS, ask_price=5.55) is None
+    assert st.resting_flip_ms == 0
     assert st.position_qty == 0 and st.position_qty_held == 0  # draft is not a fill
 
 
