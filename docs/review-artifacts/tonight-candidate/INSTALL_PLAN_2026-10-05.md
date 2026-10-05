@@ -126,6 +126,12 @@ four recorded tickets under UTC/Eastern and hostile16:05/20:05 host clocks.
 Removing the new bindings produces assertion failures in all16 regression
 cases; explicit hostile time still reaches and is blocked by real predicates.
 Both Validate runs must PASS on the corrected exact head before fresh pin.
+Own GitHub verification16:48:48 ET: BOTH now SUCCESS on exact3b4e head:
+pull37369239742 and push37369235161 attempt2. Each ran5941 unit tests PASS,
+integration/replay/backtest86PASS/1XFAIL and Ruff PASS. Push attempt1 acquired
+no runner and was retried on unchanged bytes; its cancellation is retained,
+not counted PASS. The independent-review-pin remains non-green pending the
+reviewer's new exact-head record. No merge/installation GO follows from CI.
 Fresh full-unit pair on exact source plus failed-name diff is required. Local
 Mac baseline56 and reviewer Linux baseline48 are different platforms: compare
 like-for-like, never claim full green. Old combined5769/same56 proves the old

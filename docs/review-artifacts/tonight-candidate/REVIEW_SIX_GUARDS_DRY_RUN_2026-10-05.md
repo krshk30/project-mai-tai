@@ -68,6 +68,14 @@ The final3b4e report-only commit corrects the preceding af06 report's inference:
 CI proved primary0 before evaluating mirror count; independent controlled
 reproduction proved both0. All tested code/fixture bytes are identical to af06.
 
+Own final read16:48:48 ET: exact3b4e BOTH Validate SUCCESS:
+[pull37369239742](https://github.com/krshk30/project-mai-tai/actions/runs/37369239742)
+and [push37369235161 attempt2](https://github.com/krshk30/project-mai-tai/actions/runs/37369235161).
+Each unit5941PASS, integration/replay/backtest86PASS/1XFAIL, Ruff PASS.
+Push attempt1 job111961915337 acquired no runner (runner_id0/nameempty/steps[],
+the same exact runner-acquisition annotation); rerun required no head change.
+Fresh independent-review-pin is still required. No merge or production action.
+
 ## Exact New-Byte Dry Runs
 
 Each command serialized and awaited before the next broker call, root/nice19,
