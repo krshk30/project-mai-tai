@@ -3,6 +3,18 @@
 **DRAFT AWAITING FRESH PINS AND EXACT-SHA OPERATOR GO.
 NOT EXECUTABLE, NOT SCHEDULED, NO PRODUCTION AUTHORIZATION.**
 
+**14:07 ET review hold:** R20 on RPGc6548875 and F3 on OWN55563e6f are
+blocking. Own code read confirms that a runtime waiting-to-held_unknown
+transition is excluded from the post-startup retry scan, and that the flat
+backstop lost both the bounded child-fetch retry and same-episode pending-fill
+writer guard. Each sole writer is preparing one follow-up commit. Historical
+suite/CI evidence below remains evidence for those older heads only; it does
+not prove these fixes. Require the real-loop one-time rejected-old probe,
+unknown-detail quiet-turn test, both-account real-path F3 tests and mutation
+controls, fresh full-suite failed-name comparisons, and fresh composition
+before final review. Neither PR is merge/install eligible now. Re-read the
+ticket census immediately before any separately approved execution.
+
 This new document supersedes the folded three-PM-switch plan and the v2-only
 two-switch rollback draft. Turning hand-off OFF on the current code does not
 release durable held_unknown tickets. The required candidate is #1092 plus
