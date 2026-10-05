@@ -5408,3 +5408,11 @@ evictions0->0,806525952->806694176B. Two paper catalogUNKNOWNs confirmed by
 checker source/control: expected145/147 while paperinactive, notgreen; numeric
 8/8 separate. Preserve paperguardstop and row checks. MissingL5/L7 and literal
 APUSbothPLACED still blockreview. No production or ledger action.
+
+2026-10-05 15:36 ET codex-2 C68: published #1093 ALL-ON follow-up5ddb50f5,
+base4987353b, full5864/same56 vs main5577/56; focus1550, targeted140,
+80assertion-red controls. No freshpin; CI running. APUS recorded-distance
+literalbothPLACED remainsUNMET; exactL5/L7 absent. Independent parent gate
+review exposed four parser/evidence unsafe-pass edges; now fixed and47tests
+PASS. Fresh finalbyte dryruns/re-review in progress; earlierzeros are not
+reused as newhelperproof. No production/service/env/schema/ledger action.
