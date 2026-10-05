@@ -5274,3 +5274,10 @@ exactfinalcomposedfullsuitepending, installstillBLOCKED. Restorationc9aca7c0
 recordedRETO255barworker/oraclecontrol long2.0639/noSELL11:17/11:18 andlong11:21,
 12testsPASS/scopedRuff. Pureoracleproof, notlivepublication/fullrestoration.
 C52only; no Mrow/Board/decision/production/ledger changes.
+
+2026-10-05 13:52 ET codex-2: RPGfixturecheckpoint29a17b1fpublic; srcdiff
+from271314de empty. ParentcombinedOWN55563tree8394d09951/51PASS on50fullfill
+no-rebuyrepetitions+isolation. Exactcombinedfullrunning, no parityclaimyet.
+Draftplan6babbe7cbindsnewheadbutstillBLOCKED finalfull/CI/pins. OWNbodynow
+current55563withoutbranchchange, Q2peak/limitUNMEASURED. C53only; no prod,
+ledger, Mrow, Board or decision edits.
