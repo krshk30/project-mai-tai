@@ -48,6 +48,8 @@
 
 | C12 | PMREST1 #1091 review follow-up | S1 conversion streak pinned; S2 redundant helper guard removed; local tests green, full comparison running, NOT pushed/merged/installed | 08:59 ET 10-05: tests/unit/test_pmrest1.py now 40 PASS; same eight-file review harness 224 PASS; /tmp/pmrest1-review-mutations.txt = S1 deletion 4 failures, caller-cutoff deletion 5 failures, eight prior mutations RED; only two-line guard removal plus tests, base e1ce3b39 unchanged | codex-2 | Finish full-suite failed-name comparison and send new exact head; unchanged 09:30 software-rest boundary remains assessment-only; no production action |
 
+| C13 | PMREST1 review head and PMPRINT1 origin follow-up | #1091 pushed, CI running; PMPRINT1 still stopped pending strict-rule ruling | 09:04 ET 10-05: #1091 head 1135f8d9e288ed86667fdcd880c4f6d28990a341, unchanged base e1ce3b39; frozen head full units 56 failed/5,412 passed, fresh base comparison running; assessment 2548041a contains own SAIQ capture row 185338442 matching Schwab price 6.83, size 1, exact event timestamp 12:10:35.281Z, raw pmprint1-own-origin-check.json | codex-2 | Exact failure-name comparison and new-head CI pending; condition 3 cannot rule out venue/late-report eligibility; lower-only replay 14/14 first-leg proxies and 5/5 strays, cache timing UNMEASURED; no runtime PMPRINT1 build or install |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
