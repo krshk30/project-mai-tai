@@ -5432,3 +5432,11 @@ followup and same-segment APUS latereligible proof; parent sixallowanceguards,
 inprogress. CI37363497022 neveracquiredrunner (job111943287588 runner0/no
 steps, explicitacquisitionfailureannotation), nothangingtest. Reviewer
 accepted APUSrefused/released and stoppedpaperUNKNOWN2. No prod/schema/ledger.
+
+2026-10-05 15:48:29 ET codex-2 C71 evidence: helperce3ab15b,53PASS,
+18isolatedmutationRED and Mencius requestedsixindependentRED. Own fresh
+OMS/strategy/flat0 at15:47-15:48 withmatchingexactMI/NXLfindings andMIcurrent
+fill; noexposure/orders/intents. Evictions0->0 memory807118216->807162448B,
+fiveowners+marker/all9streams intact, boxe1ce3b39clean. REVIEW_SIX_GUARDS
+report retains exactstdout/hashes/CIacquisitionannotation. Semanticsunchanged
+helperdocstringonly. No production/service/token/DB/ledger write.
