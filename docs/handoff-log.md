@@ -5455,3 +5455,10 @@ and amendedAPUSsame-segmentlaterwireonce covered. Plan49e6544c published,
 sixguards53PASS/18RED/helperce3ab15b freshOMS/strategy/flat0 andevictions0->0.
 Freshpush37366739332/pull37366743088 queued, pinabsent, notgreen/notinstalled.
 No source/default/catalogchange inRPGfollowup, no production/schema/ledger.
+
+2026-10-05 16:11:16 ET codex-2 C74:8cfnewpushCI reachedtests,3FAIL5922PASS,
+legacyOFFstartupthreeproventicketassertions; actualfailureNOToldrunnerinfra.
+Owncodeoriginalruntimeinjectsthreeclockgates, newrestartedonly_now_ms; CI
+16:05outside16:00default, localfullbefore16. Clockleakhypothesisunder
+independentassessment, PauliunfrozenONLYfixturediagnosis/fix,noprodcodeor
+weakenedassertion. Head8cf/plan49e notpinready; allnewloopcasespassed.
