@@ -1,0 +1,9 @@
+{
+  "pr_number": 1093,
+  "range_base": "4987353be54c4be15d4196907dec4dd0d6103236",
+  "range_head": "3b4e193ee1399c08045944ef79ce6ff67e4fbb41",
+  "reviewed_at": "2026-10-05T21:04:01Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RPGSTUCK1 reviewed at exact head 3b4e193e (11 commits on main 4987353b, which already contains OWNMIX1 #1094). Read every source diff: canonical wire-price comparison, proven-clear release of finished tickets, per-broker ownership, one-time rejected-old proof read, event-driven retry loop (no periodic tick for unknown tickets; startup scan; wake on committed same-generation order events with a stored hash; wake of an eligible ticket at runtime read-back exhaustion - R20). Own runs on this head: full unit suite 48 failed / 5893 passed, failed names identical to the main-equivalent set on this host; own mutation set 29 of 32 RED incl. all 19 behaviour mutations (R15 unproven ticket under a hold), R20-fix removal, and both loop wake-ups L5 (new reprice wakes the idle loop) and L7 (ticket leaving held_unknown keeps being ticked); the three survivors are equivalent or harmless (unknown tickets only enter the loop at startup or via pending; extra strategy/side filter; at most one extra tick). Own experiments with controls: runtime read-back exhaustion starts the proof read within 2.5 s and is not ticked again; liveness of both wake-ups on the head as built. Since 462c8aa1 the diff is tests and evidence only (empty src diff). Reviewed with the operator's ALL-ON live set in mind (hand-off stays ON): all 14 recorded 10-05 tickets at startup, in-window and after 20:00, zero saved buys; recorded APUS 09:32 distance refusal releases and a later in-distance authorization places the Webull leg once. Not verified: live broker behaviour (recorded shapes only); a rejection recorded after exhaustion waits for the next startup (documented, safe side)."
+}
