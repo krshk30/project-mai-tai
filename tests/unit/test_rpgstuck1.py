@@ -3,22 +3,23 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
-from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot
+from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYPE
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
 from project_mai_tai.strategy_core.schwab_1m_v2 import logger as v2_logger
-from tests.unit.test_rpg1_runtime import runtime, begin, feedback, tick_clock
+from tests.unit.test_rpg1_runtime import runtime, begin, feedback, tick_clock, _session_factory
 
 RECORDED = json.loads((Path(__file__).parents[1] / "fixtures/rpgstuck1_recorded.json").read_text())
 PRIMARY = [row for row in RECORDED["tickets"] if row["payload"]["old"]["broker_account_name"] == "live:schwab_1m_v2"]
@@ -324,6 +325,55 @@ async def test_r_t5_uncertain_webull_dispatch_reconciles_exact_client_without_re
                                             "cancelled_empty": "refused", "fills": "filled"}[outcome]
     await h.service._rpg_advance(token)
     assert not h.adapter.opens
+    return h
+
+
+@pytest.mark.asyncio
+async def test_runtime_worker_reader_close_cannot_rollback_serial_writer():
+    factory = _session_factory()
+    with factory.kw["bind"].begin() as connection:
+        connection.execute(text("CREATE TABLE isolation_probe (value INTEGER NOT NULL)"))
+        connection.execute(text("INSERT INTO isolation_probe VALUES (0)"))
+    with factory() as writer:
+        writer.execute(text("UPDATE isolation_probe SET value=1"))
+        writer_connection = writer.connection().connection.driver_connection
+
+        def read_and_close():
+            with factory() as reader:
+                assert reader.connection().connection.driver_connection is not writer_connection
+                assert reader.scalar(text("SELECT value FROM isolation_probe")) == 0
+
+        await asyncio.to_thread(read_and_close)
+        writer.commit()
+    with factory() as reader:
+        assert reader.scalar(text("SELECT value FROM isolation_probe")) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repeat", range(50))
+async def test_r_t5_uncertain_webull_dispatch_to_fill_50_repeats(monkeypatch, repeat):
+    h = await test_r_t5_uncertain_webull_dispatch_reconciles_exact_client_without_resubmit(
+        monkeypatch, "fills")
+    await asyncio.gather(*tuple(getattr(h.service, "_webull_protect_tasks", ())))
+    journal = HandoffJournal(h.factory)
+    token, job = journal.jobs()[0]
+    assert job["phase"] == "filled" and job["replacement_filled"]
+    reads = len(h.adapter.reads)
+    for _ in range(3):
+        await h.service._rpg_advance(token)
+        await feedback(h)
+        h.strategy._cw_v2_resting_track(h.state, None)
+        assert not h.strategy.drain_pending_intents()
+        assert not h.strategy.drain_webull_direct_intents()
+    assert len(h.adapter.reads) == reads and not h.adapter.opens
+    assert h.state.cw_resting_taken and not h.state.resting_active
+    assert journal.read(token)["phase"] == "filled"
+    with h.factory() as session:
+        fills = list(session.scalars(select(Fill)))
+        assert len(fills) == 1 and fills[0].quantity == 1 and fills[0].price == Decimal("3.05")
+        assert session.get(BrokerOrder, fills[0].order_id).client_order_id == job["replacement"]["client_order_id"]
+        positions = list(session.scalars(select(OmsManagedPosition)))
+        assert len(positions) == 1 and positions[0].current_quantity == 1
 
 
 @pytest.mark.asyncio

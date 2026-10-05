@@ -1,5 +1,7 @@
 # RPGSTUCK1: canonical prices and proven-clear handoff endings
 
+Latest fixture-only follow-up: [connection-isolation proof](REPORT_FIXTURE_ISOLATION.md).
+
 Latest rebased review follow-up: [complete B1-B6 report](REPORT_B_REVIEW.md),
 with merged PM integration, later14-ticket census and fresh paired verification.
 Earlier reports below retain their historical base/head and as-of evidence.

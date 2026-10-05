@@ -10,13 +10,16 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from tempfile import TemporaryDirectory
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
-from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, TradeIntent, Fill, OmsManagedPosition
+from project_mai_tai.db.models import Base, BrokerOrder, DashboardSnapshot, TradeIntent, Fill, OmsManagedPosition
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms import service as oms
@@ -24,8 +27,19 @@ from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
-from tests.unit.test_oms_webull_mirror_deferred_resubmit import _integrated_service, _session_factory
+from tests.unit.test_oms_webull_mirror_deferred_resubmit import _integrated_service
 from tests.unit.test_rpg1_buy_readback import recorded
+
+
+def _session_factory():
+    # Worker readers must not share/rollback the serial writer's DBAPI transaction.
+    directory = TemporaryDirectory(prefix="rpg-runtime-")
+    engine = create_engine("sqlite+pysqlite:///" + str(Path(directory.name) / "runtime.sqlite"),
+        connect_args={"check_same_thread": False}, poolclass=NullPool)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    factory._rpg_test_directory = directory
+    return factory
 
 
 class RecordedReadbackSimulator:
