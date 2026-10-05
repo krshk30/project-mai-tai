@@ -37,6 +37,8 @@
 
 | C8 | PMREST1 #1091 review head and evening plan | READY for independent review fa14d46e69266eae883b9ab73387927ab5c841e3; 927 focused PASS, 8/8 mutants RED; full-unit failed names identical to main; CI running | 08:24 ET 10-05: GitHub #1091; /tmp/pmrest1-head-unit-final3.txt = 56 failed / 5,404 passed vs main 56 failed / 5,372 passed, normalized node diff rc0; REPORT.md P1-P10 map and INSTALL_PLAN.md in docs/review-artifacts/pmrest1; no production change | codex-2 | Linux Validate + independent pin + exact-SHA operator GO before v2-only install; stream Webull finding separate and not hidden as P10 delivery PASS |
 
+| C9 | PMREST1 Linux CI verification | #1091 fa14d46e exact head: Validate x2 PASS; independent pin still awaiting record; NOT merged/installed | 08:31 ET 10-05: runs 37309336688 and 37309342932 PASS; PR run 5,460 unit PASS, integration/replay/backtest 86 PASS + 1 existing xfail, Ruff/marker PASS; REPORT.md and v2-only INSTALL_PLAN.md in same head | codex-2 | claude-1 independent review/pin, operator exact-SHA evening GO; A1 unchanged boundary and stream Webull defect remain separate, A2 latency UNMEASURED |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
