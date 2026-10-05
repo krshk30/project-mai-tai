@@ -1,0 +1,9 @@
+raw_price_comparison: KILLED rc=1
+drop_canonical_difference_guard: KILLED rc=1
+release_without_clear_proof: KILLED rc=1
+distance_unknown_relabelled_local: KILLED rc=1
+admission_log_flood: KILLED rc=1
+admission_permission_cached: KILLED rc=1
+same_segment_terminal_latch: KILLED rc=1
+durable_uncertain_dispatch_ignored: KILLED rc=1
+distance_retry_missing_durable_claim: KILLED rc=1

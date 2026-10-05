@@ -51,8 +51,9 @@ DISPOSITIONS = {
 }
 
 
-async def startup_harness(monkeypatch, *, with_deferred=False, deferred_rows=None):
+async def startup_harness(monkeypatch, *, with_deferred=False, deferred_rows=None, recorded=RECORDED):
     h = await runtime(monkeypatch, "schwab", notional=600)
+    h.recorded = recorded
     h.adapter.override = AtrBuyReadback("unknown", "CONTROLLED strict detail unavailable")
     set_tonight_flags(h)
     settings = h.service.settings.model_copy(update={
@@ -65,13 +66,13 @@ async def startup_harness(monkeypatch, *, with_deferred=False, deferred_rows=Non
     h.service.settings = settings
     h.bot = bot_module.SchwabV2BotService(settings, session_factory=h.factory)
     h.strategy = h.bot.strategy
-    h.clock[0] = datetime.fromisoformat(RECORDED["read_at"])
+    h.clock[0] = datetime.fromisoformat(recorded["read_at"])
     monkeypatch.setattr(h.strategy, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
     for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
         method = getattr(h.strategy, name)
         monkeypatch.setattr(h.strategy, name, lambda now=None, fn=method: fn(now or h.clock[0]))
-    for symbol in ("APUS", "VEEA", "RETO"):
-        job = max((row["payload"] for row in RECORDED["tickets"]
+    for symbol in sorted({row["payload"]["old"]["symbol"] for row in recorded["tickets"]}):
+        job = max((row["payload"] for row in recorded["tickets"]
                    if row["payload"]["old"]["symbol"] == symbol and
                    row["payload"]["old"]["broker_account_name"] == "live:schwab_1m_v2"),
                   key=lambda job: job["created_at"])
@@ -88,10 +89,10 @@ async def startup_harness(monkeypatch, *, with_deferred=False, deferred_rows=Non
         # Empty replay setup, before restoration. No ticket/order is purged afterward.
         session.execute(delete(BrokerOrder))
         session.execute(delete(TradeIntent))
-        for row in RECORDED["tickets"]:
+        for row in recorded["tickets"]:
             session.add(DashboardSnapshot(id=UUID(row["id"]), snapshot_type=SNAPSHOT_TYPE,
                                           payload=deepcopy(row["payload"])))
-        for row in RECORDED["orders"]:
+        for row in recorded["orders"]:
             strategy = h.service.store.ensure_strategy(session, row["strategy"], name="v2")
             account = h.service.store.ensure_broker_account(session, row["account"],
                 provider="schwab" if row["account"] == "live:schwab_1m_v2" else "webull", environment="test")
@@ -107,7 +108,7 @@ async def startup_harness(monkeypatch, *, with_deferred=False, deferred_rows=Non
                 status=row["status"], order_type="STOP_LIMIT", time_in_force="day")
             order.id = UUID(row["id"])
         if with_deferred:
-            for row in RECORDED["deferred_intents"] if deferred_rows is None else deferred_rows:
+            for row in recorded["deferred_intents"] if deferred_rows is None else deferred_rows:
                 strategy = h.service.store.ensure_strategy(session, row["strategy"], name="v2")
                 account = h.service.store.ensure_broker_account(session, row["account"], provider="webull", environment="test")
                 event = TradeIntentEvent(event_id=UUID(row["payload"]["event_id"]),
@@ -118,6 +119,14 @@ async def startup_harness(monkeypatch, *, with_deferred=False, deferred_rows=Non
                 intent = h.service.store.create_trade_intent(session, strategy=strategy, broker_account=account, event=event)
                 intent.id, intent.status, intent.payload = UUID(row["id"]), row["status"], deepcopy(row["payload"])
                 intent.created_at = datetime.fromisoformat(row["created_at"])
+        session.flush()
+        for row in recorded.get("fills", []):
+            order = session.get(BrokerOrder, UUID(row["order_id"]))
+            session.add(Fill(id=UUID(row["id"]), order_id=order.id,
+                strategy_id=order.strategy_id, broker_account_id=order.broker_account_id,
+                broker_fill_id=row["broker_fill_id"], symbol=row["symbol"], side=row["side"],
+                quantity=Decimal(row["quantity"]), price=Decimal(row["price"]),
+                filled_at=datetime.fromisoformat(row["filled_at"]), payload=deepcopy(row["payload"])))
         session.commit()
     assert not h.strategy._rpg_handoffs
     return h
@@ -131,7 +140,7 @@ async def real_bot_startup(monkeypatch, h):
         return None
 
     async def scanner_after_restore():
-        assert set(h.strategy._rpg_handoffs) == {row["id"] for row in RECORDED["tickets"]}
+        assert set(h.strategy._rpg_handoffs) == {row["id"] for row in h.recorded["tickets"]}
         h.bot._stop_event.set()
 
     class NoNetworkClient:
@@ -160,9 +169,9 @@ async def real_oms_startup(monkeypatch, h):
         await asyncio.Event().wait()
 
     async def control(stop_event):
-        # Allow the real startup-created wakeup task one turn, then process its
+        # Allow the real startup-created worker scan to finish, then process its
         # deliveries through the normal serial consumer before shutting down.
-        await asyncio.sleep(0)
+        await asyncio.wait_for(h.service._rpg_retry_started().wait(), timeout=5)
         rows, h.service.redis.entries = h.service.redis.entries, []
         for _, data in rows:
             if data.get("event_type") == "atr_reprice_tick":

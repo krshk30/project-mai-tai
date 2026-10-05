@@ -1,6 +1,6 @@
 """October 5 sequencing: recorded prices, controlled cache/bar eligibility.
 
-The durable-ticket replay characterizes a blocker, not a successful rollback.
+The durable-ticket replay distinguishes proven clearance from unknown ownership.
 No recorded row or terminal phase is changed to manufacture clearance.
 """
 from copy import deepcopy
@@ -15,7 +15,7 @@ import pytest
 
 from project_mai_tai.db.models import DashboardSnapshot
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
-from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYPE
+from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYPE, old_buy_proven_clear
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
 from tests.unit.test_pmprint1_pmflip1 import STRAYS, VEEA, armed, cross, flip
 from tests.unit.test_pmrest1 import bar, setup, track
@@ -126,7 +126,7 @@ async def test_tonight_rpg_off_clean_journal_legacy_cancel_then_next_pass(monkey
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
-async def test_current_rpg_off_startup_still_restores_recorded_blocking_ticket(monkeypatch, ticket):
+async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
     h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
     h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
     restarted = SchwabV2Strategy(h.bot.settings)
@@ -147,8 +147,19 @@ async def test_current_rpg_off_startup_still_restores_recorded_blocking_ticket(m
     assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
     await h.bot._rpg_handoff_pass()
     assert ticket["id"] in restarted._rpg_handoffs
-    assert restarted._rpg_entry_owned(state)  # Required proof (b) is FALSE in current code.
+    proven = ticket["id"] in {
+        "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+        "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+        "a007716c-4b50-5759-a354-ddc5b8961154",
+    }
+    assert old_buy_proven_clear(job) is proven
+    assert restarted._rpg_entry_owned(state) is not proven
     restarted._cw_v2_resting_track(state, None)
-    assert not restarted.drain_pending_intents()
-    assert not restarted.drain_webull_direct_intents()
+    primary = restarted.drain_pending_intents()
+    mirror = restarted.drain_webull_direct_intents()
+    if proven:
+        assert len(primary) == len(mirror) == 1
+        assert primary[0].intent_type == mirror[0].intent_type == "open"
+    else:
+        assert not primary and not mirror
     assert not h.adapter.opens

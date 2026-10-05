@@ -1,5 +1,9 @@
 # RPGSTUCK1: canonical prices and proven-clear handoff endings
 
+Latest rebased review follow-up: [complete B1-B6 report](REPORT_B_REVIEW.md),
+with merged PM integration, later14-ticket census and fresh paired verification.
+Earlier reports below retain their historical base/head and as-of evidence.
+
 Scope: sole-writer branch `codex/rpgstuck1-canonical-handoff`, starting at
 `a80b51816abf0aefc269f0fdfc473468fd3fe62c`. The October 5 own assessment at
 `3e3fc738` was explicitly acknowledged before this build. Its corrected causes,

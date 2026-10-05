@@ -1,0 +1,8 @@
+unknown_authorizes_replace: RED rc=1
+retry_spacing_removed: RED rc=1
+read_budget_removed: RED rc=1
+partial_ignored: RED rc=1
+cumulative_fill_can_be_forgotten: RED rc=1
+expiry_still_submits: RED rc=1
+scope_guard_removed: RED rc=1
+restart_can_resubmit: RED rc=1
