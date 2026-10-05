@@ -76,10 +76,33 @@ Current R16 actual call is `self._rpg_persisted_local_open(session, event, candi
 the control changes candidates to `[]`. Initial reviewer-shorthand anchor attempt
 correctly failed and was NOT counted; corrected anchor was rerun successfully.
 
-Fresh standalone full pair is pending when this source head is published.
-No pending suite is called PASS. The initial fixture full was terminated and
-superseded after strengthening durable assertions; source remains unchanged.
-Historical B-review counts/hashes remain historical, not final-fixture counts.
-Production hashes remain identical to271314de. Parent independently recomposes
-the new frozen head and runs combined full; focused success alone does not clear
+Source/test checkpoint `29a17b1fafe354ca230d677578a00f3fe25f14cc` was published with
+its full pair pending. This subsequent evidence-only update records completion;
+no test or production content changed while the full suites ran.
+
+| Fresh Final Suite | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: |
+| Own exact main7e10 full | 5500 | 56 | 0 |
+| Frozen fixture source full | 5683 | 56 | 0 |
+| Broad focused | 1369 | 0 | 0 |
+| Strengthened composed new cases | 51 | 0 | 0 |
+
+Exact full failed-name difference **added0 / removed0**, identical56 IDs retained
+in `verification-fixture-isolation.json`. Main232.58 seconds; fixture279.91
+seconds. Full suites are NOT called green. All67 fresh controls are assertion-red:
+64 prior, fixture shared-connection, exact R13 and exact R16. Each fresh raw
+mutation output is retained as `fixture-*-mutations.txt`, with SHA256/provenance
+and exact counts in the JSON. No anchor/import error counts.
+
+Final `test_rpg1_runtime.py` SHA256:
+`9f78957dfda6923749086d3499e94147b26011755a023de3447c3f59c2be191e`.
+Final `test_rpgstuck1.py` SHA256:
+`5bc19c995868a2dc6e004f363a097e3b91036c51c47c6aceade2d2d72894c56e`.
+All five production hashes equal271314de and are retained in the JSON. Focused
+1369 and composed51 exact test IDs and full XML hashes are also retained.
+
+The initial fixture full was terminated/superseded after strengthening durable
+assertions; no earlier result substitutes for this final pair. Historical
+B-review counts remain historical. Parent owns independent complete composition
+full validation; these standalone/limited composed results alone do not clear
 that integration. Captured ticket/fill and earlier broker-body as-of limits remain.

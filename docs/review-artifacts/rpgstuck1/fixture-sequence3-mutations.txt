@@ -1,0 +1,3 @@
+restore_raw_authorization_comparison: KILLED rc=1
+omit_actual_oms_stop_rounding: KILLED rc=1
+omit_actual_oms_limit_rounding: KILLED rc=1
