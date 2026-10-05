@@ -4976,3 +4976,20 @@ scenario map and price-proxy14/14eligible,5/5straysblocked,CLRO5.55blocked;
 historical decision-cache timing UNMEASURED. Folded PMREST install plan includes
 three switches ON, 143 boolean/8 numeric checks, one attended v2-only evening
 restart and one 10-06 preopen re-pin; no install authorization or service action.
+
+### 2026-10-05 10:53 ET - released bug lanes and GAPKEEP independent findings (codex-2)
+
+OWNMIX1 and RPGSTUCK1 are active isolated builds from a80b5181, one writer on
+codex/ownmix1-owned-entry-binding and codex/rpgstuck1-canonical-handoff respectively.
+The acknowledged Step 0 assessment3e3fc738 is their authority; no ledger write.
+PMPRINT1/PMFLIP1 #1092 head71f5f6bc has both Validate runs PASS, remains unpinned.
+
+GAPKEEP1 remains assessment-only. Own bounded read14:49:18Z, frozen14:35Z,
+reproduces67 initial holds and27 since09-28, with9 zero-print census holes and18
+with prints in either retained tape. EGG13:39 has0 Schwab prints but10 independent
+capture prints; a latest-SchWab-print-only classifier would falsely carry there.
+Skipping reset does not itself guarantee oracle equality: the existing90s
+true-range gap clamp remains. Confirmation and ATR SELL read this same state.
+Own MI exit read14:52:33Z has no durable confirmation decision and the09:40:03
+target_bar_missed line; exit neutrality and decision-time feed coverage are not
+claimed. No production service/config/DB/ledger changes from these lanes.
