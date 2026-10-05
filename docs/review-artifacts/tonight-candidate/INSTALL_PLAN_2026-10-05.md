@@ -228,6 +228,14 @@ REVIEW_SIX_GUARDS_DRY_RUN_2026-10-05.md (helper SHA256
 ce3ab15bf95a5910e9b84b147d1460c9c494bc359fa6facfa80ebf9884e55ab8).
 Helper semantics unchanged; only its docstring states the six pinned guards.
 Fresh exact-byte readings and per-guard negative tests are bound there.
+After the actual RPG merge, the unchanged final helper was rerun read-only
+on the box at17:22-17:24 ET: OMS, strategy and standalone flat each exit0,
+both brokers flat, empty books/working DB orders/inflight intents, exact
+MI/NXL audit lines, no remaining general failures. Full raw output and bounds
+are in POST_MERGE_ALLOWANCE_DRY_RUN_2026-10-05.md. Own box checkout remains
+clean e1ce3b39; no application install or schema/env change. This receipt
+does not waive separate broker-order/ticket/armed/identity/Redis fences or
+replace fresh install-time reads; it is not an execution GO.
 The accepted47-test helper's earlier dryrun remains historical in
 FINAL_ALLOWANCE_DRY_RUN_2026-10-05.md. Historical refusals and the
 superseded helper's successful reads remain in ALL_ON_GATE_DRY_RUN_2026-10-05.md,
