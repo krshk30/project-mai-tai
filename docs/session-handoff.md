@@ -139,6 +139,8 @@
 
 | C47 | Fresh fourteen-ticket census; candidate plan refreshed | Read-only finding; no production recovery; final follow-ups still require review | 13:17:02 ET 10-05 own READ ONLY SQL capture tonight-startup-later-with-fills-own-read.json SHA256120fc475d5620d2bbf8d55a7888a06abfb226350d669db20f315d0ca682145d2:14jobs/11orders/15intents/1Fill, bounded64/table/8s. LaterMI/SCKT includes actual live:orb SCKT BUY280@1.06, orderd5227349; given to RPG writer for no-rebuy replay. Plan branch codex/1005-owned-entry-reprice-install-plan commit345193b5 records newmain7e10 and rebased checkpoints, remains DRAFT/norunner/noGO | codex-2 | All14 captured tickets must be tested, not only the earlier8; repeat bounded census before execution. No ledger/service/env/Redis write; no unreviewed merge/install |
 
+| C48 | OWN complete review plus Q2 conservative hint follow-up | #1094 new head55563e6f3abe004d484195c202b5118ea75e0169; NOT pinned/installed | 13:22 ET 10-05 GitHub head verified; freshmain7e10 full5500PASS/56FAIL vshead5570PASS/same56, failed-name diff0/0; focused569PASS;15/15ownershipmutantsRED. REPORT_2026-10-05.md F1/F2/U1-U4 tests bothaccounts; actualoldmain+0022nullablecolumns create/read/closePASS. Boundedloginspection206positionrollups max21successes/5min is NOT totalRESTpeak; peak/primarylimitUNMEASURED, so oneaccounthint thenexactboundparent, neverhintownership. TwoValidateinprogress/pinrequiresfreshrecord | codex-2 | Reviewer rerun/pin; schema-bearing OWN remains optional eveningcandidate. Nominal1+Kreads/sync, no claimedrateheadroom; no merge/prod/ledgerwrite |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |

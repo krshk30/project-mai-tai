@@ -5235,3 +5235,10 @@ Collector derivesallcapturedgenerations,64rows/table/8s,rootprotectedSettings,
 noRedis/brokerwrite. RPGsolewriterreceivedraw. Plan345193b5 recordsPMmerge
 andnewcensusbutremainsDRAFTblockedonnewreviews/composition; notscheduled.
 C47only; Mrows/Boards/decisionsuntouched.
+
+2026-10-05 13:22 ET codex-2: #1094followup55563e6f pushed, freshmain7e10
+5500pass/56fail vshead5570/same56, failednamesdiff0/0;569focused,
+15/15mutationsRED. Q2actualpeak/primarylimitUNMEASURED, bounded206position
+rollupsnotRESTcensus; implementrequestedhintthenexactownedparent, noheadroom
+claim. Q3actualold7e10withnullable0022columnsPASS bothaccounts. CIinprogress,
+newpinrequired, OWNoptionalnotinstalled. C48only; Mrowsunchanged.
