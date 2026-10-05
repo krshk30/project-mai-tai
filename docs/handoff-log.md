@@ -5384,3 +5384,10 @@ order, fullrange-diff, OWN now inherently in newtarget so additive migration
 explicitly REQUIRED in separateexact-SHAGO. Today's per-gate table and raw
 readonlydryrun retained; NXL2/MI180 named disposition notgranted. No production
 or schema/ledger action; no #1095 action before RPG's reviewedmerge. C64 only.
+
+2026-10-05 15:07 ET codex-2 CLAIM: standing exact MI180/NXL2 allowance plus
+ALL-ON candidate integration per operator 15:00 ruling. Parent writes plan and
+fail-closed install policy; Pauli sole RPGwriter, Mencius independent PM tests.
+No production action. Fresh overview15:07:30 completed recon count2/degraded,
+only MI/NXL; direct-flat proof not yet rerun under new policy. L5/L7 exact text
+not in visible block/GitHub comments, being located, not invented. C65 only.
