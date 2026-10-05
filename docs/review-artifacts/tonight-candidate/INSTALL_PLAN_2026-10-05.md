@@ -16,7 +16,7 @@ ticket release, or additional trading-rule change is permitted.
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
 | 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | merged at 13:09:07 ET to main 7e10baf0319da796b84934fe38994f6db4fcfc0b; whole tree equals pinned tree 736a540cac3c2724fa116216913331f532ecdfa9 | still dark on the box; proposed PMPRINT ON and PMFLIP OFF |
 | 2 | RPGSTUCK #1093, 7f0729ef67e97566d7c254273802665c760adf08 | NOT pinned; eight-ticket startup proof complete locally; Validate pending | existing ticket recovery active; no NEW hand-offs |
-| 3, optional | OWNMIX #1094, 0e896505e7372233132c03749da752e098572a7b | NOT pinned; F1/F2/U1-U4 follow-up complete locally; Validate pending | entry binding; additive schema only if included |
+| 3, optional | OWNMIX #1094, 55563e6f3abe004d484195c202b5118ea75e0169 | NOT pinned; F1/F2/U1-U4 plus Q2 conservative hint follow-up complete; Validate in progress as of 13:22 ET | entry binding; additive schema only if included |
 
 No merge is authorized by this draft. Final exact heads, all required checks,
 ordered integration rehearsal and fresh pins after any rebase/conflict must be
@@ -96,7 +96,7 @@ approval and print actual denominators. Neither #1093 nor #1094 adds a switch.
 | (a) legacy reprice | first and reclaim cancel then next-pass placement with hand-off OFF; PMPRINT true, PMFLIP/PMREST false, NFQ/GAP true | #1093 first/reclaim and gap-hold tests PASS locally; standalone settings are not a claim of PM source composition |
 | (b) durable startup | restore every October 5 ticket, prove per-leg ownership/disposition; rejected old order releases by exact identity and zero-fill proof, never age | all eight recorded tickets and five deferred intents tested; exact rejected-zero proof uses one durably claimed GET; after20:00 zero saved opens |
 | (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | targeted combined run 76 PASS / 3 obsolete-characterization FAIL; integration blocked pending review |
-| OWN, if included | real submit and poll fill paths bind both IDs for both accounts; flat closes lifecycle without unsafe attribution; U1-U4 and old-code/schema compatibility | local563 focused PASS;15/15 review-equivalent mutants RED; fresh pin and Validate required |
+| OWN, if included | real submit and poll fill paths bind both IDs for both accounts; flat closes lifecycle without unsafe attribution; U1-U4, conservative hint and old-code/schema compatibility | local569 focused PASS;15/15 review-equivalent mutants RED; fresh pin and Validate required |
 
 Own source pull at 12:10:51 and 12:11:28 ET used read-only SQL, 8-second statement
 limit and at most64 rows per table. Raw paths are in STARTUP_TICKETS.md. It found
@@ -113,14 +113,14 @@ Fresh four-parent broker GET bodies and the complete SQL pull are independently
 retained in STARTUP_TICKETS.md. These local results do not substitute for CI,
 a fresh exact-head pin, or the unresolved combined-tree expectation review.
 
-#1094 local paired unit result: exact main a80b5181 =5412 passed /56 failed;
-follow-up =5476 passed /same56 failed; failed-name diff added0/removed0.
+#1094 fresh paired unit result: exact main7e10 =5500 passed /56 failed;
+follow-up55563e6f =5570 passed /same56 failed; failed-name diff added0/removed0.
 Its REPORT_2026-10-05.md maps F1/F2/U1-U4 to exact tests and verification.json
 retains both complete failed-ID sets and every mutation killer. The F2 submit
 test runs public process_trade_intent, not a direct fill hook, plus real polling
 on both accounts, followed by owned-child exit polling. Broker replies are
-controlled recorded-shape inputs, not a live trading exercise. SQLite old-code
-compatibility was independently rerun at12:53 ET and passes on both accounts.
+controlled recorded-shape inputs, not a live trading exercise. Actual old-main7e10
+nullable-schema compatibility passes on both accounts, offline in SQLite.
 CI is pending, not green; OWN remains optional and unpinned.
 
 The ticket census is frozen at12:13 ET. A fresh bounded read immediately before
@@ -209,7 +209,7 @@ a child fill needs the binding. Unproven exit remains unrecorded and paged.
 
 OWN rollback compatibility must use the actual old code and actual additive
 migration, not a new-code mock. The follow-up's verify_old_code_schema.py
-reconstructs pinned a80b5181 via git archive, applies migration0022 to isolated
+reconstructs old main7e10baf0 via git archive, applies migration0022 to isolated
 SQLite, then old ORM/store create/read/close PASS on both live-account names.
 The old model has no binding columns; nullable columns remain present. This is
 an offline compatibility proof, not a production PostgreSQL rollback exercise.
@@ -217,17 +217,24 @@ Code revert restores the old ownership defect and creates legacy unbound rows;
 it is not a data repair. Keep schema revision/columns, do not downgrade/backfill.
 Execution still requires explicit operator recovery GO and fresh flat/order proof.
 
-OWN per-position stand-down adds one exact Schwab-parent GET per eligible bound
-row per sync. Loaded OMS cadence at12:01:39 ET was15s normal and1s active-stop:
-nominal extra parent reads/min for1/3/6 rows are4/12/24 normal or60/180/360
-active, plus event-triggered syncs. These are not measured total HTTP rates;
-order/status/position traffic and retries are additional. No cadence change is
-included. This load cost must be accepted if OWN is in the exact-SHA release.
+OWN Q2 could not measure total peak Schwab REST calls/min or establish a primary
+documented limit. Its bounded log inspection found206 position rollups with a
+maximum21 successful position reads in one five-minute rollup; that is NOT a
+complete REST census or evidence of headroom. The explicitly requested fallback
+is used: one account-wide hint per eligible Schwab account per sync, then exact
+bound-parent reads only for symbols named by the hint. The hint is never ownership
+evidence; missing/failed hints do not renew stand-down, and pending exit retries
+remain independent. Webull is skipped. No partial-parent scaling change.
+Loaded cadence was15s normal/1s active-stop. For K hinted bound rows, nominal
+stand-down reads/min are4*(1+K) normal or60*(1+K) active, plus event syncs and all
+other traffic. At K=1/3/6 this is8/16/28 or120/240/420, not a safe REST budget.
+No unproven numeric limit or new cadence is installed; no headroom is claimed.
 
 ## Mandatory Close-Out
 
 New OMS/v2/strategy PID/start/NRestarts0, active, zero new-process tracebacks;
-all other identities unchanged. Startup recovery census for all eight IDs:
+all other identities unchanged. Startup recovery census for all fourteen captured IDs
+and any later tickets found by the fresh execution census:
 phase/reason, proven old/replacement identity, account/symbol and ownership.
 No new hand-offs with OFF. Never claim a truly unknown wire order cleared.
 Fresh live:orb sync ok>0/failed0 and account_positions stamp after OMS start.
@@ -244,7 +251,7 @@ Do not run the date-fixed October6 gate early. No Monday guard re-pin/restart.
 
 Journal deployments-20261005.md: source/release/plan/helper hashes, flat/gate
 proofs, exact commands, backups/env diff, optional migration revision, new and
-unchanged identities, loaded values, eight-ticket dispositions, sync census,
+unchanged identities, loaded values, complete as-of ticket dispositions, sync census,
 Redis before/after, catalog/checker outputs and preopen backup/diff/hash.
 COMPLETE requires actual proofs, not just active processes. Accepted UNKNOWN
 log coverage and UNEXERCISED live paths stay named, never relabelled PASS.
