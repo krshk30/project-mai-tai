@@ -5440,3 +5440,10 @@ fill; noexposure/orders/intents. Evictions0->0 memory807118216->807162448B,
 fiveowners+marker/all9streams intact, boxe1ce3b39clean. REVIEW_SIX_GUARDS
 report retains exactstdout/hashes/CIacquisitionannotation. Semanticsunchanged
 helperdocstringonly. No production/service/token/DB/ledger write.
+
+2026-10-05 15:52:27 ET codex-2 C72 evidence: workingRPGfollowup5casesPASS,
+bothliteralL5/L7wake-removals assertionRED. L5includesfirst4idle-startticks
+and5thloop-onlyPLACED afterrealbotauthorization; L7fourrecordedlocalholds
+clear->placed/after20expired; APUSold4.78refusalseparatefromlatercontrolled
+5.25same-segment normalWebullwireonce across4duplicateintents. Rawl57targeted
+andcontrols files retained. Finalhead/full/CI pending, no runtime/prod write.
