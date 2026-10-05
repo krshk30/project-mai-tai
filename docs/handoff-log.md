@@ -5218,3 +5218,12 @@ whole tree736a540c equals pinned tree; fullgitdiffempty. PinlatestPASS,
 Validatex2PASS andmaina80 exactcheckedbeforemerge. Mergeonly, noproduction
 write/restart/flag. RPG/OWNsolewriters rebase/newheadreview instructed;
 B1-B6 andactualQ2RESTloadrequirements are additionalfollowups. C45only.
+
+2026-10-05 13:17 ET codex-2: rebasedcheckpointheads #1093d6865168 and
+#1094bb4a6b22 publishedagainst7e10; ownrange-diff3/3equal each. Solewriters
+stillbuild B1-B6 andQ2loadproof/hint, notpinreadycheckpointclaim. Restoration
+ownCLAIM17:10:59Z, branchcodex/line-chart-restoration checkpoint84f3d0ef
+contains onlyoffcallbackadmissionprimitive+9passingrecorded-bar tests;
+actualmath/runtimeflag/admissionNOTwired, noPR. OwnlowpriorityREADONLY
+17:13:34Z pull444rowsRETO/JAGX,5s/1920bounds,noRedis/broker/appwrites.
+ScopedRuffPASS. FullrestorationcardNOTclaimed. C46only; Mrowsuntouched.
