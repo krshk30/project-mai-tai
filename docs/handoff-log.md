@@ -5400,3 +5400,11 @@ stillNO-GO/nooverride; OMSfencerc0. Mencius36PMALLONcases/467focusedPASS,
 catalogworkingdenominator147, no livecertification. ActualAPUS09:32Webull
 ask4.78trigger5.2720 remainsdistance-refused: literalbothPLACEDnotclaimed.
 ExactL5/L7textrequestedhuman; no guessing. No production/ledger/schema action.
+
+2026-10-05 15:26 ET codex-2 C67: RPG working followup integratedPMtests,
+focus1550PASS/0skip92.98s. Freshmain498 full5577/same56; candidatefull running,
+no newhead/CI/pin inherited. Standingdryrun finalhashdcd35a35 OMS/strategy/flat0,
+evictions0->0,806525952->806694176B. Two paper catalogUNKNOWNs confirmed by
+checker source/control: expected145/147 while paperinactive, notgreen; numeric
+8/8 separate. Preserve paperguardstop and row checks. MissingL5/L7 and literal
+APUSbothPLACED still blockreview. No production or ledger action.
