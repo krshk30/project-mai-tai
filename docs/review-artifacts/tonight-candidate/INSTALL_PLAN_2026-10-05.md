@@ -13,21 +13,36 @@ combined tree, required A/B tests, fresh pins and an exact-SHA operator GO.
 2. #1094 OWN merged FIRST at14:51:18 ET as
    `4987353be54c4be15d4196907dec4dd0d6103236`; whole tree
    `e6403bdafdc7b9670ecadbc6dbeccdcb6650c96c` equals pinned76c3b4f7.
-3. #1093 RPG ALL-ON follow-up is published at
-   `3b4e193ee1399c08045944ef79ce6ff67e4fbb41`, based on main4987353b.
-   A fresh independent pin and both Validate passes are required before merge.
+3. #1093 RPG ALL-ON was rebase-merged at17:10:40 ET as
+   `7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf`, after exact-head pin and
+   both Validate SUCCESS on `3b4e193ee1399c08045944ef79ce6ff67e4fbb41`.
+   Whole-tree comparison is identical: `ee6f058c248eeebf475fd392845eadfef7af59eb`
+   for the merge and the pinned head (git diff --quiet exit0). Review ledger
+   commit4e12eca3 has the immutable claude-1 record; local verifier PASS and
+   hosted pin run37373604989 SUCCESS. No admin bypass, install or migration.
    Its REPORT_CI_CLOCK.md and verification-ci-clock.json bind the final follow-up;
    REPORT_ALL_ON.md retains the earlier ALL-ON tables. Literal L5/L7 and the
    amended APUS later-placement requirement now pass without a source change.
-4. #1095 ROUND_UP is EXCLUDED unless independently pinned and merged before
-   execution. At15:07 it was unpinned/behind main, head38d21fa3. If included,
-   rebase/re-pin after the RPG merge, rerun the combined proofs/catalog count,
-   record the final merge SHA and add its one explicit key. No inferred ON.
+4. #1095 ROUND_UP is EXCLUDED from this exact candidate. Its generic accepted
+   resting-order restart without RPG ticket has a real hydration/admission gap:
+   current local diagnostic8 assertion failures, existing ROUNDUP focus400PASS.
+   No accepted old wire pair is hydrated and unproven cases allow a strategy
+   draft; this is NOT proof a duplicate reaches a venue or a historical event.
+   The draft is being rebased onto the RPG merge for explicit evidence, not
+   marked ready. No ROUND_UP env edit, activation or inferred fifth switch.
+   If a later safe fix is independently pinned/merged, it needs a new bound
+   plan, all-on combination proof and catalog audit; do not substitute that SHA.
+
+Exact application candidate for THIS plan:
+`7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf`, tree
+`ee6f058c248eeebf475fd392845eadfef7af59eb`. APPROVED_SHA at execution must
+equal this value and be named in a separate exact-SHA operator GO. This binding
+does not grant install, migration, restart, flag or recovery authorization.
 
 The standing merge authority covers reviewed, independently pinned exact heads
 with both Validate passes and current base only. No Update branch, amended pin,
 unpinned code or silent conflict resolution. APPROVED_SHA is the final actual
-main40-hex SHA after this order; no moving branch substituted. Main beyond it
+main40-hex SHA bound above; no moving branch substituted. Main beyond it
 may differ only under docs/. A target descended from OWN necessarily includes
 its migration: do not claim OWN optional or install that tree without schema GO.
 
@@ -143,6 +158,16 @@ Read the durable census again immediately before execution. STARTUP_TICKETS.md
 contains the own13:17:02 read:14 jobs/11 orders/15 intents/one SCKT Webull BUY
 280@1.06. Include every later ticket with account/symbol/generation evidence;
 untested shape=UNKNOWN/STOP. No journal purge, ledger write or age-based release.
+The existing pull_startup_tickets.py is an October5 archival collector, NOT a
+proof of the entire startup population: it filters created_at by date, while
+HandoffJournal.jobs does not. The future literal runner must enumerate the
+same all-date population, including older unknown/placed tickets that still
+own admission, with bounded pages and explicit overflow/refusal. No date or
+ACTIVE-only filter may hide a blocking ticket. Its broker client-ID/working-order
+census must be independent of SQL-only order absence and fresh flat positions.
+The reviewed pin names an accepted safe limitation: an old rejection recorded
+after exhaustion can wait until the next startup; do not claim immediate
+runtime recovery or clear that ticket by age to make the install gate pass.
 
 ## Standing Allowance (Operator Ruling15:00 ET)
 
