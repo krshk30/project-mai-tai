@@ -10731,6 +10731,10 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         return None
 
     async def _publish_order_event(self, event: OrderEventEvent) -> None:
+        try:
+            await self._rpg_wake_committed_evidence(event)
+        except Exception:
+            self.logger.exception("[OMS-RPG1] evidence wakeup failed; startup reconciliation retains ownership")
         await self.redis.xadd(
             stream_name(self.settings.redis_stream_prefix, "order-events"),
             {"data": event.model_dump_json()},

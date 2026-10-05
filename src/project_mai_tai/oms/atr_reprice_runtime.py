@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
+import hashlib
 import json
 from uuid import UUID, uuid5, NAMESPACE_URL
 
@@ -117,6 +118,8 @@ class AtrRepriceRuntimeMixin:
         return controller
 
     async def _rpg_begin_cancel(self, event):
+        self._rpg_retry_dirty = True
+        self._rpg_retry_signal().set()
         md = event.payload.metadata
         journal = self._rpg_journal()
         # Replay of the cancel envelope resumes its ticket, never picks a newer order.
@@ -214,6 +217,7 @@ class AtrRepriceRuntimeMixin:
     async def _rpg_advance(self, token):
         journal = self._rpg_journal()
         job = journal.read(token)
+        starting_phase = job["phase"]
         if self._rpg_rejected_old_probe_eligible(job):
             job = await self._rpg_probe_rejected_old(token, job)
         if job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven":
@@ -273,6 +277,9 @@ class AtrRepriceRuntimeMixin:
                          token, job["phase"], job["reason"], job["reads"],
                          job["old"]["broker_account_name"], job["old"]["symbol"], job["segment_id"], job["slot"],
                          elapsed("readback_at"), elapsed("submit_started_at"), elapsed("completed_at"))
+        if starting_phase == "held_unknown" and job["phase"] in ACTIVE_PHASES - {"held_unknown"}:
+            self._rpg_retry_dirty = True
+            self._rpg_retry_signal().set()
         return job
 
     def _rpg_rejected_old_probe_eligible(self, job):
@@ -566,18 +573,104 @@ class AtrRepriceRuntimeMixin:
         return stop, limit
 
     async def _run_rpg_retry_loop(self, stop_event):
+        startup = True
+        active = False
         while not stop_event.is_set():
+            signal = self._rpg_retry_signal()
+            signal.clear()
+            delay = None
             try:
-                for token, job in self._rpg_journal().jobs():
-                    if (job["phase"] in {"prepared", "waiting", "fills_waiting", "clear", "price_wait", "submitting", "submit_unknown"}
-                            or (job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven")
+                pending = self.__dict__.setdefault("_rpg_evidence_pending", set())
+                dirty = self.__dict__.pop("_rpg_retry_dirty", False)
+                if startup or active or pending or dirty:
+                    jobs = dict(await asyncio.to_thread(self._rpg_retry_jobs, include_unknown=startup))
+                    for token in pending - jobs.keys():
+                        jobs[token] = await asyncio.to_thread(self._rpg_journal().read, token)
+                else:
+                    jobs = {}
+                active = any(job["phase"] in ACTIVE_PHASES - {"held_unknown"} for job in jobs.values())
+                for token, job in jobs.items():
+                    if (job["phase"] in ACTIVE_PHASES - {"held_unknown"}
+                            or (job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven"
+                                and (startup or token in pending))
                             or self._rpg_rejected_old_probe_eligible(job)):
                         await self.redis.xadd(f"{self.settings.redis_stream_prefix}:strategy-intents",
                             {"data": json.dumps({"event_type": "atr_reprice_tick", "token": str(token)})},
                             maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
+                    pending.discard(token)
+                startup = False
+                self._rpg_retry_started().set()
             except Exception:
                 self.logger.exception("[OMS-RPG1] retry wakeup failed; durable ownership retained")
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=1.0)
-            except TimeoutError:
-                pass
+                # Existing broker-sync error cadence, not periodic unknown proof.
+                delay = max(1.0, float(self.settings.oms_broker_sync_interval_seconds))
+                self._rpg_retry_dirty = True
+            await self._rpg_retry_pause(stop_event, delay if delay is not None else (1.0 if active else None))
+
+    def _rpg_retry_started(self):
+        if "_rpg_retry_started_event" not in self.__dict__:
+            self._rpg_retry_started_event = asyncio.Event()
+        return self._rpg_retry_started_event
+
+    def _rpg_retry_signal(self):
+        if "_rpg_retry_event" not in self.__dict__:
+            self._rpg_retry_event = asyncio.Event()
+        return self._rpg_retry_event
+
+    async def _rpg_retry_pause(self, stop_event, seconds):
+        tasks = [asyncio.create_task(stop_event.wait()), asyncio.create_task(self._rpg_retry_signal().wait())]
+        try:
+            await asyncio.wait(tasks, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _rpg_retry_jobs(self, *, include_unknown):
+        phases = ACTIVE_PHASES if include_unknown else ACTIVE_PHASES - {"held_unknown"}
+        with self.session_factory() as session:
+            return [(row.id, dict(row.payload)) for row in session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["phase"].as_string().in_(phases)))]
+
+    async def _rpg_wake_committed_evidence(self, event):
+        """A committed generation write schedules proof, never supplies proof itself.
+
+        Durable notification hashes suppress duplicate deliveries. A restart
+        reconciles all held tickets even after a crash between commit and wakeup.
+        """
+        tokens = await asyncio.to_thread(self._rpg_mark_committed_evidence, event)
+        if tokens:
+            self.__dict__.setdefault("_rpg_evidence_pending", set()).update(tokens)
+            self._rpg_retry_signal().set()
+
+    def _rpg_mark_committed_evidence(self, event):
+        payload = event.payload
+        if payload.strategy_code != "schwab_1m_v2" or payload.side != "buy":
+            return []
+        generation = payload.metadata.get("rpg_resting_generation")
+        with self.session_factory() as session:
+            if not generation:
+                order = session.get(BrokerOrder, payload.order_db_id) if payload.order_db_id else None
+                intent = session.get(TradeIntent, payload.intent_db_id) if payload.intent_db_id else None
+                generation = ((order.payload or {}).get("rpg_resting_generation") if order else None) or (
+                    ((intent.payload or {}).get("metadata") or {}).get("rpg_resting_generation") if intent else None)
+            if not generation:
+                return []
+            jobs = [(row.id, dict(row.payload)) for row in session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["phase"].as_string() == "held_unknown",
+                DashboardSnapshot.payload["reason"].as_string() == "exact_old_order_unproven",
+                DashboardSnapshot.payload["old"]["symbol"].as_string() == payload.symbol,
+                DashboardSnapshot.payload["old"]["broker_account_name"].as_string() == payload.broker_account_name,
+                DashboardSnapshot.payload["old"]["metadata"]["rpg_resting_generation"].as_string() == generation))]
+        digest = hashlib.sha256(json.dumps({"generation": generation, "client": payload.client_order_id,
+            "status": payload.status, "quantity": str(payload.quantity), "filled": str(payload.filled_quantity),
+            "reason": payload.reason, "metadata": payload.metadata}, sort_keys=True).encode()).hexdigest()
+        tokens = []
+        for token, job in jobs:
+            if job.get("local_evidence_wakeup_hash") == digest:
+                continue
+            if self._rpg_journal().change(token, job["revision"], local_evidence_wakeup_hash=digest) is not None:
+                tokens.append(token)
+        return tokens
