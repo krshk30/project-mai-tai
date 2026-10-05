@@ -1,5 +1,9 @@
 # RPGSTUCK1: canonical prices and proven-clear handoff endings
 
+Latest fixture-only correction: [restart wall-clock isolation and actual CI failure](REPORT_CI_CLOCK.md).
+Real session gates and legacy assertions are unchanged; the new restarted
+fixture now receives its recorded clock. Fresh paired evidence is retained.
+
 Latest tests-only follow-up: [literal L5/L7 liveness and later APUS wire](REPORT_L57.md).
 The exact reviewer wording has now been supplied and tested; the earlier
 missing-text limitation is historical. The original distance guard remains.
