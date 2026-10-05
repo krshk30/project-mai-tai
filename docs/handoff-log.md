@@ -5135,3 +5135,20 @@ plan on that head is BLOCKED, not approved/executable/scheduled. Only intended
 env changes printON/handoffOFF, one v2 restart, catalog143combined. No OMS restart
 needed for NEW admission; an OMS restart also would not solve durable ownership.
 No production action, no main merge. Reviewer disposition required; C37 only.
+
+### 2026-10-05 12:06 ET - LINE=CHART re-add/restart Step 0 (codex-2)
+
+Own fresh nice19/SQL-read-only census on31logs/60479bars, frozen11:50ET;
+assessment5a12d4d24acb0575535b7a218fb2ee232acae750. R1-R5 causeAGREE/old;
+RETO first11:05 trail2.000258/oracle1.9629; cited2.0792/2.0639 is11:09,
+not first reading. Sixteen10:49..11:04 REST bars created11:10:19, after
+streamer advanced, never repair the line. MI11:31 continuousBUY4.9495
+independently reproduced. Broad sweep166/1191 logged flip observations,
+165distinct, not lost trades;8/1108 first-slot attempts botshort/oraclelong.
+Fifteen reclaim attempts bothlong are not false-short entries. Watchlist
+names truncated273/1400 updates: exact all-add rateUNMEASURED, lower-bound
+daily table only. Fresh30initialholds since09-28=12offlinezero/18printed;
+old27 remains9/18, three additional quiet holes after prior cut. No live
+coverage PASS from offlineabsence. Accepted pause/math/exit scope recorded
+as released, not parked. Gapcontrols15PASS; no source or production change.
+No current build PR or install claim. C38 only; M rows untouched.
