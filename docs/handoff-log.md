@@ -5425,3 +5425,10 @@ fiveowners+marker/ninestreams intact, boxe1ce3b39clean. Olddcd35a35 results
 explicitlyhistorical. OwnXMLfailednamepair56each/add0/remove0. Plan NOT
 executable/scheduled: literalAPUSbothPLACED unmet, L5/L7exacttextmissing,
 paperUNKNOWN2 retained; no production/migration/ledger action.
+
+2026-10-05 15:48 ET codex-2 C70 CLAIM: solePauli #1093 tests-only L5/L7
+followup and same-segment APUS latereligible proof; parent sixallowanceguards,
+53PASS, newdocstringhashce3ab15b/semanticsunchanged,18mutationrun+freshdryruns
+inprogress. CI37363497022 neveracquiredrunner (job111943287588 runner0/no
+steps, explicitacquisitionfailureannotation), nothangingtest. Reviewer
+accepted APUSrefused/released and stoppedpaperUNKNOWN2. No prod/schema/ledger.
