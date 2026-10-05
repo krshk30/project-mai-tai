@@ -5288,3 +5288,10 @@ failedIDsadded0removed0;1369focused/67assertioncontrolsRED. Fullcombinedtree
 5e16cf4d nowbindscompleteRPGc654evidence+OWN55563 onPMmain7e10; parentfullstill
 running, noPASSclaim. FreshRPGCI/pinpending, OWNfreshpinrequired. C54only;
 no production/ledger/Mrow/Board/decisionchanges.
+
+2026-10-05 13:56 ET codex-2: parentexactcomposition5e16cf4d full5753/same56
+vsmain5500/56; failedIDdiff0/0,0skips. Finalfocused411PASS and51fill/isolation
+PASS. Exactgitmerge-treematchedstagedtree. ExtraStaticPoolfixturefailurecleared,
+notproductionchange; historical57failurekept. Plan7d159d78andcompositionreport
+publishedforreview, notexecutable/scheduled. RPGc654CIinprogress; OWN55563green,
+bothfreshpinsrequired. C55only; no main/prod/ledger/Mrow/Board/decisionchange.
