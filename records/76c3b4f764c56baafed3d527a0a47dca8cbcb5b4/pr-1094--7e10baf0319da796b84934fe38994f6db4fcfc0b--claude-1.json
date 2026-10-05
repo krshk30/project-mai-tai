@@ -1,0 +1,9 @@
+{
+  "pr_number": 1094,
+  "range_base": "7e10baf0319da796b84934fe38994f6db4fcfc0b",
+  "range_head": "76c3b4f764c56baafed3d527a0a47dca8cbcb5b4",
+  "reviewed_at": "2026-10-05T18:38:32Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "OWNMIX1 reviewed at exact head 76c3b4f7 (5 commits on main 7e10baf0). Read the full source diff: durable owned-entry binding (entry_order_id + entry_client_order_id), exit match by ownership, strategy-safe virtual restore, account-wide OCO hint gating the exact-parent read, F3 restore of bounded child-fetch deferral and same-episode pending-fill-writer guard. Own runs: full unit suite 48 failed / 5585 passed, failed names identical to the main-equivalent set on this host; own mutation sets d (12 of 15 RED; A8/A9 superseded by A8b/A9b, A11 equivalent), e (2 of 3; A8b equivalent), f (6 of 6 RED incl. H4 account isolation), g on the F3 fix (3 of 5; G4 equivalent - counter also cleared on close and at the bound, G5 is main's own unchanged line). Card vs built: matches (the bot identifies its position by its own order; another bot's trade in the shared account cannot release it or book the wrong sale). Not verified: live broker behaviour (tests replay recorded MI shapes), additive migration on production Postgres (offline SQLite proof only), historical 41-row binding census. Optional for the 10-05 evening install; needs the operator's before-merge yes."
+}
