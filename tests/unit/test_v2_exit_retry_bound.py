@@ -124,7 +124,7 @@ def test_standing_down_does_NOT_close_the_row_or_delete_protection() -> None:
 def test_a_confirmed_flat_still_closes_the_row() -> None:
     """The pre-existing happy path must survive."""
     svc = _svc(_PositionRead.FLAT_CONFIRMED)
-    svc._find_oco_entry_order = lambda *a, **k: None
+    svc._find_oco_entry_order = lambda *a, **k: SimpleNamespace(client_order_id="owned-entry", payload={})
     svc._fetch_oco_exit_detail = lambda *a, **k: _noop()
     svc._persist_oco_exit_fill = lambda *a, **k: False
 

@@ -1,0 +1,421 @@
+{
+  "read_at": "2026-10-05T14:09:32.479784+00:00",
+  "orders": [
+    {
+      "request": "GET /trader/v1/accounts/REDACTED/orders/1008165370304",
+      "http_status": 200,
+      "response_bytes": 3377,
+      "body": {
+        "session": "NORMAL",
+        "duration": "DAY",
+        "orderType": "STOP_LIMIT",
+        "complexOrderStrategyType": "NONE",
+        "quantity": 2.0,
+        "filledQuantity": 2.0,
+        "remainingQuantity": 0.0,
+        "requestedDestination": "AUTO",
+        "destinationLinkName": "JNST",
+        "stopPrice": 3.05,
+        "stopType": "STANDARD",
+        "price": 3.06,
+        "orderLegCollection": [
+          {
+            "orderLegType": "EQUITY",
+            "legId": 1,
+            "instrument": {
+              "assetType": "EQUITY",
+              "cusip": "G6363T123",
+              "symbol": "MI",
+              "uniformSymbol": "MI",
+              "instrumentId": 251999744
+            },
+            "instruction": "BUY",
+            "positionEffect": "OPENING",
+            "quantity": 2.0
+          }
+        ],
+        "orderStrategyType": "TRIGGER",
+        "orderId": 1008165370304,
+        "cancelable": false,
+        "editable": false,
+        "status": "FILLED",
+        "enteredTime": "2026-10-05T13:28:04+0000",
+        "closeTime": "2026-10-05T13:30:22+0000",
+        "tag": "TA_krshk30gmailcom1773690950",
+        "accountNumber": "REDACTED",
+        "orderActivityCollection": [
+          {
+            "activityType": "EXECUTION",
+            "activityId": 132505404614,
+            "executionType": "FILL",
+            "quantity": 2.0,
+            "orderRemainingQuantity": 0.0,
+            "executionLegs": [
+              {
+                "legId": 1,
+                "quantity": 2.0,
+                "mismarkedQuantity": 0.0,
+                "price": 3.0498,
+                "time": "2026-10-05T13:30:22+0000",
+                "instrumentId": 251999744
+              }
+            ]
+          }
+        ],
+        "childOrderStrategies": [
+          {
+            "orderStrategyType": "OCO",
+            "orderId": 1008165370305,
+            "cancelable": false,
+            "editable": false,
+            "status": "FILLED",
+            "enteredTime": "2026-10-05T13:28:04+0000",
+            "closeTime": "2026-10-05T13:30:29+0000",
+            "tag": "TA_krshk30gmailcom1773690950",
+            "accountNumber": "REDACTED",
+            "childOrderStrategies": [
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "LIMIT",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 2.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "CDRG",
+                "price": 3.2,
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "G6363T123",
+                      "symbol": "MI",
+                      "uniformSymbol": "MI",
+                      "instrumentId": 251999744
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 2.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008165370306,
+                "cancelable": false,
+                "editable": false,
+                "status": "CANCELED",
+                "enteredTime": "2026-10-05T13:28:04+0000",
+                "closeTime": "2026-10-05T13:30:29+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132505404728,
+                    "executionType": "CANCELED",
+                    "quantity": 2.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 2.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 0.0,
+                        "time": "2026-10-05T13:30:29+0000",
+                        "instrumentId": 251999744
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "STOP",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 2.0,
+                "filledQuantity": 2.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "HRTF",
+                "stopPrice": 2.81,
+                "stopType": "STANDARD",
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "G6363T123",
+                      "symbol": "MI",
+                      "uniformSymbol": "MI",
+                      "instrumentId": 251999744
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 2.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008165370307,
+                "cancelable": false,
+                "editable": false,
+                "status": "FILLED",
+                "enteredTime": "2026-10-05T13:28:04+0000",
+                "closeTime": "2026-10-05T13:30:29+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132505404719,
+                    "executionType": "FILL",
+                    "quantity": 2.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 2.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 2.8,
+                        "time": "2026-10-05T13:30:29+0000",
+                        "instrumentId": 251999744
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request": "GET /trader/v1/accounts/REDACTED/orders/1008165370999",
+      "http_status": 200,
+      "response_bytes": 3936,
+      "body": {
+        "session": "NORMAL",
+        "duration": "DAY",
+        "orderType": "STOP_LIMIT",
+        "complexOrderStrategyType": "NONE",
+        "quantity": 180.0,
+        "filledQuantity": 180.0,
+        "remainingQuantity": 0.0,
+        "requestedDestination": "AUTO",
+        "destinationLinkName": "HRTF",
+        "stopPrice": 3.31,
+        "stopType": "STANDARD",
+        "price": 3.33,
+        "orderLegCollection": [
+          {
+            "orderLegType": "EQUITY",
+            "legId": 1,
+            "instrument": {
+              "assetType": "EQUITY",
+              "cusip": "G6363T123",
+              "symbol": "MI",
+              "uniformSymbol": "MI",
+              "instrumentId": 251999744
+            },
+            "instruction": "BUY",
+            "positionEffect": "OPENING",
+            "quantity": 180.0
+          }
+        ],
+        "orderStrategyType": "TRIGGER",
+        "orderId": 1008165370999,
+        "cancelable": false,
+        "editable": false,
+        "status": "FILLED",
+        "enteredTime": "2026-10-05T13:34:01+0000",
+        "closeTime": "2026-10-05T13:34:24+0000",
+        "tag": "TA_krshk30gmailcom1773690950",
+        "accountNumber": "REDACTED",
+        "orderActivityCollection": [
+          {
+            "activityType": "EXECUTION",
+            "activityId": 132507279318,
+            "executionType": "FILL",
+            "quantity": 97.0,
+            "orderRemainingQuantity": 0.0,
+            "executionLegs": [
+              {
+                "legId": 1,
+                "quantity": 97.0,
+                "mismarkedQuantity": 0.0,
+                "price": 3.31,
+                "time": "2026-10-05T13:34:24+0000",
+                "instrumentId": 251999744
+              }
+            ]
+          },
+          {
+            "activityType": "EXECUTION",
+            "activityId": 132507279316,
+            "executionType": "FILL",
+            "quantity": 50.0,
+            "orderRemainingQuantity": 97.0,
+            "executionLegs": [
+              {
+                "legId": 1,
+                "quantity": 50.0,
+                "mismarkedQuantity": 0.0,
+                "price": 3.31,
+                "time": "2026-10-05T13:34:24+0000",
+                "instrumentId": 251999744
+              }
+            ]
+          },
+          {
+            "activityType": "EXECUTION",
+            "activityId": 132507279288,
+            "executionType": "FILL",
+            "quantity": 33.0,
+            "orderRemainingQuantity": 147.0,
+            "executionLegs": [
+              {
+                "legId": 1,
+                "quantity": 33.0,
+                "mismarkedQuantity": 0.0,
+                "price": 3.31,
+                "time": "2026-10-05T13:34:22+0000",
+                "instrumentId": 251999744
+              }
+            ]
+          }
+        ],
+        "childOrderStrategies": [
+          {
+            "orderStrategyType": "OCO",
+            "orderId": 1008165371000,
+            "cancelable": false,
+            "editable": false,
+            "status": "FILLED",
+            "enteredTime": "2026-10-05T13:34:01+0000",
+            "closeTime": "2026-10-05T13:39:37+0000",
+            "tag": "TA_krshk30gmailcom1773690950",
+            "accountNumber": "REDACTED",
+            "childOrderStrategies": [
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "LIMIT",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 180.0,
+                "filledQuantity": 0.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "HRTF",
+                "price": 3.48,
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "G6363T123",
+                      "symbol": "MI",
+                      "uniformSymbol": "MI",
+                      "instrumentId": 251999744
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 180.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008165371001,
+                "cancelable": false,
+                "editable": false,
+                "status": "CANCELED",
+                "enteredTime": "2026-10-05T13:34:01+0000",
+                "closeTime": "2026-10-05T13:39:37+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132509514371,
+                    "executionType": "CANCELED",
+                    "quantity": 180.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 180.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 0.0,
+                        "time": "2026-10-05T13:39:37+0000",
+                        "instrumentId": 251999744
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "session": "NORMAL",
+                "duration": "DAY",
+                "orderType": "STOP",
+                "complexOrderStrategyType": "NONE",
+                "quantity": 180.0,
+                "filledQuantity": 180.0,
+                "remainingQuantity": 0.0,
+                "requestedDestination": "AUTO",
+                "destinationLinkName": "HRTF",
+                "stopPrice": 3.05,
+                "stopType": "STANDARD",
+                "orderLegCollection": [
+                  {
+                    "orderLegType": "EQUITY",
+                    "legId": 1,
+                    "instrument": {
+                      "assetType": "EQUITY",
+                      "cusip": "G6363T123",
+                      "symbol": "MI",
+                      "uniformSymbol": "MI",
+                      "instrumentId": 251999744
+                    },
+                    "instruction": "SELL",
+                    "positionEffect": "CLOSING",
+                    "quantity": 180.0
+                  }
+                ],
+                "orderStrategyType": "SINGLE",
+                "orderId": 1008165371002,
+                "cancelable": false,
+                "editable": false,
+                "status": "FILLED",
+                "enteredTime": "2026-10-05T13:34:01+0000",
+                "closeTime": "2026-10-05T13:39:37+0000",
+                "tag": "TA_krshk30gmailcom1773690950",
+                "accountNumber": "REDACTED",
+                "orderActivityCollection": [
+                  {
+                    "activityType": "EXECUTION",
+                    "activityId": 132509514360,
+                    "executionType": "FILL",
+                    "quantity": 180.0,
+                    "orderRemainingQuantity": 0.0,
+                    "executionLegs": [
+                      {
+                        "legId": 1,
+                        "quantity": 180.0,
+                        "mismarkedQuantity": 0.0,
+                        "price": 3.05,
+                        "time": "2026-10-05T13:39:37+0000",
+                        "instrumentId": 251999744
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

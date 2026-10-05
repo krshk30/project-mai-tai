@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,6 +44,13 @@ def _service(**overrides: object) -> OmsRiskService:
     service._native_oco_armed_confirmed_at = {}
     service._native_oco_resolving = {}
     service._managed_v2_symbols = set()
+    service.store = _RowStore()
+    service._oco_exit_fetch_deferrals = {}
+    async def run_db(fn, commit=False):
+        return fn(object())
+    service._run_db = run_db
+    service._find_oco_entry_order = lambda _s, _a, sym, **_kw: SimpleNamespace(
+        broker_order_id=sym + "-parent", client_order_id=sym + "-open", quantity=2)
     return service
 
 
@@ -108,6 +116,20 @@ class _StubAdapter:
         self._resolved_boom = resolved_boom
         self.calls: list[tuple[str, tuple[str, ...]]] = []
         self.resolved_calls: list[tuple[str, tuple[str, ...]]] = []
+
+    async def fetch_exit_legs_for_entry(self, account, parent):
+        symbol = parent.removesuffix("-parent")
+        repeated = (account, (symbol,)) in self.calls
+        self.calls.append((account, (symbol,)))
+        if repeated:
+            self.resolved_calls.append((account, (symbol,)))
+        if self._boom or (repeated and self._resolved_boom):
+            raise RuntimeError("broker unreachable")
+        return {"working": [symbol + "-T", symbol + "-S"] if symbol in self._armed else [],
+                "filled": symbol in self._resolved, "unsafe": False}
+
+    async def fetch_oco_exit_fill(self, *_args, **_kwargs):
+        return None
 
     async def fetch_armed_native_oco_symbols(self, account: str, symbols: list[str]) -> set[str]:
         self.calls.append((account, tuple(symbols)))
@@ -256,7 +278,7 @@ class _RowStore:
     def get_open_managed_position(self, _session: object, *, broker_account_name: str, symbol: str):
         if not self.open:
             return None
-        return type("_Row", (), {"id": "test-managed-row", "entry_time": utcnow()})()
+        return SimpleNamespace(id="test-managed-row", entry_time=utcnow(), current_quantity=2)
 
     def close_managed_position(self, _session: object, _row: object) -> None:
         self.open = False
@@ -284,7 +306,7 @@ def _reconcile_service(
     if not has_capability:
         # An adapter without the fill-status capability (Webull/Alpaca/sim): shadow the method so
         # getattr(adapter, "fetch_oco_resolved_by_fill_symbols", None) resolves to None.
-        adapter.fetch_oco_resolved_by_fill_symbols = None  # type: ignore[assignment]
+        adapter.fetch_oco_exit_fill = None  # type: ignore[assignment]
     service.broker_adapter = adapter
     return service
 

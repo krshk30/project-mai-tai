@@ -193,7 +193,11 @@ def _svc(adapter, *, base: str = "protect-base") -> svc.OmsRiskService:
     s.broker_adapter = adapter
     s._webull_protect_base = {("live:orb", "XHG"): base} if base else {}
     s._exit_reservation_released = set()
-    s._find_oco_entry_order = lambda *a, **k: None
+    s._find_oco_entry_order = lambda *a, **k: SimpleNamespace(
+        client_order_id="entry-coid", broker_order_id="owned-parent", payload={
+            "fanout_leg": "webull", "native_oco_bracket": "false",
+            "webull_protect_base_client_order_id": base,
+        }) if base else None
     return s
 
 
@@ -266,6 +270,9 @@ def test_the_latch_is_CLEARED_when_the_position_closes() -> None:
     assert len(a.cancelled) == 1
     svc.OmsRiskService._clear_exit_reservation_release(s, "live:orb", "XHG")
     s._webull_protect_base[("live:orb", "XHG")] = "protect-base-2"
+    s._find_oco_entry_order = lambda *a_, **k: SimpleNamespace(
+        client_order_id="next-entry", broker_order_id="next-owned-parent", payload={
+            "fanout_leg": "webull", "webull_protect_base_client_order_id": "protect-base-2"})
     _release(s)
     assert len(a.cancelled) == 2, "the next position must release its own legs"
 
@@ -298,7 +305,7 @@ def test_the_router_forwards_the_post_cancel_broker_state() -> None:
 def test_no_known_base_and_no_entry_order_cancels_NOTHING() -> None:
     a = _Adapter()
     s = _svc(a, base="")
-    assert _release(s).outcome == "unsupported"
+    assert _release(s).outcome == "unanswerable"
     assert a.cancelled == []
 
 
@@ -307,7 +314,8 @@ def test_it_falls_back_to_the_ENTRY_coid_when_the_attach_id_is_forgotten() -> No
     `broker_orders` row, and the native combo's legs hang off it."""
     a = _Adapter()
     s = _svc(a, base="")
-    s._find_oco_entry_order = lambda *a_, **k: SimpleNamespace(client_order_id="entry-coid")
+    s._find_oco_entry_order = lambda *a_, **k: SimpleNamespace(
+        client_order_id="entry-coid", broker_order_id="owned-parent")
     assert _release(s).outcome == "released"
     assert a.cancelled == [("XHG", "entry-coid")]
 
