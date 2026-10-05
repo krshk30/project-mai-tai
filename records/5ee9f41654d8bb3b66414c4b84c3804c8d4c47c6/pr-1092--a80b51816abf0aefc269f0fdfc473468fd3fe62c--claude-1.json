@@ -1,0 +1,9 @@
+{
+  "pr_number": 1092,
+  "range_base": "a80b51816abf0aefc269f0fdfc473468fd3fe62c",
+  "range_head": "5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6",
+  "reviewed_at": "2026-10-05T16:01:24Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "PMPRINT1 + PMFLIP1 (two commits 71f5f6bc, 5ee9f416). Read the full source diff (schwab_1m_v2.py, schwab_1m_v2_bot.py, entry_gate.py, settings.py, expected_flags.json) and both reports. Card vs built: both cards match \u2014 before 09:30 a cross needs a print AND a fresh ask at or above the trigger, a stray print takes no state, both legs sized and routed from the confirming ask; a pre-market BUY flip marks flip-seen without blinding the rest, existing next-bar take-down unchanged, SELL flip ends the wait. Own mutations on 5ee9f416: 19 of 20 RED (lower check, latch on block, sizing, stream ask, 09:30 scope x4, flip blind, sell-flip end, window guard, midpoint, Webull binding, take-down, routing after session, flag defaults x2); M17 equivalent (take-down returns first); the dead gap-hold guard was removed. Focused 346 pass; full unit 48 failed / 5,508 passed vs main-equivalent 48 / 5,420, failed names identical. Validate x2 pass. Catalog = staged set (print true, flip-wait false, pm-rest false, hand-off false). Not reviewed: install plan execution (blocked on durable RPG tickets, proof b), live behaviour."
+}
