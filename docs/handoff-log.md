@@ -5470,3 +5470,11 @@ proven-clear tickets, unbound host 15:59:59 produces primary/mirror 1/1,
 1/1. This is test-clock handling, not a production ownership defect.
 Pauli remains sole writer for the test-only correction and regression;
 both fresh CI runs and full-name pair remain required. No runtime writes.
+
+2026-10-05 16:22 ET codex-2 C76: #1093 af06bf9d published, fixture-only
+clock correction preserves real predicates and prior assertions. Fresh own
+full main5577/56 vs head5885/same56, parent XML diff added0/removed0;
+focused1571/target32, prior82 controls rerun RED plus three clock controls.
+Independent Mencius review found no blocker. Plan70d2b5bb binds head and
+allowance53PASS/18RED/new-byte rc0 dryruns. Push37369136586 running and
+pull37369140629 queued; no pin/merge/install or source/default/catalog fix.
