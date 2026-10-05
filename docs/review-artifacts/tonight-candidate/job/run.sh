@@ -3,7 +3,6 @@
 set -Eeuo pipefail
 umask 077
 export PYTHONDONTWRITEBYTECODE=1
-export TZ=America/New_York
 REPO=/home/trader/project-mai-tai
 PY=$REPO/.venv/bin/python
 JOB=$(cd -- "$(dirname -- "$0")" && pwd)
@@ -20,7 +19,7 @@ mkdir "$ATTEMPT"
 exec > >(tee -a "$ATTEMPT/runner.log") 2>&1
 
 run() {
-  printf '\nUTC=%s ET=%s STAGE=%s CALL' "$(date -u --iso-8601=ns)" "$(date --iso-8601=ns)" "$STAGE"
+  printf '\nUTC=%s ET=%s STAGE=%s CALL' "$(date -u --iso-8601=ns)" "$(TZ=America/New_York date --iso-8601=ns)" "$STAGE"
   printf ' %q' "$@"
   printf '\n'
   "$@"
@@ -32,7 +31,8 @@ abort() {
     set +e
     actual=$(systemctl show project-mai-tai-oms.service project-mai-tai-schwab-1m-v2.service \
       project-mai-tai-strategy.service -p Id -p MainPID -p ActiveState -p SubState -p NRestarts)
-    printf 'STOP rc=%s stage=%s\n%s\n' "$rc" "$STAGE" "$actual"
+    printf 'UTC=%s ET=%s STOP rc=%s stage=%s\n%s\n' \
+      "$(date -u --iso-8601=ns)" "$(TZ=America/New_York date --iso-8601=ns)" "$rc" "$STAGE" "$actual"
     "$PY" "$JOB/actions.py" journal "STOP rc=$rc stage=$STAGE attempt=$ATTEMPT actual=$actual; no automatic recovery"
     "$PY" "$JOB/actions.py" page "rc=$rc stage=$STAGE attempt=$ATTEMPT actual=$actual; no automatic recovery"
   fi
@@ -67,8 +67,11 @@ redis_now() {
     --baseline "$ATTEMPT/redis-baseline.json"
 }
 window_now() {
-  [[ $(date +%F) == 2026-10-05 ]]
-  [[ $(date +%H%M) < 1915 ]]
+  local hhmmss
+  [[ $(TZ=America/New_York date +%F) == 2026-10-05 ]] || return 1
+  hhmmss=$(TZ=America/New_York date +%H%M%S)
+  [[ $hhmmss < 213000 || $hhmmss == 213000 ]] || return 1
+  if [[ ${1:-} == first-stop ]]; then [[ $hhmmss > 200500 || $hhmmss == 200500 ]]; fi
 }
 
 STAGE=initial-read-only-gates
@@ -82,9 +85,9 @@ json_receipt redis-baseline.json "$PY" "$JOB/redis_checkpoint.py"
 run nice -n 19 "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
 
 STAGE=wait-unmodified-v2-gate
-while [[ $(date +%H%M) < 1800 ]]; do
+while [[ $(TZ=America/New_York date +%H%M) < 2005 ]]; do
   window_now
-  printf 'WAIT clock before18:00; no override, no checkout/env/service change\n'
+  printf 'WAIT clock before20:05 ET; no override, no checkout/env/service change\n'
   sleep 30
 done
 while :; do
@@ -132,15 +135,15 @@ run runuser -u trader -- "$REPO/.venv/bin/pip" install --no-deps -e "$REPO"
 run runuser -u trader -- "$PY" -c 'import project_mai_tai; print(project_mai_tai.__file__); assert project_mai_tai.__file__.startswith("/home/trader/project-mai-tai/src/")'
 flat_now
 run "$PY" "$JOB/actions.py" env "$ATTEMPT"
-run "$PY" "$JOB/actions.py" journal "BEGIN exact=$APPROVED_SHA attempt=$ATTEMPT after18 unmodified gate; no clock override"
+run "$PY" "$JOB/actions.py" journal "BEGIN exact=$APPROVED_SHA attempt=$ATTEMPT after20:05 ET/rotation; native tool timezone, explicit ET runner checks; unmodified gate/no clock override; new current10-06 logs, see post-start-logs.json source paths"
 
 STAGE=stop-v2
-window_now
+window_now first-stop
 flat_now
 redis_now
 run nice -n 19 "$REPO/ops/preflight/preflight_v2_restart.sh"
 run "$PY" "$JOB/actions.py" unchanged "$ATTEMPT/before.json"
-window_now
+window_now first-stop
 run systemctl stop project-mai-tai-schwab-1m-v2.service
 json_receipt v2-stopped.json "$PY" "$JOB/proof.py" checkpoint --before "$ATTEMPT/before.json" --phase v2-stopped
 

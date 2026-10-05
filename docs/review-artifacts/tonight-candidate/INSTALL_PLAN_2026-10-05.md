@@ -1,5 +1,39 @@
 # October 5 ALL-ON candidate: PM entry, RPG recovery and owned-entry binding
 
+## 18:50 Native-Timezone Reissue: Review Required
+
+This section supersedes ALL earlier timing and staging status below. Same
+application7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf, four true keys,
+0022 sequence, allowance helper ce3ab15b, scope and no-recovery policy.
+First v2 stop is allowed only2026-10-05 from20:05:00 through21:30:00 ET,
+after the00:00 UTC rotation. Preparation may precede20:05, but the runner
+waits before checkout/env changes. No clock fence after the first stop.
+
+Attempt2 (950e9e42) STOPPED18:29:45 ET at source-backup-and-advance, rc2:
+the official snapshot rejected `Sat 2026-10-03 18:03:17 EDT`. Runner's
+global TZ export changed systemctl output; its parser accepts UTC/GMT only.
+Staging, git fetch and STOP journal/page occurred; NO checkout advance,
+env edit, migration or service action. OMS23705/v226811/strategy24025 stayed
+active. Keep that attempt's artifacts/log intact; do not reuse its directory.
+
+Runtime change is ONLY job/run.sh: remove global TZ export, scope ET to date
+display/window calls, explicit UTC/ET abort display, new first-stop bounds.
+No checker, gate, actions.py, proof.py, census or allowance policy edit.
+All39 local runner tests pass (29 existing plus10 timezone/boundary cases).
+See RUNNER_REVISION_1850.md for the complete timestamp audit and test names.
+
+The new committed bytes/manifest require fresh exact-byte review BEFORE
+staging or execution. Prior approval of950e9e42 does not approve this release.
+Use a NEW exclusive job/attempt directory after approval. No box write has
+been made for this reissue. No scheduled job or completed install is claimed.
+
+Post-install quotes must name their actual source: fresh current
+/var/log/project-mai-tai/oms.log, schwab-1m-v2.log and strategy.log after
+the rotation into10-06 UTC; prior content is in each .log-20261006 copy.
+Record actual inode/offset/source paths from post-start-logs.json; never
+use the pre-rotation copies as new-process proof. Rotation itself is not
+claimed observed by this local reissue.
+
 ## 18:01 Reviewed Dispositions And Runner Correction
 
 D1 authorized one fresh read-only census. It completed18:05:22 ET with rc0:
@@ -309,11 +343,11 @@ API evidence/links are retained in REVIEW_SIX_GUARDS_DRY_RUN_2026-10-05.md.
 
 ## Every Runner Gate
 
-The following is the required contract for the future reviewed literal runner,
-NOT a claim a unit already exists. Preparation after20:00 ET/observed rotation,
-only on exact-SHA GO; approval/release date, flock, O_EXCL attempt and source/
-artifact hashes before any write. The eventual box unit/timer must be named and
-listable; desktop wake-up is not scheduling evidence.
+The following is the required contract for the reviewed literal attended runner,
+not a claim a unit exists. The18:50 reissue is fenced at the first stop to
+20:05:00-21:30:00 ET, after rotation, on the same exact-SHA GO plus fresh
+exact-byte approval. Approval/release date, flock, exclusive attempt and source/
+artifact hashes precede execution. Desktop wake-up is not scheduling evidence.
 
 | Gate | When / blocking rule | Exact MI/NXL effect |
 |---|---|---|
@@ -338,10 +372,10 @@ listable; desktop wake-up is not scheduling evidence.
 
 General gates run before controlled stops, not against intentionally inactive
 targets. Fresh strict-flat and restart fences are still run at action points.
-Serialize broker reads; do not cause a rate-limit burst. UNKNOWN before any
-write may wait300s and re-read inside the reviewed window; no restart without
-fresh rc0. After a scoped action, STOP/page and use only the reviewed abort
-policy, not an improvised retry. No daytime clock override is pre-authorized.
+Serialize broker reads; do not cause a rate-limit burst. Read-only flat/census
+rc2 gets at most3 attempts60s apart, logged; measured rc1 and unexpected codes
+stop immediately. No restart without fresh rc0. Other failed checks STOP/page;
+no improvised retry or recovery. No clock override is pre-authorized.
 
 ## Exact Read-Only Gate Invocations
 
