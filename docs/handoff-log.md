@@ -5478,3 +5478,10 @@ focused1571/target32, prior82 controls rerun RED plus three clock controls.
 Independent Mencius review found no blocker. Plan70d2b5bb binds head and
 allowance53PASS/18RED/new-byte rc0 dryruns. Push37369136586 running and
 pull37369140629 queued; no pin/merge/install or source/default/catalog fix.
+
+2026-10-05 16:24 ET codex-2 C77: sole writer's final report-correction
+commit3b4e193e atop af06 changes REPORT_CI_CLOCK.md only. Tested bytes and
+fresh5885/same56/focus1571/controls85 results unchanged. CI proves primary0
+before checking mirror; independent controlled reproduction proves both0.
+Parent rebound plan to a8168b29; pull37369239742 running/push37369235161
+queued, fresh pin absent. Branch frozen; no production action.
