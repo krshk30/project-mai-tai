@@ -69,3 +69,41 @@ and atomic snapshot publication without replaying entry state; then recorded
 RETO/JAGX/September/restart controls, BENF and13-entry controls, full paired
 suite and composition. Unknown coverage stays fail-closed. Source/coverage
 completeness cannot be inferred from a recent bar or successful DB read.
+
+## Read-Only Integration Audit,14:04 ET
+
+Live files remain identical to merged main7e10. The current REST client cannot
+attest a complete04:00-anchored session: `schwab_v2_rest_client.py:277` uses a
+rolling window, cursor filtering, malformed-row skips and returns only bars.
+It can return more than250 rows, but that is not completeness evidence. Its
+cursor advances before callback completion and survives desired-symbol removal
+(`:172`). A dedicated anchored response manifest is required; the controlled
+coverage manifests in these12 tests do not supply live provider proof.
+
+The DB seed at `services/schwab_1m_v2_bot.py:4325` reads latest250 rows and
+`_db_seeded` prevents later rereads. No current hook notices external late
+backfill/revisions. Stream/REST ingestion and pending drain at3734/3804/3870
+must update restoration history even when the normal callback rejects an older
+bar; C3's old-REST skip at4449 must not discard restoration evidence.
+
+Restart setup at786/881, add/re-add/remove at3214/3305 and session rollover at2071
+must initialize/invalidate per-symbol epochs before callbacks. Existing fresh-bar,
+boot timeout and strict-admission readiness cannot substitute for full history.
+Removal may discard consumed-slot memory (`strategy_core/schwab_1m_v2.py:2687`),
+which restoration must not interpret as a new opportunity.
+
+Do not rebuild through `on_bar` or completed-bar evaluation: those mutate
+trading state, and equal-minute corrections do not recompute ATR. The math-only
+snapshot fields at3618 are the publication boundary; `seed_atr_state`:4028
+currently mutates live state and is not an isolated worker. Preserve slots,
+working orders, ownership, retry budgets and pending SELL delivery. Publish
+math/readiness atomically after checking active symbol/session/epoch/revision;
+never replay a historical BUY/SELL or a cancellation.
+
+Readiness gates must cover first-entry/resting/reprice, reclaim/reactive, both
+EH crossing paths and RPG replacement authorization, not only one callback.
+Confirmation snapshots at bot4510 and late-fill evaluation at1510 also read
+the line: correcting only current ATR fields leaves stale exit evidence.
+Version/reconcile unevaluated snapshots without repeating issued exits.
+The implementation remains NOT live-wired or PR-ready. This read-only audit
+adds no source, service, database, flag or install change.
