@@ -40,7 +40,20 @@ abort() {
 }
 trap abort EXIT
 # No trap starts or restarts a unit: the new GO pre-authorizes no recovery.
-flat_now() { run nice -n 19 "$PY" "$JOB/strict_flat_readonly.py"; }
+read_only_retry() {
+  local attempt rc
+  for attempt in 1 2 3; do
+    printf 'READ_ONLY_ATTEMPT attempt=%s/3 STAGE=%s\n' "$attempt" "$STAGE"
+    if run "$@"; then rc=0; else rc=$?; fi
+    printf 'READ_ONLY_RESULT attempt=%s/3 rc=%s STAGE=%s\n' "$attempt" "$rc" "$STAGE"
+    if (( rc == 0 )); then return 0; fi
+    if (( rc != 2 || attempt == 3 )); then return "$rc"; fi
+    printf 'READ_ONLY_UNREADABLE wait_seconds=60; no policy waiver\n'
+    sleep 60
+  done
+}
+flat_now() { read_only_retry nice -n 19 "$PY" "$JOB/strict_flat_readonly.py"; }
+census_now() { read_only_retry "$PY" "$JOB/census_readonly.py" --require-reviewed; }
 json_receipt() {
   local name=$1; shift
   printf 'JSON_RECEIPT %s CALL' "$name"
@@ -55,16 +68,16 @@ redis_now() {
 }
 window_now() {
   [[ $(date +%F) == 2026-10-05 ]]
-  [[ $(date +%H%M) < 2000 ]]
+  [[ $(date +%H%M) < 1915 ]]
 }
 
 STAGE=initial-read-only-gates
 window_now
 [[ $(runuser -u trader -- git -C "$REPO" rev-parse HEAD) == "$BOX_SHA" ]]
 [[ -z $(runuser -u trader -- git -C "$REPO" status --porcelain) ]]
-run nice -n 19 "$PY" "$JOB/strict_flat_readonly.py" --service oms
-run nice -n 19 "$PY" "$JOB/strict_flat_readonly.py" --service strategy
-run "$PY" "$JOB/census_readonly.py" --require-reviewed
+read_only_retry nice -n 19 "$PY" "$JOB/strict_flat_readonly.py" --service oms
+read_only_retry nice -n 19 "$PY" "$JOB/strict_flat_readonly.py" --service strategy
+census_now
 json_receipt redis-baseline.json "$PY" "$JOB/redis_checkpoint.py"
 run nice -n 19 "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
 
@@ -101,7 +114,7 @@ done
 json_receipt before.json "$PY" "$JOB/proof.py" capture
 
 STAGE=source-backup-and-advance
-run "$PY" "$JOB/census_readonly.py" --require-reviewed
+census_now
 flat_now
 run runuser -u trader -- git -C "$REPO" fetch origin main
 [[ $(runuser -u trader -- git -C "$REPO" rev-parse HEAD) == "$BOX_SHA" ]]
@@ -127,6 +140,7 @@ flat_now
 redis_now
 run nice -n 19 "$REPO/ops/preflight/preflight_v2_restart.sh"
 run "$PY" "$JOB/actions.py" unchanged "$ATTEMPT/before.json"
+window_now
 run systemctl stop project-mai-tai-schwab-1m-v2.service
 json_receipt v2-stopped.json "$PY" "$JOB/proof.py" checkpoint --before "$ATTEMPT/before.json" --phase v2-stopped
 
@@ -137,7 +151,7 @@ run systemctl stop project-mai-tai-strategy.service
 json_receipt strategy-stopped.json "$PY" "$JOB/proof.py" checkpoint --before "$ATTEMPT/before.json" --phase strategy-stopped
 
 STAGE=stop-oms
-run "$PY" "$JOB/census_readonly.py" --require-reviewed
+census_now
 flat_now
 run nice -n 19 "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
 redis_now
@@ -151,7 +165,6 @@ run "$PY" "$JOB/actions.py" migration "$ATTEMPT"
 json_receipt migrated.json "$PY" "$JOB/proof.py" checkpoint --before "$ATTEMPT/before.json" --phase migrated
 
 STAGE=start-oms-once
-window_now
 flat_now
 redis_now
 run systemctl start project-mai-tai-oms.service
@@ -198,7 +211,7 @@ candidate_rc=$?
 set -e
 cat "$ATTEMPT/preopen-candidate.json"
 [[ $candidate_rc == 2 ]]
-# Initial approval must explicitly acknowledge the preserved inactive-paper check.
+# D2: reviewed truth, PID0 and the existing active-check failure are retained.
 run "$PY" "$JOB/actions.py" repin "$ATTEMPT"
 run "$PY" "$JOB/actions.py" journal "COMPLETE application=$APPROVED_SHA attempt=$ATTEMPT; see final.json, gate outputs and preopen diff/hash; scanner validation owned by claude-1, live/rotation reads pending"
 printf 'COMPLETE application=%s attempt=%s\n' "$APPROVED_SHA" "$ATTEMPT"

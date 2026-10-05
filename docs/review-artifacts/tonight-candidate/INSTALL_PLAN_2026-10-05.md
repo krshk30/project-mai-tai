@@ -1,5 +1,35 @@
 # October 5 ALL-ON candidate: PM entry, RPG recovery and owned-entry binding
 
+## 18:01 Reviewed Dispositions And Runner Correction
+
+D1 authorized one fresh read-only census. It completed18:05:22 ET with rc0:
+all11 linked parents terminal,14 reviewed identities matched, journal digest
+unchanged. `CENSUS_D1_REREAD_2026-10-05.json` preserves the complete extracted
+parent array and explicitly discloses tool-output truncation. This resolves
+the17:39 UNKNOWN only; no install-time flatness or all-time orphan claim.
+
+D2 accepts real paperinactive/PID0. Existing active-check FAIL is EXPECTED,
+not waived; journal and tomorrow's generated report name it. No paper restart,
+routing bypass or extra approval field. Accepted FLAGGATE145/147+UNKNOWN2.
+
+R1 is implemented IN THE RUNNER: rc2 read-only flat/census results get at most
+three attempts60seconds apart, every call/result logged. rc1 measured blocks
+and any unexpected code stop immediately. The allowance helper remains exact
+SHA256ce3ab15bf95a5910e9b84b147d1460c9c494bc359fa6facfa80ebf9884e55ab8.
+Census now distinguishes rc1 measured versus rc2 unreadable; no internal
+retry/refresh. Webull detail GETs serialized with2seconds between starts.
+
+R2 fences the FIRST v2 stop before19:15 ET on10-05 only. No runner clock
+check or proof-helper time fence after that stop; already-started sequence
+completes regardless of clock, with safety/data gates retained. If first stop
+cannot occur before19:15, do not execute this release: re-issue for20:05 or
+later after observed rotation, bound to actual box state and reviewed bytes.
+
+The corrected bytes and manifest await exact approval BEFORE remote staging
+or any box write. `RUNNER_REVISION_1801.md` records tests and dispositions.
+Only LOCAL files were edited/pushed; no production mutation or COMPLETE claim.
+Earlier status paragraphs below are historical, superseded by this section.
+
 ## 17:30 GO And 17:39 Read-Only STOP
 
 The operator's 17:30 ET GO names application7823a6fa and reviewer-approved

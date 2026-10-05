@@ -114,8 +114,7 @@ def test_approval_requires_exact_scope_application_and_manifest(tmp_path, monkey
     release_hash = actions.digest(tmp_path / "release.json")
     approval = {"reviewer": "claude-1", "decision": "APPROVED", "plan_commit": "a" * 40,
                 "approved_sha": actions.APP, "release_sha256": release_hash, "date_et": "2026-10-05",
-                "scope": "v2-strategy-oms-0022-all-four-on-no-recovery",
-                "preopen_inactive_paper_disposition": "PIN_REAL_PID0_PRESERVE_CHECK_REPORT_FAILURE"}
+                "scope": "v2-strategy-oms-0022-all-four-on-no-recovery"}
     (tmp_path / "approval.json").write_text(json.dumps(approval))
     actions.verify(tmp_path, release_hash)
     approval["approved_sha"] = actions.BOX
@@ -123,7 +122,7 @@ def test_approval_requires_exact_scope_application_and_manifest(tmp_path, monkey
     with pytest.raises(RuntimeError, match="approval"):
         actions.verify(tmp_path, release_hash)
     approval["approved_sha"] = actions.APP
-    approval.pop("preopen_inactive_paper_disposition")
+    approval["scope"] = "unapproved-recovery"
     (tmp_path / "approval.json").write_text(json.dumps(approval))
     with pytest.raises(RuntimeError, match="approval"):
         actions.verify(tmp_path, release_hash)

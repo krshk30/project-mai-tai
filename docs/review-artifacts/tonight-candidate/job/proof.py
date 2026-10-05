@@ -75,8 +75,11 @@ def run(args, *, check=True):
 def wall(*, action=False):
     now = datetime.now(UTC)
     local = now.astimezone(ZoneInfo("America/New_York"))
-    need(local.date().isoformat() == DAY and local.hour < 20 and (not action or local.hour >= 18),
-         "outside October5 window (actions require18<=hour<20); no clock override")
+    # The runner fences the first stop. Read-only completion proofs must not
+    # strand already-stopped services merely because the clock advances.
+    if action:
+        need(local.date().isoformat() == DAY and 18 <= local.hour < 20,
+             "outside October5 first-stop window; no clock override")
     return now.isoformat()
 
 
@@ -351,6 +354,18 @@ def replace_assignment(script, key, value):
     return re.sub(pattern, key + "=" + shlex.quote(str(value)), script, flags=re.M)
 
 
+def annotate_paper_expectation(script):
+    marker = 'preopen_record_restart_evidence "$evidence_rc" "$REPORT" "$evidence_output"\n'
+    need(script.count(marker) == 1, "paper report annotation anchor ambiguous")
+    note = "EXPECTED D2: momentum-paper inactive/PID0; existing active-check FAIL retained, no routing bypass or paper restart."
+    # Report annotation only: all identity checks and verdict routing remain intact.
+    annotation = ("printf '%s\\n' " + shlex.quote(note) + "\n"
+                  + "if ! printf '\\n%s\\n' " + shlex.quote(note)
+                  + ' | sudo -n tee -a "$REPORT" >/dev/null; then\n'
+                  + '  fail "cannot record expected inactive-paper disposition in report"\nfi\n')
+    return script.replace(marker, marker + annotation)
+
+
 def repin(args):
     before, after = load(args.before), load(args.after)
     validate_checkpoint(before, after, "final")
@@ -390,6 +405,8 @@ def repin(args):
     # No check_identity function, helper routing or final-verdict logic is rewritten.
     paper = after["services"]["momentum-paper"]
     pending = paper["MainPID"] == 0
+    if pending:
+        script = annotate_paper_expectation(script)
     return {"old_sha256": args.old_sha256, "candidate_sha256": sha(script.encode()), "candidate": script,
             "diff": "".join(unified_diff(original.splitlines(True), script.splitlines(True), fromfile="preopen.before", tofile="preopen.candidate")),
             "write_authorized": False, "required_backup": "parent O_EXCL copy preserving bytes/owner/mode; verify old hash before replace",
@@ -543,7 +560,7 @@ def runner_mode(command, arguments):
     before = load(attempt / "proof-before.json")
     if command == "redis":
         return redis_proof(before)
-    wall(action=True)
+    wall(action=command == "verify-source")
     if command == "verify-source":
         release = load(attempt.parent / "release.json")
         _, tree, _ = run(["git", "-C", repo, "rev-parse", SHA + "^{tree}"])

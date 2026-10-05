@@ -1,4 +1,4 @@
-"""Explicit read-only census, not install authority. Exit 2 means UNKNOWN/STOP.
+"""Read-only census: rc0 clear, rc1 measured blocker, rc2 unreadable/UNKNOWN.
 
 Run through SSH stdin as root/nice19 with PYTHONDONTWRITEBYTECODE=1 and
 PYTHONPATH=/home/trader/project-mai-tai/src. No snapshot-batches, refresh grant,
@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -105,6 +106,10 @@ class Stop(Exception):
     pass
 
 
+class Unreadable(Stop):
+    pass
+
+
 def stamp():
     return datetime.now(timezone.utc).isoformat()
 
@@ -112,7 +117,7 @@ def stamp():
 def bounded(value, limit=MAX_BODY):
     size = len(json.dumps(value, default=str).encode())
     if size > limit:
-        raise Stop("evidence byte bound exceeded")
+        raise Unreadable("evidence byte bound exceeded")
     return size
 
 
@@ -129,7 +134,7 @@ def redacted(value):
 def rows(connection, query, parameters=None, limit=MAX_ROWS):
     data = [dict(row) for row in connection.execute(text(query), parameters or {}).mappings()]
     if len(data) > limit:
-        raise Stop("SQL row overflow: " + query.split()[1])
+        raise Unreadable("SQL row overflow: " + query.split()[1])
     bounded(data)
     return data
 
@@ -150,7 +155,7 @@ def sql_census(config, result):
                                            "WHERE snapshot_type='atr_reprice_handoff'"))
             result["all_date_ticket_count"] = total
             if total > MAX_ROWS:
-                raise Stop("all-date journal exceeds 64-row bound")
+                raise Unreadable("all-date journal exceeds 64-row bound")
             # Invoke the actual unfiltered runtime reader only after its size is proven bounded.
             with Session(bind=connection, autoflush=False) as session:
                 jobs = HandoffJournal(None).jobs(session=session)
@@ -268,9 +273,9 @@ def fresh_schwab_get(adapter, token, path, reads):
                   "path_sha256": hashlib.sha256(path.encode()).hexdigest(),
                   "http": status, "response_bytes": len(raw)})
     if len(raw) > MAX_BODY:
-        raise Stop("Schwab GET exceeds 1 MB bound")
+        raise Unreadable("Schwab GET exceeds 1 MB bound")
     if status != 200:
-        raise Stop("Schwab GET HTTP " + str(status) + "; no retry/refresh")
+        raise Unreadable("Schwab GET HTTP " + str(status) + "; no internal retry/refresh")
     return json.loads(raw)
 
 
@@ -288,7 +293,7 @@ def webull_pages(adapter, request_type, label, reads):
         response = adapter._get_client().get_response(request)
         code = int(getattr(response, "status_code", 0))
         if not 200 <= code < 300:
-            raise Stop("Webull " + label + " HTTP " + str(code))
+            raise Unreadable("Webull " + label + " HTTP " + str(code))
         body = adapter._body(response)
         size = bounded(body)
         reads.append({"account": ACCOUNTS[1], "method": "GET", "read_at": stamp(),
@@ -296,26 +301,26 @@ def webull_pages(adapter, request_type, label, reads):
                       "cursor": cursor, "http": code, "response_bytes": size,
                       "response_bytes_kind": "serialized SDK-decoded JSON"})
         if not isinstance(body, dict) or not isinstance(body.get("orders"), list):
-            raise Stop("Webull " + label + " unreadable envelope")
+            raise Unreadable("Webull " + label + " unreadable envelope")
         batch = body["orders"]
         if len(batch) > 50 or any(not isinstance(row, dict) for row in batch):
-            raise Stop("Webull " + label + " invalid page")
+            raise Unreadable("Webull " + label + " invalid page")
         output.extend(batch)
         pages.append({"page": page, "http": code, "body": redacted(body)})
         if len(output) > 256:
-            raise Stop("Webull " + label + " exceeds 256-row bound")
+            raise Unreadable("Webull " + label + " exceeds 256-row bound")
         markers = [body[key] for key in ("has_next", "hasNext") if key in body]
         if not markers or any(type(value) is not bool for value in markers) or len(set(markers)) != 1:
-            raise Stop("Webull " + label + " completion marker unproven")
+            raise Unreadable("Webull " + label + " completion marker unproven")
         if markers[0] is False:
             return {"complete": True, "count": len(output), "pages": pages}
         if not batch:
-            raise Stop("Webull " + label + " empty incomplete page")
+            raise Unreadable("Webull " + label + " empty incomplete page")
         cursor = batch[-1].get("client_order_id") or batch[-1].get("clientOrderId")
         if not cursor or cursor in seen:
-            raise Stop("Webull " + label + " missing/repeated cursor")
+            raise Unreadable("Webull " + label + " missing/repeated cursor")
         seen.add(cursor)
-    raise Stop("Webull " + label + " page overflow")
+    raise Unreadable("Webull " + label + " page overflow")
 
 
 async def brokers(config, result):
@@ -334,23 +339,23 @@ async def brokers(config, result):
     reads = result["direct_requests"] = []
     body = await asyncio.to_thread(fresh_schwab_get, adapter, token, path, reads)
     if not isinstance(body, list) or len(body) >= 500:
-        raise Stop("Schwab OMS-sync order list unreadable/truncated")
+        raise Unreadable("Schwab OMS-sync order list unreadable/truncated")
     active = []
 
     def walk(node, depth=0):
         if not isinstance(node, dict) or depth > 12:
-            raise Stop("Schwab order-tree shape unreadable")
+            raise Unreadable("Schwab order-tree shape unreadable")
         legs, children = node.get("orderLegCollection", []), node.get("childOrderStrategies", [])
         if not isinstance(legs, list) or not isinstance(children, list):
-            raise Stop("Schwab order tree collections unreadable")
+            raise Unreadable("Schwab order tree collections unreadable")
         status = str(node.get("status") or "").upper()
         if legs:
             if status not in TERMINAL | adapter.ACCEPTED_STATUSES:
-                raise Stop("Schwab order status unrecognized")
+                raise Unreadable("Schwab order status unrecognized")
             if status not in TERMINAL:
                 active.append(redacted(node))
         elif not children:
-            raise Stop("Schwab empty order node")
+            raise Unreadable("Schwab empty order node")
         for child in children:
             walk(child, depth + 1)
 
@@ -366,6 +371,8 @@ async def brokers(config, result):
     result["webull_open"] = await asyncio.to_thread(webull_pages, webull, OpenOrdersListRequest, "open", reads)
     result["webull_today"] = await asyncio.to_thread(webull_pages, webull, TodayOrdersListRequest, "today", reads)
     result["exact_linked_parents"] = []
+    result["webull_detail_spacing_seconds"] = 2
+    last_webull_detail = None
     for row in result["linked_orders"]:
         if not row["broker_order_id"] or not row["client_order_id"]:
             raise Stop("linked order lacks exact broker/client identity")
@@ -384,21 +391,26 @@ async def brokers(config, result):
             walk(detail)
             status = str(detail.get("status", "")).upper()
         elif row["account"] == ACCOUNTS[1]:
+            if last_webull_detail is not None:
+                await asyncio.sleep(max(0, 2 - (time.monotonic() - last_webull_detail)))
             request = OrderDetailRequest()
             request.set_account_id(webull.accounts_by_name[ACCOUNTS[1]].account_id)
             request.set_client_order_id(row["client_order_id"])
             evidence = {"account": ACCOUNTS[1], "method": "GET", "path": "/trade/order/detail",
                         "client_order_id": row["client_order_id"], "read_at": stamp(), "http": "UNKNOWN"}
             reads.append(evidence)
+            last_webull_detail = time.monotonic()
             try:
                 response = await asyncio.to_thread(webull._get_client().get_response, request)
             except Exception as exc:
                 evidence["error_class"] = type(exc).__name__
-                raise Stop("Webull exact parent GET unreadable: " + row["client_order_id"]) from None
+                raise Unreadable("Webull exact parent GET unreadable: " + row["client_order_id"]
+                                 + " error_class=" + type(exc).__name__) from None
             code = int(getattr(response, "status_code", 0))
             evidence["http"] = code
             if not 200 <= code < 300:
-                raise Stop("Webull exact parent GET HTTP " + str(code))
+                raise Unreadable("Webull exact parent GET HTTP " + str(code)
+                                 + " client_order_id=" + row["client_order_id"])
             detail = webull._body(response)
             result["last_webull_exact_body"] = redacted(detail)
             size = bounded(detail)
@@ -407,7 +419,7 @@ async def brokers(config, result):
                 raise Stop("Webull exact parent broker identity mismatch")
             items = detail.get("items")
             if not isinstance(items, list) or len(items) != 1:
-                raise Stop("Webull exact parent items unreadable")
+                raise Unreadable("Webull exact parent items unreadable")
             item = items[0]
             if detail.get("client_order_id") != row["client_order_id"]:
                 raise Stop("Webull exact parent client identity mismatch")
@@ -449,11 +461,17 @@ async def main():
         result["rc"] = 0
         result["disposition"] = "bounded census only; not a strict-flat or install gate"
     except Stop as exc:
+        result["rc"] = 2 if isinstance(exc, Unreadable) else 1
         result["stop"] = str(exc)
     except Exception as exc:
         # Arbitrary HTTP/DB exceptions may contain protected URLs or credentials.
         result["stop"] = "unreadable evidence: " + type(exc).__name__
     result["completed_at"] = stamp()
+    if "linked_orders" in result:
+        proven = {row["client_order_id"] for row in result.get("exact_linked_parents", [])
+                  if row["status"] in TERMINAL}
+        result["unproven_client_order_ids"] = [row["client_order_id"] for row in result["linked_orders"]
+                                               if row["client_order_id"] not in proven]
     try:
         bounded(result, MAX_OUTPUT)
         print(json.dumps(result, default=str, indent=2))

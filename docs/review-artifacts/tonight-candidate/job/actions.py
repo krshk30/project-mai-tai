@@ -56,8 +56,7 @@ def verify(job, release_sha):
             or approval["approved_sha"] != APP
             or approval["release_sha256"] != release_sha
             or approval["date_et"] != "2026-10-05"
-            or approval["scope"] != "v2-strategy-oms-0022-all-four-on-no-recovery"
-            or approval.get("preopen_inactive_paper_disposition") != "PIN_REAL_PID0_PRESERVE_CHECK_REPORT_FAILURE"):
+            or approval["scope"] != "v2-strategy-oms-0022-all-four-on-no-recovery"):
         raise RuntimeError("exact runner approval absent or mismatched")
     if datetime.now(ZoneInfo("America/New_York")).date().isoformat() != "2026-10-05":
         raise RuntimeError("GO expired")
@@ -201,10 +200,8 @@ def catalogs(attempt):
 
 def repin(attempt):
     result = json.loads((attempt / "preopen-candidate.json").read_text())
-    approval = json.loads((attempt.parent / "approval.json").read_text())
     expected_question = ["inactive-paper check_identity currently demands active/running; candidate PID0 stays REAL FAILURE, no routing bypass"]
-    if (result["review_required"] != expected_question or
-            approval.get("preopen_inactive_paper_disposition") != "PIN_REAL_PID0_PRESERVE_CHECK_REPORT_FAILURE"):
+    if result["review_required"] != expected_question:
         raise RuntimeError("unresolved preopen routing disposition; no script write")
     path = Path("/home/trader/preopen.sh")
     original = path.read_bytes()
