@@ -5308,3 +5308,11 @@ latest250seedonce misseslatebackfill. Identifiedepoch/readiness/first/reclaim/
 cross/RPGadmission andconfirmationsnapshotpublicationhooks; callbacksunsafe
 forhistoryreplaybecauseconsumedslots/SELLdeliverycanchange. 12WIPtestsremain
 PASS, liveintegrationNOTwired/notPR. C57only; nootherrow/prod/ledgerchange.
+
+2026-10-05 14:07 ET codex-2: CLAIM RPG R20 and OWN F3 follow-ups on existing
+sole-writer branches, no rebase. Own code read confirms both reported edges;
+main7e10 retains the child-fetch retry and same-episode pending-fill guard.
+Candidate explicitly blocked on new tests/mutations/full pairs/composition
+and fresh pins; older suite evidence is not proof of these fixes. H4 symbol
+isolation assertion included in OWN scope. C58 only; no Mrow/Board/decision,
+merge, production or ledger changes.
