@@ -6,6 +6,12 @@ Scope: sole-writer branch `codex/rpgstuck1-canonical-handoff`, starting at
 the original card, and the operator's corrected requirements govern this change.
 OWNMIX1 and GAPKEEP are separate lanes; no shared handoff edit is included.
 
+**Latest explicit sequencing:** RPGSTUCK1 proceeds at normal pace as a standalone
+later change, **NOT tonight**. This supersedes the initial joint evening-plan
+references. The follow-up adds only tests, fixtures and report/evidence artifacts
+on top of `73e9e4c8f92f672ecc03e7c460b134123015840a`, with no rebase and no PM edits.
+Tonight's OFF proofs are a separate parent-owned task, not RPGSTUCK1 semantics.
+
 ## Recorded Before / After
 
 `tests/fixtures/rpgstuck1_recorded.json` extracts all four E1 persisted tickets
@@ -82,7 +88,7 @@ An unknown old order remains owned even if entry gates later close. Admission ga
 are evaluated on every call, including changed evidence in the same bar; only the
 log is limited to once per wall-clock one-minute bar per symbol.
 
-## Named Verification
+## Initial Named Verification (73e9e4c8)
 
 | Card | Exact tests / executable coverage |
 | --- | --- |
@@ -164,11 +170,108 @@ metadata and failed the executable-index test; it is superseded by this checkout
 Intermediate heads that caught overbroad share-counter fences are superseded by
 the frozen source whose hashes are in `verification.json`.
 
-Final raw files: `/tmp/rpgstuck-main-git-full.txt/xml`,
+Initial raw files: `/tmp/rpgstuck-main-git-full.txt/xml`,
 `/tmp/rpgstuck-head-reviewed-full.txt/xml`,
 `/tmp/rpgstuck-broad-reviewed.txt`, `/tmp/rpgstuck-focused-reviewed.xml`, and
 `/tmp/rpgstuck-composition-reviewed.txt`. Full source/test Ruff and whitespace
 checks pass. Existing local-platform failures are not a green full-suite claim.
+
+## Recorded Wire-Level Follow-Up
+
+The requested end-to-end cases are in
+`tests/unit/test_rpgstuck1_schwab_sequences.py`. They execute the **real** v2
+authorization callback, bot feedback persistence, RPG controller, ordinary OMS
+`process_trade_intent`, native-OCO decorator, both final-wire guards, and Schwab
+`submit_order` / bracket payload builder. Replacement HTTP transport is intercepted
+at `_authorized_request_json` before token refresh or any HTTP call. Inputs are not pre-rounded
+and the guards are not replaced with an unconditional permission.
+
+| Exact test / sequence (ET) | Actual strategy output | Actual intercepted Schwab payload | Outcome |
+| --- | --- | --- | --- |
+| `test_recorded_0932_0936_strategy_authorization_to_schwab_wire[APUS-0932]` | Recorded 09:32 probe trail5.245742 regenerates E3 stop5.2720 / limit5.2983, qty113 | STOP_LIMIT TRIGGER -> OCO, stopPrice5.27 / price5.30, all legs113 | One simulated accepted replacement, durable phase placed; repeated feedback/tick emits no second POST |
+| `test_recorded_0932_0936_strategy_authorization_to_schwab_wire[VEEA-0936]` | Recorded 09:36 probe trail5.481886 regenerates E3 stop5.5093 / limit5.5368, qty108 | STOP_LIMIT TRIGGER -> OCO, stopPrice5.51 / price5.54, all legs108 | One simulated accepted replacement despite the recorded unresolved Webull ticket; Webull stays owned; no second POST |
+| `test_recorded_apus_1025_1026_1027_place_keep_reprice_to_schwab_wire` | 10:25 trail5.295484 -> stop5.3220 / limit5.3486, qty112; 10:26 trail5.291387 stays below reprice threshold; 10:27 trail5.213060 -> stop5.2391 / limit5.2653, qty114 | Initial stopPrice5.32 / price5.35; no new payload at10:26; replacement stopPrice5.24 / price5.27 | Initial POST, then exactly one strict terminal-zero read and one replacement POST; old112 cancelled / new114 accepted in isolated DB; repeat tick produces no extra POST |
+
+The first two cases rewind their **recorded, proven-clear** tickets before their
+later historical refusals; the new four-decimal authorization is regenerated,
+not injected from the saved authorization. Raw stop, limit, line, segment, slot,
+quantity and outgoing cent prices are independently asserted. The late case runs
+the normal initial placement and actual reprice cancellation path before the same
+authorization/rounding/serialization chain. Its Webull 10:25 market4.56 /
+stop5.3220 (**14.3179%**) hold is recreated through the ordinary precheck with the
+recorded OMS cached ask/time; no mirror wire is permitted. At10:27 that old mirror
+is proven local and retired without a broker cancellation, independently of the
+primary's strict read. This new case selects only Schwab's replacement delivery;
+the existing R-T2/R-T5 tests continue to cover mirror reauthorization/dispatch.
+
+New late evidence: read at **2026-10-05T15:24:12.411211Z**, read-only transactions,
+8-second query bounds, ticket/order/intent limits4/10/20, APUS only,14:25-14:28Z.
+`read_late_sequence.py` ran via stdin at nice19 and was not installed remotely.
+The companion log pull reads only the selected APUS markers in that interval.
+`sequence-late-sql.json` and `sequence-late-logs.txt` retain both late tickets,
+their exact payloads and the observed lines. `rpgstuck1_sequences.json` preserves
+their SHA256 provenance and the two earlier retained probes. The earlier four-
+ticket census above remains its original frozen population, not a claim that no
+later tickets existed.
+
+Quotes not recorded in the ATR probes, bar OPEN values, empty test database setup,
+venue acceptance, the deliberately lost late cancel ACK, and the late strict-reader
+response are **controlled simulation**.
+The recorded ticket's clearance remains the provenance for early replay staging.
+The OCO geometry is configured to the recorded +5% / -8%; no production setting is
+changed. These tests prove serialization and dispatch count, not historical venue
+acceptance, live post-fix latency or live P&L. There are no live broker calls or
+ledger repairs.
+
+Three additional assertion-killed mutations prove these new cases detect restored
+raw authorization comparisons, missing **actual OMS stop rounding**, and missing
+**actual OMS limit rounding**. See `check_sequence_mutations.py` and
+`sequence-mutations.txt`; mutation anchor/import errors do not count as kills.
+
+| Fresh follow-up suite | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: |
+| Own exact a80b5181 main unit baseline | 5,412 | 56 | 0 |
+| Test-only follow-up unit build | 5,461 | 56 | 0 |
+| Broad focused including all three wire cases | 1,111 | 0 | 0 |
+| New recorded wire-level sequence module | 3 | 0 | 0 |
+
+The two fresh full-suite failure-name sets are **identical** to each other and
+the initial56: no added or removed failed IDs. The fresh baseline also matches
+the operator's retained `/tmp/pmprint-main-unit.txt` exact failure lines. All
+**21/21** mutations are assertion-killed: the original18 rerun plus the three new
+wire-level falsifiers. `followup-mutations.txt` and `followup-original9-mutations.txt`
+retain the new original18 runs; no prior logs are overwritten.
+
+### Fresh Follow-Up Commands
+
+The fresh pair uses `/tmp/rpgstuck-main-git-pair` at the original a80b5181 for main
+and the sole-writer checkout for the build. No branch is rebased. Each full-suite
+exit1 is the retained baseline failures, not a green full-suite claim.
+
+```sh
+export PYTHONPATH=src
+PY=/Users/velkris/Projects/project-mai-tai/.venv/bin/python
+# Own exact a80b5181 baseline checkout
+"$PY" -m pytest tests/unit -q --junitxml=/tmp/rpgstuck-followup-main-full.xml
+# Sole-writer checkout
+"$PY" -m pytest tests/unit -q --junitxml=/tmp/rpgstuck-followup-head-full.xml
+"$PY" -m pytest tests/unit/test_rpgstuck1_schwab_sequences.py -q \
+  --junitxml=/tmp/rpgstuck-followup-sequences.xml
+"$PY" docs/review-artifacts/rpgstuck1/run_focused.py \
+  tests/unit/test_v2_entry_composition_slot.py tests/unit/test_v2_flip_owned_first_entry.py \
+  tests/unit/test_v2_resting_cancel_rth_placed.py tests/unit/test_v2_retry_one.py \
+  tests/unit/test_v2_webull_resting_mirror.py tests/unit/test_rpgstuck1_schwab_sequences.py \
+  --junitxml=/tmp/rpgstuck-followup-focused.xml
+"$PY" docs/review-artifacts/rpgstuck1/check_sequence_mutations.py
+"$PY" docs/review-artifacts/rpgstuck1/check_mutations.py
+"$PY" docs/review-artifacts/rpg1/check_runtime_mutations.py
+```
+
+Logs use the same `/tmp/rpgstuck-followup-` stems with `.txt` instead of `.xml`.
+`verification-followup.json` preserves this fresh pair, exact new test IDs, failure
+IDs, XML hashes and final production/new-test/fixture SHA256 values without
+overwriting the initial evidence. Production SHA256 values must equal all four
+initial production hashes listed above. Ruff and whitespace checks pass.
 
 ## Composition And Deployment Boundary
 
@@ -180,8 +283,11 @@ head; all three-way applications were clean. The dependency's own worktree and
 branch were read-only. The final focused composition has **587 passed**; the
 dependency is not cherry-picked into this PR. GAPKEEP remains assessment-only
 and has no source to compose. OWNMIX1 source composition is not claimed.
+This composition result belongs to the initial 73e9e4c8 verification; the later
+test-only standalone follow-up does not repeat it or claim PM coverage for its
+three new cases. No PM source or PM branch was modified in this follow-up.
 
-Proposed restart list, only inside the separate jointly approved evening plan:
+Proposed restart list for a separately approved standalone later deployment:
 
 - `project-mai-tai-oms.service`: runtime, final-wire guard and deferred claim changes.
 - `project-mai-tai-strategy.service`: companion restart in the tracked OMS deploy path.
@@ -189,9 +295,9 @@ Proposed restart list, only inside the separate jointly approved evening plan:
 
 Merge order relative to PMPRINT is not a runtime dependency: the exact source
 composition is clean, but any final combined pin must be independently verified
-after integration. The joint plan still requires its operator GO, after 20:00 ET,
-flatness proofs, exact pinned heads and next-morning scanner validation. This PR
-does not approve or execute that plan. There were **zero production service actions,
+after integration. RPGSTUCK1 is explicitly **excluded from tonight**. A later plan
+still requires its own operator GO, flatness proofs, exact pinned heads and scanner
+validation. This PR does not approve or execute a deployment. There were **zero production service actions,
 broker trades, ledger writes, or merges** in this lane; database writes are confined
 to isolated test fixtures. Configured entry windows, distance thresholds, bands,
 dollar sizing, one-entry-per-flip and strict cancel/readback semantics are retained.
