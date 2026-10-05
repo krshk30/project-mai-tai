@@ -5323,3 +5323,13 @@ F3 fetchdeferral RED4, sameepisode pendingwriter RED2, H4 accountfilter RED1;
 all assertion failures, not import errors. Full composition running, final
 frozenhead source/test equivalence still required. C59 only; candidate held,
 no Mrow/Board/decision/main/production/ledger changes.
+
+2026-10-05 14:21 ET codex-2: RPG7fe27daa and OWN76c3b4f7 pushed, each
+one follow-up/no rebase. Own XML comparison main5500/56 vsRPG5692/same56
+andOWNfinal5577/same56 gives added[]removed[]. C59 correction: its provisional
+pending-writer mutant failed by KeyError, not an explicit assertion. Final
+test uses .get: exact rerun yields2 AssertionErrors/noKeyError; exactR15
+expired mutant yields2 unproven-hold AssertionErrors. Final tree17fcd4d9
+equals gitmerge-tree, targeted51PASS; full exact-head rerun running. Prior
+provisional full5769/same56 differs only this assertion lookup, not runtime.
+Validate pending/freshpins missing. C60 only; no other row or production action.
