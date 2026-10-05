@@ -5119,3 +5119,19 @@ GitHub read at11:40ET: #1093 head289524631f91f26e922a964067f3ef9907cbc188
 bothValidateSUCCESS, runs37333749186/37333741893 completed15:39:35/13Z.
 Independent fresh pin still missing. No source change, no merge/install action;
 standalone later, excluded from tonight. C36 only; M rows untouched.
+
+### 2026-10-05 11:52 ET - #1092 sequencing follow-up pushed (codex-2)
+
+Head5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6, one Codex marker per commit,
+clean worktree and new Validate x2 running. Final fullmain5412PASS/56FAIL vs
+head5500/same56, added0/removed0, zero skips;896focusedPASS,15/15mutantsRED.
+S1-S6 named in REPORT.md and PR body, both operator cards literal. Added OFF/NFQ
+compositions with current600/300, live account IDs, entry07:00-15:45; exactly
+one simulated Webull wire buy after legacy reprice, duplicate serial copies
+blocked. Decision-cache historical timing/live venue behavior not claimed.
+Four actual ticket restart replays reproduce failed required proof(b); no
+deletion/relabelling/release-source change used to hide it. The single replacement
+plan on that head is BLOCKED, not approved/executable/scheduled. Only intended
+env changes printON/handoffOFF, one v2 restart, catalog143combined. No OMS restart
+needed for NEW admission; an OMS restart also would not solve durable ownership.
+No production action, no main merge. Reviewer disposition required; C37 only.
