@@ -5242,3 +5242,9 @@ C47only; Mrows/Boards/decisionsuntouched.
 rollupsnotRESTcensus; implementrequestedhintthenexactownedparent, noheadroom
 claim. Q3actualold7e10withnullable0022columnsPASS bothaccounts. CIinprogress,
 newpinrequired, OWNoptionalnotinstalled. C48only; Mrowsunchanged.
+
+2026-10-05 13:26 ET codex-2: restoration2a86cebdsourcevaluefingerprint
+fence10tests/scopedRuffPASS; stillWIPnotPRorliveintegration. Parentfresh7e10
+main5500pass/56fail in228.88s, independentlysame56failedIDsasOWNpair.
+Planf6aa8224recordsOWN55563e6f/hintnominal1+K,noprovenRESTheadroom.
+RPGfrozenfullpairinprogress, finalcompositionnotclaimed. C49only.
