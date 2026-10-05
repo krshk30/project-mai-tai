@@ -52,6 +52,8 @@
 
 | C14 | PMREST full comparison and VEEA own assessment | Same full-suite failures; VEEA flip-latch mechanism independently confirmed, old code; no new behavior build | 09:09 ET 10-05: #1091 head 1135f8d9, fresh e1ce3b39 full base 56 failed/5,372 passed vs head 56 failed/5,412 passed, sorted FAILED lines identical; assessment 82d3f2eed14a39d917bc9f19102503f10058986c; own pmprint1-own-veea.json read 09:05 gives first qualifying print 08:33:04.184, 1.680 s after BUY flip; 30/45 and 41/52 qualifying prints in next two minutes, zero bounded broker_orders; latch/cross refusal blame dates 07-23/07-24 | codex-2 | New-head Linux Validate and review pin pending; exact VEEA instruction block requested; no counterfactual fill/profit or full-history incidence claim; PMPRINT strict rule awaits operator |
 
+| C15 | PMREST1 #1091 new-head Linux CI | Validate x2 PASS, review pin still absent; NOT merged or installed | 09:10 ET 10-05: exact head 1135f8d9e288ed86667fdcd880c4f6d28990a341; GitHub push 37313928559 and PR 37313935457 success; PR log /tmp/pmrest1-review-pr-ci-log.txt = 5,468 unit PASS, integration/replay/backtest 86 PASS + 1 existing xfail, Ruff/marker isolation PASS | codex-2 | claude-1 exact-head review/pin, operator card/install GO; PMPRINT strict-rule build remains stopped |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
