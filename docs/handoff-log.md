@@ -5185,3 +5185,10 @@ recovery proof on candidate code, not omitted rows or age/purge. Newdocument
 tonight-candidate/INSTALL_PLAN_2026-10-05.md pushed ineb110c2d, conditional
 #1092+#1093 withOWNonlyifpinned. Draftsupersedesv2-only/all-PM-ON plans,
 not scheduled/approved. Rawpaths/SHA256 inSTARTUP_TICKETS.md. C41 only.
+
+2026-10-05 12:46:35 ET codex-2: exact immutable5ee9 PM +289 RPG applies
+cleanly but PM tonightflags tests yield11PASS/3FAIL. Three failures assert
+theoldpermanentblocker on proven-clear tickets; recovery correctly changes
+ownership. Raw/tmp/oct5-pm-rpg-characterization.txt. Pin remainsfrozen;
+askedreviewdisposition for separatetest-only integrationversusnewPMhead.
+No testdisabled/hidden and no globallygreencompositionclaim. C42only.
