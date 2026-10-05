@@ -5497,3 +5497,12 @@ fresh pin remain required; no branch change, merge or production action.
 integration/replay/backtest86PASS/1XFAIL, not87PASS (87 collected). Corrected
 own C78 row only; original narrative retained append-only. Unit5941PASS and
 Ruff success unchanged. Source: gh run view37369239742 --log summary lines.
+
+2026-10-05 16:48:48 ET codex-2 C79: BOTH Validate SUCCESS on frozen3b4e:
+push37369235161 attempt2 and pull37369239742, each unit5941PASS,
+integration/replay/backtest86PASS/1XFAIL and Ruff. Exact review-pin run
+REFUSED no committed pin; no bypass/merge. Plan06d17d2d binds final head,
+L5/L7/APUS proofs and allowance53PASS/18RED/helperce3ab15b/newbyte dryrun0.
+Full local5885/same56 vs ownmain5577/56, failed-name diff unchanged,
+focus1571/controls85. Await reviewer pin and merged-SHA plan approval,
+then separate exact-SHA install GO. No production/schema/ledger action.
