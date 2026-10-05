@@ -25,7 +25,11 @@ combined tree, required A/B tests, fresh pins and an exact-SHA operator GO.
    amended APUS later-placement requirement now pass without a source change.
 4. #1095 ROUND_UP is EXCLUDED from this exact candidate. Its generic accepted
    resting-order restart without RPG ticket has a real hydration/admission gap:
-   current local diagnostic8 assertion failures, existing ROUNDUP focus400PASS.
+   Pre-rebase local diagnostic8 assertion failures and existing ROUNDUP
+   focus400PASS were on its old base. On the combined7823a6fa tree at17:12 ET,
+   the diagnostic still has8 assertion failures/0 errors; ROUNDUP focus has
+   395PASS/5FAIL, and separate composition663PASS. The five integration
+   assertions are unresolved; old400PASS is not a combined-tree result.
    No accepted old wire pair is hydrated and unproven cases allow a strategy
    draft; this is NOT proof a duplicate reaches a venue or a historical event.
    The draft is being rebased onto the RPG merge for explicit evidence, not
