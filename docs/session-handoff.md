@@ -35,6 +35,8 @@
 
 | C7 | PMREST1 replay and mutation proof | 912 focused PASS; 8/8 mutation cases RED; full-unit final comparison still running, not installed | 08:19 ET 10-05: /tmp/pmrest1-focused-final2.txt, /tmp/pmrest1-mutations.txt; 32 named PMREST cases cover first/reclaim, REST/stream, state and RTH conversion. Denominator correction to C6: later 08:06 DB pull has 129/129 bar-covered pairs (two more after initial 08:02 127-pair census), not the same snapshot | codex-2 | Finish final full run/CI and submit exact head + v2-only plan; stream Webull missing draft remains separate reported defect |
 
+| C8 | PMREST1 #1091 review head and evening plan | READY for independent review fa14d46e69266eae883b9ab73387927ab5c841e3; 927 focused PASS, 8/8 mutants RED; full-unit failed names identical to main; CI running | 08:24 ET 10-05: GitHub #1091; /tmp/pmrest1-head-unit-final3.txt = 56 failed / 5,404 passed vs main 56 failed / 5,372 passed, normalized node diff rc0; REPORT.md P1-P10 map and INSTALL_PLAN.md in docs/review-artifacts/pmrest1; no production change | codex-2 | Linux Validate + independent pin + exact-SHA operator GO before v2-only install; stream Webull finding separate and not hidden as P10 delivery PASS |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
