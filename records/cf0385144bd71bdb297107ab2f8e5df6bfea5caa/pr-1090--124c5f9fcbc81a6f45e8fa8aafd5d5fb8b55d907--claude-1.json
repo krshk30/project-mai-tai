@@ -1,0 +1,9 @@
+{
+  "pr_number": 1090,
+  "range_base": "124c5f9fcbc81a6f45e8fa8aafd5d5fb8b55d907",
+  "range_head": "cf0385144bd71bdb297107ab2f8e5df6bfea5caa",
+  "reviewed_at": "2026-10-05T11:02:37Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "HEALTHLATCH1 ops-only (no src, no flag, no trading-rule change). Read the full diff of ops/health/fleet_health_check.py: only the retired momentum-paper leg of check_massive_socket_policy_violations, its two needles and the momentum_policy_active latch are removed; gateway 1008 leg, service inventory (9 units), live-money checks and both cron wrappers unchanged. Card re-read against built behaviour: matches. My run in a worktree at the exact head: 74 focused tests pass; control = PR tests against main's check file -> 6 fail; my 8 mutations all RED (old state key unreadable, retired cursor kept, gateway 1008 never red, momentum-paper dropped from inventory, cleanup replays old gateway evidence, pager keeps a cleared fingerprint, paper log read again, standing red masks a new red). Full unit suite controlled pair on this host: main 48 failed/5370 passed, head 48 failed/5380 passed, failing-name sets identical (comm: 0 added, 0 removed). Codex independent assessment C1-C5 AGREE read; N2 shared-cursor race is REAL latent and NOT fixed here (characterization test only) - reported to the operator separately. Install plan read: approved with two additions sent to codex (rollback to bbb43604 on monitor-error; fast-forward away from the 5-minute cron boundary)."
+}
