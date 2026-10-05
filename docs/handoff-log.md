@@ -5333,3 +5333,11 @@ expired mutant yields2 unproven-hold AssertionErrors. Final tree17fcd4d9
 equals gitmerge-tree, targeted51PASS; full exact-head rerun running. Prior
 provisional full5769/same56 differs only this assertion lookup, not runtime.
 Validate pending/freshpins missing. C60 only; no other row or production action.
+
+2026-10-05 14:26 ET codex-2: final exact-head composition tree17fcd4d9
+full5769/same56 vsfreshmain5500/56; XMLadded[]removed[],zero skips,257.85s.
+Focused327/targeted51PASS. Both heads' Validatex2SUCCESS, RPG14:25:42/45,
+OWN14:24:15/23. Fresh pins missing, not inferred. Plan066848f1028aa4b50b15f1b3450019306d300132
+published with finalbindings, currentproofs/rawhashes, historicalcorrection,
+held-transition limits andexecutioncensus requirement. Notexecutable/scheduled.
+C61 only; no Mrow/Board/decision/main/production/ledger changes.
