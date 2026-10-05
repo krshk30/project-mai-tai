@@ -65,6 +65,8 @@ class ExitPairReleaseResult:
         "released", "resolved_by_fill", "reserved", "unanswerable", "unsupported"
     ]
     reports: tuple[ExecutionReport, ...] = ()
+    entry_broker_order_id: str = ""
+    exit_base_client_order_id: str = ""
 
 
 @dataclass(frozen=True)

@@ -112,7 +112,7 @@ def test_a_first_attempt_success_does_not_retry_or_sleep(monkeypatch) -> None:
         return True
 
     svc._run_db = _run_db
-    assert asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE)) is True
+    assert asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE, entry_client_order_id=ENTRY)) is True
     assert len(calls) == 1, f"a successful first read must not re-read ({len(calls)} reads)"
     assert slept == [], "no backoff may run when the first read succeeds"
     assert not any("HANDLE-LOST" in line for line in svc.logger.lines)
@@ -131,7 +131,7 @@ def test_every_attempt_reads_through_run_db_so_the_session_is_fresh(monkeypatch)
 
     svc._run_db = _run_db
     svc._raise_webull_handle_lost_incident = _swallow
-    asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE))
+    asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE, entry_client_order_id=ENTRY))
     assert len(seen) == svc._WEBULL_HANDLE_PERSIST_ATTEMPTS
     assert all(seen), "each attempt must commit its own unit of work"
 
@@ -164,7 +164,7 @@ def test_the_retry_is_bounded(monkeypatch) -> None:
 
     svc._run_db = _run_db
     svc._raise_webull_handle_lost_incident = _swallow
-    assert asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE)) is False
+    assert asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE, entry_client_order_id=ENTRY)) is False
     assert len(calls) == svc._WEBULL_HANDLE_PERSIST_ATTEMPTS, (
         f"unbounded retry: {len(calls)} reads against a bound of "
         f"{svc._WEBULL_HANDLE_PERSIST_ATTEMPTS}"
@@ -182,7 +182,7 @@ def test_an_exception_is_retried_and_then_reported_distinctly(monkeypatch) -> No
 
     svc._run_db = _run_db
     svc._raise_webull_handle_lost_incident = _swallow
-    assert asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE)) is False
+    assert asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE, entry_client_order_id=ENTRY)) is False
     text = "\n".join(svc.logger.lines)
     assert "unaddressable after restart" in text, "the exception branch lost its own wording"
     assert "no filled entry order accepted" not in text, (
@@ -207,7 +207,7 @@ def test_an_exhausted_retry_raises_a_durable_operator_incident(monkeypatch) -> N
 
     svc._run_db = _run_db
     svc._find_oco_entry_order = lambda *a, **k: None  # the race never resolves
-    assert asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE)) is False
+    assert asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE, entry_client_order_id=ENTRY)) is False
     with factory() as session:
         incidents = session.scalars(select(SystemIncident)).all()
     assert len(incidents) == 1, (
@@ -232,7 +232,7 @@ def test_repeated_loss_on_one_symbol_does_not_multiply_incidents(monkeypatch) ->
     svc._run_db = _live_run_db(factory)
     svc._find_oco_entry_order = lambda *a, **k: None
     for _ in range(3):
-        asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE))
+        asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE, entry_client_order_id=ENTRY))
     with factory() as session:
         assert len(session.scalars(select(SystemIncident)).all()) == 1
 
@@ -255,8 +255,8 @@ def test_a_second_loss_keeps_the_first_handle(monkeypatch) -> None:
     svc._run_db = _live_run_db(factory)
     svc._find_oco_entry_order = lambda *a, **k: None
     first, second = f"{BASE}-FIRST", f"{BASE}-SECOND"
-    asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, first))
-    asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, second))
+    asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, first, entry_client_order_id=ENTRY))
+    asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, second, entry_client_order_id=ENTRY))
     with factory() as session:
         incidents = session.scalars(select(SystemIncident)).all()
     assert len(incidents) == 1, "still one row per (account, symbol)"
@@ -279,7 +279,7 @@ def test_the_operator_surface_carries_the_handle(monkeypatch) -> None:
     svc = _svc(session_factory=factory)
     svc._run_db = _live_run_db(factory)
     svc._find_oco_entry_order = lambda *a, **k: None
-    asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE))
+    asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, BASE, entry_client_order_id=ENTRY))
     with factory() as session:
         incident = session.scalars(select(SystemIncident)).one()
     assert BASE in incident.title, (
@@ -298,7 +298,7 @@ def test_many_handles_stay_within_the_title_column(monkeypatch) -> None:
     svc._run_db = _live_run_db(factory)
     svc._find_oco_entry_order = lambda *a, **k: None
     for index in range(12):
-        asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, f"{BASE}-{index:02d}"))
+        asyncio.run(svc._persist_webull_protect_base(ACCT, SYM, f"{BASE}-{index:02d}", entry_client_order_id=ENTRY))
     with factory() as session:
         incident = session.scalars(select(SystemIncident)).one()
     assert len(incident.title) <= 255, f"title overflowed the column at {len(incident.title)}"

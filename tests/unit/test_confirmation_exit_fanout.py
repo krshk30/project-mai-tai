@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from tests.unit.managed_entry_fixtures import bind_managed_entry, set_protect_base
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -141,6 +142,8 @@ class _FanoutAdapter:
     async def release_exit_pair_for_close(
         self, *, broker_account_name: str, symbol: str, base_client_order_id: str
     ) -> ExitPairReleaseResult:
+        if broker_account_name == SCHWAB:
+            return ExitPairReleaseResult(outcome="unsupported")
         if self.release_results:
             self.cancel_pair_calls.append((broker_account_name, symbol, base_client_order_id))
             return self.release_results.pop(0)
@@ -280,6 +283,11 @@ def _service(*, fanout: bool, adapter: _FanoutAdapter) -> tuple[OmsRiskService, 
                         },
                     )
                 )
+                session.flush()
+                entry = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == "webull-stop-limit-entry"))
+                bind_managed_entry(session, row, entry=entry)
+            else:
+                bind_managed_entry(session, row)
         session.commit()
     return service, sf
 
@@ -397,7 +405,13 @@ async def test_webull_confirmation_bad_answer_matrix_has_only_safe_terminals(
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
     base = "known-protect-base"
-    service._webull_protect_base[(WEBULL, SYMBOL)] = base
+    if terminal == "FILL_UNRECORDED+PAGED":
+        with sf() as session:
+            entry = session.scalar(select(BrokerOrder).where(
+                BrokerOrder.client_order_id == "webull-stop-limit-entry"))
+            entry.intent_id = None  # deliberate attribution failure; ownership remains bound
+            session.commit()
+    set_protect_base(service, sf, WEBULL, SYMBOL, base)
     await _arm_decision(service)
     pending = service._confirmation_exit_pending[(WEBULL, SYMBOL)]
     decision = service._confirmation_fanout_decision(pending)
@@ -510,7 +524,7 @@ async def test_confirmation_close_classes_reprotect_and_page_instead_of_giving_u
     adapter.submit_results.append(response if isinstance(response, BaseException) else [response])
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     attached: list[str] = []
 
     async def _attach(**kwargs) -> bool:
@@ -548,7 +562,7 @@ async def test_no_position_reject_closes_only_after_broker_read_confirms_flat(
     adapter.position_state[WEBULL] = Decimal("0")
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
     decision = service._confirmation_fanout_decision(
         service._confirmation_exit_pending[(WEBULL, SYMBOL)]
@@ -579,7 +593,7 @@ async def test_malformed_confirmation_close_gets_exactly_one_corrected_retry(
     adapter.submit_results.append([lgps_133416_malformed_client_order_id_reject()])
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
     decision = service._confirmation_fanout_decision(
         service._confirmation_exit_pending[(WEBULL, SYMBOL)]
@@ -628,7 +642,7 @@ async def test_malformed_confirmation_close_never_retries_more_than_once(
     adapter.submit_results.extend(([malformed], [malformed]))
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     attached: list[str] = []
 
     async def _attach(**kwargs) -> bool:
@@ -766,7 +780,7 @@ async def test_webull_fresh_flat_is_closed_without_releasing_the_pair(
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
     service._latest_quotes_by_symbol[SYMBOL]["received_at"] = clock["now"]
 
@@ -805,7 +819,7 @@ async def test_recovery_flat_finalizes_released_unprotected_interval(monkeypatch
     adapter = _FanoutAdapter(reject_accounts={WEBULL})
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
 
     async def _flat_after_recovery_read(*args, **kwargs):
         clock["now"] += timedelta(seconds=4)
@@ -980,7 +994,7 @@ async def test_stale_quote_cannot_release_webull_protection(monkeypatch) -> None
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
     service._latest_quotes_by_symbol[SYMBOL]["received_at"] = datetime.now(UTC) - timedelta(
         seconds=10
@@ -1007,7 +1021,7 @@ async def test_webull_pair_is_not_released_outside_rth_and_schwab_still_closes(
         return None
 
     adapter.fetch_oco_exit_fill = no_filled_child
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
 
     await service._evaluate_v2_managed_exit(SCHWAB, SYMBOL)
@@ -1026,7 +1040,7 @@ async def test_released_webull_leg_that_rejects_is_reprotected(monkeypatch) -> N
     adapter = _FanoutAdapter(reject_accounts={WEBULL})
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     reprotected: list[tuple[str, str]] = []
 
     async def _attach(**kwargs) -> bool:
@@ -1063,7 +1077,7 @@ async def test_a_pre_send_guard_stops_the_webull_exit_before_any_release(
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     reprotected: list[tuple[str, str]] = []
     original_read = service._read_v2_managed_snapshot
 
@@ -1120,7 +1134,7 @@ async def test_shared_routine_takes_pair_back_for_full_close_not_scale_out(
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     decision = service_module._ConfirmationFanoutDecision(
         symbol=SYMBOL, source_fill_id=f"test:{reason}", accounts=(WEBULL,)
     )
@@ -1168,7 +1182,7 @@ async def test_webull_cancel_then_sell_uses_only_remainder_after_partial_exit() 
     assert partial.filled_quantity == Decimal("40")
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     remainder = prior_order.quantity - partial.filled_quantity
     adapter.position_state[WEBULL] = remainder
     with sf.begin() as session:
@@ -1216,7 +1230,7 @@ async def test_confirmed_webull_release_is_idempotent_for_the_exact_episode(
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     row_id = _open_row_ids(sf)[WEBULL]
 
     assert await _prepare_webull_leg(service, expected_row_id=row_id) == "released"
@@ -1232,7 +1246,7 @@ async def test_gipr_already_absent_reports_count_only_after_exact_release(
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     row_id = _open_row_ids(sf)[WEBULL]
     key = (WEBULL, SYMBOL)
     service._exit_reservation_released.add(key)
@@ -1261,7 +1275,7 @@ async def test_rate_limit_is_not_absence_even_when_an_exact_release_won_the_race
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     row_id = _open_row_ids(sf)[WEBULL]
 
     reports = tuple(
@@ -1293,7 +1307,7 @@ async def test_cancel_reject_is_not_absence_without_prior_exact_release(
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     row_id = _open_row_ids(sf)[WEBULL]
 
     reports = tuple(
@@ -1329,7 +1343,7 @@ async def test_unknown_after_released_rejected_sell_is_explicitly_uncovered(
     adapter = _FanoutAdapter(reject_accounts={WEBULL})
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
 
     async def _unknown(*args, **kwargs):
         return service_module._PositionRead.UNKNOWN
@@ -1366,7 +1380,7 @@ async def test_only_one_confirmed_child_reprotects_and_pages_instead_of_giving_u
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     reports = imcc_174604_cancelled_and_rate_limited("known-protect-base", symbol=SYMBOL)
     adapter.release_results.extend(
         ExitPairReleaseResult(outcome="unanswerable", reports=reports) for _ in range(4)
@@ -1402,7 +1416,7 @@ async def test_concurrent_quote_task_cannot_cancel_the_same_episode_twice(
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
     entered = service_module.asyncio.Event()
     release = service_module.asyncio.Event()
@@ -1453,7 +1467,7 @@ async def test_bound_row_read_failure_releases_claim_for_the_next_quote(
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
     row_id = _open_row_ids(sf)[WEBULL]
     bound_reads = 0
@@ -1486,7 +1500,7 @@ async def test_imcc_one_of_two_cancel_reads_retries_instead_of_abandoning(
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     row_id = _open_row_ids(sf)[WEBULL]
     one_cancelled = cancelled_leg("known-protect-base", "T", symbol=SYMBOL)
     one_working = working_leg_after_cancel_request(
@@ -1529,7 +1543,7 @@ async def test_order_cannot_cancel_is_not_absent_when_pair_read_says_working(
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     row_id = _open_row_ids(sf)[WEBULL]
     working = replace(
         gipr_170707_order_cannot_cancel("known-protect-base", "S", symbol=SYMBOL),
@@ -1566,7 +1580,7 @@ async def test_release_budget_exhaustion_reprotects_and_opens_one_pager_incident
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
     service.logger = _CapturedLogger()
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     row_id = _open_row_ids(sf)[WEBULL]
     uncertain = ExecutionReport(
         event_type="accepted",
@@ -1617,7 +1631,7 @@ async def test_reject_ceiling_blocks_webull_before_pair_release(monkeypatch) -> 
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
     adapter = _FanoutAdapter()
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
     service._v2_exit_reject_total[(WEBULL, SYMBOL)] = service._V2_EXIT_MAX_REJECTS_PER_EPISODE
 
@@ -1705,7 +1719,7 @@ async def test_webull_confirmation_exit_sells_after_a_release_that_aged_its_own_
     monkeypatch.setattr(service_module, "utcnow", lambda: clock["now"])
     adapter = _ClockAdvancingAdapter(clock, release_seconds=release_seconds)
     service, sf = _service(fanout=True, adapter=adapter)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
     service._latest_quotes_by_symbol[SYMBOL]["received_at"] = clock["now"]
 
@@ -1761,7 +1775,7 @@ async def test_uncovered_page_fires_once_for_a_released_share_that_was_never_sol
     # GLND 10:18 / GRML 10:34 / NCPL 13:55 / GLND 14:20 ET, 2026-09-21: pair cancelled, no sell,
     # 474-663 s with no broker stop and NO alert of any kind.
     service, sf, clock = _uncovered_service(monkeypatch)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     service._exit_reservation_released.add((WEBULL, SYMBOL))
 
     assert await service._check_webull_uncovered_shares() == 0  # t = 0, the clock starts
@@ -1800,7 +1814,7 @@ async def test_uncovered_page_stays_silent_for_a_share_whose_pair_is_resting(
     # left alone until a native leg filled (VRME x2) or the flip exit took it (AVAT). The whole
     # measured resting time passes at the production sync cadence; nothing may page or release.
     service, sf, clock = _uncovered_service(monkeypatch)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
 
     for _ in range(resting_seconds // 15 + 1):
         assert await service._check_webull_uncovered_shares() == 0
@@ -1816,7 +1830,7 @@ async def test_uncovered_page_stays_silent_for_a_release_that_sells_inside_the_w
 ) -> None:
     # CONTROL - AVAT 12:55 and GLND 13:38 ET flip exits 2026-09-21: released, sold ~3 s later.
     service, sf, clock = _uncovered_service(monkeypatch)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     service._exit_reservation_released.add((WEBULL, SYMBOL))
     assert await service._check_webull_uncovered_shares() == 0
 
@@ -1853,7 +1867,7 @@ async def test_uncovered_page_fires_when_a_reattach_failed_and_left_the_old_hand
     # persisted. "handle exists AND not released" would read that share as covered - for ever.
     # Driven through the REAL attach routine with a broker that refuses every attempt.
     service, sf, clock = _uncovered_service(monkeypatch)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "old-cancelled-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "old-cancelled-protect-base")
     assert await service._check_webull_uncovered_shares() == 0  # resting: covered
 
     async def _held(*args, **kwargs):
@@ -1868,7 +1882,7 @@ async def test_uncovered_page_fires_when_a_reattach_failed_and_left_the_old_hand
     service._exit_reservation_released.discard((WEBULL, SYMBOL))  # what line `[OMS-EXIT-REPROTECT]` does
     attached = await service._attach_webull_protection(
         broker_account_name=WEBULL, symbol=SYMBOL, quantity=1, entry_price=2.84,
-        strategy_code="schwab_1m_v2",
+        strategy_code="schwab_1m_v2", entry_client_order_id="webull-stop-limit-entry",
     )
     assert attached is False
 
@@ -1882,7 +1896,7 @@ async def test_uncovered_page_fires_when_a_reattach_failed_and_left_the_old_hand
     service.broker_adapter.reject_accounts = set()
     assert await service._attach_webull_protection(
         broker_account_name=WEBULL, symbol=SYMBOL, quantity=1, entry_price=2.84,
-        strategy_code="schwab_1m_v2",
+        strategy_code="schwab_1m_v2", entry_client_order_id="webull-stop-limit-entry",
     )
     clock["now"] += timedelta(seconds=120)
     assert await service._check_webull_uncovered_shares() == 0
@@ -1893,7 +1907,7 @@ async def test_uncovered_page_fires_when_a_reattach_failed_and_left_the_old_hand
 @pytest.mark.asyncio
 async def test_uncovered_page_pages_again_only_for_a_new_episode(monkeypatch) -> None:
     service, sf, clock = _uncovered_service(monkeypatch)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     service._exit_reservation_released.add((WEBULL, SYMBOL))
     await service._check_webull_uncovered_shares()
     clock["now"] += timedelta(seconds=31)
@@ -1931,7 +1945,7 @@ async def test_uncovered_page_catches_a_dropped_exit_even_when_the_exit_routine_
     # then the sell is refused AND the recovery is silenced (as if a future bug dropped it again).
     # The exit path says nothing - the net still pages, from broker-facing state alone.
     service, sf, clock = _uncovered_service(monkeypatch)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     await _arm_decision(service)
     service._latest_quotes_by_symbol[SYMBOL]["received_at"] = clock["now"]
 
@@ -1977,7 +1991,7 @@ async def test_uncovered_page_retries_on_the_next_sync_when_the_incident_write_f
     # P1-1: the key used to enter `paged` BEFORE the write, and the writer swallows its failure -
     # one bad commit suppressed the page for the whole episode.
     service, sf, clock = _uncovered_service(monkeypatch)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     service._exit_reservation_released.add((WEBULL, SYMBOL))
     assert await service._check_webull_uncovered_shares() == 0
     clock["now"] += timedelta(seconds=31)
@@ -2011,8 +2025,8 @@ async def test_uncovered_page_survives_a_restart_after_a_confirmed_release(monke
     # "handle exists, nothing released" = covered, and never started its timer.
     service, sf, clock = _uncovered_service(monkeypatch)
     # production shape: the attach PERSISTED its handle, so it outlives the restart
-    assert await service._persist_webull_protect_base(WEBULL, SYMBOL, "known-protect-base")
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    assert await service._persist_webull_protect_base(WEBULL, SYMBOL, "known-protect-base", entry_client_order_id="webull-stop-limit-entry")
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     with sf() as session:
         row_id = str(
             service.store.get_open_managed_position(
@@ -2040,7 +2054,7 @@ async def test_uncovered_page_survives_a_restart_after_a_failed_reattach(monkeyp
     service, sf, clock = _uncovered_service(monkeypatch)
     # production shape: the ORIGINAL attach persisted its handle; that pair was later cancelled
     assert await service._persist_webull_protect_base(
-        WEBULL, SYMBOL, "old-cancelled-protect-base"
+        WEBULL, SYMBOL, "old-cancelled-protect-base", entry_client_order_id="webull-stop-limit-entry"
     )
 
     async def _held(*args, **kwargs):
@@ -2054,7 +2068,7 @@ async def test_uncovered_page_survives_a_restart_after_a_failed_reattach(monkeyp
     service.broker_adapter.reject_accounts = {WEBULL}
     assert not await service._attach_webull_protection(
         broker_account_name=WEBULL, symbol=SYMBOL, quantity=1, entry_price=2.84,
-        strategy_code="schwab_1m_v2",
+        strategy_code="schwab_1m_v2", entry_client_order_id="webull-stop-limit-entry",
     )
 
     fresh = _restarted(service, sf)
@@ -2067,7 +2081,7 @@ async def test_uncovered_page_survives_a_restart_after_a_failed_reattach(monkeyp
     monkeypatch.setattr(fresh, "_broker_symbol_position_state", _held)
     assert await fresh._attach_webull_protection(
         broker_account_name=WEBULL, symbol=SYMBOL, quantity=1, entry_price=2.84,
-        strategy_code="schwab_1m_v2",
+        strategy_code="schwab_1m_v2", entry_client_order_id="webull-stop-limit-entry",
     )
     healthy = _restarted(service, sf)
     for _ in range(10):
@@ -2084,7 +2098,7 @@ async def test_uncovered_page_reads_open_rows_from_the_database_not_the_memory_l
     # `_poll_native_oco_exits`. An open row the memory set lost was invisible to the net.
     service, sf, clock = _uncovered_service(monkeypatch)
     service._exit_reservation_released.add((WEBULL, SYMBOL))
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     service._managed_v2_symbols.clear()  # the in-memory list has lost the position
 
     assert await service._check_webull_uncovered_shares() == 0
@@ -2100,8 +2114,8 @@ async def test_a_generic_software_exit_release_is_durable_too(monkeypatch) -> No
     # emit path with a broker that cancels the pair and then REFUSES the sell (YMAT 2026-09-09's
     # shape), then a restart: the mark must have been COMMITTED by the caller, not just flushed.
     service, sf, clock = _uncovered_service(monkeypatch)
-    assert await service._persist_webull_protect_base(WEBULL, SYMBOL, "known-protect-base")
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    assert await service._persist_webull_protect_base(WEBULL, SYMBOL, "known-protect-base", entry_client_order_id="webull-stop-limit-entry")
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     service.broker_adapter.reject_accounts = {WEBULL}
     snapshot = await service._run_db(
         lambda session: service._read_v2_managed_snapshot(session, WEBULL, SYMBOL, True),

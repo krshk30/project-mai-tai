@@ -33,6 +33,7 @@ def _svc(*, broker_flat: bool = True, read_raises: bool = False):
         return [] if broker_flat else [SimpleNamespace(symbol=SYM, quantity=Decimal("2"))]
 
     svc.broker_adapter = SimpleNamespace(list_account_positions=_positions)
+    svc._find_oco_entry_order = lambda *a, **k: SimpleNamespace(client_order_id="owned-entry", payload={})
     return svc, closed
 
 

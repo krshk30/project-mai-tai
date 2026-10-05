@@ -6,7 +6,7 @@ import logging
 import re
 import socket
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from enum import Enum
@@ -3515,17 +3515,15 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         terminal = self.__dict__.setdefault("_exit_reservation_terminal", {}).get(key)
         if terminal in {"reserved", "unanswerable"}:
             return ExitPairReleaseResult(outcome=terminal)
-        base = self._webull_protect_base.get(key, "")
-        if not base:
-            # Native bracket children hang off the entry coid; bare Webull protection hangs off a
-            # separately persisted attach coid. Never guess one from the other.
-            try:
-                entry = self._find_oco_entry_order(session, broker_account_name, symbol)
-                base = self._oco_exit_base_for_entry(
-                    entry, broker_account_name=broker_account_name, symbol=symbol
-                )
-            except Exception:  # noqa: BLE001 - never break an exit for bookkeeping
-                base = ""
+        try:
+            entry = self._find_oco_entry_order(session, broker_account_name, symbol)
+            if entry is None:
+                return ExitPairReleaseResult(outcome="unanswerable")
+            base = self._oco_exit_base_for_entry(
+                entry, broker_account_name=broker_account_name, symbol=symbol
+            )
+        except Exception:  # noqa: BLE001 - never release an unbound pair
+            return ExitPairReleaseResult(outcome="unanswerable")
         if not base:
             return ExitPairReleaseResult(outcome="unsupported")
         now = time.monotonic()
@@ -3570,6 +3568,10 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 key, release.outcome, terminal_after_attempt=terminal_after_attempt
             )
             return release
+        release = replace(
+            release, entry_broker_order_id=str(entry.broker_order_id or ""),
+            exit_base_client_order_id=base,
+        )
         reports = release.reports
         if release.outcome == "unsupported":
             self._clear_exit_reservation_retry_state(key)
@@ -3779,6 +3781,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             "price": report.fill_price,
             "filled_at": report.reported_at,
             "broker_order_id": report.broker_order_id or report.client_order_id,
+            "entry_broker_order_id": release.entry_broker_order_id,
+            "exit_base_client_order_id": release.exit_base_client_order_id,
         }
 
     def _reprotect_after_failed_release(
@@ -4230,6 +4234,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         price: Decimal,
         metadata: dict[str, str],
         entry_client_order_id: str = "",
+        entry_order_id: UUID | None = None,
     ) -> None:
         """Track-2 Phase-2 Slice-1: maintain the OMS-owned `oms_managed_positions`
         ladder state from v2's own fills. SOLE WRITER — only this OMS path writes
@@ -4258,9 +4263,17 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 quantity=int(quantity),
                 entry_path=entry_path,
                 config_name="make_v2_variant",
+                entry_order_id=entry_order_id,
+                entry_client_order_id=entry_client_order_id,
             )
             self.__dict__.get("_oco_exit_fill_pending", {}).pop((broker_account_name, symbol), None)
             self.__dict__.get("_v2_native_oco_high_bid", {}).pop(
+                (broker_account_name, symbol), None
+            )
+            self.__dict__.get("_native_oco_armed_confirmed_at", {}).pop(
+                (broker_account_name, symbol), None
+            )
+            self.__dict__.get("_native_oco_resolving", {}).pop(
                 (broker_account_name, symbol), None
             )
             self._managed_v2_symbols.add((broker_account_name, symbol))  # slice-3: arm quote-path eval
@@ -5359,19 +5372,21 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         """
         inline_started_at = time.monotonic()
 
-        def _read_base(session: Session) -> tuple[bool, str]:
+        def _read_base(session: Session) -> tuple[bool, str, str]:
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
             if row is None or str(row.id) != expected_row_id:
-                return False, ""
+                return False, "", ""
             entry = self._find_oco_entry_order(session, acct, symbol)
+            if entry is None:
+                return False, "", ""
             return True, self._oco_exit_base_for_entry(
                 entry, broker_account_name=acct, symbol=symbol
-            )
+            ), str(entry.broker_order_id or "")
 
         try:
-            same_row, base = await self._run_db(_read_base, commit=False)
+            same_row, base, entry_oid = await self._run_db(_read_base, commit=False)
         except Exception:  # noqa: BLE001 - an unreadable pair must remain untouched
             self.logger.exception(
                 "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s "
@@ -5450,7 +5465,10 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 )
                 return "refused"
             if filled_child is not None:
-                decision.resolved_fill = filled_child
+                decision.resolved_fill = {
+                    **filled_child, "entry_broker_order_id": entry_oid,
+                    "exit_base_client_order_id": base,
+                }
                 self.logger.info(
                     "[OMS-WEBULL-EH-PAIR-READ] sym=%s acct=%s exit=%s outcome=RESOLVED_BY_FILL",
                     symbol, acct, decision.exit_tag,
@@ -5489,6 +5507,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 release = ExitPairReleaseResult(outcome="unanswerable")
 
             if release.outcome == "resolved_by_fill":
+                release = replace(release, entry_broker_order_id=entry_oid,
+                                  exit_base_client_order_id=base)
                 decision.resolved_fill = self._exit_pair_fill_detail(release)
                 return "resolved_by_fill"
             if release.outcome == "released":
@@ -5559,6 +5579,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             if row is None or str(row.id) != expected_row_id:
                 return None
             entry = self._find_oco_entry_order(session, acct, symbol)
+            if entry is None:
+                return None
             return {
                 "quantity": int(row.current_quantity),
                 "entry_price": float(row.entry_price),
@@ -7249,58 +7271,82 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
     # completed-trades table and P&L render BLANK. Measured: Schwab sell fills 07-21: 5 -> 07-23: 0.
 
     def _find_oco_entry_order(
-        self, session: Session, acct: str, symbol: str, *, client_order_id: str = ""
+        self, session: Session, acct: str, symbol: str, *, client_order_id: str = "",
+        row=None,
     ):
-        """The filled ENTRY order carrying the strategy/account ids the synthetic exit row needs.
+        """Resolve only the durable managed-entry binding, never account/symbol recency.
 
-        Native-bracket children hang off its client id. Bare Webull protection uses the separately
-        persisted ``webull_protect_base_client_order_id`` in its payload. SYNC; caller's session.
-
-        Tolerates a missing session: some callers of the close path drive it without one, and the
-        exit capture is BOOKKEEPING — it must degrade to "no fill recorded", never raise into a
-        path whose job is to clear a phantom row.
+        Legacy rows are deliberately left unbound. The explicit client id is used by the
+        asynchronous Webull handle writer and must agree with the same managed binding.
         """
         if session is None:
+            return None
+        if row is None:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+        if row is None:
+            # The handle writer already has the exact fill's coid; it never uses recency.
+            if client_order_id:
+                return session.scalar(
+                    select(BrokerOrder)
+                    .join(BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id)
+                    .join(Strategy, Strategy.id == BrokerOrder.strategy_id)
+                    .where(
+                        BrokerOrder.client_order_id == client_order_id,
+                        Strategy.code == "schwab_1m_v2",
+                        BrokerAccount.name == acct,
+                        BrokerOrder.symbol == symbol.upper(),
+                        BrokerOrder.side == "buy",
+                        BrokerOrder.status.in_(("filled", "partially_filled")),
+                    )
+                )
+            return None
+        entry_id = getattr(row, "entry_order_id", None)
+        entry_coid = str(getattr(row, "entry_client_order_id", "") or "")
+        if not entry_id or not entry_coid or (client_order_id and client_order_id != entry_coid):
+            self._log_entry_ownership_mismatch(row, candidate_coid=client_order_id,
+                                               reason="missing_or_conflicting_entry_binding")
             return None
         stmt = (
             select(BrokerOrder)
             .join(BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id)
+            .join(Strategy, Strategy.id == BrokerOrder.strategy_id)
             .where(
+                BrokerOrder.id == entry_id,
+                BrokerOrder.client_order_id == entry_coid,
+                Strategy.code == row.strategy_code,
                 BrokerAccount.name == acct,
                 BrokerOrder.symbol == symbol.upper(),
                 BrokerOrder.side == "buy",
-                # ⛔⭐ FILLED ONLY (2026-07-31). Without this the lookup ordered by `updated_at`
-                # alone, so the newest *cancelled* buy could win -- and a cancelled entry never
-                # held a position, so it has NO OCO children and never will. The poll then asks
-                # the broker about a bracket that cannot exist, gets nothing, and the managed row
-                # stays open forever (blocking fan-out re-entry).
-                #
-                # Live AXTU 2026-07-31 on live:schwab_1m_v2:
-                #     15:15:47  entry-1 FILLED     -> its OCO exit filled 15:26:52 @3.60
-                #     15:31:16  a buy CANCELLED    <- newest by updated_at from here on
-                #     16:03:05  entry-2 FILLED     -> its OCO exit filled 16:17:07 @3.83
-                # Both exits went unrecorded and had to be recovered from Schwab history hours
-                # later. Schwab's fill -> order-history propagation lags minutes, so the window in
-                # which the correct filled entry was still the newest row was small.
-                #
-                # ⛔ Returning None when nothing is filled is CORRECT, not a regression: no filled
-                # entry means no position, so there is no exit to find. `_fetch_oco_exit_detail`
-                # already degrades to "no fill recorded" on an empty base coid.
-                #
-                # ⛔⭐ MUST INCLUDE `partially_filled`, not just "filled". A partially-filled entry
-                # HOLDS SHARES, so it has a real position and a real bracket -- excluding it would
-                # trade this bug for a NEW miss source, which is the exact failure being closed.
-                # Not hypothetical: the adapter emits `partially_filled` both from the broker's own
-                # status and computed (`0 < filledQuantity < quantity`, schwab.py), and orders here
-                # really do split -- 2124 orders have 2 fills, 406 have 3, 11 have 4. A qty-2 v2
-                # entry filling 1+1 passes through exactly this state.
                 BrokerOrder.status.in_(("filled", "partially_filled")),
             )
-            .order_by(desc(BrokerOrder.updated_at))
         )
-        if client_order_id:
-            stmt = stmt.where(BrokerOrder.client_order_id == client_order_id)
-        return session.scalar(stmt)
+        entry = session.scalar(stmt)
+        if entry is None:
+            self._log_entry_ownership_mismatch(row, candidate_coid=entry_coid,
+                                               reason="bound_entry_identity_mismatch")
+        return entry
+
+    def _log_entry_ownership_mismatch(
+        self, row, *, candidate_coid: str = "", candidate_oid: str = "",
+        reason: str,
+    ) -> None:
+        # One line per managed episode and candidate, regardless of poll/release caller.
+        key = (str(row.id), candidate_coid, candidate_oid)
+        seen = self.__dict__.setdefault("_entry_ownership_mismatches", set())
+        if key in seen:
+            return
+        seen.add(key)
+        self.logger.warning(
+            "[OMS-ENTRY-OWNERSHIP-MISMATCH] acct=%s sym=%s row=%s strategy=%s "
+            "owned_entry_id=%s owned_entry_coid=%s candidate_entry_coid=%s "
+            "candidate_entry_oid=%s reason=%s row_stays_open=1",
+            row.broker_account_name, row.symbol, row.id, row.strategy_code,
+            getattr(row, "entry_order_id", None) or "-",
+            getattr(row, "entry_client_order_id", None) or "-",
+            candidate_coid or "-", candidate_oid or "-", reason,
+        )
 
     def _oco_exit_base_for_entry(
         self, entry_order, *, broker_account_name: str, symbol: str
@@ -7311,8 +7357,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         *separate* exit-only pair, so using the entry coid polls two orders that never existed. That
         was DAIC 2026-08-25: the real pair used ``...-protect-9fea4541aa97`` while every poll asked
         for ``...-open-a2f8fc2f3f24T/S`` and therefore could never name the child that flattened it.
-        The attach handle is persisted into the filled entry order payload; the in-memory map is a
-        same-process fallback, never the durable source.
+        The attach handle must be persisted into the bound filled entry order payload;
+        an account/symbol memory handle cannot establish entry ownership.
         """
         if entry_order is None:
             return ""
@@ -7326,18 +7372,15 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         persisted = str(payload.get("webull_protect_base_client_order_id", "") or "")
         if persisted:
             return persisted
-        return str(
-            getattr(self, "_webull_protect_base", {}).get(
-                (broker_account_name, symbol.upper()), ""
-            )
-            or ""
-        )
+        return ""
 
     async def _persist_webull_protect_base(
         self, broker_account_name: str, symbol: str, base_client_order_id: str, *,
         entry_client_order_id: str = "",
     ) -> bool:
         """Persist the only handle that can address broker-created Webull exit children."""
+        if not entry_client_order_id:
+            return False
         def _write(session: Session) -> bool:
             # Use the fill event's exact entry id. Selecting merely "newest filled buy" can
             # write the handle onto yesterday's row if this background task beats the outer
@@ -7539,12 +7582,19 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             # ⛔ Ownership proof, not a hint. Schwab used to match on SYMBOL ALONE and booked the
             # operator's hand-placed TOS sell as our exit (2026-07-29). It now fails CLOSED without
             # `entry_broker_order_id`, so these must be threaded through from the ENTRY order.
-            return await fn(
+            detail = await fn(
                 acct, symbol, base_coid,
                 entry_broker_order_id=entry_broker_order_id,
                 entry_filled_at=entry_filled_at,
                 entry_quantity=entry_quantity,
             )
+            if detail:
+                return {
+                    **detail,
+                    "entry_broker_order_id": entry_broker_order_id,
+                    "exit_base_client_order_id": base_coid,
+                }
+            return detail
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -7610,6 +7660,22 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         if not detail:
             _outcome(attributed=0, could_not_tell=1, outcome="missing_child_detail")
             return False
+        strategy = session.get(Strategy, entry_order.strategy_id)
+        if strategy is not None and strategy.code == "schwab_1m_v2":
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is not None and not self._owned_exit_detail_matches(row, entry_order, detail):
+                return False
+            if row is None and (
+                detail.get("exit_base_client_order_id") != self._oco_exit_base_for_entry(
+                    entry_order, broker_account_name=acct, symbol=symbol
+                )
+                or str(detail.get("entry_broker_order_id") or "")
+                != str(entry_order.broker_order_id or "")
+            ):
+                _outcome(attributed=0, could_not_tell=1, outcome="unproven_entry_parent")
+                return False
         qty = detail.get("quantity")
         price = detail.get("price")
         if not qty or not price or Decimal(str(qty)) <= 0 or Decimal(str(price)) <= 0:
@@ -8158,7 +8224,9 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             # Capture the broker's own exit BEFORE closing the row, so the completed trade can
             # pair. This path is broker-agnostic (it fires for Schwab and Webull alike), which is
             # why it is the primary hook: Webull has no armed-OCO tracking to drive the fast path.
-            entry_order = self._find_oco_entry_order(session, acct, symbol)
+            entry_order = self._find_oco_entry_order(session, acct, symbol, row=row)
+            if entry_order is None:
+                return False
             base_coid = self._oco_exit_base_for_entry(
                 entry_order, broker_account_name=acct, symbol=symbol
             )
@@ -8175,6 +8243,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             else:
                 self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
             if detail:
+                if not self._owned_exit_detail_matches(row, entry_order, detail):
+                    return False
                 self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             self.store.close_managed_position(session, row)
             self._managed_v2_symbols.discard(key)
@@ -8330,15 +8400,21 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 continue  # the bounded resolution retry lane owns this known filled child
             self._oco_exit_poll_at[key] = now      # stamp BEFORE the call: a failure must not spin
             def _read_entry(session: Session, _a=acct, _s=symbol) -> tuple:
-                o = self._find_oco_entry_order(session, _a, _s)
+                row = self.store.get_open_managed_position(
+                    session, broker_account_name=_a, symbol=_s
+                )
+                o = self._find_oco_entry_order(session, _a, _s, row=row)
                 return (self._oco_exit_base_for_entry(
                             o, broker_account_name=_a, symbol=_s
                         ),
                         str(getattr(o, "broker_order_id", "") or ""),
-                        getattr(o, "quantity", None))
+                        getattr(o, "quantity", None),
+                        str(row.id) if row is not None and o is not None else "")
 
             try:
-                base_coid, entry_oid, entry_qty = await self._run_db(_read_entry, commit=False)
+                base_coid, entry_oid, entry_qty, bound_row_id = await self._run_db(
+                    _read_entry, commit=False
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
@@ -8378,7 +8454,9 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 "recording now instead of waiting for the close path",
                 acct, symbol, detail.get("quantity"), detail.get("price"),
             )
-            await self._close_resolved_oco_managed_row(acct, symbol, detail=detail)
+            await self._close_resolved_oco_managed_row(
+                acct, symbol, detail=detail, expected_row_id=bound_row_id
+            )
 
     # Anti-spam state for the OCO-exit miss log: (acct, symbol) -> (base_coid, last_log_monotonic).
     _OCO_EXIT_MISS_REPEAT_SECS = 300.0
@@ -8573,18 +8651,33 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         # transaction. A failed read must never turn a confirmed child fill into an unpaired close.
         def _read_base(session: Session) -> tuple:
             order = self._find_oco_entry_order(session, acct, symbol)
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
             return (self._oco_exit_base_for_entry(
                         order, broker_account_name=acct, symbol=symbol
                     ),
                     str(getattr(order, "broker_order_id", "") or ""),
-                    getattr(order, "quantity", None))
+                    getattr(order, "quantity", None),
+                    str(row.id) if row is not None and order is not None else "")
 
         base_coid, entry_oid, entry_qty = "", "", None
         try:
-            if detail is None:
-                base_coid, entry_oid, entry_qty = await self._run_db(_read_base, commit=False)
+            base_coid, entry_oid, entry_qty, bound_row_id = await self._run_db(
+                _read_base, commit=False
+            )
+            if not bound_row_id:
+                return False
+            if expected_row_id is not None and expected_row_id != bound_row_id:
+                return False
+            expected_row_id = bound_row_id
         except Exception:  # noqa: BLE001 - an unknown entry must keep the row open
             self.logger.warning("[OMS-OCO-EXIT-FILL] %s %s entry-order lookup failed", acct, symbol)
+            return False
+        # Pair-release reports contain a child but no parent proof. Re-read that child's
+        # owned pair instead of treating a caller-supplied execution as ownership evidence.
+        if isinstance(detail, dict) and not detail.get("exit_base_client_order_id"):
+            detail = None
         if detail is None:
             pending = self.__dict__.get("_oco_exit_fill_pending", {}).get((acct, symbol))
             if pending is not None and pending.paged:
@@ -8615,8 +8708,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             # checked. Closing by (account, symbol) would then close the REPLACEMENT position on
             # the strength of the previous position's OCO leg filling.
             # ⇒ When the caller names the episode it resolved, the close is scoped to that UUID and
-            # refuses anything else. Callers driven by a fresh broker execution record for the
-            # symbol (not by a cached decision) pass nothing and are unchanged.
+            # refuses anything else. The entry lookup above pins the UUID even when the caller
+            # did not supply one.
             if expected_row_id is not None:
                 current = str(row.id) if row is not None else ""
                 if current != expected_row_id:
@@ -8628,6 +8721,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                     )
                     return False, "position_replaced_during_broker_await"
             entry_order = self._find_oco_entry_order(session, acct, symbol)
+            if entry_order is None or not self._owned_exit_detail_matches(row, entry_order, detail):
+                return False, "entry_ownership_mismatch"
             attributed = self._persist_oco_exit_fill(
                 session, acct, symbol, entry_order, detail
             )
@@ -8693,7 +8788,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             )
             return False
         if not closed_expected_episode:
-            if failure_reason != "position_replaced_during_broker_await":
+            if failure_reason not in {"position_replaced_during_broker_await", "entry_ownership_mismatch"}:
                 if failure_reason == "child_attribution_refused" and expected_row_id is None:
                     await self._page_oco_exit_fill_unrecorded(
                         acct, symbol, reason=failure_reason
@@ -8723,6 +8818,35 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             symbol, acct,
         )
         return True
+
+    def _owned_exit_detail_matches(self, row, entry, detail) -> bool:
+        if row is None or entry is None or not isinstance(detail, dict):
+            return False
+        base = self._oco_exit_base_for_entry(
+            entry, broker_account_name=row.broker_account_name, symbol=row.symbol
+        )
+        try:
+            quantity = Decimal(str(detail.get("quantity") or 0))
+            quantity_valid = quantity.is_finite() and quantity > 0
+        except (InvalidOperation, TypeError, ValueError):
+            quantity_valid = False
+        matches = (
+            str(detail.get("entry_broker_order_id") or "") == str(entry.broker_order_id or "")
+            and bool(base)
+            and detail.get("exit_base_client_order_id") == base
+            and str(detail.get("symbol") or "").upper() == row.symbol.upper()
+            and quantity_valid
+            and quantity == Decimal(row.current_quantity)
+            and entry.id == row.entry_order_id
+            and entry.client_order_id == row.entry_client_order_id
+        )
+        if not matches:
+            self._log_entry_ownership_mismatch(
+                row, candidate_coid=str(detail.get("exit_base_client_order_id") or ""),
+                candidate_oid=str(detail.get("entry_broker_order_id") or ""),
+                reason="exit_parent_symbol_or_quantity_mismatch",
+            )
+        return matches
 
     async def _close_broker_flat_phantom_managed_row(
         self, acct: str, symbol: str, *, expected_row_id: str
@@ -9423,8 +9547,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         the parent -- the OMS never places them, so they never land in `broker_orders`. Asking
         the DB would always find nothing and the stand-down would never activate = the software
         ladder keeps running on an OCO'd position = the relocated collision. So this asks the
-        broker directly (adapter `fetch_armed_native_oco_symbols`, the STEP-1-proven
-        childOrderStrategies walk), matching the design's "re-derived from the broker on boot".
+        broker directly for the durable managed entry's exact parent, never an account-wide
+        armed/resolved symbol set. The existing >=2 working / filled / unsafe semantics remain.
 
         Runs on the periodic sync (~5s), off-loop; the per-tick predicate stays a dict lookup.
         FAIL-OPEN: any error (unreachable broker, adapter without the capability) -> do NOT
@@ -9438,24 +9562,40 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             return
 
         adapter = getattr(self, "broker_adapter", None)
-        fn = getattr(adapter, "fetch_armed_native_oco_symbols", None)
+        fn = getattr(adapter, "fetch_exit_legs_for_entry", None)
         if fn is None:
             # No adapter / no capability -> nothing can be confirmed armed -> ladder runs.
             self._native_oco_armed_confirmed_at.clear()
             getattr(self, "_native_oco_resolving", {}).clear()
             return
 
-        # Group the managed positions by broker account (one broker round-trip per account).
-        by_account: dict[str, list[str]] = {}
-        for (acct_name, symbol) in list(self._managed_v2_symbols):
-            by_account.setdefault(acct_name, []).append(symbol)
+        def _bound_entries(session: Session) -> dict:
+            entries = {}
+            for acct_name, symbol in list(self._managed_v2_symbols):
+                if account_names is not None and acct_name not in account_names:
+                    continue
+                row = self.store.get_open_managed_position(
+                    session, broker_account_name=acct_name, symbol=symbol
+                )
+                entry = self._find_oco_entry_order(session, acct_name, symbol, row=row)
+                if entry is not None and entry.broker_order_id:
+                    entries[(acct_name, symbol)] = (
+                        str(row.id), entry.broker_order_id
+                    )
+            return entries
 
         armed: set[tuple[str, str]] = set()
         try:
-            for acct_name, symbols in by_account.items():
-                confirmed = await fn(acct_name, symbols)
-                for sym in confirmed:
-                    armed.add((acct_name, sym))
+            bindings = await self._run_db(_bound_entries, commit=False)
+            for key, (_row_id, parent_id) in bindings.items():
+                if self._is_v2_webull_account(key[0]):
+                    continue  # Webull protection is addressed by its persisted pair handle.
+                state = await fn(key[0], parent_id)
+                working = set(state.get("working") or [])
+                if not state.get("unsafe") and not state.get("filled") and len(working) >= 2:
+                    armed.add(key)
+            current_bindings = await self._run_db(_bound_entries, commit=False)
+            armed = {key for key in armed if current_bindings.get(key) == bindings[key]}
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -9466,6 +9606,18 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             )
             return
 
+        remembered_bindings = self.__dict__.setdefault("_native_oco_entry_bindings", {})
+        for key in set(self._native_oco_armed_confirmed_at) | set(
+            getattr(self, "_native_oco_resolving", {})
+        ):
+            if key not in current_bindings or (
+                key in remembered_bindings
+                and remembered_bindings[key] != current_bindings[key]
+            ):
+                self._native_oco_armed_confirmed_at.pop(key, None)
+                getattr(self, "_native_oco_resolving", {}).pop(key, None)
+        remembered_bindings.clear()
+        remembered_bindings.update(current_bindings)
         now = utcnow()
         for key in armed:
             self._native_oco_armed_confirmed_at[key] = now
@@ -9479,7 +9631,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 # position -> a rejected sell on every OCO resolution). The grace clears early
                 # below once the position leaves _managed_v2_symbols.
                 self._native_oco_armed_confirmed_at.pop(key, None)
-                if hasattr(self, "_native_oco_resolving"):
+                if hasattr(self, "_native_oco_resolving") and key in current_bindings:
                     self._native_oco_resolving[key] = now
                 self.logger.info(
                     "[OMS-OCO-STAND-DOWN-CLEARED] %s %s - OCO gone; ladder deferred through the "
@@ -9489,7 +9641,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         # the common resolved-by-fill case, cleared well before the grace backstop.
         managed = getattr(self, "_managed_v2_symbols", set())
         for key in list(getattr(self, "_native_oco_resolving", {})):
-            if key not in managed:
+            if key not in managed or key not in current_bindings:
                 self._native_oco_resolving.pop(key, None)
 
         # ⭐ Proactively close the phantom row for any STILL-managed symbol whose OCO resolved BY A
@@ -9515,11 +9667,21 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 ):
                     continue
                 resolving_by_acct.setdefault(acct_name, []).append(sym)
-            resolved_fn = getattr(adapter, "fetch_oco_resolved_by_fill_symbols", None)
+            resolved_fn = getattr(adapter, "fetch_oco_exit_fill", None)
             if resolved_fn is not None:
                 for acct_name, syms in resolving_by_acct.items():
                     try:
-                        filled = await resolved_fn(acct_name, syms)
+                        filled = []
+                        for sym in syms:
+                            if (acct_name, sym) in pending_fills:
+                                filled.append(sym)
+                                continue
+                            binding = current_bindings.get((acct_name, sym))
+                            if binding is None:
+                                continue
+                            state = await fn(acct_name, binding[1])
+                            if state.get("filled") and not state.get("unsafe"):
+                                filled.append(sym)
                     except asyncio.CancelledError:
                         raise
                     except Exception:  # noqa: BLE001 — best-effort; never break the sync
@@ -9542,7 +9704,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                             continue
                         closed = await self._close_resolved_oco_managed_row(
                             acct_name, sym,
-                            expected_row_id=pending.row_id if pending is not None else None,
+                            expected_row_id=(pending.row_id if pending is not None
+                                             else current_bindings[(acct_name, sym)][0]),
                         )
                         if closed:
                             self._native_oco_resolving.pop((acct_name, sym), None)
@@ -10047,6 +10210,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                             price=fill.price,
                             metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
                             entry_client_order_id=str(order.client_order_id or ""),
+                            entry_order_id=order.id,
                         )
                         # Webull mirror-on-fill: queue this fill iff it's a v2-primary buy-open
                         # (flag on + strategy schwab_1m_v2 + primary account + buy + open). Fired
@@ -11020,28 +11184,9 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             await self._publish_order_event(ev)
 
     def _latest_filled_entry_order_id(self, session, acct: str, symbol: str) -> str | None:
-        """The most recent FILLED buy's broker order id for this position.
-
-        ⛔ `oms_managed_positions` carries no entry broker order id, which is why the first version
-        swept the account's whole order list. It is derivable exactly from `broker_orders`, and
-        having it lets the confirm read one order TREE instead of a paginated list.
-        """
-        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == acct))
-        if account is None:
-            return None
-        row = session.scalars(
-            select(BrokerOrder)
-            .where(
-                BrokerOrder.broker_account_id == account.id,
-                BrokerOrder.symbol == symbol,
-                BrokerOrder.side == "buy",
-                BrokerOrder.status == "filled",
-            )
-            .order_by(BrokerOrder.submitted_at.desc())
-            .limit(1)
-        ).first()
-        oid = str(getattr(row, "broker_order_id", "") or "") if row is not None else ""
-        return oid or None
+        """Compatibility name: address only this managed row's bound broker parent."""
+        entry = self._find_oco_entry_order(session, acct, symbol)
+        return str(entry.broker_order_id or "") or None if entry is not None else None
 
     def _v2_eod_cancel_reexit_due(self, now: datetime | None = None) -> bool:
         """True only INSIDE the cancel-and-reexit window (default 16:01-16:15 ET) on a weekday."""
@@ -11324,17 +11469,26 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         # `fetch_oco_resolved_by_fill_symbols` is the existing, production-proven read for exactly
         # this distinction, and it is recency-bounded so a stale fill from an earlier bracket on
         # the same symbol cannot false-positive.
-        resolved = getattr(self.broker_adapter, "fetch_oco_resolved_by_fill_symbols", None)
+        resolved = getattr(self.broker_adapter, "fetch_oco_exit_fill", None)
         if resolved is not None:
             try:
-                if symbol.upper() in {str(x).upper() for x in await resolved(acct, [symbol])}:
+                parent_id = await self._run_db(
+                    lambda session: self._latest_filled_entry_order_id(session, acct, symbol),
+                    commit=False,
+                )
+                if not parent_id:
+                    return False
+                state = await self.broker_adapter.fetch_exit_legs_for_entry(acct, parent_id)
+                if state.get("unsafe"):
+                    return False
+                if state.get("filled"):
+                    recorded = await self._close_resolved_oco_managed_row(acct, symbol)
                     self.logger.error(
                         "[OMS-V2-EOD-CANCEL-REEXIT] %s %s outcome=RESOLVED_BY_FILL — an OCO child "
                         "already FILLED, so the position is closed. NO PM exit placed.",
                         acct, symbol,
                     )
-                    await self._close_resolved_oco_managed_row(acct, symbol)
-                    return True  # nothing to place and nothing to restore
+                    return recorded
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - an unreadable broker is not a flat broker
@@ -11678,26 +11832,27 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             )
             return ExitPairReleaseResult(outcome=result)
 
-        def _base(session: Session) -> str:
+        def _base(session: Session) -> tuple[str, str]:
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
             if row is None or str(row.id) != expected_row_id:
-                return ""
+                return "", ""
             entry = self._find_oco_entry_order(session, acct, symbol)
             return self._oco_exit_base_for_entry(
                 entry, broker_account_name=acct, symbol=symbol
-            )
+            ), str(getattr(entry, "broker_order_id", "") or "")
 
         try:
-            base = await self._run_db(_base, commit=False)
+            base, entry_oid = await self._run_db(_base, commit=False)
             if not base:
                 return ExitPairReleaseResult(outcome="unanswerable")
             release = await self.broker_adapter.release_exit_pair_for_close(
                 broker_account_name=acct, symbol=symbol, base_client_order_id=base
             )
             if release.outcome == "resolved_by_fill":
-                return release
+                return replace(release, entry_broker_order_id=entry_oid,
+                               exit_base_client_order_id=base)
             confirm = getattr(self.broker_adapter, "confirm_exit_pair_terminal", None)
             if confirm is None:
                 return ExitPairReleaseResult(outcome="unanswerable")
@@ -14479,6 +14634,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                     price=fill.price,
                     metadata=dict(request.metadata),
                     entry_client_order_id=str(request.client_order_id or ""),
+                    entry_order_id=order.id,
                 )
 
             self.store.mark_intent_from_report(intent, report)

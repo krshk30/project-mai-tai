@@ -14,6 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from tests.unit.managed_entry_fixtures import bind_managed_entry, set_protect_base
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
@@ -98,6 +99,7 @@ def _arm(svc, sf, *, symbol=SYM, entry=10.0, qty=100, **rowkw) -> None:
             s, strategy_code="schwab_1m_v2", broker_account_name=ACCT,
             symbol=symbol, entry_price=Decimal(str(entry)), quantity=qty, entry_path="MACD Cross",
         )
+        bind_managed_entry(s, row)
         for k, v in rowkw.items():
             setattr(row, k, v)
         s.flush()
@@ -560,7 +562,11 @@ async def test_oco_fill_signal_without_child_record_stands_down_and_pages() -> N
     sf = _make_sf()
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    with sf() as session:
+        managed = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.status == "open"))
+        session.get(BrokerOrder, managed.entry_order_id).intent_id = None
+        session.commit()
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=9.40)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -603,8 +609,12 @@ async def test_oco_fill_signal_with_entry_order_records_child_and_closes_promptl
             order_type="market", time_in_force="day", quantity=Decimal("100"),
             status="filled", payload={},
         ))
+        session.flush()
+        entry_order = session.scalar(select(BrokerOrder).where(BrokerOrder.broker_order_id == "ENTRY-ORDER-CONTROL"))
+        managed = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.status == "open"))
+        bind_managed_entry(session, managed, entry=entry_order)
         session.commit()
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=9.40)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -634,7 +644,7 @@ async def test_oco_fill_reconciliation_names_the_row_checked_before_the_broker_a
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
     expected_row_id = str(_row(sf).id)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=9.40)
     reconciled: list[tuple[str, str, str]] = []
 
@@ -656,7 +666,7 @@ async def test_adapter_without_pair_state_capability_keeps_the_existing_sell_pat
     sf = _make_sf()
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=9.40)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -678,7 +688,7 @@ async def test_unclear_pair_holds_profit_taking_without_an_intent_and_throttles(
     sf = _make_sf()
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=10.25)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -707,7 +717,7 @@ async def test_unclear_pair_never_suppresses_the_hard_stop(outcome: str) -> None
     sf = _make_sf()
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=9.40)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -724,7 +734,7 @@ async def test_unanswerable_pair_opens_inc1_even_when_the_hard_stop_continues() 
     sf = _make_sf()
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=9.40)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -785,7 +795,7 @@ async def test_terminal_reserved_pair_pages_but_does_not_suppress_the_hard_stop(
     svc = _svc(sf, adapter=adapter, release=True)
     monkeypatch.setattr(svc, "_EXIT_RESERVATION_MAX_ATTEMPTS", 1)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=9.40)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -849,7 +859,7 @@ async def test_unclear_pair_retries_when_the_probe_window_expires(monkeypatch) -
     sf = _make_sf()
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=10.25)
     clock = {"now": 100.0}
     monkeypatch.setattr(
@@ -881,7 +891,7 @@ async def test_reserved_pair_does_not_consume_a_scale_level() -> None:
     sf = _make_sf()
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=10.25)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
@@ -905,7 +915,7 @@ async def test_confirmed_clear_pair_allows_the_existing_software_sell() -> None:
     sf = _make_sf()
     svc = _svc(sf, adapter=adapter, release=True)
     _arm(svc, sf, entry=10.0, qty=100)
-    svc._webull_protect_base[(ACCT, SYM)] = "protect-base"
+    set_protect_base(svc, sf, ACCT, SYM, "protect-base")
     _quote(svc, bid=9.40)
 
     await svc._evaluate_v2_managed_exit(ACCT, SYM)

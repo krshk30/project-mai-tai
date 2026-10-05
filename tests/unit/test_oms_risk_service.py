@@ -6,6 +6,7 @@ import logging
 from decimal import Decimal
 
 import pytest
+from tests.unit.managed_entry_fixtures import bind_managed_entry
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -4084,6 +4085,9 @@ def _seed_managed_row(session, acct="live:orb", symbol="BIYA"):
         status="open", config_name="make_v2_variant",
     )
     session.add(row)
+    session.flush()
+    entry = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == "schwab_1m_v2-BIYA-open-abc"))
+    bind_managed_entry(session, row, entry=entry)
     session.commit()
     return row
 
@@ -4104,7 +4108,7 @@ def _seed_entry(session, *, payload=None):
     session.flush()
     order = BrokerOrder(
         intent_id=intent.id, strategy_id=strategy.id, broker_account_id=account.id,
-        client_order_id="schwab_1m_v2-BIYA-open-abc", symbol="BIYA", side="buy",
+        client_order_id="schwab_1m_v2-BIYA-open-abc", broker_order_id="WB-ENTRY-1", symbol="BIYA", side="buy",
         order_type="market", time_in_force="day", quantity=Decimal("1"),
         status="filled", payload=payload or {"bracket": "true"},
     )
@@ -4115,7 +4119,8 @@ def _seed_entry(session, *, payload=None):
 
 _EXIT = {"symbol": "BIYA", "quantity": Decimal("1"), "price": Decimal("3.93"),
          "filled_at": datetime(2026, 7, 27, 15, 36, 30, tzinfo=UTC),
-         "broker_order_id": "WB-EXIT-1"}
+         "broker_order_id": "WB-EXIT-1", "entry_broker_order_id": "WB-ENTRY-1",
+         "exit_base_client_order_id": "schwab_1m_v2-BIYA-open-abc"}
 
 
 def test_the_broker_exit_is_recorded_as_a_real_fill() -> None:
@@ -4296,7 +4301,7 @@ async def test_attach_handle_is_persisted_on_the_filled_entry_order() -> None:
         entry_id = entry.id
     svc = _oco_service(sf)
     assert await svc._persist_webull_protect_base(
-        "live:orb", "BIYA", "protect-base-BIYA"
+        "live:orb", "BIYA", "protect-base-BIYA", entry_client_order_id="schwab_1m_v2-BIYA-open-abc"
     ) is True
     with sf() as session:
         from project_mai_tai.db.models import BrokerOrder

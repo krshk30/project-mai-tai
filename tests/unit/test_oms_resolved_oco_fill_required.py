@@ -58,6 +58,10 @@ def _service_with_weto():
         redis_client=_Redis(),
         session_factory=sessions,
     )
+    async def no_child(*_args, **_kwargs):
+        return None
+
+    service.broker_adapter.fetch_oco_exit_fill = no_child
     with sessions() as session:
         strategy = Strategy(code="schwab_1m_v2", name="V2", execution_mode="live")
         account = BrokerAccount(name=ACCOUNT, provider="webull", environment="live")
@@ -96,7 +100,11 @@ def _service_with_weto():
                 },
             )
         )
+        session.flush()
+        entry = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == ENTRY_COID))
         row = OmsManagedPosition(
+            entry_order_id=entry.id,
+            entry_client_order_id=entry.client_order_id,
             strategy_code="schwab_1m_v2",
             broker_account_name=ACCOUNT,
             symbol=SYMBOL,
@@ -168,7 +176,7 @@ async def test_unscoped_schwab_refresh_read_failure_holds_the_open_row() -> None
         return _EXIT_FETCH_FAILED
 
     async def armed(_acct, _symbols):
-        return set()
+        return {"working": [], "filled": True, "unsafe": False}
 
     async def resolved(_acct, _symbols):
         return {SYMBOL}
@@ -176,7 +184,7 @@ async def test_unscoped_schwab_refresh_read_failure_holds_the_open_row() -> None
     service._fetch_oco_exit_detail = failed_fetch
     service.settings.oms_native_oco_stand_down_enabled = True
     service.settings.oms_native_oco_resolve_flat_reconcile_enabled = True
-    service.broker_adapter.fetch_armed_native_oco_symbols = armed
+    service.broker_adapter.fetch_exit_legs_for_entry = armed
     service.broker_adapter.fetch_oco_resolved_by_fill_symbols = resolved
 
     await service._refresh_native_oco_armed_state([schwab_acct])
@@ -287,7 +295,7 @@ async def test_pending_child_fill_retries_after_eod_removes_resolution_grace() -
         return _EXIT_FETCH_FAILED
 
     async def armed(_acct, _symbols):
-        return set()
+        return {"working": [], "filled": False, "unsafe": False}
 
     async def no_longer_in_recent_fills(_acct, _symbols):
         return set()
@@ -295,7 +303,7 @@ async def test_pending_child_fill_retries_after_eod_removes_resolution_grace() -
     service._fetch_oco_exit_detail = failed_fetch
     service.settings.oms_native_oco_stand_down_enabled = True
     service.settings.oms_native_oco_resolve_flat_reconcile_enabled = True
-    service.broker_adapter.fetch_armed_native_oco_symbols = armed
+    service.broker_adapter.fetch_exit_legs_for_entry = armed
     service.broker_adapter.fetch_oco_resolved_by_fill_symbols = no_longer_in_recent_fills
     assert await service._close_resolved_oco_managed_row(
         ACCOUNT, SYMBOL, expected_row_id=row_id
@@ -375,6 +383,8 @@ async def test_weto_child_sell_fill_is_durable_before_managed_row_closes() -> No
     child_id = STOP_CHILD_ORDER_ID
     detail = {
         "symbol": SYMBOL,
+        "entry_broker_order_id": ENTRY_ORDER_ID,
+        "exit_base_client_order_id": PROTECT_BASE,
         "quantity": Decimal("1"),
         "price": Decimal("1.96"),
         "filled_at": STOP_FILLED_AT,
@@ -401,6 +411,8 @@ async def test_missing_weto_child_order_id_cannot_close_or_create_fill() -> None
     service, sessions, row_id = _service_with_weto()
     detail = {
         "symbol": SYMBOL,
+        "entry_broker_order_id": ENTRY_ORDER_ID,
+        "exit_base_client_order_id": PROTECT_BASE,
         "quantity": Decimal("1"),
         "price": Decimal("1.95"),
         "filled_at": datetime(2026, 9, 24, 13, 43, 44, tzinfo=UTC),
@@ -429,6 +441,8 @@ async def test_weto_resolved_answer_without_durable_fill_keeps_row_open() -> Non
         expected_row_id=row_id,
         detail={
             "symbol": SYMBOL,
+            "entry_broker_order_id": ENTRY_ORDER_ID,
+            "exit_base_client_order_id": PROTECT_BASE,
             "quantity": Decimal("1"),
             "price": Decimal("1.95"),
             "filled_at": datetime(2026, 9, 24, 13, 43, 44, tzinfo=UTC),
@@ -467,6 +481,8 @@ async def test_weto_child_fill_closes_prior_unrecorded_incident() -> None:
         expected_row_id=row_id,
         detail={
             "symbol": SYMBOL,
+            "entry_broker_order_id": ENTRY_ORDER_ID,
+            "exit_base_client_order_id": PROTECT_BASE,
             "quantity": Decimal("1"),
             "price": Decimal("1.95"),
             "filled_at": datetime(2026, 9, 24, 13, 43, 44, tzinfo=UTC),
@@ -479,7 +495,7 @@ async def test_weto_child_fill_closes_prior_unrecorded_incident() -> None:
 
 
 @pytest.mark.asyncio
-async def test_weto_answer_without_entry_order_keeps_row_open_and_pages() -> None:
+async def test_weto_answer_without_entry_order_keeps_row_open_as_ownership_mismatch() -> None:
     service, sessions, row_id = _service_with_weto()
     with sessions() as session:
         entry = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == ENTRY_COID))
@@ -493,6 +509,8 @@ async def test_weto_answer_without_entry_order_keeps_row_open_and_pages() -> Non
         expected_row_id=row_id,
         detail={
             "symbol": SYMBOL,
+            "entry_broker_order_id": ENTRY_ORDER_ID,
+            "exit_base_client_order_id": PROTECT_BASE,
             "quantity": Decimal("1"),
             "price": Decimal("1.95"),
             "filled_at": datetime(2026, 9, 24, 13, 43, 44, tzinfo=UTC),
@@ -505,7 +523,7 @@ async def test_weto_answer_without_entry_order_keeps_row_open_and_pages() -> Non
         incidents = session.scalars(select(SystemIncident)).all()
     assert row is not None and row.status == "open"
     assert fills == []
-    assert len(incidents) == 1
+    assert incidents == []
 
 
 @pytest.mark.asyncio
@@ -514,6 +532,8 @@ async def test_weto_already_recorded_child_accepts_equivalent_decimal_scale() ->
     child_id = "WETO-STOP-CHILD-CONTROL"
     base_detail = {
         "symbol": SYMBOL,
+        "entry_broker_order_id": ENTRY_ORDER_ID,
+        "exit_base_client_order_id": PROTECT_BASE,
         "quantity": Decimal("1"),
         "price": Decimal("1.95"),
         "filled_at": datetime(2026, 9, 24, 13, 43, 44, tzinfo=UTC),
@@ -544,6 +564,8 @@ async def test_weto_existing_fill_with_wrong_broker_order_id_keeps_row_open() ->
     child_id = "WETO-STOP-CHILD-CONTROL"
     detail = {
         "symbol": SYMBOL,
+        "entry_broker_order_id": ENTRY_ORDER_ID,
+        "exit_base_client_order_id": PROTECT_BASE,
         "quantity": Decimal("1"),
         "price": Decimal("1.95"),
         "filled_at": datetime(2026, 9, 24, 13, 43, 44, tzinfo=UTC),

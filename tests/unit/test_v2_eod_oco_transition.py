@@ -7,6 +7,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
+from tests.unit.managed_entry_fixtures import set_protect_base
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -271,7 +272,7 @@ async def test_webull_handover_requires_strict_second_broker_read():
     svc.settings.oms_v2_eod_oco_transition_enabled = True
     svc._v2_eod_oco_transition_due = lambda now=None: True
     svc._managed_v2_symbols = {(WEBULL, WEBULL_SYMBOL)}
-    svc._webull_protect_base[(WEBULL, WEBULL_SYMBOL)] = "known-protect-base"
+    set_protect_base(svc, sf, WEBULL, WEBULL_SYMBOL, "known-protect-base")
     reads = ["unanswerable", "released"]
 
     async def strict_read(**_kwargs):

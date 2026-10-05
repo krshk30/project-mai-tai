@@ -16,6 +16,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from tests.unit.managed_entry_fixtures import set_protect_base
 from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
@@ -66,7 +67,7 @@ async def test_hard_stop_with_no_resting_pair_sells_through_the_shared_path(monk
     service, sf = _service(fanout=True, adapter=_FanoutAdapter())
     service.logger = _CapturedLogger()
     _cw(service)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     _quote(service, 9.40)  # entry 10 -> stop 9.50
 
     await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
@@ -169,7 +170,7 @@ async def test_floor_on_webull_uses_the_same_routine(monkeypatch) -> None:
     _cw(service)
     service._cw_floor_exit_enabled = True
     service._cw_floor_armed.add((WEBULL, SYMBOL))  # rode past +2%, floor armed at +1%
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     _quote(service, 10.05)  # back under the +1% floor (10.10)
 
     await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
@@ -190,7 +191,7 @@ async def test_APUS_after_hours_floor_releases_pair_then_uses_marketable_limit(m
     _cw(service)
     service._cw_floor_exit_enabled = True
     service._cw_floor_armed.add((WEBULL, SYMBOL))
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "APUS-protect-base")
 
     async def no_filled_child(*_args, **_kwargs):
         return None
@@ -220,7 +221,7 @@ async def test_1955_flatten_closes_both_accounts_but_releases_only_webull_pair(m
     service.settings.oms_v2_overnight_flatten_enabled = True
     service._v2_overnight_flatten_due = lambda now=None: True
     service._market_is_fillable = lambda now=None: True
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "APUS-protect-base")
 
     async def no_filled_child(*_args, **_kwargs):
         return None
@@ -282,7 +283,7 @@ async def test_eh_floor_retries_after_unfilled_limit_expires_even_if_bid_recover
     _cw(service)
     service._cw_floor_exit_enabled = True
     service._cw_floor_armed.add((WEBULL, SYMBOL))
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "APUS-protect-base")
 
     async def no_filled_child(*_args, **_kwargs):
         return None
@@ -330,7 +331,7 @@ async def test_eh_target_and_flip_unfilled_limits_remain_tracked(
     service._cw_stop_pct = 8.0
     service._cw_floor_exit_enabled = False
     service._cw_floor_armed.add((WEBULL, SYMBOL))
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "exit-pair"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "exit-pair")
     if tag == "CW_FLIP":
         with sf() as session:
             row = service.store.get_open_managed_position(
@@ -372,7 +373,7 @@ async def test_rth_webull_flip_releases_its_pair_in_shared_path() -> None:
     _cw(service)
     service._cw_target_pct = 5.0
     service._cw_stop_pct = 8.0
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "rth-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "rth-protect-base")
     service._native_oco_armed_confirmed_at[(WEBULL, SYMBOL)] = service_module.utcnow()
     with sf() as session:
         row = service.store.get_open_managed_position(
@@ -404,7 +405,7 @@ async def test_rth_target_only_uses_software_when_bracket_not_confirmed(bracket_
     _cw(service)
     service._cw_target_pct = 5.0
     service._cw_stop_pct = 8.0
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "rth-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "rth-protect-base")
     if bracket_confirmed:
         service._native_oco_armed_confirmed_at[(WEBULL, SYMBOL)] = service_module.utcnow()
     _quote(service, 10.60)
@@ -504,7 +505,7 @@ async def test_eh_pair_read_429_cannot_cancel_or_sell(monkeypatch) -> None:
     service.logger = _CapturedLogger()
     service._market_is_fillable = lambda now=None: True
     _cw(service)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "APUS-protect-base")
 
     async def read_429(*_args, **_kwargs):
         raise RuntimeError("HTTP Status: 429, Code: TOO_MANY_REQUESTS")
@@ -527,7 +528,7 @@ async def test_eh_pair_read_filled_child_records_it_without_another_sell(monkeyp
     service.logger = _CapturedLogger()
     service._market_is_fillable = lambda now=None: True
     _cw(service)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "APUS-protect-base")
     with sf() as session:
         entry = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == "webull-stop-limit-entry"))
         assert entry is not None
@@ -568,7 +569,7 @@ async def test_eh_limit_refused_after_pair_release_pages_and_keeps_row(monkeypat
     service.logger = _CapturedLogger()
     service._market_is_fillable = lambda now=None: True
     _cw(service)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "APUS-protect-base")
 
     async def no_filled_child(*_args, **_kwargs):
         return None
@@ -600,7 +601,7 @@ async def test_after_2000_never_releases_pair_for_unfillable_sell(monkeypatch) -
     service.logger = _CapturedLogger()
     service._market_is_fillable = lambda now=None: False
     _cw(service)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "APUS-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "APUS-protect-base")
     _quote(service, 9.40)
 
     await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
@@ -628,7 +629,7 @@ async def test_CONTROL_a_resting_bracket_still_owns_the_stop(monkeypatch) -> Non
     service, sf = _service(fanout=True, adapter=_FanoutAdapter())
     service.logger = _CapturedLogger()
     _cw(service)
-    service._webull_protect_base[(WEBULL, SYMBOL)] = "known-protect-base"
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
     monkeypatch.setattr(service, "_native_oco_stand_down_active", lambda acct, sym: True)
     _quote(service, 9.40)
 

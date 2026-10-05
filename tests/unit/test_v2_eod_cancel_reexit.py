@@ -302,15 +302,18 @@ async def test_F1_never_sells_when_an_oco_child_has_already_filled(monkeypatch):
     """'No WORKING legs' has two causes: the legs lapsed (we still hold) or one FILLED (already
     sold). They read identically. Selling on the second is a naked short."""
     class _A(_LegAdapter):
-        async def fetch_oco_resolved_by_fill_symbols(self, acct, symbols, **kw):
-            return {SYM}
+        async def fetch_oco_exit_fill(self, *args, **kw):
+            return {"quantity": 1}
+
+        async def fetch_exit_legs_for_entry(self, acct, parent):
+            return {"filled": True, "unsafe": False, "working": []}
 
     a = _A([{}, {}])
     svc = _svc(a)
     emitted = []
     svc._emit_v2_exit_on_loop = lambda *ar, **kw: emitted.append(kw)
     async def _close_row(*ar, **kw):
-        return None
+        return True
 
     svc._close_resolved_oco_managed_row = _close_row
     placed = await svc._v2_eod_place_pm_exit(ACCT, SYM, True)

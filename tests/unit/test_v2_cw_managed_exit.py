@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from tests.unit.managed_entry_fixtures import bind_managed_entry
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -116,11 +117,14 @@ def _arm(
     account: str = ACCT,
 ) -> None:
     with sf() as s:
-        svc.store.create_managed_position(
+        row = svc.store.create_managed_position(
             s, strategy_code="schwab_1m_v2", broker_account_name=account,
             symbol=SYM, entry_price=Decimal(str(entry)), quantity=qty, entry_path="ATR Flip",
             entry_time=entry_time,
         )
+        entry_order = bind_managed_entry(s, row)
+        if account == WEBULL_ACCT:
+            entry_order.payload = {"fanout_leg": "webull", "native_oco_bracket": "false"}
         s.commit()
     svc._managed_v2_symbols.add((ACCT, SYM))
 
@@ -169,6 +173,10 @@ def _record_filled_entry(sf, *, broker_order_id: str = "entry-order-1") -> None:
                 payload={"native_oco_bracket": "true"},
             )
         )
+        s.flush()
+        entry = s.scalar(select(BrokerOrder).where(BrokerOrder.broker_order_id == broker_order_id))
+        row = s.scalar(select(OmsManagedPosition).where(OmsManagedPosition.status == "open", OmsManagedPosition.broker_account_name == ACCT))
+        bind_managed_entry(s, row, entry=entry)
         s.commit()
 
 

@@ -1,0 +1,28 @@
+All commands run in the sole-writer worktree unless explicitly noted.
+Interpreter: /Users/velkris/Projects/project-mai-tai/.venv/bin/python
+PYTHONPATH=src on every Python command.
+
+Pinned-base full suite (cwd .b; clean isolated Git checkout a80b51816abf0aefc269f0fdfc473468fd3fe62c):
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit -q > ../.ownmix1-main-baseline-final.log 2>&1
+
+Post-scope-correction head full suite:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit -q > .ownmix1-head-unit-scoped.log 2>&1
+
+Post-scope-correction focused suite:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit/test_ownmix1_entry_binding.py tests/unit/test_confirmation_exit_fanout.py tests/unit/test_exit_reservation_release.py tests/unit/test_oms_native_oco_stand_down.py tests/unit/test_oms_oco_entry_status_filter.py tests/unit/test_oms_resolved_oco_fill_required.py tests/unit/test_oms_risk_service.py tests/unit/test_oms_v2_phantom_reconcile.py tests/unit/test_v2_cw_managed_exit.py tests/unit/test_v2_eod_cancel_reexit.py tests/unit/test_v2_eod_oco_transition.py tests/unit/test_v2_exit_retry_bound.py tests/unit/test_v2_managed_exit.py tests/unit/test_v2_overnight_flatten.py tests/unit/test_webull_hard_stop_floor_shared_path.py tests/unit/test_webull_protect_handle_persistence.py tests/unit/test_orb_schwab_exits.py tests/unit/test_schwab_oco_child_cancel_probe.py tests/unit/test_schwab_exit_only_oco.py -q > .ownmix1-focused-scoped.log 2>&1
+
+Post-scope-correction ownership mutations (isolated in-memory methods):
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/mutate_ownership.py > .ownmix1-mutations-scoped.log 2>&1
+
+Read-only retained history audit:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/audit_historical_parents.py /Users/velkris/.codex/ownmix-rpgstuck-evidence-20261005/ownmix-rpgstuck-own-read.json > .ownmix1-historical-final.log
+
+Full-suite comparison, exact failed IDs and independent cross-check:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/verify_suite_pair.py .ownmix1-main-baseline-final.log .ownmix1-head-unit-scoped.log --independent-baseline /tmp/pmprint-main-unit.txt --focused .ownmix1-focused-scoped.log --mutations .ownmix1-mutations-scoped.log > docs/review-artifacts/ownmix1/verification.json
+
+Whitespace/diff validation:
+git diff --check
+
+CI-style static validation:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m ruff check src tests
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python ops/health/check_log_marker_collisions.py

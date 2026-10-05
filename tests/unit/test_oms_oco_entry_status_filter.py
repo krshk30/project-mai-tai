@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import logging
 
 import pytest
 from sqlalchemy import create_engine
@@ -57,7 +58,10 @@ def session():
 
 
 def _svc() -> OmsRiskService:
-    return OmsRiskService.__new__(OmsRiskService)   # the method only needs the passed session
+    service = OmsRiskService.__new__(OmsRiskService)
+    service.store = OmsStore()
+    service.logger = logging.getLogger("entry-status")
+    return service
 
 
 def _buy(session, *, coid: str, status: str, minutes: int, symbol: str = SYMBOL):
@@ -78,6 +82,16 @@ def _buy(session, *, coid: str, status: str, minutes: int, symbol: str = SYMBOL)
     )
     session.add(o)
     session.flush()
+    if status in {"filled", "partially_filled"} and symbol == SYMBOL:
+        store = OmsStore()
+        row = store.get_open_managed_position(session, broker_account_name=ACCT, symbol=SYMBOL)
+        if row is None:
+            row = store.create_managed_position(
+                session, strategy_code="schwab_1m_v2", broker_account_name=ACCT,
+                symbol=SYMBOL, entry_price=Decimal("3.60"), quantity=2)
+        row.entry_order_id = o.id
+        row.entry_client_order_id = o.client_order_id
+        session.flush()
     return o
 
 
@@ -92,7 +106,7 @@ def test_the_live_axtu_shape_resolves_to_the_FILLED_entry(session) -> None:
     )
 
 
-def test_newest_FILLED_entry_still_wins(session) -> None:
+def test_bound_second_FILLED_entry_still_wins(session) -> None:
     """The fix must not break re-entries: among filled entries the most recent is still correct."""
     _buy(session, coid="filled-entry-1", status="filled", minutes=15)
     _buy(session, coid="cancelled-noise", status="cancelled", minutes=31)
@@ -142,7 +156,7 @@ def test_a_PARTIALLY_FILLED_entry_still_wins(session) -> None:
     assert got.client_order_id == "partial-entry"
 
 
-def test_newest_position_holding_entry_wins_across_both_states(session) -> None:
+def test_bound_partial_entry_wins_across_both_states(session) -> None:
     """filled and partially_filled are peers: the most recent position-holding entry wins."""
     _buy(session, coid="filled-older", status="filled", minutes=10)
     _buy(session, coid="partial-newer", status="partially_filled", minutes=45)

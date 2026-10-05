@@ -1104,7 +1104,10 @@ class OmsStore:
                 continue
 
             virtual = session.scalar(
-                select(VirtualPosition).where(
+                select(VirtualPosition)
+                .join(Strategy, Strategy.id == VirtualPosition.strategy_id)
+                .where(
+                    Strategy.code == managed.strategy_code,
                     VirtualPosition.broker_account_id == account.id,
                     VirtualPosition.symbol == symbol,
                 )
@@ -1199,11 +1202,15 @@ class OmsStore:
         entry_path: str = "",
         entry_time: datetime | None = None,
         config_name: str = "make_v2_variant",
+        entry_order_id: UUID | None = None,
+        entry_client_order_id: str | None = None,
     ) -> OmsManagedPosition:
         """Create the managed-position row for a fresh v2 open fill. Ladder state
         starts at a fresh Position (peak/current 0, tier 1, no floor). OMS-only."""
         row = OmsManagedPosition(
             strategy_code=strategy_code,
+            entry_order_id=entry_order_id,
+            entry_client_order_id=entry_client_order_id or None,
             broker_account_name=broker_account_name,
             symbol=symbol,
             entry_price=entry_price,

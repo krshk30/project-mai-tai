@@ -10,6 +10,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
+from tests.unit.managed_entry_fixtures import bind_managed_entry
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -62,10 +63,11 @@ def _svc(sf, *, flatten: bool = True) -> OmsRiskService:
 
 def _arm(svc, sf, *, entry=10.0, qty=100) -> None:
     with sf() as s:
-        svc.store.create_managed_position(
+        row = svc.store.create_managed_position(
             s, strategy_code="schwab_1m_v2", broker_account_name=ACCT,
             symbol=SYM, entry_price=Decimal(str(entry)), quantity=qty, entry_path="ATR Flip",
         )
+        bind_managed_entry(s, row)
         s.commit()
     svc._managed_v2_symbols.add((ACCT, SYM))
 

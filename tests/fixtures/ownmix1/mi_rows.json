@@ -1,0 +1,123 @@
+{
+  "source": "ownmix-rpgstuck-own-read.json",
+  "read_at": "2026-10-05T14:08:26.342484+00:00",
+  "orders": [
+    {
+      "id": "2ade5ec6-a660-4a46-b4ee-d46fe354d80f",
+      "client_order_id": "orb_schwab-MI-open-c16106e4d4e5",
+      "broker_order_id": "1008165370304",
+      "quantity": "2.00000000",
+      "strategy": "orb_schwab",
+      "account": "live:schwab_1m_v2",
+      "submitted_at": "2026-10-05 13:28:14.877619+00:00",
+      "updated_at": "2026-10-05 13:39:50.117249+00:00",
+      "payload": {
+        "fanout_leg": null,
+        "native_oco_bracket": "true",
+        "webull_protect_state": null
+      }
+    },
+    {
+      "id": "f7ad3f3f-4e57-4124-a510-ab51b5da8e5c",
+      "client_order_id": "schwab_1m_v2-MI-open-2220fd5b2d58",
+      "broker_order_id": "1008165370999",
+      "quantity": "180.00000000",
+      "strategy": "schwab_1m_v2",
+      "account": "live:schwab_1m_v2",
+      "submitted_at": "2026-10-05 13:34:01.384243+00:00",
+      "updated_at": "2026-10-05 13:34:33.092086+00:00",
+      "payload": {
+        "fanout_leg": null,
+        "native_oco_bracket": "true",
+        "webull_protect_state": null
+      }
+    },
+    {
+      "id": "2e516e3c-deef-418a-a5da-9425162e1121",
+      "client_order_id": "schwab_1m_v2-MI-open-790239eb6bef",
+      "broker_order_id": "M9HEHBFDKDJ24U5M3RHCHETRG8",
+      "quantity": "90.00000000",
+      "strategy": "schwab_1m_v2",
+      "account": "live:orb",
+      "submitted_at": "2026-10-05 13:34:01.978979+00:00",
+      "updated_at": "2026-10-05 13:40:20.981624+00:00",
+      "payload": {
+        "fanout_leg": "webull",
+        "native_oco_bracket": null,
+        "webull_protect_state": "attach_failed"
+      }
+    }
+  ],
+  "managed": [
+    {
+      "id": "1c4f6d03-8dc7-4472-855c-c9b8706da4d3",
+      "strategy_code": "schwab_1m_v2",
+      "broker_account_name": "live:schwab_1m_v2",
+      "symbol": "MI",
+      "entry_price": "3.31000000",
+      "original_quantity": 180,
+      "current_quantity": 0,
+      "entry_path": "ATR Flip",
+      "entry_time": "2026-10-05 13:34:33.120513+00:00",
+      "peak_profit_pct": "0.000000",
+      "current_profit_pct": "0.000000",
+      "tier": 1,
+      "floor_pct": null,
+      "floor_price": null,
+      "scales_done": [],
+      "scale_pnl": "0E-8",
+      "config_name": "make_v2_variant",
+      "status": "closed",
+      "created_at": "2026-10-05 13:34:33.123350+00:00",
+      "updated_at": "2026-10-05 13:35:06.265815+00:00"
+    },
+    {
+      "id": "e605a169-91a4-4ac9-8772-5b767ac09317",
+      "strategy_code": "schwab_1m_v2",
+      "broker_account_name": "live:orb",
+      "symbol": "MI",
+      "entry_price": "3.32000000",
+      "original_quantity": 90,
+      "current_quantity": 0,
+      "entry_path": "",
+      "entry_time": "2026-10-05 13:39:49.658323+00:00",
+      "peak_profit_pct": "0.000000",
+      "current_profit_pct": "-27.409639",
+      "tier": 1,
+      "floor_pct": null,
+      "floor_price": null,
+      "scales_done": [],
+      "scale_pnl": "0E-8",
+      "config_name": "make_v2_variant",
+      "status": "closed",
+      "created_at": "2026-10-05 13:39:49.658953+00:00",
+      "updated_at": "2026-10-05 13:40:05.526130+00:00"
+    }
+  ],
+  "virtual": [
+    {
+      "quantity": "0E-8",
+      "average_price": "0E-8",
+      "opened_at": null,
+      "updated_at": "2026-10-05 13:40:05.496928+00:00",
+      "strategy": "schwab_1m_v2",
+      "account": "live:orb"
+    },
+    {
+      "quantity": "0E-8",
+      "average_price": "0E-8",
+      "opened_at": null,
+      "updated_at": "2026-10-05 13:39:50.711506+00:00",
+      "strategy": "orb_schwab",
+      "account": "live:schwab_1m_v2"
+    },
+    {
+      "quantity": "0E-8",
+      "average_price": "0E-8",
+      "opened_at": null,
+      "updated_at": "2026-10-05 13:39:50.707525+00:00",
+      "strategy": "schwab_1m_v2",
+      "account": "live:schwab_1m_v2"
+    }
+  ]
+}
