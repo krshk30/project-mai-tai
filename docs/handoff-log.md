@@ -5513,3 +5513,12 @@ accepted-order restart without RPG ticket coverage first. Parent leaves
 #1093 frozen3b4e while reviewer32mutants finish, verifies exact fresh pin
 before standing-authority merge, then signals actual merge SHA for rebase.
 Allowance accepted by reviewer; no install/schema/flag/production action.
+
+2026-10-05 16:59 ET codex-2 C81: ROUNDUP no-ticket restart diagnostic finds
+a real gap, not a test-only omission. Real startup/first poll with local
+book, recorded prices in controlled accepted/unfilled first/reclaim shapes:
+8 assertion failures/0 errors, old pair not hydrated, unproven cases permit
+a primary strategy draft. Parent independently parsed XML. Not venue-double
+buy evidence and not claimed historical occurrence. Existing focus400PASS.
+Operator/reviewer told early that #1095 cannot be ready tonight on current
+proof; keep draft/OFF/excluded. No generic protocol expansion or runtime write.
