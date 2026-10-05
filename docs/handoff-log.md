@@ -5462,3 +5462,11 @@ Owncodeoriginalruntimeinjectsthreeclockgates, newrestartedonly_now_ms; CI
 16:05outside16:00default, localfullbefore16. Clockleakhypothesisunder
 independentassessment, PauliunfrozenONLYfixturediagnosis/fix,noprodcodeor
 weakenedassertion. Head8cf/plan49e notpinready; allnewloopcasespassed.
+
+2026-10-05 16:16 ET codex-2 C75: independent read-only reproduction confirms
+the restart fixture's wall-clock leak on frozen 8cfb704c. For all three
+proven-clear tickets, unbound host 15:59:59 produces primary/mirror 1/1,
+16:00 produces 0/0, and recorded-clock bindings at host 16:05:33 restore
+1/1. This is test-clock handling, not a production ownership defect.
+Pauli remains sole writer for the test-only correction and regression;
+both fresh CI runs and full-name pair remain required. No runtime writes.
