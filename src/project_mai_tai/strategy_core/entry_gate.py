@@ -107,7 +107,14 @@ def route_extended_hours(
     side = str(getattr(draft, "side", "buy"))
     quote = quote_lookup(symbol)
     quote_field = "ask_price" if side == "buy" else "bid_price"
-    price = _format_limit_price(getattr(quote, quote_field, None)) if quote is not None else None
+    # PMPRINT1 binds both drafts to the ask that confirmed the software cross.
+    # OMS still performs its own authoritative repricing and band check.
+    confirming_ask = draft.metadata.get("pm_confirming_ask") if side == "buy" else None
+    price = (
+        _format_limit_price(confirming_ask)
+        if confirming_ask is not None
+        else _format_limit_price(getattr(quote, quote_field, None)) if quote is not None else None
+    )
     if price is None:
         log.warning(
             "schwab_1m_v2 skipping extended-hours %s entry for %s — no %s quote "

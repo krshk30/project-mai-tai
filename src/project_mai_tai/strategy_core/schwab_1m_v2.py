@@ -341,6 +341,7 @@ class SymbolState:
     # harmless and logged; a MISSED cancel leaves live money on the book unattended.
     # [[feedback_ambiguity_resolves_by_what_the_action_costs]]
     resting_is_broker_order: bool = True
+    pm_resting_flip_seen_ms: int = 0
     resting_flip_ms: int = 0                    # ms-wall-clock the up-flip fired while resting (fill may be
     #                                             settling); 0 = not pending. Silences re-emits through the lag.
     # Dual-broker FAN-OUT once-per-flip latch for the RTH-resting Webull leg (software-detected at
@@ -2305,6 +2306,7 @@ class SchwabV2Strategy:
         state.resting_schwab_quantity = 0
         state.resting_flip_ms = 0
         state.resting_below_floor_bars = 0
+        state.pm_resting_flip_seen_ms = 0
         return cleared
 
     def apply_fanout_outcome(self, record: FanoutOutcome) -> str:
@@ -2679,6 +2681,7 @@ class SchwabV2Strategy:
         state.cw_v2_emit_claimed = False
         state.cw_v2_emit_ms = 0
         state.resting_flip_ms = 0
+        state.pm_resting_flip_seen_ms = 0
         return had_entry_state, arm_released, cancel_requested
 
     def release_and_drop_symbol(self, symbol: str, *, reason: str = "watchlist-removed") -> bool:
@@ -3176,7 +3179,9 @@ class SchwabV2Strategy:
         return eval_draft or hold_draft
 
     def on_stream_trade(
-        self, symbol: str, price: float, event_ts_ms: int, *, ask_price: float | None
+        self, symbol: str, price: float, event_ts_ms: int, *, ask_price: float | None,
+        bid_price: float | None = None, print_size: int | None = None,
+        ask_age_ms: int | None = None,
     ) -> TradeIntentDraft | None:
         """PRE-MARKET ONLY: offer one STREAMED trade print to the EH soft-rest cross check.
 
@@ -3223,6 +3228,10 @@ class SchwabV2Strategy:
         except (TypeError, ValueError, OverflowError):
             ask = 0.0
         if not math.isfinite(ask) or ask <= 0.0:
+            if self._pm_rest_feature(state, "pm_print_ask_confirm"):
+                self._log_pm_ask_block(state, px, print_size, bid_price, ask,
+                                       "stream_ask_cache", ask_age_ms, "no_fresh_ask")
+                return None
             logger.info(
                 "[V2-RESTING-EH-STREAM-SKIP] %s reason=no_fresh_ask "
                 "trigger=%.4f px=%.4f latch_taken=0",
@@ -3239,13 +3248,16 @@ class SchwabV2Strategy:
             return None
         quote = Quote(
             symbol=state.symbol,
-            bid_price=0.0,
-            ask_price=0.0,
+            bid_price=float(bid_price or 0.0) if self._pm_rest_feature(state, "pm_print_ask_confirm") else 0.0,
+            ask_price=ask if self._pm_rest_feature(state, "pm_print_ask_confirm") else 0.0,
             last_price=px,
             quote_time_ms=print_ms,
             trade_time_ms=print_ms,
         )
-        draft = self._eh_resting_cross_check(state, quote)
+        draft = self._eh_resting_cross_check(
+            state, quote, ask_source="stream_ask_cache", ask_age_ms=ask_age_ms,
+            print_size=print_size,
+        )
         if draft is None:
             return None
         draft.metadata["eh_cross_source"] = "stream_trade"
@@ -4409,6 +4421,9 @@ class SchwabV2Strategy:
         if flip == "SELL":
             if self._cw_armed_segment_safety_enabled and state.cw_armed:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
+            if state.pm_resting_flip_seen_ms and not state.resting_flip_ms:
+                if self._pm_rest_feature(state, "pm_flip_wait"):
+                    self._queue_resting_cancel(state, reason="flip_no_fill")
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
             state.cw_arm_bar_ts = 0
             live_fanout_transition = self._fanout_identity_bar_is_live(state)
@@ -4477,7 +4492,7 @@ class SchwabV2Strategy:
             "cw_resting_suppressed_segment_id=%d cw_resting_suppressed_bars=%d "
             "cw_resting_taken=%s cw_reclaim_taken=%s "
             "resting_below_floor_bars=%d fanout_segment_id=%d position_qty_held=%s resting_active=%s "
-            "resting_flip_ms=%d resting_level=%.4f resting_trigger=%.4f resting_slot=%s "
+            "resting_flip_ms=%d pm_resting_flip_seen_ms=%d resting_level=%.4f resting_trigger=%.4f resting_slot=%s "
             "flip_owner_evidence_at_ms=%d flip_owner_evidence_readable=%s "
             "flip_owner_open_positions=%d flip_owner_phase=%s "
             "retry_one_segment_id=%d retry_one_closes_in_segment=%d "
@@ -4493,7 +4508,7 @@ class SchwabV2Strategy:
             state.cw_resting_suppressed_bars, state.cw_resting_taken,
             state.cw_reclaim_taken, state.resting_below_floor_bars,
             state.fanout_segment_id,
-            state.position_qty_held, state.resting_active, state.resting_flip_ms,
+            state.position_qty_held, state.resting_active, state.resting_flip_ms, state.pm_resting_flip_seen_ms,
             state.resting_level, state.resting_trigger, state.resting_slot,
             state.flip_owner_evidence_at_ms,
             state.flip_owner_evidence_readable, len(state.flip_owner_open_positions),
@@ -5208,6 +5223,7 @@ class SchwabV2Strategy:
         state.resting_is_broker_order = False
         state.resting_slot = "first"
         state.resting_below_floor_bars = 0
+        state.pm_resting_flip_seen_ms = 0
         # ⛔⭐ BRANCH ON WHAT WAS PLACED, NOT ON THE CURRENT SESSION.
         # This used to read `self._resting_session_is_eh()` — the session NOW — on the premise that
         # "in EH nothing is live at the broker". True of an order PLACED in EH; false of one placed
@@ -5606,9 +5622,16 @@ class SchwabV2Strategy:
             if state.resting_active:
                 self._queue_resting_cancel(state, reason="window_closed")
             state.resting_flip_ms = 0
+            state.pm_resting_flip_seen_ms = 0
             return
         # SILENCE-ON-FILL: a flip fired while resting -> hold until the position confirms (handled
         # above) or the grace expires. Never re-emit into the fill-settle lag.
+        if state.pm_resting_flip_seen_ms and not state.resting_flip_ms:
+            if self._now_ms() - state.pm_resting_flip_seen_ms >= self._resting_flip_grace_ms:
+                if state.resting_active:
+                    self._queue_resting_cancel(state, reason="flip_no_fill")
+                state.pm_resting_flip_seen_ms = 0
+                return
         if state.resting_flip_ms:
             if self._now_ms() - state.resting_flip_ms < self._resting_flip_grace_ms:
                 return
@@ -5730,7 +5753,12 @@ class SchwabV2Strategy:
             # HOLD-THROUGH-FLIP: the up-flip is the fill. Do NOT cancel; start the settle grace.
             state.resting_below_floor_bars = 0
             if state.resting_active and state.resting_flip_ms == 0:
-                state.resting_flip_ms = self._now_ms()
+                if self._pm_rest_feature(state, "pm_flip_wait"):
+                    if not state.pm_resting_flip_seen_ms:
+                        state.pm_resting_flip_seen_ms = self._now_ms()
+                        logger.info("[V2-PM-FLIP-WAIT] %s flip_seen=1 cross_taken=0", state.symbol)
+                else:
+                    state.resting_flip_ms = self._now_ms()
             return
         # No / unknown signal while flat: HOLD the resting order out there (do nothing).
         return
@@ -6009,7 +6037,33 @@ class SchwabV2Strategy:
             )
         return not held
 
-    def _eh_resting_cross_check(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
+    def _pm_rest_feature(self, state: SymbolState, name: str) -> bool:
+        et = datetime.fromtimestamp(self._now_ms() / 1000, UTC).astimezone(EASTERN_TZ)
+        return bool(
+            getattr(self.settings, f"strategy_schwab_1m_v2_{name}_enabled", False)
+            and not state.resting_is_broker_order
+            and self._resting_session_is_eh()
+            and et.hour * 60 + et.minute < 9 * 60 + 30
+        )
+
+    def _log_pm_ask_block(self, state, px, size, bid, ask, source, age, reason) -> None:
+        logger.info(
+            "[V2-PM-CROSS-BLOCK] %s print=%s size=%s bid=%s ask=%s ask_source=%s "
+            "ask_age_ms=%s trigger=%.4f reason=%s latch_taken=0",
+            state.symbol, px, size, bid, ask, source, age,
+            self._active_resting_trigger(state), reason,
+        )
+
+    def _log_pm_size_refused(self, state: SymbolState, leg: str, ask: float) -> None:
+        counts = self.__dict__.setdefault("_pm_unsized_legs", {})
+        counts[leg] = counts.get(leg, 0) + 1
+        logger.error("[V2-PM-LEG-SIZE-REFUSED] %s leg=%s count=%d ask=%s",
+                     state.symbol, leg, counts[leg], ask)
+
+    def _eh_resting_cross_check(
+        self, state: SymbolState, quote: Quote, *, ask_source: str = "rest_quote",
+        ask_age_ms: int | None = None, print_size: int | None = None,
+    ) -> TradeIntentDraft | None:
         """EH software-emulated resting TRIGGER (P-B2). A broker buy-stop-limit can't trigger in extended
         hours (Schwab RTH-only; Webull stops 417), so while software-resting in EH we watch quotes and, on
         the ATR up-cross (a live print reaching the offset trigger), emit a MARKETABLE EH-LIMIT buy. The OMS
@@ -6035,6 +6089,12 @@ class SchwabV2Strategy:
             return None
         if state.position_qty != 0 or state.resting_flip_ms:   # already filling / in the settle grace
             return None
+        confirm_ask = self._pm_rest_feature(state, "pm_print_ask_confirm")
+        if confirm_ask or self._pm_rest_feature(state, "pm_flip_wait"):
+            if not self._resting_in_window() or self._entry_window_closed_for_session():
+                return None
+            if self.gap_hold_active(state.symbol):
+                return None
         # LIVE-BAR guard (#528 mirror): only emit off a live feed, never a warmup-replayed / stale bar. The
         # arm-time gate in _cw_v2_resting_track already checks freshness at arm; this re-checks at the cross
         # so a stall between arm and cross can't fire on an hours-old bar. RTH never reaches here.
@@ -6043,17 +6103,42 @@ class SchwabV2Strategy:
             return None
         # The up-cross = a live print (fallback mid) reaching the offset trigger.
         px = float(getattr(quote, "last_price", 0.0) or 0.0)
-        if px <= 0.0:
+        if px <= 0.0 and not confirm_ask:
             bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
             ask0 = float(getattr(quote, "ask_price", 0.0) or 0.0)
             px = (bid + ask0) / 2.0 if (bid > 0.0 and ask0 > 0.0) else 0.0
         if px <= 0.0 or px < trigger:
             return None
+        decision_ask_metadata: dict[str, str] = {}
+        if confirm_ask:
+            ask = float(quote.ask_price or 0.0)
+            reason = ""
+            if ask_source == "rest_quote":
+                ask, ask_age_ms, evidence = self._resting_ask_evidence(quote)
+                if evidence != "fresh_quote":
+                    reason = evidence
+            if ask is None or not math.isfinite(ask) or ask <= 0:
+                reason = reason or "no_fresh_ask"
+            elif ask < trigger:
+                reason = reason or "ask_below_trigger"
+            if reason:
+                self._log_pm_ask_block(state, px, print_size, quote.bid_price, ask,
+                                       ask_source, ask_age_ms, reason)
+                return None
+            decision_ask_metadata = {
+                "pm_confirming_ask": str(ask), "pm_confirming_ask_source": ask_source,
+                "pm_confirming_ask_age_ms": str(ask_age_ms) if ask_age_ms is not None else "UNMEASURED",
+                "pm_confirming_ask_decision_ms": str(self._now_ms()),
+            }
         cap = trigger * (1.0 + self._resting_band_pct_value() / 100.0)
         sized = self._sized_open(
-            state.symbol, leg="schwab", price=Decimal(f"{cap:.4f}"), basis="eh_limit_cap"
+            state.symbol, leg="schwab",
+            price=Decimal(str(ask)) if confirm_ask else Decimal(f"{cap:.4f}"),
+            basis="pm_confirming_ask" if confirm_ask else "eh_limit_cap",
         )
         if sized is None:
+            if confirm_ask:
+                self._log_pm_size_refused(state, "schwab", ask)
             return None
         quantity, sizing_metadata = sized
         # Enter the settle grace BEFORE returning so a burst of quotes can't double-emit (emit exactly once
@@ -6061,6 +6146,11 @@ class SchwabV2Strategy:
         # (position_qty != 0 -> clear) or grace-expires and disarms/re-arms (flip_no_fill), all in memory.
         state.resting_flip_ms = self._now_ms()
         state.last_entry_price = px
+        if confirm_ask:
+            logger.info(
+                "[V2-PM-CROSS-ASK] %s ask=%s ask_source=%s ask_age_ms=%s trigger=%.4f cross_taken=1",
+                state.symbol, ask, ask_source, ask_age_ms, trigger,
+            )
         logger.info(
             "[V2-RESTING-EH-CROSS] %s px=%.4f line=%.4f trigger=%.4f cap=%.4f "
             "band_pct=%.2f offset_pct=%.2f -> marketable EH-LIMIT buy",
@@ -6089,8 +6179,7 @@ class SchwabV2Strategy:
                 identity=shared_fanout_identity,
                 reason="eh_resting_cross_draft_attempted",
             ):
-                self._queue_webull_fanout_draft(state,
-                    self._build_webull_fanout_draft(
+                webull_draft = self._build_webull_fanout_draft(
                         state, entry_px=trigger, sizing_quote=quote,
                         session_is_eh=True, source="eh_resting",
                         # NOT yet incremented on this path -- this leg is the NEXT entry.
@@ -6099,7 +6188,12 @@ class SchwabV2Strategy:
                         resting_line=line,
                         shared_identity=shared_fanout_identity,
                     )
-                )
+                if confirm_ask:
+                    if webull_draft is None:
+                        self._log_pm_size_refused(state, "webull", ask)
+                    else:
+                        webull_draft.metadata.update(decision_ask_metadata)
+                self._queue_webull_fanout_draft(state, webull_draft)
         return TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="open",
             quantity=quantity,
@@ -6118,6 +6212,7 @@ class SchwabV2Strategy:
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
                 **sizing_metadata,
+                **decision_ask_metadata,
             },
         )
 

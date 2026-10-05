@@ -50,7 +50,7 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 125
+    assert len(entries) == 127
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
