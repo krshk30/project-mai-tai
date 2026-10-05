@@ -29,8 +29,9 @@ Own ordered composition rehearsal is recorded in COMPOSITION_2026-10-05.md:
 56 baseline failures. This is a source/test rehearsal, NOT an independent
 review pin, executable migration proof, or live broker timing evidence.
 OWNMIX schema tests and legacy refusal run in the composed unit suite; the
-actual production migration has not been run. Both RPG Validate checks PASS;
-OWN Validate was pending when this draft was prepared. Recheck exact heads.
+actual production migration has not been run. Both RPG and OWN Validate checks
+PASS at their exact heads (OWN runs37331123062/37331114821 completed15:19Z).
+Neither has an independent review pin; recheck exact heads before approval.
 
 APPROVED_SHA must be the final reviewed merge tree, 40 hex, supplied by the
 operator. BOX_SHA observed10:45 ET is
