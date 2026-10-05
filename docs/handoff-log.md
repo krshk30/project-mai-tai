@@ -5055,3 +5055,17 @@ same exact failed IDs. O-T1-O-T10 and schema/legacy behavior in report. Historic
 UNMEASURED. Additive nullable migration, no backfill, no ledger action. Validate
 running; no pin/merge/install. Three-head composition applies cleanly in isolated
 worktree and full suite is running, not yet claimed PASS.
+
+### 2026-10-05 11:18 ET - three-head unit rehearsal (codex-2)
+
+PM71f5f6bc, OWNb94bd0ff and RPG73e9e4c8 applied cleanly in isolated source
+treee5b76f9c44532409ba4019ffdd0bab6fc0825f72. Fullunit5549PASS/56FAIL;
+exactbaseline node IDs added0/removed0, not a globally green suite. Updated
+conditional plan68833468371d7eb46dca81eacf7ac01a7ce457b8 records the hashes,
+eligible heads and additive-schema route reading production env explicitly as
+root (default .env was not sufficient for the candidate migration command).
+RPG both GitHub Validate PASS; OWN Validate pending at this read. No branch
+under review changed, no main merge or production action, no install timer.
+RPG PR body corrected a report-row label: exact PM source is NOT independently
+pinned. Existing 587-case composition result unchanged. GAP remains STOPPED,
+its safety/scope findings are now relayed to the operator in Claude row M41.
