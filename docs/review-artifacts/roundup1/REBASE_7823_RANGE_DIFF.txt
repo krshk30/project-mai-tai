@@ -1,0 +1,90 @@
+1:  07759ae0 = 1:  d68eb1de docs: independently assess ROUNDUP1 entry-only price seam
+2:  38d21fa3 ! 2:  42eb7158 feat: gate canonical resting buy ceiling behind ROUNDUP1 switch
+    @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: from project_mai_tai.v2_flip_
+      from project_mai_tai.settings import Settings
+      from project_mai_tai.strategy_core.entry_gate import resolve_entry_window, within_rth_entry_window
+     -from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit, sized_entry_quantity
+    + from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear
+     +from project_mai_tai.strategy_core.v2_entry_sizing import (
+     +    proven_resting_pair, resting_buy_limit, resting_buy_stop, resting_wire_limit, sized_entry_quantity,
+     +)
+    @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+                  raw_stop, raw_limit, leg="schwab",
+                  native_schwab_bracket=(
+     @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+    -         state.last_resting_placed_slot = slot
+              state.resting_level = line
+              state.resting_trigger = trigger
+    -+        state.resting_schwab_wire_stop = trigger if self._resting_round_up_enabled() else 0.0
+    -+        state.resting_webull_wire_stop = trigger if self._resting_round_up_enabled() else 0.0
+    -+        state.resting_wire_cap = limit if self._resting_round_up_enabled() else 0.0
+    -+        state.resting_schwab_wire_limit = state.resting_wire_cap
+    -+        state.resting_webull_wire_limit = float(resting_buy_limit(
+    -+            raw_stop, band_pct, leg="webull")) if self._resting_round_up_enabled() else 0.0
+    -         state.resting_schwab_quantity = int(schwab_sized[0]) if schwab_sized else 0
+    -         state.resting_webull_quantity = 0
+    +         if not primary_blocked:
+    ++            state.resting_schwab_wire_stop = trigger if self._resting_round_up_enabled() else 0.0
+    ++            state.resting_wire_cap = limit if self._resting_round_up_enabled() else 0.0
+    ++            state.resting_schwab_wire_limit = state.resting_wire_cap
+    +             state.resting_schwab_quantity = int(schwab_sized[0]) if schwab_sized else 0
+    +         if not webull_blocked:
+    ++            state.resting_webull_wire_stop = trigger if self._resting_round_up_enabled() else 0.0
+    ++            state.resting_webull_wire_limit = float(resting_buy_limit(
+    ++                raw_stop, band_pct, leg="webull")) if self._resting_round_up_enabled() else 0.0
+    +             state.resting_webull_quantity = 0
+              state.resting_below_floor_bars = 0
+    +         generation = str(uuid4())
+     @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+                      **shared_fanout_identity,
+                      "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
+    @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+     @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+              # ⛔ Goes on the DIRECT queue, not the fan-out queue: the fan-out queue is drained through
+              # `_maybe_emit`, and the matching CANCEL must never be gated.
+    -         if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled:
+    +         if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled and not webull_blocked:
+     +            webull_limit = Decimal(str(state.resting_webull_wire_limit)) if self._resting_round_up_enabled() else raw_limit
+                  webull_sized = self._sized_open(
+                      state.symbol, leg="webull",
+    @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+                                "rpg_resting_generation": state.resting_webull_generation,
+                                "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
+                                "webull_mirror_generation_id": was_webull_generation,
+    -@@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+    -     def _rpg_leg_owned(self, state: SymbolState, account: str) -> bool:
+    -         return any(job["old"].get("broker_account_name") == account
+    -                    and job["old"]["symbol"] == state.symbol
+    --                   and job["phase"] not in {"requested", "placed", "filled", "expired", "refused"}
+    -+                   and (job["phase"] not in {"requested", "placed", "filled", "expired", "refused"}
+    -+                        or (self._resting_round_up_enabled() and job["phase"] == "placed"
+    -+                            and not proven_resting_pair(job.get("replacement_wire_prices"))
+    -+                            and not job.get("replacement_filled")))
+    -                    for job in getattr(self, "_rpg_handoffs", {}).values())
+    - 
+    -     def _rpg_entry_owned(self, state: SymbolState) -> bool:
+     @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+                  if job["old"]["symbol"] != state.symbol:
+                      continue
+    @@ tests/unit/test_pmprint1_tonight_flags.py: def test_s5_tonight_pm_rest_off_keeps
+          assert not strategy.drain_pending_intents()
+      
+      
+    --def test_s6_catalog_matches_tonights_live_set_and_143_checks():
+    -+def test_s6_catalog_matches_tonights_live_set_and_144_checks():
+    +-def test_s6_catalog_matches_all_on_live_set_and_147_checks():
+    ++def test_s6_catalog_matches_all_on_live_set_and_148_checks():
+          catalog = json.loads((Path(__file__).parents[2] / "ops/health/expected_flags.json").read_text())
+          flags = {entry["name"]: entry["expected"] for entry in catalog["flags"]}
+    -     assert {key: flags[key] for key in TONIGHT} == TONIGHT
+    +     assert {key: flags[key] for key in TONIGHT} == {key: True for key in TONIGHT}
+          numeric = json.loads((Path(__file__).parents[2] / "ops/health/expected_numeric.json").read_text())
+          entries = catalog["flags"] + numeric["settings"]
+    --    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 143
+    -+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 144
+    +-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 147
+    ++    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 148
+      
+      
+      @pytest.mark.asyncio
+3:  3cb3c970 = 3:  c29db116 docs(roundup1): record generic legacy restart blocker
