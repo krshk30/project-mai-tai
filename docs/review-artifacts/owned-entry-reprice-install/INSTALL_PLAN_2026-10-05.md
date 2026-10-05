@@ -12,8 +12,8 @@ before asking for execution. No approval or automatic rollback is implied.
 |---|---|---|---|
 | PMREST1 #1091 | merged a80b5181, dark in production | v2 | PM_REST_REPRICE_ENABLED=true |
 | PMPRINT1/PMFLIP1 #1092 | 71f5f6bc, Validate x2 PASS, NOT pinned | v2 | PM_PRINT_ASK_CONFIRM_ENABLED=true and PM_FLIP_WAIT_ENABLED=true |
-| OWNMIX1 | codex/ownmix1-owned-entry-binding, build, NOT pinned | OMS + strategy companion | additive managed-entry binding migration; no ledger repair |
-| RPGSTUCK1 | codex/rpgstuck1-canonical-handoff, build, NOT pinned | OMS + strategy companion + v2 | existing RPG switch retained ON; no new trading rule |
+| OWNMIX1 #1094 | b94bd0ff0c2c7da681da45d748db61db82250b7c, review-ready, NOT pinned | OMS + strategy companion | additive managed-entry binding migration; no ledger repair |
+| RPGSTUCK1 #1093 | 73e9e4c8f92f672ecc03e7c460b134123015840a, review-ready, NOT pinned | OMS + strategy companion + v2 | existing RPG switch retained ON; no new trading rule |
 | GAPKEEP1 | Step 0 e90a7073, STOPPED on scope/safety differences | excluded | no flag or source build |
 
 Proposed order, not a merge authorization: #1091 already merged; #1092 if pinned;
@@ -23,6 +23,14 @@ Both OMS fixes touch service.py; PM and RPG fixes touch the v2 strategy.
 Run the ordered integration rehearsal and composition tests on the exact
 combined tree before final pins/GO; clean pairwise merge-tree is insufficient.
 No shared source branch has two writers. Excluded PRs wait for a later window.
+
+Own ordered composition rehearsal is recorded in COMPOSITION_2026-10-05.md:
+#1092 then #1094 then #1093 applies cleanly; full unit 5549 passed / the same
+56 baseline failures. This is a source/test rehearsal, NOT an independent
+review pin, executable migration proof, or live broker timing evidence.
+OWNMIX schema tests and legacy refusal run in the composed unit suite; the
+actual production migration has not been run. Both RPG Validate checks PASS;
+OWN Validate was pending when this draft was prepared. Recheck exact heads.
 
 APPROVED_SHA must be the final reviewed merge tree, 40 hex, supplied by the
 operator. BOX_SHA observed10:45 ET is
@@ -100,13 +108,29 @@ Candidate literal migration command after exact checkout and runtime refresh:
 ```bash
 sudo -u trader git -C /home/trader/project-mai-tai switch --detach "$APPROVED_SHA"
 sudo -u trader /home/trader/project-mai-tai/.venv/bin/pip install --no-deps -e /home/trader/project-mai-tai
-sudo /home/trader/project-mai-tai/.venv/bin/python -m alembic \
-  -c /home/trader/project-mai-tai/alembic.ini upgrade 20261005_0022
+sudo /home/trader/project-mai-tai/.venv/bin/python - <<'PY'
+import os
+from alembic import command
+from alembic.config import Config
+from project_mai_tai.settings import Settings, get_settings
+
+os.chdir('/home/trader/project-mai-tai')
+settings = Settings(_env_file='/etc/project-mai-tai/project-mai-tai.env')
+os.environ['MAI_TAI_DATABASE_URL'] = settings.database_url
+get_settings.cache_clear()
+config = Config('/home/trader/project-mai-tai/alembic.ini')
+command.upgrade(config, '20261005_0022')
+PY
 ```
 
 These commands are a review candidate, not a runnable release: first confirm
-the repo's actual Alembic Settings/credentials/cwd route and old revision on
-the box read-only. Do not run migration or checkout commands from this draft.
+the old revision on the box read-only. Source inspection confirms env.py
+overrides sqlalchemy.url from get_settings(), whose default env_file is .env;
+therefore the candidate reads the protected production env explicitly as root,
+sets only its database URL in this short-lived process, clears the Settings
+cache, and sets cwd for the relative migration directory. No credential value
+is printed or placed in shell arguments. Do not run these commands from this
+draft. Verify the exact composed runtime import/config route before release.
 
 ## Runtime Sequence And Failure Policy
 
