@@ -43,12 +43,15 @@ to11:10:18 leaves the real16-hole test passing. No recorded prices changed.
 
 Provider coverage manifests and job scheduling in these unit tests are
 controlled inputs, not a historical decision-cache coverage measurement.
-JAGX current-session rows are captured, but its requested34-minute re-add
-rebuild scenario is not yet asserted by this primitive.
+JAGX's34-minute re-add hole is now pinned at the admission boundary:33 stored
+REST rows11:18..11:50 were created12:20:12.521834 ET. The live11:51 bar arrived
+11:52:14.283561. At11:52:15 the33 rows are absent; admission refuses until they
+are supplied. This is not yet a mathematical rebuild or historical provider
+manifest proof; the full source response remains a controlled test input.
 
 ## Checkpoint Verification
 
-10 tests PASS in test_line_chart_restoration.py; scoped Ruff PASS. Tests pin
+11 tests PASS in test_line_chart_restoration.py; scoped Ruff PASS. Tests pin
 late-bar admission, source/start/end/completeness,255-row retention, re-add
 epoch fencing, off-callback worker execution, revision invalidation and frozen
 provider values and source-value mismatch refusal. No full-suite pair, mutation
