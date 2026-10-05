@@ -5544,3 +5544,15 @@ and remain unresolved; generic no-ticket restoration separately remains unsafe.
 No proven venue duplicate or historical occurrence claimed. Bound plan5ac5f26b
 excludes ROUNDUP and corrects old-base focus wording; accepted helper unchanged.
 No production, migration, restart, env, flag or ledger action.
+
+2026-10-05 17:24 ET codex-2 C84: reverified already-merged RPG head3b4e,
+main7823a6fa whole treeee6f identical, not a second merge. Final accepted
+helperce3ab15b unchanged, local53PASS. Fresh serialized remote OMS/strategy/
+flat calls completed17:22:59.807/17:23:28.037/17:23:51.417 ET, all process
+and helper0; direct BOTH brokers flat, zero books/working DB orders/inflight,
+exact standingMI180/NXL2 lines and no remaining general blockers. Full raw
+receipt/bounds committed with bound plan690775af. Boxe1ce3b39 clean; no
+remote staging, token refresh, migration, env/flag or service action. This
+point-in-time receipt does not certify install-time flatness or replace other
+fences. ROUNDUP draft6b47c461 excluded for unresolved restart/integration
+coverage; final plan review and exact-SHA execution GO still required.
