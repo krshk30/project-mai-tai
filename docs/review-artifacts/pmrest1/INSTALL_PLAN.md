@@ -1,122 +1,113 @@
-# PMREST1 + PMPRINT1 + PMFLIP1 - single v2 evening install review plan
+# 2026-10-05 evening: one v2 restart, two switches
 
-REVIEW REQUIRED; NOT install authorization. Exact head pin, merge and operator
-exact-SHA GO required. Intended window Monday 2026-10-05 after 20:00 ET and the
-observed log rotation. No unattended install is scheduled by this document.
-Only `project-mai-tai-schwab-1m-v2.service` may restart, once. No OMS/strategy/
-gateway/orb/orb-schwab/paper/control/reconciler restart, migration or watch install.
+**DRAFT BLOCKED: required proof (b) FAILS. Do not execute or schedule this plan.**
+This single document supersedes the folded three-PM-flag plan and the conditional
+OWNMIX1/RPGSTUCK1 evening draft (including 13a05090). It records sequencing,
+not an operator exact-SHA GO or a waiver. No executable runner/timer is staged.
 
-## Preflight
+## Scope
 
-Bind BOX_SHA=e1ce3b3978fbcb1ff00daecdf6dc2618e6b5fb89 and APPROVED_SHA to the
-operator-named final merge SHA, not a moving branch. Merge order: #1091 PMREST1
-(merged a80b5181), then the independently pinned combined PMPRINT1/PMFLIP1 PR.
-If that PR is not pinned in time, install #1091 alone using its original plan
-at 1135f8d9, one switch and denominator 141; do not install unpinned work.
-This folded plan is for the three-card final SHA only. Require a clean box,
-ancestry, exact reviewed delta and no concurrent deploy. Refuse any executable
-delta beyond settings, v2 strategy, services/schwab_1m_v2_bot.py,
-strategy_core/entry_gate.py and the expected-flags catalog; docs/tests
-are allowed. Record every service PID/start/NRestarts before any write. Verify
-editable import resolves to this checkout. If box identities moved, STOP for
-review, do not silently re-pin.
+After 20:00 ET October5 and observed rotation: only one
+project-mai-tai-schwab-1m-v2.service restart, once pinned #1092 is merged and
+the operator names exact application/plan SHAs. Merge order: #1091 (already
+a80b51816abf0aefc269f0fdfc473468fd3fe62c, dark), then #1092. BOX_SHA=
+e1ce3b3978fbcb1ff00daecdf6dc2618e6b5fb89. APPROVED_SHA remains unset pending
+pin/merge/GO. No OWNMIX1, RPGSTUCK1 or GAPKEEP1 in this install.
 
-Immediately before checkout/environment writes and again before the v2 restart,
-perform fresh direct broker position AND working-order reads on both live
-accounts (`live:schwab_1m_v2` and `live:orb`). Require both broker accounts flat,
-no working orders, zero managed rows and zero nonzero virtual positions, with
-fresh readable evidence. SQL runs read-only. No historical NXL manual-close
-exception applies on October 5. UNKNOWN or exposure = STOP, no state edit.
-Do not rely on a cached account_positions zero or a logs-only flat assertion.
-Capture direct read request, reply size, timestamp and working-order IDs.
+Exactly TWO primary EnvironmentFile values may change:
 
-Run the repository restart preflight immediately before the restart, with
-pipefail and the real exit code; it must return zero:
+```text
+MAI_TAI_STRATEGY_SCHWAB_1M_V2_PM_PRINT_ASK_CONFIRM_ENABLED=true
+MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_REPRICE_HANDOFF_ENABLED=false
+```
+
+PM_FLIP_WAIT=false, PM_REST_REPRICE=false remain dark, NFQ1=true and
+GAP_HOLD=true unchanged. Verify, do not edit those values. No orb-paper.env edit.
+Sizing600/300/1000, target5.0/stop8.0/floorfalse, bands, offset, exits unchanged.
+
+OMS does NOT need a restart merely to stop NEW admission: v2 will stamp no RPG
+handoff on new legacy cancel intents. OMS's already loaded value may stay true;
+the catalog owns that flag on v2 only. But OFF is NOT a durable-ticket rollback:
+OMS retry/admission and v2 restoration honor existing tickets regardless of flag.
+Restarting OMS with OFF would not prove clearance either. No extra restart,
+ticket deletion, relabelling or database edit is authorized.
+
+## Mandatory proof ledger
+
+| Proof | Result before execution | Evidence and limits |
+|---|---|---|
+| (a) OFF uses legacy cancel then next pass | PASS with a clean journal | test_rpg_flag_off_new_reprice_retains_legacy_cancel_then_next_pass; test_tonight_rpg_off_clean_journal_legacy_cancel_then_next_pass, first/reclaim, exact six flags; OMS still ON |
+| (b) refused/held_unknown cannot own after restart | **FAIL, blocks plan** | test_current_rpg_off_startup_still_restores_recorded_blocking_ticket: four actual APUS/VEEA tickets; real _rpg_handoff_pass restores them, refused same-segment and held_unknown still own. Characterization PASS is NOT safety PASS |
+| (c) NFQ1 ON/RPG OFF | PASS in recorded-price clean-journal composition | test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once[tonight_handoff_off], four cases; old/new retries submit one buy; OMS loaded ON. Cache/bar scaffolding and simulated execution disclosed; live behavior UNEXERCISED |
+
+Startup unconditionally polls HandoffJournal.jobs(), registers terminal jobs via
+rpg_handoff_authorization, and _rpg_entry_owned ignores OFF. OMS ordinary-open
+also blocks held_unknown regardless of flag. Flat books/zero working orders do
+not prove the journal clear. Reviewer/operator disposition required BEFORE an
+executable reviewed plan. Do not fold RPGSTUCK1 into tonight to force proof PASS.
+
+## Intended sequence after blocker resolution and exact-SHA GO
+
+1. Verify no concurrent deploy, exact clean BOX_SHA, approved ancestry/path
+   allowlist and editable import path; journal every PID/start/NRestarts.
+   Executable allowlist: settings, v2 strategy, v2 service, entry_gate, isolated
+   flag catalog; docs/tests allowed. No unrelated source or migration.
+2. Fresh direct positions AND working-order reads on BOTH live accounts;
+   zero managed rows and zero nonzero virtual positions before writes/restart.
+   Exposure/UNKNOWN/orders = STOP. No historical manual-close exception.
+3. Require proof(b) resolved under separate review with exact bounded journal
+   and strategy-state evidence, not an empty in-memory cache or assumed segment.
+4. Exclusive backups/hashes/modes of env, isolated catalog and preopen.sh.
+   Reject duplicate env definitions; change only the two named values. Confirm
+   retained/dark values. Advance only to operator-named APPROVED_SHA, refresh
+   editable runtime as trader, repeat clean-tree/import checks.
+5. Fresh flat/working-order proof; blocking v2 preflight with pipefail and real
+   rc0. Armed set blocks pending operator-named live override/Bug2 acceptance;
+   no retry loop or automatic override. Then exactly ONE restart, attended:
 
 ```bash
 sudo /home/trader/project-mai-tai/ops/preflight/preflight_v2_restart.sh
-```
-
-Armed state blocks: ask the operator for the exact live set and Bug-2 acceptance;
-no pre-authorized armed override, retry loop or automatic read-and-override.
-Unreadable/stale state also blocks. No clock override needed after 20:00.
-All Redis reads are bounded; never bulk-read snapshot-batches.
-
-## Backups and one restart
-
-Record SHA256/ownership/mode and preserve exclusive backups of the primary env,
-isolated FLAGGATE catalog and `/home/trader/preopen.sh`. Append exactly one
-each of these three keys, with exactly one true definition, to
-`/etc/project-mai-tai/project-mai-tai.env`; refuse duplicate definitions. No other
-env line changes:
-
-```text
-MAI_TAI_STRATEGY_SCHWAB_1M_V2_PM_REST_REPRICE_ENABLED=true
-MAI_TAI_STRATEGY_SCHWAB_1M_V2_PM_PRINT_ASK_CONFIRM_ENABLED=true
-MAI_TAI_STRATEGY_SCHWAB_1M_V2_PM_FLIP_WAIT_ENABLED=true
-```
-
-Reclaim remains OFF, amounts 600/300, band/offset/reprice 0.5.
-Advance the production checkout to the exact APPROVED_SHA only; clean-tree and
-import-path checks repeated. Do not use deploy_service.sh (companion restart).
-After the second flat/working-order proof and passing preflight:
-
-```bash
 sudo systemctl restart project-mai-tai-schwab-1m-v2.service
 sudo systemctl is-active --quiet project-mai-tai-schwab-1m-v2.service
 sudo systemctl show project-mai-tai-schwab-1m-v2.service \
   -p MainPID -p ActiveEnterTimestamp -p NRestarts
 ```
 
-Remain attended. Failure after a write/restart: STOP, page the actual states and
-seek instructions. No rollback or extra restart is pre-authorized. After-hours
-restart creates no bar hole because Schwab bars end at 20:00; this is not proof
-of next-day continuity.
+No OMS/strategy/gateway/ORB/orb-schwab/paper/control/reconciler/Redis/Postgres
+restart, watch install, migration or guard action. Failure: STOP/page actual
+states/seek instructions. No rollback or extra restart pre-authorized.
+After20:00 restart creates no bar hole (Schwab bars stop20:00), not delivery PASS.
 
-## Loaded settings and re-pin
+## Close-out and next-session proof
 
-Read the NEW v2 `/proc/<MainPID>/environ`, not the env file alone. Journal the new
-all three PMREST/PMPRINT/PMFLIP switches explicitly true and unchanged sizing
-600/300/1000, reprice/offset/
-band 0.5, retry-one, flip-owner, gap hold, stream-cross, entry window 07:00-15:45,
-reclaim=false and polygon_30s=false. Compare unaffected service identities to the
-preflight census. Capture only new-process log bytes; require zero new Traceback,
-NRestarts=0, exact BOOT-HOLD and warm-up lines. Empty overnight population means
-`held, EXPECTED BY DESIGN, population=<n>`, NOT release PASS.
+Read by KEY from NEW v2 /proc: printtrue, handofffalse, flipfalse, pmrestfalse,
+NFQtrue, gapholdtrue; retain sizing600/300/1000, target5/stop8/floorfalse,
+retry-one/flip-owner, offset/band/reprice0.5, entry07:00-15:45, reclaimfalse,
+polygon_30s=false. Name unchanged OMS loaded handoff value; do not claim reload.
+The two changed keys must be explicit in the new PID's environment. For an
+unchanged dark key absent from /proc, journal ABSENT plus the approved SHA's
+default FALSE and the checker source=default; never invent a /proc value or
+add a third env change. Do not read shared on-disk env as the old OMS's settings.
+Every other identity unchanged; zero new-process Traceback; NRestarts0; exact
+warm-up/BOOT-HOLD population. Overnight held = expected by design, not release.
 
-Install only the isolated expected_flags.json from APPROVED_SHA, compare its
-Git blob and file SHA256; checker/numeric paths and hashes remain unchanged.
-Run the reviewed read-only FLAGGATE with that catalog. Three new v2 boolean checks:
-catalog has 127 bool definitions; previous per-service boolean denominator
-140 becomes 143 (numeric 8 unchanged). Print the actual full denominator and
-Final call; mismatch/unreadable fails or UNKNOWN, never force green.
+Install/hash only isolated expected_flags.json from APPROVED_SHA.
+Combined FLAGGATE **143/143 =135 boolean service checks+8 numeric checks**;
+standalone numeric8/8. Paste actual outcome/denominator, UNKNOWN not green.
+Catalog printtrue/flipfalse/pmrestfalse/handofffalse.
 
-Single preopen.sh re-pin to 2026-10-06 and APPROVED_SHA/new v2 PID/start;
-preserve every freshly verified unchanged identity, routing/checker/catalog
-path and mode 0700. REPORT MUST be
-`/home/trader/known_defect_regression_watch/v2-restart-evidence-20261006.md`.
-That report-date defect was already corrected this morning; retain the correct
-line, do not make a second unrelated change. Current preopen hash before this
-planned evening re-pin is
-`2ef22340d34ebe5630d140729384409e69c8953485d3ee409e7c5551832f5af3`;
-recheck before use. Back up, review diff, bash -n, record new hash. Do not run
-the date-fixed October 6 gate early. No Monday guard re-pin/service action.
+Backup/re-pin preopen.sh ONCE: 2026-10-06, APPROVED_SHA/new v2 identity, preserve
+all verified unchanged pins/paths and0700, bash -n/diff/hash. REPORT remains
+v2-restart-evidence-20261006.md. Recheck prior hash
+2ef22340d34ebe5630d140729384409e69c8953485d3ee409e7c5551832f5af3.
+Do not run tomorrow's gate early. Journal deployments-20261005.md with exact
+SHAs, fresh proofs, two-key diff, backups/hashes, /proc/census/logs/catalog/gates/
+preopen. No COMPLETE until every mandatory proof, including(b), is established.
 
-## Completion and next-session proof
-
-Journal `/home/trader/fleet_health/deployments-20261005.md`: exact app/plan SHAs,
-fresh flat/read/working-order proofs, preflight rc, backups/hashes and three-key
-env diff, new v2 PID/start/NRestarts, every untouched identity, /proc settings,
-new log bytes/BOOT-HOLD population, catalog blob/file hashes, FLAGGATE/numeric
-Final calls and denominators, preopen backup/diff/hash/report-date line.
-Say INSTALL COMPLETE only when these are established; list unknowns honestly.
-
-Codex-2 owns Tuesday 10-06 07:00/first-nonempty-watchlist warm-up and BOOT-HOLD
-release verification; claude-1 independently checks bar continuity after first
-bars (07:10 if populated). First live meaningful software reprice must show one
-EH-MOVE with old/new values, no reprice disarm and no next-bar hole. Compare
-Schwab and Webull intents on both REST and stream crosses, confirming ask/source/
-age and once-only latch. Verify flip-seen/cross-taken separately, and the existing
-next-bar take-down. A1 unchanged-rest boundary, A2 ORB latency, F2 later re-entry
-and low-print exits are not in this install. Real next-session delivery/fills
-are UNEXERCISED at evening close-out, never inferred from flag or gate PASS.
+Codex-2: Tuesday10-06 07:00/first-nonempty BOOT-HOLD release; claude-1:
+bar-continuity after first bars (~07:10). Strategy NOT restarted: no scanner
+warm-up validation triggered; adding its restart voids scope.
+First stream/REST crosses: confirming ask/source/age, both600/300, once-only
+latch; SAIQ stray no state. PMFLIP/PMREST OFF retains latch/disarm/rearm.
+M19 software rest at09:30 may still queue its legacy Webull RTH leg: unchanged,
+not represented as fixed. Delivery/fills, ORB and future activations unexercised.

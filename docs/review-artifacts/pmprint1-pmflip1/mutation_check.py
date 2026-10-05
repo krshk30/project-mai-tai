@@ -19,6 +19,11 @@ mutations = {
     "routing_ask_lost": (entry_gate, "route_extended_hours", 'confirming_ask = draft.metadata.get("pm_confirming_ask") if side == "buy" else None', "confirming_ask = None"),
     "emit_stale_ask": (schwab_1m_v2_bot.SchwabV2BotService, "_apply_extended_hours_routing", 'if not 0 <= age <= max_age or extended_hours_session(now) != "AM":', "if False:"),
     "silent_webull_drop": (schwab_1m_v2.SchwabV2Strategy, "_log_pm_size_refused", "logger.error(", "logger.info("),
+    "s1_route_after_open": (schwab_1m_v2_bot.SchwabV2BotService, "_apply_extended_hours_routing", ' or extended_hours_session(now) != "AM"', ""),
+    "s2_pm_feature_after_open": (schwab_1m_v2.SchwabV2Strategy, "_pm_rest_feature", "        and et.hour * 60 + et.minute < 9 * 60 + 30\n", ""),
+    "s2_pm_feature_on_broker_rest": (schwab_1m_v2.SchwabV2Strategy, "_pm_rest_feature", "        and not state.resting_is_broker_order\n", ""),
+    "s2_session_and_time_scope_removed": (schwab_1m_v2.SchwabV2Strategy, "_pm_rest_feature", "        and self._resting_session_is_eh()\n        and et.hour * 60 + et.minute < 9 * 60 + 30\n", ""),
+    "s3_window_guard_removed": (schwab_1m_v2.SchwabV2Strategy, "_eh_resting_cross_check", "    if confirm_ask or self._pm_rest_feature(state, \"pm_flip_wait\"):\n        if not self._resting_in_window() or self._entry_window_closed_for_session():\n            return None\n", ""),
 }
 name = sys.argv[1]
 owner, method, before, after = mutations[name]

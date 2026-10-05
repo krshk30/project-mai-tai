@@ -57,9 +57,9 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
         if field.annotation is bool or bool in get_args(field.annotation)
     }
     by_name = {entry["name"]: entry for entry in entries}
-    assert by_name["strategy_schwab_1m_v2_pm_rest_reprice_enabled"]["expected"] is True
+    assert by_name["strategy_schwab_1m_v2_pm_rest_reprice_enabled"]["expected"] is False
     assert by_name["strategy_schwab_1m_v2_pm_rest_reprice_enabled"]["owning_service"] == "schwab-1m-v2"
-    assert by_name["strategy_schwab_1m_v2_atr_reprice_handoff_enabled"]["expected"] is True
+    assert by_name["strategy_schwab_1m_v2_atr_reprice_handoff_enabled"]["expected"] is False
     assert by_name["strategy_schwab_1m_v2_atr_reprice_handoff_enabled"]["owning_service"] == "schwab-1m-v2"
     assert by_name["strategy_schwab_1m_v2_retry_one_enabled"]["expected"] is True
     assert by_name["strategy_schwab_1m_v2_gap_hold_enabled"]["expected"] is True

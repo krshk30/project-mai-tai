@@ -6093,8 +6093,6 @@ class SchwabV2Strategy:
         if confirm_ask or self._pm_rest_feature(state, "pm_flip_wait"):
             if not self._resting_in_window() or self._entry_window_closed_for_session():
                 return None
-            if self.gap_hold_active(state.symbol):
-                return None
         # LIVE-BAR guard (#528 mirror): only emit off a live feed, never a warmup-replayed / stale bar. The
         # arm-time gate in _cw_v2_resting_track already checks freshness at arm; this re-checks at the cross
         # so a stall between arm and cross can't fire on an hours-old bar. RTH never reaches here.

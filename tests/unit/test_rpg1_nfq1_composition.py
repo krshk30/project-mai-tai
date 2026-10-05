@@ -5,9 +5,9 @@ Liquid SHORT bar state, the subsequent 1% trail decline, and delivery to the OMS
 cache are controlled counterfactual inputs, not historical strategy/OMS facts.
 Only SimulatedBrokerAdapter supplies execution reports; none are venue evidence.
 
-This extends the original shared-seam replay through the production RPG runtime
-handoff and current-gate callback. RPG and NFQ are both required: a missing
-production composition must fail collection rather than silently skip.
+This extends the shared-seam replay through both the production RPG runtime
+handoff and tonight's legacy OFF path. NFQ remains ON and OMS retains its loaded
+ON flag. Missing production seams fail collection rather than silently skip.
 """
 from __future__ import annotations
 
@@ -76,11 +76,12 @@ async def _emit_lifecycle(strategy, emitter, clock, intent_type):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("handoff_enabled", [True, False], ids=["handoff_on", "tonight_handoff_off"])
 @pytest.mark.parametrize(
     "case", CASES,
     ids=lambda case: f'{case["record"]["symbol"]}-{case["record"]["submitted_at"][:16]}',
 )
-async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monkeypatch, case):
+async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monkeypatch, case, handoff_enabled):
     factory = _session_factory()
     service, simulated_adapter = _integrated_service(factory, enabled=True, nfq_enabled=True)
     assert isinstance(simulated_adapter, SimulatedBrokerAdapter)
@@ -97,7 +98,12 @@ async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monk
     settings = service.settings.model_copy(update={
         "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
-        "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": True,
+        "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": handoff_enabled,
+        "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled": True,
+        "strategy_schwab_1m_v2_pm_flip_wait_enabled": False,
+        "strategy_schwab_1m_v2_pm_rest_reprice_enabled": False,
+        "strategy_schwab_1m_v2_gap_hold_enabled": True,
+        "oms_v2_webull_mirror_fresh_price_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_quote_max_age_ms": 10_000,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct": 0.5,
@@ -108,7 +114,18 @@ async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monk
         "strategy_schwab_1m_v2_entry_window_end_hour_et": 16,
         "strategy_schwab_1m_v2_entry_window_end_minute_et": 0,
     })
-    service.settings = settings
+    if not handoff_enabled:
+        settings = settings.model_copy(update={
+            "strategy_schwab_1m_v2_account_name": "live:schwab_1m_v2",
+            "strategy_schwab_1m_v2_entry_notional_usd": 600,
+            "strategy_schwab_1m_v2_webull_entry_notional_usd": 300,
+            "strategy_schwab_1m_v2_entry_window_start_hour_et": 7,
+            "strategy_schwab_1m_v2_entry_window_start_minute_et": 0,
+            "strategy_schwab_1m_v2_entry_window_end_hour_et": 15,
+            "strategy_schwab_1m_v2_entry_window_end_minute_et": 45,
+        })
+    # Tonight restarts only v2; the existing OMS retains its loaded ON setting.
+    service.settings = settings.model_copy(update={"strategy_schwab_1m_v2_atr_reprice_handoff_enabled": True})
     strategy = SchwabV2Strategy(settings)
     monkeypatch.setattr(strategy, "_now_ms", lambda: int(clock[0].timestamp() * 1000))
     for method_name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
@@ -174,7 +191,7 @@ async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monk
     assert old_retry.payload.metadata["webull_mirror_generation_id"] == generation
     assert simulated_adapter.requests == []
 
-    # Real v2 trail movement cancels; RPG, not the next bar, owns replacement.
+    # Real v2 trail movement cancels; ownership depends on v2's hand-off flag.
     state.atr_trail *= 0.99
     strategy._cw_v2_resting_track(state, None)
     cancel = await _emit_lifecycle(strategy, emitter, clock, "cancel")
@@ -185,6 +202,42 @@ async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monk
     assert slot not in service._nfq_holds
     assert not state.fanout_webull_claimed
     assert simulated_adapter.requests == []
+
+    if not handoff_enabled:
+        assert "atr_reprice" not in cancel.payload.metadata
+        assert not HandoffJournal(factory).jobs()
+        assert not strategy._rpg_entry_owned(state)
+        service._latest_quotes_by_symbol.clear()
+        strategy._cw_v2_resting_track(state, None)
+        replacement = await _emit_lifecycle(strategy, emitter, clock, "open")
+        replacement_md = replacement.payload.metadata
+        assert "atr_reprice_token" not in replacement_md
+        assert replacement_md["fanout_slot_id"] == slot
+        assert replacement_md["webull_mirror_generation_id"] != generation
+        await service._handle_stream_message({"data": replacement.model_dump_json()})
+        assert service._nfq_holds[slot].phase == "held"
+        clock[0] += timedelta(seconds=1)
+        service._latest_quotes_by_symbol[state.symbol] = {
+            "ask": Decimal(quote["ask_price"]), "received_at": clock[0],
+        }
+        await service._evaluate_nfq_holds(state.symbol)
+        new_retry = _retry_events(service)[1]
+        assert new_retry.payload.metadata["nfq_retry_token"] != old_retry.payload.metadata["nfq_retry_token"]
+        for retry in (old_retry, new_retry, new_retry, old_retry):
+            await service._handle_stream_message({"data": retry.model_dump_json()})
+        request, = simulated_adapter.requests
+        assert request.metadata["webull_mirror_generation_id"] == replacement_md["webull_mirror_generation_id"]
+        assert request.intent_type == "open"
+        assert Decimal(request.metadata["entry_notional_target_usd"]) == Decimal(300)
+        assert request.quantity > 1  # Current dollar sizing, not the amount-zero fixture.
+        assert service._nfq_holds == {}
+        assert not HandoffJournal(factory).jobs()
+        with factory() as session:
+            order, = session.scalars(select(BrokerOrder)).all()
+            fill, = session.scalars(select(Fill)).all()
+            assert order.client_order_id == request.client_order_id
+            assert fill.order_id == order.id
+        return
 
     bot = object.__new__(SchwabV2BotService)
     bot.strategy, bot.settings = strategy, settings
