@@ -4993,3 +4993,19 @@ true-range gap clamp remains. Confirmation and ATR SELL read this same state.
 Own MI exit read14:52:33Z has no durable confirmation decision and the09:40:03
 target_bar_missed line; exit neutrality and decision-time feed coverage are not
 claimed. No production service/config/DB/ledger changes from these lanes.
+
+### 2026-10-05 11:00 ET - GAPKEEP1 Step 0 delivered; no source build (codex-2)
+
+Pushed assessment-only e90a7073686a722651bfbbdb04580537ca5a46bc on
+codex/gapkeep1-independent-assessment. Own final raw14:56:12Z freezes population
+14:35Z; all eighteen positive holes were received by a recorder before detect.
+The report covers G1-G11, all27 initial holds since09-28, the thirteen actual
+entry-bar probe controls and MI confirmation/ATR SELL readers. Cause AGREE old
+#1038 reseed. Historical9/18 census is not a decision-time silence proof:
+Schwab-only11/16 falsely carries two EGG holes with10/18 independent prints.
+Reset-only fix DISAGREE on exact oracle parity: DXST10:42 production carry
+trail3.840881 versus oracle3.7691 due the older90s true-range gap clamp. Exit
+scope UNMEASURED: MI target09:35 missing, zero durable decisions, real
+target_bar_missed; both exit readers use the state a carry fix changes. No
+GAPKEEP source PR/flag/installation; GAPHOLD8PASS untouched. Await review of
+these safety/scope differences, while the three released build lanes continue.
