@@ -358,6 +358,65 @@ def test_rth_move_places_both_brokers_same_evaluation_without_cancel(caplog):
     assert "old_line=8.3599" in moves[0] and "new_line=7.9699" in moves[0]
 
 
+@pytest.mark.parametrize("streak", [1, 2])
+@pytest.mark.parametrize("when", ["09:30:02", "09:31:02"])
+def test_p5_rth_conversion_preserves_thin_streak_until_third_thin_cancel(
+    streak, when, monkeypatch, caplog
+):
+    strategy, state, clock = armed(strategy_schwab_1m_v2_webull_resting_mirror_enabled=True)
+    clock[0] = ms(f"2026-10-05T{when}-04:00")
+    state.bars[-1] = replace(state.bars[-1], timestamp_ms=clock[0] - 60_000)
+    state.last_quote = Quote("SAIQ", 7.95, 7.96, 7.95, clock[0], clock[0])
+    state.resting_below_floor_bars = streak
+    strategy._reprice_resting(state, 7.9699)
+    assert state.resting_active and state.resting_is_broker_order
+    assert state.resting_below_floor_bars == streak
+    assert [d.intent_type for d in strategy.drain_pending_intents()] == ["open"]
+    assert [d.intent_type for d in strategy._pending_webull_direct_intents] == ["open"]
+    strategy._pending_webull_direct_intents.clear()
+
+    monkeypatch.setattr(strategy, "_liquidity_floor_ok", lambda st: False)
+    with caplog.at_level(logging.INFO):
+        for expected in range(streak + 1, 4):
+            clock[0] += 60_000
+            state.bars[-1] = replace(state.bars[-1], timestamp_ms=clock[0] - 60_000)
+            track(strategy, state, 7.9699)
+            if expected < 3:
+                assert state.resting_active
+                assert state.resting_below_floor_bars == expected
+                assert strategy.drain_pending_intents() == []
+                assert strategy._pending_webull_direct_intents == []
+    assert not state.resting_active
+    assert any("reason=liquidity_floor" in r.getMessage() for r in caplog.records)
+    assert [d.intent_type for d in strategy.drain_pending_intents()] == ["cancel"]
+    assert [d.intent_type for d in strategy._pending_webull_direct_intents] == ["cancel"]
+
+
+@pytest.mark.parametrize("slot", ["first", "reclaim"])
+@pytest.mark.parametrize("when", ["15:45:00", "16:00:00"])
+def test_p7_production_cutoff_disarms_before_reprice_helper(slot, when, monkeypatch, caplog):
+    strategy, state, clock = armed()
+    state.resting_slot = state.last_resting_placed_slot = slot
+    state.cw_armed = True
+    state.cw_bars_waited = 2
+    state.cw_segment_high = state.atr_trail = 7.9699
+    state.atr_state = "short"
+    state.atr_session_anchor_ms = ms("2026-10-05T04:00:00-04:00")
+    clock[0] = ms(f"2026-10-05T{when}-04:00")
+    monkeypatch.setattr(
+        strategy, "_reprice_resting", lambda *a, **k: pytest.fail("post-cutoff reprice")
+    )
+    with caplog.at_level(logging.INFO):
+        assert strategy.on_bar(
+            "SAIQ", replace(state.bars[-1], timestamp_ms=clock[0] - 60_000)
+        ) is None
+    assert not state.resting_active
+    assert not state.cw_armed
+    assert all(d.intent_type != "open" for d in strategy.drain_pending_intents())
+    assert all(d.intent_type != "open" for d in strategy._pending_webull_direct_intents)
+    assert any("reason=post-close-entry-disabled" in r.getMessage() for r in caplog.records)
+
+
 @pytest.mark.parametrize("failure", ["price", "stop_ask", "window", "admission"])
 def test_failed_preparation_or_rth_admission_leaves_old_rest(failure, monkeypatch):
     strategy, state, clock = armed()
