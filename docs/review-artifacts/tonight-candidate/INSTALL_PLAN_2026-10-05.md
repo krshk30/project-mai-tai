@@ -15,11 +15,34 @@ No exception is implemented or authorized here. See the exhaustive gate table,
 the exact named disposition needed below, and PREFLIGHT_DRY_RUN_2026-10-05.md
 for commands, unedited outputs, source hashes and current limits. Nothing
 was staged or written on the box; the two PR branches were not changed.
-GitHub read14:49 ET: OWN76c3b4f7 now has a fresh independent-review-pin PASS
+Historical GitHub read14:49 ET: OWN76c3b4f7 had a fresh independent-review-pin PASS
 (run37357567204, completed14:39:30 ET) and both Validate passes. RPG7fe27daa
-still lacks its fresh passing pin. Both PRs remain OPEN on main7e10. The
+still lacked its fresh passing pin. Both PRs were OPEN on main7e10. The
 14:26 checkpoint below is historical; its then-missing OWN pin is not carried
-forward as current state. This gate audit neither merges nor rebases either PR.
+forward as current state. That gate audit neither merged nor rebased either PR.
+
+**14:51 ET repository-only update:** operator's exact-head yes was rechecked
+against OWN76c3/base7e10, latest independent pin PASS and Validatex2PASS.
+#1094 rebase-merged14:51:18 ET to main
+`4987353be54c4be15d4196907dec4dd0d6103236`.
+Whole main tree `e6403bdafdc7b9670ecadbc6dbeccdcb6650c96c` equals the
+pinned76c3 tree. No install, env/flag edit, restart or migration was performed.
+Actual new order: #1094 FIRST (done), then pure rebase/review/pin/merge #1093.
+The operator's standing before-merge yes applies ONLY to a reviewed pinned
+exact head not behind main; it does not authorize install or migration.
+
+**14:53 ET pure RPG rebase checkpoint:** new #1093 head
+`462c8aa1ffc2f5515f50ba14964fc38e839ddc89`, base
+`4987353be54c4be15d4196907dec4dd0d6103236`.
+Old7fe27daa was rebased without conflicts or hand edits; parent independently
+verified all7 range-diff entries `=` and clean worktree. All Codex markers
+preserved. New whole tree `17fcd4d927827825a70a3ae1b4f772911c7ddbe6`
+equals the exact previously tested combined rehearsal tree (full5769/same56,
+failed-IDadded[]removed[]). This is content equivalence, not a fresh reviewer
+pin or permission to install. New-head Validate runs37359176342/37359183078
+are IN_PROGRESS and the new independent pin is missing at14:53; the old
+Validate/pin status is not inherited. REBASE_RESULT_2026-10-05.md records the
+full range-diff. No other RPG content/report/fixture was edited in the rebase.
 
 **14:26 ET follow-up checkpoint:** R20 and F3 are locally corrected on the
 exact heads below, each one follow-up commit without rebase. Fresh main5500/56
@@ -35,18 +58,20 @@ Provisional full5769/same56 differed only that assertion lookup; the final
 exact-head full rerun is5769/same56 with added[]/removed[], zero skips,257.85s.
 Final focused327PASS/zero skips and targeted51PASS/zero skips. Both exact-head
 Validate pairs are PASS: RPG14:25:42/14:25:45 ET; OWN14:24:15/14:24:23 ET.
-Fresh independent pins are missing. COMPOSITION_RESULT_2026-10-05.md records
+At14:26 fresh independent pins were missing. COMPOSITION_RESULT_2026-10-05.md records
 exact bindings, raw hashes and correction history. No local/CI pass authorizes
 this candidate without the review pins and operator's exact-SHA GO.
-Neither PR is merge/install eligible now. Re-read the bounded ticket census
+Neither PR was merge/install eligible at that checkpoint. Re-read the bounded ticket census
 immediately before any separately approved execution; any later untested shape
 is UNKNOWN/STOP. No execution or scheduled install is authorized by this draft.
 
 This new document supersedes the folded three-PM-switch plan and the v2-only
 two-switch rollback draft. Turning hand-off OFF on the current code does not
 release durable held_unknown tickets. The required candidate is #1092 plus
-#1093 recovery code, with hand-off OFF; #1094 is optional only after its complete
-follow-up is independently pinned. No journal purge, database repair, age-based
+#1093 recovery code, with hand-off OFF, on main already containing #1094.
+OWN is no longer optional in this candidate's code: the RPG rebase is onto
+the real OWN merge. Its additive migration MUST be explicitly included in
+the later exact-SHA install GO; merge alone never runs it. No journal purge, database repair, age-based
 ticket release, or additional trading-rule change is permitted.
 
 ## Candidate And Merge Order
@@ -55,18 +80,22 @@ ticket release, or additional trading-rule change is permitted.
 |---|---|---|---|
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
 | 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | merged at 13:09:07 ET to main 7e10baf0319da796b84934fe38994f6db4fcfc0b; whole tree equals pinned tree 736a540cac3c2724fa116216913331f532ecdfa9 | still dark on the box; proposed PMPRINT ON and PMFLIP OFF |
-| 2 | RPGSTUCK #1093, 7fe27daaad522bb3aa7f921212a3179532117f7c | NOT pinned; R20 runtime one-time wake + full held-transition audit; full5692/same56, focused1378; Validate x2 PASS14:25:42/14:25:45 ET | existing ticket recovery active; no NEW hand-offs |
-| 3, optional | OWNMIX #1094, 76c3b4f764c56baafed3d527a0a47dca8cbcb5b4 | PINNED: GitHub fresh pin PASS14:39:30 ET, read14:49; F3/H4 closed; full5577/same56; Validate x2 PASS14:24:15/14:24:23 ET; still OPEN/not installed | entry binding; additive schema only if included in exact-SHA GO |
+| 2, FIRST new merge | OWNMIX #1094, pinned76c3b4f764c56baafed3d527a0a47dca8cbcb5b4 | MERGED14:51:18 ET as4987353be54c4be15d4196907dec4dd0d6103236; whole treee6403bda equals pinned tree; latest pin/Validatex2 PASS | not installed; entry binding/additive schema requires separate exact-SHA GO |
+| 3, SECOND new merge | RPGSTUCK #1093, 462c8aa1ffc2f5515f50ba14964fc38e839ddc89 | PURE rebase onto4987353b pushed,7/7 range-diff equal, no conflict/edit; new-head CI running/fresh pin missing; reviewer rerun required | existing ticket recovery active after separately approved install; no NEW hand-offs |
 
-No merge is authorized by this draft. Final exact heads, all required checks,
+Merge authority comes from the separately recorded operator ruling, not this
+install draft. Final exact heads, all required checks,
 ordered integration rehearsal and fresh pins after any rebase/conflict must be
 recorded before the operator names APPROVED_SHA (40 hex). Never Update branch.
-Exclude #1094 entirely if it is unpinned. Do not substitute a moving branch tip.
+No omission of the OWN migration from a target descended from4987353b.
+Do not substitute a moving branch tip or install unpinned RPG code.
 LINE=CHART is an active separate build concern, not in this candidate.
 
 The authorized rebase checkpoints were RPGd6865168 and OWNbb4a6b22, each
 onto merged main7e10; range-diff3/3 equal for each. Their subsequent follow-ups
-above require fresh review records. No pinned PM commit was amended.
+required fresh review records. OWN's final record was verified before merge;
+RPG's current462c8aa1 requires its own new-base/new-head record. No pinned PM
+or OWN commit was amended. This rebase changed RPG commit identity only.
 
 **Historical failed rehearsal, 13:33 ET:** clean main7e10 plus generated patches
 for RPG271314de and OWN55563e6f applies cleanly in the isolated worktree
@@ -174,7 +203,7 @@ approval and print actual denominators. Neither #1093 nor #1094 adds a switch.
 | (b) durable startup | restore every captured October 5 ticket, prove per-leg ownership/disposition; rejected old order releases by exact identity and zero-fill proof, never age | all14 jobs/11 orders/15 intents/1 actual fill tested; strict RETO probe durably claimed once; after20:00 zero saved opens/cancels, true unknown stays blocked |
 | (c) composition | NFQ ON + hand-off OFF on this tree: local no-wire recovery, held/requeued mirror, one buy per slot, true unknown remains blocked | exact new-head tree17fcd4d9 full5769/same56 vs freshmain5500/56, added[]removed[],zero skips; focused327PASS and targeted51PASS. Prior c654+55563 results are historical only |
 | R20 | waiting/reads29 -> runtime exhaustion -> one proof tick without restart; rejected-zero clears, unknown remains held and 180 quiet turns issue no SQL/scan/tick | eight recorded-RETO real-loop variants PASS; wake removal assertion RED2; every held transition and next-check route in REPORT_R20.md; later-ineligible exhaustion remains startup-only, not aged clear |
-| OWN, if included | real submit and poll fill paths bind both IDs for both accounts; F3 bounded child-fetch retries and same-episode writer priority; no unsafe fill attribution; H4 account isolation | fresh full5577/same56,focused576PASS; F3 real-exit tests PASS on both accounts, retry removal RED4 and writer removal RED2; H4 RED1; Validate x2 PASS, fresh pin required |
+| OWN, now merged/in candidate | real submit and poll fill paths bind both IDs for both accounts; F3 bounded child-fetch retries and same-episode writer priority; no unsafe fill attribution; H4 account isolation | full5577/same56,focused576PASS; F3 real-exit tests PASS on both accounts, retry removal RED4 and writer removal RED2; H4 RED1; latest pin/Validatex2PASS before exact-tree merge; migration still requires explicit install GO |
 
 Own source pull at13:17:02 ET uses READ ONLY SQL,8s and64-row/table sentinel
 limits. STARTUP_TICKETS.md retains paths/hashes and the previous exact broker
@@ -216,7 +245,8 @@ on both accounts, followed by owned-child exit polling. Broker replies are
 controlled recorded-shape inputs, not a live trading exercise. Actual old-main7e10
 nullable-schema compatibility passes on both accounts, offline in SQLite.
 OWN Validate x2 PASS at13:27:34/13:27:56 ET; its fresh independent pin remains
-required. OWN remains optional, not installed.
+was required at that historical checkpoint. OWN has since been pinned/merged
+as recorded above, not installed; the RPG rebase target contains it.
 
 The ticket census is frozen at13:17:02 ET. A fresh bounded read immediately before
 execution must include any later tickets. Do not describe these14 fixtures as
@@ -264,7 +294,7 @@ attachment distinguishes executed commands from future-only proofs.
 |---|---|---|---|---|
 | Exact heads, independent pins, both Validate checks, merged tree and operator exact-SHA GO | before staging/execution; no substitution of moving tips | no, not a ledger reader | no, not a ledger reader | Final pins/GO/release not supplied by this audit; remains pending |
 | Release approval date/window, after20:00 ET, observed rotation, exclusive attempt and deployment lock | before any write; review-gated manifest/hashes and no concurrent deploy | no | no | Window/rotation/lock/approval not exercised; no lock/claim created during dry run |
-| BOX_SHA, clean tree, source ancestry, reviewed PR/path allowlist, import path | before any write and after checkout/pip refresh | no | no | box e1ce3b39 clean/import at repo src; origin/main7e10baf0; final APPROVED_SHA not named |
+| BOX_SHA, clean tree, source ancestry, reviewed PR/path allowlist, import path | before any write and after checkout/pip refresh | no | no | dry-run box e1ce3b39 clean/import at repo src; current main4987353b after OWN merge, not installed; final APPROVED_SHA not named |
 | Saved helper, preopen, checker/catalog, both env-file hashes; duplicate-key and two-key diff checks | before backup/edit; exact bytes and unchanged routing | no | no | Gate/helper/preopen hashes attached; future env/catalog edits NOT run |
 | Service identities, healthy target heartbeats, unchanged-unit state | before writes and after each action | not by quantity; reconciler health is checked by general gate below | same | OMS23705/strategy24025/v226811 unchanged, active, NRestarts0; paper PID0/inactive, see attachment; never assume saved paper27320 is still active |
 | Control single-writer token policy and successful fresh broker GETs; token expiry recheck if quiesce>25min | before each broker proof; unreadable/401=UNKNOWN | no | no | Refresh disabled in helper; fresh Schwab and Webull GETs succeeded; no token grant or token-file write |
@@ -275,10 +305,10 @@ attachment distinguishes executed commands from future-only proofs.
 | Fresh bounded ticket census + exact-generation broker evidence + reviewed startup replay | before stopping/replacing OMS; no later untested shape or unproven wire declaration | no | no | Phase census14: filled1/refused8/held_unknown5; does not prove those5 clear. Full per-leg replay/census and broker proof remain required; never waive via flatness |
 | preflight_v2_restart.sh: clock, fresh armed state, managed rows, stored broker positions | immediately BEFORE v2 stop; rc0 | no, never reads reconciler or fills | no, never reads reconciler or fills | rc1 ONLY clock<18; armed0/state1.1s, managed0, stored broker flat. Its CYN/TE exclusions do not apply to the direct strict helper |
 | preflight_oms_restart.sh --require-all-account-positions-flat | immediately BEFORE OMS restart/stop; rc0 | no, reads current rows/position freshness | no, reads current rows/position freshness | rc0; both flat, stamps6s/7s; no manual-symbol exclusion |
-| Alembic revision, exact additive migration base/columns and old-code compatibility | ONLY if #1094 pinned and explicitly in GO; before migration | no | no | current20260916_0021; no production migration/rollback drill performed |
+| Alembic revision, exact additive migration base/columns and old-code compatibility | REQUIRED for candidate descended from OWN4987353b, only on explicit migration GO; before migration | no | no | current20260916_0021; no production migration/rollback drill performed |
 | Redis pre-step baseline + strategy warm-up checkpoint | before strategy start, immediately after and through initialization; no eviction/stream loss, <=1.6GB, five owners+marker | no | no | context evicted0->0, memory813121400->813117224B,9 stream types intact, five owners+marker1; post-warm-up NOT exercised |
 | New process identity/log/heartbeat/BOOT-HOLD and unchanged-unit census | after each action and close-out; literal evidence, no assumed release | no direct ledger predicate; do not run a global-health shortcut that hides reconciler degradation | same | Post-install NOT run; held boot population is reported, not called PASS |
-| Startup recovery/disposition, optional OWN bindings, fresh live:orb sync and account stamp | after OMS start; exact proof, no saved new buy with hand-off OFF after window | no exception to broker/order proof | no exception to broker/order proof | Post-install NOT run; no ledger repair or ticket purge |
+| Startup recovery/disposition, OWN bindings, fresh live:orb sync and account stamp | after OMS start; exact proof, no saved new buy with hand-off OFF after window | no exception to broker/order proof | no exception to broker/order proof | Post-install NOT run; no ledger repair or ticket purge |
 | /proc exact live set; isolated FLAGGATE143/143 and numeric8/8 | after final starts/catalog install; print actual denominators | no, settings/process-env checks | no | Post-install NOT run; neither gate is simulated green |
 | Single preopen Oct6 re-pin, backups/diff/hash/mode0700/bash-n; scanner15min recipe; next07:00 hold and07:10 continuity reads | file checks close-out; live bar checks next session | no | no | Current preopen hash attached; NO re-pin and NO early10-06 gate run; Monday live reads remain pending |
 
@@ -375,10 +405,12 @@ After initial flat/gate proofs and backups, advance to APPROVED_SHA, refresh
 editable runtime as trader, prove clean tree/import path; then only the two env
 key changes. Settings reads use root; protected env is never read as trader.
 
-Normal sequence, flat_now before each action: stop v2 -> stop strategy ->
-restart OMS ONCE -> start v2 -> start strategy. If #1094 is included, replace
-the OMS restart with stop OMS -> approved additive migration -> start OMS ONCE;
-GO must explicitly include that schema-bearing sequence. Validate current
+Candidate sequence, flat_now before each action: stop v2 -> stop strategy ->
+stop OMS -> approved additive migration -> start OMS ONCE -> start v2 ->
+start strategy. OWN is on the real RPG rebase base, so the ordinary no-migration
+OMS restart is NOT this candidate's path. GO must explicitly include the
+schema-bearing sequence. No migration or service action is authorized by the
+repository merge. Validate current
 Alembic revision and exact migration base first. Add nullable entry_order_id
 UUID and entry_client_order_id(128); no binding/fill/ledger backfill or downgrade.
 
@@ -433,7 +465,7 @@ and any later tickets found by the fresh execution census:
 phase/reason, proven old/replacement identity, account/symbol and ownership.
 No new hand-offs with OFF. Never claim a truly unknown wire order cleared.
 Fresh live:orb sync ok>0/failed0 and account_positions stamp after OMS start.
-OWN binding/migration census only if included; no manual row repair.
+OWN binding/migration census is required for this candidate; no manual row repair.
 
 Read flags BY KEY from /proc of the final new PIDs. Print/hash actual FLAGGATE
 and numeric results. Record BOOT-HOLD/population literally; held overnight is
@@ -445,7 +477,7 @@ v2-restart-evidence-20261006.md. Exclusive backup, diff, SHA256, bash-n, mode070
 Do not run the date-fixed October6 gate early. No Monday guard re-pin/restart.
 
 Journal deployments-20261005.md: source/release/plan/helper hashes, flat/gate
-proofs, exact commands, backups/env diff, optional migration revision, new and
+proofs, exact commands, backups/env diff, required migration revision, new and
 unchanged identities, loaded values, complete as-of ticket dispositions, sync census,
 Redis before/after, catalog/checker outputs and preopen backup/diff/hash.
 COMPLETE requires actual proofs, not just active processes. Accepted UNKNOWN
