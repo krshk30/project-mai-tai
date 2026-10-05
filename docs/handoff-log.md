@@ -4951,3 +4951,14 @@ RPGSTUCK1 agrees on both failed reprices, disagrees with missing requested ackno
 Operator10:10 merge authorization executed on unchanged #1091 head1135f8d9/basee1ce3b39. Committed Claude pin verified with repository review_pin_gate (PASS); current Validate twice PASS. Rebase-merged to a80b51816abf0aefc269f0fdfc473468fd3fe62c; entire pinned-head versus merge tree diff empty. No production action, restart, env edit or install: dark PMREST1 now on main, box remains installed bbb43604 code with the switch OFF.
 
 Operator09:44 explicitly released PMPRINT1/PMFLIP1. Fleet CLAIM recorded14:20:26Z for combined branch codex/pmprint1-pmflip1-confirming-ask, managed worktree at the pinned PMREST head, Codex-only marker hook installed. Specified rebase --onto origin/main1135f8d9 completed after merge, so forthcoming range excludes PMREST commits. Two flags default FALSE, real recorded replay and separate/composition tests required; no new upper cap or timer. Service routing must preserve the same confirming ask through both leg sizing while OMS remains authoritative. OWNMIX/RPGSTUCK Step0 disagreement does not block this separately authorized lane. Nothing else merged or installed.
+# Codex-2 2026-10-05 10:40 ET PMPRINT1/PMFLIP1 build evidence
+
+972 focused tests PASS; ten substantive isolated in-memory mutations RED.
+Own read-only SQL at 10:37:52 ET adds VEEA tick6794048/quote3243244 after the
+30-second settle grace but before the existing bar-driven take-down. The cross
+must keep watching until that take-down, not invent a tick-time expiry. WETO
+tick6233046 is 645.330 s after take-down; MI's order cdca0853 records the
+unchanged QUOTE_DRIFT_CANCEL. Raw committed remaining-cases.json SHA256
+6893bb954131ce5233b60e1fd3d96d9f363c4d073f009c4d3570fef2774fd77c.
+Price-proxy replay14/14 eligible,5/5 strays blocked,CLRO ask5.55 blocked;
+decision-cache history UNMEASURED. Full final pair pending. No production action.
