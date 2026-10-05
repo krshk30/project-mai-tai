@@ -629,6 +629,7 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled: bool = False
     # PMREST1 changes only software-rest reprices; broker handoffs remain RPG1-owned.
     strategy_schwab_1m_v2_pm_rest_reprice_enabled: bool = False
+    strategy_schwab_1m_v2_resting_buy_round_up_enabled: bool = False
     strategy_schwab_1m_v2_pm_print_ask_confirm_enabled: bool = False
     strategy_schwab_1m_v2_pm_flip_wait_enabled: bool = False
     # PRE-MARKET ONLY (operator 2026-09-28, CLRO 07:24 ET). The EH soft rest above watches REST quote
