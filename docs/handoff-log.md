@@ -5077,3 +5077,16 @@ runs37331123062/37331114821 completed15:19:33/38Z. RPG #1093 remains x2PASS.
 Draft evening plan520509dc09914dc556016af76f0bb8a97e9c3b48 records final CI
 state; no source under review changed. Both independent-review-pin checks
 await reviewer records, no pin claimed. No merge/install/migration/timer.
+
+### 2026-10-05 11:27 ET - two-switch sequencing and durable-ticket blocker (codex-2)
+
+Latest ruling supersedes the OWN/RPG joint evening draft: tonight is PMPRINT ON,
+RPG hand-off OFF, one v2 restart; PMFLIP/PMREST remain dark. Own code read and
+independent audit find required proof(b) fails: restart restores durable refused
+and held_unknown tickets even with the v2 flag OFF, and strategy ownership still
+blocks placement. OMS held_unknown admission also ignores the flag. Four actual
+recorded tickets reproduce this in the real startup hand-off pass; the 43-case
+focused PASS is negative characterization, not a successful safety proof. No
+ticket deletion, DB edit, extra restart, or RPGSTUCK source folded into tonight.
+Reviewer disposition needed before execution. S5/S6 exact-set tests and catalog
+edits underway; OFF/NFQ composition is being measured separately. M rows untouched.
