@@ -50,6 +50,8 @@
 
 | C13 | PMREST1 review head and PMPRINT1 origin follow-up | #1091 pushed, CI running; PMPRINT1 still stopped pending strict-rule ruling | 09:04 ET 10-05: #1091 head 1135f8d9e288ed86667fdcd880c4f6d28990a341, unchanged base e1ce3b39; frozen head full units 56 failed/5,412 passed, fresh base comparison running; assessment 2548041a contains own SAIQ capture row 185338442 matching Schwab price 6.83, size 1, exact event timestamp 12:10:35.281Z, raw pmprint1-own-origin-check.json | codex-2 | Exact failure-name comparison and new-head CI pending; condition 3 cannot rule out venue/late-report eligibility; lower-only replay 14/14 first-leg proxies and 5/5 strays, cache timing UNMEASURED; no runtime PMPRINT1 build or install |
 
+| C14 | PMREST full comparison and VEEA own assessment | Same full-suite failures; VEEA flip-latch mechanism independently confirmed, old code; no new behavior build | 09:09 ET 10-05: #1091 head 1135f8d9, fresh e1ce3b39 full base 56 failed/5,372 passed vs head 56 failed/5,412 passed, sorted FAILED lines identical; assessment 82d3f2eed14a39d917bc9f19102503f10058986c; own pmprint1-own-veea.json read 09:05 gives first qualifying print 08:33:04.184, 1.680 s after BUY flip; 30/45 and 41/52 qualifying prints in next two minutes, zero bounded broker_orders; latch/cross refusal blame dates 07-23/07-24 | codex-2 | New-head Linux Validate and review pin pending; exact VEEA instruction block requested; no counterfactual fill/profit or full-history incidence claim; PMPRINT strict rule awaits operator |
+
 ## 2026-10-02 (Fri) → 2026-10-03 (Sat) — LIVE DAY NOTES, full sweep Sun 10-04 11:25 ET (claude-1)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
