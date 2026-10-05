@@ -3,6 +3,24 @@
 **DRAFT AWAITING FRESH PINS AND EXACT-SHA OPERATOR GO.
 NOT EXECUTABLE, NOT SCHEDULED, NO PRODUCTION AUTHORIZATION.**
 
+**14:45 ET gate audit: BLOCKED, not final.** Own read-only commands reproduce
+both reconciliation findings: NXL +2 and MI +180, account/virtual/managed all0.
+The general OMS AND strategy deploy preflights return1 for total2/critical2
+and reconciler degraded. The no-exception strict-flat proof returns1 for
+today's MI +180 net fills despite both direct brokers being flat. NXL's balance
+is historical, outside today's04:00 ET fill window. OMS restart fence returns0;
+v2 restart gate returns1 on its daytime clock only, armed0/managed0/brokerflat.
+An operator decision not to write the MI ledger does NOT waive these gates.
+No exception is implemented or authorized here. See the exhaustive gate table,
+the exact named disposition needed below, and PREFLIGHT_DRY_RUN_2026-10-05.md
+for commands, unedited outputs, source hashes and current limits. Nothing
+was staged or written on the box; the two PR branches were not changed.
+GitHub read14:49 ET: OWN76c3b4f7 now has a fresh independent-review-pin PASS
+(run37357567204, completed14:39:30 ET) and both Validate passes. RPG7fe27daa
+still lacks its fresh passing pin. Both PRs remain OPEN on main7e10. The
+14:26 checkpoint below is historical; its then-missing OWN pin is not carried
+forward as current state. This gate audit neither merges nor rebases either PR.
+
 **14:26 ET follow-up checkpoint:** R20 and F3 are locally corrected on the
 exact heads below, each one follow-up commit without rebase. Fresh main5500/56
 versus RPG5692/same56 and OWN5577/same56 has failed-ID added[]/removed[],
@@ -38,7 +56,7 @@ ticket release, or additional trading-rule change is permitted.
 | Existing | PMREST #1091 on main a80b51816abf0aefc269f0fdfc473468fd3fe62c | merged, dark | stays OFF |
 | 1 | PMPRINT/PMFLIP #1092, 5ee9f41654d8bb3b66414c4b84c3804c8d4c47c6 | merged at 13:09:07 ET to main 7e10baf0319da796b84934fe38994f6db4fcfc0b; whole tree equals pinned tree 736a540cac3c2724fa116216913331f532ecdfa9 | still dark on the box; proposed PMPRINT ON and PMFLIP OFF |
 | 2 | RPGSTUCK #1093, 7fe27daaad522bb3aa7f921212a3179532117f7c | NOT pinned; R20 runtime one-time wake + full held-transition audit; full5692/same56, focused1378; Validate x2 PASS14:25:42/14:25:45 ET | existing ticket recovery active; no NEW hand-offs |
-| 3, optional | OWNMIX #1094, 76c3b4f764c56baafed3d527a0a47dca8cbcb5b4 | NOT pinned; F3 bounded deferral and pending-writer guards restored; H4 per-account assertion; full5577/same56; Validate x2 PASS14:24:15/14:24:23 ET | entry binding; additive schema only if included |
+| 3, optional | OWNMIX #1094, 76c3b4f764c56baafed3d527a0a47dca8cbcb5b4 | PINNED: GitHub fresh pin PASS14:39:30 ET, read14:49; F3/H4 closed; full5577/same56; Validate x2 PASS14:24:15/14:24:23 ET; still OPEN/not installed | entry binding; additive schema only if included in exact-SHA GO |
 
 No merge is authorized by this draft. Final exact heads, all required checks,
 ordered integration rehearsal and fresh pins after any rebase/conflict must be
@@ -218,18 +236,118 @@ and selected-PR path diff, saved preopen/checker/catalog/helper hashes, all
 service PID/start/NRestarts identities. No gate edit or forced green. Record
 both EnvironmentFiles and schema revision without credentials.
 
-Use the reviewed strict-flat helper bound by blob/hash in the release: fresh
+Use strict_flat_readonly.py, the NO-EXCEPTION review artifact bound by blob/hash
+in the eventual release (not yet independently approved): fresh
 direct positions on BOTH brokers, zero open managed rows, zero nonzero virtual
-positions, no working entries/exits or unresolved wire dispatch. Read-only bot
+positions and zero current-session net fills. Separately prove no working
+entries/exits or unresolved wire dispatch. Read-only bot
 books and broker reads must agree. A held ticket is not cleared merely because
 its row says refused; preserve identity-specific order/dispatch proof. No
 historical NXL override or ledger adjustment. Unreadable = UNKNOWN/STOP.
+This helper has no protected-symbol or manual-holding exclusion. Any holding,
+including a non-bot position, blocks unless the operator separately names it
+and a narrowly reviewed exception is added. APUS needs no exception: the own
+14:43:03 ET direct reads show broker_holdings=[], including no APUS. The
+historical10-01 helper83191320 is NOT used: it contains the old NXL override
+and permits unnamed manual holdings, which would violate this plan.
+
+### Exhaustive Gate Contract
+
+There is NO runner/service/timer staged for this candidate. This is the
+required invocation contract for its future reviewed runner, not a claim that
+an existing job executes these gates. The066848f1 draft did not bind an exact
+flat artifact or enumerate the general deploy preflight; that omission is
+corrected here, not used to bypass reconciliation. The read-only evidence
+attachment distinguishes executed commands from future-only proofs.
+
+| Gate / invocation | When and required result | NXL +2 blocks? | MI +180 blocks? | Own dry-run result / limitation |
+|---|---|---|---|---|
+| Exact heads, independent pins, both Validate checks, merged tree and operator exact-SHA GO | before staging/execution; no substitution of moving tips | no, not a ledger reader | no, not a ledger reader | Final pins/GO/release not supplied by this audit; remains pending |
+| Release approval date/window, after20:00 ET, observed rotation, exclusive attempt and deployment lock | before any write; review-gated manifest/hashes and no concurrent deploy | no | no | Window/rotation/lock/approval not exercised; no lock/claim created during dry run |
+| BOX_SHA, clean tree, source ancestry, reviewed PR/path allowlist, import path | before any write and after checkout/pip refresh | no | no | box e1ce3b39 clean/import at repo src; origin/main7e10baf0; final APPROVED_SHA not named |
+| Saved helper, preopen, checker/catalog, both env-file hashes; duplicate-key and two-key diff checks | before backup/edit; exact bytes and unchanged routing | no | no | Gate/helper/preopen hashes attached; future env/catalog edits NOT run |
+| Service identities, healthy target heartbeats, unchanged-unit state | before writes and after each action | not by quantity; reconciler health is checked by general gate below | same | OMS23705/strategy24025/v226811 unchanged, active, NRestarts0; paper PID0/inactive, see attachment; never assume saved paper27320 is still active |
+| Control single-writer token policy and successful fresh broker GETs; token expiry recheck if quiesce>25min | before each broker proof; unreadable/401=UNKNOWN | no | no | Refresh disabled in helper; fresh Schwab and Webull GETs succeeded; no token grant or token-file write |
+| General deploy preflight --service oms | once BEFORE checkout/env/schema writes and while all live targets are still up; rc0 | YES: total/critical findings + degraded reconciler | YES: total/critical findings + degraded reconciler | rc1: total2, critical2, reconciler degraded |
+| General deploy preflight --service strategy | same initial live checkpoint; rc0 | YES, same three predicates | YES, same three predicates | rc1, identical three failure lines |
+| strict_flat_readonly.py, fresh direct BOTH broker positions; account, managed, virtual rows;04:00 ET current-session net fills | before checkout/env/schema writes and EVERY stop/start/restart; rc0, no exceptions | NO today: historical balance outside session; any actual NXL holding/row/current-session imbalance WOULD block | YES: MI current-session +180 | rc1; broker[], managed[], virtual[], account[]; only net_bot_fills MI180 |
+| Working entry/exit orders and pending dispatch / intent drain | same checkpoints; zero live buys/sells and identity-proven no-wire/terminal disposition | no, not a ledger finding reader | no | Read-only DB nonterminal_orders=[] and inflight_intents=[]; this is NOT proof that every unknown broker dispatch is absent |
+| Fresh bounded ticket census + exact-generation broker evidence + reviewed startup replay | before stopping/replacing OMS; no later untested shape or unproven wire declaration | no | no | Phase census14: filled1/refused8/held_unknown5; does not prove those5 clear. Full per-leg replay/census and broker proof remain required; never waive via flatness |
+| preflight_v2_restart.sh: clock, fresh armed state, managed rows, stored broker positions | immediately BEFORE v2 stop; rc0 | no, never reads reconciler or fills | no, never reads reconciler or fills | rc1 ONLY clock<18; armed0/state1.1s, managed0, stored broker flat. Its CYN/TE exclusions do not apply to the direct strict helper |
+| preflight_oms_restart.sh --require-all-account-positions-flat | immediately BEFORE OMS restart/stop; rc0 | no, reads current rows/position freshness | no, reads current rows/position freshness | rc0; both flat, stamps6s/7s; no manual-symbol exclusion |
+| Alembic revision, exact additive migration base/columns and old-code compatibility | ONLY if #1094 pinned and explicitly in GO; before migration | no | no | current20260916_0021; no production migration/rollback drill performed |
+| Redis pre-step baseline + strategy warm-up checkpoint | before strategy start, immediately after and through initialization; no eviction/stream loss, <=1.6GB, five owners+marker | no | no | context evicted0->0, memory813121400->813117224B,9 stream types intact, five owners+marker1; post-warm-up NOT exercised |
+| New process identity/log/heartbeat/BOOT-HOLD and unchanged-unit census | after each action and close-out; literal evidence, no assumed release | no direct ledger predicate; do not run a global-health shortcut that hides reconciler degradation | same | Post-install NOT run; held boot population is reported, not called PASS |
+| Startup recovery/disposition, optional OWN bindings, fresh live:orb sync and account stamp | after OMS start; exact proof, no saved new buy with hand-off OFF after window | no exception to broker/order proof | no exception to broker/order proof | Post-install NOT run; no ledger repair or ticket purge |
+| /proc exact live set; isolated FLAGGATE143/143 and numeric8/8 | after final starts/catalog install; print actual denominators | no, settings/process-env checks | no | Post-install NOT run; neither gate is simulated green |
+| Single preopen Oct6 re-pin, backups/diff/hash/mode0700/bash-n; scanner15min recipe; next07:00 hold and07:10 continuity reads | file checks close-out; live bar checks next session | no | no | Current preopen hash attached; NO re-pin and NO early10-06 gate run; Monday live reads remain pending |
+
+The eventual runner may not omit either general preflight, replace it with
+the flat fence, or treat the diagnostic context script's rc0 as deploy GO.
+General gates run before the controlled stops; they are NOT re-run against a
+deliberately stopped strategy/OMS to produce a misleading new health failure.
+The live strict proof and restart-specific fences remain at their action
+checkpoints. No script's failure is swallowed by a pipeline or a later rc0.
+
+### Named Disposition Required, NOT Granted
+
+Execution is BLOCKED with current data. The exact operator decision needed
+is a TODAY-ONLY deployment exception for these identities, not "ignore
+reconciliation":
+
+* `position-quantity:live:schwab_1m_v2:NXL`, type
+  position_quantity_mismatch, critical, retained net_fill_balance +2 from the
+  accepted10-01 manual close; account/virtual/managed0.
+* `position-quantity:live:schwab_1m_v2:MI`, same type/severity, retained
+  net_fill_balance +180 from the unrecorded10-05 Schwab exit; account/virtual/
+  managed0. Accept ONLY that MI +180 current-session fill imbalance in the
+  strict helper; NXL gets NO current-session-fill exception.
+* Allow ONLY the general gate's total2/critical2 and fresh reconciler
+  degraded status attributable to those exact two findings. No third finding,
+  different quantity/account/type, stale heartbeat, pending intent, fresh fill,
+  live broker holding, open managed/virtual row or unknown read is excused.
+
+The no-MI-ledger-write ruling remains intact. No DB, fill, reconciler incident
+or ticket changes; no manual APUS exception. This is a request for a named
+operator ruling plus a separately reviewed narrow runner policy, NOT an
+implemented whitelist and NOT a newly authorized env switch. deploy_preflight.py
+has NO CLI findings override, and its existing clock/armed/position overrides
+do not cover this condition. Do not invent a flag or just omit its call. If
+the operator declines this disposition, the plan REFUSES; it cannot execute
+by waiting past20:00 or by getting both brokers flat. All fresh proofs must
+still be re-read at execution; today's dry run is not tonight's flat GO.
+
+### Exact Read-Only Preflight Commands
+
+The runner must require the rc of EACH of these commands. REPO is the exact
+clean box checkout; JOB_ROOT is the future hash-verified release directory,
+not yet installed. The helper is passed through stdin exactly as in the
+attached own dry run; SSH only transports those bytes. Both scripts are
+read-only. root is needed for the0600 env; bytecode writes are disabled.
+
+```bash
+sudo nice -n 19 env PYTHONDONTWRITEBYTECODE=1 "$REPO/.venv/bin/python" "$REPO/src/project_mai_tai/deploy_preflight.py" --service oms --overview-url http://127.0.0.1:8100/api/overview
+sudo nice -n 19 env PYTHONDONTWRITEBYTECODE=1 "$REPO/.venv/bin/python" "$REPO/src/project_mai_tai/deploy_preflight.py" --service strategy --overview-url http://127.0.0.1:8100/api/overview
+sudo nice -n 19 env PYTHONDONTWRITEBYTECODE=1 "$REPO/.venv/bin/python" - < "$JOB_ROOT/strict_flat_readonly.py"
+sudo nice -n 19 env PYTHONDONTWRITEBYTECODE=1 "$REPO/ops/preflight/preflight_v2_restart.sh"
+sudo nice -n 19 env PYTHONDONTWRITEBYTECODE=1 "$REPO/ops/preflight/preflight_oms_restart.sh" --require-all-account-positions-flat
+```
+
+Strict helper SHA256
+`ddb29631aa8114d40a66c7bda5eb840d2321bd7e3346756a205841ebf6aeaeaa`.
+Its own run14:43:03 ET is attached, rc1, no legacy override. DB transactions
+are READ ONLY,5s statement budget,64-row sentinel/query. Broker bodies have a
+1MB post-decode rejection bound; observed replies2151B Schwab/32B Webull, no
+cache. That post-decode check is NOT a wire/client-buffer allocation limit.
+Schwab one fresh GET; Webull fresh50-row pages/max20, no SDK position cache.
+Unreadable HTTP/body/quantity/pagination/DB ->rc2, NEVER flat. There are no
+Redis calls in this helper.
 
 Fresh flat/order proof precedes checkout/env/schema writes and EVERY scoped
 stop/start/restart. Immediately before v2 stop run the blocking restart gate:
 
 ```bash
-sudo /home/trader/project-mai-tai/ops/preflight/preflight_v2_restart.sh
+sudo nice -n 19 env PYTHONDONTWRITEBYTECODE=1 /home/trader/project-mai-tai/ops/preflight/preflight_v2_restart.sh
 ```
 
 Require rc0. An armed set blocks and requires an operator-named live set and
