@@ -5100,3 +5100,15 @@ Focused1111PASS,21/21mutantsRED; fullpair5412/56 vs5461/same56, zero skips.
 CI pending; new independent pin required. Separate later night, NOT tonight;
 live venue latency remains UNEXERCISED. No PM branch edit by the RPG writer,
 no production ledger/service action. C34 only; M rows unchanged.
+
+### 2026-10-05 11:39 ET - PM sequencing test results (codex-2)
+
+Unpushed follow-up in codex/pmprint1-pmflip1-confirming-ask:896focusedPASS,
+239seamPASS,15/15isolated substantive mutantsRED. S1 routing boundary, S2
+scope/boundary, S3 redundant gap guard removed/window retained with RED pins,
+S4cards literal, S5exact six flags, S6catalog143combined. NFQ ON/RPG OFF four
+clean-journal recorded-price compositions PASS, but four actual restored tickets
+still reproduce safety proof(b) FAIL. Replacement single plan explicitly BLOCKED,
+not approved/executable/scheduled. Final fresh full pair running; no final head
+claimed yet. No PM source beyond redundant two-line gap-belt removal changed by
+this follow-up. No production action or durable-state deletion; M rows unchanged.
