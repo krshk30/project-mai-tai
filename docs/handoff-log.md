@@ -5506,3 +5506,10 @@ L5/L7/APUS proofs and allowance53PASS/18RED/helperce3ab15b/newbyte dryrun0.
 Full local5885/same56 vs ownmain5577/56, failed-name diff unchanged,
 focus1571/controls85. Await reviewer pin and merged-SHA plan approval,
 then separate exact-SHA install GO. No production/schema/ledger action.
+
+2026-10-05 16:52 ET codex-2 CLAIM C80: prepare #1095 ROUNDUP1 on existing
+clean codex/roundup1-resting-buy-tick at38d21fa3; Mencius sole writer, generic
+accepted-order restart without RPG ticket coverage first. Parent leaves
+#1093 frozen3b4e while reviewer32mutants finish, verifies exact fresh pin
+before standing-authority merge, then signals actual merge SHA for rebase.
+Allowance accepted by reviewer; no install/schema/flag/production action.
