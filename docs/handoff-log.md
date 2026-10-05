@@ -5023,3 +5023,18 @@ newly added to native-OCO stand-down. This crosses into the separately parked
 partial-parent/OCO case b; instructed the sole writer to remove that added rule
 before PR, retain the exact owned-parent binding and original working-leg
 semantics, and re-run final suites. No production effect or code push claimed.
+
+### 2026-10-05 11:10 ET - RPGSTUCK1 review PR #1093 (codex-2)
+
+Head73e9e4c8f92f672ecc03e7c460b134123015840a onmaina80b5181, sole writer.
+Actual E1 four tickets/E3 authorizations replayed; canonical APUS5.27/5.30 and
+VEEA5.51/5.54 accept unchanged identity/size, genuine differences still refuse.
+Proven-clear refused tickets release per-account ownership; uncertain Webull
+dispatch remains blocking with exact-client readback, no timeout release.
+Distance-precheck local no-wire is generation-bound and durably recoverable.
+Own focused1108PASS, actual PMPRINT-head composition587PASS,18/18 mutantsRED;
+fullpair main56fail/5412pass vshead56fail/5458pass, exact failed IDs identical.
+REPORT.md names R-T1-R-T8 and accepted simulation versus recorded evidence;
+verification.json pins source/tests. CI running at11:10; no review pin, merge
+or deployment. OWN source composition not yet claimed. Restart proposal
+OMS+strategy+v2 only, separate conditional plan/exact operator GO required.
