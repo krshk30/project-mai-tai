@@ -1,0 +1,80 @@
+FF..                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_b4_hold_authorization_waits_for_unproven_old_but_expires_proven_old[True-entry] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10897f080>
+gate = 'entry', proven = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("gate", ["entry", "gap"])
+    @pytest.mark.parametrize("proven", [True, False])
+    async def test_b4_hold_authorization_waits_for_unproven_old_but_expires_proven_old(monkeypatch, gate, proven):
+        h = await runtime(monkeypatch, "schwab")
+        if not proven:
+            h.adapter.override = AtrBuyReadback("working", "CONTROLLED old order still working", Decimal(0))
+        token, _ = await begin(h, "schwab")
+        if gate == "entry":
+            h.strategy._entries_held = True
+        else:
+            h.strategy._gap_hold_enabled = h.state.gap_hold_active = True
+        job = HandoffJournal(h.factory).read(token)
+        assert old_buy_proven_clear(job) is proven
+        auth = h.strategy.rpg_handoff_authorization(str(token), job)
+        assert auth["reason"] == "entry_or_gap_hold"
+>       assert auth["verdict"] == ("expired" if proven else "wait")
+E       AssertionError: assert 'wait' == 'expired'
+E         
+E         - expired
+E         + wait
+
+tests/unit/test_rpgstuck1_review_completion.py:113: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:10,445 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:10,445 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:10,445 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:10,445 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:10,445 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:10,472 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AMOD slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:10,472 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AMOD reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:10,516 INFO [oms-risk] [OMS-RPG1] token=e39ca8da-5f8e-5352-8d35-6cb4743f32c0 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:schwab_1m_v2 symbol=AMOD segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+_ test_b4_hold_authorization_waits_for_unproven_old_but_expires_proven_old[True-gap] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10905fd10>
+gate = 'gap', proven = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("gate", ["entry", "gap"])
+    @pytest.mark.parametrize("proven", [True, False])
+    async def test_b4_hold_authorization_waits_for_unproven_old_but_expires_proven_old(monkeypatch, gate, proven):
+        h = await runtime(monkeypatch, "schwab")
+        if not proven:
+            h.adapter.override = AtrBuyReadback("working", "CONTROLLED old order still working", Decimal(0))
+        token, _ = await begin(h, "schwab")
+        if gate == "entry":
+            h.strategy._entries_held = True
+        else:
+            h.strategy._gap_hold_enabled = h.state.gap_hold_active = True
+        job = HandoffJournal(h.factory).read(token)
+        assert old_buy_proven_clear(job) is proven
+        auth = h.strategy.rpg_handoff_authorization(str(token), job)
+        assert auth["reason"] == "entry_or_gap_hold"
+>       assert auth["verdict"] == ("expired" if proven else "wait")
+E       AssertionError: assert 'wait' == 'expired'
+E         
+E         - expired
+E         + wait
+
+tests/unit/test_rpgstuck1_review_completion.py:113: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:10,714 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:10,714 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:10,715 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:10,715 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:10,715 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:10,726 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AMOD slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:10,726 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AMOD reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:10,767 INFO [oms-risk] [OMS-RPG1] token=e39ca8da-5f8e-5352-8d35-6cb4743f32c0 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:schwab_1m_v2 symbol=AMOD segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1_review_completion.py::test_b4_hold_authorization_waits_for_unproven_old_but_expires_proven_old[True-entry]
+FAILED tests/unit/test_rpgstuck1_review_completion.py::test_b4_hold_authorization_waits_for_unproven_old_but_expires_proven_old[True-gap]
+2 failed, 2 passed, 28 deselected in 1.09s

@@ -1,5 +1,12 @@
 # ALL-ON follow-up: isolated proofs, not install approval
 
+Continuation: [L5/L7 tests-only follow-up](REPORT_L57.md). The reviewer supplied
+the missing exact L5/L7 cases at 15:45; that follow-up resolves the missing-text
+limitation below without changing production or the original distance refusal.
+The amended APUS allowance is proved there by legitimate refusal -> release ->
+later eligible same-segment wire once; the older literal both-PLACED limitation
+below is historical and superseded, not a current blocker.
+
 Parent `462c8aa1ffc2f5515f50ba14964fc38e839ddc89`; main baseline
 `4987353be54c4be15d4196907dec4dd0d6103236`. One follow-up, no rebase.
 The operator's new ALL-ON ruling supersedes the earlier print-only/OFF rollout.

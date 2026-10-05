@@ -1,0 +1,543 @@
+strict_ask_trigger: ASSERTION_RED
+FF..FFFF..FF........................                                     [100%]
+=================================== FAILURES ===================================
+___ test_all_on_recorded_service_cross_same_ask_both_legs[first-SAIQ-stream] ___
+tests/unit/test_all_on_pm.py:125: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert not dispatched and not strategy.drain_webull_fanout_intents()
+E   AssertionError: assert (not [TradeIntentDraft(symbol='SAIQ', side='buy', intent_type='open', quantity=Decimal('96'), reason='schwab_1m_v2 ATR Flip...81', 'session': 'AM', 'time_in_force': 'day', 'extended_hours': 'true', 'limit_price': '6.24', 'price_source': 'ask'})])
+_ test_all_on_recorded_service_cross_same_ask_both_legs[first-SAIQ-five_second_rest] _
+tests/unit/test_all_on_pm.py:125: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert not dispatched and not strategy.drain_webull_fanout_intents()
+E   AssertionError: assert (not [TradeIntentDraft(symbol='SAIQ', side='buy', intent_type='open', quantity=Decimal('96'), reason='schwab_1m_v2 ATR Flip...81', 'session': 'AM', 'time_in_force': 'day', 'extended_hours': 'true', 'limit_price': '6.24', 'price_source': 'ask'})])
+___ test_all_on_recorded_service_cross_same_ask_both_legs[first-CLRO-stream] ___
+tests/unit/test_all_on_pm.py:125: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert not dispatched and not strategy.drain_webull_fanout_intents()
+E   AssertionError: assert (not [TradeIntentDraft(symbol='CLRO', side='buy', intent_type='open', quantity=Decimal('108'), reason='schwab_1m_v2 ATR Fli...92', 'session': 'AM', 'time_in_force': 'day', 'extended_hours': 'true', 'limit_price': '5.55', 'price_source': 'ask'})])
+_ test_all_on_recorded_service_cross_same_ask_both_legs[first-CLRO-five_second_rest] _
+tests/unit/test_all_on_pm.py:125: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert not dispatched and not strategy.drain_webull_fanout_intents()
+E   AssertionError: assert (not [TradeIntentDraft(symbol='CLRO', side='buy', intent_type='open', quantity=Decimal('108'), reason='schwab_1m_v2 ATR Fli...92', 'session': 'AM', 'time_in_force': 'day', 'extended_hours': 'true', 'limit_price': '5.55', 'price_source': 'ask'})])
+__ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-SAIQ-stream] __
+tests/unit/test_all_on_pm.py:125: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert not dispatched and not strategy.drain_webull_fanout_intents()
+E   AssertionError: assert (not [TradeIntentDraft(symbol='SAIQ', side='buy', intent_type='open', quantity=Decimal('96'), reason='schwab_1m_v2 ATR Flip...81', 'session': 'AM', 'time_in_force': 'day', 'extended_hours': 'true', 'limit_price': '6.24', 'price_source': 'ask'})])
+_ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-SAIQ-five_second_rest] _
+tests/unit/test_all_on_pm.py:125: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert not dispatched and not strategy.drain_webull_fanout_intents()
+E   AssertionError: assert (not [TradeIntentDraft(symbol='SAIQ', side='buy', intent_type='open', quantity=Decimal('96'), reason='schwab_1m_v2 ATR Flip...81', 'session': 'AM', 'time_in_force': 'day', 'extended_hours': 'true', 'limit_price': '6.24', 'price_source': 'ask'})])
+__ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-CLRO-stream] __
+tests/unit/test_all_on_pm.py:125: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert not dispatched and not strategy.drain_webull_fanout_intents()
+E   AssertionError: assert (not [TradeIntentDraft(symbol='CLRO', side='buy', intent_type='open', quantity=Decimal('108'), reason='schwab_1m_v2 ATR Fli...92', 'session': 'AM', 'time_in_force': 'day', 'extended_hours': 'true', 'limit_price': '5.55', 'price_source': 'ask'})])
+_ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-CLRO-five_second_rest] _
+tests/unit/test_all_on_pm.py:125: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert not dispatched and not strategy.drain_webull_fanout_intents()
+E   AssertionError: assert (not [TradeIntentDraft(symbol='CLRO', side='buy', intent_type='open', quantity=Decimal('108'), reason='schwab_1m_v2 ATR Fli...92', 'session': 'AM', 'time_in_force': 'day', 'extended_hours': 'true', 'limit_price': '5.55', 'price_source': 'ask'})])
+=========================== short test summary info ============================
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-SAIQ-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-SAIQ-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-CLRO-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-CLRO-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-SAIQ-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-SAIQ-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-CLRO-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-CLRO-five_second_rest]
+8 failed, 28 passed in 3.39s
+
+flip_wait: ASSERTION_RED
+..FF..........................FF....                                     [100%]
+=================================== FAILURES ===================================
+___ test_all_on_recorded_service_cross_same_ask_both_legs[first-VEEA-stream] ___
+tests/unit/test_all_on_pm.py:95: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert state.pm_resting_flip_seen_ms and not state.resting_flip_ms
+E   AssertionError: assert (0)
+E    +  where 0 = SymbolState(symbol='VEEA', bars=deque([OHLCVBar(timestamp_ms=1791203460000, open=5.27, high=5.27, low=5.27, close=5.27...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').pm_resting_flip_seen_ms
+_ test_all_on_recorded_service_cross_same_ask_both_legs[first-VEEA-five_second_rest] _
+tests/unit/test_all_on_pm.py:95: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert state.pm_resting_flip_seen_ms and not state.resting_flip_ms
+E   AssertionError: assert (0)
+E    +  where 0 = SymbolState(symbol='VEEA', bars=deque([OHLCVBar(timestamp_ms=1791203460000, open=5.27, high=5.27, low=5.27, close=5.27...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').pm_resting_flip_seen_ms
+__ test_all_on_flip_wait_takedown_and_rth_latch_regressions[no_fill_takedown] __
+tests/unit/test_all_on_pm.py:279: in test_all_on_flip_wait_takedown_and_rth_latch_regressions
+    pmprint.test_ft3_flip_without_cross_keeps_existing_grace_and_next_bar_takedown(caplog)
+tests/unit/test_pmprint1_pmflip1.py:347: in test_ft3_flip_without_cross_keeps_existing_grace_and_next_bar_takedown
+    assert state.resting_active and state.resting_flip_ms == 0
+E   AssertionError: assert (True and 1791203582504 == 0)
+E    +  where True = SymbolState(symbol='VEEA', bars=deque([OHLCVBar(timestamp_ms=1791203520000, open=5.27, high=5.27, low=5.27, close=5.27...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').resting_active
+E    +  and   1791203582504 = SymbolState(symbol='VEEA', bars=deque([OHLCVBar(timestamp_ms=1791203520000, open=5.27, high=5.27, low=5.27, close=5.27...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').resting_flip_ms
+_____ test_all_on_flip_wait_takedown_and_rth_latch_regressions[sell_flip] ______
+tests/unit/test_all_on_pm.py:281: in test_all_on_flip_wait_takedown_and_rth_latch_regressions
+    pmprint.test_ft5_sell_flip_ends_wait_before_a_later_print()
+tests/unit/test_pmprint1_pmflip1.py:373: in test_ft5_sell_flip_ends_wait_before_a_later_print
+    assert not state.resting_active and state.pm_resting_flip_seen_ms == 0
+E   AssertionError: assert (not True)
+E    +  where True = SymbolState(symbol='VEEA', bars=deque([OHLCVBar(timestamp_ms=1791203520000, open=5.27, high=5.27, low=5.27, close=5.27...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').resting_active
+=========================== short test summary info ============================
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-VEEA-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-VEEA-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_flip_wait_takedown_and_rth_latch_regressions[no_fill_takedown]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_flip_wait_takedown_and_rth_latch_regressions[sell_flip]
+4 failed, 32 passed in 2.50s
+
+software_move: ASSERTION_RED
+............FFFFFF.........FF.......                                     [100%]
+=================================== FAILURES ===================================
+_ test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting[first] _
+tests/unit/test_all_on_pm.py:158: in test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting
+    assert state.resting_active and not state.resting_is_broker_order
+E   AssertionError: assert (False)
+E    +  where False = SymbolState(symbol='SAIQ', bars=deque([OHLCVBar(timestamp_ms=1791200040000, open=7.02, high=7.32, low=7.0, close=7.2, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').resting_active
+_ test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting[reclaim] _
+tests/unit/test_all_on_pm.py:158: in test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting
+    assert state.resting_active and not state.resting_is_broker_order
+E   AssertionError: assert (False)
+E    +  where False = SymbolState(symbol='SAIQ', bars=deque([OHLCVBar(timestamp_ms=1791200040000, open=7.02, high=7.32, low=7.0, close=7.2, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').resting_active
+____________ test_all_on_held_rest_cannot_move_or_cross[True-boot] _____________
+tests/unit/test_all_on_pm.py:180: in test_all_on_held_rest_cannot_move_or_cross
+    assert (state.resting_level, state.resting_trigger, state.resting_flip_ms) == before
+E   assert (0.0, 0.0, 0) == (5.235124378109454, 5.2613, 0)
+E     
+E     At index 0 diff: 0.0 != 5.235124378109454
+E     Use -v to get more diff
+_____________ test_all_on_held_rest_cannot_move_or_cross[True-gap] _____________
+tests/unit/test_all_on_pm.py:180: in test_all_on_held_rest_cannot_move_or_cross
+    assert (state.resting_level, state.resting_trigger, state.resting_flip_ms) == before
+E   assert (0.0, 0.0, 0) == (5.235124378109454, 5.2613, 0)
+E     
+E     At index 0 diff: 0.0 != 5.235124378109454
+E     Use -v to get more diff
+____________ test_all_on_held_rest_cannot_move_or_cross[False-boot] ____________
+tests/unit/test_all_on_pm.py:180: in test_all_on_held_rest_cannot_move_or_cross
+    assert (state.resting_level, state.resting_trigger, state.resting_flip_ms) == before
+E   assert (0.0, 0.0, 0) == (5.235124378109454, 5.2613, 0)
+E     
+E     At index 0 diff: 0.0 != 5.235124378109454
+E     Use -v to get more diff
+____________ test_all_on_held_rest_cannot_move_or_cross[False-gap] _____________
+tests/unit/test_all_on_pm.py:180: in test_all_on_held_rest_cannot_move_or_cross
+    assert (state.resting_level, state.resting_trigger, state.resting_flip_ms) == before
+E   assert (0.0, 0.0, 0) == (5.235124378109454, 5.2613, 0)
+E     
+E     At index 0 diff: 0.0 != 5.235124378109454
+E     Use -v to get more diff
+_____ test_all_on_rth_conversion_preserves_original_thin_cancel[09:30:02] ______
+tests/unit/test_all_on_pm.py:255: in test_all_on_rth_conversion_preserves_original_thin_cancel
+    pmrest.test_p5_rth_conversion_preserves_thin_streak_until_third_thin_cancel(2, when, monkeypatch, caplog)
+tests/unit/test_pmrest1.py:372: in test_p5_rth_conversion_preserves_thin_streak_until_third_thin_cancel
+    assert state.resting_active and state.resting_is_broker_order
+E   AssertionError: assert (False)
+E    +  where False = SymbolState(symbol='SAIQ', bars=deque([OHLCVBar(timestamp_ms=1791206942000, open=7.02, high=7.32, low=7.0, close=7.2, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').resting_active
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:18,924 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-EH-ARM] SAIQ slot=first line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)
+2026-10-05 15:49:18,925 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-EH-DISARM] SAIQ slot=first reason=reprice resting_below_floor_bars=2 line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:5014 [V2-RESTING-EH-ARM] SAIQ slot=first line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:5279 [V2-RESTING-EH-DISARM] SAIQ slot=first reason=reprice resting_below_floor_bars=2 line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50
+_____ test_all_on_rth_conversion_preserves_original_thin_cancel[09:31:02] ______
+tests/unit/test_all_on_pm.py:255: in test_all_on_rth_conversion_preserves_original_thin_cancel
+    pmrest.test_p5_rth_conversion_preserves_thin_streak_until_third_thin_cancel(2, when, monkeypatch, caplog)
+tests/unit/test_pmrest1.py:372: in test_p5_rth_conversion_preserves_thin_streak_until_third_thin_cancel
+    assert state.resting_active and state.resting_is_broker_order
+E   AssertionError: assert (False)
+E    +  where False = SymbolState(symbol='SAIQ', bars=deque([OHLCVBar(timestamp_ms=1791207002000, open=7.02, high=7.32, low=7.0, close=7.2, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').resting_active
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:18,942 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-EH-ARM] SAIQ slot=first line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)
+2026-10-05 15:49:18,942 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-EH-DISARM] SAIQ slot=first reason=reprice resting_below_floor_bars=2 line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:5014 [V2-RESTING-EH-ARM] SAIQ slot=first line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:5279 [V2-RESTING-EH-DISARM] SAIQ slot=first reason=reprice resting_below_floor_bars=2 line=8.3599 trigger=8.4017 band_pct=0.50 offset_pct=0.50
+=========================== short test summary info ============================
+FAILED tests/unit/test_all_on_pm.py::test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting[first]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting[reclaim]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_held_rest_cannot_move_or_cross[True-boot]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_held_rest_cannot_move_or_cross[True-gap]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_held_rest_cannot_move_or_cross[False-boot]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_held_rest_cannot_move_or_cross[False-gap]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_conversion_preserves_original_thin_cancel[09:30:02]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_conversion_preserves_original_thin_cancel[09:31:02]
+8 failed, 28 passed in 2.87s
+
+handoff_admission: ASSERTION_RED
+...................FFFFFFFF......FF.                                     [100%]
+=================================== FAILURES ===================================
+________ test_all_on_rth_broker_reprice_owned_by_handoff[first-schwab] _________
+tests/unit/test_all_on_pm.py:214: in test_all_on_rth_broker_reprice_owned_by_handoff
+    token, _ = await begin(h, broker)
+               ^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:157: in begin
+    primary, mirror = h.strategy.drain_pending_intents(), h.strategy.drain_webull_direct_intents()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_all_on_pm.py:209: in observed_cancel_drain
+    assert draft.metadata.get("atr_reprice") == "true"
+E   AssertionError: assert None == 'true'
+E    +  where None = <built-in method get of dict object at 0x10ae5e8c0>('atr_reprice')
+E    +    where <built-in method get of dict object at 0x10ae5e8c0> = {'reason': 'reprice', 'resting_entry_cancel': 'true', 'rpg_resting_generation': '13448872-e81b-4267-82c8-6258d4711b3e', 'source': 'schwab_1m_v2', ...}.get
+E    +      where {'reason': 'reprice', 'resting_entry_cancel': 'true', 'rpg_resting_generation': '13448872-e81b-4267-82c8-6258d4711b3e', 'source': 'schwab_1m_v2', ...} = TradeIntentDraft(symbol='AMOD', side='buy', intent_type='cancel', quantity=Decimal('10'), reason='schwab_1m_v2 resting...pg_resting_generation': '13448872-e81b-4267-82c8-6258d4711b3e', 'source': 'schwab_1m_v2', 'strategy_version': 'v1.32'}).metadata
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:20,775 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:20,775 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:20,775 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:20,775 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:20,775 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:20,794 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AMOD slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:20,794 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AMOD reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+________ test_all_on_rth_broker_reprice_owned_by_handoff[first-webull] _________
+tests/unit/test_all_on_pm.py:214: in test_all_on_rth_broker_reprice_owned_by_handoff
+    token, _ = await begin(h, broker)
+               ^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:157: in begin
+    primary, mirror = h.strategy.drain_pending_intents(), h.strategy.drain_webull_direct_intents()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_all_on_pm.py:209: in observed_cancel_drain
+    assert draft.metadata.get("atr_reprice") == "true"
+E   AssertionError: assert None == 'true'
+E    +  where None = <built-in method get of dict object at 0x10b932c80>('atr_reprice')
+E    +    where <built-in method get of dict object at 0x10b932c80> = {'reason': 'reprice', 'resting_entry_cancel': 'true', 'rpg_resting_generation': '717f09b4-83d5-46b4-80f2-766e31c64b58', 'source': 'schwab_1m_v2', ...}.get
+E    +      where {'reason': 'reprice', 'resting_entry_cancel': 'true', 'rpg_resting_generation': '717f09b4-83d5-46b4-80f2-766e31c64b58', 'source': 'schwab_1m_v2', ...} = TradeIntentDraft(symbol='AIXI', side='buy', intent_type='cancel', quantity=Decimal('10'), reason='schwab_1m_v2 resting...pg_resting_generation': '717f09b4-83d5-46b4-80f2-766e31c64b58', 'source': 'schwab_1m_v2', 'strategy_version': 'v1.32'}).metadata
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:20,955 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:20,955 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:20,955 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:20,956 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:20,956 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:20,965 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:20,965 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+_______ test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-schwab] ________
+tests/unit/test_all_on_pm.py:214: in test_all_on_rth_broker_reprice_owned_by_handoff
+    token, _ = await begin(h, broker)
+               ^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:157: in begin
+    primary, mirror = h.strategy.drain_pending_intents(), h.strategy.drain_webull_direct_intents()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_all_on_pm.py:209: in observed_cancel_drain
+    assert draft.metadata.get("atr_reprice") == "true"
+E   AssertionError: assert None == 'true'
+E    +  where None = <built-in method get of dict object at 0x10b934880>('atr_reprice')
+E    +    where <built-in method get of dict object at 0x10b934880> = {'reason': 'reprice', 'resting_entry_cancel': 'true', 'rpg_resting_generation': 'a4f949a6-d9ff-4016-9871-4e5fc4994374', 'source': 'schwab_1m_v2', ...}.get
+E    +      where {'reason': 'reprice', 'resting_entry_cancel': 'true', 'rpg_resting_generation': 'a4f949a6-d9ff-4016-9871-4e5fc4994374', 'source': 'schwab_1m_v2', ...} = TradeIntentDraft(symbol='AMOD', side='buy', intent_type='cancel', quantity=Decimal('10'), reason='schwab_1m_v2 resting...pg_resting_generation': 'a4f949a6-d9ff-4016-9871-4e5fc4994374', 'source': 'schwab_1m_v2', 'strategy_version': 'v1.32'}).metadata
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:21,093 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=reclaim line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,093 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:21,093 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:21,093 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:21,093 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=reclaim line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:21,102 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RECLAIM-SLOT-CHECKED] AMOD active reclaim rest reached the slot gate union_qty=0 held_qty=0 reclaim_taken=False
+2026-10-05 15:49:21,102 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AMOD slot=reclaim reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,102 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AMOD reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+_______ test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-webull] ________
+tests/unit/test_all_on_pm.py:214: in test_all_on_rth_broker_reprice_owned_by_handoff
+    token, _ = await begin(h, broker)
+               ^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:157: in begin
+    primary, mirror = h.strategy.drain_pending_intents(), h.strategy.drain_webull_direct_intents()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_all_on_pm.py:209: in observed_cancel_drain
+    assert draft.metadata.get("atr_reprice") == "true"
+E   AssertionError: assert None == 'true'
+E    +  where None = <built-in method get of dict object at 0x10b95b300>('atr_reprice')
+E    +    where <built-in method get of dict object at 0x10b95b300> = {'reason': 'reprice', 'resting_entry_cancel': 'true', 'rpg_resting_generation': 'b705f6a4-6d98-488f-b068-70f706151ea7', 'source': 'schwab_1m_v2', ...}.get
+E    +      where {'reason': 'reprice', 'resting_entry_cancel': 'true', 'rpg_resting_generation': 'b705f6a4-6d98-488f-b068-70f706151ea7', 'source': 'schwab_1m_v2', ...} = TradeIntentDraft(symbol='AIXI', side='buy', intent_type='cancel', quantity=Decimal('10'), reason='schwab_1m_v2 resting...pg_resting_generation': 'b705f6a4-6d98-488f-b068-70f706151ea7', 'source': 'schwab_1m_v2', 'strategy_version': 'v1.32'}).metadata
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:21,243 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=reclaim line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,243 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:21,243 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:21,243 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:21,244 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=reclaim line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:21,254 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RECLAIM-SLOT-CHECKED] AIXI active reclaim rest reached the slot gate union_qty=0 held_qty=0 reclaim_taken=False
+2026-10-05 15:49:21,254 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=reclaim reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,254 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+__________ test_all_on_existing_nfq_handoff_regressions[cancel_clear] __________
+tests/unit/test_all_on_pm.py:243: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_recorded_cancel_read_then_nfq_hold_reauthorizes_once_and_old_token_cannot_wire(monkeypatch)
+tests/unit/test_rpg1_runtime_nfq.py:37: in test_recorded_cancel_read_then_nfq_hold_reauthorizes_once_and_old_token_cannot_wire
+    token, _ = await begin(h, "webull")
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:165: in begin
+    return HandoffJournal(h.factory).jobs()[0][0], event
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:21,387 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,387 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:21,387 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:21,387 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:21,387 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:21,395 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,395 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+____________ test_all_on_existing_nfq_handoff_regressions[no_wire] _____________
+tests/unit/test_all_on_pm.py:245: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_v2_reprice_of_unsubmitted_nfq_generation_never_invents_broker_cancel(monkeypatch)
+tests/unit/test_rpg1_runtime_nfq.py:65: in test_v2_reprice_of_unsubmitted_nfq_generation_never_invents_broker_cancel
+    token, _ = await begin(h, "webull")
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:165: in begin
+    return HandoffJournal(h.factory).jobs()[0][0], event
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:21,544 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,544 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:21,544 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:21,544 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:21,544 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:21,563 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 attempt=schwab_1m_v2-AIXI-open-0984842951cd decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+2026-10-05 15:49:21,572 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,572 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:21,576 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 attempt=schwab_1m_v2-AIXI-open-0984842951cd decision=retired reason=v2_cancel_intent cache_age_ms=0.000 cache_source=ask cache_timestamp=2026-10-02T17:56:02.899000+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+____________ test_all_on_existing_nfq_handoff_regressions[buy_flip] ____________
+tests/unit/test_all_on_pm.py:247: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends(monkeypatch, scenario)
+tests/unit/test_rpg1_runtime_nfq.py:82: in test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends
+    token, _ = await begin(h, "webull")
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:165: in begin
+    return HandoffJournal(h.factory).jobs()[0][0], event
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:21,712 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,712 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:21,712 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:21,712 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:21,712 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:21,721 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,721 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+______________ test_all_on_existing_nfq_handoff_regressions[1545] ______________
+tests/unit/test_all_on_pm.py:247: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends(monkeypatch, scenario)
+tests/unit/test_rpg1_runtime_nfq.py:82: in test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends
+    token, _ = await begin(h, "webull")
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:165: in begin
+    return HandoffJournal(h.factory).jobs()[0][0], event
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:21,853 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,853 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:21,853 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:21,853 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:21,853 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:21,862 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:21,862 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+_______ test_all_on_gap_hold_retires_handoff_without_replacement[schwab] _______
+tests/unit/test_all_on_pm.py:291: in test_all_on_gap_hold_retires_handoff_without_replacement
+    token, _ = await begin(h, broker)
+               ^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:165: in begin
+    return HandoffJournal(h.factory).jobs()[0][0], event
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:22,045 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:22,045 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:22,045 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:22,045 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:22,045 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:22,052 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AMOD slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:22,053 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AMOD reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+_______ test_all_on_gap_hold_retires_handoff_without_replacement[webull] _______
+tests/unit/test_all_on_pm.py:291: in test_all_on_gap_hold_retires_handoff_without_replacement
+    token, _ = await begin(h, broker)
+               ^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime.py:165: in begin
+    return HandoffJournal(h.factory).jobs()[0][0], event
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:22,187 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:22,187 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:22,187 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:22,187 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:22,187 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:22,193 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:22,193 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+=========================== short test summary info ============================
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[first-schwab]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[first-webull]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-schwab]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-webull]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[cancel_clear]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[no_wire]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[buy_flip]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[1545]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_gap_hold_retires_handoff_without_replacement[schwab]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_gap_hold_retires_handoff_without_replacement[webull]
+10 failed, 26 passed in 1.93s
+
+nfq_price_hold: ASSERTION_RED
+....................F.FFFFF.........                                     [100%]
+=================================== FAILURES ===================================
+________ test_all_on_rth_broker_reprice_owned_by_handoff[first-webull] _________
+tests/unit/test_all_on_pm.py:221: in test_all_on_rth_broker_reprice_owned_by_handoff
+    assert journal.read(token)["phase"] == "price_wait"
+E   AssertionError: assert 'placed' == 'price_wait'
+E     
+E     - price_wait
+E     + placed
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:23,835 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:23,835 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:23,835 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:23,835 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:23,835 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:23,843 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:23,843 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:23,877 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:23,900 INFO [oms-risk] [OMS-FANOUT-MIRROR-LAG] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 primary_entered=none primary_clock=oms_submit_started wire=none lag_ms=-1 outcome=accepted shape=unreported
+2026-10-05 15:49:23,909 WARNING [oms-risk] post-intent broker-state reconcile failed for live:orb (order already submitted; next periodic sync reconciles)
+2026-10-05 15:49:23,912 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=placed reason=replacement_accepted reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=0.0 cancel_to_report_ms=0.0 timing=local_observation
+_______ test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-webull] ________
+tests/unit/test_all_on_pm.py:221: in test_all_on_rth_broker_reprice_owned_by_handoff
+    assert journal.read(token)["phase"] == "price_wait"
+E   AssertionError: assert 'placed' == 'price_wait'
+E     
+E     - price_wait
+E     + placed
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:24,265 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=reclaim line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:24,266 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:24,266 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:24,266 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:24,266 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=reclaim line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:24,274 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RECLAIM-SLOT-CHECKED] AIXI active reclaim rest reached the slot gate union_qty=0 held_qty=0 reclaim_taken=False
+2026-10-05 15:49:24,274 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=reclaim reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:24,274 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:24,309 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=reclaim cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:24,355 INFO [oms-risk] [OMS-FANOUT-MIRROR-LAG] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 primary_entered=none primary_clock=oms_submit_started wire=none lag_ms=-1 outcome=accepted shape=unreported
+2026-10-05 15:49:24,365 WARNING [oms-risk] post-intent broker-state reconcile failed for live:orb (order already submitted; next periodic sync reconciles)
+2026-10-05 15:49:24,368 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=placed reason=replacement_accepted reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=reclaim cancel_to_read_ms=0.0 cancel_to_submit_ms=0.0 cancel_to_report_ms=0.0 timing=local_observation
+__________ test_all_on_existing_nfq_handoff_regressions[cancel_clear] __________
+tests/unit/test_all_on_pm.py:243: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_recorded_cancel_read_then_nfq_hold_reauthorizes_once_and_old_token_cannot_wire(monkeypatch)
+tests/unit/test_rpg1_runtime_nfq.py:40: in test_recorded_cancel_read_then_nfq_hold_reauthorizes_once_and_old_token_cannot_wire
+    assert journal.read(token)["phase"] == "price_wait"
+E   AssertionError: assert 'placed' == 'price_wait'
+E     
+E     - price_wait
+E     + placed
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:24,487 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:24,487 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:24,487 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:24,487 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:24,487 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:24,496 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:24,496 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:24,528 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:24,548 INFO [oms-risk] [OMS-FANOUT-MIRROR-LAG] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 primary_entered=none primary_clock=oms_submit_started wire=none lag_ms=-1 outcome=accepted shape=unreported
+2026-10-05 15:49:24,560 WARNING [oms-risk] post-intent broker-state reconcile failed for live:orb (order already submitted; next periodic sync reconciles)
+2026-10-05 15:49:24,562 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=placed reason=replacement_accepted reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=0.0 cancel_to_report_ms=0.0 timing=local_observation
+____________ test_all_on_existing_nfq_handoff_regressions[no_wire] _____________
+tests/unit/test_all_on_pm.py:245: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_v2_reprice_of_unsubmitted_nfq_generation_never_invents_broker_cancel(monkeypatch)
+tests/unit/test_rpg1_runtime_nfq.py:63: in test_v2_reprice_of_unsubmitted_nfq_generation_never_invents_broker_cancel
+    old_retry = await queue_price(h)
+                ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime_nfq.py:29: in queue_price
+    return [TradeIntentEvent.model_validate(data) for stream, data in h.service.redis.entries
+E   IndexError: list index out of range
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:24,672 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:24,673 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:24,673 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:24,673 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:24,673 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:24,688 INFO [oms-risk] [OMS-FANOUT-MIRROR-LAG] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 primary_entered=none primary_clock=oms_submit_started wire=none lag_ms=-1 outcome=accepted shape=unreported
+2026-10-05 15:49:24,697 WARNING [oms-risk] post-intent broker-state reconcile failed for live:orb (order already submitted; next periodic sync reconciles)
+____________ test_all_on_existing_nfq_handoff_regressions[buy_flip] ____________
+tests/unit/test_all_on_pm.py:247: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends(monkeypatch, scenario)
+tests/unit/test_rpg1_runtime_nfq.py:84: in test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends
+    queued = await queue_price(h)
+             ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime_nfq.py:29: in queue_price
+    return [TradeIntentEvent.model_validate(data) for stream, data in h.service.redis.entries
+E   IndexError: list index out of range
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:24,817 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:24,818 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:24,818 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:24,818 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:24,818 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:24,826 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:24,826 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:24,856 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:24,876 INFO [oms-risk] [OMS-FANOUT-MIRROR-LAG] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 primary_entered=none primary_clock=oms_submit_started wire=none lag_ms=-1 outcome=accepted shape=unreported
+2026-10-05 15:49:24,885 WARNING [oms-risk] post-intent broker-state reconcile failed for live:orb (order already submitted; next periodic sync reconciles)
+2026-10-05 15:49:24,888 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=placed reason=replacement_accepted reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=0.0 cancel_to_report_ms=0.0 timing=local_observation
+______________ test_all_on_existing_nfq_handoff_regressions[1545] ______________
+tests/unit/test_all_on_pm.py:247: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends(monkeypatch, scenario)
+tests/unit/test_rpg1_runtime_nfq.py:84: in test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends
+    queued = await queue_price(h)
+             ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_rpg1_runtime_nfq.py:29: in queue_price
+    return [TradeIntentEvent.model_validate(data) for stream, data in h.service.redis.entries
+E   IndexError: list index out of range
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:25,002 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:25,002 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:25,002 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:25,002 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:25,002 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:25,011 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:25,011 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:25,040 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:25,067 INFO [oms-risk] [OMS-FANOUT-MIRROR-LAG] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 primary_entered=none primary_clock=oms_submit_started wire=none lag_ms=-1 outcome=accepted shape=unreported
+2026-10-05 15:49:25,076 WARNING [oms-risk] post-intent broker-state reconcile failed for live:orb (order already submitted; next periodic sync reconciles)
+2026-10-05 15:49:25,079 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=placed reason=replacement_accepted reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=0.0 cancel_to_report_ms=0.0 timing=local_observation
+=========================== short test summary info ============================
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[first-webull]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-webull]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[cancel_clear]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[no_wire]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[buy_flip]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[1545]
+6 failed, 30 passed in 2.29s
+
+gap_authorization: ASSERTION_RED
+.................................FF.                                     [100%]
+=================================== FAILURES ===================================
+_______ test_all_on_gap_hold_retires_handoff_without_replacement[schwab] _______
+tests/unit/test_all_on_pm.py:295: in test_all_on_gap_hold_retires_handoff_without_replacement
+    assert HandoffJournal(h.factory).read(token)["phase"] == "expired"
+E   AssertionError: assert 'placed' == 'expired'
+E     
+E     - expired
+E     + placed
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:28,581 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:28,581 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:28,581 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:28,581 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:28,581 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:28,591 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AMOD slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:28,591 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AMOD reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:28,675 INFO [oms-risk] [OMS-RPG1] token=e39ca8da-5f8e-5352-8d35-6cb4743f32c0 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:schwab_1m_v2 symbol=AMOD segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:28,701 INFO [oms-risk] [OMS-RPG1] token=e39ca8da-5f8e-5352-8d35-6cb4743f32c0 phase=placed reason=replacement_accepted reads=1 account=live:schwab_1m_v2 symbol=AMOD segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=0.0 cancel_to_report_ms=0.0 timing=local_observation
+_______ test_all_on_gap_hold_retires_handoff_without_replacement[webull] _______
+tests/unit/test_all_on_pm.py:295: in test_all_on_gap_hold_retires_handoff_without_replacement
+    assert HandoffJournal(h.factory).read(token)["phase"] == "expired"
+E   AssertionError: assert 'price_wait' == 'expired'
+E     
+E     - expired
+E     + price_wait
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:28,855 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:28,856 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:28,856 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:28,856 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:28,856 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:28,862 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-CANCEL] AIXI slot=first reason=reprice resting_below_floor_bars=0 line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:28,862 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=3.1000 trigger=3.1155 band_pct=0.50 offset_pct=0.50 — cancelling the mirror
+2026-10-05 15:49:28,885 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 attempt= decision=retired reason=atr_reprice_terminal_cancel_explicit_zero cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+2026-10-05 15:49:28,894 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=clear reason=terminal_cancel_explicit_zero reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 15:49:28,912 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1790961902899 slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 attempt=schwab_1m_v2-AIXI-open-2063d9d6635a decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+2026-10-05 15:49:28,918 INFO [oms-risk] [OMS-RPG1] token=dc44cfbc-ba4f-5b53-9746-4af9ca48b209 phase=price_wait reason=replacement_refused reads=1 account=live:orb symbol=AIXI segment=1790961902899 slot=first cancel_to_read_ms=0.0 cancel_to_submit_ms=0.0 cancel_to_report_ms=0.0 timing=local_observation
+=========================== short test summary info ============================
+FAILED tests/unit/test_all_on_pm.py::test_all_on_gap_hold_retires_handoff_without_replacement[schwab]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_gap_hold_retires_handoff_without_replacement[webull]
+2 failed, 34 passed in 2.44s
+
+all_on_mutations_assertion_red=6/6

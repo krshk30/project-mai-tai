@@ -1,0 +1,79 @@
+{
+  "job": {
+    "id": 111943287588,
+    "run_id": 37363497022,
+    "workflow_name": "Validate",
+    "head_branch": "codex/rpgstuck1-canonical-handoff",
+    "run_url": "https://api.github.com/repos/krshk30/project-mai-tai/actions/runs/37363497022",
+    "run_attempt": 1,
+    "node_id": "CR_kwDORzSZys8AAAAaEFcDJA",
+    "head_sha": "5ddb50f55498232915bd54171d5cc21579f43240",
+    "url": "https://api.github.com/repos/krshk30/project-mai-tai/actions/jobs/111943287588",
+    "html_url": "https://github.com/krshk30/project-mai-tai/actions/runs/37363497022/job/111943287588",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-10-05T19:27:22Z",
+    "started_at": "2026-10-05T19:27:22Z",
+    "completed_at": "2026-10-05T19:42:24Z",
+    "name": "validate",
+    "steps": [],
+    "check_run_url": "https://api.github.com/repos/krshk30/project-mai-tai/check-runs/111943287588",
+    "labels": [
+      "ubuntu-latest"
+    ],
+    "runner_id": 0,
+    "runner_name": "",
+    "runner_group_id": 0,
+    "runner_group_name": ""
+  },
+  "annotations": [
+    {
+      "path": ".github",
+      "blob_href": "https://github.com/krshk30/project-mai-tai/blob/5ddb50f55498232915bd54171d5cc21579f43240/.github",
+      "start_line": 1,
+      "start_column": null,
+      "end_line": 1,
+      "end_column": null,
+      "annotation_level": "failure",
+      "title": "",
+      "message": "The job was not acquired by Runner of type hosted even after multiple attempts",
+      "raw_details": ""
+    },
+    {
+      "path": ".github",
+      "blob_href": "https://github.com/krshk30/project-mai-tai/blob/5ddb50f55498232915bd54171d5cc21579f43240/.github",
+      "start_line": 1,
+      "start_column": null,
+      "end_line": 1,
+      "end_column": null,
+      "annotation_level": "notice",
+      "title": "",
+      "message": "\"The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748\"",
+      "raw_details": ""
+    },
+    {
+      "path": ".github",
+      "blob_href": "https://github.com/krshk30/project-mai-tai/blob/5ddb50f55498232915bd54171d5cc21579f43240/.github",
+      "start_line": 1,
+      "start_column": null,
+      "end_line": 1,
+      "end_column": null,
+      "annotation_level": "notice",
+      "title": "",
+      "message": "\"The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748\"",
+      "raw_details": ""
+    },
+    {
+      "path": ".github",
+      "blob_href": "https://github.com/krshk30/project-mai-tai/blob/5ddb50f55498232915bd54171d5cc21579f43240/.github",
+      "start_line": 1,
+      "start_column": null,
+      "end_line": 1,
+      "end_column": null,
+      "annotation_level": "notice",
+      "title": "",
+      "message": "\"The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748\"",
+      "raw_details": ""
+    }
+  ]
+}

@@ -1,0 +1,232 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+_ test_b2_any_generation_broker_row_vetoes_recorded_local_proof[APUS-accepted] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1098b8560>
+status = 'accepted', symbol = 'APUS'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted", "rejected"])
+    @pytest.mark.parametrize("symbol", ["APUS", "VEEA", "RETO"])
+    async def test_b2_any_generation_broker_row_vetoes_recorded_local_proof(monkeypatch, status, symbol):
+        h = await startup_harness(monkeypatch, with_deferred=True)
+        with h.factory() as session:
+            intent = next(row for row in session.scalars(select(TradeIntent))
+                if row.symbol == symbol and (row.payload or {}).get("refusal_code") == "webull_mirror_precheck_deferred")
+            h.service.store.get_or_create_order(session, intent=intent, strategy_id=intent.strategy_id,
+                broker_account_id=intent.broker_account_id, client_order_id="CONTROLLED-wire-" + symbol,
+                symbol=symbol, side="buy", quantity=intent.quantity, metadata=intent.payload["metadata"],
+                status=status, order_type="STOP_LIMIT", time_in_force="day")
+            session.commit()
+        token = next(token for token, job in HandoffJournal(h.factory).jobs()
+            if job["old"]["symbol"] == symbol and job["old"]["broker_account_name"] == "live:orb"
+            and job["phase"] == "held_unknown")
+        await h.service._rpg_advance(token)
+        job = HandoffJournal(h.factory).read(token)
+>       assert job["phase"] == "held_unknown" and not old_buy_proven_clear(job)
+E       AssertionError: assert ('clear' == 'held_unknown'
+E         
+E         - held_unknown
+E         + clear)
+
+tests/unit/test_rpgstuck1_review_completion.py:72: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:08,425 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:08,425 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:08,425 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:08,427 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:08,427 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:08,508 INFO [oms-risk] [OMS-RPG1] token=ee3d0d07-abea-5fe2-98c9-cace5c08d135 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=APUS segment=1791210302605 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+_ test_b2_any_generation_broker_row_vetoes_recorded_local_proof[APUS-rejected] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109af7fb0>
+status = 'rejected', symbol = 'APUS'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted", "rejected"])
+    @pytest.mark.parametrize("symbol", ["APUS", "VEEA", "RETO"])
+    async def test_b2_any_generation_broker_row_vetoes_recorded_local_proof(monkeypatch, status, symbol):
+        h = await startup_harness(monkeypatch, with_deferred=True)
+        with h.factory() as session:
+            intent = next(row for row in session.scalars(select(TradeIntent))
+                if row.symbol == symbol and (row.payload or {}).get("refusal_code") == "webull_mirror_precheck_deferred")
+            h.service.store.get_or_create_order(session, intent=intent, strategy_id=intent.strategy_id,
+                broker_account_id=intent.broker_account_id, client_order_id="CONTROLLED-wire-" + symbol,
+                symbol=symbol, side="buy", quantity=intent.quantity, metadata=intent.payload["metadata"],
+                status=status, order_type="STOP_LIMIT", time_in_force="day")
+            session.commit()
+        token = next(token for token, job in HandoffJournal(h.factory).jobs()
+            if job["old"]["symbol"] == symbol and job["old"]["broker_account_name"] == "live:orb"
+            and job["phase"] == "held_unknown")
+        await h.service._rpg_advance(token)
+        job = HandoffJournal(h.factory).read(token)
+>       assert job["phase"] == "held_unknown" and not old_buy_proven_clear(job)
+E       AssertionError: assert ('clear' == 'held_unknown'
+E         
+E         - held_unknown
+E         + clear)
+
+tests/unit/test_rpgstuck1_review_completion.py:72: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:08,817 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:08,817 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:08,817 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:08,817 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:08,817 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:08,874 INFO [oms-risk] [OMS-RPG1] token=ee3d0d07-abea-5fe2-98c9-cace5c08d135 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=APUS segment=1791210302605 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+_ test_b2_any_generation_broker_row_vetoes_recorded_local_proof[VEEA-accepted] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b63d10>
+status = 'accepted', symbol = 'VEEA'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted", "rejected"])
+    @pytest.mark.parametrize("symbol", ["APUS", "VEEA", "RETO"])
+    async def test_b2_any_generation_broker_row_vetoes_recorded_local_proof(monkeypatch, status, symbol):
+        h = await startup_harness(monkeypatch, with_deferred=True)
+        with h.factory() as session:
+            intent = next(row for row in session.scalars(select(TradeIntent))
+                if row.symbol == symbol and (row.payload or {}).get("refusal_code") == "webull_mirror_precheck_deferred")
+            h.service.store.get_or_create_order(session, intent=intent, strategy_id=intent.strategy_id,
+                broker_account_id=intent.broker_account_id, client_order_id="CONTROLLED-wire-" + symbol,
+                symbol=symbol, side="buy", quantity=intent.quantity, metadata=intent.payload["metadata"],
+                status=status, order_type="STOP_LIMIT", time_in_force="day")
+            session.commit()
+        token = next(token for token, job in HandoffJournal(h.factory).jobs()
+            if job["old"]["symbol"] == symbol and job["old"]["broker_account_name"] == "live:orb"
+            and job["phase"] == "held_unknown")
+        await h.service._rpg_advance(token)
+        job = HandoffJournal(h.factory).read(token)
+>       assert job["phase"] == "held_unknown" and not old_buy_proven_clear(job)
+E       AssertionError: assert ('clear' == 'held_unknown'
+E         
+E         - held_unknown
+E         + clear)
+
+tests/unit/test_rpgstuck1_review_completion.py:72: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:09,117 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:09,117 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:09,117 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:09,117 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:09,117 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:09,172 INFO [oms-risk] [OMS-RPG1] token=faa55c1f-262b-52e2-adcc-280ab1e5e2ff phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=VEEA segment=1791207242421 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+_ test_b2_any_generation_broker_row_vetoes_recorded_local_proof[VEEA-rejected] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b94620>
+status = 'rejected', symbol = 'VEEA'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted", "rejected"])
+    @pytest.mark.parametrize("symbol", ["APUS", "VEEA", "RETO"])
+    async def test_b2_any_generation_broker_row_vetoes_recorded_local_proof(monkeypatch, status, symbol):
+        h = await startup_harness(monkeypatch, with_deferred=True)
+        with h.factory() as session:
+            intent = next(row for row in session.scalars(select(TradeIntent))
+                if row.symbol == symbol and (row.payload or {}).get("refusal_code") == "webull_mirror_precheck_deferred")
+            h.service.store.get_or_create_order(session, intent=intent, strategy_id=intent.strategy_id,
+                broker_account_id=intent.broker_account_id, client_order_id="CONTROLLED-wire-" + symbol,
+                symbol=symbol, side="buy", quantity=intent.quantity, metadata=intent.payload["metadata"],
+                status=status, order_type="STOP_LIMIT", time_in_force="day")
+            session.commit()
+        token = next(token for token, job in HandoffJournal(h.factory).jobs()
+            if job["old"]["symbol"] == symbol and job["old"]["broker_account_name"] == "live:orb"
+            and job["phase"] == "held_unknown")
+        await h.service._rpg_advance(token)
+        job = HandoffJournal(h.factory).read(token)
+>       assert job["phase"] == "held_unknown" and not old_buy_proven_clear(job)
+E       AssertionError: assert ('clear' == 'held_unknown'
+E         
+E         - held_unknown
+E         + clear)
+
+tests/unit/test_rpgstuck1_review_completion.py:72: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:09,385 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:09,385 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:09,385 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:09,386 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:09,386 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:09,428 INFO [oms-risk] [OMS-RPG1] token=faa55c1f-262b-52e2-adcc-280ab1e5e2ff phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=VEEA segment=1791207242421 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+_ test_b2_any_generation_broker_row_vetoes_recorded_local_proof[RETO-accepted] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109c25a00>
+status = 'accepted', symbol = 'RETO'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted", "rejected"])
+    @pytest.mark.parametrize("symbol", ["APUS", "VEEA", "RETO"])
+    async def test_b2_any_generation_broker_row_vetoes_recorded_local_proof(monkeypatch, status, symbol):
+        h = await startup_harness(monkeypatch, with_deferred=True)
+        with h.factory() as session:
+            intent = next(row for row in session.scalars(select(TradeIntent))
+                if row.symbol == symbol and (row.payload or {}).get("refusal_code") == "webull_mirror_precheck_deferred")
+            h.service.store.get_or_create_order(session, intent=intent, strategy_id=intent.strategy_id,
+                broker_account_id=intent.broker_account_id, client_order_id="CONTROLLED-wire-" + symbol,
+                symbol=symbol, side="buy", quantity=intent.quantity, metadata=intent.payload["metadata"],
+                status=status, order_type="STOP_LIMIT", time_in_force="day")
+            session.commit()
+        token = next(token for token, job in HandoffJournal(h.factory).jobs()
+            if job["old"]["symbol"] == symbol and job["old"]["broker_account_name"] == "live:orb"
+            and job["phase"] == "held_unknown")
+        await h.service._rpg_advance(token)
+        job = HandoffJournal(h.factory).read(token)
+>       assert job["phase"] == "held_unknown" and not old_buy_proven_clear(job)
+E       AssertionError: assert ('clear' == 'held_unknown'
+E         
+E         - held_unknown
+E         + clear)
+
+tests/unit/test_rpgstuck1_review_completion.py:72: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:09,633 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:09,633 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:09,634 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:09,634 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:09,634 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:09,689 INFO [oms-risk] [OMS-RPG1] token=ba108172-04f6-5659-892b-a0fc10d22b15 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+_ test_b2_any_generation_broker_row_vetoes_recorded_local_proof[RETO-rejected] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109c27470>
+status = 'rejected', symbol = 'RETO'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted", "rejected"])
+    @pytest.mark.parametrize("symbol", ["APUS", "VEEA", "RETO"])
+    async def test_b2_any_generation_broker_row_vetoes_recorded_local_proof(monkeypatch, status, symbol):
+        h = await startup_harness(monkeypatch, with_deferred=True)
+        with h.factory() as session:
+            intent = next(row for row in session.scalars(select(TradeIntent))
+                if row.symbol == symbol and (row.payload or {}).get("refusal_code") == "webull_mirror_precheck_deferred")
+            h.service.store.get_or_create_order(session, intent=intent, strategy_id=intent.strategy_id,
+                broker_account_id=intent.broker_account_id, client_order_id="CONTROLLED-wire-" + symbol,
+                symbol=symbol, side="buy", quantity=intent.quantity, metadata=intent.payload["metadata"],
+                status=status, order_type="STOP_LIMIT", time_in_force="day")
+            session.commit()
+        token = next(token for token, job in HandoffJournal(h.factory).jobs()
+            if job["old"]["symbol"] == symbol and job["old"]["broker_account_name"] == "live:orb"
+            and job["phase"] == "held_unknown")
+        await h.service._rpg_advance(token)
+        job = HandoffJournal(h.factory).read(token)
+>       assert job["phase"] == "held_unknown" and not old_buy_proven_clear(job)
+E       AssertionError: assert ('clear' == 'held_unknown'
+E         
+E         - held_unknown
+E         + clear)
+
+tests/unit/test_rpgstuck1_review_completion.py:72: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 15:49:09,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 15:49:09,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 15:49:09,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 15:49:09,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 15:49:09,852 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 15:49:09,893 INFO [oms-risk] [OMS-RPG1] token=ba108172-04f6-5659-892b-a0fc10d22b15 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1_review_completion.py::test_b2_any_generation_broker_row_vetoes_recorded_local_proof[APUS-accepted]
+FAILED tests/unit/test_rpgstuck1_review_completion.py::test_b2_any_generation_broker_row_vetoes_recorded_local_proof[APUS-rejected]
+FAILED tests/unit/test_rpgstuck1_review_completion.py::test_b2_any_generation_broker_row_vetoes_recorded_local_proof[VEEA-accepted]
+FAILED tests/unit/test_rpgstuck1_review_completion.py::test_b2_any_generation_broker_row_vetoes_recorded_local_proof[VEEA-rejected]
+FAILED tests/unit/test_rpgstuck1_review_completion.py::test_b2_any_generation_broker_row_vetoes_recorded_local_proof[RETO-accepted]
+FAILED tests/unit/test_rpgstuck1_review_completion.py::test_b2_any_generation_broker_row_vetoes_recorded_local_proof[RETO-rejected]
+6 failed in 2.02s

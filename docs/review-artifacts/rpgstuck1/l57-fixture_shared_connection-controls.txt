@@ -1,0 +1,44 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_runtime_worker_reader_close_cannot_rollback_serial_writer ________
+
+    @pytest.mark.asyncio
+    async def test_runtime_worker_reader_close_cannot_rollback_serial_writer():
+        factory = _session_factory()
+        with factory.kw["bind"].begin() as connection:
+            connection.execute(text("CREATE TABLE isolation_probe (value INTEGER NOT NULL)"))
+            connection.execute(text("INSERT INTO isolation_probe VALUES (0)"))
+        with factory() as writer:
+            writer.execute(text("UPDATE isolation_probe SET value=1"))
+            writer_connection = writer.connection().connection.driver_connection
+    
+            def read_and_close():
+                with factory() as reader:
+                    assert reader.connection().connection.driver_connection is not writer_connection
+                    assert reader.scalar(text("SELECT value FROM isolation_probe")) == 0
+    
+>           await asyncio.to_thread(read_and_close)
+
+tests/unit/test_rpgstuck1.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py:25: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def read_and_close():
+        with factory() as reader:
+>           assert reader.connection().connection.driver_connection is not writer_connection
+E           assert <sqlite3.Connection object at 0x10d3dbd30> is not <sqlite3.Connection object at 0x10d3dbd30>
+E            +  where <sqlite3.Connection object at 0x10d3dbd30> = <sqlalchemy.pool.base._ConnectionFairy object at 0x10d4706b0>.driver_connection
+E            +    where <sqlalchemy.pool.base._ConnectionFairy object at 0x10d4706b0> = <sqlalchemy.engine.base.Connection object at 0x10d50c9b0>.connection
+E            +      where <sqlalchemy.engine.base.Connection object at 0x10d50c9b0> = connection()
+E            +        where connection = <sqlalchemy.orm.session.Session object at 0x10d50c6b0>.connection
+
+tests/unit/test_rpgstuck1.py:343: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1.py::test_runtime_worker_reader_close_cannot_rollback_serial_writer
+1 failed in 0.12s
