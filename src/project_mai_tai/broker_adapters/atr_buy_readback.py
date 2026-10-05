@@ -14,7 +14,7 @@ from project_mai_tai.broker_adapters.protocols import OrderRequest
 
 @dataclass(frozen=True)
 class AtrBuyReadback:
-    outcome: Literal["cancelled_empty", "fills", "working", "unknown"]
+    outcome: Literal["cancelled_empty", "rejected_empty", "fills", "working", "unknown"]
     reason: str
     cumulative_filled: Decimal | None = None
     fill_price: Decimal | None = None
@@ -129,6 +129,10 @@ def schwab_buy_readback(request: OrderRequest, body: object) -> AtrBuyReadback:
     if execution_qty > filled:
         return unknown("cumulative_fills_contradict_executions")
     price = execution_value / execution_qty if execution_qty == filled and filled > 0 else None
+    if (str(body.get("status", "")).upper() == "REJECTED" and filled == 0
+            and _number(body.get("remainingQuantity")) == 0):
+        return AtrBuyReadback("rejected_empty", "terminal_rejection_explicit_zero", filled,
+                              broker_status="REJECTED")
     return _result(str(body.get("status", "")).upper(), filled, price)
 
 

@@ -55,20 +55,31 @@ class AtrRepriceRuntimeMixin:
             TradeIntent.payload["metadata"]["rpg_resting_generation"].as_string() ==
                 event.payload.metadata["rpg_resting_generation"]).order_by(TradeIntent.created_at))
         matches = []
+        local_clients = set()
         for row in rows:
             payload = row.payload or {}
-            if (row.status != "rejected" or payload.get("refusal_origin") != "skipped_before_submit"
-                    or payload.get("refusal_code") != "webull_mirror_precheck_deferred"):
-                return None
             opening = TradeIntentEvent(event_id=UUID(payload["event_id"]),
                 source_service=payload["source_service"], payload=TradeIntentPayload(
                     strategy_code="schwab_1m_v2", broker_account_name=event.payload.broker_account_name,
                     symbol=row.symbol, side=row.side, intent_type=row.intent_type,
                     quantity=row.quantity, reason=row.reason, metadata=payload["metadata"]))
-            if self._rpg_matches_local_open(opening, event):
-                matches.append(opening)
-            else:
+            if not self._rpg_matches_local_open(opening, event):
                 return None
+            if (row.status != "rejected" or payload.get("refusal_origin") != "skipped_before_submit"
+                    or payload.get("refusal_code") != "webull_mirror_precheck_deferred"):
+                md = opening.payload.metadata
+                client = self._build_client_order_id(opening)
+                if (row.status == "rejected" and payload.get("refusal_origin") == "client_abort"
+                        and payload.get("refusal_code") == "rpg_old_buy_still_owned"
+                        and opening.source_service == "oms-risk"
+                        and md.get("webull_deferred_resubmit") == "true"
+                        and md.get("fanout_predecessor_attempt_id") in local_clients
+                        and md.get("fanout_attempt_id") == client):
+                    local_clients.add(client)
+                    continue
+                return None
+            local_clients.add(self._build_client_order_id(opening))
+            matches.append(opening)
         return matches[-1] if matches else None
 
     def _rpg_owns_old_order(self, session, order, account):
@@ -203,6 +214,8 @@ class AtrRepriceRuntimeMixin:
     async def _rpg_advance(self, token):
         journal = self._rpg_journal()
         job = journal.read(token)
+        if self._rpg_rejected_old_probe_eligible(job):
+            job = await self._rpg_probe_rejected_old(token, job)
         if job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven":
             old = _request(job["old"])
             event = TradeIntentEvent(source_service="schwab-1m-v2", payload=TradeIntentPayload(
@@ -261,6 +274,82 @@ class AtrRepriceRuntimeMixin:
                          job["old"]["broker_account_name"], job["old"]["symbol"], job["segment_id"], job["slot"],
                          elapsed("readback_at"), elapsed("submit_started_at"), elapsed("completed_at"))
         return job
+
+    def _rpg_rejected_old_probe_eligible(self, job):
+        if (job["phase"] != "held_unknown" or job.get("reason") != "readback_budget_exhausted"
+                or job.get("reads") != MAX_READS or job.get("no_rebuy")
+                or job.get("terminal_rejection_probe_started_at") is not None
+                or not job.get("original_order_id")
+                or job["old"]["broker_account_name"] != self.settings.strategy_schwab_1m_v2_account_name):
+            return False
+        old = job["old"]
+        try:
+            order_id, quantity = UUID(job["original_order_id"]), Decimal(old["quantity"])
+        except (ValueError, TypeError, InvalidOperation):
+            return False
+        with self.session_factory() as session:
+            order = session.scalar(select(BrokerOrder).join(BrokerAccount).join(Strategy).where(
+                BrokerOrder.id == order_id,
+                BrokerAccount.name == old["broker_account_name"], Strategy.code == old["strategy_code"],
+                BrokerOrder.client_order_id == old["client_order_id"], BrokerOrder.symbol == old["symbol"],
+                BrokerOrder.side == "buy", BrokerOrder.quantity == quantity,
+                BrokerOrder.broker_order_id == old["metadata"].get("broker_order_id"),
+                BrokerOrder.status == "rejected"))
+            return (order is not None and (order.payload or {}).get("rpg_resting_generation") ==
+                    old["metadata"].get("rpg_resting_generation") and not session.scalar(
+                        select(Fill.id).where(Fill.order_id == order.id).limit(1)))
+
+    async def _rpg_probe_rejected_old(self, token, job):
+        # One durable proof-only read for a committed rejection, not a restarted
+        # cancel budget. Claim before GET; a crash or an unreadable answer stays owned.
+        journal = self._rpg_journal()
+        claimed = journal.change(token, job["revision"], terminal_rejection_probe_started_at=self._rpg_now().timestamp())
+        if claimed is None:
+            return journal.read(token)
+        old = _request(claimed["old"])
+        try:
+            readback = await asyncio.wait_for(
+                self.broker_adapter.read_atr_resting_buy_after_cancel(old), READ_TIMEOUT_SECONDS)
+        except Exception:
+            readback = None
+        current = journal.read(token)
+        if current["revision"] != claimed["revision"]:
+            return current
+        with self.session_factory() as session:
+            known_fill = bool(session.scalar(select(Fill.id).where(
+                Fill.order_id == UUID(current["original_order_id"])).limit(1)))
+        proven = (isinstance(readback, AtrBuyReadback) and readback.outcome == "rejected_empty"
+                  and readback.broker_status == "REJECTED" and readback.cumulative_filled == Decimal(0)
+                  and not known_fill)
+        changes = {"terminal_rejection_probe_completed_at": self._rpg_now().timestamp(),
+                   "terminal_rejection_probe_proven": proven}
+        if proven:
+            # The original row remains rejected. This proof ends ownership; it
+            # never authorizes a saved replacement or submits in the startup task.
+            changes.update(phase="refused", reason="old_rejected_explicit_zero", broker_status="REJECTED",
+                           cleared_at=self._rpg_now().timestamp(), clear_recorded=True)
+        elif known_fill:
+            changes.update(no_rebuy=True, terminal_rejection_fill_accounting="already_recorded")
+        elif isinstance(readback, AtrBuyReadback) and readback.outcome == "fills":
+            changes.update(no_rebuy=True, terminal_rejection_fill_quantity=str(readback.cumulative_filled),
+                           terminal_rejection_fill_accounting="UNMEASURED")
+            if (readback.cumulative_filled is not None and readback.cumulative_filled.is_finite()
+                    and 0 < readback.cumulative_filled <= old.quantity and readback.fill_price is not None
+                    and readback.fill_price.is_finite() and readback.fill_price > 0):
+                current = journal.change(token, current["revision"], **changes)
+                if current is None:
+                    return journal.read(token)
+                report = ExecutionReport(
+                    "filled" if readback.cumulative_filled == old.quantity else "partially_filled",
+                    old.client_order_id, broker_order_id=old.metadata["broker_order_id"],
+                    symbol=old.symbol, side="buy", intent_type="open", quantity=old.quantity,
+                    filled_quantity=readback.cumulative_filled, fill_price=readback.fill_price,
+                    origin="broker", reason="terminal_rejection_probe_found_fill",
+                    metadata={"atr_reprice_terminal_cancel": str(readback.terminal_cancel).lower()})
+                recorded = await self._rpg_record_fill(old, report)
+                return journal.change(token, current["revision"],
+                    terminal_rejection_fill_accounting="recorded" if recorded else "UNMEASURED") or journal.read(token)
+        return journal.change(token, current["revision"], **changes) or journal.read(token)
 
     async def _rpg_reconcile_dispatch(self, token, job):
         """Read the claimed replacement identity; never replay an uncertain submit."""
@@ -481,7 +570,8 @@ class AtrRepriceRuntimeMixin:
             try:
                 for token, job in self._rpg_journal().jobs():
                     if (job["phase"] in {"prepared", "waiting", "fills_waiting", "clear", "price_wait", "submitting", "submit_unknown"}
-                            or (job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven")):
+                            or (job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven")
+                            or self._rpg_rejected_old_probe_eligible(job)):
                         await self.redis.xadd(f"{self.settings.redis_stream_prefix}:strategy-intents",
                             {"data": json.dumps({"event_type": "atr_reprice_tick", "token": str(token)})},
                             maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)

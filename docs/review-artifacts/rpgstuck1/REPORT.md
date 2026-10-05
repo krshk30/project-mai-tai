@@ -273,6 +273,15 @@ IDs, XML hashes and final production/new-test/fixture SHA256 values without
 overwriting the initial evidence. Production SHA256 values must equal all four
 initial production hashes listed above. Ruff and whitespace checks pass.
 
+## Complete Startup Follow-Up
+
+The newer human-requested follow-up is recorded separately in
+`REPORT_STARTUP.md`, with all eight October5 tickets, all five deferred intents,
+four actual strict Schwab response bodies, exact OFF/outside-window behavior,
+test-revealed narrow source corrections and fresh paired verification.
+Its final source hashes supersede the historical hashes above for the new head;
+the earlier test-only verification remains its original frozen evidence.
+
 ## Composition And Deployment Boundary
 
 NFQ1 and PMREST1 are already included in base a80b5181. PMPRINT1 / PMFLIP1 is
