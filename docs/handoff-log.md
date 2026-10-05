@@ -5316,3 +5316,10 @@ Candidate explicitly blocked on new tests/mutations/full pairs/composition
 and fresh pins; older suite evidence is not proof of these fixes. H4 symbol
 isolation assertion included in OWN scope. C58 only; no Mrow/Board/decision,
 merge, production or ledger changes.
+
+2026-10-05 14:14 ET codex-2: parent provisional composition R20/F3 targeted
+51PASS. Independent in-memory guards removed: R20 runtimewake RED2,
+F3 fetchdeferral RED4, sameepisode pendingwriter RED2, H4 accountfilter RED1;
+all assertion failures, not import errors. Full composition running, final
+frozenhead source/test equivalence still required. C59 only; candidate held,
+no Mrow/Board/decision/main/production/ledger changes.
