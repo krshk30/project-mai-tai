@@ -1,6 +1,6 @@
 # PMPRINT1 independent incident assessment
 
-The SAIQ causes match the reviewer: one high last-trade print crossed the trigger while the ask remained below it; Webull lost its ask before dollar sizing. No fill or managed position resulted. **BUILD STOPPED: the required same-moment 14/14 preservation gate is not established.** Original routed asks identify two additional upper-cap refusals, and CLRO's raw second-print ask differs from the existing test's supplied ask. This is an assessment, not a fix or deployment approval.
+The SAIQ causes match the reviewer: one high last-trade print crossed the trigger while the ask remained below it; Webull lost its ask before dollar sizing. No fill or managed position resulted. **BUILD STOPPED pending the operator's strict-lower-check ruling.** The reviewer clarified that the five-second path must not acquire a new upper cap: the lower-only alternative leaves 14/14 first-leg price proxies eligible and blocks 5/5 trigger-reaching outliers; decision-cache timing remains UNMEASURED. CLRO's raw second-print ask differs from the existing test's supplied ask and would be blocked. This is an assessment, not a fix or deployment approval.
 
 ## Independence limitation and build gate
 
@@ -36,6 +36,10 @@ The print is 1/404 Schwab trade rows at or above 6.75 in 08:05-08:13 ET. No SAIQ
 **Why 97 became 96:** the original retained intent, not the mutated database payload, records price 6.19 and quantity 97. Extended-hours routing reads the separate REST quote cache (`strategy_core/entry_gate.py:106-120`), then `services/schwab_1m_v2_bot.py:5321-5342` recomputes quantity from its routed limit. Nearest whole shares: 600/6.19 = 96.9305 -> 97. OMS uses its own 6.24 ask and finalizes again (`oms/service.py:14259-14274`, sizing `:12539`): 600/6.24 = 96.1538 -> 96. The initial strategy cap-based draft would be 88 shares; it is not the emitted quantity.
 
 **Earlier occurrence:** TOPS 09-22 09:28:44.274 ET also crossed with the first OMS ask below its trigger (1.30 versus 1.3490, -3.632%). The cross log used last price 1.39. One-share print outliers appear at 09:28:46.120 and 09:29:16.922 with surrounding prices 1.28/1.29. Those later prints are not the exact quote sample that caused the earlier REST decision. The retained OMS-priced cohort has 2/16 below-trigger first asks, TOPS and SAIQ; 14/16 are above the trigger. These are attempts, not 16 fills.
+
+### Condition 3: Alternative Explanations for SAIQ 6.83
+
+A genuine trade at another venue or a late/out-of-sequence report remains possible; neither is ruled out by the surrounding low NBBO or the completed bar. A fresh bounded own query found Massive-derived capture row 185338442: price 6.83, size 1, event timestamp 2026-10-05T12:10:35.281Z, exactly matching Schwab row 6790350. Schwab raw fields 3/9/35 contain that last price, size and millisecond timestamp, and the decoder reads those fields directly: our bid/ask-as-last decoding and local timestamp conversion do not explain this print. Cross-provider agreement does not rule out an upstream timestamp/reporting error or prove a current, bar-eligible execution. The 42/45 same-priced outlier-window matches strengthen a feed-level origin, not an execution-identity claim: market_capture_trades is Massive-derived gateway capture, not another independently connected recorder, and lacks raw execution IDs and participant-versus-SIP timestamps. SAIQ's captured exchange 17 and conditions 12,37 are retained but not interpreted here; venue validity and late/out-of-sequence eligibility remain UNMEASURED.
 
 ### Q2 Why Webull received no order
 
@@ -96,6 +100,8 @@ Candidate predicate: print >= trigger AND fresh ask >= trigger AND ask <= trigge
 **Gate: NOT PASS.** The routed/event-time price replay has 12/14 real attempts eligible, two upper-cap refusals. It is not a proof that the full patched strategy would emit 12 entries: exact REST decision-cache timestamps and callback receipt order are unmeasured. Those missing records cannot turn the two counterexamples into a claimed 14/14 PASS. Same-moment, both-leg preservation remains UNMEASURED and the price-proxy test fails it.
 
 Measured alternative, NOT approval: adding only an ask lower bound at the REST cross while retaining the existing downstream OMS cap leaves 14/14 first-leg real attempts price-eligible in these proxies. It avoids adding a new REST-side upper-cap refusal, but does not settle CLRO's low-ask brief cross or prove freshness/both-leg delivery. No price tolerance or new threshold is proposed without evidence.
+
+**Reviewer clarification, 10-05 approximately 09:00 ET:** this lower-only alternative is the intended rule, not the originally replayed lower-plus-upper predicate. Preserve the stream path's existing upper-cap skip and the OMS's cap; add no upper cap to the five-second path. Price-proxy result: 14/14 real first-leg eligible, 5/5 trigger-reaching outliers blocked, CLRO second print blocked. Exact decision-cache timing and same-moment two-leg delivery remain UNMEASURED. The operator's answer on that strict rule, including the CLRO behavior change, is still pending; no build has begun.
 
 ### All 25 Upward Outliers
 
@@ -191,7 +197,7 @@ Assessment branch: `codex/pmprint1-independent-assessment`, docs only, not merge
 ## Raw evidence and read safety
 
 - Durable local evidence directory: `/Users/velkris/.codex/pmprint1-evidence-20261005/`; raw fresh pulls, read scripts, analysis and local reproduction retained there. SHA256SUMS covers the saved files. Initial copies also remain under `/tmp/pmprint1-*`.
-- Raw incident pull `pmprint1-own-read.json` (62 file paths: 31 OMS, 31 v2); original intent `pmprint1-own-intent.json`; historical ticks/state `pmprint1-own-history.json`; original routed intents `pmprint1-own-originals.json`; wire-aware RTH census `pmprint1-own-rth-wire.json`; no-payload gateway aggregates `pmprint1-own-gateway-aggregates.json`; SAIQ probe lines `pmprint1-own-saiq-probes.txt`.
+- Raw incident pull `pmprint1-own-read.json` (62 file paths: 31 OMS, 31 v2); original intent `pmprint1-own-intent.json`; historical ticks/state `pmprint1-own-history.json`; original routed intents `pmprint1-own-originals.json`; wire-aware RTH census `pmprint1-own-rth-wire.json`; no-payload gateway aggregates `pmprint1-own-gateway-aggregates.json`; SAIQ probe lines `pmprint1-own-saiq-probes.txt`; exact price/size/timestamp origin cross-check `pmprint1-own-origin-check.json` and its `pmprint1-origin-check.py` read script (READ ONLY, five-second timeout, LIMIT 10, one row returned).
 - Remote sources: `/var/log/project-mai-tai/oms.log*`, `/var/log/project-mai-tai/schwab-1m-v2.log*`, `market_trade_ticks`, `market_quote_ticks`, `strategy_bar_history`, `trade_intents`, `broker_orders`, `fills`, `oms_managed_positions`.
 - Original intent from `mai_tai:strategy-intents`, event bda3ad57-da92-4d69-b62c-2d5df0efc6ce; bounded XRANGE COUNT 25, found after three envelopes. No snapshot-batches read.
 - Database queries were READ ONLY, statement timeout 8 s, per-symbol/time bounded. Tick `received_at` is database flush time, not callback time (`market_data/schwab_v2_tick_writer.py:99-137`); it cannot prove when a quote reached the bot. This distinction will be maintained in the replay.
