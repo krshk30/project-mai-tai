@@ -9,6 +9,73 @@ not merged, so its required rebase and combined ON/OFF proof remain PENDING.
 Generic pre-switch resting-order restart coverage outside an RPG ticket is
 also not proven end-to-end. Nothing in this report authorizes an install.**
 
+## Early Generic Restart Blocker
+
+At unchanged head `38d21fa3b122cbbc7c02b163c1fc84d6b5872a59`, this is a
+production restoration/admission gap, not a test-only coverage omission.
+No source change, rebase, push, deployment, or production write accompanies
+this diagnostic. The mandatory #1093 merge-SHA instruction is still pending.
+
+`SchwabV2BotService.run` (services/schwab_1m_v2_bot.py:761) runs startup
+exit coverage, then `_rpg_handoff_pass` (:1378). That pass restores wire proof
+only from handoff jobs. `_position_poll_pass` (:1873) and
+`_fetch_position_maps` (:2343) hydrate held/in-flight quantities, not the
+legacy accepted order's exact wire pair, broker identity, generation, and
+resting latch; the latter reads only the configured primary account.
+No-ticket accepted STOP_LIMITs do not receive the RPG restore behavior.
+
+The explicit diagnostic `test_legacy_restart_gap.py` lives outside normal
+discovery (`pyproject.toml` sets `testpaths = ["tests"]`). It is an intentionally
+failing, explicitly invoked blocker characterization, not a claimed passing
+unit gate. Keeping it in the review artifacts separates unresolved required
+invariants from CI gates for the existing implementation; its failures remain
+published here and readiness stays blocked. It drives the real service `run`, startup exit coverage, RPG pass,
+and first position poll with an independent-connection local in-memory book.
+Only network/heartbeat publication and unrelated background loops are stubbed.
+There is no handoff snapshot/ticket; RPG request metadata is removed for this
+controlled permutation. Retained SCKT/PFSA prices are replayed as accepted,
+unfilled orders, **not** claimed to have had that state at a historical restart.
+
+Fresh diagnostic: **8 assertion failures / 0 passes**, in 0.89s:
+
+- `test_no_ticket_startup_preserves_accepted_old_wire`: first/reclaim x
+  Schwab/Webull, four failures. Observed restored pair `(0.0, 0.0)` instead
+  of PFSA `3.77/3.79` or SCKT `1.06/1.07`.
+- `test_no_ticket_unproven_wire_blocks_duplicate_rest`: first/reclaim x
+  Schwab/Webull, four failures. After real startup/poll, controlled eligible
+  strategy trackers allow a new primary draft without accepted-wire proof.
+  This tests draft-level admission, not the entire outbound service route;
+  it is **not** proof a duplicate reaches a venue, nor of a historical duplicate.
+
+Raw XML: [eight assertion failures, zero errors](LEGACY_RESTART_GAP_38d21fa3.xml).
+Existing unit focus remains **400 passed** in 3.28s;
+raw XML [400 passing unit cases](LEGACY_GAP_FOCUS_38d21fa3.xml).
+These results do not replace the pending merged-main full-suite pair,
+composition proof, or safety mutations for an eventual production fix.
+
+Reproduce explicitly from the ROUNDUP worktree (expected exit code **1**):
+
+```sh
+env PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python \
+  -m pytest -p no:cacheprovider \
+  docs/review-artifacts/roundup1/test_legacy_restart_gap.py -q --tb=short
+```
+
+Both test families parameterize `leg = schwab, webull` and
+`slot = first, reclaim`; all eight exact case names and assertions are retained
+in the diagnostic XML. Evidence is from the pre-rebase tree `38d21fa3`, not
+the yet-to-be-merged #1093 composition. A fresh post-rebase diagnostic is
+required before publishing the DRAFT blocker head; no fresh full-suite pair
+has been run or claimed passing for that future tree.
+
+A safe correction needs generic evidence hydration plus fail-closed admission,
+including exact account/strategy/order/episode binding, both legs, persisted
+first/reclaim consumption, partial/filled/terminal states, conflicting or
+unreadable evidence, and startup ordering before entry callbacks. This is a
+broader ownership protocol than tick rounding alone. Scope alignment is
+required before expanding production code; #1095 is **not ready** tonight on
+the current proof. ROUNDUP remains default OFF, not activated.
+
 ## Price Contract
 
 The accepted 13:58 ET correction is implemented: format the existing float
