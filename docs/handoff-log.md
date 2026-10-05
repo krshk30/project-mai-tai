@@ -5255,3 +5255,13 @@ parentEXACTR13guarddropassertRED1andR16candidatesdropassertRED6. OWN55563e6f
 Validatex2PASS. Parentfresh7e10+RPG271314+OWN55563generatedpatchesapplycleanly,
 verifiedownimportpath,360focusedPASS/30.72s, tree87f73bda73d9addc59f6543ca8642cb31f48fcc6.
 Combinedfullunitinprogress, noPASSclaim. C50only; no production/ledger action.
+
+2026-10-05 13:45 ET codex-2: combined87f73bda full5701pass/57fail vs
+main7e10 5500/56. ExactXMLdiff adds ONLYR-T5uncertainWebullfills; isolated
+5runs4pass/1fail, expectedfilled remains submit_unknown. Prior inference
+fromlasttailunattendedfailurewaswrong: unattendedfailureisBASELINE, not
+theadditionalfailure. SharedStaticPoolconnectionracehypothesisNOTproven;
+RPGsolewriterinvestigates, OWNreadonlyanalysis supportsbutdoesnotprove.
+BothstandaloneValidatex2PASS; freshpinsrequired. Plan11195c33explicitly
+BLOCKED; norunner/GO/schedule/install. Restoration475fe844admission11tests
+PASS/scopedRuff, fullATR/runtimeNOTwired/notPR. C51only; Mrowsuntouched.
