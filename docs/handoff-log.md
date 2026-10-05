@@ -5362,3 +5362,12 @@ degraded status. No whitelist built/granted, no MI ledger write, no runner
 staged/scheduled. Generic gate has no findings override; do not omit its call.
 GitHub14:49 verifies freshOWN76c3 pinPASS14:39:30, RPG7fe freshpin stillmissing;
 both heads frozen. C62 only; Mrows/Boards/open-decisions untouched.
+
+2026-10-05 14:51 ET codex-2: operator exact-head before-merge yes for
+OWN1094 relayed directly. Fresh head76c3/base7e10, pinPASS/latestValidate2PASS
+and cleanmergeability rechecked; exact ledger record read. Rebase-merged with
+match-head guard at14:51:18 ET: main4987353be54c4be15d4196907dec4dd0d6103236.
+Whole maine6403bdafdc7b9670ecadbc6dbeccdcb6650c96c equals pinned76c3 tree.
+No production, env, restart or migration. Pauli sole RPGwriter instructed pure
+rebase7fe27daa onto newmain; stop on hand-edit conflict, equal range-diff and
+explicit expected-oldhead lease required. Parent owns plan/handoff. C63 only.
