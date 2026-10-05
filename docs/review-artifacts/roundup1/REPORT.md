@@ -1,15 +1,99 @@
 # ROUNDUP1 Build Evidence
 
-October 5, 2026. Frozen base: `7e10baf0319da796b84934fe38994f6db4fcfc0b`.
+October 5, 2026. Current merged/rebased base:
+`7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf`, tree
+`ee6f058c248eeebf475fd392845eadfef7af59eb`.
+Historical pre-rebase evidence below used base
+`7e10baf0319da796b84934fe38994f6db4fcfc0b`.
 
 **Assessment AGREE: the old nearest-tick entry rounding can buy below the
 four-decimal rule price. The default-OFF implementation is built on an isolated
-branch, not merged or installed. This is a DRAFT, not a pin request: #1093 has
-not merged, so its required rebase and combined ON/OFF proof remain PENDING.
-Generic pre-switch resting-order restart coverage outside an RPG ticket is
-also not proven end-to-end. Nothing in this report authorizes an install.**
+branch, not merged or installed. This is a DRAFT, not a pin request. #1093 is
+merged and the authorized rebase is complete, but current-tree diagnostics
+prove a real generic no-ticket restart gap (8 FAIL), and ROUNDUP unit focus has
+five additional integration failures (395 PASS / 5 FAIL). The prior 400 PASS
+is historical only. No generic ownership protocol was added. Nothing in this
+report authorizes an install, pin, or flag activation.**
 
-## Early Generic Restart Blocker
+## Current Rebase And Blockers
+
+Tested rebased source/test head: `c29db1165c24796adf0e7fad5a320edcbc56e383`.
+Rebase is **not patch-identical**. All six conflict hunks in two files were
+resolved explicitly; no other file had a content conflict. See retained
+[range-diff](REBASE_7823_RANGE_DIFF.txt).
+
+- Strategy import hunk: retained main's `old_buy_proven_clear` and added
+  ROUNDUP's `proven_resting_pair` and canonical price helpers.
+- Strategy placement-state hunk: ROUNDUP per-leg wire stop/limit assignments
+  now live under main's `not primary_blocked` / `not webull_blocked` guards,
+  alongside quantities; an owned leg's stored pair is not overwritten when
+  placing a different, unblocked leg. Main's generation guards remain.
+- Strategy mirror hunk: retained `not webull_blocked`; applied ROUNDUP's final
+  per-leg wire limit to sizing inside that guard.
+- Strategy `_rpg_leg_owned` hunk: retained main's delegation to
+  `_rpg_entry_owned(..., account=account)`, not the older ROUNDUP override.
+  Main's per-account clearance, requested-leg acknowledgement and
+  `old_buy_proven_clear` handling stay intact. The auto-merged ROUNDUP
+  placed-wire proof checks remain; no generic no-ticket protocol is added.
+- Catalog test name hunk: retained main's all-ON live-set assertion, renamed
+  its denominator to 148 for the new default-OFF ROUNDUP check.
+- Catalog count hunk: retained the merged main's 147-check basis, plus one
+  ROUNDUP owner check = 148. The old branch's 143 -> 144 basis is obsolete.
+
+Catalog/expected-settings tests, OMS entry-cap changes, handoff wire feedback
+and service feedback changes auto-merged without conflicts. Existing main
+NFQ/RPG metadata and callback ownership changes were not replaced wholesale.
+Catalog has 128 boolean entries / 148 total consumer checks; the four PM/RPG
+keys remain expected TRUE, NFQ/GAPHOLD remain TRUE, and ROUNDUP is expected FALSE.
+
+Fresh current-tree results:
+
+- Explicit outside-discovery diagnostic: **8 FAIL, 0 errors**, 1.12s;
+  [raw assertions](LEGACY_RESTART_GAP_7823_REBASE.xml). Both accepted old-wire
+  pairs remain `(0, 0)` after real startup/poll, and unproven cases permit
+  controlled strategy drafts, not proven venue duplicates.
+- ROUNDUP unit focus: **395 PASS / 5 FAIL, 0 errors**, 2.94s;
+  [all 400 exact cases](ROUNDUP_FOCUS_7823_REBASE.xml).
+- Relevant composition/regression focus: **663 PASS**, 58.44s;
+  [all selected files/cases](COMPOSITION_FOCUS_7823_REBASE.xml). This includes
+  PMPRINT/PMFLIP/PMREST, the merged RPG restart/all-ON/clock/loop suites,
+  NFQ, catalog, sizing and resting regressions. ROUNDUP is default OFF in
+  the merged RPG ALL_ON fixtures: this result is not proof of simultaneous
+  ROUNDUP ON + all four PM/RPG flags + NFQ/GAPHOLD ON across every required edge.
+
+Exact five focus failures (all under `tests/unit/test_roundup1.py`):
+
+- `test_restart_restores_recorded_accepted_wire_not_new_calculation_and_never_duplicates[webull-False]`
+- `test_unproven_or_malformed_placed_price_keeps_both_admission_guards_closed[None]`
+- `test_unproven_or_malformed_placed_price_keeps_both_admission_guards_closed[wire1]`
+- `test_unproven_or_malformed_placed_price_keeps_both_admission_guards_closed[wire2]`
+- `test_unproven_or_malformed_placed_price_keeps_both_admission_guards_closed[wire3]`
+
+Disposition: these assertions expect a single unproven Webull RPG ticket to
+block both primary and mirror drafts. Main's retained per-account semantics
+allow a new primary draft when only Webull owns that ticket. They remain
+visible **integration blockers requiring fresh review**; neither the tests
+nor the admission guards were weakened to manufacture green. This does not
+resolve the separate generic no-ticket restoration gap.
+
+Fresh full-unit pair: **INCOMPLETE / NOT RE-RUN TO COMPLETION on 7823**.
+At the parent's explicit publication-priority request, both owned test sessions
+were stopped through their session APIs (both exited 2). No other test/session
+was stopped. These partial outputs are not completed suite evidence; no current
+pass/fail totals or complete failed-name diff are claimed:
+
+- [main interrupted text](MAIN_7823_UNIT_INCOMPLETE.txt) and
+  [main interrupted XML](MAIN_7823_UNIT_INCOMPLETE.xml)
+- [head interrupted text](HEAD_7823_REBASE_UNIT_INCOMPLETE.txt) and
+  [head interrupted XML](HEAD_7823_REBASE_UNIT_INCOMPLETE.xml)
+
+Prior 5,500/5,900 counts and 9/9 mutation results below belong only to the old base. Current
+mutations are **NOT REVALIDATED**: the existing mutation runner's blanket
+exit-code check would be invalid with five control failures. Combined ON/OFF
+proof, current clean controls/mutations, and generic restart safety remain
+blocked; no ready-for-review or install claim follows from the passing 663.
+
+## Pre-Rebase Generic Restart Diagnosis
 
 At unchanged head `38d21fa3b122cbbc7c02b163c1fc84d6b5872a59`, this is a
 production restoration/admission gap, not a test-only coverage omission.
@@ -50,7 +134,7 @@ Fresh diagnostic: **8 assertion failures / 0 passes**, in 0.89s:
 Raw XML: [eight assertion failures, zero errors](LEGACY_RESTART_GAP_38d21fa3.xml).
 Existing unit focus remains **400 passed** in 3.28s;
 raw XML [400 passing unit cases](LEGACY_GAP_FOCUS_38d21fa3.xml).
-These results do not replace the pending merged-main full-suite pair,
+These historical results do not replace the pending merged-main full-suite pair,
 composition proof, or safety mutations for an eventual production fix.
 
 Reproduce explicitly from the ROUNDUP worktree (expected exit code **1**):
@@ -100,7 +184,8 @@ their decision reference, not a claim their execution price equals the trigger.
 
 Default-OFF setting: `strategy_schwab_1m_v2_resting_buy_round_up_enabled`.
 The catalog expects FALSE; activation needs a later exact-SHA GO, not tonight.
-The catalog has 128 boolean entries and the combined check denominator is 144.
+The old-base catalog had 128 boolean entries and 144 checks. The current
+merged/rebased catalog still has 128 boolean entries, now 148 consumer checks.
 
 ## Recorded Orders And Six PM Crosses
 
@@ -194,7 +279,7 @@ Momentum source are unchanged. AST comparison of OMS methods finds changes
 only in the three entry-cap methods listed above. Existing exit/ORB/pair
 regressions: **179 passed**; raw `/tmp/roundup1-exit-regressions.txt`.
 
-## OFF Identity And Tests
+## Historical OFF Identity And Tests
 
 Against a separate frozen-main checkout, deterministic strategy drafts for all
 179 inputs are byte-identical OFF (including quantities and metadata):
@@ -239,7 +324,7 @@ earlier archive-only run, whose extra executable-mode failure was a missing
 `.git` artifact, not a defect fixed by this PR. No archived-run improvement
 is counted as a fix.
 
-## Mutation Controls
+## Historical Mutation Controls
 
 `scripts/roundup1_mutation_probe.py` changes one function in memory per fresh
 process; it never edits production source. Each runs all 400 ROUNDUP tests.
@@ -261,11 +346,14 @@ Raw outputs: `/tmp/roundup1-mutation-<name>-final-400.txt`; JUnit:
 
 ## Not Covered / Next Gate
 
-- #1093 must merge first; rebase this branch and prove that combined code with
-  tonight's exact flag set, ROUNDUP OFF and ON, before asking for a pin.
-- A broker rest that predates switch-on but has no RPG ticket is not yet
-  covered by an end-to-end bot restart test. The controlled state-preservation
-  and accepted-ticket restore tests are narrower; they do not waive this edge.
+- #1093 merge and conflict-resolved rebase are complete; integration changes
+  require fresh review. Prove combined code with the exact flag set, ROUNDUP
+  OFF and ON, only after resolving the recorded blockers and before any pin.
+- A broker rest that predates switch-on but has no RPG ticket now has an
+  explicitly invoked real-startup diagnostic, with eight failing assertions.
+  The controlled state-preservation and accepted-ticket restore tests are
+  narrower; they do not waive or fix this edge. Five current ROUNDUP unit
+  integration failures also remain unresolved.
 - No live acceptance, partial-fill outcome, counterfactual fill delay or P&L
   is measured. Partial-fill tests are controlled interleavings around SCKT,
   not claims of a recorded SCKT partial fill. Sub-dollar/dollar-boundary tests
