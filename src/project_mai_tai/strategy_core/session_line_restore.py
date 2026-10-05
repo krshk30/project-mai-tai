@@ -8,6 +8,8 @@ window and candle IDs before a reconstruction can be admitted.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import math
 from dataclasses import dataclass
 from typing import Callable, Generic, TypeVar
@@ -24,6 +26,7 @@ class SessionCoverage:
     end_ms: int
     closed_ids: tuple[int, ...]
     complete: bool
+    bars_sha256: str
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,13 @@ class HistoryBar:
     close: float
     volume: int
     timestamp_ms: int
+
+
+def history_fingerprint(bars) -> str:
+    """Attest candle values as well as IDs; the adapter must use its own response."""
+    rows = [(bar.symbol.upper(), bar.timestamp_ms, bar.open, bar.high, bar.low,
+             bar.close, bar.volume) for bar in bars]
+    return hashlib.sha256(json.dumps(rows, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -106,9 +116,13 @@ class SessionLineRestoration:
         if set(ids) != set(self._bars):
             self.incomplete_reason = "history_missing_or_conflicting"
             return None
+        bars = tuple(self._bars[ts] for ts in ids)
+        if proof.bars_sha256 != history_fingerprint(bars):
+            self.incomplete_reason = "source_values_unproven"
+            return None
         return RebuildInput(
             self.symbol, self.epoch, self.revision, self.anchor_ms,
-            self.current_bar_ms, tuple(self._bars[ts] for ts in ids),
+            self.current_bar_ms, bars,
         )
 
     async def rebuild(self, builder: Callable[[RebuildInput], Snapshot]) -> RebuildResult[Snapshot] | None:
