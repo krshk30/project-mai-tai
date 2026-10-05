@@ -1,0 +1,56 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_clear[placed] _
+tests/unit/test_rpgstuck1_loop_liveness.py:118: in test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_clear
+    assert phases == {token: ["clear", expected] for token in tokens}
+E   AssertionError: assert {UUID('4be7cb...'): ['clear']} == {UUID('4be7cb...r', 'placed']}
+E     
+E     Differing items:
+E     {UUID('faa55c1f-262b-52e2-adcc-280ab1e5e2ff'): ['clear']} != {UUID('faa55c1f-262b-52e2-adcc-280ab1e5e2ff'): ['clear', 'placed']}
+E     {UUID('ba108172-04f6-5659-892b-a0fc10d22b15'): ['clear']} != {UUID('ba108172-04f6-5659-892b-a0fc10d22b15'): ['clear', 'placed']}
+E     {UUID('ee3d0d07-abea-5fe2-98c9-cace5c08d135'): ['clear']} != {UUID('ee3d0d07-abea-5fe2-98c9-cace5c08d135'): ['clear', 'placed']}
+E     {UUID('4be7cb2d-406b-56db-b597-3783f6e956ff'): ['clear']} != {UUID('4be7cb2d-406b-56db-b597-3783f6e956ff'): ['clear', 'placed']}
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:00,431 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:00,431 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:00,431 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:00,431 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:00,431 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 16:16:00,479 INFO [project_mai_tai.services.schwab_1m_v2_bot] schwab_1m_v2 bot starting pid=31249 (enabled=True)
+2026-10-05 16:16:00,481 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-IDENTITY-RESTORE] restored=0 could_not_tell=0
+2026-10-05 16:16:00,483 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=0
+2026-10-05 16:16:00,483 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account live:orb
+2026-10-05 16:16:00,507 INFO [oms-risk] [OMS-RPG1] token=faa55c1f-262b-52e2-adcc-280ab1e5e2ff phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=VEEA segment=1791207242421 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 16:16:00,515 INFO [oms-risk] [OMS-RPG1] token=ee3d0d07-abea-5fe2-98c9-cace5c08d135 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=APUS segment=1791210302605 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 16:16:00,532 INFO [oms-risk] [OMS-RPG1] token=ba108172-04f6-5659-892b-a0fc10d22b15 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 16:16:00,539 INFO [oms-risk] [OMS-RPG1] token=4be7cb2d-406b-56db-b597-3783f6e956ff phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=MI segment=1791218281208 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+_ test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_clear[expired-after-2000] _
+tests/unit/test_rpgstuck1_loop_liveness.py:118: in test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_clear
+    assert phases == {token: ["clear", expected] for token in tokens}
+E   AssertionError: assert {UUID('4be7cb...'): ['clear']} == {UUID('4be7cb...', 'expired']}
+E     
+E     Differing items:
+E     {UUID('faa55c1f-262b-52e2-adcc-280ab1e5e2ff'): ['clear']} != {UUID('faa55c1f-262b-52e2-adcc-280ab1e5e2ff'): ['clear', 'expired']}
+E     {UUID('ba108172-04f6-5659-892b-a0fc10d22b15'): ['clear']} != {UUID('ba108172-04f6-5659-892b-a0fc10d22b15'): ['clear', 'expired']}
+E     {UUID('ee3d0d07-abea-5fe2-98c9-cace5c08d135'): ['clear']} != {UUID('ee3d0d07-abea-5fe2-98c9-cace5c08d135'): ['clear', 'expired']}
+E     {UUID('4be7cb2d-406b-56db-b597-3783f6e956ff'): ['clear']} != {UUID('4be7cb2d-406b-56db-b597-3783f6e956ff'): ['clear', 'expired']}
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:01,641 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:01,641 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:01,641 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:01,641 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:01,641 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-05 16:16:01,679 INFO [project_mai_tai.services.schwab_1m_v2_bot] schwab_1m_v2 bot starting pid=31249 (enabled=True)
+2026-10-05 16:16:01,680 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-IDENTITY-RESTORE] restored=0 could_not_tell=0
+2026-10-05 16:16:01,684 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=0
+2026-10-05 16:16:01,684 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account live:orb
+2026-10-05 16:16:01,706 INFO [oms-risk] [OMS-RPG1] token=faa55c1f-262b-52e2-adcc-280ab1e5e2ff phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=VEEA segment=1791207242421 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 16:16:01,713 INFO [oms-risk] [OMS-RPG1] token=ee3d0d07-abea-5fe2-98c9-cace5c08d135 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=APUS segment=1791210302605 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 16:16:01,729 INFO [oms-risk] [OMS-RPG1] token=ba108172-04f6-5659-892b-a0fc10d22b15 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=RETO segment=1791213663149 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+2026-10-05 16:16:01,737 INFO [oms-risk] [OMS-RPG1] token=4be7cb2d-406b-56db-b597-3783f6e956ff phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=MI segment=1791218281208 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1_loop_liveness.py::test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_clear[placed]
+FAILED tests/unit/test_rpgstuck1_loop_liveness.py::test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_clear[expired-after-2000]
+2 failed, 3 deselected in 2.66s

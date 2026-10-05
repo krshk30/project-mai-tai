@@ -1,5 +1,9 @@
 # L5/L7 literal wake proofs and later APUS wire
 
+Continuation: [fixture-only restart clock correction](REPORT_CI_CLOCK.md) records
+the actual later8cf CI three-assertion failure, controlled cause, correction and
+fresh pair. This report's earlier local counts remain historical evidence.
+
 ONE tests/evidence/report-only follow-up atop
 `5ddb50f55498232915bd54171d5cc21579f43240`, no rebase. Main stays
 `4987353be54c4be15d4196907dec4dd0d6103236`. The reviewer's exact L5/L7 wording

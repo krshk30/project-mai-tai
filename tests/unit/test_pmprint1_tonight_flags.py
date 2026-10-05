@@ -135,6 +135,10 @@ async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership
     job = deepcopy(ticket["payload"])
     h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
     monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+    # Bind every session gate on the NEW restored strategy, not just _now_ms.
+    for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+        method = getattr(restarted, name)
+        monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
     state = restarted.watchlist_state(job["old"]["symbol"])
     state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
     state.fanout_segment_id = job["segment_id"]

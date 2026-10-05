@@ -1,0 +1,157 @@
+FFF.                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership[fbfd692d-ec1f-5a39-9e11-1a133abccc96] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109556f30>
+ticket = {'created_at': '2026-10-05 13:32:03.208542+00:00', 'id': 'fbfd692d-ec1f-5a39-9e11-1a133abccc96', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '6f5a52ce-1c31-42cb-9b0e-a5f9ca3ca15b', 'cancel_started_at': 1791207123.259607, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+        restarted._cw_v2_resting_track(state, None)
+        primary = restarted.drain_pending_intents()
+        mirror = restarted.drain_webull_direct_intents()
+        if proven:
+>           assert len(primary) == len(mirror) == 1
+E           assert 0 == 1
+E            +  where 0 = len([])
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:13:43,271 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:13:43,272 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:13:43,272 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:13:43,272 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:13:43,272 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership[bd6ac0b9-727c-500b-8581-aabdd95992d4] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109c4a600>
+ticket = {'created_at': '2026-10-05 13:32:04.246471+00:00', 'id': 'bd6ac0b9-727c-500b-8581-aabdd95992d4', 'payload': {'attempt'...s', 'verdict': 'ready'}, 'broker_status': 'CANCELLED', 'cancel_event_id': '229a3cf8-3e44-47a5-b2b6-1e3aa4eb350c', ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+        restarted._cw_v2_resting_track(state, None)
+        primary = restarted.drain_pending_intents()
+        mirror = restarted.drain_webull_direct_intents()
+        if proven:
+>           assert len(primary) == len(mirror) == 1
+E           assert 0 == 1
+E            +  where 0 = len([])
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:13:43,393 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:13:43,393 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:13:43,393 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:13:43,393 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:13:43,393 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership[a007716c-4b50-5759-a354-ddc5b8961154] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109c6eb10>
+ticket = {'created_at': '2026-10-05 13:36:02.972400+00:00', 'id': 'a007716c-4b50-5759-a354-ddc5b8961154', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '48a33598-23fe-46f4-a0fa-8e8683f31aeb', 'cancel_started_at': 1791207363.015175, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+        restarted._cw_v2_resting_track(state, None)
+        primary = restarted.drain_pending_intents()
+        mirror = restarted.drain_webull_direct_intents()
+        if proven:
+>           assert len(primary) == len(mirror) == 1
+E           assert 0 == 1
+E            +  where 0 = len([])
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:13:43,483 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:13:43,483 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:13:43,483 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:13:43,483 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:13:43,483 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+=========================== short test summary info ============================
+FAILED tests/unit/test_pmprint1_tonight_flags.py::test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership[fbfd692d-ec1f-5a39-9e11-1a133abccc96]
+FAILED tests/unit/test_pmprint1_tonight_flags.py::test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership[bd6ac0b9-727c-500b-8581-aabdd95992d4]
+FAILED tests/unit/test_pmprint1_tonight_flags.py::test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership[a007716c-4b50-5759-a354-ddc5b8961154]
+3 failed, 1 passed, 12 deselected in 0.47s

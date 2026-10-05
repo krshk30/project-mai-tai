@@ -1,0 +1,1276 @@
+FFFFFFFFFFFFFFFF                                                         [100%]
+=================================== FAILURES ===================================
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-UTC-fbfd692d] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108e2e510>
+ticket = {'created_at': '2026-10-05 13:32:03.208542+00:00', 'id': 'fbfd692d-ec1f-5a39-9e11-1a133abccc96', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '6f5a52ce-1c31-42cb-9b0e-a5f9ca3ca15b', 'cancel_started_at': 1791207123.259607, ...}}
+timezone = 'UTC', host_time = '2026-10-05T20:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10906ed80>
+ticket = {'created_at': '2026-10-05 13:32:03.208542+00:00', 'id': 'fbfd692d-ec1f-5a39-9e11-1a133abccc96', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '6f5a52ce-1c31-42cb-9b0e-a5f9ca3ca15b', 'cancel_started_at': 1791207123.259607, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 20:16:53,030 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 20:16:53,030 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 20:16:53,031 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 20:16:53,031 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 20:16:53,031 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-UTC-bd6ac0b9] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092234a0>
+ticket = {'created_at': '2026-10-05 13:32:04.246471+00:00', 'id': 'bd6ac0b9-727c-500b-8581-aabdd95992d4', 'payload': {'attempt'...s', 'verdict': 'ready'}, 'broker_status': 'CANCELLED', 'cancel_event_id': '229a3cf8-3e44-47a5-b2b6-1e3aa4eb350c', ...}}
+timezone = 'UTC', host_time = '2026-10-05T20:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10924c7a0>
+ticket = {'created_at': '2026-10-05 13:32:04.246471+00:00', 'id': 'bd6ac0b9-727c-500b-8581-aabdd95992d4', 'payload': {'attempt'...s', 'verdict': 'ready'}, 'broker_status': 'CANCELLED', 'cancel_event_id': '229a3cf8-3e44-47a5-b2b6-1e3aa4eb350c', ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 20:16:53,181 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 20:16:53,181 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 20:16:53,181 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 20:16:53,181 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 20:16:53,181 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-UTC-a007716c] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10924f770>
+ticket = {'created_at': '2026-10-05 13:36:02.972400+00:00', 'id': 'a007716c-4b50-5759-a354-ddc5b8961154', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '48a33598-23fe-46f4-a0fa-8e8683f31aeb', 'cancel_started_at': 1791207363.015175, ...}}
+timezone = 'UTC', host_time = '2026-10-05T20:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092afda0>
+ticket = {'created_at': '2026-10-05 13:36:02.972400+00:00', 'id': 'a007716c-4b50-5759-a354-ddc5b8961154', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '48a33598-23fe-46f4-a0fa-8e8683f31aeb', 'cancel_started_at': 1791207363.015175, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 20:16:53,282 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 20:16:53,282 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 20:16:53,282 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 20:16:53,282 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 20:16:53,282 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-UTC-faa55c1f] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092c6e70>
+ticket = {'created_at': '2026-10-05 13:36:05.664771+00:00', 'id': 'faa55c1f-262b-52e2-adcc-280ab1e5e2ff', 'payload': {'authoriz...ancel_event_id': '11f169a6-a021-4044-97fa-6d830a043de0', 'created_at': 1791207365.658557, 'local_no_wire': False, ...}}
+timezone = 'UTC', host_time = '2026-10-05T20:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+                await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+                restarted, = restored
+                assert restarted._now_ms() == int(expected.timestamp() * 1000)
+>               assert restarted._resting_in_window()
+E               assert False
+E                +  where False = _resting_in_window()
+E                +    where _resting_in_window = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1092f75c0>._resting_in_window
+
+tests/unit/test_rpgstuck1_restart_clock.py:43: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 20:16:53,381 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 20:16:53,381 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 20:16:53,381 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 20:16:53,381 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 20:16:53,381 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-America/New_York-fbfd692d] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092f4a70>
+ticket = {'created_at': '2026-10-05 13:32:03.208542+00:00', 'id': 'fbfd692d-ec1f-5a39-9e11-1a133abccc96', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '6f5a52ce-1c31-42cb-9b0e-a5f9ca3ca15b', 'cancel_started_at': 1791207123.259607, ...}}
+timezone = 'America/New_York', host_time = '2026-10-05T20:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092f6690>
+ticket = {'created_at': '2026-10-05 13:32:03.208542+00:00', 'id': 'fbfd692d-ec1f-5a39-9e11-1a133abccc96', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '6f5a52ce-1c31-42cb-9b0e-a5f9ca3ca15b', 'cancel_started_at': 1791207123.259607, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:53,498 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:53,498 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:53,498 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:53,498 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:53,498 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-America/New_York-bd6ac0b9] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092c53a0>
+ticket = {'created_at': '2026-10-05 13:32:04.246471+00:00', 'id': 'bd6ac0b9-727c-500b-8581-aabdd95992d4', 'payload': {'attempt'...s', 'verdict': 'ready'}, 'broker_status': 'CANCELLED', 'cancel_event_id': '229a3cf8-3e44-47a5-b2b6-1e3aa4eb350c', ...}}
+timezone = 'America/New_York', host_time = '2026-10-05T20:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109358350>
+ticket = {'created_at': '2026-10-05 13:32:04.246471+00:00', 'id': 'bd6ac0b9-727c-500b-8581-aabdd95992d4', 'payload': {'attempt'...s', 'verdict': 'ready'}, 'broker_status': 'CANCELLED', 'cancel_event_id': '229a3cf8-3e44-47a5-b2b6-1e3aa4eb350c', ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:53,621 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:53,621 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:53,621 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:53,621 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:53,621 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-America/New_York-a007716c] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10935b110>
+ticket = {'created_at': '2026-10-05 13:36:02.972400+00:00', 'id': 'a007716c-4b50-5759-a354-ddc5b8961154', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '48a33598-23fe-46f4-a0fa-8e8683f31aeb', 'cancel_started_at': 1791207363.015175, ...}}
+timezone = 'America/New_York', host_time = '2026-10-05T20:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1093ab8f0>
+ticket = {'created_at': '2026-10-05 13:36:02.972400+00:00', 'id': 'a007716c-4b50-5759-a354-ddc5b8961154', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '48a33598-23fe-46f4-a0fa-8e8683f31aeb', 'cancel_started_at': 1791207363.015175, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:53,731 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:53,731 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:53,731 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:53,731 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:53,731 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-America/New_York-faa55c1f] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10935b0b0>
+ticket = {'created_at': '2026-10-05 13:36:05.664771+00:00', 'id': 'faa55c1f-262b-52e2-adcc-280ab1e5e2ff', 'payload': {'authoriz...ancel_event_id': '11f169a6-a021-4044-97fa-6d830a043de0', 'created_at': 1791207365.658557, 'local_no_wire': False, ...}}
+timezone = 'America/New_York', host_time = '2026-10-05T20:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+                await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+                restarted, = restored
+                assert restarted._now_ms() == int(expected.timestamp() * 1000)
+>               assert restarted._resting_in_window()
+E               assert False
+E                +  where False = _resting_in_window()
+E                +    where _resting_in_window = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1092d3c20>._resting_in_window
+
+tests/unit/test_rpgstuck1_restart_clock.py:43: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:53,845 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:53,845 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:53,845 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:53,845 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:53,845 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-UTC-fbfd692d] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092d33b0>
+ticket = {'created_at': '2026-10-05 13:32:03.208542+00:00', 'id': 'fbfd692d-ec1f-5a39-9e11-1a133abccc96', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '6f5a52ce-1c31-42cb-9b0e-a5f9ca3ca15b', 'cancel_started_at': 1791207123.259607, ...}}
+timezone = 'UTC', host_time = '2026-10-06T00:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092d3a70>
+ticket = {'created_at': '2026-10-05 13:32:03.208542+00:00', 'id': 'fbfd692d-ec1f-5a39-9e11-1a133abccc96', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '6f5a52ce-1c31-42cb-9b0e-a5f9ca3ca15b', 'cancel_started_at': 1791207123.259607, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 20:16:53,945 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 20:16:53,945 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 20:16:53,945 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 20:16:53,945 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 20:16:53,945 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-UTC-bd6ac0b9] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1092d3230>
+ticket = {'created_at': '2026-10-05 13:32:04.246471+00:00', 'id': 'bd6ac0b9-727c-500b-8581-aabdd95992d4', 'payload': {'attempt'...s', 'verdict': 'ready'}, 'broker_status': 'CANCELLED', 'cancel_event_id': '229a3cf8-3e44-47a5-b2b6-1e3aa4eb350c', ...}}
+timezone = 'UTC', host_time = '2026-10-06T00:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109449d90>
+ticket = {'created_at': '2026-10-05 13:32:04.246471+00:00', 'id': 'bd6ac0b9-727c-500b-8581-aabdd95992d4', 'payload': {'attempt'...s', 'verdict': 'ready'}, 'broker_status': 'CANCELLED', 'cancel_event_id': '229a3cf8-3e44-47a5-b2b6-1e3aa4eb350c', ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 20:16:54,045 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 20:16:54,046 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 20:16:54,046 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 20:16:54,046 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 20:16:54,046 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-UTC-a007716c] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1094126f0>
+ticket = {'created_at': '2026-10-05 13:36:02.972400+00:00', 'id': 'a007716c-4b50-5759-a354-ddc5b8961154', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '48a33598-23fe-46f4-a0fa-8e8683f31aeb', 'cancel_started_at': 1791207363.015175, ...}}
+timezone = 'UTC', host_time = '2026-10-06T00:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109448c20>
+ticket = {'created_at': '2026-10-05 13:36:02.972400+00:00', 'id': 'a007716c-4b50-5759-a354-ddc5b8961154', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '48a33598-23fe-46f4-a0fa-8e8683f31aeb', 'cancel_started_at': 1791207363.015175, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 20:16:54,159 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 20:16:54,159 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 20:16:54,159 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 20:16:54,159 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 20:16:54,159 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-UTC-faa55c1f] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1094489e0>
+ticket = {'created_at': '2026-10-05 13:36:05.664771+00:00', 'id': 'faa55c1f-262b-52e2-adcc-280ab1e5e2ff', 'payload': {'authoriz...ancel_event_id': '11f169a6-a021-4044-97fa-6d830a043de0', 'created_at': 1791207365.658557, 'local_no_wire': False, ...}}
+timezone = 'UTC', host_time = '2026-10-06T00:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+                await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+                restarted, = restored
+                assert restarted._now_ms() == int(expected.timestamp() * 1000)
+>               assert restarted._resting_in_window()
+E               assert False
+E                +  where False = _resting_in_window()
+E                +    where _resting_in_window = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1094488c0>._resting_in_window
+
+tests/unit/test_rpgstuck1_restart_clock.py:43: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 20:16:54,263 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 20:16:54,263 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 20:16:54,263 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 20:16:54,263 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 20:16:54,263 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-America/New_York-fbfd692d] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109441e50>
+ticket = {'created_at': '2026-10-05 13:32:03.208542+00:00', 'id': 'fbfd692d-ec1f-5a39-9e11-1a133abccc96', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '6f5a52ce-1c31-42cb-9b0e-a5f9ca3ca15b', 'cancel_started_at': 1791207123.259607, ...}}
+timezone = 'America/New_York', host_time = '2026-10-06T00:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109440da0>
+ticket = {'created_at': '2026-10-05 13:32:03.208542+00:00', 'id': 'fbfd692d-ec1f-5a39-9e11-1a133abccc96', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '6f5a52ce-1c31-42cb-9b0e-a5f9ca3ca15b', 'cancel_started_at': 1791207123.259607, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:54,364 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:54,364 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:54,364 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:54,364 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:54,364 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-America/New_York-bd6ac0b9] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1094dbe90>
+ticket = {'created_at': '2026-10-05 13:32:04.246471+00:00', 'id': 'bd6ac0b9-727c-500b-8581-aabdd95992d4', 'payload': {'attempt'...s', 'verdict': 'ready'}, 'broker_status': 'CANCELLED', 'cancel_event_id': '229a3cf8-3e44-47a5-b2b6-1e3aa4eb350c', ...}}
+timezone = 'America/New_York', host_time = '2026-10-06T00:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1094d97c0>
+ticket = {'created_at': '2026-10-05 13:32:04.246471+00:00', 'id': 'bd6ac0b9-727c-500b-8581-aabdd95992d4', 'payload': {'attempt'...s', 'verdict': 'ready'}, 'broker_status': 'CANCELLED', 'cancel_event_id': '229a3cf8-3e44-47a5-b2b6-1e3aa4eb350c', ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:54,502 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:54,502 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:54,502 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:54,502 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:54,502 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-America/New_York-a007716c] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1094428a0>
+ticket = {'created_at': '2026-10-05 13:36:02.972400+00:00', 'id': 'a007716c-4b50-5759-a354-ddc5b8961154', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '48a33598-23fe-46f4-a0fa-8e8683f31aeb', 'cancel_started_at': 1791207363.015175, ...}}
+timezone = 'America/New_York', host_time = '2026-10-06T00:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+>               await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+
+tests/unit/test_rpgstuck1_restart_clock.py:40: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1094aab10>
+ticket = {'created_at': '2026-10-05 13:36:02.972400+00:00', 'id': 'a007716c-4b50-5759-a354-ddc5b8961154', 'payload': {'authoriz...': 'CANCELED', 'cancel_event_id': '48a33598-23fe-46f4-a0fa-8e8683f31aeb', 'cancel_started_at': 1791207363.015175, ...}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
+    async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+        h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
+        h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+        restarted = SchwabV2Strategy(h.bot.settings)
+        h.bot.strategy = restarted
+        job = deepcopy(ticket["payload"])
+        h.clock[0] = datetime.fromtimestamp((job.get("authorization") or {}).get("at", job["created_at"]), UTC) + timedelta(seconds=60)
+        monkeypatch.setattr(restarted, "_now_ms", lambda: int(h.clock[0].timestamp() * 1000))
+        # Bind every session gate on the NEW restored strategy, not just _now_ms.
+        for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
+            method = getattr(restarted, name)
+            monkeypatch.setattr(restarted, name, lambda now=None, fn=method: fn(now or h.clock[0]))
+        state = restarted.watchlist_state(job["old"]["symbol"])
+        state.atr_state, state.atr_state_age, state.atr_trail = "short", 31, 5.0
+        state.fanout_segment_id = job["segment_id"]
+        state.atr_short_flip_bar_ts = int(job["old"]["metadata"]["rpg_short_segment"])
+        state.bars.append(OHLCVBar(restarted._now_ms() - 60_000, 4.9, 5.0, 4.8, 4.9, 50_000))
+        state.last_quote = Quote(state.symbol, 4.8, 4.9, 4.85, restarted._now_ms())
+        with h.factory() as session:
+            session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
+            session.commit()
+        assert not restarted._rpg_handoffs
+        assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+        await h.bot._rpg_handoff_pass()
+        assert ticket["id"] in restarted._rpg_handoffs
+        proven = ticket["id"] in {
+            "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
+            "bd6ac0b9-727c-500b-8581-aabdd95992d4",
+            "a007716c-4b50-5759-a354-ddc5b8961154",
+        }
+        assert old_buy_proven_clear(job) is proven
+        assert restarted._rpg_entry_owned(state) is not proven
+>       restarted._cw_v2_resting_track(state, None)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+tests/unit/test_pmprint1_tonight_flags.py:162: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:54,607 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:54,607 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:54,607 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:54,607 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:54,607 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-America/New_York-faa55c1f] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1094d9970>
+ticket = {'created_at': '2026-10-05 13:36:05.664771+00:00', 'id': 'faa55c1f-262b-52e2-adcc-280ab1e5e2ff', 'payload': {'authoriz...ancel_event_id': '11f169a6-a021-4044-97fa-6d830a043de0', 'created_at': 1791207365.658557, 'local_no_wire': False, ...}}
+timezone = 'America/New_York', host_time = '2026-10-06T00:05:33+00:00'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticket", recorded_fixture.TICKETS, ids=lambda row: row["id"][:8])
+    @pytest.mark.parametrize("timezone", ["UTC", "America/New_York"])
+    @pytest.mark.parametrize("host_time", ["2026-10-05T20:05:33+00:00", "2026-10-06T00:05:33+00:00"],
+                             ids=["host-after1600", "host-after2000"])
+    async def test_recorded_restart_real_session_gates_ignore_host_after_window(monkeypatch, ticket, timezone, host_time):
+        host = datetime.fromisoformat(host_time)
+        expected = datetime.fromtimestamp((ticket["payload"].get("authorization") or {}).get(
+            "at", ticket["payload"]["created_at"]), UTC) + timedelta(seconds=60)
+        original_strategy = recorded_fixture.SchwabV2Strategy
+        restored = []
+    
+        class HostClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return host.astimezone(tz or UTC)
+    
+        def capture_strategy(settings):
+            result = original_strategy(settings)
+            restored.append(result)
+            return result
+    
+        try:
+            with monkeypatch.context() as control:
+                control.setenv("TZ", timezone)
+                time.tzset()
+                control.setattr(strategy_module, "datetime", HostClock)
+                control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
+                # Preserve all original proven/unproven and both-leg assertions.
+                await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+                restarted, = restored
+                assert restarted._now_ms() == int(expected.timestamp() * 1000)
+>               assert restarted._resting_in_window()
+E               assert False
+E                +  where False = _resting_in_window()
+E                +    where _resting_in_window = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10906f6e0>._resting_in_window
+
+tests/unit/test_rpgstuck1_restart_clock.py:43: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-05 16:16:54,718 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-05 16:16:54,718 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-05 16:16:54,718 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-05 16:16:54,718 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-05 16:16:54,718 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-UTC-fbfd692d]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-UTC-bd6ac0b9]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-UTC-a007716c]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-UTC-faa55c1f]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-America/New_York-fbfd692d]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-America/New_York-bd6ac0b9]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-America/New_York-a007716c]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after1600-America/New_York-faa55c1f]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-UTC-fbfd692d]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-UTC-bd6ac0b9]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-UTC-a007716c]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-UTC-faa55c1f]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-America/New_York-fbfd692d]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-America/New_York-bd6ac0b9]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-America/New_York-a007716c]
+FAILED tests/unit/test_rpgstuck1_restart_clock.py::test_recorded_restart_real_session_gates_ignore_host_after_window[host-after2000-America/New_York-faa55c1f]
+16 failed in 1.84s
