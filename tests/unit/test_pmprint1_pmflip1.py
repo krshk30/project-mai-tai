@@ -171,6 +171,86 @@ def test_t7_routing_uses_same_confirming_ask_not_rest_cache(monkeypatch):
     assert not bot._apply_extended_hours_routing(draft, datetime.fromtimestamp(clock[0] / 1000, UTC))
 
 
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("tonight", [False, True], ids=["both_cards", "tonight"])
+def test_s1_confirmed_cross_decided_before_open_cannot_route_after_0930(stream, tonight):
+    from tests.unit.test_pmprint1_tonight_flags import TONIGHT
+    strategy, state, clock = armed(**TONIGHT) if tonight else armed()
+    # Recorded VEEA prices; callback timing is a controlled boundary interleaving.
+    clock[0] = ms("2026-10-05T13:29:59Z")
+    state.bars[-1].timestamp_ms = ms("2026-10-05T13:29:00Z")
+    primary = cross(strategy, state, clock, 5.27, 5.27, stream=stream)
+    mirror, = strategy.drain_webull_fanout_intents()
+    assert primary is not None
+    latch = state.resting_flip_ms
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot._eh_stream_ask_max_age_ms = strategy, 10000
+    bot._last_quote_by_symbol = {"VEEA": Quote("VEEA", 5.26, 5.27, 5.27, clock[0])}
+    routed_at = datetime.fromisoformat("2026-10-05T13:30:00+00:00")
+    for leg in (primary, mirror):
+        assert not bot._apply_extended_hours_routing(leg, routed_at)
+    assert state.resting_flip_ms == latch  # No ambiguous dispatch retry/second buy.
+
+
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("tonight", [False, True], ids=["both_cards", "tonight"])
+def test_s2_software_rest_at_0930_does_not_cross_or_take_state(stream, tonight):
+    from tests.unit.test_pmprint1_tonight_flags import TONIGHT
+    strategy, state, clock = armed(**TONIGHT) if tonight else armed()
+    clock[0] = ms("2026-10-05T13:30:00Z")
+    state.bars[-1].timestamp_ms = ms("2026-10-05T13:29:00Z")
+    quote = Quote("VEEA", 5.26, 5.27, 5.27, clock[0])
+    assert strategy._eh_resting_cross_check(state, quote) is None
+    assert cross(strategy, state, clock, 5.27, 5.27, stream=stream) is None
+    assert state.resting_active and state.resting_flip_ms == 0
+    legs = strategy.drain_webull_fanout_intents()
+    if stream:
+        assert not legs
+    else:
+        # M19 is deliberately unchanged: on_quote's existing RTH detector can
+        # queue its Webull leg although this software rest did not convert yet.
+        legacy, legacy_state, legacy_clock = armed(confirm=False, wait=False)
+        legacy_clock[0] = clock[0]
+        legacy_state.bars[-1].timestamp_ms = state.bars[-1].timestamp_ms
+        assert cross(legacy, legacy_state, legacy_clock, 5.27, 5.27, stream=False) is None
+        old_leg, = legacy.drain_webull_fanout_intents()
+        leg, = legs
+        assert (leg.symbol, leg.intent_type, leg.quantity, leg.metadata["fanout_source"]) == (
+            old_leg.symbol, old_leg.intent_type, old_leg.quantity, old_leg.metadata["fanout_source"])
+
+
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("gate", ["not_in_window", "configured_cutoff"])
+def test_s3_public_cross_respects_window_before_taking_latch(monkeypatch, stream, gate):
+    strategy, state, clock = armed(
+        strategy_schwab_1m_v2_entry_window_end_hour_et=8,
+        strategy_schwab_1m_v2_entry_window_end_minute_et=30,
+    )
+    end = strategy._entry_window_closed_for_session
+    monkeypatch.setattr(strategy, "_entry_window_closed_for_session",
+                        lambda now=None: end(datetime.fromtimestamp(clock[0] / 1000, UTC)))
+    if gate == "not_in_window":
+        clock[0] = ms("2026-10-05T10:59:59Z")
+        state.bars[-1].timestamp_ms = ms("2026-10-05T10:59:00Z")
+    assert cross(strategy, state, clock, 5.27, 5.27, stream=stream) is None
+    assert state.resting_active and state.resting_flip_ms == 0
+    assert not strategy.drain_webull_fanout_intents()
+
+
+@pytest.mark.parametrize("feature", ["pm_print_ask_confirm", "pm_flip_wait"])
+def test_s2_feature_scope_ends_at_0930_and_excludes_broker_rest(feature):
+    strategy, state, clock = armed()
+    clock[0] = ms("2026-10-05T13:29:59Z")
+    assert strategy._pm_rest_feature(state, feature)
+    state.resting_is_broker_order = True
+    assert not strategy._pm_rest_feature(state, feature)
+    state.resting_is_broker_order = False
+    clock[0] = ms("2026-10-05T13:30:00Z")
+    assert not strategy._pm_rest_feature(state, feature)
+    clock[0] = ms("2026-10-05T20:00:00Z")
+    assert not strategy._pm_rest_feature(state, feature)
+
+
 @pytest.mark.asyncio
 async def test_t7_schwab_policy_reject_still_dispatches_webull(monkeypatch):
     strategy, state, clock = armed()

@@ -56,9 +56,11 @@ class RecordedReadbackSimulator:
         return self.override or self.decode(request, self.body)
 
 
-async def runtime(monkeypatch, broker, *, filled=False, quantity=None, slot="first", amod=False, notional=0):
+async def runtime(monkeypatch, broker, *, filled=False, quantity=None, slot="first", amod=False, notional=0,
+                  strategy_overrides=None):
     factory = _session_factory()
-    service, _ = _integrated_service(factory, enabled=True)
+    service, _ = _integrated_service(factory, enabled=True, nfq_enabled=bool(
+        strategy_overrides and strategy_overrides.get("oms_v2_webull_mirror_fresh_price_enabled")))
     old, body, decode = recorded(broker, filled=filled, amod_1356=amod and broker == "schwab")
     if quantity is not None:
         old = replace(old, quantity=Decimal(quantity))  # Explicit controlled dollar-size race.
@@ -81,7 +83,8 @@ async def runtime(monkeypatch, broker, *, filled=False, quantity=None, slot="fir
         "strategy_schwab_1m_v2_entry_notional_usd": notional if broker == "schwab" else 0,
         "strategy_schwab_1m_v2_webull_entry_notional_usd": notional if broker == "webull" else 0,
     })
-    strategy = SchwabV2Strategy(service.settings)
+    strategy_settings = service.settings.model_copy(update=strategy_overrides) if strategy_overrides else service.settings
+    strategy = SchwabV2Strategy(strategy_settings)
     monkeypatch.setattr(strategy, "_now_ms", lambda: int(clock[0].timestamp() * 1000))
     for name in ("_resting_in_window", "_resting_session_is_eh", "_entry_window_closed_for_session"):
         method = getattr(strategy, name)

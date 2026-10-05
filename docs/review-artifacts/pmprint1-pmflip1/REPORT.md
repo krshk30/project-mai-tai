@@ -16,9 +16,23 @@ then dropped Webull on ask=0. PMFLIP1: VEEA's BUY flip was treated as a fill,
 blocking its first qualifying 5.27 print 1.680 s later. The flip mechanism is
 old; the Webull dollar-size failure became live with #1082.
 
-Both new flags default FALSE, expected TRUE at the jointly reviewed install:
+Both new flags default FALSE:
 `strategy_schwab_1m_v2_pm_print_ask_confirm_enabled` and
-`strategy_schwab_1m_v2_pm_flip_wait_enabled`. No install authorization here.
+`strategy_schwab_1m_v2_pm_flip_wait_enabled`. Reviewer sequencing 11:20 ET:
+tonight only print-confirm ON; flip-wait and PMREST remain dark OFF, hand-off
+admission OFF. The new catalog matches that set. No install authorization here.
+
+## Operator cards
+
+PMPRINT1: "before 09:30 the bot buys only when the asking price itself has
+reached our buy price. One stray print with the bid and ask below it does
+nothing and the rest stays waiting. When it fires, both brokers get their
+order, each sized from that same ask. Nothing else changes: the trigger, the
+0.5% band, the sizes."
+
+PMFLIP1: "before 09:30, after a buy flip, the bot keeps its buy waiting one
+more bar instead of dropping it at once. If the price reaches the buy price
+in that time, it buys. Nothing else changes." Built dark; not activated tonight.
 
 Only software rests before 09:30 are changed. RTH uses broker resting orders;
 the broker hold-through-flip/fill path is unchanged. No exit, OMS, NFQ1, RPG1,
@@ -104,7 +118,7 @@ Existing CLRO stream test is renamed to
 Other explicit flag-OFF 5.57 probes remain legacy compatibility tests, not
 representations of the actual CLRO decision.
 
-## Verification
+## Prior-head verification (71f5f6bc)
 
 Final focused run: **972 passed** (20.00 s), including all v2 suites, PMREST1,
 flip-owner probes, entry routing, catalog coverage, RPG1/NFQ1 composition and
@@ -138,10 +152,93 @@ no-ask check still refuses. The substantive age-bound mutation targets that
 existing helper instead. Mutation harness is in-memory, isolated per process;
 neither source nor production is mutated.
 
+## Sequencing follow-up: S1-S6 and tonight's proofs
+
+All source additions remain pre-market; RTH semantics are unchanged.
+S1-S4 were recovered from reviewer-owned handoff M36 and the read-only
+mut1092.py/mut1092b.py evidence. No M row was edited by Codex.
+
+| Review item | Test or response |
+|---|---|
+| S1 / M14 routing after session | test_s1_confirmed_cross_decided_before_open_cannot_route_after_0930, REST and stream, both cards and tonight's exact set. Decision09:29:59, route09:30:00 rejects both drafts; the once-only latch remains taken, no ambiguous retry |
+| S2 / M5 / M19 PM boundary | test_s2_software_rest_at_0930_does_not_cross_or_take_state; test_s2_feature_scope_ends_at_0930_and_excludes_broker_rest. Includes16:00 exclusion, so the time clause's standalone mutation is RED; removing session+time or broker-rest scope is RED |
+| S3 / M9 gap belt | Removed only the redundant gap-hold check in _eh_resting_cross_check. Both public callers already return on gap hold, existing F-T6 stays green |
+| S3 / M10 window belt | Retained and pinned by test_s3_public_cross_respects_window_before_taking_latch: both public APIs, projected06:59:59 and recordedVEEA print under configured08:30 cutoff. Later _maybe_emit rejection does not prevent an earlier latch/queued leg. The original redundancy claim does not hold for these paths; removing the window guard is RED |
+| S4 card text | Both literal operator cards above and in the PR body; default FALSE and staged activation stated |
+| S5 exact flags | test_s5_tonight_saiq_stray_blocked_without_taking_state; test_s5_tonight_stream_and_rest_cross_size_both_legs_from_same_ask; test_s5_tonight_flip_wait_off_keeps_recorded_veea_legacy_latch; test_s5_tonight_pm_rest_off_keeps_recorded_saiq_disarm_rearm |
+| S6 catalog | test_s6_catalog_matches_tonights_live_set_and_143_checks: printtrue/flipfalse/pmrestfalse/handofffalse/NFQtrue/GAPtrue, combined143=135 boolean service checks+8 numeric; standalone numeric8 |
+
+Five new boundary/window/scope mutants RED, tested in isolated in-memory
+processes. Original ten card mutants are rerun, not substituted by assertions
+about collection. No runtime/import error counts as a kill.
+
+### Final follow-up verification
+
+Final focused union: **896 PASS** (17.80s), including all v2 suites, both PM
+cards, PMREST1, RPG1/NFQ1 and mirror/catalog tests. Exact live-account/dollar
+OFF/NFQ composition plus tonight module: **22 PASS**. Card module70PASS,
+tonight module14PASS; four of those characterize the failed safety proof.
+**15/15 isolated substantive mutations RED**, including the five new pins.
+Ruff and diff checks PASS. Nothing merged, installed or scheduled.
+
+Fresh full tests/unit pair, same macOS environment and PYTHONPATH=src:
+
+| Tree | Failed | Passed | Skipped | Failed-name comparison |
+|---|---:|---:|---:|---|
+| main a80b51816abf0aefc269f0fdfc473468fd3fe62c | 56 | 5,412 | 0 | baseline |
+| final follow-up | 56 | 5,500 | 0 | added0 / removed0, identical |
+
+Baseline215.04s, final211.58s. The full suite is NOT green. Linux review and
+GitHub results must be stated separately; baseline names are not waived.
+
+| Raw local output | SHA256 |
+|---|---|
+| /tmp/pmprint-tonight-main-unit.txt | f6ebbb3e0d68bfdacf5659529e54d256d52fa478b3b769569c9a31c0a8253bb3 |
+| /tmp/pmprint-tonight-delivery-final.txt | 7caeb64067bf1a5cb0b452a6b72495c68882c460e80422d0e0314fcbfcb51969 |
+| /tmp/pmprint-tonight-delivery-final.xml | 3fb69f2bac73594e250b787c2948ea9fbc14f00eea9d2606bbd4942c68dc4315 |
+| /tmp/pmprint-tonight-focus-delivery-final.txt | 68dd9b628be6a02c2cd649bada46687d86834d465c71d44e79950ac1df5cb22b |
+| /tmp/pmprint-tonight-boundary-mutations.txt | 47ff0a83fc51b859942415722c2583df173563ef95f55a340c3b6cd91e4cb2fa |
+| /tmp/pmprint-tonight-original-mutations.txt | 1d7858eefd11e46726c03d8e414c249ec4f21f446204b4d25eb76543224573c7 |
+
+**Required proof(b) FAILS and blocks execution.** Turning hand-off admission
+OFF does not suppress existing durable tickets after restart. Real startup
+_rpg_handoff_pass restores four actual persisted APUS/VEEA ticket payloads via
+rpg_handoff_authorization; _rpg_entry_owned still owns refused same-segment and
+held_unknown entries. OMS ordinary-open also blocks held_unknown independent
+of that setting. No ticket or terminal phase was invented/rewritten; fixture
+rpg_off_recorded_tickets.json contains only the four recorded ticket objects
+from the earlier independently pulled RPGSTUCK evidence. The passing
+test_current_rpg_off_startup_still_restores_recorded_blocking_ticket is a
+negative characterization, NOT a green safety proof. Flat books do not prove
+durable ownership clear. No journal purge/DB edit/extra restart was made.
+
+Proof(a): legacy cancel/next pass PASS only with a CLEAN durable journal;
+existing test_rpg_flag_off_new_reprice_retains_legacy_cancel_then_next_pass
+and new test_tonight_rpg_off_clean_journal_legacy_cancel_then_next_pass cover
+first/reclaim with the exact six settings, OMS remains loaded ON.
+Proof(c): four OFF variants of the recorded NFQ/RPG composition PASS: v2 legacy
+cancel retires the old held/queued generation, the next normal placement holds
+until a fresh price, and old/new serial retry copies result in exactly one
+simulated wire buy. OMS is deliberately still ON, as with a v2-only restart.
+The OFF variants use current600/300 dollars, live account identities, and
+configured entry07:00-15:45; wire metadata pins the300 dollar Webull leg.
+This is controlled cache/bar eligibility on real prices, not live latency proof.
+
+M19 remains out of scope: a software rest carried to09:30 can still queue the
+legacy RTH Webull leg from on_quote. The test explicitly compares unchanged
+legacy behavior; it does NOT claim the boundary problem fixed or remove the
+RTH route. A new PM cross does not occur at09:30 and takes no EH latch.
+
+The single replacement INSTALL_PLAN.md is DRAFT BLOCKED on proof(b): exactly
+two env changes, one v2 restart; no executable schedule. OMS need not reload
+for NEW admission, but restarting it would not solve durable ownership either.
+Reviewer disposition is needed before this can be reviewed for execution.
+
 ## Remaining limits
 
 Decision-cache historical timing, actual fill/profit and installed behavior are
 UNMEASURED/UNEXERCISED. Owner-UNKNOWN, unchanged-rest 09:30 boundary, F2 second
 entry question, low-print exits, shared health cursor and 07:00 late start are
-explicitly excluded. Evening deployment requires independent exact-head pin,
-merge and operator exact-SHA GO for the folded PMREST1 plan. No restart here.
+explicitly excluded. Evening deployment requires proof(b) resolved under review,
+independent exact-head pin, merge and operator exact-SHA GO for the replacement
+two-switch plan. No restart here. GAPKEEP/OWN/RPG are excluded from tonight.

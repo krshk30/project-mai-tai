@@ -7,28 +7,28 @@
       "expected": true,
       "owning_service": "schwab-1m-v2",
       "reason": "PMPRINT1 requires a fresh ask at the trigger before a pre-market software cross; both legs use that ask.",
-      "ruling": "Operator 2026-10-05 09:44 ET: yes to both cards, go ahead; default OFF, ON only at reviewed install."
+      "ruling": "Operator delegated sequencing to reviewer 2026-10-05 ~11:20 ET: tonight PMPRINT1 ON only, exact-SHA GO still required."
     },
     {
       "name": "strategy_schwab_1m_v2_pm_flip_wait_enabled",
-      "expected": true,
+      "expected": false,
       "owning_service": "schwab-1m-v2",
       "reason": "PMFLIP1 separates a pre-market BUY flip from a cross taken, preserving the existing take-down.",
-      "ruling": "Operator 2026-10-05 09:44 ET: yes to both cards, go ahead; default OFF, ON only at reviewed install."
+      "ruling": "Reviewer sequencing 2026-10-05 ~11:20 ET: PMFLIP1 remains dark OFF tonight; a later clean-day install needs its own GO."
     },
     {
       "name": "strategy_schwab_1m_v2_pm_rest_reprice_enabled",
-      "expected": true,
+      "expected": false,
       "owning_service": "schwab-1m-v2",
       "reason": "PMREST1 moves a software rest in the same evaluation without resetting its ownership or thin-bar streak.",
-      "ruling": "Operator 2026-10-05 ~07:55 ET: cover pre-market reprices too; default OFF, explicitly ON at the reviewed install."
+      "ruling": "Reviewer sequencing 2026-10-05 ~11:20 ET: PMREST1 remains dark OFF tonight; a later clean-day install needs its own GO."
     },
     {
       "name": "strategy_schwab_1m_v2_atr_reprice_handoff_enabled",
-      "expected": true,
+      "expected": false,
       "owning_service": "schwab-1m-v2",
       "reason": "RPG1 admits new durable fast-reprice handoffs; OFF never abandons existing ownership.",
-      "ruling": "Operator 2026-10-03: RPG flag ON in the reviewed joint install; no deployment authority from this catalog."
+      "ruling": "Reviewer sequencing 2026-10-05 ~11:20 ET: v2 hand-off admission OFF tonight; durable ownership is not erased by OFF and must be proven safe before install."
     },
     {
       "name": "market_data_subscription_startup_enabled",
