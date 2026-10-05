@@ -1,13 +1,14 @@
 {
-  "base_commit": "a80b51816abf0aefc269f0fdfc473468fd3fe62c",
+  "base_commit": "7e10baf0319da796b84934fe38994f6db4fcfc0b",
   "branch": "codex/ownmix1-owned-entry-binding",
-  "scope": "complete review F1/F2/U1-U4 follow-up atop b94bd0ff; no new trading rule",
+  "scope": "rebase onto merged PM main7e10; Q2 hint-first exact-parent stand-down; F1/F2/U1-U4 retained",
+  "independent_baseline_base_commit": "a80b51816abf0aefc269f0fdfc473468fd3fe62c",
   "baseline": {
-    "log": ".ownmix1-review-base-rerun-unit.log",
-    "sha256": "74b1323dfce4141d4c0acafd2a5c1e5895cf0c3d07d872f3a8fc854853ecb509",
+    "log": ".ownmix1-main7e10-unit.log",
+    "sha256": "e78bdda88adcf87abb3b662f32a015de01c6e87f8b2174e328ed45d913aed756",
     "failed": 56,
-    "passed": 5412,
-    "seconds": 223.66,
+    "passed": 5500,
+    "seconds": 224.83,
     "failed_ids": [
       "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]",
       "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal]",
@@ -68,11 +69,11 @@
     ]
   },
   "head": {
-    "log": ".ownmix1-review-head-unit.log",
-    "sha256": "e8a5883730a9143c47e6d09cae6a95347454a61034e3cb5d58959dcde66ef538",
+    "log": ".ownmix1-q2-head-final-unit.log",
+    "sha256": "369345ed8a627310a0b094828ea6802f5cc6e43ee4e4318588fd321b2efc5fed",
     "failed": 56,
-    "passed": 5476,
-    "seconds": 197.74,
+    "passed": 5570,
+    "seconds": 197.79,
     "failed_ids": [
       "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]",
       "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal]",
@@ -201,8 +202,8 @@
   "resolved_failed_ids": [],
   "independent_failed_ids_equal": true,
   "focused": {
-    "passed": 563,
-    "seconds": 33.29
+    "passed": 569,
+    "seconds": 34.09
   },
   "mutations": [
     "order_id: KILLED",

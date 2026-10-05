@@ -43,9 +43,10 @@ def main() -> None:
     mutations = args.mutations.read_text()
     assert "ownership_mutations_killed=15/15" in mutations
     result = {
-        "base_commit": "a80b51816abf0aefc269f0fdfc473468fd3fe62c",
+        "base_commit": "7e10baf0319da796b84934fe38994f6db4fcfc0b",
         "branch": "codex/ownmix1-owned-entry-binding",
-        "scope": "complete review F1/F2/U1-U4 follow-up atop b94bd0ff; no new trading rule",
+        "scope": "rebase onto merged PM main7e10; Q2 hint-first exact-parent stand-down; F1/F2/U1-U4 retained",
+        "independent_baseline_base_commit": "a80b51816abf0aefc269f0fdfc473468fd3fe62c",
         "baseline": baseline, "head": head, "independent_baseline": independent,
         "introduced_failed_ids": introduced, "resolved_failed_ids": resolved,
         "independent_failed_ids_equal": baseline["failed_ids"] == independent["failed_ids"],

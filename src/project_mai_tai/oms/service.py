@@ -9712,8 +9712,9 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         the parent -- the OMS never places them, so they never land in `broker_orders`. Asking
         the DB would always find nothing and the stand-down would never activate = the software
         ladder keeps running on an OCO'd position = the relocated collision. So this asks the
-        broker directly for the durable managed entry's exact parent, never an account-wide
-        armed/resolved symbol set. The existing >=2 working / filled / unsafe semantics remain.
+        broker for an account-wide candidate hint, then the durable managed entry's exact
+        parent. The hint never establishes ownership. The existing >=2 working / filled /
+        unsafe semantics remain; an empty/truncated hint does not confirm stand-down.
 
         Runs on the periodic sync (~5s), off-loop; the per-tick predicate stays a dict lookup.
         FAIL-OPEN: any error (unreachable broker, adapter without the capability) -> do NOT
@@ -9728,6 +9729,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
 
         adapter = getattr(self, "broker_adapter", None)
         fn = getattr(adapter, "fetch_exit_legs_for_entry", None)
+        hint_fn = getattr(adapter, "fetch_armed_native_oco_symbols", None)
         if fn is None:
             # No adapter / no capability -> nothing can be confirmed armed -> ladder runs.
             self._native_oco_armed_confirmed_at.clear()
@@ -9752,9 +9754,15 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         armed: set[tuple[str, str]] = set()
         try:
             bindings = await self._run_db(_bound_entries, commit=False)
+            hints: dict[str, set[str]] = {}
             for key, (_row_id, parent_id) in bindings.items():
                 if self._is_v2_webull_account(key[0]):
                     continue  # Webull protection is addressed by its persisted pair handle.
+                if key[0] not in hints:
+                    symbols = sorted(sym for acct, sym in bindings if acct == key[0])
+                    hints[key[0]] = set(await hint_fn(key[0], symbols)) if hint_fn else set()
+                if key[1] not in hints[key[0]]:
+                    continue
                 state = await fn(key[0], parent_id)
                 working = set(state.get("working") or [])
                 if not state.get("unsafe") and not state.get("filled") and len(working) >= 2:

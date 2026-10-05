@@ -154,9 +154,10 @@ class SchwabBrokerAdapter:
     ) -> set[str]:
         """Symbols with a LIVE native OCO exit pair at the broker (>= 2 WORKING sell legs).
 
-        This is the source of truth for the OMS stand-down: OCO child legs are created BY THE
-        BROKER, so they never appear in `broker_orders` -- the only way to know a bracket is
-        armed is to ask the broker. Walks `childOrderStrategies` (the STEP-1-proven shape).
+        This is a coarse candidate HINT, not ownership or complete coverage proof. The
+        capped account listing can omit orders; two sells can belong to different parents
+        or strategies. OMS must verify its durably bound exact parent before stand-down.
+        Walks `childOrderStrategies` (the STEP-1-proven shape).
 
         "Armed" = the position is held AND both exits are working. So a leg in
         AWAITING_PARENT_ORDER does NOT count (the entry has not filled; nothing is held yet) --
@@ -164,7 +165,8 @@ class SchwabBrokerAdapter:
 
         Raises on any broker/HTTP error so the caller can FAIL OPEN (resume the software ladder)
         rather than silently treat an unreachable broker as "no bracket" -- which would also
-        resume the ladder, but loudly here vs silently there. Never returns a partial guess.
+        resume the ladder, but loudly here vs silently there. An empty hint does not prove
+        that no bracket exists: this listing is neither paginated nor completeness-checked.
         """
         account = self.accounts_by_name.get(broker_account_name)
         if account is None or not symbols:

@@ -115,11 +115,12 @@ class _StubAdapter:
         self._resolved = resolved or set()
         self._resolved_boom = resolved_boom
         self.calls: list[tuple[str, tuple[str, ...]]] = []
+        self.hint_calls: list[tuple[str, tuple[str, ...]]] = []
         self.resolved_calls: list[tuple[str, tuple[str, ...]]] = []
 
     async def fetch_exit_legs_for_entry(self, account, parent):
         symbol = parent.removesuffix("-parent")
-        repeated = (account, (symbol,)) in self.calls
+        repeated = (account, (symbol,)) in self.calls or symbol not in self._armed
         self.calls.append((account, (symbol,)))
         if repeated:
             self.resolved_calls.append((account, (symbol,)))
@@ -132,7 +133,7 @@ class _StubAdapter:
         return None
 
     async def fetch_armed_native_oco_symbols(self, account: str, symbols: list[str]) -> set[str]:
-        self.calls.append((account, tuple(symbols)))
+        self.hint_calls.append((account, tuple(symbols)))
         if self._boom:
             raise RuntimeError("broker unreachable")
         return {s for s in symbols if s in self._armed}

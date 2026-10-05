@@ -9,7 +9,7 @@ import sys
 import tarfile
 import tempfile
 
-BASE = "a80b51816abf0aefc269f0fdfc473468fd3fe62c"
+BASE = "7e10baf0319da796b84934fe38994f6db4fcfc0b"
 ROOT = Path(__file__).resolve().parents[3]
 PROGRAM = r'''
 import importlib.util

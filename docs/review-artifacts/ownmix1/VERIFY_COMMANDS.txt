@@ -1,32 +1,37 @@
-Complete-review follow-up atop b94bd0ff. All commands use the sole-writer worktree,
-except the clean isolated pinned-base checkout .b inside it.
-No CI unit test depends on .b; it is only a local full-baseline verification checkout.
+Q2 follow-up after human-authorized rebase bb4a6b22 onto main7e10.
+All commands use the sole-writer worktree except fresh clean baseline checkout .m.
+No unit test depends on .m/.b or any other untracked checkout.
 Interpreter: /Users/velkris/Projects/project-mai-tai/.venv/bin/python
 PYTHONPATH=src on every Python command. Previous verification is retained in Git history.
 
-Fresh pinned-base full suite (cwd .b; a80b51816abf0aefc269f0fdfc473468fd3fe62c):
-PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit -q > ../.ownmix1-review-base-rerun-unit.log 2>&1
+Fresh pinned-main full suite (cwd .m; 7e10baf0319da796b84934fe38994f6db4fcfc0b):
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit -q > ../.ownmix1-main7e10-unit.log 2>&1
 
-Frozen follow-up head full suite:
-PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit -q > .ownmix1-review-head-unit.log 2>&1
+Final follow-up head full suite:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit -q > .ownmix1-q2-head-final-unit.log 2>&1
 
-Final focused suite (20 files):
-PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit/test_ownmix1_entry_binding.py tests/unit/test_ownmix1_review_followup.py tests/unit/test_confirmation_exit_fanout.py tests/unit/test_exit_reservation_release.py tests/unit/test_oms_native_oco_stand_down.py tests/unit/test_oms_oco_entry_status_filter.py tests/unit/test_oms_resolved_oco_fill_required.py tests/unit/test_oms_risk_service.py tests/unit/test_oms_v2_phantom_reconcile.py tests/unit/test_v2_cw_managed_exit.py tests/unit/test_v2_eod_cancel_reexit.py tests/unit/test_v2_eod_oco_transition.py tests/unit/test_v2_exit_retry_bound.py tests/unit/test_v2_managed_exit.py tests/unit/test_v2_overnight_flatten.py tests/unit/test_webull_hard_stop_floor_shared_path.py tests/unit/test_webull_protect_handle_persistence.py tests/unit/test_orb_schwab_exits.py tests/unit/test_schwab_oco_child_cancel_probe.py tests/unit/test_schwab_exit_only_oco.py -q > .ownmix1-review-focused-final.log 2>&1
+Final focused suite (21 files):
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit/test_ownmix1_entry_binding.py tests/unit/test_ownmix1_review_followup.py tests/unit/test_confirmation_exit_fanout.py tests/unit/test_exit_reservation_release.py tests/unit/test_oms_native_oco_stand_down.py tests/unit/test_oms_oco_entry_status_filter.py tests/unit/test_oms_resolved_oco_fill_required.py tests/unit/test_oms_risk_service.py tests/unit/test_oms_v2_phantom_reconcile.py tests/unit/test_v2_cw_managed_exit.py tests/unit/test_v2_eod_cancel_reexit.py tests/unit/test_v2_eod_oco_transition.py tests/unit/test_v2_exit_retry_bound.py tests/unit/test_v2_managed_exit.py tests/unit/test_v2_overnight_flatten.py tests/unit/test_webull_hard_stop_floor_shared_path.py tests/unit/test_webull_protect_handle_persistence.py tests/unit/test_orb_schwab_exits.py tests/unit/test_schwab_oco_child_cancel_probe.py tests/unit/test_schwab_exit_only_oco.py tests/unit/test_ownmix1_oco_hint.py -q > .ownmix1-q2-focused-final.log 2>&1
 Same file arguments with --collect-only -q > docs/review-artifacts/ownmix1/focused-test-ids.txt
 
-Final review-equivalent mutations (isolated in-memory methods, production files unchanged):
-PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/mutate_ownership.py > .ownmix1-review-mutations.log 2>&1
+Final review-equivalent mutations (isolated in-memory methods; production files unchanged):
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/mutate_ownership.py > .ownmix1-q2-mutations-final.log 2>&1
 
-Standalone actual-old-code additive schema compatibility, no untracked checkout dependency:
-PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/verify_old_code_schema.py > .ownmix1-review-old-schema.log 2>&1
+Actual old-main7e10 additive schema compatibility:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/verify_old_code_schema.py > .ownmix1-q2-old-schema.log 2>&1
 
-Exact full-suite failed-ID comparison and independent cross-check:
-PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/verify_suite_pair.py .ownmix1-review-base-rerun-unit.log .ownmix1-review-head-unit.log --independent-baseline /tmp/pmprint-main-unit.txt --focused .ownmix1-review-focused-final.log --mutations .ownmix1-review-mutations.log > docs/review-artifacts/ownmix1/verification.json
+Exact full-suite failed-ID comparison; independent cross-check remains prior a80 baseline,
+explicitly not a substitute for fresh main7e10 baseline:
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/verify_suite_pair.py .ownmix1-main7e10-unit.log .ownmix1-q2-head-final-unit.log --independent-baseline /tmp/pmprint-main-unit.txt --focused .ownmix1-q2-focused-final.log --mutations .ownmix1-q2-mutations-final.log > docs/review-artifacts/ownmix1/verification.json
 
-Read-only retained history audit, unchanged in this follow-up:
-PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/audit_historical_parents.py /Users/velkris/.codex/ownmix-rpgstuck-evidence-20261005/ownmix-rpgstuck-own-read.json > .ownmix1-historical-final.log
+Bounded Q2 box reads (read-only, low priority; no token/service/DB writes):
+ssh -o BatchMode=yes mai-tai-vps 'sudo -n nice -n 19 ionice -c 3 head -c 3000000 /var/log/project-mai-tai/oms.log | grep -E "BROKER-SYNC-CENSUS|schwabapi.com|SCHWAB.*(REST|HTTP|429)|Schwab.*(request|HTTP|429)" | head -n 400' > .ownmix1-q2-oms-bounded.log
+ssh -o BatchMode=yes mai-tai-vps 'sudo -n nice -n 19 ionice -c 3 tail -n 4000 /var/log/project-mai-tai/market-data.log | grep -E "schwabapi.com|SCHWAB.*(REST|HTTP|429)|Schwab.*(request|HTTP|429)" | head -n 60' > .ownmix1-q2-market-data-bounded.log
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/ownmix1/audit_q2_rest.py .ownmix1-q2-oms-bounded.log .ownmix1-q2-market-data-bounded.log > docs/review-artifacts/ownmix1/q2_rest_evidence.json
+Public primary-source inspection: https://developer.schwab.com/products/trader-api--individual
+No readable rate-limit document found; no authenticated portal/credentials used.
 
 Static/marker/diff checks:
-PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m ruff check src tests docs/review-artifacts/ownmix1/mutate_ownership.py docs/review-artifacts/ownmix1/verify_old_code_schema.py docs/review-artifacts/ownmix1/verify_suite_pair.py
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m ruff check src tests docs/review-artifacts/ownmix1/audit_q2_rest.py docs/review-artifacts/ownmix1/mutate_ownership.py docs/review-artifacts/ownmix1/verify_old_code_schema.py docs/review-artifacts/ownmix1/verify_suite_pair.py
 PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python ops/health/check_log_marker_collisions.py
 git diff --check
