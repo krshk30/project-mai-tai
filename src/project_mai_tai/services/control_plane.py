@@ -5119,9 +5119,13 @@ def _seconds_since_eastern_label(value: str | None) -> float | None:
     return (utcnow().astimezone(EASTERN_TZ) - parsed).total_seconds()
 
 
-def _orb_session_closed() -> bool:
+def _orb_session_closed(bot: dict[str, Any]) -> bool:
     now_et = utcnow().astimezone(EASTERN_TZ)
-    return now_et.weekday() >= 5 or now_et.hour >= 10
+    return now_et.hour >= 10 and not bot.get("positions")
+
+
+def _orb_display_refresh_paused(bot: dict[str, Any]) -> bool:
+    return utcnow().astimezone(EASTERN_TZ).hour >= 16 or _orb_session_closed(bot)
 
 
 def _orb_within_display_session(timestamp: str | None) -> bool:
@@ -5129,7 +5133,7 @@ def _orb_within_display_session(timestamp: str | None) -> bool:
     if observed is None:
         return False
     today = utcnow().astimezone(EASTERN_TZ).date()
-    return observed.date() == today and observed.hour < 10
+    return observed.date() == today and observed <= observed.replace(hour=16, minute=0, second=0, microsecond=0)
 
 
 def _build_orb_live_listening_status(
@@ -5139,9 +5143,16 @@ def _build_orb_live_listening_status(
     heartbeat_at = str(service.get("observed_at") or "")
     tick_age = _seconds_since_eastern_label(latest_tick)
     state, detail, color = "UNKNOWN", "ORB-Schwab activity is not reported by the installed service.", "#ffcc5b"
-    if _orb_session_closed():
+    if bot.get("positions"):
+        state, color = "HOLDING", "#5fff8d"
+        detail = (
+            "ORB strategy book has an open managed row. Display window ended at 16:00 ET; auto-refresh is paused."
+            if _orb_display_refresh_paused(bot)
+            else "ORB strategy book has an open managed row. Auto-refresh continues until 16:00 ET."
+        )
+    elif _orb_session_closed(bot):
         date_label = utcnow().astimezone(EASTERN_TZ).strftime("%Y-%m-%d")
-        state, detail, color = "SESSION COMPLETE", f"{date_label} ORB session through 10:00 AM ET. Auto-refresh is paused; these are live broker results, not paper trades.", "#98a6c8"
+        state, detail, color = "SESSION COMPLETE", f"{date_label} ORB entry window is complete and its managed book is flat. Today's live broker results through 16:00 ET remain visible; auto-refresh is paused.", "#98a6c8"
     elif str(service.get("effective_status", service.get("status", ""))).lower() in {"inactive", "stopped", "stopping", "failed"}:
         state, detail, color = "STOPPED", "ORB-Schwab service is not running.", "#ff6b6b"
     elif tick_age is not None and 0 <= tick_age <= 90:
@@ -5881,7 +5892,7 @@ def _render_bot_detail_page(
     meta = BOT_PAGE_META[strategy_code]
     refresh_seconds = 30
     refresh_meta = f'<meta http-equiv="refresh" content="{refresh_seconds}">'
-    if strategy_code == "orb_schwab" and _orb_session_closed():
+    if strategy_code == "orb_schwab" and _orb_display_refresh_paused(bot):
         refresh_meta = ""
     recent_decisions = _resolved_bot_recent_decisions(data, bot)
     listening_status = _build_bot_listening_status(data, bot, recent_decisions)

@@ -175,9 +175,15 @@ def test_orbpage_fresh_own_tick_is_activity_without_decisions(monkeypatch: pytes
 
 def test_orbpage_session_boundary_filters_only_live_orb(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime(2026, 10, 6, 14, tzinfo=UTC))
-    assert control_plane_module._orb_session_closed()
+    assert control_plane_module._orb_session_closed({"positions": []})
     assert control_plane_module._orb_within_display_session("2026-10-06 09:59:59 AM ET")
-    assert not control_plane_module._orb_within_display_session("2026-10-06 10:00:00 AM ET")
+    assert control_plane_module._orb_within_display_session("2026-10-06 10:00:00 AM ET")
+    assert control_plane_module._orb_within_display_session("2026-10-06 03:59:59 PM ET")
+    assert control_plane_module._orb_within_display_session("2026-10-06 04:00:00 PM ET")
+    assert control_plane_module._parse_eastern_label("2026-10-06 04:00:00 PM ET").microsecond == 0
+    assert control_plane_module._parse_eastern_label("2026-10-06 04:00:00.5 PM ET") is None
+    assert not control_plane_module._orb_within_display_session("2026-10-06 04:00:00.5 PM ET")
+    assert not control_plane_module._orb_within_display_session("2026-10-06 04:00:01 PM ET")
     assert not control_plane_module._orb_within_display_session("2026-10-05 09:59:59 AM ET")
     assert not control_plane_module._orb_within_display_session("unreadable")
 
@@ -213,6 +219,132 @@ def test_orbpage_before_ten_refreshes_without_claiming_unreported_activity(monke
         assert "<strong>Status:</strong> UNKNOWN" in page
         assert "ORB-Schwab activity is not reported" in page
         assert "<strong>Routing:</strong> LIVE/SCHWAB" in page
+
+
+def _orbpage_managed_row(factory, *, strategy_code="orb_schwab", account_name="live:schwab_1m_v2", quantity="2"):
+    with factory() as session:
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == account_name))
+        if account is None:
+            account = BrokerAccount(name=account_name, provider="schwab", environment="test", is_active=True)
+            session.add(account)
+            session.flush()
+        strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
+        session.add(VirtualPosition(
+            strategy_id=strategy.id, broker_account_id=account.id, symbol="JAGX",
+            quantity=Decimal(quantity), average_price=Decimal("6.67"),
+        ))
+        session.commit()
+
+
+@pytest.mark.parametrize("at,flat_state,held_refresh", [
+    ("2026-10-06T13:59:59+00:00", "UNKNOWN", True),
+    ("2026-10-06T14:00:00+00:00", "SESSION COMPLETE", True),
+    ("2026-10-06T14:00:01+00:00", "SESSION COMPLETE", True),
+    ("2026-10-06T19:59:59+00:00", "SESSION COMPLETE", True),
+    ("2026-10-06T20:00:00+00:00", "SESSION COMPLETE", False),
+    ("2026-10-06T20:00:01+00:00", "SESSION COMPLETE", False),
+])
+@pytest.mark.parametrize("holding", [False, True])
+def test_orbpage_managed_row_session_and_refresh_boundaries(monkeypatch, at, flat_state, held_refresh, holding):
+    app, factory = _orbpage_app(monkeypatch)
+    if holding:
+        _orbpage_managed_row(factory)
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime.fromisoformat(at))
+    state = "HOLDING" if holding else flat_state
+    refresh = held_refresh if holding else flat_state != "SESSION COMPLETE"
+    with TestClient(app) as client:
+        live = client.get("/api/bot/orb-schwab").json()
+        page = client.get("/bot/orb").text
+        assert live["listening_status"]["state"] == state
+        assert len(live["positions"]) == int(holding)
+        assert f"<strong>Status:</strong> {state}" in page
+        assert ('http-equiv="refresh" content="30"' in page) is refresh
+        assert control_plane_module._orb_session_closed({"positions": live["positions"]}) is (state == "SESSION COMPLETE")
+        if holding:
+            assert live["positions"][0]["quantity"] == 2
+            assert "SESSION COMPLETE" not in page
+
+
+@pytest.mark.parametrize("strategy_code,account_name,quantity", [
+    ("schwab_1m_v2", "live:schwab_1m_v2", "100"),
+    ("orb_schwab", "live:other-schwab", "2"),
+    ("orb_schwab", "live:schwab_1m_v2", "0"),
+])
+def test_orbpage_foreign_or_flat_book_rows_do_not_hold_session(monkeypatch, strategy_code, account_name, quantity):
+    app, factory = _orbpage_app(monkeypatch)
+    _orbpage_managed_row(factory, strategy_code=strategy_code, account_name=account_name, quantity=quantity)
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime(2026, 10, 6, 14, 1, tzinfo=UTC))
+    with TestClient(app) as client:
+        live = client.get("/api/bot/orb-schwab").json()
+        page = client.get("/bot/orb").text
+        assert live["positions"] == []
+        assert live["listening_status"]["state"] == "SESSION COMPLETE"
+        assert "<strong>Status:</strong> HOLDING" not in page
+        assert 'http-equiv="refresh"' not in page
+
+
+@pytest.mark.parametrize("exit_at,included", [
+    ("2026-10-06T14:30:00+00:00", True),
+    ("2026-10-06T19:55:00+00:00", True),
+    ("2026-10-06T20:00:00+00:00", True),
+    ("2026-10-06T20:00:01+00:00", False),
+])
+def test_orbpage_recorded_shape_late_exit_is_visible_through_sixteen(monkeypatch, exit_at, included):
+    app, factory = _orbpage_app(monkeypatch)
+    with factory() as session:
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == "live:schwab_1m_v2"))
+        live = session.scalar(select(Strategy).where(Strategy.code == "orb_schwab"))
+        _seed_completed_cycle(
+            session, strategy=live, account=account, symbol="LATE_ORB", quantity="2",
+            entry_price="6.67", exit_price="6.6001",
+            entry_time=datetime(2026, 10, 6, 13, 30, 14, tzinfo=UTC),
+            exit_time=datetime.fromisoformat(exit_at), path="ORB", exit_reason="ATR_FLIP",
+        )
+        session.commit()
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime(2026, 10, 6, 20, 5, tzinfo=UTC))
+    with TestClient(app) as client:
+        live = client.get("/api/bot/orb-schwab").json()
+        for key in ("recent_orders", "recent_fills", "recent_intents"):
+            assert len([row for row in live[key] if row["symbol"] == "LATE_ORB"]) == (2 if included else 1)
+        assert len(live["closed_today"]) == (2 if included else 1)
+        assert live["daily_pnl"] == pytest.approx(-0.2796 if included else -0.1398)
+        page = client.get("/bot/orb").text
+        assert "6.6001" in page
+
+
+def test_orbpage_holding_render_does_not_mutate_trading_rows(monkeypatch):
+    app, factory = _orbpage_app(monkeypatch)
+    _orbpage_managed_row(factory)
+
+    def trading_rows():
+        with factory() as session:
+            return (
+                list(session.execute(select(BrokerOrder.id, BrokerOrder.status, BrokerOrder.payload).order_by(BrokerOrder.id))),
+                list(session.execute(select(Fill.id, Fill.quantity, Fill.price).order_by(Fill.id))),
+                list(session.execute(select(TradeIntent.id, TradeIntent.status, TradeIntent.payload).order_by(TradeIntent.id))),
+                list(session.execute(select(VirtualPosition.id, VirtualPosition.quantity, VirtualPosition.average_price).order_by(VirtualPosition.id))),
+            )
+
+    before = trading_rows()
+    with TestClient(app) as client:
+        assert client.get("/api/bot/orb-schwab").json()["listening_status"]["state"] == "HOLDING"
+        assert "<strong>Status:</strong> HOLDING" in client.get("/bot/orb").text
+    assert trading_rows() == before
+
+
+@pytest.mark.parametrize("at,flat_state", [
+    ("2026-10-10T13:59:59+00:00", "UNKNOWN"),
+    ("2026-10-10T14:00:00+00:00", "SESSION COMPLETE"),
+])
+@pytest.mark.parametrize("holding", [False, True])
+def test_orbpage_weekend_display_uses_the_same_time_and_owned_book_rule(monkeypatch, at, flat_state, holding):
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime.fromisoformat(at))
+    bot = {"strategy_code": "orb_schwab", "provider": "schwab", "watchlist": [],
+           "positions": [{"ticker": "JAGX", "quantity": 2}] if holding else [], "last_tick_at": {}}
+    status = _build_bot_listening_status({"services": [], "market_data": {}}, bot, [])
+    assert status["state"] == ("HOLDING" if holding else flat_state)
+    assert control_plane_module._orb_session_closed(bot) is (not holding and flat_state == "SESSION COMPLETE")
+    assert control_plane_module._orb_display_refresh_paused(bot) is (not holding and flat_state == "SESSION COMPLETE")
 
 
 def test_exchange_schwab_authorization_code_uses_url_request(monkeypatch: pytest.MonkeyPatch) -> None:
