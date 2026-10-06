@@ -11,12 +11,14 @@ import pytest
 import daily
 import release_policy as policy
 from test_daily_release import NOW, report
+from test_retry_zero_mechanics import controlled_receipt
 
 JOB = Path(__file__).parent
 LOCAL = Path(__file__).resolve().parents[4]
 
 
-def setup(monkeypatch, tmp_path, *, gate_rc=0, adapter_rc=0, timeout=False, missing_report=False):
+def setup(monkeypatch, tmp_path, *, gate_rc=0, adapter_rc=0, timeout=False, missing_report=False,
+          retry_rc=0, retry_change=None, retry_timeout=False):
     root, repo, reports = tmp_path / "daily", tmp_path / "repo", tmp_path / "reports"
     for path in (root / "runs", repo / "ops/health", reports):
         path.mkdir(parents=True, exist_ok=True)
@@ -26,7 +28,7 @@ def setup(monkeypatch, tmp_path, *, gate_rc=0, adapter_rc=0, timeout=False, miss
     adapter = repo / "ops/health/preopen_alert.sh"
     adapter.write_bytes(subprocess.check_output(["git", "show", policy.APP + ":ops/health/preopen_alert.sh"], cwd=LOCAL))
     installed = {}
-    for name in ("daily.py", "release_policy.py"):
+    for name in ("daily.py", "release_policy.py", "retry_zero_readonly.py"):
         (root / name).write_bytes((JOB / name).read_bytes())
         (root / name).chmod(0o600)
         installed[name] = policy.digest((root / name).read_bytes())
@@ -59,6 +61,13 @@ def setup(monkeypatch, tmp_path, *, gate_rc=0, adapter_rc=0, timeout=False, miss
     def command(args, **kwargs):
         args = list(map(str, args))
         calls.append(args)
+        if args[-1] == str(root / "retry_zero_readonly.py"):
+            if retry_timeout:
+                raise subprocess.TimeoutExpired(args, 20)
+            receipt = controlled_receipt()
+            if retry_change:
+                retry_change(receipt)
+            return SimpleNamespace(returncode=retry_rc, stdout=policy.canonical(receipt), stderr=b"")
         if args == ["bash", str(gate)]:
             if timeout:
                 raise subprocess.TimeoutExpired(args, 240, output=b"CONTROLLED timeout partial output")
@@ -83,7 +92,9 @@ def test_literal_daily_gate_rc_report_receipt_and_onfailure_once(monkeypatch, tm
     latest = Path(json.loads((root / "latest.json").read_bytes())["run"])
     receipt = json.loads((latest / "complete.json").read_bytes())
     assert receipt["gate_rc"] == rc
-    assert calls == [["bash", str(gate)]]
+    assert len(calls) == 2 and calls[0][-1] == str(root / "retry_zero_readonly.py")
+    assert calls[1] == ["bash", str(gate)]
+    assert (latest / "retry-zero-coverage.json").exists()
     if rc:
         assert daily.notify() == 0
         assert json.loads((latest / "notification-complete.json").read_bytes())["delivery_confirmed"]
@@ -141,3 +152,21 @@ def test_evidence_input_drift_refuses_gate(monkeypatch, tmp_path):
     with pytest.raises(policy.Stop):
         daily.run()
     assert calls == []
+
+
+@pytest.mark.parametrize("option", [dict(retry_rc=2), dict(retry_timeout=True),
+    dict(retry_change=lambda r: r.update(checked=1)),
+    dict(retry_change=lambda r: r["rows"][0]["values"].update({policy.RETRY_MAX: "1"})),
+    dict(retry_change=lambda r: r["rows"][1]["values"].pop(policy.RETRY_MAX)),
+    dict(retry_change=lambda r: r["rows"][1]["after"].update(MainPID="9999")),
+    dict(retry_change=lambda r: r.update(measured_at_utc="2026-10-06T10:20:00+00:00"))])
+def test_daily_zero_guard_failure_never_runs_gate_one_onfailure(monkeypatch, tmp_path, option):
+    root, _, calls = setup(monkeypatch, tmp_path, **option)
+    assert daily.run() == 2
+    assert not any(args[0] == "bash" for args in calls)
+    latest = Path(json.loads((root / "latest.json").read_bytes())["run"])
+    assert (latest / "error.json").exists() and not (latest / "retry-zero-coverage.json").exists()
+    assert daily.notify() == 0
+    assert len([args for args in calls if "ERROR" in args]) == 1
+    with pytest.raises(FileExistsError):
+        daily.notify()

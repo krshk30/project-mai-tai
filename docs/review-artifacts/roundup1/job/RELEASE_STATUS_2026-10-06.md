@@ -1,4 +1,13 @@
-# Four-Item Literal Mechanics Checkpoint
+# Five Active Items, Display Source Included But Not Activated
+
+Current working integration receipt:568PASS/29.61s,
+/tmp/roundup1-retry-zero-integrated-final-20261006.log;14 fresh in-memory
+mechanics probes PASS control/ASSERTION_RED mutant, no source rewriting,
+/tmp/roundup1-retry-zero-integrated-mutations-20261006.json. Ruff/diff PASS.
+Separate committed-source rerun and deterministic manifest verification receipt
+is published in RELEASE_VERIFICATION_RETRY_ZERO_2026-10-06.md. The parent484PASS
+clean4e8d control does not validate this later integration. Historical c21/469
+and d125 receipts below remain historical, never new application admission.
 
 Status: **REVIEWABLE / NOT ADMITTED**, not a stage, install, live flat receipt
 or broker acceptance claim. Bounded read-only prior journal/file and current
@@ -6,23 +15,31 @@ paper/config evidence was captured; no production gates/provider requests,
 service actions, env/DB/Redis writes or application-source edits in this lane.
 The d125 commit and `BUILD_STATUS_2026-10-06.md` remain unchanged evidence.
 
-Candidate is exact c21d8274fcd1d3129d61207a33dd7b002a7c9e8c, whole tree
-e01851ac630ebf425de655c5c09dc11ae3c0304e; BOX7823 baseline; no migration.
-Only v2/OMS/orb-schwab restart once. Only the three reviewed env enables are
-implemented. RETRYOFF removal is requested but excluded pending acceptance.
+Candidate is exact4805ddc81184c76b4d5cef5c483c809edb666fe6, whole tree
+4248057079864f93066a69f355e2607840c701b9; BOX7823 baseline; no migration.
+Only v2/OMS/orb-schwab restart once. The three reviewed env enables and numeric
+retry-max0 are implemented; retry-enabledtrue must already be explicit and is
+preserved byte-for-byte. Superseded OFF/removal is withdrawn, not accepted.
 T43, CLEARWAIT, new WEBULL lanes, MIRRORHOLD Step0 and Pause are not adopted.
-The newer #1099 recovery/MIRROR-counter build and #1100 display build do not
-hold this candidate's install and are not included without a fresh reviewed
-merged pin before the start. This checkpoint grants no additional install or
-process authority. Candidate remains c21/four items/151 checks.
+#1099 recovery/MIRROR-counter is excluded. #1100 merged15:04:24ET; local whole
+tree equals pinned56c9357b, hosted latest pin37514987598 and both Validate
+37513768160/37513775601 attempt2 SUCCESS. Display source is in this application
+checkout; activation remains UNMEASURED/NOT AUTHORIZED. Control uses uvicorn
+reload=False/no systemd ExecReload and owns SchwabTokenRefresher. No control
+action is added. Parent/user resolve activation separately, never claim all six
+items activated. This checkpoint grants no additional install/process authority.
+Golden source catalogs remain151; isolated numeric catalog raises measured
+population to153 (143 boolean+10 numeric), dropping no original row.
 
 ## Exclusions And Runtime Conditions
 
-- RETRYOFF1: parent exact-main recorded OLOX OFF replay still gives a second
-  primary/mirror after confirmation close. The27PASS OFF suite agrees with the
-  existing deliberate confirmation-only reset, not the no-second-trade card.
-  No retry-key removal, false override, catalog change or trading-source fix
-  is included. Parent owns `/tmp/codex-retryoff1-olox-*` and disposition.
+- RETRYOFF1: corrected max0/retain-enabledtrue is accepted after parent's
+  recorded33PASS decision replay and max0->1 two-assertion RED mutation.
+  IPDN11:5x was a first new SELL-cycle waiting reprice; actual12:16->12:17 is
+  the blocked closed retry. Owned RETRY_ZERO_RECEIPT_2026-10-06.md binds the
+  independently read raw hashes and correction, not a new live replay.
+  Failed OFF replay remains historical; no enabled removal or false override.
+  Catalog/proc/env guards admit only explicit zero, never defaults.
 - Row47: prior recorded manager rows prove UNIT/init.scope, invocation and
   prefixed exit1 schema. The retained file traceback is untimestamped; no
   explicit SIGTERM event exists in the bounded prior capture. These are parser
@@ -35,9 +52,10 @@ process authority. Candidate remains c21/four items/151 checks.
 - Night FLAGGATE: latest operator ruling admits only the exact two named
   momentum-paper UNKNOWNs, with exact inactive reason and unchanged fresh
   PID0/inactive/dead/success/NRestarts0/exit0 plus October6 scheduled09:40 stop
-  timestamp (within30s). Raw149/151, rc2, UNKNOWN2 is preserved, never151PASS.
-  All other149 identities must PASS; any other row/reason/failure/state drift
-  blocks. No checker/catalog edit or paper restart. Next morning's dynamic
+  timestamp (within30s). Raw151/153, rc2, UNKNOWN2 is preserved, never153PASS.
+  All other151 identities must PASS; any other row/reason/failure/state drift
+  blocks. No checker/application catalog edit or paper restart. Only the
+  reviewed isolated numeric artifact adds both zero checks. Next morning's dynamic
   active-paper proof is unchanged. Coverage is retained in COMPLETE/journal.
 - Current measured IPDN132/66, managed/virtual and bot balances plus OLOX
   activity remain admission blockers. Positive1000 activation is UNMEASURED.
@@ -46,7 +64,8 @@ process authority. Candidate remains c21/four items/151 checks.
   state read. Missing/failed/unsupported/malformed/wrong source/account/type,
   stale/future or nonempty armed field blocks. No application/gate rewrite.
 
-The manifest explicitly excludes RETRYOFF and unpinned lanes, lists these
+The new manifest includes corrected zero budget and excludes superseded
+OFF/removal, display activation and unpinned lanes, lists these
 runtime requirements, and requires exact independent approval. No approval.json
 is generated. A different candidate/policy needs a new committed/tested/reviewed
 release and hashes, not editing a staged manifest or waiving a live blocker.
@@ -68,7 +87,7 @@ flat and NOT operator-only inferred from127BUY/127SELL. This is a local policy
 control, not a positive observed snapshot. The d125 pure helper is unchanged.
 
 `census_readonly.py`: copied reviewed Oct5 collector, changed only accepted
-source set BOX7823/c21 and installed schema0022 requirement. It is still the
+source set BOX7823/4805 and installed schema0022 requirement. It is still the
 reviewed14-ticket immutable population, **not** a new general legacy discovery
 or clearance policy. Two repeatable-read read-only SQL censuses bound at64 rows,
 5s statement timeout, stable journal identity before/after broker reads. New
@@ -102,6 +121,20 @@ unmeasured warmup evidence gets a bounded180s wait; measured failure stops.
 Official unmodified restart evidence grades bar/REST continuity; unknown cannot
 become after-hours N/A by a DBzero guess. Future live delivery is UNMEASURED.
 
+`retry_zero_readonly.py`: no Settings defaults, token or broker calls. Each owner
+uses two systemd state reads (5s each) bracketing a bounded262144-byte /proc
+environment read. Exact enabledtrue/max0, active/running/NRestarts0, canonical
+positive PID/start-monotonic and invocation are mandatory; alias/duplicate,
+missing/malformed/unreadable/drift blocks. Only selected values plus raw hash
+and safe identity are returned, never secrets. Daily subprocess is bounded20s
+and16KiB output and requires a fresh invocation-timestamped complete2/2 proof
+before the existing real gate (240s); OnFailure stays single-delivery. This raw
+provenance proof supplements, not substitutes for, the catalog153 audit.
+Pre-write env/candidate/diff/hash and isolated numeric bytes are validated
+before source/env changes and rechecked before backup/source advance.
+All original numeric rows are preserved; isolated replacement is backed up and
+its exact diff recorded. Golden source catalogs are not written.
+
 `gate_patch.py`, `daily.py`, shell entry points and three units: exact recorded
 8cdaf gate input; date/report from today's ET clock; only OMS/v2/orb-schwab static
 pins updated; guard-linked dynamic paper active/NRestarts0/floor admission.
@@ -124,9 +157,12 @@ the three `project-mai-tai-preopen*.service/.timer` files,
 `test_attended_release.py`, `test_daily_release.py`, `test_daily_monitor.py`,
 `test_raw_gate_admission.py`, `test_literal_rehearsal.py`,
 `test_manifest_release.py`, `mechanics_mutation_probe.py`, this status and the
-generated `release-manifest.json`, `armed_readonly.py`,
+historical generated `release-manifest.json`, `armed_readonly.py`,
 `test_armed_readonly.py`, `test_paper_coverage.py`,
-`test_row47_recorded_schema.py`, `row47_prior_schema.json`.
+`test_row47_recorded_schema.py`, `row47_prior_schema.json`,
+`retry_zero_readonly.py`, `expected_numeric.retry-zero.json`,
+`test_retry_zero_catalog.py`, `test_retry_zero_mechanics.py`,
+`RETRY_ZERO_RECEIPT_2026-10-06.md`.
 No parent handoff or app files touched.
 
 High-signal test names: `test_literal_full_sequence_backups_gate_diff_hashes_units_timer_only`,
@@ -145,7 +181,7 @@ High-signal test names: `test_literal_full_sequence_backups_gate_diff_hashes_uni
 
 Test/hash/commit receipt is published separately after the final rerun and
 deterministic committed-blob manifest generation, so it does not form a circular
-manifest input. The manifest binds both plans, executable artifacts and c21
+manifest input. The new manifest binds both plans, executable artifacts and4805
 application blobs. Do not issue an approval or stage it while the blockers above
 remain. Fake system/provider results and root metadata are explicitly controlled
 fixtures, not fabricated production records or acceptance history.

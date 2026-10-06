@@ -14,9 +14,11 @@ import signal
 import subprocess
 import sys
 import time
+from io import StringIO
+from dotenv.parser import parse_stream
 
 from daily import exclusive
-from release_policy import (APP, BASELINE_GATE, BOX, CHANGED, ET, NEW_ENV, PHASES,
+from release_policy import (APP, BASELINE_GATE, BOX, CHANGED, ENV_UPDATES, ET, NEW_ENV, NUMERIC_ARTIFACT, PHASES, RETRY_ENABLED,
                             SERVICES, TREE, Stop, approval, canonical, digest, first_write_window,
                             need, row47, states)
 
@@ -76,20 +78,26 @@ def parse_helper(raw):
 
 def env_candidate(raw):
     lines = raw.decode().splitlines(keepends=True)
+    bindings = list(parse_stream(StringIO(raw.decode())))
+    need(not any(binding.error for binding in bindings), "malformed EnvironmentFile")
+    retained = [(binding.key, binding.value) for binding in bindings
+                if binding.key is not None and binding.key.upper() == RETRY_ENABLED]
+    need(retained == [(RETRY_ENABLED, "true")], "retry-enabled must already be explicit true unchanged")
     seen = {}
     for i, line in enumerate(lines):
         match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
         if match:
             key = match[1].upper()
             need(key not in seen, "duplicate/case-alias EnvironmentFile definition")
+            need(key not in ENV_UPDATES or match[1] == key, "case-alias env update forbidden")
             seen[key] = i
-    for key in NEW_ENV:
+    for key, value in ENV_UPDATES.items():
         if key in seen:
-            lines[seen[key]] = key + "=true\n"
+            lines[seen[key]] = key + "=" + value + "\n"
         else:
             if lines and not lines[-1].endswith("\n"):
                 lines[-1] += "\n"
-            lines.append(key + "=true\n")
+            lines.append(key + "=" + value + "\n")
     return "".join(lines).encode()
 
 
@@ -272,7 +280,23 @@ class Real:
         need(all(path.startswith("docs/") for path in paths), "moving main has application changes")
         need(digest(GATE.read_bytes()) == BASELINE_GATE, "preopen baseline drift")
         need(not ENV.is_symlink() and ENV.stat().st_uid == 0 and ENV.stat().st_mode & 0o777 == 0o600, "env mode/owner")
-        env_candidate(ENV.read_bytes())
+        self.env_before = ENV.read_bytes()
+        self.env_after = env_candidate(self.env_before)
+        from difflib import unified_diff
+        exclusive(self.attempt / "env.prewrite.diff", "".join(unified_diff(
+            self.env_before.decode().splitlines(True), self.env_after.decode().splitlines(True),
+            fromfile="env.before", tofile="env.reviewed-after", n=0)).encode())
+        from retry_zero_readonly import catalog
+        numeric = self.command(["git", "-C", REPO, "show", APP + ":ops/health/expected_numeric.json"]).stdout
+        reviewed = (self.job / NUMERIC_ARTIFACT).read_bytes()
+        catalog(reviewed, numeric)
+        exclusive(self.attempt / "numeric.prewrite.diff", "".join(unified_diff(
+            numeric.decode().splitlines(True), reviewed.decode().splitlines(True),
+            fromfile="golden-source-numeric", tofile="reviewed-isolated-numeric")).encode())
+        self.receipt("prewrite-env-catalog.json", canonical(dict(before_sha256=digest(self.env_before),
+                     after_sha256=digest(self.env_after), env_updates=ENV_UPDATES,
+                     retained={RETRY_ENABLED: "true"}, source_numeric_sha256=digest(numeric),
+                     reviewed_numeric_sha256=digest(reviewed), numeric_checks=10, total_checks=153)))
         self.before = self.fleet()
         need(all(self.before[name]["MainPID"] > 0 and self.before[name]["ActiveState"] == "active"
                  and self.before[name]["NRestarts"] == 0 and self.before[name]["Result"] == "success"
@@ -305,6 +329,10 @@ class Real:
 
     def prepare(self):
         self.gates(0)
+        need(ENV.read_bytes() == self.env_before, "env changed after prewrite admission")
+        from retry_zero_readonly import catalog
+        catalog((self.job / NUMERIC_ARTIFACT).read_bytes(),
+                self.command(["git", "-C", REPO, "show", APP + ":ops/health/expected_numeric.json"]).stdout)
         # Backups precede all source/env/catalog/gate replacement, with O_EXCL and hashes.
         for label, path in (("env", ENV), ("preopen", GATE)):
             exclusive(self.attempt / (label + ".before"), path.read_bytes())
@@ -326,6 +354,7 @@ class Real:
         need(ENV.read_bytes() == (self.attempt / "env.before").read_bytes(), "env changed during source advance")
         original = ENV.read_bytes()
         updated = env_candidate(original)
+        need(updated == self.env_after, "env candidate differs from prewrite receipt")
         from difflib import unified_diff
         diff = "".join(unified_diff(original.decode().splitlines(True), updated.decode().splitlines(True),
                                     fromfile="env.before", tofile="env.after", n=0))
@@ -333,6 +362,7 @@ class Real:
         self.replace(ENV, updated, 0o600, ENV.stat().st_uid, ENV.stat().st_gid)
         self.receipt("env-hashes.json", canonical(dict(before_sha256=digest(original), after_sha256=digest(updated),
                                                      diff_sha256=digest(diff.encode()), enabled_keys=NEW_ENV,
+                                                     env_updates=ENV_UPDATES, retained={RETRY_ENABLED: "true"},
                                                      retry_key_removed=False)))
 
     def replace(self, path, raw, mode, uid=0, gid=0):

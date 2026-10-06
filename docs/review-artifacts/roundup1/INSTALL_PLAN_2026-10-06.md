@@ -1,9 +1,11 @@
-# October 6 Release - Six-Item Intent, Five Included, Display Pending
+# October 6 Release - Six-Item Source, Five Active, Display Activation Pending
 
 **Application bound; literal release not yet staged.** APPROVED_SHA is
-`c21d8274fcd1d3129d61207a33dd7b002a7c9e8c`, tree
-`e01851ac630ebf425de655c5c09dc11ae3c0304e`. Its whole tree equals pinned
-ORBPURPLE1 head `ed7c2c81da28b1bf46eff70362dfd47a9f79337d`.
+`4805ddc81184c76b4d5cef5c483c809edb666fe6`, tree
+`4248057079864f93066a69f355e2607840c701b9`. Its whole tree equals pinned
+#1100 head `56c9357b66c591acb83a1aa7ccbcbc0847883dd9`, independently read from
+local Git and hosted merge receipt2026-10-06T19:04:24Z (15:04:24ET).
+The prior four-item c21 application/tree receipt below remains historical.
 ROUNDUP1 is already merged as `a7fed34d97732e1c1379ec77d89fd83f886ce2d8`;
 #1097 merged after it at 10:53:42 ET October 6. Hosted independent-review-pin
 and both Validate runs were PASS on that exact head before the non-admin
@@ -15,11 +17,11 @@ reviewer/Codex segments. Whole-tree equality is verified; production remains
 
 Tonight's intended six items are ROUNDUP1, LINE=CHART Restoration, ORBPURPLE1,
 daily preopen mechanics, corrected RETRYOFF1 zero budget and #1100 ORB display.
-The first four bind the merged c21 application below; the fifth is the accepted
-env-only policy on that same source. #1100 is **NOT INCLUDED** until verified
-exact-head review/checks and merge, new application SHA/tree binding and a
-separately approved control-process activation decision. This is five included
-items plus one pending, not a six-item executable release. Parent owns the new
+The first four and accepted env-only fifth bind the exact4805 application above.
+#1100 is **SOURCE INCLUDED / ACTIVATION PENDING** after verified merge; its
+handlers are not loaded without a separately approved control-process action.
+This is five active items plus one source-only, not a six-item activated release.
+Parent owns the new
 read-only bracket Step0; this checkpoint does not adopt or replace that work.
 
 The eight PM switches remain ON; the independent
@@ -141,15 +143,15 @@ it ON alongside ROUNDUP1. No file is staged on the box by this draft.
 
 ## Literal Runner Requirements Before Staging
 
-Local mechanics checkpoint: `job/runner_mechanics.sh` implements the dated
-first-stop window, clock-only gate invocation and bounded rc2 retries. This is
-a sourced component, **not a staged/executable full install**. Full actions,
-dynamic preopen gate/timer and immutable release still require assembly and
-testing before any box call. Do not substitute the October5 three-service/
-migration runner: today's sequence has three different services and no migration.
-The complete immutable runner/manifest/approval release is **UNREADY** until
-assembled, tested and independently reviewed; a sourced mechanics component is
-not a full runner. No local test or policy allowance authorizes a box action.
+Current literal mechanics are `job/attended.py`, not the historical sourced
+`job/runner_mechanics.sh` component. Full fake sequence, backup/abort,
+153-check isolated catalog and max-zero daily guards are locally assembled and
+tested; no production gate was invoked. The generated immutable release still
+needs exact independent review/approval and fresh admission and is **UNREADY**
+for production without them. Do not substitute the October5 migration runner:
+today's sequence has three different services and no migration. No local test
+or policy allowance authorizes a box action. The following116-test component
+receipt remains historical; current literal receipt is below.
 
 Local116-test control PASS (53 unchanged MI/NXL controls, exact-session/clock
 and retry controls). Eleven in-memory policy mutations each fail an assertion:
@@ -284,7 +286,7 @@ extra restart, ticket purge or recovery action is pre-authorized.
 `job/attended.py` contains the exact three-owner sequence, phase-aware fresh
 admission and unchanged-owner proof, source/env/catalog/gate backups, abort
 state/notification and no automatic recovery. `job/make_release.py` packages
-only exact committed blobs and the pinned c21 application sources. The daily
+only exact committed blobs and the pinned4805 application sources. The daily
 wrapper, narrow recorded-gate transform and three timer units are literal local
 artifacts. No approval is generated and no production staging/run is authorized
 by those bytes. The entry point requires an exact independently reviewed
@@ -305,14 +307,15 @@ receipt. `job/BUILD_STATUS_2026-10-06.md` and commit d125 retain their original
 evidence unchanged. Full controlled sequences simulate system/provider results;
 they do not establish live flatness, historic acceptance or tomorrow's timer
 result. The latest narrow operator ruling supersedes the former nighttime
-paper coverage blocker: preserve actual **149/151, rc2, UNKNOWN2**, never151PASS.
+paper coverage blocker: preserve actual **151/153, rc2, UNKNOWN2**, never153PASS.
 Only momentum_paper_enabled and market_data_subscription_startup_enabled on
 momentum-paper with exact reason 'momentum-paper is not active' qualify, plus
 unchanged fresh PID0/inactive/dead/success/NRestarts0/exit0 and dated09:40
-InactiveEnterTimestamp (within30s). The other149 rows must PASS with exact151
+InactiveEnterTimestamp (within30s). The other151 rows must PASS with exact153
 unique catalog identities and no failures. Any other UNKNOWN/reason/state/time,
-missing proof or paper drift stops. Runtime checker/catalog is unchanged; no
-paper restart. Coverage is retained in raw results, COMPLETE and deployment
+missing proof or paper drift stops. Runtime checker/golden source catalog is
+unchanged; reviewed isolated numeric adds two zero checks. No paper restart.
+Coverage is retained in raw results, COMPLETE and deployment
 journal. This is the October5 precedent at the new denominator, not whole-fleet
 PASS. Current IPDN132/66 continues to block all fresh admission.
 
@@ -344,17 +347,24 @@ Keep `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true` unchanged and set
 The old flag-OFF/removal FAIL remains historical for a different configuration;
 its requested removal and expected-False catalog are withdrawn, not pending.
 Reviewer accepts the33PASS replay and IPDN correction and authorizes this env
-policy plus the new numeric expectation. **Plan inclusion is confirmed;
-literal runner integration/testing is PENDING.**
-No production environment has been changed or adopted by this plan-only update.
+policy plus the new numeric expectation. Plan inclusion is confirmed.
+**Literal runner integration is LOCALLY TESTED**, not a production adoption.
+No production environment has been changed or adopted by this local release.
 Owned isolated numeric catalog SHA256:
 `bff3fad73fa593b48af08fc3cb8ab6cad5d2d055e1bc787706ff79ad34dbf205`.
 Plan/catalog focus19PASS includes both-owner explicit zero, per-owner missing,
 nonzero, negative, malformed, empty and unreadable controls. This uses the
 unchanged application checker with controlled process readings, not production
-reads; runner selection, full zero-budget rehearsal and manifest remain pending.
-Owned job-suite control484PASS/17.41s; this preserves the existing full fake
-sequences but does not make them zero-budget integration rehearsals.
+reads. That plan-only19/484PASS checkpoint4e8d7ee2 remains historical and does
+not validate the subsequent integration. New own integrated job run568PASS/
+29.61s includes normal/proven-row47/paperUNKNOWN2 complete sequences, exact
+enabledtrue retention/max0 update before stop, catalog diff/153 coverage, stable
+raw process and daily guard failures, immutable-package hashes and control
+action refusals. Raw /tmp/roundup1-retry-zero-integrated-final-20261006.log.
+Fourteen fresh in-memory mechanics probes PASS control/ASSERTION_RED mutant,
+including four new retry raw-value/write/receipt/catalog bindings, no rewriting:
+/tmp/roundup1-retry-zero-integrated-mutations-20261006.json. This is not a live
+broker replay, fresh flat/gate admission or Linux/systemd activation receipt.
 
 Parent receipt: docs/review-artifacts/retryoff1/ZERO_BUDGET_REPLAY_2026-10-06.md
 in the shared handoff worktree. Independently read raw33PASS/0.87s focus log and
@@ -386,21 +396,24 @@ This supersedes the earlier separate supplemental2/2 catalog proposal, not the
 explicit raw zero-budget process proof. Existing first/waiting/SELL controls
 are unchanged. No effect is claimed before the scoped restart and fresh gates.
 
-This plan checkpoint includes the corrected env-only card; mechanics integration
-is still pending. Commit781454af and its337b1589 manifest are historical and do
-not bind this updated plan. There is no current immutable manifest for it yet.
-Regenerate an immutable committed-blob release after the updated mechanics and
-full fake rehearsal pass; no production staging/attempt until exact review and
-fresh after16:00 admission. #1100 remains excluded under the following exact
+This plan includes the corrected env-only card and locally tested mechanics.
+Commit781454af and its337b1589 manifest remain historical, not current approval.
+Generate the new committed-blob release as release-manifest-retry-zero.json;
+the separate RELEASE_VERIFICATION_RETRY_ZERO_2026-10-06.md receipt must name
+its exact source commit/artifact hashes to avoid circular manifest inputs.
+No production staging/attempt until exact review and
+fresh after16:00 admission. #1100 activation remains excluded under the following exact
 read-only disposition; this three-owner restart scope is unchanged.
 
-### #1100 Pending Merge And Control Activation
+### #1100 Verified Merge, Control Activation Pending
 
-Read-only hosted result: head56c9357b66c591acb83a1aa7ccbcbc0847883dd9 is OPEN,
-mergeCommit=null. Latest independent-review-pin37514987598 is SUCCESS;
-Validate37513775601 is FAILURE, while37513768160 is SUCCESS. Parent investigates
-the failed check; a successful pin does not waive it or establish a merge.
-Do not quietly substitute this head, a moving main or an unverified merge.
+Read-only hosted result: head56c9357b66c591acb83a1aa7ccbcbc0847883dd9 is MERGED,
+mergeCommit=4805ddc81184c76b4d5cef5c483c809edb666fe6,
+mergedAt2026-10-06T19:04:24Z. Latest independent-review-pin37514987598 is SUCCESS;
+Validate37513768160 is SUCCESS and37513775601 attempt2 is SUCCESS,
+completed19:03:42Z. Attempt1 SQLite139 is retained as historical, not waived;
+no head edit occurred. Merge tree4248057079864f93066a69f355e2607840c701b9 equals
+the pinned head's whole tree. No moving main or unverified merge substitution.
 
 Exact local diff c21->56c9357b under src/ops-systemd is solely
 src/project_mai_tai/services/control_plane.py (153 insertions/9 deletions).
@@ -412,7 +425,7 @@ The control lifespan also owns SchwabTokenRefresher at3580; control activation
 therefore needs separately reviewed restart/reload choreography and fresh
 auth-owner/health proof. No such additional restart is authorized or implemented
 by this plan: control must remain untouched by the three-owner runner.
-If #1100 merges without activation authority, report display activation pending,
+With #1100 merged but without activation authority, report display activation pending,
 not installed/working, and ask parent to resolve scope before claiming six items.
 
 ## Dated IPDN Operator Residual Policy

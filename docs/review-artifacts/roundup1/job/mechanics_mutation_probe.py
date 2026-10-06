@@ -6,6 +6,14 @@ import sys
 
 ROOT = Path(__file__).parent
 PROBES = (
+    ("retry_explicit_raw_values", "retry_zero_readonly", 'need(found == [(key, expected)],', 'need(True,',
+     "import test_retry_zero_mechanics as t; import release_policy as p; t.test_raw_missing_default_nonzero_negative_malformed_each_key_blocks(p.RETRY_MAX, None)"),
+    ("retry_env_zero_write", "release_policy", 'RETRY_MAX: "0"}', 'RETRY_MAX: "1"}',
+     "import test_retry_zero_mechanics as t; t.test_env_zero_update_preserves_enabled_and_protected_bytes()"),
+    ("retry_receipt_value_binding", "retry_zero_readonly", 'row["values"] == EXPECTED and', 'True and',
+     "import test_retry_zero_mechanics as t; import release_policy as p; t.test_receipt_stale_incomplete_changed_values_never_pass(lambda r: r['rows'][0]['values'].update({p.RETRY_MAX:'1'}))"),
+    ("retry_catalog_hash", "retry_zero_readonly", 'need(digest(raw) == NUMERIC_SHA,', 'need(True,',
+     "import test_retry_zero_mechanics as t; t.test_catalog_semantically_equal_unreviewed_bytes_block()"),
     ("armed_field_presence", "armed_readonly", 'need("cw_armed_segments" in payload and type(payload["cw_armed_segments"]) is list,',
      'payload.setdefault("cw_armed_segments", []); need(True,',
      "import test_armed_readonly as t; t.test_missing_malformed_nonzero_wrong_identity_stale_never_zero(lambda e: e['payload'].pop('cw_armed_segments'))"),

@@ -5,8 +5,8 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[4]
-APP = "c21d8274fcd1d3129d61207a33dd7b002a7c9e8c"
-TREE = "e01851ac630ebf425de655c5c09dc11ae3c0304e"
+APP = "4805ddc81184c76b4d5cef5c483c809edb666fe6"
+TREE = "4248057079864f93066a69f355e2607840c701b9"
 PLAN = ROOT / "docs/review-artifacts/roundup1/INSTALL_PLAN_2026-10-06.md"
 PREOPEN = ROOT / "docs/review-artifacts/preopen-daily/PLAN_2026-10-06.md"
 
@@ -62,7 +62,7 @@ def test_install_scope_is_exact_three_new_env_keys_and_three_processes():
 def test_daily_timer_is_checks_only_and_never_starts_application_units():
     document = PREOPEN.read_text()
     assert "Persistent=false" in document and "06:20:00 America/New_York" in document
-    assert "the combined four-item plan" in document
+    assert "the combined five-active-item plan" in document
     assert "start" in document and "**the timer only**" in document
     assert "No Wants/Requires dependency on an application unit" in document
     assert "Date/paper changes do not authorize any other identity refresh" in document

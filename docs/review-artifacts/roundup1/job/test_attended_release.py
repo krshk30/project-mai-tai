@@ -242,26 +242,27 @@ def test_real_action_resets_exact_unit_only_after_complete_row47(monkeypatch, tm
         ["systemctl", "reset-failed", "project-mai-tai-orb-schwab.service"]]
 
 
-def test_env_changes_exact_three_and_retains_all_other_bytes():
-    raw = b"SECRET=untouched\nMAI_TAI_PROTECTED_SYMBOLS=TE,CYN\nOTHER=true\n" + policy.NEW_ENV[0].encode() + b"=false\n"
+def test_env_changes_three_booleans_and_zero_only_retains_all_other_bytes():
+    raw = b"SECRET=untouched\nMAI_TAI_PROTECTED_SYMBOLS=TE,CYN\nOTHER=true\n" + policy.RETRY_ENABLED.encode() + b"=true\n" + policy.NEW_ENV[0].encode() + b"=false\n"
     value = runner.env_candidate(raw)
     assert value.startswith(raw[:raw.index(policy.NEW_ENV[0].encode())])
     assert all(value.count((key + "=true\n").encode()) == 1 for key in policy.NEW_ENV)
-    assert len(value.splitlines()) == 6
+    assert value.count((policy.RETRY_MAX + "=0\n").encode()) == 1
+    assert len(value.splitlines()) == 8
 
 
 def test_duplicate_env_cannot_be_repaired_to_green():
     with pytest.raises(policy.Stop):
-        runner.env_candidate(b"A=1\nexport A=2\n")
+        runner.env_candidate((policy.RETRY_ENABLED + "=true\nA=1\nexport A=2\n").encode())
 
 
 def test_case_alias_duplicate_new_key_blocks_instead_of_shadowing_process():
     key = policy.NEW_ENV[0]
     with pytest.raises(policy.Stop):
-        runner.env_candidate((key + "=false\n" + key.lower() + "=false\n").encode())
+        runner.env_candidate((policy.RETRY_ENABLED + "=true\n" + key + "=false\n" + key.lower() + "=false\n").encode())
 
 
-def test_excluded_retry_key_is_retained_byte_for_byte():
+def test_retry_enabled_key_is_retained_byte_for_byte():
     raw = b"MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true\n"
     assert runner.env_candidate(raw).startswith(raw)
     assert runner.env_candidate(raw).count(b"RETRY_ONE_ENABLED") == 1
@@ -270,16 +271,16 @@ def test_excluded_retry_key_is_retained_byte_for_byte():
 def catalog_control():
     repo = Path(__file__).resolve().parents[4]
     catalog = json.loads(subprocess.check_output(["git", "show", policy.APP + ":ops/health/expected_flags.json"], cwd=repo))["flags"]
-    catalog += json.loads(subprocess.check_output(["git", "show", policy.APP + ":ops/health/expected_numeric.json"], cwd=repo))["settings"]
+    catalog += json.loads(Path(__file__).with_name(policy.NUMERIC_ARTIFACT).read_bytes())["settings"]
     raw = "\n".join("PASS flag=" + row["name"] + " service=" + name + " pid=100 controlled-snapshot"
                     for row in catalog for name in (row["owning_service"], *row.get("also_check_services", [])))
-    return catalog, raw + "\nFinal call: PASS; checked=151/151 mismatches=0 unknown=0\n"
+    return catalog, raw + "\nFinal call: PASS; checked=153/153 mismatches=0 unknown=0\n"
 
 
-def test_flaggate_exact151_control_and_unknowns_not_pass():
+def test_flaggate_exact153_control_and_unknowns_not_pass():
     catalog, raw = catalog_control()
     closeout.flag_result(0, raw, catalog)
-    for rc, changed in [(2, raw.replace("PASS; checked=151/151 mismatches=0 unknown=0", "UNKNOWN; checked=149/151 mismatches=0 unknown=2")),
-                        (0, raw.replace("151/151", "149/149")), (1, raw), (0, "\n".join(raw.splitlines()[1:]))]:
+    for rc, changed in [(2, raw.replace("PASS; checked=153/153 mismatches=0 unknown=0", "UNKNOWN; checked=151/153 mismatches=0 unknown=2")),
+                        (0, raw.replace("153/153", "151/151")), (1, raw), (0, "\n".join(raw.splitlines()[1:]))]:
         with pytest.raises(policy.Stop):
             closeout.flag_result(rc, changed, catalog)

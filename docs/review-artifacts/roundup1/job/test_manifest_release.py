@@ -86,15 +86,23 @@ def working_blob_control(monkeypatch):
                         if ref == "a" * 40 else original(ref, path))
 
 
-def test_deterministic_manifest_excludes_failed_retry_card_and_pins_runtime_conditions(monkeypatch):
+def test_deterministic_manifest_adopts_zero_not_off_and_pins_runtime_conditions(monkeypatch):
     working_blob_control(monkeypatch)
     first = make_release.generate("a" * 40)
     assert policy.canonical(first) == policy.canonical(make_release.generate("a" * 40))
     assert first["approved_sha"] == policy.APP and first["tree"] == policy.TREE
     assert first["blocking_acceptance"] == []
-    assert any("RETRYOFF1" in entry and "failed acceptance" in entry for entry in first["excluded"])
-    assert len(first["runtime_required"]) == 4
-    assert first["flaggate"]["total"] == 151 and "149/151 UNKNOWN2" in first["flaggate"]["required"]
+    assert any("RETRYOFF1" in entry and "withdrawn" in entry for entry in first["excluded"])
+    assert len(first["runtime_required"]) == 5
+    assert first["flaggate"]["total"] == 153 and "151/153 UNKNOWN2" in first["flaggate"]["required"]
+    assert first["env_updates"] == policy.ENV_UPDATES
+    assert first["retained_env"] == {policy.RETRY_ENABLED: "true"}
+    assert first["numeric_catalog"]["sha256"] == policy.NUMERIC_SHA
+    assert policy.NUMERIC_ARTIFACT in first["artifacts"]
+    assert "retry_zero_readonly.py" in first["artifacts"]
+    assert first["display"] == dict(merged_sha=policy.APP, source_in_checkout=True,
+                                    activation="UNMEASURED_NOT_AUTHORIZED", control_restart=False)
+    assert "src/project_mai_tai/services/control_plane.py" in first["application_blobs"]
     assert "armed_readonly.py" in first["artifacts"]
 
 

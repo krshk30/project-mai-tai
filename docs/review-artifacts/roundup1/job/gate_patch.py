@@ -1,7 +1,7 @@
 """Narrow, hash-bound transformation of the recorded deployed preopen gate."""
 import re
 import shlex
-from release_policy import APP, BASELINE_GATE, CHANGED, NEW_ENV, PM, digest, need
+from release_policy import APP, BASELINE_GATE, CHANGED, NEW_ENV, PM, RETRY_ENABLED, RETRY_MAX, digest, need
 
 
 def assignment(script, key, value):
@@ -41,6 +41,7 @@ fi''')
     expectations.update({("oms", NEW_ENV[2]), ("orb-schwab", NEW_ENV[2]),
                          ("orb-schwab", "MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED"),
                          ("orb-schwab", "MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED")})
+    expectations.update((name, RETRY_ENABLED) for name in ("oms", "schwab-1m-v2"))
     additions = ""
     for name, key in sorted(expectations):
         value = "false" if key == "MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED" else "true"
@@ -50,6 +51,9 @@ fi''')
     anchor = "  --expected-alembic-head 20261005_0022"
     need(script.count(anchor) == 1, "schema proof anchor ambiguous")
     script = script.replace(anchor, additions + anchor)
+    numeric = "".join(f"  --expect-flag '{name}:{RETRY_MAX}=0' \\\n" for name in ("oms", "schwab-1m-v2"))
+    need(RETRY_MAX not in script, "retry numeric expectation already present/ambiguous")
+    script = script.replace(anchor, numeric + anchor)
     annotation = 'preopen_record_restart_evidence "$evidence_rc" "$REPORT" "$evidence_output"\n'
     need(script.count(annotation) == 1, "verdict route anchor ambiguous")
     # The wrapper also checks report generation time; the hand-run gate checks its ET date.

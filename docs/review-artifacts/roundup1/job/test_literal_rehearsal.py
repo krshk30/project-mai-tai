@@ -128,7 +128,7 @@ class FakeSystem(attended.Real):
         return SimpleNamespace(returncode=rc, stdout=output, stderr=b"")
 
 
-def setup(monkeypatch, tmp_path, **options):
+def setup(monkeypatch, tmp_path, *, retry_env=None, **options):
     repo, job, attempt = tmp_path / "repo", tmp_path / "job", tmp_path / "attempt"
     for directory in (repo, job, attempt, repo / "logs", tmp_path / "helpers", tmp_path / "units"):
         directory.mkdir(parents=True, exist_ok=True)
@@ -145,7 +145,7 @@ def setup(monkeypatch, tmp_path, **options):
     gate, env = tmp_path / "preopen.sh", tmp_path / "environment"
     gate.write_bytes((JOB / "preopen.baseline.sh").read_bytes())
     gate.chmod(0o700)
-    env.write_text("MAI_TAI_PROTECTED_SYMBOLS=TE,CYN\nUNCHANGED=1\n")
+    env.write_text("MAI_TAI_PROTECTED_SYMBOLS=TE,CYN\nUNCHANGED=1\n" + policy.RETRY_ENABLED + "=true\n" + policy.RETRY_MAX + "=1\n")
     env.chmod(0o600)
     for name in policy.CHANGED:
         (repo / "logs" / (name + ".log")).write_text("CONTROLLED old-process log\n")
@@ -178,6 +178,12 @@ def setup(monkeypatch, tmp_path, **options):
             path.parent.mkdir(parents=True, exist_ok=True)
             flags = {key: "true" for key in policy.PM + policy.NEW_ENV}
             flags.update(MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED="true", MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED="false")
+            flags.update({policy.RETRY_ENABLED: "true", policy.RETRY_MAX: "0"})
+            for key, value in (retry_env or {}).items():
+                if value is None:
+                    flags.pop(key, None)
+                else:
+                    flags[key] = value
             path.write_bytes(b"\0".join((key + "=" + value).encode() for key, value in flags.items()))
             return path
         return real_path(value)
@@ -204,8 +210,17 @@ def test_literal_full_sequence_backups_gate_diff_hashes_units_timer_only(monkeyp
     assert (fx.attempt / "source-before.tar").exists() and (fx.attempt / "env.before").exists()
     assert (fx.attempt / "env.diff").exists()
     assert "UNCHANGED=1" not in (fx.attempt / "env.diff").read_text()
+    assert policy.RETRY_ENABLED not in (fx.attempt / "env.diff").read_text()
+    assert env.read_text().count(policy.RETRY_ENABLED + "=true") == 1
+    assert env.read_text().count(policy.RETRY_MAX + "=0") == 1
+    assert (fx.attempt / "env.prewrite.diff").exists()
+    assert (fx.attempt / "numeric-catalog.diff").exists()
+    assert (tmp_path / "helpers/expected_numeric.json").read_bytes() == (JOB / policy.NUMERIC_ARTIFACT).read_bytes()
+    assert (fx.repo / "ops/health/expected_numeric.json").read_bytes() != (tmp_path / "helpers/expected_numeric.json").read_bytes()
+    assert json.loads((fx.attempt / "COMPLETE.json").read_bytes())["flaggate_coverage"]["total"] == 153
     assert (fx.attempt / "preopen.diff").exists()
     pin = json.loads((tmp_path / "daily/runtime.json").read_bytes())
+    assert pin["artifacts"]["retry_zero_readonly.py"] == policy.digest((JOB / "retry_zero_readonly.py").read_bytes())
     assert pin["gate_sha256"] == policy.digest(gate.read_bytes())
     assert pin["artifacts"]["daily.py"] == policy.digest((JOB / "daily.py").read_bytes())
     assert "UNCHANGED=1" in env.read_text()
@@ -230,7 +245,7 @@ def test_night_exact_paper_unknown2_retained_allows_timer_only(monkeypatch, tmp_
     fx, gate, _ = setup(monkeypatch, tmp_path, unknown_flags=True)
     attended.Sequence(fx).run()
     coverage = json.loads((fx.attempt / "flaggate-coverage.json").read_bytes())
-    assert (coverage["original_rc"], coverage["checked"], coverage["unknown"]) == (2, 149, 2)
+    assert (coverage["original_rc"], coverage["checked"], coverage["unknown"]) == (2, 151, 2)
     assert coverage["original_verdict"] == "UNKNOWN"
     assert (tmp_path / "daily").exists() and policy.digest(gate.read_bytes()) != policy.BASELINE_GATE
     assert not any(args == ["systemctl", "start", "project-mai-tai-momentum-paper.service"] for args in fx.calls)

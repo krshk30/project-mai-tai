@@ -6,9 +6,9 @@ from pathlib import Path
 import re
 from daily import exclusive
 from gate_patch import build
-from release_policy import APP, CHANGED, DAY, ET, canonical, digest, need
+from release_policy import APP, CHANGED, DAY, ET, NUMERIC_ARTIFACT, canonical, digest, need
 
-DAILY = ("daily.py", "release_policy.py", "daily-run.sh", "daily-notify.sh")
+DAILY = ("daily.py", "release_policy.py", "retry_zero_readonly.py", "daily-run.sh", "daily-notify.sh")
 UNITS = ("project-mai-tai-preopen.service", "project-mai-tai-preopen-failure.service", "project-mai-tai-preopen.timer")
 CATALOGS = ("expected_flags_check.py", "expected_flags.json", "expected_numeric.json", "v2_restart_evidence.py", "preopen_restart_evidence.sh")
 HELPERS = Path("/home/trader/restart_evidence")
@@ -48,11 +48,11 @@ def inactive_paper(before, after, now):
 
 def flag_result(rc, text, catalog, *, paper_before=None, paper_after=None, now=None):
     final = re.findall(r"^Final call: (PASS|FAIL|UNKNOWN); checked=(\d+)/(\d+) mismatches=(\d+) unknown=(\d+)$", text, re.M)
-    full = final == [("PASS", "151", "151", "0", "0")] and rc == 0
-    paper_only = final == [("UNKNOWN", "149", "151", "0", "2")] and rc == 2
+    full = final == [("PASS", "153", "153", "0", "0")] and rc == 0
+    paper_only = final == [("UNKNOWN", "151", "153", "0", "2")] and rc == 2
     need(full or paper_only, "FLAGGATE unexpected verdict/population")
     rows = [line for line in text.splitlines() if line.startswith(("PASS ", "REAL FAILURE ", "UNKNOWN "))]
-    need(len(rows) == 151, "FLAGGATE population mismatch")
+    need(len(rows) == 153, "FLAGGATE population mismatch")
     found = [re.match(r"(?:PASS|UNKNOWN) flag=([^ ]+) service=([^ ]+) ", line) for line in rows]
     need(all(found), "FLAGGATE identities unreadable")
     actual = [(match[1], match[2]) for match in found]
@@ -67,7 +67,7 @@ def flag_result(rc, text, catalog, *, paper_before=None, paper_after=None, now=N
              for (name, service), row in zip(actual, rows) if row.startswith("UNKNOWN ")), "unexpected paper UNKNOWN reason/identity")
         need(paper_before is not None and paper_after is not None and now is not None, "fresh paper inactivity proof absent")
         inactive_paper(paper_before, paper_after, now)
-    return dict(original_rc=rc, original_verdict=final[0][0], checked=int(final[0][1]), total=151,
+    return dict(original_rc=rc, original_verdict=final[0][0], checked=int(final[0][1]), total=153,
                 unknown=int(final[0][4]), coverage="expected-dated-inactive-paper" if paper_only else "all-measured",
                 raw_sha256=digest(text.encode()), paper_before=paper_before, paper_after=paper_after)
 
@@ -95,7 +95,15 @@ def install(effects):
         need(digest(source.read_bytes()) == effects.release["application_blobs"]["ops/health/" + name], "closeout source drift")
     for name in CATALOGS:
         file = target / name
-        effects.replace(file, (REPO / "ops/health" / name).read_bytes(), 0o644, file.stat().st_uid, file.stat().st_gid)
+        raw = (REPO / "ops/health" / name).read_bytes()
+        if name == "expected_numeric.json":
+            from retry_zero_readonly import catalog
+            raw = (effects.job / NUMERIC_ARTIFACT).read_bytes()
+            catalog(raw, (REPO / "ops/health" / name).read_bytes())
+            exclusive(effects.attempt / "numeric-catalog.diff", "".join(unified_diff(
+                (REPO / "ops/health" / name).read_text().splitlines(True), raw.decode().splitlines(True),
+                fromfile="golden-source-numeric", tofile="reviewed-isolated-numeric")).encode())
+        effects.replace(file, raw, 0o644, file.stat().st_uid, file.stat().st_gid)
     paper_before = effects.fleet()["momentum-paper"]
     need(paper_before == effects.before["momentum-paper"], "untouched paper changed before checker")
     result = effects.command([PY, target / "expected_flags_check.py", "--catalog", target / "expected_flags.json",
@@ -149,9 +157,9 @@ def install(effects):
     journal = JOURNAL
     need(journal.is_file(), "deployment journal missing; no implicit creation")
     with journal.open("a") as file:
-        file.write("\n" + effects.now().isoformat() + " codex four-item application=" + APP + " attempt=" + str(effects.attempt)
+        file.write("\n" + effects.now().isoformat() + " codex five-item retry-zero application=" + APP + " attempt=" + str(effects.attempt)
                    + " release=" + pin["release_sha256"] + " preopen=" + pin["gate_sha256"]
-                   + " flags=" + str(coverage["checked"]) + "/151 raw_verdict=" + coverage["original_verdict"]
+                   + " flags=" + str(coverage["checked"]) + "/153 raw_verdict=" + coverage["original_verdict"]
                    + " raw_rc=" + str(coverage["original_rc"]) + " unknown=" + str(coverage["unknown"])
                    + " coverage=" + coverage["coverage"] + " next=20261007T0620ET; future live delivery/rehearsal UNMEASURED\n")
         file.flush()

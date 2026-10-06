@@ -73,9 +73,10 @@ def test_each_owner_read_failure_blocks(service):
 def test_plan_accepts_zero_and_keeps_display_outside_restart_authority():
     document = PLAN.read_text()
     assert "RETRY_ONE_ENABLED=true" in document and "RETRY_ONE_MAX_RETRIES=0" in document
-    assert "literal runner integration/testing is PENDING" in document
+    assert "Literal runner integration is LOCALLY TESTED" in document
     assert "FLAGGATE153" in document and "151/153 rc2 UNKNOWN2" in document
-    assert "five included" in document and "#1100 is **NOT INCLUDED**" in document
-    assert "mergeCommit=null" in document and "Validate37513775601 is FAILURE" in document
+    assert "five active items" in document and "#1100 is **SOURCE INCLUDED / ACTIVATION PENDING**" in document
+    assert "mergeCommit=4805ddc81184c76b4d5cef5c483c809edb666fe6" in document
+    assert "37513775601 attempt2 is SUCCESS" in document
     assert "reload=False" in document and "no\nExecReload" in document
     assert "control must remain untouched" in document

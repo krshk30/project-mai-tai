@@ -53,7 +53,7 @@ KNOWN = {
 TERMINAL = {"CANCELLED", "CANCELED", "FILLED", "REJECTED", "EXPIRED", "REPLACED"}
 REVIEWED_SOURCES = {
     "7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf",
-    "c21d8274fcd1d3129d61207a33dd7b002a7c9e8c",
+    "4805ddc81184c76b4d5cef5c483c809edb666fe6",
 }
 # From 7823's committed tests/fixtures/rpgstuck1_startup_later.json, not this live pull.
 FIXTURE_SHA256 = "21e0352a642f81c6f9e68ca51831d0aff470f057b387f4fb5900638d38650b87"

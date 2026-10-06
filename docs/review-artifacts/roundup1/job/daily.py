@@ -82,6 +82,8 @@ def verify_runtime(*, check_gate=True):
     need(not pin.is_symlink() and pin.stat().st_uid == 0 and pin.stat().st_mode & 0o022 == 0, "runtime pin not immutable to non-root")
     manifest = json.loads(pin.read_bytes())
     need(manifest["approved_sha"] == APP, "daily application pin differs")
+    need({"daily.py", "release_policy.py", "retry_zero_readonly.py"}.issubset(manifest["artifacts"]),
+         "daily retry proof artifact omitted")
     for name, expected in manifest["artifacts"].items():
         need(Path(name).name == name, "runtime path escape")
         path = ROOT / name
@@ -136,6 +138,16 @@ def run():
             if not calendar(now, US_MARKET_HOLIDAYS):
                 exclusive(destination / "complete.json", canonical(dict(verdict="SKIP_CLOSED", gate_invoked=False)))
                 return 0
+            from retry_zero_readonly import validate
+            since = datetime.now(UTC)
+            result = subprocess.run([sys.executable, str(ROOT / "retry_zero_readonly.py")],
+                                    capture_output=True, timeout=20)
+            need(len(result.stdout) + len(result.stderr) <= 16384, "retry proof output exceeds bound")
+            exclusive(destination / "retry-zero.stdout.json", result.stdout)
+            exclusive(destination / "retry-zero.stderr.txt", result.stderr)
+            need(result.returncode == 0 and not result.stderr.strip(), "daily explicit zero proof blocked/unreadable")
+            receipt = validate(json.loads(result.stdout), since, datetime.now(UTC))
+            exclusive(destination / "retry-zero-coverage.json", canonical(receipt))
             def invoke():
                 try:
                     result = subprocess.run(["bash", str(GATE)], capture_output=True, timeout=240)
@@ -149,7 +161,8 @@ def run():
             rc, receipt, output = run_checks(now, US_MARKET_HOLIDAYS, invoke, report)
             exclusive(destination / "raw.txt", output)
             receipt.update(report_path=str(Path("/home/trader/known_defect_regression_watch") /
-                                          ("v2-restart-evidence-" + now.astimezone(ET).strftime("%Y%m%d") + ".md")))
+                                          ("v2-restart-evidence-" + now.astimezone(ET).strftime("%Y%m%d") + ".md")),
+                           retry_zero_process_proof="explicit2/2", catalog_total=153)
             exclusive(destination / "complete.json", canonical(receipt))
             return rc
         except Exception as exc:

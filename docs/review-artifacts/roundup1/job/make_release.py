@@ -4,19 +4,22 @@ import json
 from pathlib import Path
 import re
 import subprocess
-from release_policy import APP, BOX, DAY, SCOPE, TREE, digest, need
+from release_policy import (APP, BOX, DAY, ENV_UPDATES, NUMERIC_ARTIFACT, NUMERIC_SHA,
+                            RETRY_ENABLED, SCOPE, TREE, digest, need)
 
 PREFIX = "docs/review-artifacts/roundup1/"
 NAMES = ("attended.py", "release_policy.py", "armed_readonly.py", "raw_gate_admission.py", "strict_flat_readonly.py", "census_readonly.py",
          "redis_checkpoint.py", "post_proof.py", "closeout.py", "gate_patch.py", "preopen.baseline.sh", "daily.py",
          "daily-run.sh", "daily-notify.sh", "project-mai-tai-preopen.service", "project-mai-tai-preopen.timer",
-         "project-mai-tai-preopen-failure.service", "make_release.py", "RELEASE_STATUS_2026-10-06.md")
+         "project-mai-tai-preopen-failure.service", "make_release.py", "RELEASE_STATUS_2026-10-06.md",
+         "retry_zero_readonly.py", NUMERIC_ARTIFACT, "RETRY_ZERO_RECEIPT_2026-10-06.md")
 SOURCES = tuple("ops/health/" + name for name in ("expected_flags_check.py", "expected_flags.json", "expected_numeric.json",
                     "v2_restart_evidence.py", "preopen_restart_evidence.sh", "preopen_alert.sh")) + (
     "ops/preflight/preflight_v2_restart.sh", "ops/preflight/preflight_oms_restart.sh",
     "src/project_mai_tai/deploy_preflight.py", "src/project_mai_tai/settings.py", "src/project_mai_tai/strategy_core/time_utils.py",
     "src/project_mai_tai/services/schwab_1m_v2_bot.py", "src/project_mai_tai/services/orb_schwab_app.py",
-    "src/project_mai_tai/oms/service.py", "src/project_mai_tai/oms/store.py", "src/project_mai_tai/oms/atr_reprice_handoff.py")
+    "src/project_mai_tai/oms/service.py", "src/project_mai_tai/oms/store.py", "src/project_mai_tai/oms/atr_reprice_handoff.py",
+    "src/project_mai_tai/services/control_plane.py", "ops/systemd/project-mai-tai-control.service")
 
 
 def blob(ref, path):
@@ -30,6 +33,8 @@ def generate(plan):
     paths = {name: PREFIX + "job/" + name for name in NAMES}
     paths["INSTALL_PLAN_2026-10-06.md"] = PREFIX + "INSTALL_PLAN_2026-10-06.md"
     paths["PREOPEN_PLAN_2026-10-06.md"] = "docs/review-artifacts/preopen-daily/PLAN_2026-10-06.md"
+    from retry_zero_readonly import catalog
+    catalog(blob(plan, paths[NUMERIC_ARTIFACT]), blob(APP, "ops/health/expected_numeric.json"))
     return dict(schema_version=2, approved_sha=APP, tree=TREE, box_sha=BOX, plan_commit=plan, scope=SCOPE, date_et=DAY,
                 artifacts={name: digest(blob(plan, path)) for name, path in paths.items()}, artifact_sources=paths,
                 application_blobs={path: digest(blob(APP, path)) for path in SOURCES},
@@ -38,12 +43,16 @@ def generate(plan):
                 runtime_required=["fresh strict flat/exact dated residual admission; actual132/66 blocks",
                                   "explicit fresh armed field before/after unchanged v2 gate; read failure blocks",
                                   "row47 optional reset requires fresh old-PID/invocation explicit SIGTERM and CancelledError; ambiguity blocks",
-                                  "paper149/151 UNKNOWN2 only exact named rows plus unchanged dated09:40 clean-stop proof"],
-                excluded=["RETRYOFF1 requested env removal: failed acceptance, separate reviewed fix pending",
-                          "#1099 unpinned recovery/MIRROR-counter build", "#1100 unpinned display build", "T43", "MIRRORHOLD Step0",
+                                  "paper151/153 UNKNOWN2 only exact named rows plus unchanged dated09:40 clean-stop proof",
+                                  "explicit stable new v2/OMS retry-enabled=true max-retries=0; repeat before daily checks"],
+                excluded=["RETRYOFF1 superseded enabled-OFF/removal request: withdrawn, not accepted",
+                          "#1099 unpinned recovery/MIRROR-counter build", "#1100 display activation: control restart not authorized", "T43", "MIRRORHOLD Step0",
                           "Pause", "CLEARWAIT", "new WEBULL lanes", "migration", "other application restart"],
-                flaggate=dict(boolean=143, numeric=8, total=151,
-                              required="actual151/151 PASS or narrowly proven paper149/151 UNKNOWN2; never relabel UNKNOWN as PASS"))
+                env_updates=ENV_UPDATES, retained_env={RETRY_ENABLED: "true"},
+                display=dict(merged_sha=APP, source_in_checkout=True, activation="UNMEASURED_NOT_AUTHORIZED", control_restart=False),
+                numeric_catalog=dict(artifact=NUMERIC_ARTIFACT, sha256=NUMERIC_SHA, source_catalog_unchanged=True),
+                flaggate=dict(boolean=143, numeric=10, total=153,
+                              required="actual153/153 PASS or narrowly proven paper151/153 UNKNOWN2; never relabel UNKNOWN as PASS"))
 
 
 def main():

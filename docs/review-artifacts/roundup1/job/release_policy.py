@@ -7,13 +7,13 @@ from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
 UTC = timezone.utc
-APP = "c21d8274fcd1d3129d61207a33dd7b002a7c9e8c"
-TREE = "e01851ac630ebf425de655c5c09dc11ae3c0304e"
+APP = "4805ddc81184c76b4d5cef5c483c809edb666fe6"
+TREE = "4248057079864f93066a69f355e2607840c701b9"
 BOX = "7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf"
 DAY = "2026-10-06"
 BASELINE_GATE = "8cdafcded0f748b6779696953cc8a101409b6bc0ce9a2314938d7f4fa82cf15a"
 ADAPTER = "a9f2407612baf48ee4b0577e42ccd0c714be1c1315b8276f5f9638a2999a1aaa"
-SCOPE = "four-item-c21-v2-oms-orb-schwab-no-migration-no-recovery"
+SCOPE = "five-active-items-4805-retry-zero-display-unloaded-v2-oms-orb-schwab-only"
 CHANGED = ("schwab-1m-v2", "orb-schwab", "oms")
 SERVICES = ("control", "market-capture", "market-data", "oms", "orb", "orb-schwab",
             "reconciler", "schwab-1m-v2", "strategy", "momentum-paper",
@@ -25,6 +25,11 @@ PM = tuple(PREFIX + suffix for suffix in (
     "LINE_CHART_RESTORATION_ENABLED")) + ("MAI_TAI_OMS_V2_WEBULL_MIRROR_FRESH_PRICE_ENABLED",)
 ATR = "MAI_TAI_ORB_SCHWAB_ATR_ENTRY_GATE_ENABLED"
 NEW_ENV = (PREFIX + "RESTING_BUY_ROUND_UP_ENABLED", PREFIX + "LINE_CHART_RESTORATION_ENABLED", ATR)
+RETRY_ENABLED = PREFIX + "RETRY_ONE_ENABLED"
+RETRY_MAX = PREFIX + "RETRY_ONE_MAX_RETRIES"
+ENV_UPDATES = {**{key: "true" for key in NEW_ENV}, RETRY_MAX: "0"}
+NUMERIC_ARTIFACT = "expected_numeric.retry-zero.json"
+NUMERIC_SHA = "bff3fad73fa593b48af08fc3cb8ab6cad5d2d055e1bc787706ff79ad34dbf205"
 PHASES = (
     ("stop", "schwab-1m-v2"), ("stop", "orb-schwab"), ("stop", "oms"),
     ("start", "oms"), ("start", "orb-schwab"), ("start", "schwab-1m-v2"))

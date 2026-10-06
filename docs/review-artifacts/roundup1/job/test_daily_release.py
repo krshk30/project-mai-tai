@@ -124,6 +124,8 @@ def test_gate_transform_exact_baseline_and_only_scoped_pins(tmp_path):
     for name in ("oms", "schwab-1m-v2"):
         for key in policy.PM:
             assert value.count(f"--expect-flag '{name}:{key}=true'") == 1
+        assert value.count(f"--expect-flag '{name}:{policy.RETRY_MAX}=0'") == 1
+        assert value.count(f"--expect-flag '{name}:{policy.RETRY_ENABLED}=true'") == 1
     target = tmp_path / "gate.sh"
     target.write_text(value)
     subprocess.run(["bash", "-n", target], check=True)

@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import time
 from daily import system_time
-from release_policy import CHANGED, ET, NEW_ENV, PM, Unknown, digest, moment, need
+from release_policy import CHANGED, ET, NEW_ENV, NUMERIC_ARTIFACT, PM, RETRY_ENABLED, RETRY_MAX, Unknown, digest, moment, need
 
 MAX = 3_000_000
 
@@ -69,6 +69,9 @@ def process_flags(effects):
         if name == "orb-schwab":
             checks["MAI_TAI_ORB_SCHWAB_OBSERVE_ENABLED"] = "false"
         values[name] = {}
+        if name in {"oms", "schwab-1m-v2"}:
+            from retry_zero_readonly import values as retry_values
+            values[name].update(retry_values(raw))
         for key, expected in checks.items():
             found = [value.decode() for candidate, value in pairs if candidate.decode() == key]
             need(found == [expected], "explicit new-PID environment missing/drift: " + name + ":" + key)
@@ -80,6 +83,8 @@ def process_flags(effects):
     def count(rows):
         return sum(1 + len(row.get("also_check_services", [])) for row in rows)
     need(len(flags) == 130 and count(flags) == 143 and count(numeric) == 8, "actual catalog not151")
+    from retry_zero_readonly import catalog
+    catalog((effects.job / NUMERIC_ARTIFACT).read_bytes(), (REPO / "ops/health/expected_numeric.json").read_bytes())
     return values
 
 
@@ -150,6 +155,9 @@ def collect(effects, baseline, started):
             args += ["--expect-flag", name + ":" + key + "=true"]
     for name in ("oms", "orb-schwab"):
         args += ["--expect-flag", name + ":" + NEW_ENV[2] + "=true"]
+    for name in ("oms", "schwab-1m-v2"):
+        args += ["--expect-flag", name + ":" + RETRY_ENABLED + "=true",
+                 "--expect-flag", name + ":" + RETRY_MAX + "=0"]
     result = effects.command(args, check=False, timeout=240)
     need(result.returncode == 0, "official restart/bar evidence FAIL or UNKNOWN; no N/A guessed")
     raw = output.read_bytes()
