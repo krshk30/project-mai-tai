@@ -34,7 +34,7 @@ intervals = [(b-a).total_seconds() for a,b in zip(times,times[1:])]
 assert all(.5<=x<=1.5 for x in intervals)
 assert 0 <= (now-times[-1]).total_seconds() <= 5
 audit = [json.loads(line) for line in (OUTPUT/'option-a-guard.jsonl').open()]
-assert not any(r.get('action') in {'stop','blind'} for r in audit)
+assert not any(r.get('action') in {'stop','blind','stop_paper'} for r in audit)
 settings = Settings(_env_file='/etc/project-mai-tai/project-mai-tai.env')
 client = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=5, socket_connect_timeout=5)
 try:
@@ -42,14 +42,16 @@ try:
     assert not trigger and safety['evicted_keys']==0
     owners = guard._owners(client, settings.redis_stream_prefix)
     assert set(owners)=={'strategy-engine','schwab-1m-v2','orb','orb-schwab','momentum-paper'} and len(owners['momentum-paper'])<=16
-    status, age, _ = guard.LiveSignals(client, settings.redis_stream_prefix).heartbeat(now)
+    status, age, heartbeat = guard.LiveSignals(client, settings.redis_stream_prefix).heartbeat(now)
     assert status=='healthy' and age<=guard.HEARTBEAT_AGE_BOUND
+    union = set().union(*owners.values())
+    assert heartbeat['payload']['details']['active_symbols']==len(union)
 finally:
     client.close()
 result = {'as_of_utc': now.isoformat(), 'verdict': 'PASS', 'observed_seconds': (times[-1]-times[0]).total_seconds(),
           'states': states, 'sampler_path': str(path), 'sampler_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
           'rows': len(rows), 'interval_min': min(intervals), 'interval_max': max(intervals), 'new_1008_lines': 0,
-          'redis': safety, 'owners': {k: sorted(v) for k,v in owners.items()}, 'gateway_heartbeat_age_s': age,
+          'redis': safety, 'owners': {k: sorted(v) for k,v in owners.items()}, 'active_symbols': len(union), 'gateway_heartbeat_age_s': age,
           'load_warning_only_unchanged': list(os.getloadavg()), 'window_end_et': audit[0]['end_et']}
 text = json.dumps(result, indent=2)+'\n'
 with os.fdopen(os.open(OUTPUT/'first-15-minutes.json', os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600), 'w') as f:
