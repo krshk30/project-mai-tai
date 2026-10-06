@@ -5727,3 +5727,15 @@ Receipt cf74e2767046d58de1c1defbd75236ce036ca47f on plan branch; actualruntime
 0c6f6f746e77659d476ad28f8e948598747ed5b0c53ab1a0b38e8add1eb9239d.
 STOP_DETAIL appended deployments-20261005.md, not COMPLETE. No rollback,
 extra restart, ledger/ticket edit or gate waiver; continuation needed.
+
+2026-10-05 21:12 ET codex-2 C97: operator21:07 requested recurring guarded
+paper. Direct reply narrows to existing bot hours, not16:00; no trading code
+or approved app SHA changed. Daily timer/service installed and enabled,
+next10-06 03:40ET. Guard366236 start01:10:58Z, paper366242 start01:11:01Z,
+sampler366239; allNRestarts0. Sevenartifact on-box hashes PASS, unitverifyPASS,
+60testsPASS/source88224b7e. Existing guard/sampler copied in isolation; only
+sampler path and final drain after wait corrected. Full count remains strict.
+Initial baseline01:11:01.348Z, subsequent1Hz OK/kicks0; first15minutes pending
+until21:26ET. Guardianuntil10-06 09:40ET, normalcompletion stops paper via
+reviewed paper-only stop/release path; daily03:40 start and holidays skipped.
+Close-out mechanics/catalog/preopen now reflect ACTIVE paper; not COMPLETEyet.
