@@ -129,6 +129,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     TradeIntentDraft,
     session_start_ts_ms,
 )
+from project_mai_tai.v2_removed_wait import RemovedWaitStore
 
 logger = logging.getLogger(__name__)
 
@@ -778,6 +779,68 @@ class SchwabV2BotService:
             getattr(self.settings, "strategy_schwab_1m_v2_streamer_enabled", False)
         )
 
+    def _configure_removed_wait_store(self) -> None:
+        if not self.strategy._removed_wait_enabled:
+            return
+        store = None
+        try:
+            if self.session_factory is None:
+                raise RuntimeError("removal evidence database unavailable")
+            store = RemovedWaitStore(self.session_factory)
+            restored = store.restore()
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=restore_unreadable")
+            self.strategy.configure_removed_wait(None, restored={}, readable=False)
+        else:
+            self.strategy.configure_removed_wait(store.record, restored=restored, readable=True)
+        self._removed_wait_store = store
+
+    async def _removed_wait_poll(self) -> None:
+        if not getattr(self.strategy, "_removed_wait_enabled", False):
+            return
+        requests = tuple(self.strategy._removed_wait_requests.values())
+        if not requests:
+            return
+        # An emit already past its gate must finish before the serial cancellation barrier.
+        if self._removed_wait_emits_inflight():
+            return
+        store = getattr(self, "_removed_wait_store", None)
+        if store is None:
+            return
+        accounts = {self.settings.strategy_schwab_1m_v2_account_name}
+        if self.strategy._dual_broker_fanout_enabled:
+            accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
+        try:
+            proofs = await asyncio.to_thread(store.proofs, requests, accounts)
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=evidence_unreadable")
+            return
+        if self._removed_wait_emits_inflight():
+            return
+        self.strategy.apply_removed_wait_proofs(proofs)
+
+    def _removed_wait_emits_inflight(self) -> bool:
+        counts = getattr(self, "_clearwait_open_emits", {})
+        return any(counts.get(symbol, 0) for symbol in self.strategy._removed_wait_requests)
+
+    async def _emit_removal_tracked(self, emitter, draft) -> bool:
+        if (getattr(draft, "intent_type", "") != "open"
+                or not getattr(getattr(self, "strategy", None), "_removed_wait_enabled", False)):
+            await emitter.emit(draft)
+            return True
+        if not self._line_draft_allowed(draft):
+            return False
+        counts = self.__dict__.setdefault("_clearwait_open_emits", {})
+        symbol = draft.symbol.upper()
+        counts[symbol] = counts.get(symbol, 0) + 1
+        try:
+            await emitter.emit(draft)
+        finally:
+            counts[symbol] -= 1
+            if not counts[symbol]:
+                counts.pop(symbol)
+        return True
+
     async def run(self) -> None:
         logging.basicConfig(
             level=self.settings.log_level.upper(),
@@ -803,6 +866,7 @@ class SchwabV2BotService:
                 )
         active_segments = self._configure_fanout_identity_store()
         self._configure_flip_entry_ownership_store(active_segments)
+        self._configure_removed_wait_store()
         self._configure_fanout_outcome_journal(active_segments)
         self.intent_emitter = SchwabV2IntentEmitter(
             self.settings,
@@ -1949,6 +2013,9 @@ class SchwabV2BotService:
                 unknown_opportunities,
             )
             self.strategy.apply_flip_position_book(position_book)
+        removed_wait_poll = getattr(self, "_removed_wait_poll", None)
+        if callable(removed_wait_poll):
+            await removed_wait_poll()
         if getattr(self, "session_factory", None) is not None:
             await self._sync_confirmation_entries()
         self._release_entry_state_at_window_close()
@@ -3322,6 +3389,14 @@ class SchwabV2BotService:
         # later empty scanner pass into completed boot restoration.
         self._boot_scanner_selected = scanner_selected
         self._boot_exclusion_sources_readable = not unreadable_exclusion_sources
+        if getattr(self.strategy, "_removed_wait_enabled", False):
+            previous = getattr(self, "_clearwait_scanner_symbols", None)
+            self._clearwait_scanner_symbols = set(scanner_selected)
+            if previous is not None:
+                for sym in previous - scanner_selected:
+                    self.strategy.release_and_drop_symbol(sym)
+            for sym in scanner_selected:
+                self.strategy.scanner_readded(sym)
         if unreadable_exclusion_sources:
             logger.warning(
                 "[V2-BOOT-RESTORE] restoration_complete=%d "
@@ -4667,6 +4742,10 @@ class SchwabV2BotService:
         return f"{request.epoch}:{request.revision}:{request.current_bar_ms}:{result.snapshot.reset_after_ms}"
 
     def _line_draft_allowed(self, draft) -> bool:
+        buy_ready = getattr(self.strategy, "line_buy_ready", None)
+        if (getattr(draft, "intent_type", "") == "open"
+                and callable(buy_ready) and not buy_ready(draft.symbol)):
+            return False
         if (not getattr(self, "_line_restoration_enabled", False)
                 or getattr(draft, "intent_type", "") != "open"):
             return True
@@ -4984,6 +5063,9 @@ class SchwabV2BotService:
         """
         # Bars/quotes revoke prior authorization immediately; the periodic pass also
         # handles cancellation feedback arriving when no new bar is available.
+        if (getattr(self.strategy, "_removed_wait_requests", {})
+                and self._removed_wait_emits_inflight()):
+            return
         handoff_pass = getattr(self, "_rpg_handoff_pass", None)
         if callable(handoff_pass):
             await handoff_pass(refresh=False)
@@ -4994,10 +5076,14 @@ class SchwabV2BotService:
         drain = getattr(self.strategy, "drain_pending_intents", None)
         if callable(drain) and self.intent_emitter is not None:
             for d in drain():
-                if getattr(self, "_line_restoration_enabled", False) and not self._line_draft_allowed(d):
+                if (getattr(self, "_line_restoration_enabled", False)
+                        or getattr(self.strategy, "_removed_wait_enabled", False)) and not self._line_draft_allowed(d):
                     continue
                 try:
-                    await self.intent_emitter.emit(d)
+                    if getattr(self.strategy, "_removed_wait_enabled", False):
+                        await self._emit_removal_tracked(self.intent_emitter, d)
+                    else:
+                        await self.intent_emitter.emit(d)
                 except Exception:
                     logger.exception(
                         "schwab_1m_v2 resting-entry emit failed for %s", getattr(d, "symbol", "?")
@@ -5010,7 +5096,8 @@ class SchwabV2BotService:
         wdrain = getattr(self.strategy, "drain_webull_direct_intents", None)
         if callable(wdrain):
             for d in wdrain():
-                if getattr(self, "_line_restoration_enabled", False) and not self._line_draft_allowed(d):
+                if (getattr(self, "_line_restoration_enabled", False)
+                        or getattr(self.strategy, "_removed_wait_enabled", False)) and not self._line_draft_allowed(d):
                     continue
                 if self.webull_intent_emitter is None:
                     logger.warning(
@@ -5028,7 +5115,10 @@ class SchwabV2BotService:
                     )
                     continue
                 try:
-                    await self.webull_intent_emitter.emit(d)
+                    if getattr(self.strategy, "_removed_wait_enabled", False):
+                        await self._emit_removal_tracked(self.webull_intent_emitter, d)
+                    else:
+                        await self.webull_intent_emitter.emit(d)
                 except Exception:
                     logger.exception(
                         "schwab_1m_v2 webull direct emit failed for %s (%s)",
@@ -5557,7 +5647,8 @@ class SchwabV2BotService:
         # and would silently change five existing entry paths. With `_exit_coverage` empty — every
         # pre-change state, and every existing test — this guard is INERT and byte-neutral.
         _sym = str(getattr(draft, "symbol", "")).upper()
-        if getattr(self, "_line_restoration_enabled", False) and not self._line_draft_allowed(draft):
+        if (getattr(self, "_line_restoration_enabled", False)
+                or getattr(getattr(self, "strategy", None), "_removed_wait_enabled", False)) and not self._line_draft_allowed(draft):
             await self._record_local_fanout_outcome(
                 draft, outcome="dropped_routing", reason="session_line_unproven_or_stale",
             )
@@ -5665,9 +5756,11 @@ class SchwabV2BotService:
             )
             return "dropped_routing"
         try:
-            if getattr(self, "_line_restoration_enabled", False) and not self._line_draft_allowed(draft):
+            if (getattr(self, "_line_restoration_enabled", False)
+                    or getattr(getattr(self, "strategy", None), "_removed_wait_enabled", False)) and not self._line_draft_allowed(draft):
                 return "dropped_routing"
-            await target_emitter.emit(draft)
+            if not await SchwabV2BotService._emit_removal_tracked(self, target_emitter, draft):
+                return "dropped_routing"
         except Exception:
             logger.exception("schwab_1m_v2 emit failed")
             await self._record_local_fanout_outcome(

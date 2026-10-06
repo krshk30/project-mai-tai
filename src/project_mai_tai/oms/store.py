@@ -445,12 +445,18 @@ class OmsStore:
         symbol: str,
         metadata: dict[str, str],
     ) -> BrokerOrder | None:
+        clearwait_segment = (metadata.get("fanout_segment_id")
+                             if metadata.get("clearwait_buy_only") == "true" else None)
         def is_cancellable(order: BrokerOrder | None) -> BrokerOrder | None:
             if order is None:
                 return None
             if order.strategy_id != strategy_id or order.broker_account_id != broker_account_id:
                 return None
             if order.symbol != symbol:
+                return None
+            if metadata.get("clearwait_buy_only") == "true" and order.side != "buy":
+                return None
+            if clearwait_segment and str((order.payload or {}).get("fanout_segment_id", "")) != clearwait_segment:
                 return None
             if order.status not in self.OPEN_ORDER_STATUSES:
                 return None
@@ -482,6 +488,9 @@ class OmsStore:
             .where(BrokerOrder.strategy_id == strategy_id)
             .where(BrokerOrder.broker_account_id == broker_account_id)
             .where(BrokerOrder.symbol == symbol)
+            .where(BrokerOrder.side == "buy" if metadata.get("clearwait_buy_only") == "true" else True)
+            .where(BrokerOrder.payload["fanout_segment_id"].as_string() == clearwait_segment
+                   if clearwait_segment else True)
             .where(BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES))
             .order_by(BrokerOrder.updated_at.desc())
         )
