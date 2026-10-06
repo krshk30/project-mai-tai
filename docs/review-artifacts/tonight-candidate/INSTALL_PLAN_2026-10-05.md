@@ -1,5 +1,48 @@
 # October 5 ALL-ON candidate: PM entry, RPG recovery and owned-entry binding
 
+## 20:45 Standing Mechanics Authority And Complete Rehearsal
+
+This section supersedes previous timing/approval/helper statements below.
+Application7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf, four true keys,
+migration0022, the MI/NXL policy, restart sequence and no-recovery scope stay
+unchanged. First stop20:05:00-23:00:00 ET10-05 only; no post-stop clock fence.
+
+Attempt3 refused20:10:53 ET before application writes because the documented
+closed-market v2 heartbeat was degraded/stalled_offhours_rest_dry. OldPIDs
+23705/26811/24025 remained active; staging/STOP journal/page occurred, no
+checkout/env/migration/service action. Preserve both earlier attempts.
+
+Reviewer20:40 exact-shape off-hours policy and20:45 standing mechanics
+authority permit this NON-TRADING gate-policy edit inside the install window
+(08-06 exception explicitly accepted). No extra independent exact-byte review
+is claimed or required for these delegated mechanics. Approval JSON is issued
+under that standing authority and the same17:30 operator GO, not a new GO.
+
+New helper SHA256:
+658ca1c0ed85c18b9f898643dc84fc49ac4826ffa06f38c8a471f9e0f8565670.
+Only a fresh <=120s v2 heartbeat with the exact off-hours detail construction
+is adjusted in the in-memory overview. Recorded state: closed, loop healthy,
+zero exceptions, streamer/enabled true, warmed=watchlist>0 and integral;
+bar age <= seconds since today's20:00 ET +300, nonnegative. Known nonregular
+session strings only; unknown/missing detail stays blocked. No third degraded
+service is adjusted. Every value/bound is printed as STANDING-ALLOWANCE.
+No extra broker read, heartbeat write, DB/Redis write or new switch.
+
+121 local tests PASS; new12 mutations RED (requested8 plus freshness,
+bar-age bound, raw status and copy isolation); existing18 MI/NXL mutations
+RED. Ruff/bash-n PASS. Complete live READ-ONLY rehearsal20:44:07-20:45:23 ET
+passed all pre-write read gates, including fresh direct brokers, generalOMS/
+strategy,11/11 linked parents/14tickets, OMS/v2 fences, native official
+snapshot collector, source/ancestry/import/preopen/env/schema/identity reads.
+Redis0->0 evictions;806932144->806954936B; five sets/marker/nine streams
+unchanged. Approval and post-install proofs are execution-only, NOT rehearsed
+as if services had already moved. See REHEARSAL_RECEIPT_2040.md.
+
+Proceed attended on a NEW exclusive job after committed-blob manifest
+regeneration and on-box checksum verification; journal attempt and hashes.
+Real blockers, exhausted unreadables, startup/proc/buy/eviction defects still
+STOP/page. No trading-code edit, ledger write, rollback or recovery authority.
+
 ## 18:50 Native-Timezone Reissue: Review Required
 
 This section supersedes ALL earlier timing and staging status below. Same

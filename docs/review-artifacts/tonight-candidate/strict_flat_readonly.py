@@ -1,4 +1,4 @@
-"""Standing MI/NXL install allowance. No token refresh or DB/Redis write.
+"""Standing MI/NXL and exact off-hours v2 admission. No token/DB/Redis write.
 
 Exit 0: proven clear; 1: measured blocker; 2: unreadable/unknown. Run as root
 with PYTHONDONTWRITEBYTECODE=1. Broker calls are fresh GETs, never cached reads.
@@ -49,6 +49,54 @@ def fresh(value, now, label):
     if stamp is None or not 0 <= (now - stamp).total_seconds() <= FRESH_SECONDS:
         raise ValueError(label + " stale/unreadable/future")
     return stamp
+
+
+def admit_v2_offhours(adjusted, overview, now):
+    """Leave every unproven shape unchanged, so the original gate still blocks."""
+    rows = [row for row in overview["services"] if row["service_name"] == "schwab-1m-v2"]
+    if len(rows) != 1:
+        return []
+    row = rows[0]
+    if row.get("effective_status", row.get("status")) != "degraded":
+        return []
+    details = row.get("details")
+    if not isinstance(details, dict):
+        return []
+    try:
+        observed = fresh(row.get("observed_at_raw"), now, "published v2 heartbeat")
+        local = now.astimezone(ZoneInfo("America/New_York"))
+        session_end = datetime.combine(local.date(), time(20), local.tzinfo)
+        since_end = (local - session_end).total_seconds()
+        watchlist = quantity(details.get("watchlist_size"))
+        warmed = quantity(details.get("warmed_size"))
+        exceptions = quantity(details.get("loop_exceptions_total"))
+        bar_age = quantity(details.get("secs_since_last_bar"))
+    except (ValueError, TypeError, OverflowError):
+        return []
+    if (row.get("raw_status", row.get("status")) != "degraded"
+            or details.get("data_flow") != "stalled_offhours_rest_dry"
+            or details.get("market_session") not in {"closed", "premarket", "afterhours"}
+            or details.get("loop_health") != "healthy"
+            or exceptions != 0
+            or not (details.get("streamer_connected") is True or details.get("streamer_connected") == "true")
+            or not (details.get("enabled") is True or details.get("enabled") == "true")
+            or warmed != watchlist or warmed != warmed.to_integral_value()
+            or watchlist <= 0 or watchlist != watchlist.to_integral_value()
+            or since_end < 0 or not 0 <= bar_age <= quantity(since_end + 300)):
+        return []
+    for target in adjusted["services"]:
+        if target["service_name"] == "schwab-1m-v2":
+            target["effective_status"] = "healthy"
+    keys = ("data_flow", "market_session", "loop_health", "loop_exceptions_total",
+            "streamer_connected", "enabled", "warmed_size", "watchlist_size",
+            "secs_since_last_bar")
+    return ["[STANDING-ALLOWANCE] service=schwab-1m-v2 effective_status=degraded"
+            + " observed_at=" + observed.isoformat()
+            + " heartbeat_max_age_seconds=" + str(FRESH_SECONDS)
+            + " " + " ".join(key + "=" + str(details[key]) for key in keys)
+            + " seconds_since_20_et=" + str(since_end)
+            + " bar_age_limit_seconds=" + str(since_end + 300)
+            + " admission=in_memory_only"]
 
 
 def standing_allowance(result, overview, run, findings, heartbeat, now):
@@ -153,6 +201,7 @@ def standing_allowance(result, overview, run, findings, heartbeat, now):
         for row in adjusted["services"]:
             if row["service_name"] == "reconciler":
                 row["effective_status"] = "healthy"
+    audit.extend(admit_v2_offhours(adjusted, overview, now))
     return adjusted, audit
 
 

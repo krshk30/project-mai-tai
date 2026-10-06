@@ -35,7 +35,7 @@ def main():
     artifacts = {name: digest(blob(args.plan, path)) for name, path in FILES.items()}
     result = {"schema_version": 1, "date_et": "2026-10-05", "plan_commit": args.plan,
               "approved_sha": APP, "box_sha": "e1ce3b3978fbcb1ff00daecdf6dc2618e6b5fb89",
-              "helper_sha256": "ce3ab15bf95a5910e9b84b147d1460c9c494bc359fa6facfa80ebf9884e55ab8",
+              "helper_sha256": "658ca1c0ed85c18b9f898643dc84fc49ac4826ffa06f38c8a471f9e0f8565670",
               "artifacts": artifacts, "artifact_sources": FILES, "application_blobs": application,
               "migration_sha256": application[SOURCES[-1]],
               "scope": "v2-strategy-oms-0022-all-four-on-no-recovery"}

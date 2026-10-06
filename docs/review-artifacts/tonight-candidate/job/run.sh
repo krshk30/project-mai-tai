@@ -70,7 +70,7 @@ window_now() {
   local hhmmss
   [[ $(TZ=America/New_York date +%F) == 2026-10-05 ]] || return 1
   hhmmss=$(TZ=America/New_York date +%H%M%S)
-  [[ $hhmmss < 213000 || $hhmmss == 213000 ]] || return 1
+  [[ $hhmmss < 230000 || $hhmmss == 230000 ]] || return 1
   if [[ ${1:-} == first-stop ]]; then [[ $hhmmss > 200500 || $hhmmss == 200500 ]]; fi
 }
 

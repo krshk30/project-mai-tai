@@ -47,8 +47,8 @@ run probe service-identity
     ("2026-10-05", "200459", False, True),
     ("2026-10-05", "200459", True, False),
     ("2026-10-05", "200500", True, True),
-    ("2026-10-05", "213000", True, True),
-    ("2026-10-05", "213001", True, False),
+    ("2026-10-05", "230000", True, True),
+    ("2026-10-05", "230001", True, False),
     ("2026-10-06", "200500", True, False),
 ))
 def test_literal_et_first_stop_boundaries(day, clock, first_stop, allowed):

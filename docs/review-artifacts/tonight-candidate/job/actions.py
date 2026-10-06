@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 APP = "7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf"
 BOX = "e1ce3b3978fbcb1ff00daecdf6dc2618e6b5fb89"
-FLAT_HASH = "ce3ab15bf95a5910e9b84b147d1460c9c494bc359fa6facfa80ebf9884e55ab8"
+FLAT_HASH = "658ca1c0ed85c18b9f898643dc84fc49ac4826ffa06f38c8a471f9e0f8565670"
 REPO = Path("/home/trader/project-mai-tai")
 ENV = Path("/etc/project-mai-tai/project-mai-tai.env")
 JOURNAL = Path("/home/trader/fleet_health/deployments-20261005.md")

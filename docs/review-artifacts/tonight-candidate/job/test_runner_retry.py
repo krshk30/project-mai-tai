@@ -63,7 +63,7 @@ def test_clock_gate_only_before_first_stop_never_between_stop_and_start():
     assert "window_now" not in script[stop:]
     before = script[:stop]
     assert before.rstrip().endswith("window_now first-stop")
-    assert "hhmmss < 213000" in before and "hhmmss > 200500" in before
+    assert "hhmmss < 230000" in before and "hhmmss > 200500" in before
 
 
 @pytest.mark.parametrize("clock", (datetime(2026, 10, 6, 0, 5, tzinfo=UTC),
