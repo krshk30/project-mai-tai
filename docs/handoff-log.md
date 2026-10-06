@@ -6499,3 +6499,12 @@ bars, two filled entries both above line, so no claimed profit improvement.
 Target2026-10-06 13:00ET, source8f591809 and verification underway. Separate
 writers/PRs, no shared trading edits and no production action. Tonight's
 ROUNDUP+Restoration+preopen remains unchanged unless separately pinned/rebound.
+
+### 2026-10-06 11:20 ET - codex-2 C46 pre-deploy safety findings
+
+Independent audit of the uninstalled T43 draft found a shared-account collision
+window during nonce refresh and a local-abort crash-recovery gap. Parent corrected
+both without widening authorization age or releasing ambiguous orders. Regression
+and final failed-name/mutation proofs are pending; no ready or install claim.
+The first safety run was19PASS plus one wrong test-method keyword; corrected before
+the final run, not treated as a code pass. Target15:00ET remains.
