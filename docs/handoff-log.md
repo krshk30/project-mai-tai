@@ -6856,3 +6856,15 @@ Bundled recorded receipts and executable docs replay preserve controlled-gate
 limitations; no live-cache, fullsession or brokerwire claim. Kant informed.
 #1100 pure rebase56c9357b onto c21 has3equal commits/empty scoped contentdiff,
 102focusedPASS; fresh exacthead pin and newValidatepending. No production action.
+
+### 2026-10-06 15:00 ET - codex-2 C71 pin verified, crash not bypassed, bracket CLAIM
+
+Parent reads committed exacthead #1100 record and hosted latest pinPASS.
+OneValidate passes; otherattempt1 actually crashes with139 in SQLiteORMworker
+threads, not an assertion failure and not proven infrastructure. Sameheadfailed
+job rerun authorized by ordinarymechanics, no source/pin/head change. No merge
+before green. Parent reads correctedzero-budget localplan11082f4: includedtrue
+enabled/max0; runnerintegrationpending and oldmanifesthistorical. Solewriter
+asked to publishaccessiblecheckpoint. Bracketparity Step0 is read-only: direct
+exact IPDN child plus MOBX parent/child, owningrule/history and retainedbuying-
+powerrefusalcount. No tradingbuild, production/env/order/ledger action.
