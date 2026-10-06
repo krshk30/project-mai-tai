@@ -132,8 +132,8 @@ def configured_webull_accounts(settings: Settings) -> dict[str, WebullAccountCon
 
 
 class WebullBrokerAdapter:
-    # Two cancel requests consume Webull's documented two-requests-per-two-seconds allowance. Wait
-    # before the two detail reads that turn "requested" into "confirmed". Tests set this to zero.
+    # Preserve the existing cancellation-settle delay. Legacy endpoint quota is unmeasured;
+    # this delay is not evidence of a cancel quota. Tests set this to zero.
     _CANCEL_CONFIRM_DELAY_SECONDS = 2.0
     def __init__(
         self,

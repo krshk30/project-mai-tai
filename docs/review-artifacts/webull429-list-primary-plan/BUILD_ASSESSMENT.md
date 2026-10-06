@@ -36,7 +36,8 @@ settings are outside this build. The legacy query quota remains UNMEASURED.
   ceiling is2 HTTP attempts per2s, including failed attempts. Ordinary optional
   detail gets at most1 of those permits, reserving the other for strict proof.
   Strict reads never wait for permits and never consume ordinary cached proof.
-  This policy is not a measured Webull legacy quota.
+  This policy is process-local, not a distributed app-key quota guarantee, and
+  is not a measured Webull legacy quota.
 - Real-account scans coalesce across aliases, threads, and adapter instances.
   At most2 list page attempts per account/scheduler cycle, with fair continuation
   instead of restarting on2s cache expiry.20 pages remain the logical cap.
@@ -75,11 +76,13 @@ settings remain unchanged; this lane does not slow those timers.
 ## Verification
 
 Focused adapter, RPG, configuration catalog, PM composition, and protection
-guards:385 passed. Local SQLite roundtrip plus replay/backtest:71 passed,
+guards:401 passed. Local SQLite roundtrip plus replay/backtest:71 passed,
 one expected failure. Ruff and marker isolation pass. Ten process-local source
-mutations are killed. Final pinned-main/head full-unit failure-name pair and
-CI evidence are still being completed; no ready claim is issued by this commit.
-The pinned main run measured56 local failures (not an assumed47), with names
-saved in `MAC_BASE_FAILED.txt`.
+mutations are killed. Full Mac unit pair: main6438 passed/56 failed;
+head6480 passed/56 failed. Failure names match exactly, zero new failures.
+The measured baseline is56, not an assumed47. `VERIFICATION.md` records commands,
+hashes, the corrected inventory assertion, and the pinned main's green Ubuntu
+CI receipt. Final exact-head push and PR Validate results must both be green
+before a ready claim; their URLs and exact SHA will be published on the PR.
 No production DB/Redis writes, broker
 order calls, service actions, installation, or merge was performed.
