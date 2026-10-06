@@ -2,9 +2,10 @@
 
 ## Verdict And Scope
 
-**NOT READY FOR PIN: one hard-stop coverage decision remains.** The current
-candidate protects the CW managed hard stop, but not the separate `ArmedHardStop`
-sender. Clarification was requested before any review-ready claim or deployment.
+The reviewer explicitly confirmed coverage of the separate `ArmedHardStop` sender
+for v2 and ORB-Schwab. It now uses the same exact-parent release and mandatory
+post-cancel confirmation as the managed CW senders. The decision is resolved;
+verification receipts below distinguish the earlier candidate from the extension.
 The initial over-broad candidate also changed the deliberately fail-open 19:55
 flatten policy; this was corrected by limiting the guard to the three requested
 managed-send paths. An explicit counterfactual now pins the unchanged exception.
@@ -70,9 +71,24 @@ at the eight historical evaluations can be recovered from those stamps.
 - Existing EOD handover gates and exit backoff run before removing protection.
   Webull's reservation/cancel-then-sell path, generic exit controls, the explicit
   19:55 flatten exception, and native target resolution are unchanged.
+- The ArmedHardStop path keeps the known DB-native-guard dedup first. A failed
+  optimization lookup still evaluates the stop, but never bypasses the Schwab
+  release gate. Its episode claim is shared with the managed CW sender; changed
+  ownership or quantity after release refuses the close. Oversold recovery uses
+  the same exact rejected-close proof and the same once-per-episode recovery set.
+- ORB-Schwab does not create a v2 managed row. It resolves a unique broker-filled
+  entry within its own virtual-position episode (strategy/account/symbol and
+  opening time); historical trips, ambiguous entries, and missing proof refuse.
+  A child fill is attributed through the existing exact-entry ORB child poll.
+- ORB's normal signal contract rejects OMS hard-stop envelopes. Only an exact,
+  one-use internally registered envelope, created after the guarded release while
+  the episode claim is held, enters the ordinary risk/position/dedup/report path.
+  An external envelope cannot forge it. Bracket preview remains entry-only;
+  existing body/ATR exit signal validation is unchanged.
 
 Telemetry: `[OMS-V2-CW-FLIP-NOTE]` records fresh/stale/absent plus age at flip and
-confirmation evaluations. `[OMS-V2-CW-FLIP-PROTECTION]` records every guarded send
+confirmation and armed-stop evaluations (including known-native-guard dedup).
+`[OMS-V2-CW-FLIP-PROTECTION]` records every guarded send
 path. `[OMS-BROKER-SYNC-PASS]` logs one start and one end with pass id, outcome,
 duration_ms and whether the duration exceeded the existing note-age bound, including
 exceptions and cancellation.
@@ -104,6 +120,18 @@ responses, not claimed historical outcomes.
 | test_nxl_three_retained_oversold_reports_require_exact_rejected_zero_fill | All three recorded rejects require exact-id REJECTED/0; client/partial responses refuse. |
 | test_note_state_logging_measures_absent_fresh_stale | Includes the 30-second boundary. |
 | test_sync_pass_start_end_duration_survives_errors | Start/end and duration for success, exception, and cancellation. |
+| test_armed_hard_stop_working_schwab_children_release_confirm_then_real_close | v2 and ORB-Schwab: real intent/risk/report path after GET, DELETE, DELETE, GET; one close. |
+| test_armed_hard_stop_child_fills_during_release_records_owned_fill_no_second_sell | Both strategies: owned child fill recorded; no software submit. |
+| test_armed_hard_stop_unknown_parent_retains_stop_and_never_sends | Both strategies: unknown parent keeps stop, no send. |
+| test_armed_hard_stop_known_native_guard_dedup_still_precedes_release | Existing native-guard dedup, note/protection logs, no parent call or send. |
+| test_armed_hard_stop_oversold_retries_once_only_after_broker_rejection_and_release | Both strategies: original broker rejection proof, fresh release, one retry. |
+| test_armed_hard_stop_original_close_unknown_or_filled_never_retries | Neither ambiguous nor filled original close permits recovery. |
+| test_armed_hard_stop_cancel_ack_without_terminal_confirmation_never_sends | Ack alone cannot authorize a hard-stop send. |
+| test_armed_hard_stop_and_managed_flip_share_one_episode_sell_claim | Concurrent senders cannot submit twice for one lot. |
+| test_armed_hard_stop_quantity_change_during_release_refuses_send | No stale-quantity close. |
+| test_orb_armed_hard_stop_external_intent_cannot_forge_internal_release_proof | External OMS-labelled envelope still refused. |
+| test_armed_hard_stop_recovery_cap_survives_a_later_quote | A subsequent evaluation cannot repeat the bounded recovery. |
+| test_orb_armed_hard_stop_previous_trip_is_not_current_entry_evidence | An earlier broker-filled buy cannot own the current episode. |
 
 Regression controls include test_v2_cw_managed_exit, test_v2_eod_oco_transition,
 test_confirmation_exit_fanout, test_oms_native_oco_stand_down,
@@ -111,17 +139,17 @@ test_exit_reservation_release, test_v2_managed_exit and test_schwab_exit_only_oc
 
 ## Verification
 
-Final expanded regression set: **333 passed**, including **27 RESERVE1 cases**.
-This includes the previously missed retry-ceiling, Webull late-close and OWNMiX
+Final expanded regression set: **442 passed**, including **44 RESERVE1 cases**.
+This includes the previously missed retry-ceiling, Webull late-close and OWNMIX
 reconciliation controls, without changing their assertions. Ruff and
 `git diff --check` pass. Full-unit same-window pair: base **57 failed / 6,468 passed**;
-candidate **57 failed / 6,495 passed**; failed-name diff **EMPTY, 57/57 identical**.
+candidate **57 failed / 6,512 passed**; failed-name diff **EMPTY, 57/57 identical**.
 The names and raw paths are in `FULL_UNIT_PAIR_2026-10-06.md`. The earlier reviewer
 48-failure result is not substituted for this machine's measurement.
 
 The mutation checker at `tests/reserve1_mutation_check.py` runs each mutation in
 memory in a separate process, without rewriting tracked production source.
-All **14 mutations RED**, each by an actual test assertion failure:
+All **25 mutations RED**, each by an actual test assertion failure:
 
 | Mutation | Result |
 | --- | --- |
@@ -139,15 +167,26 @@ All **14 mutations RED**, each by an actual test assertion failure:
 | M12 omit sync-pass end marker | RED |
 | M13 remove the adapter post-cancel GET | RED |
 | M14 omit the evaluation note marker | RED |
+| M15 bypass ArmedHardStop release | RED |
+| M16 admit unknown ArmedHardStop release | RED |
+| M17 omit ArmedHardStop child-fill attribution | RED |
+| M18 remove the shared armed/CW episode claim | RED |
+| M19 omit ArmedHardStop post-release episode check | RED |
+| M20 omit ArmedHardStop original-close proof | RED |
+| M21 admit ORB's earlier trip as current-entry evidence | RED |
+| M22 remove known-native-guard dedup | RED |
+| M23 omit ArmedHardStop note-state logging | RED |
+| M24 remove ArmedHardStop episode recovery cap | RED |
+| M25 admit an external ORB envelope without internal release proof | RED |
 
 Verified source SHA256:
-`22676a6866321de99332c0d26d126e06f2e664313b425ef231f298ed899b13f2`.
+`3d103d4ed4953bd4389e4a7f535078af726c08af9c1c1003849f5908c0095b6b`.
 Recorded fixture SHA256:
 `577d8a3dbae6eb357c9e67f0eed4d174ed49d545dc46be3fc85e89e0b5f8ff88`.
 
 ## Deploy And Rollback Boundary
 
-### Scope Boundary And Outstanding Decision
+### Scope Boundary And Resolved Decision
 
 1. `_v2_overnight_flatten` deliberately passes `allow_unconfirmed_overnight=True`
    and submits at 19:55 despite unconfirmed protection. The first over-broad guard
@@ -156,17 +195,18 @@ Recorded fixture SHA256:
    policy is inferred from this fix; changing it requires an explicit ruling.
 2. `_evaluate_hard_stop_market_event` calls `_trigger_hard_stop`, which sends through
    `process_trade_intent`, not `_emit_v2_exit_on_loop`. Its RTH native-stop check is
-   deliberately fail-open on an exception. The current CW hard-stop replay does not
-   prove that separate path safe. Decide whether the requested software-hard-stop
-   coverage includes it; if yes it needs a separate exact-parent send-boundary
-   integration and recorded-path test before pin.
+   deliberately fail-open on an exception. The reviewer confirmed that this sender
+   is in scope; the extension places the mandatory release gate after that optional
+   lookup and tests the real hard-stop dispatch for both strategies. ORB controls
+   adapt the recorded APUS tree to ORB's two-share contract; they are labelled
+   counterfactuals, not a claim that ORB experienced APUS's historical rejection.
 
 The first full-suite candidate had 79 failures versus 56 on the clean base. The
 22 new exit-control failures were traced and reproduced: unnecessary database
 reads in untouched emitters, and interception of generic owned-fill reconciliation.
 The narrower candidate passes all 22 controls without altering their assertions.
 The other extra failure, ROUNDUP1's SCKT deferred replay, also fails on unchanged
-base after the session cutoff (`resting_window_ended`); a same-window full pair is
+base after the session cutoff (`resting_window_ended`); a same-window full pair
 was measured rather than counting that clock dependency as a new source defect;
 both completed runs now have the identical 57 failed names.
 
