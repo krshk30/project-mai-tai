@@ -23,6 +23,7 @@
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
 |---|---|---|---|---|---|
 | T1 | Start ritual | DONE 06:14 ET — checksums green, not frozen, box `7823a6fa` = main minus 3 docs-only files (`handoff-log.md`, manifest, `session-handoff.md`); open PRs #1095 ROUNDUP1 draft, #1062 study draft; no codex refs newer than the 10-05 close-out | fleet board; `git diff --name-only 7823a6fa origin/main`; `gh pr list` 06:14 ET | claude-1 | — |
+| T2 | 03:40 read — Option A DAILY guard (first fire of the new timer) | **PASS, read late 06:15 ET.** Timer `project-mai-tai-option-a-daily-guard.timer` last trigger 03:40:00 ET 10-06; the guard service was already running from the 21:10:58 ET hand start (pid 366236, NRestarts 0) with `daily_window end_et=09:40 ET 10-06`, so the 03:40 fire found it active (no second run dir); paper 366242 up since 21:11:01 ET; sampler 1 row/s, every row `status=OK`, `new_1008_lines=0`; OMS 362892 / v2 362945 / strategy 363061 / orb-schwab 27173 / market-data 2907 all active, NRestarts 0; box HEAD `7823a6fa` clean. **No 10-06 preopen report yet and still no timer/cron for `preopen.sh`** (same as M11) — claude-1 runs it at 06:22 | box systemd 06:15 ET; `/home/trader/after-hours/2026-10-06/option-a-daily/run-20261006T011059600358Z/*.jsonl` | claude-1 | 09:42 read: stop at 09:40 by design; confirm the timer has a next elapse for 10-07 |
 
 ### What to READ Tuesday 10-06 — claude-1, UNPROMPTED (scheduled in the claude-1 session, CronList)
 | Time ET | Read | Pass looks like |
