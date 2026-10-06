@@ -1,0 +1,1688 @@
+{
+  "verdict": "DISAGREE",
+  "blocker_count": 1,
+  "base_sha": "3ebde364d4634fdad45992e2ab1cbdf43ffeb221",
+  "production_head": "7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf",
+  "read_at": "2026-10-06T15:01:29.293989+00:00",
+  "raw_sha256": "24faf2816674ac2582ae55692e8b58814b8a835f5dc28bb063460d45bd6a4b05",
+  "query_counts": {
+    "orders": 183,
+    "fills": 59,
+    "intents": 506,
+    "case_order_events": 4,
+    "managed": 29,
+    "ownership": 421
+  },
+  "case_orders": [
+    {
+      "id": "8271449a-be0a-4325-9216-c8ead327376b",
+      "symbol": "AIXI",
+      "client_order_id": "schwab_1m_v2-AIXI-open-d1c79f2d643b",
+      "broker_order_id": "U1G26C05OVO9ES2BPGHEIENOVB",
+      "submitted_at": "2026-10-06 13:57:42.781992+00:00",
+      "updated_at": "2026-10-06 14:03:03.466021+00:00",
+      "side": "buy",
+      "quantity": "115.00000000",
+      "status": "cancelled",
+      "order_type": "STOP_LIMIT",
+      "payload": {
+        "path": "ATR Flip",
+        "atr_variant": "CW-v2-fanout",
+        "rpg_resting_generation": "ab88acc9-92e9-4f59-9bc3-7f4b205afd3b",
+        "order_type": "STOP_LIMIT",
+        "stop_price": "2.5984",
+        "limit_price": "2.6114",
+        "reference_price": "2.5984",
+        "entry_price": "2.5984",
+        "cw_flip_level": "2.5855",
+        "resting_band_pct": "0.5",
+        "resting_offset_pct": "0.5",
+        "fanout_leg": "webull",
+        "fanout_source": "rth_resting_mirror",
+        "webull_mirror_generation_id": "3d7cc4fd-9b62-4ef2-880b-2aa31d4b3d05",
+        "resting_entry": "true",
+        "cw_entry_n": "1",
+        "cw_entry_slot": "first",
+        "cw_arm_bar_ts": "0",
+        "fanout_segment_id": "1791294242804",
+        "fanout_identity_schema": "entry_opportunity_v2",
+        "fanout_slot": "resting",
+        "fanout_slot_id": "7c448455-f5fb-52e9-b792-84744055e2c2",
+        "entry_notional_target_usd": "300",
+        "entry_size_price_basis": "limit_price",
+        "entry_size_price": "2.61",
+        "entry_computed_shares": "115",
+        "source": "schwab_1m_v2",
+        "strategy_version": "v1.32",
+        "fanout_attempt_id": "schwab_1m_v2-AIXI-open-d1c79f2d643b",
+        "nfq_price_feedback_owned": "true",
+        "webull_mirror_entry_deadline_utc": "2026-10-06T19:45:00+00:00",
+        "webull_deferred_resubmit": "true",
+        "webull_deferred_resubmit_attempt": "1",
+        "fanout_predecessor_attempt_id": "schwab_1m_v2-AIXI-open-419a6d7a0a6d",
+        "webull_shape_market_price": "2.4",
+        "webull_shape_market_source": "ask",
+        "webull_shape_market_at_utc": "2026-10-06T13:57:42.669145+00:00",
+        "webull_shape_market_max_age_ms": "10000"
+      },
+      "strategy": "schwab_1m_v2",
+      "account": "live:orb"
+    },
+    {
+      "id": "b8d3c8cc-59da-4086-9c8f-40e1b7ed7567",
+      "symbol": "XHG",
+      "client_order_id": "schwab_1m_v2-XHG-open-572eed004d33",
+      "broker_order_id": "1008187019347",
+      "submitted_at": "2026-10-06 14:32:03.558143+00:00",
+      "updated_at": "2026-10-06 14:32:13.586715+00:00",
+      "side": "buy",
+      "quantity": "195.00000000",
+      "status": "rejected",
+      "order_type": "STOP_LIMIT",
+      "payload": {
+        "path": "ATR Flip",
+        "atr_variant": "CW-v2-resting",
+        "rpg_resting_generation": "c3cc9b50-7bb1-486f-b5a1-7a441d5cff3f",
+        "order_type": "STOP_LIMIT",
+        "reference_price": "3.0618",
+        "entry_price": "3.0618",
+        "stop_price": "3.06",
+        "limit_price": "3.08",
+        "cw_flip_level": "3.0466",
+        "resting_entry": "true",
+        "resting_band_pct": "0.5",
+        "resting_offset_pct": "0.5",
+        "cw_entry_n": "1",
+        "cw_entry_slot": "first",
+        "cw_arm_bar_ts": "0",
+        "fanout_segment_id": "1791297123018",
+        "fanout_identity_schema": "entry_opportunity_v2",
+        "fanout_slot": "resting",
+        "fanout_slot_id": "783062c4-48c9-5e1a-a802-3aee5a9100c9",
+        "source": "schwab_1m_v2",
+        "strategy_version": "v1.32",
+        "entry_notional_target_usd": "600",
+        "entry_size_price_basis": "limit_price",
+        "entry_size_price": "3.08",
+        "entry_computed_shares": "195",
+        "fanout_attempt_id": "schwab_1m_v2-XHG-open-572eed004d33",
+        "bracket": "true",
+        "bracket_entry_type": "STOP_LIMIT",
+        "native_oco_bracket": "true",
+        "bracket_target_price": "3.21",
+        "bracket_stop_price": "2.82",
+        "broker_order_id": "1008187019347",
+        "reject_reason": "Opening transactions for this security must be placed with a broker. Contact us at 1-800-435-4000"
+      },
+      "strategy": "schwab_1m_v2",
+      "account": "live:schwab_1m_v2"
+    }
+  ],
+  "case_order_events": [
+    {
+      "id": "ffa5a4e8-1951-43a0-9ad7-4d7b4a7cebe2",
+      "order_id": "8271449a-be0a-4325-9216-c8ead327376b",
+      "event_type": "accepted",
+      "event_at": "2026-10-06 13:57:42.999357+00:00",
+      "payload": {
+        "client_order_id": "schwab_1m_v2-AIXI-open-d1c79f2d643b",
+        "broker_order_id": null,
+        "broker_fill_id": null,
+        "metadata": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-fanout",
+          "rpg_resting_generation": "ab88acc9-92e9-4f59-9bc3-7f4b205afd3b",
+          "order_type": "STOP_LIMIT",
+          "stop_price": "2.5984",
+          "limit_price": "2.6114",
+          "reference_price": "2.5984",
+          "entry_price": "2.5984",
+          "cw_flip_level": "2.5855",
+          "resting_band_pct": "0.5",
+          "resting_offset_pct": "0.5",
+          "fanout_leg": "webull",
+          "fanout_source": "rth_resting_mirror",
+          "webull_mirror_generation_id": "3d7cc4fd-9b62-4ef2-880b-2aa31d4b3d05",
+          "resting_entry": "true",
+          "cw_entry_n": "1",
+          "cw_entry_slot": "first",
+          "cw_arm_bar_ts": "0",
+          "fanout_segment_id": "1791294242804",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "7c448455-f5fb-52e9-b792-84744055e2c2",
+          "entry_notional_target_usd": "300",
+          "entry_size_price_basis": "limit_price",
+          "entry_size_price": "2.61",
+          "entry_computed_shares": "115",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "fanout_attempt_id": "schwab_1m_v2-AIXI-open-d1c79f2d643b",
+          "nfq_price_feedback_owned": "true",
+          "webull_mirror_entry_deadline_utc": "2026-10-06T19:45:00+00:00",
+          "webull_deferred_resubmit": "true",
+          "webull_deferred_resubmit_attempt": "1",
+          "fanout_predecessor_attempt_id": "schwab_1m_v2-AIXI-open-419a6d7a0a6d",
+          "webull_shape_market_price": "2.4",
+          "webull_shape_market_source": "ask",
+          "webull_shape_market_at_utc": "2026-10-06T13:57:42.669145+00:00",
+          "webull_shape_market_max_age_ms": "10000",
+          "webull_wire_stop_price": "2.60",
+          "webull_wire_limit_price": "2.61",
+          "webull_buy_stop_limit_tick_adjusted": "false",
+          "webull_resting_mirror_shape_checked": "true",
+          "webull_shape_market_age_ms_at_wire": "129",
+          "webull_shape_market_price_at_wire": "2.4",
+          "webull_resting_mirror_shape": "stop_limit_unchanged",
+          "webull_wire_category": "US_STOCK",
+          "webull_wire_instrument_id": "950985170",
+          "webull_wire_order_type": "STOP_LOSS_LIMIT",
+          "webull_wire_side": "BUY",
+          "webull_wire_quantity": "115",
+          "webull_wire_time_in_force": "DAY",
+          "webull_wire_extended_hours_trading": "false",
+          "webull_wire_submitted_at_utc": "2026-10-06T13:57:42.797+00:00"
+        },
+        "reason": "schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)"
+      },
+      "event_source": "unknown"
+    },
+    {
+      "id": "f6ac087e-6c1d-4f01-9bca-2fd75bee3857",
+      "order_id": "8271449a-be0a-4325-9216-c8ead327376b",
+      "event_type": "cancelled",
+      "event_at": "2026-10-06 14:03:03.454717+00:00",
+      "payload": {
+        "client_order_id": "schwab_1m_v2-AIXI-open-d1c79f2d643b",
+        "broker_order_id": "U1G26C05OVO9ES2BPGHEIENOVB",
+        "broker_fill_id": null,
+        "metadata": {
+          "fanout_segment_id": "1791294242804",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "7c448455-f5fb-52e9-b792-84744055e2c2",
+          "fanout_attempt_id": "schwab_1m_v2-AIXI-open-d1c79f2d643b",
+          "fanout_predecessor_attempt_id": "schwab_1m_v2-AIXI-open-419a6d7a0a6d",
+          "fanout_identity_schema": "entry_opportunity_v2"
+        },
+        "reason": "atr_reprice_terminal_cancel_explicit_zero"
+      },
+      "event_source": "broker"
+    },
+    {
+      "id": "36f42ab8-322e-40ce-93c1-05720e45e80b",
+      "order_id": "b8d3c8cc-59da-4086-9c8f-40e1b7ed7567",
+      "event_type": "rejected",
+      "event_at": "2026-10-06 14:32:03+00:00",
+      "payload": {
+        "client_order_id": "schwab_1m_v2-XHG-open-572eed004d33",
+        "broker_order_id": "1008187019347",
+        "broker_fill_id": null,
+        "metadata": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-resting",
+          "rpg_resting_generation": "c3cc9b50-7bb1-486f-b5a1-7a441d5cff3f",
+          "order_type": "STOP_LIMIT",
+          "reference_price": "3.0618",
+          "entry_price": "3.0618",
+          "stop_price": "3.06",
+          "limit_price": "3.08",
+          "cw_flip_level": "3.0466",
+          "resting_entry": "true",
+          "resting_band_pct": "0.5",
+          "resting_offset_pct": "0.5",
+          "cw_entry_n": "1",
+          "cw_entry_slot": "first",
+          "cw_arm_bar_ts": "0",
+          "fanout_segment_id": "1791297123018",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "783062c4-48c9-5e1a-a802-3aee5a9100c9",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "entry_notional_target_usd": "600",
+          "entry_size_price_basis": "limit_price",
+          "entry_size_price": "3.08",
+          "entry_computed_shares": "195",
+          "fanout_attempt_id": "schwab_1m_v2-XHG-open-572eed004d33",
+          "bracket": "true",
+          "bracket_entry_type": "STOP_LIMIT",
+          "native_oco_bracket": "true",
+          "bracket_target_price": "3.21",
+          "bracket_stop_price": "2.82",
+          "broker_order_id": "1008187019347"
+        },
+        "reason": "Opening transactions for this security must be placed with a broker. Contact us at 1-800-435-4000"
+      },
+      "event_source": "broker"
+    },
+    {
+      "id": "7ac8be98-31b2-499d-b619-a93ef5cb3fe6",
+      "order_id": "b8d3c8cc-59da-4086-9c8f-40e1b7ed7567",
+      "event_type": "accepted",
+      "event_at": "2026-10-06 14:32:03.553435+00:00",
+      "payload": {
+        "client_order_id": "schwab_1m_v2-XHG-open-572eed004d33",
+        "broker_order_id": "1008187019347",
+        "broker_fill_id": null,
+        "metadata": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-resting",
+          "rpg_resting_generation": "c3cc9b50-7bb1-486f-b5a1-7a441d5cff3f",
+          "order_type": "STOP_LIMIT",
+          "reference_price": "3.0618",
+          "entry_price": "3.0618",
+          "stop_price": "3.06",
+          "limit_price": "3.08",
+          "cw_flip_level": "3.0466",
+          "resting_entry": "true",
+          "resting_band_pct": "0.5",
+          "resting_offset_pct": "0.5",
+          "cw_entry_n": "1",
+          "cw_entry_slot": "first",
+          "cw_arm_bar_ts": "0",
+          "fanout_segment_id": "1791297123018",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "783062c4-48c9-5e1a-a802-3aee5a9100c9",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "entry_notional_target_usd": "600",
+          "entry_size_price_basis": "limit_price",
+          "entry_size_price": "3.08",
+          "entry_computed_shares": "195",
+          "fanout_attempt_id": "schwab_1m_v2-XHG-open-572eed004d33",
+          "bracket": "true",
+          "bracket_entry_type": "STOP_LIMIT",
+          "native_oco_bracket": "true",
+          "bracket_target_price": "3.21",
+          "bracket_stop_price": "2.82"
+        },
+        "reason": "schwab_1m_v2 ATR Flip CW-v2-resting"
+      },
+      "event_source": "unknown"
+    }
+  ],
+  "jagx_foreign_fill": {
+    "id": "1fe9f814-b3a2-468b-a5b5-ecacd2330b62",
+    "symbol": "JAGX",
+    "order_id": "0be05de1-9744-4d1a-aef2-de19ec5bf2bb",
+    "side": "buy",
+    "quantity": "2.00000000",
+    "price": "6.67000000",
+    "filled_at": "2026-10-06 13:30:14+00:00",
+    "strategy": "orb_schwab",
+    "account": "live:schwab_1m_v2",
+    "client_order_id": "orb_schwab-JAGX-open-3a8263e1999d"
+  },
+  "jagx_unknown_owner": {
+    "id": "63c6cab5-5835-45f9-a665-7fe4a92e727c",
+    "snapshot_type": "v2_flip_entry_ownership",
+    "created_at": "2026-10-06 13:30:19.355357+00:00",
+    "payload": {
+      "schema_version": 1,
+      "strategy_code": "schwab_1m_v2",
+      "symbol": "JAGX",
+      "opportunity_id": "1791293419343",
+      "phase": "unknown",
+      "flip_bar_ts": "0",
+      "provisional_started_ms": "0",
+      "fill_accounts": [],
+      "position_ids": {},
+      "position_entry_ms": {},
+      "retry_segment_id": "0",
+      "retry_closes_at_place": 0,
+      "active": true,
+      "reason": "schwab_first_rest_filled_not_first_rest"
+    }
+  },
+  "case_owner_snapshots": [
+    {
+      "id": "71d0d044-695f-4b52-adb6-2cdcea25ecfa",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 13:44:02.824277+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "b7317ade-c5c2-4f6a-872d-6c3c43f768e3",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 13:46:02.758623+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "4342f2a2-60aa-4a1d-b77a-e99414529af6",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 13:48:02.691198+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "a439e8ce-763e-4568-a7fb-1ee1072ac19d",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 13:50:00.284465+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "fe99c8a7-789c-427b-8a8c-ba6d8ecc6fe1",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 13:52:03.030768+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "62612010-d391-45fa-871e-dd91a61cd065",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 13:55:02.998851+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "946657b2-baa1-4ee1-aea5-aff5f40c3f6c",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 13:57:02.870337+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "bd34967c-f12e-4ecd-9a22-82ef2cb8a8cb",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:04:01.627028+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "800d7356-dd73-4bda-951c-351d1643b59b",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:07:01.128441+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "dc45be9a-6336-402f-ae16-f932c7e68311",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:09:02.547496+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "28c2cd84-862f-4521-9aaa-74ebf428596a",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:12:02.664561+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "75d5e052-600a-4f43-b6f9-b774cbc1165b",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:18:59.275517+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "unknown",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "watchlist_removed_before_position_episode_ended"
+      }
+    },
+    {
+      "id": "cd9e570a-e708-4312-9f2a-731fa297eeec",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:32:03.022892+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "XHG",
+        "opportunity_id": "1791297123018",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791296880000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "0ed99cd9-e5c1-4d78-8382-3f99066fc1b4",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:32:57.333242+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791294242804",
+        "phase": "unknown",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791294000000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "watchlist_removed_before_position_episode_ended"
+      }
+    },
+    {
+      "id": "a16a9eae-cbb2-4ee5-8e95-99ac130bac79",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:34:02.306640+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "XHG",
+        "opportunity_id": "1791297123018",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791296880000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "id": "a9c44e41-2860-48fb-af10-777a93ce0a13",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:41:17.026051+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "XHG",
+        "opportunity_id": "1791297123018",
+        "phase": "unknown",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791296880000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "watchlist_removed_before_position_episode_ended"
+      }
+    },
+    {
+      "id": "e4c83054-fd1b-465f-bd1f-21549c85ea88",
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-06 14:41:22.154243+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "XHG",
+        "opportunity_id": "1791297123018",
+        "phase": "unknown",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791296880000",
+        "retry_closes_at_place": 0,
+        "active": false,
+        "reason": "proven_empty_first_rest_opportunity"
+      }
+    }
+  ],
+  "case_logs": [
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:14:02,406 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FIRST-REST-QUOTE-WAIT] AIXI slot=first action=held reason=stale_quote line=2.211326 segment_id=1791294000000 quote_age_ms=10764 source=schwab_rest_quoteTime"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:16:02,989 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FIRST-REST-QUOTE-WAIT] AIXI slot=first action=rederived reason=line_moved line=2.195249 segment_id=1791294000000"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:17:02,752 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FIRST-REST-QUOTE-WAIT] AIXI slot=first action=rederived reason=line_moved line=2.158199 segment_id=1791294000000"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:18:59,275 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FIRST-REST-QUOTE-WAIT] AIXI slot=first action=gave_up reason=watchlist-removed line=2.158199 segment_id=1791294000000 waited_ms=296869"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:18:59,275 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] AIXI opportunity_id=1791294242804 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:21:27,830 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FIRST-REST-QUOTE-WAIT] AIXI slot=first action=held reason=stale_quote line=2.158199 segment_id=1791294000000 quote_age_ms=153675 source=schwab_rest_quoteTime"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:21:29,277 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FIRST-REST-QUOTE-WAIT] AIXI slot=first action=gave_up reason=slot_owned_or_consumed line=2.158199 segment_id=1791294000000 waited_ms=1447"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:22:02,337 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] AIXI armed bar_ts=1791296460000 trig=2.2101 flip_level=2.1582"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:32:57,333 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] AIXI opportunity_id=1791294242804 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:41:17,025 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] XHG opportunity_id=1791297123018 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:41:22,158 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] XHG evaluated=301 recovered=1 pending=300 entry_allowed=1 reason=proven_empty_first_rest_released"
+    }
+  ],
+  "sweep": [
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+        "line": "2026-09-28 17:25:24,487 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] CLRO opportunity_id=1790615942287 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "CLRO",
+      "opportunity": "1790615942287",
+      "orders": [
+        {
+          "id": "27da010c-ef3f-42bc-abde-df45b44e4a42",
+          "client_order_id": "schwab_1m_v2-CLRO-open-7a616c644c42",
+          "broker_order_id": "1008089988309",
+          "submitted_at": "2026-09-28 17:19:03.024014+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "c6b8b06d-e6df-48a5-9820-fab36c98dfcb",
+          "client_order_id": "schwab_1m_v2-CLRO-open-4d4ceca9d74a",
+          "broker_order_id": "PSI02SF4QTP138B91QDNSV1AT8",
+          "submitted_at": "2026-09-28 17:19:03.311016+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "032c0ddf-dee3-4e56-acc6-798962350d69",
+          "client_order_id": "schwab_1m_v2-CLRO-open-74a737d44269",
+          "broker_order_id": "1008089989027",
+          "submitted_at": "2026-09-28 17:22:03.212518+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "a11a4d1c-5576-4b99-b063-83ce390fac32",
+          "client_order_id": "schwab_1m_v2-CLRO-open-f6041731fada",
+          "broker_order_id": "NHGOEE547B25AHJCA45NULFS19",
+          "submitted_at": "2026-09-28 17:22:03.389051+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+        "line": "2026-09-28 17:36:16,124 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790615640378 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "MEDS",
+      "opportunity": "1790615640378",
+      "orders": [
+        {
+          "id": "1cfb5e2b-6e69-4a07-9edf-191c96bd274e",
+          "client_order_id": "schwab_1m_v2-MEDS-open-10f2a75e8f6b",
+          "broker_order_id": "1008089683166",
+          "submitted_at": "2026-09-28 17:14:00.801701+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "fc99950d-3ca0-4286-90dc-ee08f104dad2",
+          "client_order_id": "schwab_1m_v2-MEDS-open-711e635a95cf",
+          "broker_order_id": "TFHU8UTFHEKL3PJJO2VLOJ026A",
+          "submitted_at": "2026-09-28 17:14:01.091113+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "8de40de7-49ba-4d5b-afeb-5e5025a5f93a",
+          "client_order_id": "schwab_1m_v2-MEDS-open-9bdadaab5c13",
+          "broker_order_id": "1008089683638",
+          "submitted_at": "2026-09-28 17:16:03.531412+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "987cd418-9841-4f5b-8fc4-3e3030e7a690",
+          "client_order_id": "schwab_1m_v2-MEDS-open-01645417d36c",
+          "broker_order_id": "IAG0D3SID29G4MIC4QAHRRMQGB",
+          "submitted_at": "2026-09-28 17:16:03.783146+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "306561c3-d9e2-4c83-bdd0-9fe2c943a845",
+          "client_order_id": "schwab_1m_v2-MEDS-open-bc79d2a02b33",
+          "broker_order_id": "1008090278609",
+          "submitted_at": "2026-09-28 17:28:02.740117+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "52348d80-5aab-48a5-b4cd-617a9dba44b1",
+          "client_order_id": "schwab_1m_v2-MEDS-open-741700dfe42e",
+          "broker_order_id": null,
+          "submitted_at": "2026-09-28 17:28:02.831072+00:00",
+          "status": "rejected",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+        "line": "2026-09-28 19:03:20,096 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] NAMI opportunity_id=1790616903122 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "NAMI",
+      "opportunity": "1790616903122",
+      "orders": [
+        {
+          "id": "353edae1-6051-4b00-bd3e-bb477838d9c1",
+          "client_order_id": "schwab_1m_v2-NAMI-open-f157f1fdbc6e",
+          "broker_order_id": "1008090550130",
+          "submitted_at": "2026-09-28 17:35:03.790887+00:00",
+          "status": "rejected",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "d53cdb78-17f2-4b77-87a2-2aa31f30a2e3",
+          "client_order_id": "schwab_1m_v2-NAMI-open-e9449b224dcf",
+          "broker_order_id": "T7JOFEBM82299OTASKJRHRF3KB",
+          "submitted_at": "2026-09-28 17:35:04.533279+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "baa8743f-55fa-4fbd-98c5-c291ca92275a",
+          "client_order_id": "schwab_1m_v2-NAMI-open-07df366ae983",
+          "broker_order_id": "HQIG8KRQ5VOF93MS3BSBBLEOO9",
+          "submitted_at": "2026-09-28 17:51:03.082649+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "3d9be1ab-44d3-4359-a19d-90fa2ebd963a",
+          "client_order_id": "schwab_1m_v2-NAMI-open-3ce82128faf0",
+          "broker_order_id": "N5IAD1F4TPUH50UJTHURU93KI9",
+          "submitted_at": "2026-09-28 17:54:02.815069+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "4688ea03-1055-4bb5-b8b6-1760acd1a774",
+          "client_order_id": "schwab_1m_v2-NAMI-open-e31ff31a5e66",
+          "broker_order_id": "HPJ4AHDMGLE6A4M45T03JBV30A",
+          "submitted_at": "2026-09-28 17:57:03.059608+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "2b2628f6-c1a9-4e52-8432-15f309daf9cd",
+          "client_order_id": "schwab_1m_v2-NAMI-open-6c5cf4087328",
+          "broker_order_id": null,
+          "submitted_at": "2026-09-28 18:01:03.273380+00:00",
+          "status": "rejected",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "8ccfd74f-0c73-48a5-b2b9-f2c16834a002",
+          "client_order_id": "schwab_1m_v2-NAMI-open-0987de6ce2a5",
+          "broker_order_id": "8NJQO8UELC4R21MR2LPH0FEK98",
+          "submitted_at": "2026-09-28 18:22:02.857963+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "a5bd3577-cfb1-451d-bcba-b20d59143b1f",
+          "client_order_id": "schwab_1m_v2-NAMI-open-22e4ab756273",
+          "broker_order_id": "NJHSJQJRFG264UBAF3JLL07GVB",
+          "submitted_at": "2026-09-28 18:26:02.931461+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "29e7804e-1e47-41da-bbbb-2766828a90a1",
+          "client_order_id": "schwab_1m_v2-NAMI-open-bd0eb364a097",
+          "broker_order_id": "A8I0GQ3NBKNF49BPLBGPND6CE9",
+          "submitted_at": "2026-09-28 18:32:01.847669+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260930.gz",
+        "line": "2026-09-29 22:40:50,265 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] DXST opportunity_id=1790703543160 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "DXST",
+      "opportunity": "1790703543160",
+      "orders": [
+        {
+          "id": "cb25fd6f-2182-4877-973d-fe8ff8919b2b",
+          "client_order_id": "schwab_1m_v2-DXST-open-dae37c169994",
+          "broker_order_id": "F4GMG80172DQ23A4CDGNQG52V8",
+          "submitted_at": "2026-09-29 17:39:03.862749+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "905442a2-3e0e-459e-b884-4cb00d04c881",
+          "client_order_id": "schwab_1m_v2-DXST-open-6e57bf630f39",
+          "broker_order_id": "K6J2B0QRD5T98CE25FS9VRUT7B",
+          "submitted_at": "2026-09-29 17:57:03.303385+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "6c8d4c40-8591-43e0-b2e5-cf83188818ae",
+          "client_order_id": "schwab_1m_v2-DXST-open-8438e6d80737",
+          "broker_order_id": null,
+          "submitted_at": "2026-09-29 18:11:02.270018+00:00",
+          "status": "rejected",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "8848890d-b05e-4644-b346-bcdb6e0c7db4",
+          "client_order_id": "schwab_1m_v2-DXST-open-7232c416557c",
+          "broker_order_id": null,
+          "submitted_at": "2026-09-29 18:15:05.477796+00:00",
+          "status": "rejected",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "5fa58410-b175-4f3b-9b2d-2bf244088b5f",
+          "client_order_id": "schwab_1m_v2-DXST-open-38a90e35059b",
+          "broker_order_id": "0EGG547HRR7JC558US2P32UNSA",
+          "submitted_at": "2026-09-29 18:27:03.473820+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "430ce1b4-3e2e-44b5-ad7d-0c75b2d0fb4b",
+          "client_order_id": "schwab_1m_v2-DXST-open-4831dfee7bc0",
+          "broker_order_id": "L7J08LM3QNUA415AF2KAB6LAO9",
+          "submitted_at": "2026-09-29 18:31:02.539481+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "36b1bd38-2998-42ae-8f64-8687440992e0",
+          "client_order_id": "schwab_1m_v2-DXST-open-a08783ad622c",
+          "broker_order_id": "SGHG2ALLROBH37PGP7ILGPBB69",
+          "submitted_at": "2026-09-29 18:44:02.855837+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "13846b75-de90-4fdd-ab87-9b182d83c077",
+          "client_order_id": "schwab_1m_v2-DXST-open-d1b29d3a9f57",
+          "broker_order_id": "HSG6C3R0F1QACQ8J42PVC9HA29",
+          "submitted_at": "2026-09-29 18:51:03.121906+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "192634b7-d9a3-447d-91b6-314273ab5e21",
+          "client_order_id": "schwab_1m_v2-DXST-open-c2052d1a6c0e",
+          "broker_order_id": "DVHAS0D56GLA3FMKOUFPEVNJGA",
+          "submitted_at": "2026-09-29 18:58:02.586708+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "aefcf072-e573-42dc-8202-f730845e960e",
+          "client_order_id": "schwab_1m_v2-DXST-open-71405c2b1ba6",
+          "broker_order_id": "2TJK78P6EK414LAR6U5R4PUVEB",
+          "submitted_at": "2026-09-29 19:00:05.104854+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+        "line": "2026-09-30 12:24:37,325 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] NCI opportunity_id=1790768102878 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "NCI",
+      "opportunity": "1790768102878",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+        "line": "2026-09-30 12:37:43,897 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] NCI opportunity_id=1790768102878 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "NCI",
+      "opportunity": "1790768102878",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+        "line": "2026-09-30 13:35:37,567 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] LGHL opportunity_id=1790774762362 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "LGHL",
+      "opportunity": "1790774762362",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+        "line": "2026-10-01 12:29:57,102 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "MEDS",
+      "opportunity": "1790857262747",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+        "line": "2026-10-01 12:46:46,588 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] VEEA opportunity_id=1790858582561 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "VEEA",
+      "opportunity": "1790858582561",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+        "line": "2026-10-01 13:02:25,150 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] VEEA opportunity_id=1790858582561 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "VEEA",
+      "opportunity": "1790858582561",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+        "line": "2026-10-01 13:32:47,964 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "MEDS",
+      "opportunity": "1790857262747",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+        "line": "2026-10-01 13:44:45,085 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "MEDS",
+      "opportunity": "1790857262747",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+        "line": "2026-10-01 14:08:41,777 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "MEDS",
+      "opportunity": "1790857262747",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+        "line": "2026-10-01 17:16:53,080 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "MEDS",
+      "opportunity": "1790857262747",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+        "line": "2026-10-01 20:41:10,198 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "MEDS",
+      "opportunity": "1790857262747",
+      "orders": [],
+      "fill_ids": [],
+      "classification": "UNMEASURED"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "line": "2026-10-02 08:00:00,601 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] NXL opportunity_id=1790875862772 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "NXL",
+      "opportunity": "1790875862772",
+      "orders": [
+        {
+          "id": "74ae702f-9254-4524-8912-49871de035ab",
+          "client_order_id": "schwab_1m_v2-NXL-open-4d10a0d36c0c",
+          "broker_order_id": "1008139899549",
+          "submitted_at": "2026-10-01 17:31:03.561381+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "bc2f9989-1aaa-44f5-993a-1f199bac32aa",
+          "client_order_id": "schwab_1m_v2-NXL-open-1937d52e728d",
+          "broker_order_id": "O6GKNB379BIQBMKI5P1MUERM3B",
+          "submitted_at": "2026-10-01 17:31:03.728417+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "e340da6d-8068-416d-b3a6-537d28db611c",
+          "client_order_id": "schwab_1m_v2-NXL-open-f999cd27d5d0",
+          "broker_order_id": "1008139899755",
+          "submitted_at": "2026-10-01 17:33:04.010569+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "d62150c7-3a9f-4b08-ad22-8f5d86b2e6f5",
+          "client_order_id": "schwab_1m_v2-NXL-open-5eee7accc071",
+          "broker_order_id": "K2HM9SBJI2BN16JRC87HE8GV0A",
+          "submitted_at": "2026-10-01 17:33:04.216853+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "0392d8ba-126d-43db-bfc9-a6d97cd1e928",
+          "client_order_id": "schwab_1m_v2-NXL-open-cfbbf93cc270",
+          "broker_order_id": "1008139899973",
+          "submitted_at": "2026-10-01 17:36:02.748603+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "6987d211-aeb4-4d59-b49a-30a919020ae9",
+          "client_order_id": "schwab_1m_v2-NXL-open-6de0ed169a12",
+          "broker_order_id": "N9GSM3S9LAT4BFRUCN9F81THD9",
+          "submitted_at": "2026-10-01 17:36:02.952735+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "2291bf62-a00c-47e2-a424-79cc77c88a62",
+          "client_order_id": "schwab_1m_v2-NXL-open-13b381aab9cb",
+          "broker_order_id": "1008140906700",
+          "submitted_at": "2026-10-01 17:42:03.671381+00:00",
+          "status": "filled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "f5f32a7c-379b-4f5e-9d8d-26a53e52fd6c",
+          "client_order_id": "schwab_1m_v2-NXL-open-5bcd4fec6519",
+          "broker_order_id": "QLGSF6IB9UGG2GG3KFQBBFV399",
+          "submitted_at": "2026-10-01 17:42:04.015895+00:00",
+          "status": "filled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [
+        "e642e33f-c11a-497b-a5bc-55c6a61f019f",
+        "a14f2f01-e072-42c0-a4de-7608c8519192"
+      ],
+      "classification": "filled"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "line": "2026-10-02 08:00:00,606 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] VEEA opportunity_id=1790879042757 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "VEEA",
+      "opportunity": "1790879042757",
+      "orders": [
+        {
+          "id": "53a71b46-fb02-4cee-abba-840f60bdb66e",
+          "client_order_id": "schwab_1m_v2-VEEA-open-51608f43b660",
+          "broker_order_id": "1008142021098",
+          "submitted_at": "2026-10-01 18:24:03.402848+00:00",
+          "status": "filled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "fba5d474-3dee-4f1c-b608-f119d04fab7f",
+          "client_order_id": "schwab_1m_v2-VEEA-open-f98fae2f9098",
+          "broker_order_id": "PLGUNSICPHTH8OOOARVQL1FMQ8",
+          "submitted_at": "2026-10-01 18:24:03.621873+00:00",
+          "status": "filled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [
+        "d9b3b03e-e021-4348-a942-72fd193d33a6",
+        "55fe362d-cd07-4940-a9ca-c29628ba29f0"
+      ],
+      "classification": "filled"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "line": "2026-10-02 18:25:09,656 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] CYCU opportunity_id=1790963880380 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "CYCU",
+      "opportunity": "1790963880380",
+      "orders": [
+        {
+          "id": "19d090ba-ffa4-436a-a978-d272afcf1a71",
+          "client_order_id": "schwab_1m_v2-CYCU-open-14d814cc51e9",
+          "broker_order_id": "1008159037010",
+          "submitted_at": "2026-10-02 17:58:00.935092+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "a0d5d5bb-6269-43e3-8f8d-f00f428e68ec",
+          "client_order_id": "schwab_1m_v2-CYCU-open-40ad383bdcb6",
+          "broker_order_id": null,
+          "submitted_at": "2026-10-02 17:58:01.001175+00:00",
+          "status": "rejected",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "7e269362-7bf1-4dd9-a250-355e4d850f8d",
+          "client_order_id": "schwab_1m_v2-CYCU-open-afa6cf7993fd",
+          "broker_order_id": "1008159037363",
+          "submitted_at": "2026-10-02 18:03:03.196305+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "72bbbbd9-df14-4d21-8749-c3a53d938d06",
+          "client_order_id": "schwab_1m_v2-CYCU-open-3914058229ae",
+          "broker_order_id": "PFI2NDFBJCPNAL7A0H292NPP0B",
+          "submitted_at": "2026-10-02 18:03:03.421495+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "9afd1998-4d7a-4c9a-afcb-e7a5c60fbcce",
+          "client_order_id": "schwab_1m_v2-CYCU-open-984819ce5271",
+          "broker_order_id": "1008159988344",
+          "submitted_at": "2026-10-02 18:17:02.611341+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "a2b662d0-e13d-4afb-a089-e5f144011d19",
+          "client_order_id": "schwab_1m_v2-CYCU-open-d8495122cf02",
+          "broker_order_id": "FQIUTPJOG5BF8M7UEED0LABNK9",
+          "submitted_at": "2026-10-02 18:17:02.807731+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "3aae5787-c5a9-4c50-a214-ce8a441ce34a",
+          "client_order_id": "schwab_1m_v2-CYCU-open-a4b6253ff21b",
+          "broker_order_id": "1008159988824",
+          "submitted_at": "2026-10-02 18:24:02.438341+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        },
+        {
+          "id": "49e9c3cc-00b4-47e7-aace-141cfb78c20a",
+          "client_order_id": "schwab_1m_v2-CYCU-open-ac79285780bd",
+          "broker_order_id": "L7JI4M5A00BO2NJKHJHIFBQTG8",
+          "submitted_at": "2026-10-02 18:24:02.838968+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "line": "2026-10-02 23:58:34,356 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] AIXI opportunity_id=1790968922460 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "AIXI",
+      "opportunity": "1790968922460",
+      "orders": [
+        {
+          "id": "a330c74b-45a1-4394-aa04-0b6088c4251c",
+          "client_order_id": "schwab_1m_v2-AIXI-open-59a07343d49c",
+          "broker_order_id": "N9JOQTIF6OQ8ECJV6LSJKN4OE8",
+          "submitted_at": "2026-10-02 19:22:02.755568+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        },
+        {
+          "id": "64d01bd3-1d51-4847-9196-a3217b2177a8",
+          "client_order_id": "schwab_1m_v2-AIXI-open-a33b81f78e17",
+          "broker_order_id": "76JG9I8ISRKL0RNT0C1BN2HFM9",
+          "submitted_at": "2026-10-02 19:37:02.629370+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "line": "2026-10-05 12:15:39,398 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] SAIQ opportunity_id=1791200102388 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "SAIQ",
+      "opportunity": "1791200102388",
+      "orders": [
+        {
+          "id": "0e0003e7-d405-42d7-9e4e-cc6714c34669",
+          "client_order_id": "schwab_1m_v2-SAIQ-open-bda3ad57da92",
+          "broker_order_id": "1008164151537",
+          "submitted_at": "2026-10-05 12:10:36.267327+00:00",
+          "status": "rejected",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "line": "2026-10-05 15:28:38,045 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] RETO opportunity_id=1791213663149 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "RETO",
+      "opportunity": "1791213663149",
+      "orders": [
+        {
+          "id": "48d6964a-51ae-4367-a44c-ad7f083b205d",
+          "client_order_id": "schwab_1m_v2-RETO-open-7f273d444a66",
+          "broker_order_id": "1008171127230",
+          "submitted_at": "2026-10-05 15:21:03.817342+00:00",
+          "status": "rejected",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+        "line": "2026-10-06 14:18:59,275 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] AIXI opportunity_id=1791294242804 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "AIXI",
+      "opportunity": "1791294242804",
+      "orders": [
+        {
+          "id": "8271449a-be0a-4325-9216-c8ead327376b",
+          "client_order_id": "schwab_1m_v2-AIXI-open-d1c79f2d643b",
+          "broker_order_id": "U1G26C05OVO9ES2BPGHEIENOVB",
+          "submitted_at": "2026-10-06 13:57:42.781992+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+        "line": "2026-10-06 14:32:57,333 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] AIXI opportunity_id=1791294242804 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "AIXI",
+      "opportunity": "1791294242804",
+      "orders": [
+        {
+          "id": "8271449a-be0a-4325-9216-c8ead327376b",
+          "client_order_id": "schwab_1m_v2-AIXI-open-d1c79f2d643b",
+          "broker_order_id": "U1G26C05OVO9ES2BPGHEIENOVB",
+          "submitted_at": "2026-10-06 13:57:42.781992+00:00",
+          "status": "cancelled",
+          "strategy": "schwab_1m_v2",
+          "account": "live:orb"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    },
+    {
+      "removal": {
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+        "line": "2026-10-06 14:41:17,025 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] XHG opportunity_id=1791297123018 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+      },
+      "symbol": "XHG",
+      "opportunity": "1791297123018",
+      "orders": [
+        {
+          "id": "b8d3c8cc-59da-4086-9c8f-40e1b7ed7567",
+          "client_order_id": "schwab_1m_v2-XHG-open-572eed004d33",
+          "broker_order_id": "1008187019347",
+          "submitted_at": "2026-10-06 14:32:03.558143+00:00",
+          "status": "rejected",
+          "strategy": "schwab_1m_v2",
+          "account": "live:schwab_1m_v2"
+        }
+      ],
+      "fill_ids": [],
+      "classification": "submitted"
+    }
+  ],
+  "all_removal_markers": [
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 10:12:04,390 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-DISARM] JAGX reason=watchlist-removed"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:18:59,275 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FIRST-REST-QUOTE-WAIT] AIXI slot=first action=gave_up reason=watchlist-removed line=2.158199 segment_id=1791294000000 waited_ms=296869"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:18:59,275 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] AIXI opportunity_id=1791294242804 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:32:57,332 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-DISARM] AIXI reason=watchlist-removed"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:32:57,333 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] AIXI opportunity_id=1791294242804 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:39:59,382 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-DISARM] JAGX reason=watchlist-removed"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line": "2026-10-06 14:41:17,025 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] XHG opportunity_id=1791297123018 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+      "line": "2026-09-28 08:07:33,611 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-DISARM] MIMI reason=watchlist-removed"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+      "line": "2026-09-28 17:25:24,487 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] CLRO opportunity_id=1790615942287 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+      "line": "2026-09-28 17:36:16,124 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790615640378 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+      "line": "2026-09-28 19:03:20,095 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-DISARM] NAMI reason=watchlist-removed"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+      "line": "2026-09-28 19:03:20,096 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] NAMI opportunity_id=1790616903122 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260930.gz",
+      "line": "2026-09-29 10:44:54,621 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-DISARM] MSGY reason=watchlist-removed"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260930.gz",
+      "line": "2026-09-29 13:46:56,176 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-DISARM] MSGY reason=watchlist-removed"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260930.gz",
+      "line": "2026-09-29 22:40:50,265 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] DXST opportunity_id=1790703543160 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+      "line": "2026-09-30 08:00:06,508 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FANOUT-IDENTITY-PERSISTED] MSGY segment_id=1790707022389 active=0 reason=watchlist-removed persisted=1 could_not_tell=0"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+      "line": "2026-09-30 12:24:37,325 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] NCI slot=first reason=watchlist-removed resting_below_floor_bars=0 line=1.7996 trigger=1.8086 band_pct=0.50 offset_pct=0.50"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+      "line": "2026-09-30 12:24:37,325 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] NCI opportunity_id=1790768102878 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+      "line": "2026-09-30 12:37:43,897 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] NCI opportunity_id=1790768102878 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+      "line": "2026-09-30 13:35:37,566 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] LGHL slot=first reason=watchlist-removed resting_below_floor_bars=0 line=7.1959 trigger=7.2319 band_pct=0.50 offset_pct=0.50"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+      "line": "2026-09-30 13:35:37,567 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-CANCEL] LGHL reason=watchlist-removed line=7.1959 trigger=7.2319 band_pct=0.50 offset_pct=0.50 \u2014 cancelling the mirror"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+      "line": "2026-09-30 13:35:37,567 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] LGHL opportunity_id=1790774762362 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "line": "2026-10-01 12:29:57,102 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] MEDS slot=first reason=watchlist-removed resting_below_floor_bars=0 line=4.4025 trigger=4.4245 band_pct=0.50 offset_pct=0.50"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "line": "2026-10-01 12:29:57,102 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "line": "2026-10-01 12:46:46,588 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] VEEA opportunity_id=1790858582561 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "line": "2026-10-01 13:02:25,150 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] VEEA opportunity_id=1790858582561 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "line": "2026-10-01 13:32:47,964 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "line": "2026-10-01 13:44:45,085 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "line": "2026-10-01 14:08:41,777 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "line": "2026-10-01 17:16:53,080 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "line": "2026-10-01 20:41:10,198 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] MEDS opportunity_id=1790857262747 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+      "line": "2026-10-02 08:00:00,601 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] NXL opportunity_id=1790875862772 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+      "line": "2026-10-02 08:00:00,606 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] VEEA opportunity_id=1790879042757 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+      "line": "2026-10-02 18:25:09,654 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] CYCU slot=first reason=watchlist-removed resting_below_floor_bars=1 line=3.9988 trigger=4.0188 band_pct=0.50 offset_pct=0.50"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+      "line": "2026-10-02 18:25:09,654 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-CANCEL] CYCU reason=watchlist-removed line=3.9988 trigger=4.0188 band_pct=0.50 offset_pct=0.50 \u2014 cancelling the mirror"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+      "line": "2026-10-02 18:25:09,656 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] CYCU opportunity_id=1790963880380 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+      "line": "2026-10-02 23:58:34,356 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] AIXI opportunity_id=1790968922460 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+      "line": "2026-10-05 12:15:39,398 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] SAIQ slot=first reason=watchlist-removed resting_below_floor_bars=0 line=6.7590 trigger=6.7928 band_pct=0.50 offset_pct=0.50"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+      "line": "2026-10-05 12:15:39,398 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] SAIQ opportunity_id=1791200102388 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+      "line": "2026-10-05 15:28:38,045 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] RETO opportunity_id=1791213663149 entry_allowed=0 reason=watchlist_removed_before_position_episode_ended"
+    }
+  ],
+  "scanned_log_files": [
+    "/var/log/project-mai-tai/schwab-1m-v2.log",
+    "/var/log/project-mai-tai/schwab-1m-v2.log-20260928.gz",
+    "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+    "/var/log/project-mai-tai/schwab-1m-v2.log-20260930.gz",
+    "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+    "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+    "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+    "/var/log/project-mai-tai/schwab-1m-v2.log-20261004.gz",
+    "/var/log/project-mai-tai/schwab-1m-v2.log-20261005.gz",
+    "/var/log/project-mai-tai/schwab-1m-v2.log-20261006"
+  ]
+}
