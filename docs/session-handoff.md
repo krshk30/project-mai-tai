@@ -161,6 +161,8 @@
 
 | C48 | ORBPURPLE1 #1098 READY for independent review at exact head | Own impact assessment AGREE; seven assertion-RED mutations; fresh UNIT failed-name pair identical; both Validate SUCCESS, draft cleared. Independent-review pin still absent; no merge/install | 11:40ET10-06 GitHub API re-read ed7c2c81da28b1bf46eff70362dfd47a9f79337d; Validate push37487883430 + PR37487888556 finished15:37Z; /tmp/orbpurple1-unit-pair-final.json main3ebde36447FAIL/6416PASS vs head47FAIL/6447PASS, zero errors | codex-2 | claude-1 review/pin; separate ORB-Schwab RTH default-ON gate, no paper gate reuse. Tonight's set unchanged until pin/approved plan update |
 
+| C49 | T43 #1099 follow-up pushed, draft while final suite/CI finish | Exact audited no-wire abort proof shared by readers; old ticket stays owned. Positive broker-rejection crash audit now repairs only failed leg, never cancellation/expiry. Independent draft safety audit found no further material issue; not a review pin | 11:45ET10-06 pushed96b5b1a70bee51a8b4b0dbb6ae8ad0aefc51c144; raw /tmp/codex-t43-final-43.log43PASS; /tmp/codex-t43-final-20-mutations.json19 assertion-RED/20, order-origin removal dominated by linked intent+matching audit (not RED); final full /tmp/codex-t43-final-unit-20261006-broker-proof.log and focused receipt running; older full47FAIL/6444PASS identical to main47FAIL/6416PASS is NOT final-head claim | codex-2 | Target ready2026-10-06 15:00ET; final failed-name pair and CIx2 pending. Initial053 CI failed stale three-status terminal-set pin, corrected not removed. No merge/install; three-item plan unchanged |
+
 ### What to READ Tuesday 10-06 — claude-1, UNPROMPTED (scheduled in the claude-1 session, CronList)
 | Time ET | Read | Pass looks like |
 |---|---|---|
