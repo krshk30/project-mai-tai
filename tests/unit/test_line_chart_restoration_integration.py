@@ -128,7 +128,8 @@ def test_provider_uses_exact_0400_anchor_without_cursor_or_250_bar_limit():
     assert query["startDate"] == [str(ledger.anchor_ms)]
     assert query["endDate"] == [str(bars[-1].timestamp_ms + 59_999)]
     assert len(response) == 255
-    assert proof.bars_sha256 == history_fingerprint(response)
+    # Pinned directly from the retained 255-row RETO source, not the helper under test.
+    assert proof.bars_sha256 == "2aacce66cc9821972334caf58c8035c5d6fb3e09a48c323acb7412333ccfa333"
     assert proof.closed_ids == tuple(bar.timestamp_ms for bar in bars)
 
 

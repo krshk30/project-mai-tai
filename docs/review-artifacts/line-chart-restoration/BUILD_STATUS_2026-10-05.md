@@ -92,7 +92,7 @@ test_expected_flags_check.py and test_all_on_pm.py. Raw:
 pass. The full suite has NOT been rerun after this count-only correction;
 there is no final-head full-suite/no-regression claim.
 
-Four added failures remain concrete checkpoint blockers:
+At handover four added failures remained concrete checkpoint blockers:
 - test_no_test_reimplements_logic.py::test_no_test_computes_its_expected_value_from_production_code:
   the new provider fingerprint test derives its expected hash from production
   history_fingerprint instead of independently pinning the recorded literal.
@@ -150,6 +150,34 @@ c9aca7c0->9f003969,25c31d39->ff062bcf. The integration checkpoint follows
 that range; the handover follow-up changes only BUILD_STATUS and two ALL-ON
 catalog assertions. Parent-reported checkpoint focus112PASS/1.59s on62de631f
 is independent evidence, not a substitute for the failing full pair.
+
+## October 6 Parent Verification After Handover
+
+Parent sole-writer integration on checkpoint9e75a78c: the four residual nodes
+are corrected, not baseline-waived. New readiness-method calls are skipped
+entirely when the flag is OFF; ON retains the exact snapshot/version check.
+Provider fingerprint expectation is a pinned literal independently calculated
+from the retained255RETO source rows, with no production fingerprint function
+on the assertion's expected side. The last catalog total is148, with the new
+restoration flag explicitly expectedFALSE and installed live keys unchanged.
+
+Parent focus **212PASS/8.16s**, including all four prior failure nodes, primitive
+and provider/service tests, ALL_ON and existing emit/held-symbol controls.
+Ruff and whitespace checks PASS. Fresh full-head run completed at06:53ET:
+**47FAILED/5950PASS/237.78s**, versus exact03b
+**47FAILED/5894PASS/249.60s**. Failed node sets identical; zero additions/removals.
+No failure was waived or marked expected. Raw byte-identical copies:
+[main](MAIN_03B_UNIT_20261006_PATH.txt), SHA256
+5b199708b8c44f20ff0e848f9f0921d9c67f8c214e8f396070ab1194b8380836;
+[head](HEAD_UNIT_20261006_PATH.txt), SHA256
+dec3393454431b84aab770c1cd0eb25383d2061b45c49217dda2ec8402b70666.
+Local originals `/tmp/line-chart-baseline-03b2-unit-20261006-path.log` and
+`/tmp/line-chart-parent-final-unit-20261006-path.log`.
+
+This closes all six initially added failure nodes, not the activation blockers.
+Callback/delivery scheduling and source/quota/coverage limitations above remain
+unresolved; broader restoration-ON order-lifecycle composition is outstanding.
+No PR-ready claim, merge, flag edit or production action.
 
 ## Historical 2026-10-05 Primitive Checkpoint
 

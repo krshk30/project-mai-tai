@@ -1,0 +1,2069 @@
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+.........................................................FF......FFFFFFF [ 15%]
+FFFFFF......FFFFFF......FFFFFFFFFFFFFFFFFFFFFFF......................... [ 16%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+.....................................................F.................. [ 21%]
+........................................................................ [ 23%]
+...........................................F............................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 41%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 50%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 58%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 61%]
+........................................................................ [ 63%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+........................................................................ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+..............................F......................................... [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 83%]
+........................................................................ [ 84%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+.....................................                                    [100%]
+=================================== FAILURES ===================================
+___________ test_whole_installer_succeeds_with_one_managed_schedule ____________
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_succeeds_0')
+
+    def test_whole_installer_succeeds_with_one_managed_schedule(tmp_path) -> None:
+        installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    
+>       assert result.returncode == 0, result.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_succeeds_0/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_succeeds_0/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_succeeds_0/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_succeeds_0/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1103: AssertionError
+____ test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block ____
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_is_idempo0')
+
+    def test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block(tmp_path) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+    
+        first = subprocess.run(
+            [_bash_executable(), str(installer)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        second = subprocess.run(
+            [_bash_executable(), str(installer)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        third = subprocess.run(
+            [_bash_executable(), str(installer)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    
+>       assert first.returncode == 0, first.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_is_idempo0/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_is_idempo0/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_is_idempo0/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_is_idempo0/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1143: AssertionError
+_ test_differing_reinstall_preserves_a_pre_versioned_copy[check.py-fanout_outcome_acceptance.py] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese0')
+installed_name = 'check.py', source_name = 'fanout_outcome_acceptance.py'
+
+    @pytest.mark.parametrize(
+        ("installed_name", "source_name"),
+        (
+            ("check.py", "fanout_outcome_acceptance.py"),
+            ("cron.py", "fanout_outcome_acceptance_cron.py"),
+        ),
+    )
+    def test_differing_reinstall_preserves_a_pre_versioned_copy(
+        tmp_path: Path, installed_name: str, source_name: str
+    ) -> None:
+        installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+        first = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+>       assert first.returncode == 0, first.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese0/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese0/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese0/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese0/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1198: AssertionError
+_ test_differing_reinstall_preserves_a_pre_versioned_copy[cron.py-fanout_outcome_acceptance_cron.py] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese1')
+installed_name = 'cron.py', source_name = 'fanout_outcome_acceptance_cron.py'
+
+    @pytest.mark.parametrize(
+        ("installed_name", "source_name"),
+        (
+            ("check.py", "fanout_outcome_acceptance.py"),
+            ("cron.py", "fanout_outcome_acceptance_cron.py"),
+        ),
+    )
+    def test_differing_reinstall_preserves_a_pre_versioned_copy(
+        tmp_path: Path, installed_name: str, source_name: str
+    ) -> None:
+        installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+        first = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+>       assert first.returncode == 0, first.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese1/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese1/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese1/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_differing_reinstall_prese1/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1198: AssertionError
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be0')
+shell_mode = 'normal', installed_name = 'check.py'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize("installed_name", ("check.py", "cron.py"))
+    def test_backup_failure_refuses_before_overwriting_even_without_errexit(
+        tmp_path: Path, shell_mode: str, installed_name: str
+    ) -> None:
+        installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+        first = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+>       assert first.returncode == 0, first.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be0/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be0/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be0/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be0/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: AssertionError
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be1')
+shell_mode = 'without-set-e', installed_name = 'check.py'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize("installed_name", ("check.py", "cron.py"))
+    def test_backup_failure_refuses_before_overwriting_even_without_errexit(
+        tmp_path: Path, shell_mode: str, installed_name: str
+    ) -> None:
+        installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+        first = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+>       assert first.returncode == 0, first.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be1/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be1/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be1/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be1/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: AssertionError
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be2')
+shell_mode = 'insert-set-plus-e', installed_name = 'check.py'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize("installed_name", ("check.py", "cron.py"))
+    def test_backup_failure_refuses_before_overwriting_even_without_errexit(
+        tmp_path: Path, shell_mode: str, installed_name: str
+    ) -> None:
+        installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+        first = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+>       assert first.returncode == 0, first.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be2/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be2/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be2/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be2/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: AssertionError
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-normal] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be3')
+shell_mode = 'normal', installed_name = 'cron.py'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize("installed_name", ("check.py", "cron.py"))
+    def test_backup_failure_refuses_before_overwriting_even_without_errexit(
+        tmp_path: Path, shell_mode: str, installed_name: str
+    ) -> None:
+        installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+        first = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+>       assert first.returncode == 0, first.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be3/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be3/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be3/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be3/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: AssertionError
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be4')
+shell_mode = 'without-set-e', installed_name = 'cron.py'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize("installed_name", ("check.py", "cron.py"))
+    def test_backup_failure_refuses_before_overwriting_even_without_errexit(
+        tmp_path: Path, shell_mode: str, installed_name: str
+    ) -> None:
+        installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+        first = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+>       assert first.returncode == 0, first.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be4/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be4/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be4/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be4/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: AssertionError
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be5')
+shell_mode = 'insert-set-plus-e', installed_name = 'cron.py'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize("installed_name", ("check.py", "cron.py"))
+    def test_backup_failure_refuses_before_overwriting_even_without_errexit(
+        tmp_path: Path, shell_mode: str, installed_name: str
+    ) -> None:
+        installer, env, _command_log, _cron_state = _whole_installer_fixture(tmp_path)
+        first = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+>       assert first.returncode == 0, first.stderr
+E       AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be5/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E         /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be5/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E         REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be5/repo/ops/health/fanout_outcome_acceptance.py
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_backup_failure_refuses_be5/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: AssertionError
+_ test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance.py-check.py] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu0')
+source_name = 'fanout_outcome_acceptance.py', installed_name = 'check.py'
+
+    @pytest.mark.parametrize(
+        ("source_name", "installed_name"),
+        (
+            ("fanout_outcome_acceptance.py", "check.py"),
+            ("fanout_outcome_acceptance_cron.py", "cron.py"),
+        ),
+    )
+    def test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy(
+        tmp_path: Path, source_name: str, installed_name: str
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        installed = target_dir / installed_name
+        installed.write_bytes(b"# prior installed bytes\n")
+        env["FAKE_DATE_VALUE"] = "20260829T120000Z"
+        backup = target_dir / f"{installed_name}.pre-versioned-20260829T120000Z"
+        prior_backup = b"# older preserved rollback copy\n"
+        backup.write_bytes(prior_backup)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "backup path already exists" in result.stderr
+E       AssertionError: assert 'backup path already exists' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1270: AssertionError
+_ test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance_cron.py-cron.py] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu1')
+source_name = 'fanout_outcome_acceptance_cron.py', installed_name = 'cron.py'
+
+    @pytest.mark.parametrize(
+        ("source_name", "installed_name"),
+        (
+            ("fanout_outcome_acceptance.py", "check.py"),
+            ("fanout_outcome_acceptance_cron.py", "cron.py"),
+        ),
+    )
+    def test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy(
+        tmp_path: Path, source_name: str, installed_name: str
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        installed = target_dir / installed_name
+        installed.write_bytes(b"# prior installed bytes\n")
+        env["FAKE_DATE_VALUE"] = "20260829T120000Z"
+        backup = target_dir / f"{installed_name}.pre-versioned-20260829T120000Z"
+        prior_backup = b"# older preserved rollback copy\n"
+        backup.write_bytes(prior_backup)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "backup path already exists" in result.stderr
+E       AssertionError: assert 'backup path already exists' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_existing_backup_path_refu1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1270: AssertionError
+______ test_runtime_failure_rolls_back_every_target_mutation[new-install] ______
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac0')
+prior_artifacts = False
+
+    @pytest.mark.parametrize("prior_artifacts", (False, True), ids=("new-install", "reinstall"))
+    def test_runtime_failure_rolls_back_every_target_mutation(
+        tmp_path: Path, prior_artifacts: bool
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        if prior_artifacts:
+            target_check.write_bytes(prior_check)
+            target_cron.write_bytes(prior_cron)
+        (installer.parent / "fanout_outcome_acceptance.py").write_text(
+            "raise RuntimeError('module-scope rollback sentinel')\n",
+            encoding="utf-8",
+        )
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "module-scope rollback sentinel" in result.stderr
+E       AssertionError: assert 'module-scope rollback sentinel' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1303: AssertionError
+_______ test_runtime_failure_rolls_back_every_target_mutation[reinstall] _______
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac1')
+prior_artifacts = True
+
+    @pytest.mark.parametrize("prior_artifacts", (False, True), ids=("new-install", "reinstall"))
+    def test_runtime_failure_rolls_back_every_target_mutation(
+        tmp_path: Path, prior_artifacts: bool
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        if prior_artifacts:
+            target_check.write_bytes(prior_check)
+            target_cron.write_bytes(prior_cron)
+        (installer.parent / "fanout_outcome_acceptance.py").write_text(
+            "raise RuntimeError('module-scope rollback sentinel')\n",
+            encoding="utf-8",
+        )
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "module-scope rollback sentinel" in result.stderr
+E       AssertionError: assert 'module-scope rollback sentinel' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_runtime_failure_rolls_bac1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1303: AssertionError
+_ test_post_write_confirmation_failure_restores_root_cron_and_prior_artifacts __
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_post_write_confirmation_f0')
+
+    def test_post_write_confirmation_failure_restores_root_cron_and_prior_artifacts(
+        tmp_path: Path,
+    ) -> None:
+        installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        env["FAKE_CRONTAB_FAIL_READ_AFTER_WRITE"] = "1"
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "could not confirm the installed D6 root crontab" in result.stderr
+E       AssertionError: assert 'could not confirm the installed D6 root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_post_write_confirmation_f0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_post_write_confirmation_f0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_post_write_confirmation_f0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_post_write_confirmation_f0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_post_write_confirmation_f0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1336: AssertionError
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-normal] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_6')
+shell_mode = 'normal', failure_env = {'FAKE_DATE_FAIL': '1'}
+expected_message = 'unique D6 backup timestamp'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message"),
+        (
+            ({"FAKE_ID_FAIL": "1"}, "numeric effective uid"),
+            ({"FAKE_ID_EMPTY": "1"}, "numeric effective uid"),
+            ({"FAKE_DATE_FAIL": "1"}, "unique D6 backup timestamp"),
+            ({"FAKE_DATE_EMPTY": "1"}, "unique D6 backup timestamp"),
+        ),
+        ids=("id-fails", "id-empty", "date-fails", "date-empty"),
+    )
+    def test_uid_and_backup_timestamp_fail_closed_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_6/...6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_6/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_6/...6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_6/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_6/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: AssertionError
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_7')
+shell_mode = 'without-set-e', failure_env = {'FAKE_DATE_FAIL': '1'}
+expected_message = 'unique D6 backup timestamp'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message"),
+        (
+            ({"FAKE_ID_FAIL": "1"}, "numeric effective uid"),
+            ({"FAKE_ID_EMPTY": "1"}, "numeric effective uid"),
+            ({"FAKE_DATE_FAIL": "1"}, "unique D6 backup timestamp"),
+            ({"FAKE_DATE_EMPTY": "1"}, "unique D6 backup timestamp"),
+        ),
+        ids=("id-fails", "id-empty", "date-fails", "date-empty"),
+    )
+    def test_uid_and_backup_timestamp_fail_closed_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_7/...6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_7/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_7/...6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_7/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_7/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: AssertionError
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_8')
+shell_mode = 'insert-set-plus-e', failure_env = {'FAKE_DATE_FAIL': '1'}
+expected_message = 'unique D6 backup timestamp'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message"),
+        (
+            ({"FAKE_ID_FAIL": "1"}, "numeric effective uid"),
+            ({"FAKE_ID_EMPTY": "1"}, "numeric effective uid"),
+            ({"FAKE_DATE_FAIL": "1"}, "unique D6 backup timestamp"),
+            ({"FAKE_DATE_EMPTY": "1"}, "unique D6 backup timestamp"),
+        ),
+        ids=("id-fails", "id-empty", "date-fails", "date-empty"),
+    )
+    def test_uid_and_backup_timestamp_fail_closed_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_8/...6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_8/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_8/...6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_8/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_8/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: AssertionError
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-normal] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_9')
+shell_mode = 'normal', failure_env = {'FAKE_DATE_EMPTY': '1'}
+expected_message = 'unique D6 backup timestamp'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message"),
+        (
+            ({"FAKE_ID_FAIL": "1"}, "numeric effective uid"),
+            ({"FAKE_ID_EMPTY": "1"}, "numeric effective uid"),
+            ({"FAKE_DATE_FAIL": "1"}, "unique D6 backup timestamp"),
+            ({"FAKE_DATE_EMPTY": "1"}, "unique D6 backup timestamp"),
+        ),
+        ids=("id-fails", "id-empty", "date-fails", "date-empty"),
+    )
+    def test_uid_and_backup_timestamp_fail_closed_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_9/...6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_9/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_9/...6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_9/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_9/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: AssertionError
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_10')
+shell_mode = 'without-set-e', failure_env = {'FAKE_DATE_EMPTY': '1'}
+expected_message = 'unique D6 backup timestamp'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message"),
+        (
+            ({"FAKE_ID_FAIL": "1"}, "numeric effective uid"),
+            ({"FAKE_ID_EMPTY": "1"}, "numeric effective uid"),
+            ({"FAKE_DATE_FAIL": "1"}, "unique D6 backup timestamp"),
+            ({"FAKE_DATE_EMPTY": "1"}, "unique D6 backup timestamp"),
+        ),
+        ids=("id-fails", "id-empty", "date-fails", "date-empty"),
+    )
+    def test_uid_and_backup_timestamp_fail_closed_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_10...p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_10/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_10...p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_10/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_10/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: AssertionError
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_11')
+shell_mode = 'insert-set-plus-e', failure_env = {'FAKE_DATE_EMPTY': '1'}
+expected_message = 'unique D6 backup timestamp'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message"),
+        (
+            ({"FAKE_ID_FAIL": "1"}, "numeric effective uid"),
+            ({"FAKE_ID_EMPTY": "1"}, "numeric effective uid"),
+            ({"FAKE_DATE_FAIL": "1"}, "unique D6 backup timestamp"),
+            ({"FAKE_DATE_EMPTY": "1"}, "unique D6 backup timestamp"),
+        ),
+        ids=("id-fails", "id-empty", "date-fails", "date-empty"),
+    )
+    def test_uid_and_backup_timestamp_fail_closed_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_11...p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_11/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_11...p40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_11/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_uid_and_backup_timestamp_11/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-normal] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no6')
+shell_mode = 'normal', failure_env = {'FAKE_SHA256_FAIL_AT': '2'}
+expected_message = 'installed D6 acceptance hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no6/...6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no6/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no6/...6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no6/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no6/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no7')
+shell_mode = 'without-set-e', failure_env = {'FAKE_SHA256_FAIL_AT': '2'}
+expected_message = 'installed D6 acceptance hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no7/...6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no7/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no7/...6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no7/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no7/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no8')
+shell_mode = 'insert-set-plus-e', failure_env = {'FAKE_SHA256_FAIL_AT': '2'}
+expected_message = 'installed D6 acceptance hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no8/...6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no8/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no8/...6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no8/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no8/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-normal] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no9')
+shell_mode = 'normal', failure_env = {'FAKE_SHA256_EMPTY_AT': '2'}
+expected_message = 'installed D6 acceptance hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no9/...6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no9/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no9/...6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no9/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no9/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no10')
+shell_mode = 'without-set-e', failure_env = {'FAKE_SHA256_EMPTY_AT': '2'}
+expected_message = 'installed D6 acceptance hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no10...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no10/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no10...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no10/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no10/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no11')
+shell_mode = 'insert-set-plus-e', failure_env = {'FAKE_SHA256_EMPTY_AT': '2'}
+expected_message = 'installed D6 acceptance hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no11...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no11/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no11...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no11/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no11/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-normal] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no12')
+shell_mode = 'normal', failure_env = {'FAKE_SHA256_FAIL_AT': '3'}
+expected_message = 'installed D6 cron-runner hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no12...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no12/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no12...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no12/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no12/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no13')
+shell_mode = 'without-set-e', failure_env = {'FAKE_SHA256_FAIL_AT': '3'}
+expected_message = 'installed D6 cron-runner hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no13...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no13/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no13...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no13/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no13/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no14')
+shell_mode = 'insert-set-plus-e', failure_env = {'FAKE_SHA256_FAIL_AT': '3'}
+expected_message = 'installed D6 cron-runner hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no14...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no14/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no14...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no14/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no14/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-normal] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no15')
+shell_mode = 'normal', failure_env = {'FAKE_SHA256_EMPTY_AT': '3'}
+expected_message = 'installed D6 cron-runner hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no15...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no15/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no15...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no15/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no15/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no16')
+shell_mode = 'without-set-e', failure_env = {'FAKE_SHA256_EMPTY_AT': '3'}
+expected_message = 'installed D6 cron-runner hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no16...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no16/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no16...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no16/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no16/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no17')
+shell_mode = 'insert-set-plus-e', failure_env = {'FAKE_SHA256_EMPTY_AT': '3'}
+expected_message = 'installed D6 cron-runner hash', rollback_expected = True
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    @pytest.mark.parametrize(
+        ("failure_env", "expected_message", "rollback_expected"),
+        (
+            ({"FAKE_SHA256_FAIL_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_EMPTY_AT": "1"}, "reviewed D6 acceptance source", False),
+            ({"FAKE_SHA256_FAIL_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "2"}, "installed D6 acceptance hash", True),
+            ({"FAKE_SHA256_FAIL_AT": "3"}, "installed D6 cron-runner hash", True),
+            ({"FAKE_SHA256_EMPTY_AT": "3"}, "installed D6 cron-runner hash", True),
+        ),
+        ids=(
+            "source-hash-fails",
+            "source-hash-empty",
+            "summary-check-hash-fails",
+            "summary-check-hash-empty",
+            "summary-cron-hash-fails",
+            "summary-cron-hash-empty",
+        ),
+    )
+    def test_every_operator_hash_is_nonempty_and_guarded_without_errexit(
+        tmp_path: Path,
+        shell_mode: str,
+        failure_env: dict[str, str],
+        expected_message: str,
+        rollback_expected: bool,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original_cron = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original_cron, encoding="utf-8")
+        target_dir = tmp_path / "runtime" / "installed"
+        target_dir.mkdir()
+        target_check = target_dir / "check.py"
+        target_cron = target_dir / "cron.py"
+        prior_check = b"# prior acceptance bytes\n"
+        prior_cron = b"# prior cron-runner bytes\n"
+        target_check.write_bytes(prior_check)
+        target_cron.write_bytes(prior_cron)
+        _set_installer_shell_mode(installer, shell_mode)
+        env.update(failure_env)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert expected_message in result.stderr
+E       AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no17...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no17/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no17...p40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no17/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-10/test_every_operator_hash_is_no17/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: AssertionError
+__ test_proposed_crontab_is_validated_before_root_crontab_is_written[normal] ___
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid0')
+shell_mode = 'normal'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    def test_proposed_crontab_is_validated_before_root_crontab_is_written(
+        tmp_path: Path, shell_mode: str
+    ) -> None:
+        installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        source = installer.read_text(encoding="utf-8")
+        needle = '  "$cron_line" \\'
+        assert source.count(needle) == 1
+        installer.write_text(
+            source.replace(needle, "  '# invalid managed schedule' \\", 1),
+            encoding="utf-8",
+        )
+        installer.chmod(0o755)
+        _set_installer_shell_mode(installer, shell_mode)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "proposed root crontab does not contain the reviewed D6 schedule" in result.stderr
+E       AssertionError: assert 'proposed root crontab does not contain the reviewed D6 schedule' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1459: AssertionError
+_ test_proposed_crontab_is_validated_before_root_crontab_is_written[without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid1')
+shell_mode = 'without-set-e'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    def test_proposed_crontab_is_validated_before_root_crontab_is_written(
+        tmp_path: Path, shell_mode: str
+    ) -> None:
+        installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        source = installer.read_text(encoding="utf-8")
+        needle = '  "$cron_line" \\'
+        assert source.count(needle) == 1
+        installer.write_text(
+            source.replace(needle, "  '# invalid managed schedule' \\", 1),
+            encoding="utf-8",
+        )
+        installer.chmod(0o755)
+        _set_installer_shell_mode(installer, shell_mode)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "proposed root crontab does not contain the reviewed D6 schedule" in result.stderr
+E       AssertionError: assert 'proposed root crontab does not contain the reviewed D6 schedule' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1459: AssertionError
+_ test_proposed_crontab_is_validated_before_root_crontab_is_written[insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid2')
+shell_mode = 'insert-set-plus-e'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    def test_proposed_crontab_is_validated_before_root_crontab_is_written(
+        tmp_path: Path, shell_mode: str
+    ) -> None:
+        installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        source = installer.read_text(encoding="utf-8")
+        needle = '  "$cron_line" \\'
+        assert source.count(needle) == 1
+        installer.write_text(
+            source.replace(needle, "  '# invalid managed schedule' \\", 1),
+            encoding="utf-8",
+        )
+        installer.chmod(0o755)
+        _set_installer_shell_mode(installer, shell_mode)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "proposed root crontab does not contain the reviewed D6 schedule" in result.stderr
+E       AssertionError: assert 'proposed root crontab does not contain the reviewed D6 schedule' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid2/...6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid2/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid2/...6p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid2/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_proposed_crontab_is_valid2/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1459: AssertionError
+________ test_single_cron_composition_command_refuses_as_a_unit[normal] ________
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c0')
+shell_mode = 'normal'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    def test_single_cron_composition_command_refuses_as_a_unit(tmp_path: Path, shell_mode: str) -> None:
+        """A failure at any point in the one-command block cannot be hidden by a later printf."""
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        source = installer.read_text(encoding="utf-8")
+        needle = "if ! printf '%s\\n%s\\n%s\\n' \\\n"
+        assert source.count(needle) == 1
+        installer.write_text(
+            source.replace(needle, "if ! false \\\n", 1),
+            encoding="utf-8",
+        )
+        installer.chmod(0o755)
+        _set_installer_shell_mode(installer, shell_mode)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "REFUSED: could not compose proposed D6 root crontab" in result.stderr
+E       AssertionError: assert 'REFUSED: could not compose proposed D6 root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1485: AssertionError
+____ test_single_cron_composition_command_refuses_as_a_unit[without-set-e] _____
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c1')
+shell_mode = 'without-set-e'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    def test_single_cron_composition_command_refuses_as_a_unit(tmp_path: Path, shell_mode: str) -> None:
+        """A failure at any point in the one-command block cannot be hidden by a later printf."""
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        source = installer.read_text(encoding="utf-8")
+        needle = "if ! printf '%s\\n%s\\n%s\\n' \\\n"
+        assert source.count(needle) == 1
+        installer.write_text(
+            source.replace(needle, "if ! false \\\n", 1),
+            encoding="utf-8",
+        )
+        installer.chmod(0o755)
+        _set_installer_shell_mode(installer, shell_mode)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "REFUSED: could not compose proposed D6 root crontab" in result.stderr
+E       AssertionError: assert 'REFUSED: could not compose proposed D6 root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1485: AssertionError
+__ test_single_cron_composition_command_refuses_as_a_unit[insert-set-plus-e] ___
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c2')
+shell_mode = 'insert-set-plus-e'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    def test_single_cron_composition_command_refuses_as_a_unit(tmp_path: Path, shell_mode: str) -> None:
+        """A failure at any point in the one-command block cannot be hidden by a later printf."""
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        source = installer.read_text(encoding="utf-8")
+        needle = "if ! printf '%s\\n%s\\n%s\\n' \\\n"
+        assert source.count(needle) == 1
+        installer.write_text(
+            source.replace(needle, "if ! false \\\n", 1),
+            encoding="utf-8",
+        )
+        installer.chmod(0o755)
+        _set_installer_shell_mode(installer, shell_mode)
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "REFUSED: could not compose proposed D6 root crontab" in result.stderr
+E       AssertionError: assert 'REFUSED: could not compose proposed D6 root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c2/...6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c2/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c2/...6p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c2/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_single_cron_composition_c2/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1485: AssertionError
+_ test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_preservation_invariant_re0')
+
+    def test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled(
+        tmp_path,
+    ) -> None:
+        installer, env, _command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        source = installer.read_text(encoding="utf-8")
+        assert source.count("set -euo pipefail") == 1  # Cheap setup tripwire, not the proof.
+        installer.write_text(
+            source.replace("set -euo pipefail", "set -euo pipefail\nset +e", 1),
+            encoding="utf-8",
+        )
+        installer.chmod(0o755)
+        awk_state = tmp_path / "awk-state"
+        env["FAKE_AWK_STATE"] = awk_state.as_posix()
+        _write_executable(
+            tmp_path / "runtime" / "fake-bin" / "awk",
+            "#!/usr/bin/env bash\n"
+            "is_cron_filter=0\n"
+            'for arg in "$@"; do [[ $arg == begin=* ]] && is_cron_filter=1; done\n'
+            "if [[ $is_cron_filter == 1 ]]; then\n"
+            '  count=0; [[ -f $FAKE_AWK_STATE ]] && count=$(cat "$FAKE_AWK_STATE")\n'
+            '  count=$((count + 1)); printf \'%s\' "$count" > "$FAKE_AWK_STATE"\n'
+            "  if [[ $count == 1 ]]; then exit 29; fi\n"
+            "fi\n"
+            'exec /usr/bin/awk "$@"\n',
+        )
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    
+        assert result.returncode != 0
+>       assert "REFUSED: could not derive proposed root crontab" in result.stderr
+E       AssertionError: assert 'REFUSED: could not derive proposed root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_preservation_invariant_re0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_preservation_invariant_re0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_preservation_invariant_re0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_preservation_invariant_re0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_preservation_invariant_re0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1527: AssertionError
+_____ test_lossy_successful_awk_is_refused_before_root_crontab_is_written ______
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_lossy_successful_awk_is_r0')
+
+    def test_lossy_successful_awk_is_refused_before_root_crontab_is_written(tmp_path) -> None:
+        """Pin the pre-write ordering: an exit-zero filter that drops one line cannot clobber root."""
+        installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+        original = "# existing maintenance\n3 * * * * /usr/local/bin/keep-me\n"
+        cron_state.write_text(original, encoding="utf-8")
+        awk_state = tmp_path / "awk-state"
+        env["FAKE_AWK_STATE"] = awk_state.as_posix()
+        _write_executable(
+            tmp_path / "runtime" / "fake-bin" / "awk",
+            "#!/usr/bin/env bash\n"
+            "is_cron_filter=0\n"
+            'for arg in "$@"; do [[ $arg == begin=* ]] && is_cron_filter=1; done\n'
+            "if [[ $is_cron_filter == 1 ]]; then\n"
+            '  count=0; [[ -f $FAKE_AWK_STATE ]] && count=$(cat "$FAKE_AWK_STATE")\n'
+            '  count=$((count + 1)); printf \'%s\' "$count" > "$FAKE_AWK_STATE"\n'
+            "  if [[ $count == 1 ]]; then\n"
+            "    /usr/bin/awk \"$@\" | /usr/bin/grep -v '/usr/local/bin/keep-me'\n"
+            "    exit 0\n"
+            "  fi\n"
+            "fi\n"
+            'exec /usr/bin/awk "$@"\n',
+        )
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)], env=env, capture_output=True, text=True, check=False
+        )
+    
+        assert result.returncode != 0
+>       assert "would alter or lose a non-D6 line" in result.stderr
+E       AssertionError: assert 'would alter or lose a non-D6 line' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_lossy_successful_awk_is_r0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_lossy_successful_awk_is_r0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_lossy_successful_awk_is_r0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_lossy_successful_awk_is_r0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_lossy_successful_awk_is_r0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1559: AssertionError
+_ test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[normal] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u0')
+shell_mode = 'normal'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    def test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit(
+        tmp_path, shell_mode: str
+    ) -> None:
+        installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+        _set_installer_shell_mode(installer, shell_mode)
+        env["FAKE_CRONTAB_READ_FAIL"] = "1"
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    
+        assert result.returncode != 0
+>       assert "REFUSED: could not read the existing root crontab" in result.stderr
+E       AssertionError: assert 'REFUSED: could not read the existing root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u0/...6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1586: AssertionError
+_ test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[without-set-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u1')
+shell_mode = 'without-set-e'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    def test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit(
+        tmp_path, shell_mode: str
+    ) -> None:
+        installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+        _set_installer_shell_mode(installer, shell_mode)
+        env["FAKE_CRONTAB_READ_FAIL"] = "1"
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    
+        assert result.returncode != 0
+>       assert "REFUSED: could not read the existing root crontab" in result.stderr
+E       AssertionError: assert 'REFUSED: could not read the existing root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u1/...6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1586: AssertionError
+_ test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[insert-set-plus-e] _
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u2')
+shell_mode = 'insert-set-plus-e'
+
+    @pytest.mark.parametrize("shell_mode", ("normal", "without-set-e", "insert-set-plus-e"))
+    def test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit(
+        tmp_path, shell_mode: str
+    ) -> None:
+        installer, env, command_log, cron_state = _whole_installer_fixture(tmp_path)
+        _set_installer_shell_mode(installer, shell_mode)
+        env["FAKE_CRONTAB_READ_FAIL"] = "1"
+    
+        result = subprocess.run(
+            [_bash_executable(), str(installer)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    
+        assert result.returncode != 0
+>       assert "REFUSED: could not read the existing root crontab" in result.stderr
+E       AssertionError: assert 'REFUSED: could not read the existing root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u2/...6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u2/repo/ops/health/fanout_outcome_acceptance.py\n'
+E        +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u2/...6p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u2/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...p40000gp/T/pytest-of-velkris/pytest-10/test_whole_installer_refuses_u2/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1586: AssertionError
+_____________________ test_installer_shell_fault_controls ______________________
+
+    @pytest.mark.skipif(os.name == "nt", reason="Windows filesystems cannot model Unix ownership/mode")
+    def test_installer_shell_fault_controls() -> None:
+>       subprocess.run(["bash", "ops/logrotate/test_install.sh"], cwd=ROOT, check=True)
+
+tests/unit/test_log_retention_policy.py:13: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+input = None, capture_output = False, timeout = None, check = True
+popenargs = (['bash', 'ops/logrotate/test_install.sh'],)
+kwargs = {'cwd': PosixPath('/private/tmp/line-chart-baseline-03b2-20261006')}
+process = <Popen: returncode: 1 args: ['bash', 'ops/logrotate/test_install.sh']>
+stdout = None, stderr = None, retcode = 1
+
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+    
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+    
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output & stderr attributes if those streams
+        were captured.
+    
+        If timeout (seconds) is given and the process takes too long,
+         a TimeoutExpired exception will be raised.
+    
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+    
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+    
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+    
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+    
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+>               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['bash', 'ops/logrotate/test_install.sh']' returned non-zero exit status 1.
+
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/subprocess.py:571: CalledProcessError
+----------------------------- Captured stderr call -----------------------------
+/private/tmp/line-chart-baseline-03b2-20261006/ops/logrotate/install.sh: line 27: PRIV[@]: unbound variable
+___________ test_real_dead_consumer_cannot_block_the_paced_producer ____________
+
+tmp_path = PosixPath('/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-10/test_real_dead_consumer_cannot0')
+
+    def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> None:
+        consumer = CrossProcessPaperConsumer(
+            mode="dead",
+            raw_samples_path=tmp_path / "dead-consumer.jsonl",
+        )
+        context = multiprocessing.get_context("spawn")
+        result_reader, result_writer = context.Pipe(duplex=False)
+        producer = None
+        consumer_result = None
+        hung = False
+        try:
+            consumer_pid = consumer.start()
+            producer = context.Process(
+                target=_run_real_dead_consumer_probe,
+                args=(consumer.socket_path, result_writer),
+                name="momentum-nonblocking-producer-probe",
+            )
+            producer.start()
+            result_writer.close()
+            producer.join(timeout=3.0)
+            hung = producer.is_alive()
+            if hung:
+                producer.terminate()
+                producer.join(timeout=1.0)
+>           assert not hung, "a dead consumer blocked the producer process"
+E           AssertionError: a dead consumer blocked the producer process
+E           assert not True
+
+tests/unit/test_momentum_gateway_throughput.py:377: AssertionError
+__________________ test_installer_and_notifier_fault_controls __________________
+
+    @pytest.mark.skipif(os.name == "nt", reason="requires Linux apt and systemd tooling")
+    def test_installer_and_notifier_fault_controls() -> None:
+>       subprocess.run(
+            ["bash", "ops/bootstrap/test_unattended_upgrade_policy.sh"],
+            cwd=ROOT,
+            check=True,
+        )
+
+tests/unit/test_unattended_upgrade_policy.py:15: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+input = None, capture_output = False, timeout = None, check = True
+popenargs = (['bash', 'ops/bootstrap/test_unattended_upgrade_policy.sh'],)
+kwargs = {'cwd': PosixPath('/private/tmp/line-chart-baseline-03b2-20261006')}
+process = <Popen: returncode: 127 args: ['bash', 'ops/bootstrap/test_unattended_upgrad...>
+stdout = None, stderr = None, retcode = 127
+
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+    
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+    
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output & stderr attributes if those streams
+        were captured.
+    
+        If timeout (seconds) is given and the process takes too long,
+         a TimeoutExpired exception will be raised.
+    
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+    
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+    
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+    
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+    
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+>               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['bash', 'ops/bootstrap/test_unattended_upgrade_policy.sh']' returned non-zero exit status 127.
+
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/subprocess.py:571: CalledProcessError
+----------------------------- Captured stderr call -----------------------------
+/private/tmp/line-chart-baseline-03b2-20261006/ops/bootstrap/11_install_unattended_upgrade_policy.sh: line 35: systemd-analyze: command not found
+=============================== warnings summary ===============================
+../../../Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+../../../Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/unit/test_control_plane.py: 308 warnings
+  /Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+tests/unit/test_webull_hard_stop_floor_shared_path.py::test_a_never_protected_share_is_not_reported_as_released
+  /Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:2320: RuntimeWarning: coroutine 'OmsRiskService._attach_webull_protection' was never awaited
+    return row_fn(getter(parameters) for getter, col in getters)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_succeeds_with_one_managed_schedule
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_differing_reinstall_preserves_a_pre_versioned_copy[check.py-fanout_outcome_acceptance.py]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_differing_reinstall_preserves_a_pre_versioned_copy[cron.py-fanout_outcome_acceptance_cron.py]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance.py-check.py]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance_cron.py-cron.py]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_runtime_failure_rolls_back_every_target_mutation[new-install]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_runtime_failure_rolls_back_every_target_mutation[reinstall]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_post_write_confirmation_failure_restores_root_cron_and_prior_artifacts
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_lossy_successful_awk_is_refused_before_root_crontab_is_written
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[insert-set-plus-e]
+FAILED tests/unit/test_log_retention_policy.py::test_installer_shell_fault_controls
+FAILED tests/unit/test_momentum_gateway_throughput.py::test_real_dead_consumer_cannot_block_the_paced_producer
+FAILED tests/unit/test_unattended_upgrade_policy.py::test_installer_and_notifier_fault_controls
+47 failed, 5894 passed, 311 warnings in 249.60s (0:04:09)
