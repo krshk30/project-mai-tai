@@ -22,10 +22,11 @@ from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
-from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYPE, _request, old_buy_proven_clear
+from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYPE, _request, old_buy_proven_clear, replacement_terminal_zero
 from project_mai_tai.services import schwab_1m_v2_bot as bot_module
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
 from tests.unit.test_rpg1_runtime import feedback, runtime
+from tests.unit.t43_recorded_audit_support import AUDITS, seed_recorded_abort, seed_recorded_intent
 
 
 TONIGHT_FLAGS = {
@@ -128,6 +129,11 @@ async def startup_harness(monkeypatch, *, with_deferred=False, deferred_rows=Non
                 quantity=Decimal(row["quantity"]), price=Decimal(row["price"]),
                 filled_at=datetime.fromisoformat(row["filled_at"]), payload=deepcopy(row["payload"])))
         session.commit()
+    for row in recorded["tickets"]:
+        job = row["payload"]
+        event_id = job.get("replacement", {}).get("metadata", {}).get("rpg_event_id")
+        if any(audit["payload"]["event_id"] == event_id for audit in AUDITS["intents"]):
+            seed_recorded_abort(h, job)
     assert not h.strategy._rpg_handoffs
     return h
 
@@ -200,12 +206,21 @@ async def test_real_startup_restores_all_seven_requested_tickets_and_eighth_cens
     h = await startup_harness(monkeypatch)
     before = dict(HandoffJournal(h.factory).jobs())
     await real_bot_startup(monkeypatch, h)
-    assert dict(HandoffJournal(h.factory).jobs()) == before
+    for token, job in HandoffJournal(h.factory).jobs():
+        original = before[token]
+        if job != original:
+            assert replacement_terminal_zero(job)
+            assert job["revision"] == original["revision"] + 1
+            assert {key: value for key, value in job.items() if key not in {
+                "revision", "replacement_terminal_report"}} == {
+                    key: value for key, value in original.items() if key != "revision"}
+    before = dict(HandoffJournal(h.factory).jobs())
     await real_oms_startup(monkeypatch, h)
     for token, restored in HandoffJournal(h.factory).jobs():
         original = before[token]
         assert {key: value for key, value in restored.items()
-                if key not in {"revision", "blocked_notice_at"} and not key.startswith("terminal_rejection_probe_")} == {
+                if key not in {"revision", "blocked_notice_at", "replacement_proof_edge"}
+                and not key.startswith("terminal_rejection_probe_")} == {
             key: value for key, value in original.items() if key not in {"revision", "blocked_notice_at"}}
     assert len(h.strategy._rpg_handoffs) == 8
     early_mirror = h.strategy._rpg_handoffs["bd6ac0b9-727c-500b-8581-aabdd95992d4"]
@@ -218,7 +233,8 @@ async def test_real_startup_restores_all_seven_requested_tickets_and_eighth_cens
     for row in RECORDED["tickets"]:
         job = h.strategy._rpg_handoffs[row["id"]]
         clear, blocked = DISPOSITIONS[row["id"][:8]]
-        assert job == row["payload"]
+        assert {key: value for key, value in job.items() if key not in {"revision", "replacement_terminal_report"}} == {
+            key: value for key, value in row["payload"].items() if key != "revision"}
         assert old_buy_proven_clear(job) is clear
         state, account = h.strategy.watchlist_state(job["old"]["symbol"]), job["old"]["broker_account_name"]
         assert h.strategy._rpg_entry_owned(state, account=account) is blocked
@@ -262,16 +278,32 @@ async def test_real_startup_all_eight_and_all_five_deferred_intents_recover_only
     for token in local_clients:
         assert HandoffJournal(h.factory).read(UUID(token))["phase"] == "expired"
     for symbol in ("APUS", "VEEA", "RETO"):
-        assert not h.strategy._rpg_entry_owned(h.strategy.watchlist_state(symbol), account="live:orb")
-        assert h.service._rpg_open_refusal(tokenless_open(symbol, "live:orb")) is None
+        # This older five-row audit subset omits bd6's exact final e299 attempt.
+        # Its reason string cannot waive replacement ownership; other local
+        # targets still recover, and the late complete census supplies e299.
+        blocked = symbol == "APUS"
+        assert h.strategy._rpg_entry_owned(h.strategy.watchlist_state(symbol), account="live:orb") is blocked
+        assert h.service._rpg_open_refusal(tokenless_open(symbol, "live:orb")) == (
+            "rpg_old_buy_still_owned" if blocked else None)
     h.strategy._entries_held = False
+    # Supply the missing exact final attempt before any new draft. Its later
+    # positive proof must not be confused with replaying an old BUY/flip.
+    from tests.unit.test_rpgstuck1 import RECORDED as E3
+    audit = next(row for row in E3["intents"] if row["id"] == "24a768b5-b985-48df-8dd4-61dd3fd80800")
+    seed_recorded_intent(h, {**audit, "strategy": "schwab_1m_v2", "symbol": "APUS",
+                            "side": "buy", "intent_type": "open"})
+    await h.bot._rpg_handoff_pass()
     for symbol in ("APUS", "VEEA", "RETO"):
         h.strategy._cw_v2_resting_track(h.strategy.watchlist_state(symbol), None)
     assert {draft.symbol for draft in h.strategy.drain_pending_intents()} == {"APUS", "VEEA"}
     assert {draft.symbol for draft in h.strategy.drain_webull_direct_intents()} == {"APUS", "VEEA", "RETO"}
     assert h.service._rpg_open_refusal(tokenless_open("RETO", "live:schwab_1m_v2")) == "rpg_old_buy_still_owned"
     with h.factory() as session:
-        assert len(list(session.scalars(select(TradeIntent)))) == 10  # Five old BUYs plus all five retained deferred rows.
+        intents = list(session.scalars(select(TradeIntent)))
+        assert len(intents) == 14  # Five old BUYs, five deferrals, three exact aborts, final E3 audit.
+        assert {UUID(row["id"]) for row in AUDITS["intents"]
+                if row["symbol"] in {"APUS", "VEEA"}} <= {intent.id for intent in intents}
+        assert UUID(audit["id"]) in {intent.id for intent in intents}
         assert len(list(session.scalars(select(BrokerOrder)))) == 5
 
 
@@ -581,7 +613,8 @@ async def test_tonight_all_eight_outside_window_startup_expires_only_proven_tick
     await feedback(h)
     for symbol in ("APUS", "VEEA", "RETO"):
         for account in ("live:schwab_1m_v2", "live:orb"):
-            blocked = not proof_available and (account == "live:orb" or symbol == "RETO")
+            blocked = (not proof_available and (account == "live:orb" or symbol == "RETO")) or (
+                symbol == "APUS" and account == "live:orb")
             assert h.strategy._rpg_entry_owned(h.strategy.watchlist_state(symbol), account=account) is blocked
             assert h.service._rpg_open_refusal(tokenless_open(symbol, account)) == (
                 "rpg_old_buy_still_owned" if blocked else None)

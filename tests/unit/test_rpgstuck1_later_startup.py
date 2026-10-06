@@ -10,8 +10,8 @@ import pytest
 from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.atr_buy_readback import schwab_buy_readback
-from project_mai_tai.db.models import BrokerOrder, Fill
-from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, _request, old_buy_proven_clear
+from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill
+from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, _request, old_buy_proven_clear, replacement_terminal_zero, rpg_buy_owned
 from tests.unit.test_rpg1_runtime import feedback
 from tests.unit.test_rpgstuck1_startup import BROKER, real_bot_startup, real_oms_startup, startup_harness, tokenless_open
 
@@ -71,9 +71,16 @@ async def test_later_all14_real_startup_actual_fill_and_mi_no_wire_no_stored_or_
     h.strategy._entries_held = False
     for symbol in ("APUS", "VEEA", "RETO", "MI", "SCKT"):
         state = h.strategy.watchlist_state(symbol)
-        assert not h.strategy._rpg_entry_owned(state)
         if symbol == "SCKT":
+            # Both legacy terminal rows use the same recorded successor proof;
+            # the later exact Fill still consumes its first-entry opportunity.
+            terminal = [job for job in jobs.values() if job["old"]["symbol"] == symbol
+                        and job.get("reason") == "replacement_terminal_accounted"]
+            assert len(terminal) == 2 and all(replacement_terminal_zero(job) for job in terminal)
+            assert h.strategy._rpg_entry_owned(state)
             h.strategy._cw_v2_resting_track(state, None)
+        else:
+            assert not h.strategy._rpg_entry_owned(state)
     assert not h.strategy.drain_pending_intents() and not h.strategy.drain_webull_direct_intents()
     assert h.strategy.watchlist_state("SCKT").cw_resting_taken
     with h.factory() as session:
@@ -124,3 +131,39 @@ async def test_later_mi_unknown_label_never_proves_no_wire_or_releases_at_closed
     assert job["phase"] == "held_unknown" and not old_buy_proven_clear(job)
     assert h.strategy._rpg_entry_owned(h.strategy.watchlist_state("MI"), account="live:orb")
     assert not h.adapter.opens and not h.adapter.cancels
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["6fb89c93", "889889cd"])
+async def test_sckt_legacy_same_phase_later_exact_proof_releases_only_zero_not_filled(monkeypatch, prefix):
+    h = await startup_harness(monkeypatch, with_deferred=True, recorded=LATER)
+    token = UUID(next(row["id"] for row in LATER["tickets"] if row["id"].startswith(prefix)))
+    journal = HandoffJournal(h.factory)
+    original = journal.read(token)
+    with h.factory() as session:
+        order = session.scalar(select(BrokerOrder).where(
+            BrokerOrder.client_order_id == original["replacement"]["client_order_id"]))
+        successor = session.scalar(select(DashboardSnapshot).where(
+            DashboardSnapshot.payload["original_order_id"].as_string() == str(order.id)))
+        successor_id, recorded_proof = successor.id, deepcopy(successor.payload)
+        successor.payload = {**successor.payload, "clear_recorded": False}
+        session.commit()
+    await h.bot._rpg_handoff_pass()
+    unknown = journal.read(token)
+    assert unknown["phase"] == "refused" and not replacement_terminal_zero(unknown)
+    assert rpg_buy_owned(unknown)
+    state = h.strategy.watchlist_state("SCKT")
+    assert state.cw_resting_taken  # Separate exact recorded Fill is still sticky.
+    with h.factory() as session:
+        successor = session.get(DashboardSnapshot, successor_id)
+        successor.payload = {**recorded_proof, "revision": successor.payload["revision"] + 1}
+        session.commit()
+    await h.bot._rpg_handoff_pass()
+    proven = journal.read(token)
+    assert proven["phase"] == unknown["phase"] and proven["revision"] > unknown["revision"]
+    assert replacement_terminal_zero(proven) and not rpg_buy_owned(proven)
+    filled = next(job for key, job in journal.jobs() if str(key).startswith("d86d5d38"))
+    assert rpg_buy_owned(filled) and not replacement_terminal_zero(filled)
+    h.strategy._cw_v2_resting_track(state, None)
+    assert not h.strategy.drain_pending_intents() and not h.strategy.drain_webull_direct_intents()
+    assert not h.adapter.opens and not h.adapter.cancels and not h.adapter.reads

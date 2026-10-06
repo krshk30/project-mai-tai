@@ -20,6 +20,8 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strateg
 from tests.unit.test_pmprint1_pmflip1 import STRAYS, VEEA, armed, cross, flip
 from tests.unit.test_pmrest1 import bar, setup, track
 from tests.unit.test_rpg1_runtime import runtime
+from tests.unit.test_rpgstuck1 import RECORDED
+from tests.unit.t43_recorded_audit_support import seed_recorded_abort, seed_recorded_intent
 
 TONIGHT = {
     "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled": True,
@@ -150,6 +152,14 @@ async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership
         session.add(DashboardSnapshot(id=UUID(ticket["id"]), snapshot_type=SNAPSHOT_TYPE, payload=job))
         session.commit()
     assert not restarted._rpg_handoffs
+    if job.get("replacement"):
+        if job["replacement"]["broker_account_name"] == "live:schwab_1m_v2":
+            seed_recorded_abort(h, job)
+        else:
+            audit = next(item for item in RECORDED["intents"]
+                         if item["payload"].get("event_id") == job["replacement"]["metadata"]["rpg_event_id"])
+            seed_recorded_intent(h, {**audit, "strategy": "schwab_1m_v2", "symbol": state.symbol,
+                                    "side": "buy", "intent_type": "open"})
     assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
     await h.bot._rpg_handoff_pass()
     assert ticket["id"] in restarted._rpg_handoffs

@@ -115,7 +115,11 @@ async def test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_cle
     monkeypatch.setattr(h.service, "_rpg_retry_pause", pump)
     await h.service._run_rpg_retry_loop(stop)
     expected = "expired" if outside else "placed"
-    assert phases == {token: ["clear", expected] for token in tokens}
+    # A committed acceptance may wake one same-generation proof evaluation;
+    # it must not replay the opening or start a periodic terminal scan.
+    for token in tokens:
+        assert phases[token][:2] == ["clear", expected]
+        assert phases[token][2:] in ([], ["placed"] if not outside else [])
     assert all(journal.read(token)["phase"] == expected and old_buy_proven_clear(journal.read(token))
                for token in tokens)
     assert len(h.adapter.opens) == (0 if outside else 4)

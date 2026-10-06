@@ -32,7 +32,7 @@ FAIL = 1
 COULD_NOT_TELL = 2
 UNEXERCISED = 3
 
-TERMINAL_STATUSES = {"filled", "cancelled", "rejected"}
+TERMINAL_STATUSES = {"filled", "cancelled", "rejected", "aborted"}
 START_MARKER = "schwab_1m_v2 bot starting pid="
 START_RE = re.compile(
     r"^(?P<at>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[,.]\d+)?)"

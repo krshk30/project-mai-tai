@@ -393,9 +393,11 @@ def test_restart_restores_recorded_accepted_wire_not_new_calculation_and_never_d
     quantity = Decimal(new["shares"]) if post_flag else Decimal(row["quantity"])
     md.setdefault("rpg_resting_generation", str(token))  # Controlled ticket around the pre-RPG recorded wire.
     job = {"revision": 0, "phase": "placed", "slot": "first", "segment_id": state.fanout_segment_id,
-           "old": {"symbol": row["symbol"], "broker_account_name": row["account"], "metadata": md},
+           "old": {"symbol": row["symbol"], "broker_account_name": row["account"], "metadata": md,
+                   "strategy_code": "schwab_1m_v2", "side": "buy"},
            "replacement": {"client_order_id": row["client_order_id"], "metadata": md,
-                           "quantity": str(quantity)}}
+                           "quantity": str(quantity), "symbol": row["symbol"], "side": "buy",
+                           "strategy_code": "schwab_1m_v2", "broker_account_name": row["account"]}}
     event = TradeIntentEvent(source_service="recorded-accepted-replay", payload=TradeIntentPayload(
         strategy_code="schwab_1m_v2", broker_account_name=row["account"], symbol=row["symbol"],
         side="buy", intent_type="open", quantity=quantity, reason="ATR Flip", metadata=md))

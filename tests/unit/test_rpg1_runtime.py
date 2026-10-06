@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
-from uuid import UUID
+from uuid import UUID, uuid5, NAMESPACE_URL
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -558,9 +558,25 @@ async def test_v2_restart_uses_committed_replacement_status_not_stale_placed_lat
     with h.factory() as session:
         order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == request.client_order_id))
         order.status = status  # Controlled committed broker-sync outcome; no venue claim.
+        if status == "cancelled":
+            # A status alone is not terminal-zero evidence. Model the durable
+            # exact successor read/accounting, as in the recorded OLOX chain.
+            old = replace(request, intent_type="cancel", metadata={
+                **request.metadata, "broker_order_id": order.broker_order_id,
+                "resting_entry_cancel": "true"})
+            successor = HandoffJournal(h.factory).prepare_local(old, slot="first",
+                segment_id=h.state.fanout_segment_id, now=h.clock[0].timestamp(),
+                phase="clear", reason="terminal_cancel_explicit_zero", session=session,
+                original_order_id=str(order.id), cleared_at=h.clock[0].timestamp(),
+                clear_recorded=True, broker_status="CANCELED")
+            assert successor == uuid5(NAMESPACE_URL, f"atr-reprice:{request.broker_account_name}:{request.client_order_id}")
         session.commit()
     h.strategy._rpg_handoffs.clear()
     h.strategy._rpg_feedback_applied.clear()  # Restart's empty feedback cache.
+    if status == "cancelled":
+        # This restart is after the opportunity ended, not an active reprice.
+        # The real authorization/dispatcher must expire the cleared successor.
+        h.state.atr_state = "long"
     await feedback(h)
     assert not h.state.resting_active
     assert h.state.cw_resting_taken is (status == "filled")

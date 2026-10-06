@@ -21,7 +21,8 @@ from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.atr_reprice_handoff import (
     AtrRepriceHandoff, HandoffJournal, ReplacementDecision, SNAPSHOT_TYPE, _request,
     _request_dict, MAX_READS, READ_INTERVAL_SECONDS, READ_TIMEOUT_SECONDS,
-    old_buy_proven_clear,
+    replacement_needs_reconciliation, replacement_terminal_zero,
+    replacement_order_matches, rpg_buy_owned,
 )
 from project_mai_tai.strategy_core.entry_gate import within_rth_entry_window
 from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit
@@ -214,9 +215,17 @@ class AtrRepriceRuntimeMixin:
         await self._rpg_advance(token)
         return []
 
-    async def _rpg_advance(self, token):
+    async def _rpg_advance(self, token, *, proof_edge=None):
         journal = self._rpg_journal()
         job = journal.read(token)
+        if replacement_needs_reconciliation(job) and job["phase"] not in {"submitting", "submit_unknown"}:
+            job = journal.reconcile_feedback(token, job)
+            if (replacement_needs_reconciliation(job) and not replacement_terminal_zero(job)
+                    and proof_edge and job.get("replacement_proof_edge") != proof_edge):
+                claimed = journal.change(token, job["revision"], replacement_proof_edge=proof_edge)
+                if claimed is not None:
+                    job = await self._rpg_reconcile_dispatch(token, claimed, proof_only=True)
+            return job  # Proof-only turns never replay authorization or an old BUY.
         starting_phase = job["phase"]
         if self._rpg_rejected_old_probe_eligible(job):
             job = await self._rpg_probe_rejected_old(token, job)
@@ -363,21 +372,23 @@ class AtrRepriceRuntimeMixin:
                     terminal_rejection_fill_accounting="recorded" if recorded else "UNMEASURED") or journal.read(token)
         return journal.change(token, current["revision"], **changes) or journal.read(token)
 
-    async def _rpg_reconcile_dispatch(self, token, job):
+    async def _rpg_reconcile_dispatch(self, token, job, *, proof_only=False):
         """Read the claimed replacement identity; never replay an uncertain submit."""
         accounted = self._rpg_journal().reconcile_feedback(token, job)
-        if accounted["phase"] != job["phase"]:
+        if accounted != job:
             return accounted
-        if (not job.get("replacement") or job.get("dispatch_reads", 0) >= MAX_READS
-                or self._rpg_now().timestamp() < job.get("dispatch_next_read_at", 0)):
+        if (not job.get("replacement") or (not proof_only and (job.get("dispatch_reads", 0) >= MAX_READS
+                or self._rpg_now().timestamp() < job.get("dispatch_next_read_at", 0)))):
             return job
         journal = self._rpg_journal()
         request = _request(job["replacement"])
         with self.session_factory() as session:
             order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == request.client_order_id))
-            if order is None:
+            if order is None or not replacement_order_matches(session, order, job["replacement"]):
                 return job
             broker_id = order.broker_order_id or ""
+            expected_broker_id = order.broker_order_id
+            order_id = str(order.id)
         job = journal.change(token, job["revision"], dispatch_reads=job.get("dispatch_reads", 0) + 1,
             dispatch_next_read_at=self._rpg_now().timestamp() + READ_INTERVAL_SECONDS)
         if job is None:
@@ -391,9 +402,28 @@ class AtrRepriceRuntimeMixin:
         except Exception:
             return journal.read(token)
         current = journal.read(token)
-        if current["revision"] != job["revision"] or not isinstance(readback, AtrBuyReadback):
+        if (current["revision"] != job["revision"] or current.get("replacement") != job["replacement"]
+                or not isinstance(readback, AtrBuyReadback)
+                or (broker_id and readback.broker_order_id and readback.broker_order_id != broker_id)):
+            return current
+        if (readback.cumulative_filled is not None and
+                (not readback.cumulative_filled.is_finite() or readback.cumulative_filled < 0)):
             return current
         broker_id = readback.broker_order_id or broker_id
+        with self.session_factory() as session:
+            order = session.get(BrokerOrder, UUID(order_id))
+            if (order is None or order.broker_order_id != expected_broker_id
+                    or not replacement_order_matches(session, order, current["replacement"])):
+                return current
+            guard = (order_id, order.broker_order_id)
+        if (readback.cumulative_filled is not None and readback.cumulative_filled.is_finite()
+                and readback.cumulative_filled > 0):
+            # Even when price/quantity accounting is unresolved, positive quantity
+            # permanently forbids reopening this opportunity.
+            current = journal.change(token, current["revision"], _expected_replacement=job["replacement"],
+                _expected_order=guard, replacement_filled=True, no_rebuy=True) or journal.read(token)
+            if current["revision"] != job["revision"] + 1:
+                return current
         if readback.can_replace:
             status, phase = "cancelled", "refused"
         elif readback.outcome == "working" and readback.cumulative_filled == 0 and broker_id:
@@ -408,11 +438,17 @@ class AtrRepriceRuntimeMixin:
             symbol=request.symbol, side="buy", intent_type="open", quantity=request.quantity,
             filled_quantity=readback.cumulative_filled if phase == "filled" else Decimal(0),
             fill_price=readback.fill_price, origin="broker", reason="rpg_exact_dispatch_readback",
-            metadata={"atr_reprice_terminal_cancel": str(readback.terminal_cancel).lower()})
+            metadata={"atr_reprice_terminal_cancel": str(readback.terminal_cancel).lower(),
+                      "rpg_terminal_filled_quantity": str(readback.cumulative_filled)})
+        request = replace(request, metadata={**request.metadata, "rpg_proof_order_id": order_id,
+                                           "rpg_proof_broker_id": guard[1] or ""})
         if not await self._rpg_record_fill(request, report):
             return current
-        return journal.change(token, current["revision"], phase=phase,
-            replacement_filled=phase == "filled", reason="replacement_exact_dispatch_readback") or journal.read(token)
+        if phase == "refused":
+            return journal.reconcile_feedback(token, journal.read(token))
+        return journal.change(token, current["revision"], _expected_replacement=job["replacement"],
+            _expected_order=(order_id, broker_id), phase=phase, replacement_filled=phase == "filled",
+            reason="replacement_exact_dispatch_readback") or journal.reconcile_feedback(token, journal.read(token))
 
     def _rpg_retire_price_wait(self, job):
         request = job["replacement"]
@@ -504,8 +540,16 @@ class AtrRepriceRuntimeMixin:
 
     async def _rpg_record_fill(self, old, report):
         with self.session_factory() as session:
-            order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == old.client_order_id))
-            if order is None:
+            order = session.scalar(select(BrokerOrder).where(
+                BrokerOrder.client_order_id == old.client_order_id).with_for_update())
+            if order is None or not replacement_order_matches(session, order, _request_dict(old),
+                                                               require_generation=old.intent_type != "cancel"):
+                return False
+            if old.metadata.get("rpg_proof_order_id") and (
+                    str(order.id) != old.metadata["rpg_proof_order_id"]
+                    or (order.broker_order_id or "") != old.metadata.get("rpg_proof_broker_id")):
+                return False
+            if order.broker_order_id and report.broker_order_id != order.broker_order_id:
                 return False
             intent = session.get(TradeIntent, order.intent_id)
             opening = replace(old, intent_type="open", metadata=dict(order.payload or {}))
@@ -514,6 +558,7 @@ class AtrRepriceRuntimeMixin:
                     strategy_code="schwab_1m_v2", broker_account_name=old.broker_account_name,
                     symbol=old.symbol, side="buy", intent_type="open", quantity=old.quantity,
                     reason=intent.reason, metadata=dict(opening.metadata)))
+            report = replace(report, metadata={**old.metadata, **report.metadata})
             events = await self._record_order_reports(session=session, intent=intent,
                 strategy_id=order.strategy_id, broker_account_id=order.broker_account_id,
                 intent_event=event, request=opening, reports=[report])
@@ -563,8 +608,13 @@ class AtrRepriceRuntimeMixin:
             return None
         for _, job in self._rpg_journal().jobs(session=session):
             old = job["old"]
-            if ((job["phase"] in ACTIVE_PHASES or (job["phase"] in {"expired", "refused"}
-                    and not old_buy_proven_clear(job))) and old["symbol"] == event.payload.symbol
+            try:
+                segment = int(event.payload.metadata["fanout_segment_id"])
+            except (KeyError, ValueError, TypeError):
+                segment = None
+            if (rpg_buy_owned(job, slot=event.payload.metadata.get("cw_entry_slot"),
+                             segment_id=segment)
+                    and old["symbol"] == event.payload.symbol
                     and old["broker_account_name"] == event.payload.broker_account_name):
                 return "rpg_old_buy_still_owned"
         return None
@@ -677,6 +727,7 @@ class AtrRepriceRuntimeMixin:
 
     async def _run_rpg_retry_loop(self, stop_event):
         startup = True
+        startup_edge = "startup:" + str(uuid4())
         active = False
         while not stop_event.is_set():
             signal = self._rpg_retry_signal()
@@ -693,12 +744,18 @@ class AtrRepriceRuntimeMixin:
                     jobs = {}
                 active = any(job["phase"] in ACTIVE_PHASES - {"held_unknown"} for job in jobs.values())
                 for token, job in jobs.items():
-                    if (job["phase"] in ACTIVE_PHASES - {"held_unknown"}
+                    proof = (replacement_needs_reconciliation(job)
+                             and not replacement_terminal_zero(job)
+                             and job["phase"] not in {"submitting", "submit_unknown"})
+                    if ((proof and (startup or token in pending))
+                            or job["phase"] in ACTIVE_PHASES - {"held_unknown"}
                             or (job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven"
                                 and (startup or token in pending))
                             or await asyncio.to_thread(self._rpg_rejected_old_probe_eligible, job)):
                         await self.redis.xadd(f"{self.settings.redis_stream_prefix}:strategy-intents",
-                            {"data": json.dumps({"event_type": "atr_reprice_tick", "token": str(token)})},
+                            {"data": json.dumps({"event_type": "atr_reprice_tick", "token": str(token),
+                                **({"proof_edge": startup_edge if startup else
+                                    job.get("local_evidence_wakeup_hash")} if proof else {})})},
                             maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
                     pending.discard(token)
                 startup = False
@@ -732,9 +789,13 @@ class AtrRepriceRuntimeMixin:
     def _rpg_retry_jobs(self, *, include_unknown):
         phases = ACTIVE_PHASES if include_unknown else ACTIVE_PHASES - {"held_unknown"}
         with self.session_factory() as session:
-            return [(row.id, dict(row.payload)) for row in session.scalars(select(DashboardSnapshot).where(
-                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
-                DashboardSnapshot.payload["phase"].as_string().in_(phases)))]
+            statement = select(DashboardSnapshot).where(DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE)
+            if not include_unknown:
+                statement = statement.where(DashboardSnapshot.payload["phase"].as_string().in_(phases))
+            rows = session.scalars(statement)
+            return [(row.id, dict(row.payload)) for row in rows if row.payload["phase"] in phases
+                    or (include_unknown and replacement_needs_reconciliation(row.payload)
+                        and not replacement_terminal_zero(row.payload))]
 
     async def _rpg_wake_committed_evidence(self, event):
         """A committed generation write schedules proof, never supplies proof itself.
@@ -760,13 +821,16 @@ class AtrRepriceRuntimeMixin:
                     ((intent.payload or {}).get("metadata") or {}).get("rpg_resting_generation") if intent else None)
             if not generation:
                 return []
-            jobs = [(row.id, dict(row.payload)) for row in session.scalars(select(DashboardSnapshot).where(
+            candidates = [(row.id, dict(row.payload)) for row in session.scalars(select(DashboardSnapshot).where(
                 DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
-                DashboardSnapshot.payload["phase"].as_string() == "held_unknown",
-                DashboardSnapshot.payload["reason"].as_string() == "exact_old_order_unproven",
                 DashboardSnapshot.payload["old"]["symbol"].as_string() == payload.symbol,
-                DashboardSnapshot.payload["old"]["broker_account_name"].as_string() == payload.broker_account_name,
-                DashboardSnapshot.payload["old"]["metadata"]["rpg_resting_generation"].as_string() == generation))]
+                DashboardSnapshot.payload["old"]["broker_account_name"].as_string() == payload.broker_account_name))]
+            jobs = [(token, job) for token, job in candidates if (
+                job["phase"] == "held_unknown" and job.get("reason") == "exact_old_order_unproven"
+                and job["old"]["metadata"].get("rpg_resting_generation") == generation) or (
+                    replacement_needs_reconciliation(job) and
+                    job["replacement"]["metadata"].get("rpg_resting_generation") == generation
+                    and job["replacement"]["client_order_id"] == payload.client_order_id)]
         digest = hashlib.sha256(json.dumps({"generation": generation, "client": payload.client_order_id,
             "status": payload.status, "quantity": str(payload.quantity), "filled": str(payload.filled_quantity),
             "reason": payload.reason, "metadata": payload.metadata}, sort_keys=True).encode()).hexdigest()
