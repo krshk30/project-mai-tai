@@ -1291,7 +1291,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         payload = json.loads(data)
         event_type = str(payload.get("event_type", "")).strip().lower()
         if event_type == "atr_reprice_tick":
-            await self._rpg_advance(UUID(payload["token"]))
+            await self._rpg_advance(UUID(payload["token"]), proof_edge=payload.get("proof_edge"))
             return
         if event_type == "trade_intent":
             event = TradeIntentEvent.model_validate(payload)

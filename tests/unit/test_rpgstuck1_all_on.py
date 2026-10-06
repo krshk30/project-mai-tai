@@ -109,7 +109,9 @@ async def test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_
         if prefix in LOCAL:
             assert job["phase"] == ("held_unknown" if not proof else "expired" if outside else "placed")
             assert old_buy_proven_clear(job) is proof
-            assert h.strategy._rpg_entry_owned(state, account="live:orb") is (not proof)
+            # An accepted replacement owns BUYs, not the serial cancel lane.
+            assert h.strategy._rpg_entry_owned(state, account="live:orb") is (not proof or job["phase"] == "placed")
+            assert h.strategy._rpg_leg_owned(state, "live:orb") is (not proof)
         elif prefix == "ff6464ff":
             assert job["phase"] == ("refused" if proof else "held_unknown")
             assert old_buy_proven_clear(job) is proof

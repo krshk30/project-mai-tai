@@ -18,6 +18,7 @@ from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYP
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
 from tests.unit.test_rpg1_runtime import begin, feedback, runtime
 from tests.unit.test_all_on_pm import ALL_ON, completed_seeded_line  # noqa: F401
+from tests.unit.t43_recorded_audit_support import seed_recorded_abort
 
 RECORDED = json.loads((Path(__file__).parents[1] / "fixtures/t43_recorded_tickets_20261006.json").read_text())
 REFUSED = [job for job in RECORDED["tickets"] if job["old"]["symbol"] == "AIXI"
@@ -55,6 +56,11 @@ async def recovered_pair(monkeypatch, recorded, *, all_on=False):
     state.resting_level, state.resting_trigger = state.atr_trail, 1.4639
     token = recorded["replacement"]["metadata"]["rpg_handoff_token"]
     h.strategy.rpg_handoff_authorization(token, deepcopy(recorded))
+    with h.factory() as session:
+        session.add(DashboardSnapshot(id=UUID(token), snapshot_type=SNAPSHOT_TYPE, payload=deepcopy(recorded)))
+        session.commit()
+    seed_recorded_abort(h, recorded)
+    await h.bot._rpg_handoff_pass()
     return h, surviving_leg
 
 
@@ -317,6 +323,12 @@ async def test_t43_committed_broker_rejection_repairs_only_absent_leg_after_cras
             order.status = proof
         session.commit()
     reads = len(h.adapter.reads)
+    if proof == "foreign_generation":
+        from project_mai_tai.oms.atr_reprice_handoff import broker_rpg_rejection_proof
+        with h.factory() as session:
+            order = session.scalar(select(BrokerOrder).where(
+                BrokerOrder.client_order_id == job["replacement"]["client_order_id"]))
+            assert broker_rpg_rejection_proof(session, order, job) is None
     recovered = await h.service._rpg_reconcile_dispatch(token, job)
     assert len(h.adapter.reads) == reads and len(h.adapter.opens) == 1
     if proof == "complete":
@@ -402,7 +414,7 @@ async def test_t43_reauthorization_rechecks_orb_ownership_after_releasing_shared
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("proof", ["complete", "no_audit", "audit_source", "foreign_token", "foreign_generation", "broker_id", "unknown_origin"])
+@pytest.mark.parametrize("proof", ["complete", "no_audit", "audit_source", "foreign_token", "foreign_generation", "broker_id", "unknown_origin", "unknown_order_and_audit_origin"])
 async def test_t43_committed_abort_recovers_interrupted_dispatch_only_with_exact_no_wire_proof(monkeypatch, proof):
     h = await runtime(monkeypatch, "schwab")
     token, _ = await begin(h, "schwab")
@@ -434,8 +446,13 @@ async def test_t43_committed_abort_recovers_interrupted_dispatch_only_with_exact
             order.payload = {**order.payload, "rpg_resting_generation": "foreign-generation"}
         elif proof == "broker_id":
             order.broker_order_id = "CONTROLLED-possibly-wired"
-        elif proof == "unknown_origin":
+        elif proof in {"unknown_origin", "unknown_order_and_audit_origin"}:
             order.payload = {**order.payload, "refusal_origin": "unknown"}
+            if proof == "unknown_order_and_audit_origin":
+                # Controlled corrupt order/audit agreement isolates the order
+                # origin guard; the linked intent still proves client origin.
+                audit.payload = {**audit.payload, "metadata": {
+                    **audit.payload["metadata"], "refusal_origin": "unknown"}}
         session.commit()
     reads_before = len(h.adapter.reads)
     recovered = await h.service._rpg_reconcile_dispatch(token, job)

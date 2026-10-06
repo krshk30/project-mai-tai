@@ -111,6 +111,12 @@ def test_complete_depth_one_fill_is_pass_not_missing_data() -> None:
     assert "[V2-FANOUT-IDENTITY-ACCEPTED]" in output
 
 
+def test_audited_aborted_attempt_counts_as_terminal_without_a_fill() -> None:
+    report = _evaluate([_intent()], [_attempt(status="aborted", fills=0)])
+    assert "submitted=1 terminal=1" in "\n".join(report.lines)
+    assert "filled_attempts=0" in "\n".join(report.lines)
+
+
 def test_realistic_depth_fifty_chain_stays_readable_and_complete() -> None:
     attempts = []
     predecessor = ""
