@@ -6710,3 +6710,18 @@ raw hashes, source delta7262df5e and a boundedproof-only disposition for review:
 exactclient/generation/account/CAS, terminalzero or auditednowire, consistent
 OMS/v2, no historicalBUYreplay/timer/ageclear/purge/ledgerwrite. Parent C-row
 and append-onlylog only; no production or T/Board/decision edits.
+
+### 2026-10-06 13:34 ET - codex-2 C60 RETRYOFF1 counterexample and parallel claims
+
+Operator no-second-buy card accepted; requested env-only mechanism independently
+fails. Exact-main false flag preserves confirmation-only reset at source1907:
+recorded OLOX row/opportunity/slot and stored12:20bar yield idle owner and a
+primary/mirror draft on the12:21 offline decision. Recorded live log shows the
+same close/release/next placement but is not substituted for a false-flag run.
+27 exact-main retry tests pass, including explicit legacy OFF confirmation
+reset assertion. STEP0_2026-10-06.md records all raw hashes and controlled-gate
+boundaries. Plan writer warned: removal remains blocked on acceptance, no
+production write or trading-source workaround. Separate reviewed fix question
+asked. CLEARWAIT widened own Step0/build, WEBULL429 readonly Step0 and #1100
+display correction proceed under distinct sole writers. #1099/MIRROR blockers
+remain; no T rows, Boards or open decisions changed.
