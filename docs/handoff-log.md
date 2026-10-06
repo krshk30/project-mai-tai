@@ -6422,3 +6422,20 @@ read-only pull precede the build. Missing refused/rejected leg must return
 through ordinary next-bar admission, without touching its surviving sibling.
 Reject-text recording stays bundled. No production write, restart or ledger
 adjustment; no change to manual-cancel, policy refusal or unknown-buy proof.
+
+### 2026-10-06 10:51 ET - codex-2 C38 T43 cause correction / build STOP
+
+Own bounded read-only PostgreSQL confirms order ...-b95fc559b0a2 is rejected,
+brokerid null, reject_reason null, audit events0. Its intent explicitly records
+client_abort/rpg_stale_strategy_authorization; c9b13cc4 ticket independently
+records that same replacement reason. Authorization age0.822s at submit-start,
+1.085s at completion vs unchanged1s admission. service.py's second pre-wire
+check writes this exact incomplete order-audit shape and returns before wire.
+Thus T43 missing-leg/shared-latch defect AGREED, claimed Schwab market-price
+rejection DISAGREED. No fabricated broker reason, no relaxation of freshness.
+Standing own-assessment rule requires STOP on cause disagreement; assessment
+only pushed at1cbc40c7c861e67ba28305703f2a45d424adc790 on the C37branch.
+Next-bar one-leg-only card remains sound with exact terminal/no-wire generation
+proof and current gates; venue acceptance/profit remains counterfactual.
+Report contains own raw paths/hashes, bounds and pre-market scope distinction.
+No PR/build/pin/merge/install claimed; no production action or ledger edit.
