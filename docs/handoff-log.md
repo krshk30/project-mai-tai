@@ -5644,3 +5644,13 @@ NativeboxUTC confirmed; originalOMS23705/v226811/strategy24025 activeNRestarts0,
 HEADe1ce3b39, no concurrentdeploy observed. logrotateNEXT00:00UTC10-06.
 AttendedrunNOTstarted: waitingrotation/20:05ET; nocheckout/env/schema/service
 action. No timer/scheduledclaim; oldSTOPattempt preserved; no recovery.
+
+2026-10-05 20:11 ET codex-2 C91: rotationobservedbeforeapprovedrun:
+logrotate.service start00:00:00UTC/exit0; statusdate10-6; currentlog inodes
+match19:28 preread and sizeslower; all3rotated .log-20261006 copiespresent.
+Sevenartifacthashes recheckedonbox againstadf55da1, allPASS, attemptabsent.
+Exact6ffc runnerbegins20:10:30.991ET APPROVALPASS initialOMSread. Attended
+SSHsession21237; no concurrentdeploy. OldPIDs23705/26811/24025active beforecall.
+Rawattempt/home/trader/after-hours/2026-10-05/owned-entry-rpg-all-on-1910-native-tz-job/attempt-1730-go/runner.log.
+NoCOMPLETE/newPID/checkout/env/migrationclaimyet; supervisioncontinues,
+abortpages/startsnothing; noimprovisedrecovery.
