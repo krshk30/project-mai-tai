@@ -548,3 +548,25 @@ anchor, stale/future heartbeat, bad field or any other degraded service.
 Print every detail, chosen anchor and bound in [STANDING-ALLOWANCE]; preserve
 the raw evidence and adjust only the input copy. No lower health threshold,
 trading-code edit or MI/NXL allowance change.
+
+## Recorded No-Broker-ID Rejections
+
+Reviewer clarification October6 after17:09ET: a rejected BUY row with no broker
+ID may be admitted as terminal through its exact recorded client-abort intent,
+not only a broker_order_events row. Bind account, strategy, symbol and client
+attempt ID; require rejected intent, refusal_origin=client_abort and a recorded
+refusal code. Alternatively require the exact broker-source rejected event,
+matching client/order ID, no broker/fill ID and recorded HTTP4xx at submit.
+Any recorded fill blocks this admission. Status alone, foreign/absent proof or
+a broker ID cannot take this path. The working-order census still runs directly
+on both brokers. This is install admission, never a ticket/ownership release.
+
+Own17:07ET Webull list-today: complete86 orders/two bounded pages, zero working
+OLOX/MOBX. Raw local SHA25622432bca997bba6e90ba9ee45687e47fd92ccf4674bfe09de8040dfae8f7bc4b.
+Own17:07:33ET SchwabOLOX exactorderd56dac04/exactintent99ee8c8c: no broker ID,
+zero fills, no broker_order_events; rejected intent explicitly records
+client_abort/rpg_stale_strategy_authorization. Source discrepancy retained,
+not a fabricated broker event. Three recorded Webull HTTP417 submit rejects
+and this intent are captured in job/TERMINAL_REJECTS_RECORDED_2026-10-06.json.
+Tests:718 jobPASS;12/12 assertion mutationsRED, no harness failures. Fresh full
+103-row/broker rehearsal and all initial runner gates remain mandatory.

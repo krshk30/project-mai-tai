@@ -140,6 +140,42 @@ def rows(connection, query, parameters=None, limit=MAX_ROWS):
     return data
 
 
+def no_broker_id_terminal(row, events, intents, fills):
+    """Install admission only: recorded rejection, never runtime ownership release."""
+    client = row.get("client_order_id")
+    if (row.get("status") != "rejected" or row.get("broker_order_id") or not client
+            or row.get("account") not in ACCOUNTS or row.get("side") != "buy"
+            or row.get("strategy") != "schwab_1m_v2"
+            or any(str(fill.get("order_id")) == str(row["id"]) for fill in fills)):
+        raise Stop("missing broker identity without zero-fill recorded reject proof")
+    for event_row in events:
+        payload = event_row.get("payload") or {}
+        metadata = payload.get("metadata") or {}
+        if (str(event_row.get("order_id")) == str(row["id"])
+                and event_row.get("event_type") == "rejected"
+                and event_row.get("event_source") == "broker"
+                and payload.get("client_order_id") == client
+                and not payload.get("broker_order_id")
+                and not payload.get("broker_fill_id")
+                and str(metadata.get("webull_http_status", "")).isdigit()
+                and 400 <= int(metadata["webull_http_status"]) < 500
+                and metadata.get("webull_wire_submitted_at_utc")):
+            return dict(kind="broker_submit_reject_event", evidence_id=str(event_row["id"]),
+                        http=int(metadata["webull_http_status"]))
+    for intent in intents:
+        payload = intent.get("payload") or {}
+        metadata = payload.get("metadata") or {}
+        if (intent.get("account") == row["account"] and intent.get("symbol") == row["symbol"]
+                and intent.get("strategy") == row["strategy"] and intent.get("side") == "buy"
+                and intent.get("status") == "rejected"
+                and metadata.get("fanout_attempt_id") == client
+                and payload.get("refusal_origin") == "client_abort"
+                and payload.get("refusal_code")):
+            return dict(kind="client_abort_intent", evidence_id=str(intent["id"]),
+                        refusal_code=payload["refusal_code"])
+    raise Stop("missing broker identity without matching reject event/client_abort intent: " + client)
+
+
 def sql_census(config, result):
     engine = build_engine(config.database_url, connect_timeout_s=5, statement_timeout_ms=5000)
 
@@ -243,6 +279,33 @@ def sql_census(config, result):
                 "JOIN broker_accounts a ON a.id=f.broker_account_id WHERE CAST(f.order_id AS text)"
                 "=ANY(:ids) ORDER BY f.filled_at,f.id LIMIT 1025",
                 {"ids": [str(row["id"]) for row in result["linked_orders"]]})
+            result["no_id_reject_orders"] = rows(connection,
+                "SELECT b.id,b.client_order_id,b.broker_order_id,b.symbol,b.side,b.quantity,"
+                "b.status,b.submitted_at,s.code strategy,a.name account FROM broker_orders b "
+                "JOIN strategies s ON s.id=b.strategy_id JOIN broker_accounts a ON a.id=b.broker_account_id "
+                "WHERE b.broker_order_id IS NULL AND (CAST(b.id AS text)=ANY(:ids) OR "
+                "(b.status='rejected' AND b.side='buy' AND s.code='schwab_1m_v2' AND "
+                "b.submitted_at>='2026-10-06T04:00:00Z' AND a.name IN ('live:schwab_1m_v2','live:orb'))) "
+                "ORDER BY b.id LIMIT 1025", {"ids": [str(row["id"]) for row in result["linked_orders"]]})
+            rejected_ids = [str(row["id"]) for row in result["no_id_reject_orders"]]
+            rejected_clients = [row["client_order_id"] for row in result["no_id_reject_orders"]]
+            result["no_id_reject_events"] = rows(connection,
+                "SELECT id,order_id,event_type,event_at,event_source,payload FROM broker_order_events "
+                "WHERE CAST(order_id AS text)=ANY(:ids) ORDER BY event_at,id LIMIT 1025", {"ids": rejected_ids})
+            result["no_id_reject_intents"] = rows(connection,
+                "SELECT t.id,t.status,t.symbol,t.side,t.payload,s.code strategy,a.name account "
+                "FROM trade_intents t JOIN strategies s ON s.id=t.strategy_id "
+                "JOIN broker_accounts a ON a.id=t.broker_account_id "
+                "WHERE t.payload->'metadata'->>'fanout_attempt_id'=ANY(:clients) "
+                "ORDER BY t.created_at,t.id LIMIT 1025", {"clients": rejected_clients})
+            result["no_id_reject_fills"] = rows(connection,
+                "SELECT id,order_id,quantity FROM fills WHERE CAST(order_id AS text)=ANY(:ids) "
+                "ORDER BY id LIMIT 1025", {"ids": rejected_ids})
+            result["no_id_reject_proofs"] = [dict(order_id=str(row["id"]),
+                client_order_id=row["client_order_id"], account=row["account"], symbol=row["symbol"],
+                **no_broker_id_terminal(row, result["no_id_reject_events"],
+                                      result["no_id_reject_intents"], result["no_id_reject_fills"]))
+                for row in result["no_id_reject_orders"]]
             for label, table, time_column in (
                     ("nonterminal_orders", "broker_orders", "submitted_at"),
                     ("nonterminal_intents", "trade_intents", "created_at")):
@@ -378,11 +441,21 @@ async def brokers(config, result):
     webull = WebullBrokerAdapter(config)
     result["webull_open"] = await asyncio.to_thread(webull_pages, webull, OpenOrdersListRequest, "open", reads)
     result["webull_today"] = await asyncio.to_thread(webull_pages, webull, TodayOrdersListRequest, "today", reads)
+    if active or result["webull_open"]["count"]:
+        raise Stop("fresh direct broker working-order census nonempty")
+    result["terminal_no_id_admission"] = result["no_id_reject_proofs"]
     result["exact_linked_parents"] = []
     result["webull_detail_spacing_seconds"] = 2
     last_webull_detail = None
     for row in result["linked_orders"]:
-        if not row["broker_order_id"] or not row["client_order_id"]:
+        if not row["broker_order_id"]:
+            proof = no_broker_id_terminal(row, result["no_id_reject_events"],
+                                         result["no_id_reject_intents"], result["no_id_reject_fills"])
+            result["exact_linked_parents"].append(dict(account=row["account"], symbol=row["symbol"],
+                client_order_id=row["client_order_id"], broker_order_id=None, status="REJECTED",
+                body=proof, disposition="recorded terminal no-wire/submit rejection; no ownership release"))
+            continue
+        if not row["client_order_id"]:
             raise Stop("linked order lacks exact broker/client identity")
         if row["account"] == ACCOUNTS[0]:
             detail_path = (f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"

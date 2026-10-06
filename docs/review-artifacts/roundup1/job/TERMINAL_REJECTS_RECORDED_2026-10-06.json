@@ -1,0 +1,110 @@
+{
+  "as_of": "2026-10-06T21:15:04.881057+00:00",
+  "orders": [
+    {
+      "id": "258a2e00-60c6-46ce-a616-d6625b3d1366",
+      "client_order_id": "schwab_1m_v2-OLOX-open-496d3bf92b2a",
+      "broker_order_id": null,
+      "symbol": "OLOX",
+      "side": "buy",
+      "status": "rejected",
+      "strategy": "schwab_1m_v2",
+      "account": "live:orb"
+    },
+    {
+      "id": "a5ebfaf1-44a3-494e-bc4d-4dd7d32e5733",
+      "client_order_id": "schwab_1m_v2-OLOX-open-0f1814197899",
+      "broker_order_id": null,
+      "symbol": "OLOX",
+      "side": "buy",
+      "status": "rejected",
+      "strategy": "schwab_1m_v2",
+      "account": "live:orb"
+    },
+    {
+      "id": "bbad1416-4692-406c-ba31-42f936f1fbb6",
+      "client_order_id": "schwab_1m_v2-MOBX-open-07bc532a7fdc",
+      "broker_order_id": null,
+      "symbol": "MOBX",
+      "side": "buy",
+      "status": "rejected",
+      "strategy": "schwab_1m_v2",
+      "account": "live:orb"
+    },
+    {
+      "id": "d56dac04-058e-47d1-b759-a9c9ffbbd9eb",
+      "client_order_id": "schwab_1m_v2-OLOX-open-b95fc559b0a2",
+      "broker_order_id": null,
+      "symbol": "OLOX",
+      "side": "buy",
+      "status": "rejected",
+      "strategy": "schwab_1m_v2",
+      "account": "live:schwab_1m_v2"
+    }
+  ],
+  "events": [
+    {
+      "id": "93ecd386-0d0f-4fd6-a04f-4f654fcde479",
+      "order_id": "a5ebfaf1-44a3-494e-bc4d-4dd7d32e5733",
+      "event_type": "rejected",
+      "event_source": "broker",
+      "payload": {
+        "client_order_id": "schwab_1m_v2-OLOX-open-0f1814197899",
+        "broker_order_id": null,
+        "broker_fill_id": null,
+        "metadata": {
+          "webull_http_status": "417",
+          "webull_wire_submitted_at_utc": "2026-10-06T19:00:08.749+00:00"
+        }
+      }
+    },
+    {
+      "id": "8c6416b4-1f77-41cf-812c-bfc739a1d47c",
+      "order_id": "bbad1416-4692-406c-ba31-42f936f1fbb6",
+      "event_type": "rejected",
+      "event_source": "broker",
+      "payload": {
+        "client_order_id": "schwab_1m_v2-MOBX-open-07bc532a7fdc",
+        "broker_order_id": null,
+        "broker_fill_id": null,
+        "metadata": {
+          "webull_http_status": "417",
+          "webull_wire_submitted_at_utc": "2026-10-06T18:47:01.515+00:00"
+        }
+      }
+    },
+    {
+      "id": "0074336f-997b-4b2c-a908-8107811ba699",
+      "order_id": "258a2e00-60c6-46ce-a616-d6625b3d1366",
+      "event_type": "rejected",
+      "event_source": "broker",
+      "payload": {
+        "client_order_id": "schwab_1m_v2-OLOX-open-496d3bf92b2a",
+        "broker_order_id": null,
+        "broker_fill_id": null,
+        "metadata": {
+          "webull_http_status": "417",
+          "webull_wire_submitted_at_utc": "2026-10-06T19:02:03.994+00:00"
+        }
+      }
+    }
+  ],
+  "intents": [
+    {
+      "id": "99ee8c8c-0e8a-452f-b828-d09cd55ec9e7",
+      "status": "rejected",
+      "symbol": "OLOX",
+      "side": "buy",
+      "strategy": "schwab_1m_v2",
+      "account": "live:schwab_1m_v2",
+      "payload": {
+        "refusal_origin": "client_abort",
+        "refusal_code": "rpg_stale_strategy_authorization",
+        "metadata": {
+          "fanout_attempt_id": "schwab_1m_v2-OLOX-open-b95fc559b0a2"
+        }
+      }
+    }
+  ],
+  "fills": []
+}
