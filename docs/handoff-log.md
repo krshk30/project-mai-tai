@@ -6987,3 +6987,13 @@ fill1 but retains an open partially_filled order and intent. The terminal
 metadata is not consumed by OMS. PRcomment6024079645 records this real blocker;
 worker owns a source correction and end-to-end idempotence tests before ready.
 No live broker submit, service action, persistence write or ledger adjustment.
+
+### 2026-10-06 15:48 ET - codex-2 C82 exact frozen census refusal
+
+Executed only committed121f census helper over SSH stdin/nice19 with bytecode
+disabled. Receipt at15:47:29: source7823 exact module checked; read-only
+repeatable-read SQL; all-datecount103; rc2 with exact line
+"all-date journal exceeds 64-row bound". No broker reads reached, no disk
+staging/approval/service/source/env/ledger/token writes. Keep UNKNOWN/bound
+disposition rather than label ownership or individual tickets measured clear.
+Expanded population requires review; no live-state adoption or omitted phases.
