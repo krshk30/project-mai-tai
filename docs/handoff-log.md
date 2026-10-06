@@ -5739,3 +5739,23 @@ Initial baseline01:11:01.348Z, subsequent1Hz OK/kicks0; first15minutes pending
 until21:26ET. Guardianuntil10-06 09:40ET, normalcompletion stops paper via
 reviewed paper-only stop/release path; daily03:40 start and holidays skipped.
 Close-out mechanics/catalog/preopen now reflect ACTIVE paper; not COMPLETEyet.
+
+### C98 - All-on install close-out COMPLETE, 2026-10-05 21:22 ET
+
+Standing20:45/21:07 authority used for isolated proof mechanics only. Final
+closeout78b213aa manifest828d6fb1, 54testsPASS, committed artifacts hash-verified
+before execution. No further trading restart, env/schema/checkout write, ticket
+or ledger edit. Original STOP retained; continuation COMPLETE21:21:20.374ET in
+/home/trader/fleet_health/deployments-20261005.md. All14tickets proven terminal,
+zero new buys/opens/fills; original no-wire intents independently re-read for
+the four recovered Webull identities. A separate Redis baseline and the official
+collector's ten-service census retained; paper separately checked by exact PID,
+start, active/NRestarts0, then preopen direct identity and catalog rows.
+Isolated catalog FLAGGATE147/147 PASS, numeric8/8; Redis0->0 and fiveowners+marker.
+Bar delivery NOT_APPLICABLE_OFFHOURS with zero live rows since20:00, process
+downtime141.263886s; next-session bar delivery UNMEASURED. BOOT-HOLD literal
+release00:59:44.146Z. Preopen10-06 single actual re-pin dc334e44, backup
+owned-entry-closeout-2121-job/closeout-2121/preopen.sh.before, mode0700/bash-nPASS.
+Runner901c22de; final receipts under that closeout-2121 directory. Morning scanner
+validation owner claude-1; live cancel-place latency unexercised. Guard/paper
+remain active and kick-free through21:22; first15minutes end21:26ET.
