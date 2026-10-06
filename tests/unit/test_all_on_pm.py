@@ -35,6 +35,7 @@ ALL_ON = {
     "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": True,
     "oms_v2_webull_mirror_fresh_price_enabled": True,
     "strategy_schwab_1m_v2_gap_hold_enabled": True,
+    "strategy_schwab_1m_v2_resting_buy_round_up_enabled": True,
 }
 CLRO = ("CLRO", "2026-09-28T11:24:59.992Z", 5.559, 5.5689, 5.55)
 
@@ -157,7 +158,8 @@ def test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting(slot):
         pmrest.track(strategy, state, line, slot)
         assert state.resting_active and not state.resting_is_broker_order
         assert state.resting_level == line
-        assert state.resting_trigger == pytest.approx(line * 1.005)
+        # ROUNDUP1: trigger is ceilinged to the cent
+        assert state.resting_trigger == (8.28 if line == 8.2381 else 8.01)
         assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
         assert not strategy._rpg_handoffs
     for field in ("fanout_segment_id", "retry_one_segment_id", "retry_one_closes_in_segment",
