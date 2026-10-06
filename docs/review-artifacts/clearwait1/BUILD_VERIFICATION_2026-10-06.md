@@ -58,6 +58,19 @@ as exact terminal broker-state proof.
 
 ## Recorded Controls And Verification
 
+The first post-rebase comparison crossed the 16:00 session cutoff: its baseline
+ran the existing SCKT PA1 replay inside the entry window, while the candidate
+ran it after the cutoff and correctly refused with `resting_window_ended`.
+That raw comparison has one new failure name and is preserved separately in
+`preclose_mismatch_unit_pair.json`, not silently relabeled PASS. The exact
+isolated SCKT test on unchanged 4805 reproduced the same refusal at
+2026-10-06 16:06:38 ET; see `baseline_clock_control.json`. The full
+after-close baseline comparison confirmed zero new candidate failure names.
+No production window/authorization change, age waiver, test skip or
+out-of-lane test edit has been made. The inherited clock-sensitive test may
+block tonight's Validate runs; readiness requires both latest runs, not an
+earlier successful main run.
+
 The initial evidence-only checkpoint remains
 `a2de4ec07323d2c30d844a62fea31725e4a717a9`. Production capture was
 2026-10-06 13:30:13.519782 ET. Counts remain six removal markers / three episodes
@@ -78,14 +91,16 @@ Released fixture SHA256:
   observes one possible mock wire, zero surviving opening rows and two actual
   local no-target receipts. It now returns `clear=false` with the unresolved
   dispatch reason; see `defensive_counterexample.json`.
-- Pre-rebase focused acceptance: 389 passed, including 84 new CLEARWAIT1 cases, all-ON
+- Latest rebased focused acceptance: 389 passed, including 84 new CLEARWAIT1 cases, all-ON
   settings, OWNMIX, Restoration, seed-cap, RETRY-ONE and held-feed regressions.
-- Full unit pair on identical venv/PATH/PYTHONPATH, frozen candidate versus
-  immutable c21 Git archive: candidate 6,531 passed / 47 failed; baseline 6,446
-  passed / 48 failed. Exact failure-name comparison: ZERO new failures. The
+- Latest full unit pair on identical venv/PATH/PYTHONPATH, frozen rebased candidate
+  versus immutable 4805 Git archive, both exercising SCKT after 16:00:
+  candidate 6,561 passed / 48 failed; baseline 6,476 passed / 49 failed.
+  Exact failure-name comparison: ZERO new failures. The
   baseline-only executable-mode control explains the extra recovered pass.
   Local baseline failures include macOS shell dependencies and the unrelated
-  dead-consumer timing control. Full failure names, log/XML hashes and frozen
+  dead-consumer timing control and the reproduced after-close SCKT replay.
+  Full failure names, log/XML hashes and frozen
   source hashes are retained in `defensive_unit_pair.json`.
 - Sixteen CLEARWAIT1 guard mutations were killed, including missing history,
   later lost dispatch, broker-terminal origin, either-account cancellation,
@@ -106,7 +121,15 @@ rollback-only switch. That separate switch and expected-ON registry are wired;
 this build does not authorize activation. The preceding pair used
 `c21d8274fcd1d3129d61207a33dd7b002a7c9e8c`. The parent explicitly requested
 a pure rebase onto `4805ddc81184c76b4d5cef5c483c809edb666fe6` before readiness;
-the latest full pair and CI must cover that baseline and the rebased candidate.
+the rebase completed without conflicts at
+`c3ad424df9a8a6f70d55d9a92c983aee5de5941e`. All eight commits are
+patch-equivalent by range-diff; only the five main ORBPAGE1 files changed
+between the old and rebased trees. The latest full pair and CI must cover
+that baseline and the rebased candidate. The latest full pair does so.
 Both latest push and pull-request Validate runs are required before a ready
 review pin. Their exact-SHA receipts will be published with the PR, never
-in the parent's shared handoff. Conditional review target: 2026-10-06 16:30 ET.
+in the parent's shared handoff. One identified readiness blocker remains:
+the inherited clock-sensitive SCKT test may fail both latest Validate runs.
+The PR stays draft until the gates pass; no readiness or production eligibility
+is claimed. Conditional review target: 2026-10-06 16:30 ET, subject to this
+test-only scope disposition and both latest Validate receipts.

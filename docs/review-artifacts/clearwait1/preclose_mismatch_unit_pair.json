@@ -4,9 +4,9 @@
   "runs": {
     "base": {
       "tests": 6525,
-      "failures": 49,
+      "failures": 48,
       "errors": 0,
-      "seconds": 274.101,
+      "seconds": 296.499,
       "failure_names": [
         "tests.unit.test_eod_cron_adoption::test_current_wrapper_and_installer_remain_executable",
         "tests.unit.test_fanout_outcome_acceptance_schedule::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]",
@@ -55,12 +55,11 @@
         "tests.unit.test_fanout_outcome_acceptance_schedule::test_whole_installer_succeeds_with_one_managed_schedule",
         "tests.unit.test_log_retention_policy::test_installer_shell_fault_controls",
         "tests.unit.test_momentum_gateway_throughput::test_real_dead_consumer_cannot_block_the_paced_producer",
-        "tests.unit.test_roundup1::test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire",
         "tests.unit.test_unattended_upgrade_policy::test_installer_and_notifier_fault_controls"
       ],
       "artifacts": {
-        "/tmp/clearwait1-4805-afterclose-unit-base.log": "b4c0e6a702f3bcdc0e6f3def4b65292b4a1bf30299c6c9b205b62dc9f3555e7c",
-        "/tmp/clearwait1-4805-afterclose-unit-base.xml": "aebf13070d33841b4be821470ab0016ce35bf12b185f9fdd90271fa752ab1670"
+        "/tmp/clearwait1-4805-unit-base.log": "738de502b75ecbd635866c95ffcdf30fc37b75a6f8b2d0be788ba590d4036cad",
+        "/tmp/clearwait1-4805-unit-base.xml": "96fff364bafeb8b3870957c80b9d26e8e7e5cfc41fc22b402d5e55a245ebe0e3"
       }
     },
     "head": {
@@ -130,7 +129,9 @@
     "src/project_mai_tai/services/schwab_1m_v2_bot.py": "a5b59e08a76c1e65ee1e1cb8c61de7e52fd0d07b5c645f0f2291e0671b74ab49",
     "tests/unit/test_clearwait1_removed_wait.py": "27aea4764d6a98c02041a388f85b37ff96cafe6778baf97c07ee3372fb5b3823"
   },
-  "new_failures": [],
+  "new_failures": [
+    "tests.unit.test_roundup1::test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire"
+  ],
   "baseline_only_failures": [
     "tests.unit.test_eod_cron_adoption::test_current_wrapper_and_installer_remain_executable"
   ]
