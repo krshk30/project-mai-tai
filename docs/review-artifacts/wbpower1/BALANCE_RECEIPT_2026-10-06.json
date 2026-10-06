@@ -1,0 +1,39 @@
+{
+  "agent": "codex",
+  "provenance": "Previous owner's completed sanitized receipt; new owner issued no broker request",
+  "source_path": "/tmp/wbpower1-one-balance-get-20261006.json",
+  "source_sha256": "3863fa66c62d3045aa737b258e7b01c11c277f46501e9ea814c335807d8f1f64",
+  "request_script_sha256": "ff7fbe7dc8296f926b53d46563b15975be87fdc8d65e929c3f751ac8a91dc32d",
+  "receipt": {
+    "account_alias": "live:orb",
+    "asof_end_utc": "2026-10-06T19:27:20.068892+00:00",
+    "asof_start_utc": "2026-10-06T19:27:19.218938+00:00",
+    "budget_scope": "Same Sagan public definitions, separate SSH process; NOT distributed production enforcement",
+    "budget_source_sha256": "3e802143b8bfa68fcbf3926883a9c92efd0093177a3caff16e0eef06ed208738",
+    "currency_fields_only": [
+      {"currency": "USD", "path": "$"},
+      {"currency": "USD", "path": "$.account_currency_assets[0]"}
+    ],
+    "endpoint": "/account/balance",
+    "filesystem_writes_denied": true,
+    "http_attempts": 1,
+    "http_status": 200,
+    "kind": "WBPOWER1_actual_account_balance_GET",
+    "method": "GET",
+    "permit_endpoint": "account-balance",
+    "power_field_names_without_proven_USD_scope": [],
+    "refresh_enabled": false,
+    "request_body_bytes": 0,
+    "requested_total_asset_currency": "USD",
+    "response_body_bytes": 488,
+    "response_body_sha256": "a1480c60a531b1bed0dd150bdcff3fd50abcb11d2ca11aa29f762fc8088eb5e5",
+    "retry_enabled": false,
+    "sanitized_USD_power_fields": [
+      {"currency": "USD", "path": "$.account_currency_assets[0].margin_power", "value": "451.405"},
+      {"currency": "USD", "path": "$.account_currency_assets[0].cash_power", "value": "0"}
+    ],
+    "semantics": "Observed field values only; available-day-power/reservation interpretation requires authoritative contract",
+    "strict": false,
+    "version": "v2"
+  }
+}
