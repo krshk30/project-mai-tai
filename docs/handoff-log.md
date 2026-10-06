@@ -5686,3 +5686,14 @@ Raw466235B local/tmp/oct5-2040-complete-rehearsal.log
 sha25684ea738e750963e0d15e9544c39aaf5827d069c18640c21ec5eee61535556c7e.
 Newstaging/runnextunderstandingauthority; nonewindependentexactreviewclaim,
 sameAPP7823/fourtruekeys/0022/no-recovery; firststopdeadline23:00ET.
+
+2026-10-05 20:48 ET codex-2 C94: committed490e job staged NEWroot0700
+/home/trader/after-hours/2026-10-05/owned-entry-rpg-all-on-2045-standing-job.
+Independentvalidatorall7artifacts/manifest53bc8873/helper658ca1c0/approval7
+fields/fullrawrehearsal84ea738e PASS; oldattemptsuntouched. Approvalgenerated
+under20:45standingmechanicsauthority, notnewindependentexactreview.
+DeploymentjournalATTEMPT4 recordsoldblock/accepted08-06policyedit/newhashes/
+121tests+30mutationRED/readonlyrehearsal. Literalrunstart20:48:07.367ET
+APPROVALPASS, attendedsession64738/localmirror/tmp/oct5-standing-run-client.log.
+InitialfreshOMSread, noappwrite/newPID/COMPLETEclaimed; same7823/fourkeys/
+0022/no-recovery; firststopdeadline23ET. Reportrealstopordone, neverimprovise.
