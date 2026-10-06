@@ -1,0 +1,9 @@
+{
+  "pr_number": 1097,
+  "range_base": "a7fed34d97732e1c1379ec77d89fd83f886ce2d8",
+  "range_head": "78802ac5444150d781ba87c4ff2524a8436921e4",
+  "reviewed_at": "2026-10-06T14:49:24Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "LINE=CHART Restoration (item 7): acceptance runner on 123 recorded re-add/hold events at 65010dff: 0 mismatch vs oracle-on-same-bars, 0 buys/permissions while incomplete, 0 held after 10 bars; my mutations (spanning off -> 53 mismatch; buy gate always ready -> 33) RED; focused+composed 649 pass incl. 8-switch ALL-ON; full suite head 48/6415 vs main a7fed34d 48/6313 identical names; CI validate x2 pass; catalog TRUE (FLAGGATE 149). Codex-authored segment reviewed by claude-1; claude-1 runner segments pinned by codex-2."
+}
