@@ -5950,3 +5950,21 @@ source finding is asserted. Live bar/scanner/first-reprice latency are distinct
 next-session measurements, not implied PASS by local tests. Claude owns07:11
 bar and07:16scanner reads. Guard NEXT follow-up remains09:42; no preopen timer
 has been installed or silently assumed scheduled.
+
+## 2026-10-06 06:55 ET - Preopen correction re-confirmed, owner proposal
+
+Reviewer request repeated the olddc334e44 pin. Own fresh SSHread confirms the
+06:31correction remains exact: two orb-schwab expect-flag removals, all identity
+and routing/catalog lines preserved; mode0700trader/bash-nPASS. Hash
+8cdafcded0f748b6779696953cc8a101409b6bc0ce9a2314938d7f4fa82cf15a;
+backup preopen-mechanics-0630/preopen.sh.before retainsdc334e44, with exactdiff.
+Dated5253B report exists, generated06:31:15ET, PASS9/9zeroUNKNOWN;
+rootreceipt06:31:16rc0/FLAGGATE147/147. Offsessionbarcontinuity stays N/A.
+Already journaled PREOPEN_MECHANICS and PREOPEN_MECHANICS_GATE; no duplicate
+edit/run, service action or new production journal write for this confirmation.
+Dailyownerproposal: Codex performs reviewed day/date/SHA/PID repin, never autoheal;
+root-run named project-mai-tai-preopen.service/.timer at06:20ET tradingdays,
+retain each receipt/report, refuse stale/date/hash/identity drift; Claude verifies
+at06:22. Root invocation preserves isolated helper permissions, not a chmod
+workaround. No timer installed today; today's gate ownership remains Claude.
+Both agents retain09:42guard next-elapse verification after the09:40normalstop.
