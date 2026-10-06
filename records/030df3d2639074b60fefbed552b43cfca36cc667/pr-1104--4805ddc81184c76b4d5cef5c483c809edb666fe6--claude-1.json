@@ -1,0 +1,9 @@
+{
+  "pr_number": 1104,
+  "range_base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "range_head": "030df3d2639074b60fefbed552b43cfca36cc667",
+  "reviewed_at": "2026-10-06T20:55:46Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "KEEPREST1 (operator card 10-06, confirmed): after a buy flip the one waiting first BUY stays frozen at its last SHORT-line price through the BUY segment until fill, a SELL flip (cancel reason keep_rest_sell), the liquidity floor (three completed thin bars) or the window; PM and RTH; flag strategy_schwab_1m_v2_keep_rest_after_buy_enabled default False, catalog expected TRUE for tonight's install (switch ON). Read the strategy diff; population re-verified by me: 17 chart-flip take-downs since 09-22 (IMCC 09-23 08:17 was a bot-line event, conceded). Focused 166 pass; full suite 49 failed identical names to base 4805ddc8. My mutations RED: freeze never set (25 fail), SELL flip keeps the frozen rest (2)."
+}
