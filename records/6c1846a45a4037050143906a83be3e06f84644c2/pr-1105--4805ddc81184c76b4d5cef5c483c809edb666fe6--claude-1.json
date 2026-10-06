@@ -1,0 +1,9 @@
+{
+  "pr_number": 1105,
+  "range_base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "range_head": "6c1846a45a4037050143906a83be3e06f84644c2",
+  "reviewed_at": "2026-10-06T22:52:54Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "CLEARWAIT1 (operator 10-06 ~13:10: before a fill the stock is the scanner's \u2014 a removal cancels the waiting buy, forgets the attempt, re-add starts fresh; a cancelled/rejected order is nothing; after a fill the bot owns it): a scanner-removed unfilled waiting episode is retired only on durable terminal proof of every dispatched order (dispatch history tracked per draft), buy-only, segment-scoped; unknown cancellation and owned fills stay blocked; flag strategy_schwab_1m_v2_removed_wait_clear_enabled default True, catalog TRUE. Focused 691 pass; full suite 48 failed = base minus the pinned SCKT clock test. My mutations RED: clearance without durable dispatch tracking (3), buy-only filter removed (1). Population 63 blocks / 11 sessions (codex), 6 today."
+}
