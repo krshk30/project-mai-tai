@@ -7213,3 +7213,13 @@ Freshread-onlycontrolrehearsalPASS/f67b1b15, focused105PASS. Fullharnessstill
 running controlledfailure60s pauses; no staging/executionclaim beforePASS.
 Manifest0b7238c1/approvalf391dc3d exactcommittedblobs regenerated locally;
 same4805candidate/env/sequence, no application/MI-NXL changes.
+
+2026-10-06 18:57 ET codex-2 C102: reviewer18:47 withdrew control owner/page
+admission. Current runner proves three application services before the one
+control restart, then GET /bot/orb LIVE/SCHWAB only. No overview/token/owner
+or exactJAGX-count gate runs. Full753PASS, focused198PASS; new runtime725e4045
+and tests-only01ed2458 published. Manifestb1b81166 bound to app4805 and all27
+artifacts verified on box; approval75b4a125 under standing mechanics authority.
+Attended runner started18:56; /home/trader/roundup1-install1-20261006-01ed2458/
+runner.log and numbered rawstdout/stderr receipts retained. NOT COMPLETE;
+no Install2 merge or source trading change, no rollback/recovery authority.
