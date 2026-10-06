@@ -5,7 +5,24 @@ instruction, not a staged runner or a scheduled application install. No session
 production write. First stop only after 20:00 ET October 6, observed rotation,
 fresh flat/working-order gates and a reviewed exact application SHA.
 
-## Measured Preparation Blockers
+## Current Refresh - 08:16 ET
+
+Reviewer-authorized rebase/test refresh is pushed as
+`fa54579b4794d5fc6b275ab3233c0161d51110c7`, based on exact main03b26293.
+All ten rebased commits are patch-equal. Diff from6727fff5 under `src ops scripts`
+is empty. The sole follow-up file is `tests/unit/test_all_on_pm.py`: ROUND_UP
+is true in the shared seven-key fixture; the first/reclaim parametrized PMREST
+check uses exact8.28 and8.01 for its two recorded moves, no tolerance, with the
+requested ceiling comment. Accounting, no-emission and no-handoff checks stay.
+
+Actual composed run **36/36 PASS**,2.45s. Composed plus ROUNDUP **456/456 PASS**,
+5.31s. Ruff/diff-whitespace PASS. These supersede the prior34/36 composition
+failure below; source was not changed to satisfy the tests. CI on the new head
+has just started; fresh reviewer pin/mutations and Validate x2 remain required.
+Do not reuse the old6727fff5 pin or call this merged/staged. After the fresh pin,
+merge the exact head and bind the real resulting main SHA before execution.
+
+## Historical Preparation Blockers - Superseded By The Refresh
 
 At 08:08 ET, #1095 is the exact pinned head
 `6727fff57fa00cf2d8a7194097f3b2fd5fc024d7`. Local committed pin verification

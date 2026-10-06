@@ -6116,3 +6116,20 @@ Added combined install draft and cross-reference to the amended daily preopen
 plan, v2/OMS only, one env key, 148catalog/8numeric, one final date/paper-shape
 repin and daily timer after20:00. This is neither a literal staged runner nor
 an installed/listable application job. Production and pinned branch unchanged.
+
+### 2026-10-06 08:16 ET - ROUNDUP1 reviewed rebase/fixture refresh ready for fresh pin (codex-2)
+
+Under the explicit reviewer follow-up, rebased #1095 onto main03b26293 with
+all ten commits patch-equal. New tests-only commit adds ROUND_UP=true to the
+six-key ALL_ON fixture and changes the shared first/reclaim PMREST check to
+exact8.28/8.01 for its two recorded moves; requested one-line ceiling comment,
+no tolerance or weakened accounting/no-handoff/no-emission assertions. Source,
+ops and scripts diff versus reviewed6727fff5 is empty.
+
+Pushed fa54579b4794d5fc6b275ab3233c0161d51110c7 using an exact-old-head lease.
+Composed36/36PASS,2.45s; composed+ROUNDUP456/456PASS,5.31s; Ruff and whitespace
+PASS. Hosted head confirmed and CI newly started, not called green. Old pin
+does not carry over. Head frozen for reviewer's eight mutations/new pin, then
+authorized exact-head merge and candidate-SHA binding. Plan remains v2/OMS
+only, flag ON both,148catalog,8numeric, one preopen final identity/date/paper
+shape repin and daily timer after20:00. No merge or production action yet.
