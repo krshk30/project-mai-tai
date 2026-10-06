@@ -3,6 +3,21 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
+## PRODUCTION NOW — as of 2026-10-05 21:31 ET (claude-1 full sweep against the box)
+
+| Item | State now | Evidence (as-of) |
+|---|---|---|
+| Box checkout | `7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf` (= origin/main head of the day), tree clean. Contains #1091 PMREST1, #1092 PMPRINT1 + PMFLIP1, #1093 RPGSTUCK1, #1094 OWNMIX1 | `git rev-parse HEAD` on the box 20:59 ET |
+| Services | OMS 362892 (20:53:08 ET), v2 362945 (20:53:31), strategy 363061 (20:53:53), all active, NRestarts 0; orb 30225, orb-schwab 27173, market-data 2907, control 2916, reconciler 2918, capture 2917 untouched; momentum-paper 366242 under the daily guard since 21:11:01 ET | `systemctl show` 20:59 / 21:29 ET |
+| Switches live (both OMS and v2 `/proc`) | `PM_PRINT_ASK_CONFIRM`, `PM_FLIP_WAIT`, `PM_REST_REPRICE`, `ATR_REPRICE_HANDOFF` all **true**; NFQ, GAP_HOLD true; `RESTING_BUY_ROUND_UP` absent (false) — #1095 not installed | `/proc/<pid>/environ` by exact key 20:59 ET |
+| Schema | alembic `20261005_0022`; `oms_managed_positions.entry_order_id` / `entry_client_order_id` present | `alembic_version` 20:59 ET |
+| Positions / orders | Flat on both brokers; 0 open managed rows; 0 orders, fills or intents since 20:50 ET; 0 ERROR / 0 Traceback in the fresh (post-20:00) OMS, v2 and strategy logs | DB + logs 20:59 ET |
+| Today's stuck reprice tickets | Cleared at startup: RETO `ff6464ff` refused / old_rejected_explicit_zero (live one-time proof read); VEEA / APUS / RETO / MI Webull local tickets expired / window_closed; no buy sent | `[OMS-RPG1]` lines after 20:53 ET |
+| Known-red items that are CLOSED by ruling | Reconcile findings MI +180 (unrecorded 10-05 Schwab sale) and NXL +2 (10-01 manual close): standing allowance in the install gates; never a decision again | operator 15:00 ET (M81) |
+| Momentum paper | Running under the new DAILY guard (timer next 03:40 ET); Option A hours unchanged ⇒ stops 09:40 ET by design; all-day = operator's call tomorrow | M99 |
+| Open PRs | #1095 ROUNDUP1 draft `6b47c461` (rebased on `7823a6fa`, NOT ready: 8 legacy-restart failures + 5 integration assertions) · #1089 this handoff · #1062 study draft | `gh pr list` 21:13 ET |
+| Tomorrow first | 07:00 boot-hold release + first bars (claude-1 ~07:10); scanner validation 07:00–07:15 and 09:30–09:45; first live reprice with the hand-off ON and the Webull mirror; paper window; #1095 rebase / review; LINE=CHART build (Restoration lane first) | — |
+
 ## 2026-10-05 (Mon) — LIVE DAY NOTES (shared: both agents add rows as things happen; full sweep at close-out)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
