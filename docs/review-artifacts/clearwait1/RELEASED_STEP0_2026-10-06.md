@@ -17,7 +17,7 @@ worktree and branch are written; parent owns shared C-rows/handoff.
 ## Fresh Own Counts
 
 SSH stdin, nice19, 90-second process bound; read-only SQL transactions with
-8-second statements and 500ms lock timeout. Capture at 13:31 ET (see fixture
+8-second statements and 500ms lock timeout. Capture at 13:30:13.519782 ET (see fixture
 for the exact UTC timestamp) from production head
 `7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf`. No production file/state was written.
 
