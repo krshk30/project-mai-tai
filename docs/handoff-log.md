@@ -5780,3 +5780,18 @@ UNMEASURED, not retroactivelyPASS. No tradingcode/mainmerge/additionalrestart.
 ## 2026-10-05 21:31 ET - claude-1 close-out narrative (full day)
 
 Day summary: 13 buy flips missed (9 reprice bug RPGSTUCK1, 3 line reset after a pause / missing bar, 1 pre-market flip drop), 2 traded (MI 09:34, SCKT 12:55), 3 skipped by rule; real P&L -$121.60 (MI -$106.20 incl. the unrecorded 180-share Schwab sale, SCKT -$15.40). Defects found and fixed the same day: OWNMIX1 (#1094), RPGSTUCK1 (#1093), PMPRINT1 + PMFLIP1 (#1092), PMREST1 (#1091); found and card-confirmed: ROUNDUP1 (#1095, draft, next install), LINE=CHART (building). Operator rulings: change nothing live during the day; merge every reviewed PR; deploy everything with every switch ON; decided matters (MI +180, NXL +2) are closed and never a blocker; install mechanics never round-trip through him. Install: three pre-write stops (Webull read without retry; runner TZ vs UTC-only parser; v2 off-hours "degraded" state), fourth attempt installed 20:53 ET, verified by claude-1, COMPLETE per codex (FLAGGATE 147 / 147, numeric 8 / 8). Momentum paper restarted under a daily guard 21:11 ET. Selection study: drop-from-high not supported (91 days); pre-registered swing call failed as a whole; only volume separates, and the per-bar floor already captures it. Rows M1-M99 in session-handoff.md carry the evidence.
+
+## 2026-10-06 06:23 ET - Codex lanes resumed
+
+ROUNDUP1 #1095 at 6b47c461 is already based on 7823a6fa; the eight no-ticket
+restart diagnostics and five account-local integration assertions remain honest
+blockers, not hidden baseline failures. Parent owns this branch; restoration has
+a separate writer and remains default OFF and not service-wired at checkpoint
+25c31d39. No new passing suite or review-ready claim yet.
+
+Own 06:22:24 ET read observes daily guard timer running with NEXT empty and
+guard366236/paper366242 active. A one-time Codex follow-up is scheduled for
+09:42 ET to verify NEXT Wed10-07 03:40 after the normal09:40 stop. It is not a
+box install or a new production timer. No service, flag, database or preopen
+change; claude-1 owns the manual06:22 gate. Installed #1093/#1094 proofs remain
+in yesterday's COMPLETE receipt; new-session live behaviour is not assumed PASS.
