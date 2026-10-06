@@ -104,7 +104,8 @@ def sql_path(monkeypatch, tmp_path):
         def execute(self, query, params):
             query = str(query)
             if "current_database()" in query:
-                rows = [dict(database="project_mai_tai", server_address="127.0.0.1")]
+                rows = [dict(database=capture.get("database", "project_mai_tai"),
+                             server_address=capture.get("server_address", "127.0.0.1"))]
             elif "alembic_version" in query:
                 rows = [dict(version_num="20261005_0022")]
             elif "information_schema.columns" in query:
@@ -149,4 +150,26 @@ def test_actual_runner_sql_missing_capture_and_new_buy_activity_block(sql_path):
         real.sql("2026-10-06T20:10:00Z")
     capture["total"] = 104
     with pytest.raises(attended.Stop, match="incomplete"):
+        real.sql()
+
+
+@pytest.mark.parametrize("address", [None, "127.0.0.1", "127.0.0.1/32", "::1", "::1/128"])
+def test_real_sql_accepts_only_exact_canonical_local_postgres_address(sql_path, address):
+    real, capture = sql_path
+    capture["server_address"] = address
+    assert len(real.sql()["tickets"]) == 103
+
+
+@pytest.mark.parametrize("address", ["::2/128", "192.0.2.1/32", "127.0.0.1/16", "::1/64", "unknown"])
+def test_real_sql_nonlocal_or_unreadable_address_still_blocks(sql_path, address):
+    real, capture = sql_path
+    capture["server_address"] = address
+    with pytest.raises(attended.Stop):
+        real.sql()
+
+
+def test_real_sql_wrong_database_never_admitted_by_address_normalization(sql_path):
+    real, capture = sql_path
+    capture["database"] = "foreign"
+    with pytest.raises(attended.Stop, match="database name"):
         real.sql()

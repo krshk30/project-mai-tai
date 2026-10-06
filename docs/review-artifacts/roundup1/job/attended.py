@@ -5,6 +5,7 @@ Tests inject effects into Sequence, not a production fake-mode CLI.
 """
 from datetime import datetime, timezone
 import fcntl
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -100,6 +101,19 @@ def env_candidate(raw):
                 lines[-1] += "\n"
             lines.append(key + "=" + value + "\n")
     return "".join(lines).encode()
+
+
+def local_database_binding(rows):
+    need(len(rows) == 1 and rows[0].get("database") == "project_mai_tai", "gate database name differs")
+    value = rows[0].get("server_address")
+    if value is None:
+        return  # Local Unix socket, as already admitted.
+    try:
+        address = ipaddress.ip_interface(value)
+    except (ValueError, TypeError):
+        raise Stop("gate database address unreadable") from None
+    need(address.ip in {ipaddress.ip_address("127.0.0.1"), ipaddress.ip_address("::1")}
+         and address.network.prefixlen == address.max_prefixlen, "hardtuple gate DSN not local production database")
 
 
 def verify(job, expected, now):
@@ -225,8 +239,7 @@ class Real:
         finally:
             engine.dispose()
         need(result["revision"] == [{"version_num": "20261005_0022"}], "installed schema not0022; no migration")
-        need(len(result["database_binding"]) == 1 and result["database_binding"][0]["database"] == "project_mai_tai"
-             and result["database_binding"][0]["server_address"] in {None, "127.0.0.1", "::1"}, "hardtuple gate DSN not local production database")
+        local_database_binding(result["database_binding"])
         columns = {row["column_name"]: row for row in result["columns"]}
         need(set(columns) == {"entry_order_id", "entry_client_order_id"}
              and columns["entry_order_id"]["data_type"] == "uuid"
@@ -564,5 +577,6 @@ if __name__ == "__main__":
         main()
     except Exception as exc:
         # Driver and HTTP exceptions can contain credentials; receipts retain raw safe commands.
-        print("STOP attended error_type=" + type(exc).__name__, file=sys.stderr)
+        print("STOP attended error_type=" + type(exc).__name__ + " reason="
+              + (str(exc) if isinstance(exc, Stop) else "protected unreadable error"), file=sys.stderr)
         raise SystemExit(1 if isinstance(exc, Stop) else 2)

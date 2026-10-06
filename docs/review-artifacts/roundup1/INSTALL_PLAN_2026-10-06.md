@@ -592,3 +592,10 @@ Own17:16:25-17:18:13ET full read-only rehearsal rc0:103tickets/zeroinflight,
 95linkedparents terminal, all4recorded no-ID rejects proven, Webullopen0.
 Localreceipt /tmp/install1-terminal-reject-full-rehearsal-v2-20261006.json.
 No unknown ticket ownership cleared; AIXI/XHG remain held_unknown.
+
+17:22ET initial-only attempt8ee1f432 stopped before application writes on the
+database-binding representation: own fresh SQL returnedproject_mai_tai and
+inet_server_addr()::text=::1/128, not bare::1. Canonicalize only exact localhost
+IPv4/IPv6 with full host prefix (or the existing Unix-socketNULL); no remote,
+subnet, missing database-name or unreadable-address admission. Regression tests
+drive the actual Real.sql gate. All four target services retain old identities.
