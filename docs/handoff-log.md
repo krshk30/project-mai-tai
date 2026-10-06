@@ -5865,3 +5865,20 @@ cancels alone does not prevent a wrong-target race. No OMS change was silently
 folded into rounding, and no broker cancel was sent. Report keeps #1095DRAFT,
 defaultOFF, not pin-ready. Corrected-PATH full-main control47fail/5894pass,
 238.49s is complete; full-head pair remains running, no equivalence claim yet.
+
+## 2026-10-06 06:45 ET - ROUNDUP1 recovery controls and archive census
+
+Own focused set543PASS/8.75s includes default-OFF coverage, ALL_ON catalog,
+87legacy cases,403ROUNDUP cases and eight explicit startup diagnostics.
+Seven new in-memory recovery mutations RED: refresh omission, unreadable
+clearance, unknown clearance, filled-slot reuse, wire-stop recalculation,
+segment bypass and row-status-only terminal clearance. Existing nine remain
+RED. Frozen final full-head test is still running; no complete paired claim yet.
+Own low-priority read-only box aggregate06:40:43ET, five-second timeout and
+LIMIT20 grouped rows:5978STOP_LIMIT buys (3864cancelled,622filled,1492rejected),
+all intent-linked but5157 missing a newer segment/attempt/slot field. This
+measures the archive encountered by the draft scan; it is not broker-terminal
+proof. First trader env permission refusal preceded SQL; root read made no
+writes. Exact-target cancel fallback and bounded recovery remain real readiness
+blockers. Asked whether fixes belong in a separate prerequisite or explicitly
+expanded #1095 scope; no OMS trading change hidden in rounding. DRAFT/defaultOFF.
