@@ -16,13 +16,20 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from project_mai_tai.db.models import Base, BrokerOrder, DashboardSnapshot, TradeIntent
+from project_mai_tai.db.models import (
+    Base,
+    BrokerOrder,
+    BrokerOrderEvent,
+    DashboardSnapshot,
+    TradeIntent,
+)
 from project_mai_tai.events import StrategyStateSnapshotEvent, StrategyStateSnapshotPayload
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy, TradeIntentDraft
 from project_mai_tai.v2_removed_wait import (
+    DISPATCH_SNAPSHOT_TYPE,
     RemovedWait,
     RemovedWaitProof,
     RemovedWaitStore,
@@ -40,7 +47,7 @@ NOW = datetime(2026, 10, 6, 17, 31, tzinfo=UTC)
 
 def _row(data):
     fields = copy.deepcopy(data)
-    for key in ("created_at", "updated_at", "submitted_at"):
+    for key in ("created_at", "updated_at", "submitted_at", "event_at"):
         if fields.get(key):
             fields[key] = datetime.fromisoformat(fields[key])
     fields["broker_account_id"] = fields.get("account", PRIMARY)
@@ -69,6 +76,33 @@ def _recorded(symbol, *, include_tickets=True, now=NOW, opportunity=None):
     ]
     if include_tickets:
         snapshots += [_row(r) for r in EVIDENCE["retry_owners"]]
+    # A controlled complete future journal, NOT reconstructed historical coverage.
+    # Old live episodes lacking this positive coverage remain unknown on upgrade.
+    base = {"schema_version": 1, "strategy_code": "schwab_1m_v2", "symbol": symbol,
+            "opportunity_id": str(opportunity), "account_names": [PRIMARY, WEBULL]}
+    snapshots.append(SimpleNamespace(
+        id="controlled-begin", snapshot_type=DISPATCH_SNAPSHOT_TYPE,
+        created_at=now - timedelta(minutes=2), payload={**base, "kind": "begin"},
+    ))
+    tokens = {}
+    for intent in intents:
+        if intent.intent_type != "open":
+            continue
+        md = intent.payload.get("metadata", {})
+        if str(md.get("fanout_segment_id", "")) != str(opportunity):
+            continue
+        token = "controlled-attempt-" + str(intent.id)
+        tokens[intent.id] = token
+        md["clearwait_dispatch_token"] = token
+        snapshots.append(SimpleNamespace(
+            id=token, snapshot_type=DISPATCH_SNAPSHOT_TYPE,
+            created_at=now - timedelta(minutes=2),
+            payload={**base, "kind": "attempt", "attempt_token": token,
+                     "account_name": intent.broker_account_id},
+        ))
+    for order in orders:
+        if order.intent_id in tokens:
+            order.payload["clearwait_dispatch_token"] = tokens[order.intent_id]
     snapshots.append(
         SimpleNamespace(
             id="controlled-request",
@@ -109,6 +143,9 @@ def _recorded(symbol, *, include_tickets=True, now=NOW, opportunity=None):
         filled_order_ids={
             r["order_id"] for r in EVIDENCE["fills"] if r["strategy"] == "schwab_1m_v2"
         },
+        order_events=[
+            _row(r) for r in EVIDENCE["order_events"] if r["order_id"] in {o.id for o in orders}
+        ],
     )
 
 
@@ -390,7 +427,8 @@ def test_removed_about_to_place_drops_queued_opens_without_minting_identity():
     state.flip_owner_opportunity_id = state.fanout_segment_id = 0
     state.flip_owner_first_rest_placed = False
     draft = TradeIntentDraft(
-        symbol="AIXI", side="buy", intent_type="open", quantity=1, reason="controlled"
+        symbol="AIXI", side="buy", intent_type="open", quantity=1, reason="controlled",
+        metadata={"fanout_segment_id": str(strategy.watchlist_state("AIXI").fanout_segment_id)},
     )
     for queue in (
         strategy._pending_intents,
@@ -412,7 +450,7 @@ def test_removed_about_to_place_drops_queued_opens_without_minting_identity():
     )
     request = strategy._removed_wait_requests["AIXI"]
     strategy.apply_removed_wait_proofs([RemovedWaitProof(request, clock[0], True, "controlled")])
-    assert not strategy._removed_wait_requests and not state.cw_resting_taken
+    assert strategy._removed_wait_requests and not strategy.line_buy_ready("AIXI")
 
 
 def test_store_restart_request_and_rollback_default():
@@ -557,6 +595,17 @@ def test_real_db_reader_replays_recorded_aixi_and_requires_configured_accounts()
                     updated_at=r.updated_at,
                 )
             )
+        for r in rows["order_events"]:
+            session.add(
+                BrokerOrderEvent(
+                    id=UUID(r.id),
+                    order_id=UUID(r.order_id),
+                    event_type=r.event_type,
+                    event_at=r.event_at,
+                    event_source=r.event_source,
+                    payload=r.payload,
+                )
+            )
         session.add(
             DashboardSnapshot(
                 snapshot_type="v2_removed_wait",
@@ -564,6 +613,11 @@ def test_real_db_reader_replays_recorded_aixi_and_requires_configured_accounts()
                 created_at=NOW - timedelta(minutes=1),
             )
         )
+        for row in rows["snapshots"]:
+            if row.snapshot_type == DISPATCH_SNAPSHOT_TYPE:
+                session.add(DashboardSnapshot(snapshot_type=DISPATCH_SNAPSHOT_TYPE,
+                                              payload=row.payload,
+                                              created_at=row.created_at))
         session.commit()
     proof = store.proofs([request], {PRIMARY, WEBULL}, now=NOW)[0]
     assert proof.clear, proof.reason
@@ -725,6 +779,48 @@ def test_duplicate_configured_accounts_cannot_collapse_two_required_receipts_to_
     assert assess_removed_wait(request, **rows).reason == "accounts_unreadable"
 
 
+@pytest.mark.parametrize("kind", ["rpg", "nfq"])
+def test_malformed_current_retry_metadata_is_unknown_not_evidence_of_absence(kind):
+    request, rows = _recorded("AIXI", include_tickets=False)
+    if kind == "rpg":
+        ticket = copy.deepcopy(EVIDENCE["retry_owners"][0])
+        ticket["payload"]["segment_id"] = request.opportunity_id
+        ticket["payload"]["old"].pop("strategy_code")
+        rows["snapshots"].append(_row(ticket))
+    else:
+        rows["snapshots"].append(
+            SimpleNamespace(
+                id="malformed",
+                snapshot_type="oms_webull_mirror_price_hold",
+                payload={"phase": "held", "event": {"payload": {"symbol": "AIXI", "metadata": {}}}},
+            )
+        )
+    assert not assess_removed_wait(request, **rows).clear
+    p = rows["snapshots"][-1].payload
+    if kind == "rpg":
+        p["old"]["strategy_code"] = "schwab_1m_v2"
+        p["old"]["metadata"]["fanout_segment_id"] = str(request.opportunity_id)
+        p.update(phase="expired", local_no_wire="false")
+    else:
+        p["event"]["payload"]["strategy_code"] = "schwab_1m_v2"
+        p["event"]["payload"]["metadata"] = {**rows["orders"][0].payload, "fanout_slot": "reclaim"}
+    assert not assess_removed_wait(request, **rows).clear
+
+
+def test_broker_terminal_receipt_required_not_merely_local_terminal_status():
+    request, rows = _recorded("AIXI", include_tickets=False)
+    rows["order_events"] = []
+    assert assess_removed_wait(request, **rows).reason == "broker_terminal_unproven"
+
+
+def test_zero_episode_with_own_fill_history_is_unknown_not_a_new_unfilled_owner():
+    request, rows = _recorded("MI", opportunity=1791207240886)
+    request = replace(request, opportunity_id=0)
+    assert (
+        assess_removed_wait(request, **rows).reason == "missing_opportunity_with_own_fill_history"
+    )
+
+
 @pytest.mark.asyncio
 async def test_already_emitting_open_finishes_before_both_cancel_barriers():
     strategy, _, _, _ = _strategy()
@@ -742,10 +838,11 @@ async def test_already_emitting_open_finishes_before_both_cancel_barriers():
 
     bot.intent_emitter = bot.webull_intent_emitter = SimpleNamespace(emit=emit)
     draft = TradeIntentDraft(
-        symbol="AIXI", side="buy", intent_type="open", quantity=1, reason="controlled"
+        symbol="AIXI", side="buy", intent_type="open", quantity=1, reason="controlled",
+        metadata={"fanout_segment_id": str(strategy.watchlist_state("AIXI").fanout_segment_id)},
     )
     task = asyncio.create_task(bot._emit_removal_tracked(bot.intent_emitter, draft))
-    await started.wait()
+    await asyncio.wait_for(started.wait(), 2)
     strategy.release_and_drop_symbol("AIXI")
     assert bot._removed_wait_emits_inflight()
     await bot._drain_direct_strategy_intents()
@@ -757,3 +854,216 @@ async def test_already_emitting_open_finishes_before_both_cancel_barriers():
     assert emitted[0].intent_type == "open"
     assert all(d.intent_type == "cancel" for d in emitted[1:])
     assert len([d for d in emitted if d.metadata.get("clearwait_removal_token")]) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("eh", [False, True])
+async def test_draft_held_across_removal_cannot_dispatch_into_fresh_episode(eh):
+    strategy, state, clock, _ = _strategy(eh=eh)
+    bot = SchwabV2BotService(strategy.settings)
+    bot.strategy = strategy
+    emitter = SimpleNamespace(emit=AsyncMock(), broker_account_name=PRIMARY)
+    old = state.fanout_segment_id
+    draft = TradeIntentDraft(symbol="AIXI", side="buy", intent_type="open", quantity=1,
+                             reason="controlled", metadata={"fanout_segment_id": str(old)})
+    strategy.release_and_drop_symbol("AIXI")
+    request = strategy._removed_wait_requests["AIXI"]
+    strategy.scanner_readded("AIXI")
+    strategy.apply_removed_wait_proofs([RemovedWaitProof(request, clock[0], True, "controlled_terminal")])
+    assert strategy.line_buy_ready("AIXI")
+    assert not await bot._emit_removal_tracked(emitter, draft)
+    fresh = strategy._ensure_flip_owner_opportunity(state)
+    assert fresh > old
+    assert not await bot._emit_removal_tracked(emitter, draft)
+    emitter.emit.assert_not_awaited()
+    draft.metadata["fanout_segment_id"] = str(fresh)
+    assert await bot._emit_removal_tracked(emitter, draft)
+    emitter.emit.assert_awaited_once()
+
+
+def test_no_target_receipts_and_missing_opening_rows_are_not_never_wire_proof():
+    request, rows = _recorded("AIXI", include_tickets=False)
+    rows["orders"] = []
+    rows["order_events"] = []
+    rows["intents"] = [i for i in rows["intents"] if i.intent_type == "cancel"]
+    proof = assess_removed_wait(request, **rows)
+    assert not proof.clear and proof.reason == "dispatch_attempt_unproven"
+
+
+def test_lost_later_generation_not_absolved_by_earlier_cancelled_order():
+    request, rows = _recorded("AIXI", include_tickets=False)
+    rows["snapshots"].insert(-1, SimpleNamespace(
+        id="lost-later-attempt", snapshot_type=DISPATCH_SNAPSHOT_TYPE,
+        payload={"schema_version": 1, "strategy_code": "schwab_1m_v2", "symbol": "AIXI",
+                 "opportunity_id": str(request.opportunity_id), "account_names": [PRIMARY, WEBULL],
+                 "kind": "attempt", "attempt_token": "lost-later-wire", "account_name": PRIMARY},
+    ))
+    proof = assess_removed_wait(request, **rows)
+    assert not proof.clear and proof.reason == "dispatch_attempt_unproven"
+
+
+def test_restored_unknown_history_not_inferred_from_positive_known_terminal_rows():
+    request, rows = _recorded("AIXI", include_tickets=False)
+    rows["snapshots"] = [r for r in rows["snapshots"] if r.snapshot_type != DISPATCH_SNAPSHOT_TYPE]
+    assert assess_removed_wait(request, **rows).reason == "dispatch_history_unknown"
+
+
+def test_complete_local_begin_with_no_attempts_is_positive_never_wire():
+    request, rows = _recorded("AIXI", include_tickets=False)
+    rows["intents"] = [i for i in rows["intents"] if i.intent_type == "cancel"]
+    rows["orders"] = []
+    rows["order_events"] = []
+    rows["snapshots"] = [r for r in rows["snapshots"]
+                         if r.snapshot_type != DISPATCH_SNAPSHOT_TYPE or r.payload["kind"] == "begin"]
+    assert assess_removed_wait(request, **rows).clear
+
+
+@pytest.mark.asyncio
+async def test_dispatch_journal_precedes_emit_and_failed_emit_remains_an_unresolved_attempt():
+    strategy, state, _, _ = _strategy()
+    journal, published = [], []
+    strategy.configure_removed_wait(lambda *a: None, restored={}, readable=True,
+                                    dispatch_persist=journal.append)
+    state.flip_owner_opportunity_id = state.fanout_segment_id = 0
+    strategy._ensure_flip_owner_opportunity(state)
+    bot = SchwabV2BotService(strategy.settings)
+    bot.strategy = strategy
+
+    async def emit(draft):
+        assert journal[-1]["kind"] == "attempt"
+        assert journal[-1]["attempt_token"] == draft.metadata["clearwait_dispatch_token"]
+        published.append(draft)
+        raise RuntimeError("controlled transport unknown")
+
+    emitter = SimpleNamespace(broker_account_name=PRIMARY, emit=emit)
+    draft = TradeIntentDraft(symbol="AIXI", side="buy", intent_type="open", quantity=1,
+                             reason="controlled", metadata={"fanout_segment_id": str(state.fanout_segment_id)})
+    with pytest.raises(RuntimeError, match="transport unknown"):
+        await bot._emit_removal_tracked(emitter, draft)
+    assert [p["kind"] for p in journal] == ["begin", "attempt"]
+    assert len(published) == 1
+
+    def fail(payload):
+        raise RuntimeError("controlled journal failure")
+
+    strategy._removed_wait_dispatch_persist = fail
+    assert not await bot._emit_removal_tracked(emitter, draft)
+    assert len(published) == 1
+
+
+def test_zero_identity_idle_and_no_target_are_not_positive_never_wire():
+    request, rows = _recorded("AIXI", include_tickets=False)
+    request = replace(request, opportunity_id=0)
+    rows["orders"] = []
+    rows["order_events"] = []
+    rows["intents"] = [i for i in rows["intents"] if i.intent_type == "cancel"]
+    for i in rows["intents"]:
+        i.payload["metadata"]["clearwait_opportunity_id"] = "0"
+    rows["snapshots"] = [SimpleNamespace(id="request", snapshot_type="v2_removed_wait",
+                                          payload=request.payload(active=True))]
+    assert assess_removed_wait(request, **rows).reason == "dispatch_history_unknown"
+    rows["snapshots"][0].payload["local_never_wire"] = True
+    assert not assess_removed_wait(request, **rows).clear
+
+
+@pytest.mark.parametrize("fault", ["none", "restored_unknown", "broker_wait", "first_rest"])
+def test_zero_waiting_identity_never_infers_no_wire_from_local_state(fault):
+    strategy, state, _, _ = _strategy()
+    state.flip_owner_opportunity_id = state.fanout_segment_id = 0
+    state.flip_owner_first_rest_placed = False
+    state.flip_owner_phase = "idle"
+    state.resting_active = state.webull_resting_active = False
+    if fault == "restored_unknown":
+        state.flip_owner_phase = "unknown"
+    elif fault == "broker_wait":
+        state.resting_active = True
+        state.resting_is_broker_order = True
+    elif fault == "first_rest":
+        state.flip_owner_first_rest_placed = True
+    strategy.release_and_drop_symbol("AIXI")
+    request = strategy._removed_wait_requests["AIXI"]
+    assert request.opportunity_id == 0 and "local_never_wire" not in request.payload(active=True)
+
+
+def test_fresh_fanout_bind_before_first_rest_journals_begin_once_not_on_restore():
+    strategy, state, _, _ = _strategy()
+    journal = []
+    strategy.configure_removed_wait(lambda *a: None, restored={}, readable=True,
+                                    dispatch_persist=journal.append)
+    state.fanout_segment_id = state.flip_owner_opportunity_id = 0
+    segment = strategy._ensure_fanout_segment_id(state)
+    assert strategy._ensure_flip_owner_opportunity(state) == segment
+    assert [p["kind"] for p in journal] == ["begin"]
+    assert journal[0]["opportunity_id"] == str(segment)
+    journal.clear()
+    state.fanout_segment_id = state.flip_owner_opportunity_id = 0
+    strategy._restored_fanout_segment_ids["AIXI"] = segment
+    strategy._ensure_fanout_segment_id(state)
+    assert journal == []
+
+
+@pytest.mark.asyncio
+async def test_actual_ordinary_oms_lost_transaction_counterexample_now_fails_closed(capsys):
+    import importlib.util
+    path = Path(__file__).parents[2] / "docs/review-artifacts/clearwait1/probe_ordinary_submit_durability.py"
+    spec = importlib.util.spec_from_file_location("clearwait1_real_rollback_probe", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    await module.main()
+    output = json.loads(capsys.readouterr().out)
+    assert output["mock_submit_calls"] == 1
+    assert output["durable_open_intents_after_rollback"] == 0
+    assert output["actual_local_oms_no_target_cancel_receipts"] == 2
+    assert output["candidate_clear"] is False
+    assert output["classification"] == "FAIL_CLOSED"
+
+
+def test_unknown_dispatch_reason_is_visible_once_and_keeps_same_owned_wait(caplog):
+    strategy, state, clock, _ = _strategy()
+    strategy.release_and_drop_symbol("AIXI")
+    request = strategy._removed_wait_requests["AIXI"]
+    for _ in range(2):
+        strategy.apply_removed_wait_proofs([
+            RemovedWaitProof(request, clock[0], False, "dispatch_attempt_unproven")
+        ])
+    assert caplog.text.count("verdict=UNKNOWN reason=dispatch_attempt_unproven") == 1
+    assert strategy._removed_wait_requests["AIXI"] == request
+    assert state.flip_owner_opportunity_id == request.opportunity_id
+    assert not strategy.line_buy_ready("AIXI")
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+def test_recorded_cancel_then_late_fill_on_either_account_cannot_clear(account):
+    request, rows = _recorded("AIFA", include_tickets=False)
+    order = next(o for o in rows["orders"] if o.broker_account_id == account)
+    rows["filled_order_ids"].add(order.id)
+    proof = assess_removed_wait(request, **rows)
+    assert not proof.clear and proof.reason == "own_fill_stays_owned"
+
+
+@pytest.mark.parametrize("event_type", ["filled", "partially_filled", "cancelled"])
+def test_durable_fill_event_identity_is_not_erased_by_missing_fill_table_row(event_type):
+    request, rows = _recorded("AIFA", include_tickets=False)
+    event = copy.deepcopy(rows["order_events"][0])
+    event.event_type = event_type
+    event.payload["broker_fill_id"] = "controlled-positive-fill-identity"
+    rows["order_events"].append(event)
+    proof = assess_removed_wait(request, **rows)
+    assert not proof.clear and proof.reason == "fill_history_not_unfilled"
+
+
+@pytest.mark.parametrize("outcome", ["already_absent", "confirmed_after_accepted_request", "could_not_tell", "not_confirmed"])
+def test_broker_absence_or_cancel_ack_is_not_exact_terminal_proof(outcome):
+    request, rows = _recorded("AIXI", include_tickets=False)
+    event = next(e for e in rows["order_events"] if e.event_type == "cancelled")
+    event.payload["metadata"]["cancel_outcome"] = outcome
+    assert assess_removed_wait(request, **rows).reason == "broker_terminal_unproven"
+
+
+def test_removed_wait_gate_normalizes_symbol_and_cannot_be_bypassed_by_case():
+    strategy, state, _, _ = _strategy()
+    state.symbol = "aixi"
+    strategy._remove_waiting_buy(state, reason="controlled removal")
+    assert "AIXI" in strategy._removed_wait_requests
+    assert strategy._removed_wait_gate_closed("aixi")
+    assert strategy._removed_wait_gate_closed("AIXI")

@@ -5,7 +5,7 @@
     {
       "mutation": "all_account_receipts",
       "guard_lines": [
-        257
+        340
       ],
       "test": "test_acceptance_faults_fail_closed",
       "arguments": [
@@ -16,7 +16,7 @@
     {
       "mutation": "unknown_cancel",
       "guard_lines": [
-        249
+        332
       ],
       "test": "test_acceptance_faults_fail_closed",
       "arguments": [
@@ -27,7 +27,7 @@
     {
       "mutation": "terminal_order",
       "guard_lines": [
-        192
+        270
       ],
       "test": "test_acceptance_faults_fail_closed",
       "arguments": [
@@ -38,7 +38,7 @@
     {
       "mutation": "position_guard",
       "guard_lines": [
-        129
+        146
       ],
       "test": "test_acceptance_faults_fail_closed",
       "arguments": [
@@ -49,7 +49,7 @@
     {
       "mutation": "owner_position_identity",
       "guard_lines": [
-        143
+        160
       ],
       "test": "test_acceptance_faults_fail_closed",
       "arguments": [
@@ -60,7 +60,7 @@
     {
       "mutation": "no_wire_evidence",
       "guard_lines": [
-        228
+        311
       ],
       "test": "test_acceptance_faults_fail_closed",
       "arguments": [
@@ -71,7 +71,7 @@
     {
       "mutation": "nfq_terminal",
       "guard_lines": [
-        185
+        240
       ],
       "test": "test_acceptance_faults_fail_closed",
       "arguments": [
@@ -82,7 +82,7 @@
     {
       "mutation": "xhg_unknown_ticket",
       "guard_lines": [
-        183
+        234
       ],
       "test": "test_recorded_xhg_unknown_ticket_overrules_rejected_order",
       "arguments": [],
@@ -93,6 +93,86 @@
       "guard_lines": [],
       "test": "test_recorded_aifa_latest_cancel_not_first_cancel_controls_settle",
       "arguments": [],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "broker_terminal_receipt",
+      "guard_lines": [
+        283
+      ],
+      "test": "test_broker_terminal_receipt_required_not_merely_local_terminal_status",
+      "arguments": [],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "lost_dispatch_attempt",
+      "guard_lines": [
+        372
+      ],
+      "test": "test_lost_later_generation_not_absolved_by_earlier_cancelled_order",
+      "arguments": [],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "unknown_dispatch_history",
+      "guard_lines": [
+        352,
+        364,
+        356,
+        367,
+        378,
+        384
+      ],
+      "test": "test_restored_unknown_history_not_inferred_from_positive_known_terminal_rows",
+      "arguments": [],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "primary_fill",
+      "guard_lines": [
+        132,
+        290,
+        304
+      ],
+      "test": "test_recorded_cancel_then_late_fill_on_either_account_cannot_clear",
+      "arguments": [
+        "live:schwab_1m_v2"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "webull_fill",
+      "guard_lines": [
+        132,
+        290,
+        304
+      ],
+      "test": "test_recorded_cancel_then_late_fill_on_either_account_cannot_clear",
+      "arguments": [
+        "live:orb"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "durable_fill_history",
+      "guard_lines": [
+        139
+      ],
+      "test": "test_durable_fill_event_identity_is_not_erased_by_missing_fill_table_row",
+      "arguments": [
+        "cancelled"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "broker_absence_not_terminal",
+      "guard_lines": [
+        283
+      ],
+      "test": "test_broker_absence_or_cancel_ack_is_not_exact_terminal_proof",
+      "arguments": [
+        "already_absent"
+      ],
       "outcome": "KILLED"
     }
   ]

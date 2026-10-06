@@ -36,7 +36,7 @@ def mutant(name, reason, *, settle=False):
                and n.value.args[0].value == reason for n in returns):
             node.test = ast.Constant(False)
             matches.append(node.lineno)
-    if not settle and len(matches) != 1:
+    if not settle and (not matches or (reason not in {"dispatch_history_unknown", "own_fill_stays_owned"} and len(matches) != 1)):
         raise RuntimeError(f"mutation {name} expected one guard, got {matches}")
     module = ModuleType("clearwait1_mutant_" + name)
     sys.modules[module.__name__] = module
@@ -58,6 +58,13 @@ def main():
         ("nfq_terminal", "mirror_retry_not_retired", "test_acceptance_faults_fail_closed", ("nfq_hold",)),
         ("xhg_unknown_ticket", "replacement_ticket_not_terminal", "test_recorded_xhg_unknown_ticket_overrules_rejected_order", ()),
         ("aifa_settle_window", "", "test_recorded_aifa_latest_cancel_not_first_cancel_controls_settle", ()),
+        ("broker_terminal_receipt", "broker_terminal_unproven", "test_broker_terminal_receipt_required_not_merely_local_terminal_status", ()),
+        ("lost_dispatch_attempt", "dispatch_attempt_unproven", "test_lost_later_generation_not_absolved_by_earlier_cancelled_order", ()),
+        ("unknown_dispatch_history", "dispatch_history_unknown", "test_restored_unknown_history_not_inferred_from_positive_known_terminal_rows", ()),
+        ("primary_fill", "own_fill_stays_owned", "test_recorded_cancel_then_late_fill_on_either_account_cannot_clear", (tests.PRIMARY,)),
+        ("webull_fill", "own_fill_stays_owned", "test_recorded_cancel_then_late_fill_on_either_account_cannot_clear", (tests.WEBULL,)),
+        ("durable_fill_history", "fill_history_not_unfilled", "test_durable_fill_event_identity_is_not_erased_by_missing_fill_table_row", ("cancelled",)),
+        ("broker_absence_not_terminal", "broker_terminal_unproven", "test_broker_absence_or_cancel_ack_is_not_exact_terminal_proof", ("already_absent",)),
     ]
     original = tests.assess_removed_wait
     results = []
