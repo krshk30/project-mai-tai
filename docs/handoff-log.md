@@ -6332,3 +6332,34 @@ Next ten stored bars can contain a later hole (CLRO); per-bar interval and
 post-resume contiguous metadata now recorded, never asserted entry-eligible.
 Target21:00review remains contingent on acceptance/lifecycle/exit evidence;
 no pin, merge, activation, production write or install.
+
+### 2026-10-06 09:54 ET - codex-2 daily guard NEXT follow-up COMPLETE
+
+Own bounded read-only SSH: project-mai-tai-option-a-daily-guard.timer enabled,
+active/waiting, LastTrigger07:40UTC10-06, NEXT07:40UTC10-07 = Wed03:40ET.
+Daily guard and momentum-paper both inactive/dead, MainPID0, NRestarts0,
+Result=success. Root-readable journal confirms paper stopped13:40:01UTC and
+guard exited13:40:07UTC, no failure. The former emptyNEXT was the running
+service state, not a timer fault. No box write/reload/restart or repair.
+
+Original evidence: /home/trader/after-hours/2026-10-06/option-a-daily/
+run-20261006T011059600358Z/option-a-guard.jsonl and option-a-1008.jsonl.
+Guard complete13:40:00.422944UTC expected/load/sampler=9600/9600/9600;
+scheduled_session_close13:40:01.243957UTC rc0; owner_release_confirmed attempt0;
+page_delivery13:40:07.596273UTC deliveredtrue. Final3sampler rows13:39:57-59UTC
+statusOK,new_1008_lines0. This last-row read does not claim an independently
+recounted whole-session zero-kick total. Load warnings are labelled warning
+only in the existing guard; no threshold or policy was changed.
+
+Local raw captures prefix /tmp/codex-daily-guard-20261006-0953- and SHA256:
+- identities.txt c3c2119ea5b2ab2c3f321ae4eed6e200edaf4c5e65e15f7fdb7bef0a403df095
+- timers.txt b32a11ae0f198521fca3e488ae32ae6919b5a2517aafe14f67fe0fdc47018a70
+- guard.txt 27d0df6b3256977cefbe042004277a212e472647bf868242abf0f4d4f0a5be04
+- sampler.txt f54a3d095eef2a1163f9b060596cb7c49a40d93a8311aed9884a940cf7a6ad67
+- journal.txt 667b6fa433fd745db8287a78d37070935bc4cde4646b8da69ec2848922a0df00
+- enabled.txt e056a35db086947e2f5969d747f0a7517bff00c7ffff1f9e7b47b72bfac9d948
+
+C3closed, independently agrees T35without editing any reviewer row. The
+Wednesday03:40fresh unattended run remains future proof. Retire only Codex
+automation oct-6-daily-guard-next-elapse-check after this completion receipt;
+existing box daily timer remains enabled and unchanged.
