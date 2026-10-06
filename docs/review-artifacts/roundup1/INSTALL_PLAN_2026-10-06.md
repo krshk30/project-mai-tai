@@ -110,11 +110,20 @@ it ON alongside ROUNDUP1. No file is staged on the box by this draft.
   `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RESTING_BUY_ROUND_UP_ENABLED`,
   `MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED` and
   `MAI_TAI_ORB_SCHWAB_ATR_ENTRY_GATE_ENABLED`.
+  Corrected RETRYOFF1 adds one numeric env update:
+  `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_MAX_RETRIES=0`.
+  Keep `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true` unchanged;
+  do not remove it or write false. Exact before hash/diff and duplicate/case-alias
+  refusal apply. This is env-only on c21, not a trading-source change.
   Retain all four October 5 switches, NFQ, GAP_HOLD, sizing600/300/1000,
   target5/stop8 and existing ORB flags. No other switch or trading rule edit.
 - Schema0022 is already installed: verify it; do not rerun a migration.
 - Catalog expectation is FLAGGATE151 (143 boolean +8 numeric); numeric remains8. Verify the real measured
   denominator/result, including UNKNOWN rows; never start paper to force green.
+  The added max-retries value is not in that catalog: require a separate pinned
+  2/2 explicit zero-budget process proof for new v2/OMS and daily preopen.
+  Retain baseline149/151 UNKNOWN2 under the narrow paper policy; do not claim
+  the existing151 checks prove zero or silently alter the catalog denominator.
 
 ## Literal Runner Requirements Before Staging
 
@@ -155,7 +164,8 @@ three reads60s apart; a measured blocker stops immediately. No bulk Redis stream
 reads or unbounded broker histories.
 
 Back up source/env/catalogs/gate with hashes and duplicate-key refusal, advance
-only to APPROVED_SHA, edit the three named env keys with duplicate refusal, take old log offsets and restart
+only to APPROVED_SHA, enable the three named booleans and set max-retries0 with duplicate refusal,
+retain retry-enabledtrue unchanged, take old log offsets and restart
 snapshot. Fresh flat and working-order proof before every stop/start; require
 the unmodified v2 gate immediately before stop and zero armed. Its existing
 18:00 clock proxy cannot enforce the new operator window. Only before18:00,
@@ -265,8 +275,9 @@ wrapper, narrow recorded-gate transform and three timer units are literal local
 artifacts. No approval is generated and no production staging/run is authorized
 by those bytes. The entry point requires an exact independently reviewed
 manifest hash and approval and refuses any immutable `blocking_acceptance`
-population even if an approval JSON matches its hash. RETRYOFF is explicitly
-excluded from this candidate, not an accepted no-second-trade card.
+population even if an approval JSON matches its hash. The withdrawn RETRYOFF
+flag-OFF/removal remains excluded. Corrected enabledtrue/max0 adoption below
+supersedes only that pending card disposition, not live admission requirements.
 The unchanged v2 gate133 defaults a missing cw_armed_segments field to empty.
 Mechanics now bracket that unchanged gate with an explicit bounded read of
 the single newest isolated-state entry. Read-only EVAL_RO caps the reply at
@@ -308,32 +319,54 @@ New #1099 recovery/MIRROR-counter and #1100 display work do not hold this instal
 include only a separately reviewed fresh merged pin before the first write,
 with newly generated immutable release and approval. Current release stays c21.
 
-## RETRYOFF1 Requested - BLOCKED Acceptance
+## RETRYOFF1 Corrected Zero Budget - INCLUDED In Plan
 
-The operator's13:00 ruling requests removal of the retry-one env key (default
-False), not writing a false override, to prevent another buy in the same segment
-after a closed trade. That requested removal is pending and **not included in
-the executable env action set or catalog**. No RETRYOFF execution is authorized
-by this checkpoint. Parent exact-main OFF replay of recorded OLOX opportunity
-1791302942230, Webull managed row8f75d2a2, still produces owner idle and one
-primary plus one mirror at12:21 after confirmation close. Source1907-1926 retains
-confirmation-only retirement with retryFalse, and the default-OFF regression
-test explicitly preserves it. The parent's27-test OFF suite PASS is a control,
-not proof the no-second-trade card is satisfied. Raw parent evidence is
-`/tmp/codex-retryoff1-olox-*`; no numeric/bar/order evidence is invented here.
-Requested pending literal removal:
-`MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true`.
-No false assignment is authorized as a substitute. The unchanged c21 catalog
-still expects retry-one True; an expected-False job catalog is also pending,
-not generated/installed or claimed matching by this checkpoint.
+Latest operator instruction adopts **enabled=true unchanged, max_retries=0**
+for tonight after parent PASS. The earlier enabled-OFF/removal request is
+withdrawn, not repaired or relabeled PASS. No source change, enabled removal,
+false override, extra process restart or live admission is authorized here.
+Keep `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true` unchanged and set
+`MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_MAX_RETRIES=0` in the reviewed runner.
+The old flag-OFF/removal FAIL remains historical for a different configuration;
+its requested removal and expected-False catalog are withdrawn, not pending.
+**Plan inclusion is confirmed; literal runner integration/testing is PENDING.**
+No production environment has been changed or adopted by this plan-only update.
 
-RETRYOFF requires an independently reviewed disposition before changing the
-three-key env action or the catalog. If later released, removal needs exact
-duplicate/before-hash/diff controls and effective False in new v2/OMS, with an
-explicit generated isolated catalog expectation and unchanged151 denominator.
-No trading-source change is authorized in this lane. CLEARWAIT and new WEBULL
-lanes remain excluded absent a pin/merge. T43/#1099 remains excluded after the
-legacy-proof regression; no moving application SHA adoption.
+Parent receipt: docs/review-artifacts/retryoff1/ZERO_BUDGET_REPLAY_2026-10-06.md
+in the shared handoff worktree. Independently read raw33PASS/0.87s focus log and
+results, plus max0->1 mutation log with2 assertion failures/4PASS. OLOX12:20->12:21
+and actual IPDN12:16->12:17 both remain consumed/count1 and draft0primary/0mirror
+at max0; positive max1 controls emit1/1. These are offline decision replays with
+controlled owner/persistence/liquidity/quote/window gates, not live-wire acceptance.
+Independent receipt read (not a new replay run):
+`/tmp/codex-retryoff1-zero-budget-focus-20261006.log`, sha256
+f1b5045ce8b761ce455a07695a73f230c809b3b1b8890fc7a5acf04f876222aa;
+results sha256 b574d462278c677d607d90e558ef373835d84eddd1c082fca2ce95472f9e40e4;
+final mutation log sha2563791d1c4ea27da3f2d7f9194c79047a889f6cb383e4769a29d71b029ad0431cb.
+
+Correct the requested IPDN11:5x label: prior first trade10:23/old127-share close
+11:06 preceded fresh SELL11:41:02.394 (bar11:40, ts1791301200000). That resets
+closes0 and11:44 first rest opportunity1791301442514 emits1/1. The unfilled11:56
+waiting/reprice owner remains resting/count0; it is not a same-cycle closed
+retry. Next rowa53adba2 fills12:14, confirmation12:16:02.804, release12:16:07.952,
+second-rest12:17:02.924 is the actual blocked-second case. No missing requested
+11:5x second-after-close case is fabricated or waived.
+
+Executable mechanics must preserve enabledtrue, update only max-retries0 in
+addition to the three reviewed boolean enables, capture exact hashes/diff and
+refuse duplicates. Read explicit zero from stable new v2/OMS PIDs after startup
+and on each daily preopen; absent/default1/1/negative/unreadable/alias/PID drift
+blocks, never falls back to zero. Catalog151 is unchanged; supplemental2/2 is
+separately named and retained in receipts. Existing first/waiting/SELL controls
+are unchanged. No effect is claimed before the scoped restart and fresh gates.
+
+This plan checkpoint includes the corrected env-only card; mechanics integration
+is still pending. Commit781454af and its337b1589 manifest are historical and do
+not bind this updated plan. There is no current immutable manifest for it yet.
+Regenerate an immutable committed-blob release after the updated mechanics and
+full fake rehearsal pass; no production staging/attempt until exact review and
+fresh after16:00 admission. #1100 rebased56c9357b remains pending reviewer pin/
+merge and separate control restart decision; this three-owner scope is unchanged.
 
 ## Dated IPDN Operator Residual Policy
 
