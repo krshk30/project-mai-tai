@@ -7074,3 +7074,18 @@ Schema0022 unchanged; literal collector/daily command now explicitly declares
 no-schema-change. Historical Webull read budget600s/2sspacing; fresh direct
 flatness repeated last before actions. This is not an install-start orCOMPLETE
 receipt. EarlierC87 refusal remains historical evidence, not currentphase rule.
+
+### 2026-10-06 16:28 ET - codex-2 C89 ready Install2 heads
+
+Parent hosted reads confirm KEEPREST1 #1104 exact030df3d2 and both Validate
+SUCCESS; own53PASS1.04s in recorded-replay+mutation files. Worker unitpair
+6478/47 vs6531/same47, not prior56resolved. #1099 markready succeeds now,
+unchangedf4e2d4e and isDraft=false confirmed; priorGraphQL errors preserved.
+#1102 e1cf2164 remainsready, bothValidategreen, independentpinabsent.
+Holdings #1103 da187b75 draft has greenValidatepair and controlled31semantic
+mutations workerreported, but actual Install2 typed-gate caller still missing.
+Assigned a separate solewriter branch for that caller/draftplan only; current
+Install1 source/production remain parentowned. WEBULL429 andCLEARWAIT inherited
+after-close clock-sensitive SCKT tests require exact recorded in-window test
+clocks; authorized tests-only corrections, no assertions loosened/sourcegate
+changed. All Install2 lanes remain unpinned/unmerged/uninstalled.
