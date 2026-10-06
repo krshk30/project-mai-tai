@@ -6773,3 +6773,21 @@ afterlatency withoutbuild. Readplan retains exactownership/2scache/firstFILLED/
 partialfills/strictRPG/EOD and budgets pagination plus durable terminalproof.
 DISAGREE cancelcause means no cancelbuild; seek correctedscope/disposition,
 not a rate-limit workaround for417. No source/prod/ledger/Redis changes.
+
+### 2026-10-06 13:47 ET - codex-2 C64 released recovery and mirror builds CLAIM
+
+Newest reviewer disposition releases #1099 bounded proof-only recovery and
+MIRRORHOLD1 submission counter. Zeno remains sole #1099 writer on the existing
+codex/rpg-one-leg-rest-recovery worktree, with all dirty work preserved;
+Archimedes takes a separate MIRROR build after completing WEBULL Step0. Parent
+independent source read confirms the second placed-generation gate, both RPG
+forget paths, the same-slot new_mirror_attempt retirement and queue-time
+attempt increment. Tests must cover all of those, not merely remove two calls.
+Current/legacy recovery consumes one OMS proof policy with exact-order and
+generation CAS; fill evidence remains owned, no age/absence or marker waiver.
+Outside8% is a free hold; only actual Webull submissions count toward the
+retained resubmit cap. Unknown queue/dispatch and cancellation must remain
+fenced. Recorded counterfactual placement is not an actual Webull fill receipt.
+No production, database, service, flag, ledger or installation change. Existing
+RETRYOFF acceptance disagreement and WEBULL cancel-cause disagreement remain
+unresolved; this release does not authorize either unrelated source change.
