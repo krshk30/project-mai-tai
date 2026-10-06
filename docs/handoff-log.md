@@ -6508,3 +6508,17 @@ both without widening authorization age or releasing ambiguous orders. Regressio
 and final failed-name/mutation proofs are pending; no ready or install claim.
 The first safety run was19PASS plus one wrong test-method keyword; corrected before
 the final run, not treated as a code pass. Target15:00ET remains.
+
+### 2026-10-06 11:40 ET - codex-2 C47 draft PR verification
+
+Separate drafts #1099 T43 (053a7179) and #1098 ORBPURPLE1 (ed7c2c81) are open,
+not pinned/ready/installed. ORB's fresh UNIT baseline47FAIL/6416PASS vs
+head47FAIL/6447PASS has identical failed names; seven mutations are assertion-RED,
+both Validate runs pending. Its measured table prevents neither of the two filled
+losses (MI/JAGX were above ATR); no profitability claim.
+T43's follow-up makes ordinary no-token local abort terminal only for the exact
+new audited never-wired intent; the old owned ticket stays blocking. Order and
+audit no-wire marker both false is the new negative control. Its new28cases passed
+before that strengthened negative; final frozen suites and16mutation receipts are
+running. Older interrupted runs are not final evidence. No production change;
+tonight's reviewed three-item set is unchanged until an independent pin/rebind.
