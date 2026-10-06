@@ -6027,3 +6027,28 @@ created. Actual installed hashes and Wed06:20NEXT remain owed tonight.
 Timestamp correction: the automation receipt was recorded at07:17ET (clock
 11:17:03UTC), not07:19ET as the preceding heading says. C19 corrected; narrative
 heading retained under the append-only rule.
+
+## 2026-10-06 07:35 ET - LINE=CHART steering, independent JAGX coverage blocker
+
+CLAIM continuing codex/line-chart-restoration as sole source writer; two
+read-only evidence/audit agents made no source changes. Own bounded read-only
+JAGX captures07:22-07:26 show the late07:03/07:04 rows written07:10:10, but
+stored history begins07:01. One Schwab pricehistory GET0400-0716 returns27
+candles:17 in scope07:00-07:16 and10 after the requested cutoff. All16
+overlapping stored/provider candles match exactly. Independent capture proves
+trades04:00 and06:10-06:12; neither candle series covers that prefix. Conditional
+07:16 line from stored16 bars5.7955/long-age7; provider17 bars5.7804/age8;
+installed5.883980/age3. Full0400 chart acceptance is UNMEASURED, not a match
+obtained by assuming the missing prefix silent.
+
+Added fail-closed prefix/interior coverage controls and actual JAGX fixture;
+stored-session reread is off-callback,961-row bound, no250-row truncation.
+Rebuild uses full admitted history rather than post-reset cutoff, retaining
+the existing clean-bar wait and no-late-flip/version/consumed-slot fences.
+Provider proof is immutable: DB additions/conflicts cannot silently rewrite
+its IDs/hash. Controlled coverage in unit fixtures is explicitly not historical
+proof. Focus180 PASS; five assertion mutations RED including completeness,
+post-reset truncation,250-row cap and replayed-flip emission. Full head suite
+running; no current PR-ready or activation claim. Pause classifier, complete
+anchor provenance, exit continuity and bounded delivery remain blockers.
+No broker order, subscription, service, flag, DB/Redis or box file changed.
