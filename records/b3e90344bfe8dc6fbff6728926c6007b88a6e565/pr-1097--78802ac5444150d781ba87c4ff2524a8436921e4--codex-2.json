@@ -1,0 +1,9 @@
+{
+  "pr_number": 1097,
+  "range_base": "78802ac5444150d781ba87c4ff2524a8436921e4",
+  "range_head": "b3e90344bfe8dc6fbff6728926c6007b88a6e565",
+  "reviewed_at": "2026-10-06T14:21:31Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Read reviewer-owned runner and original raw population receipt; original comparison includes unavailable late bars and is explicitly superseded by 91b02e5e, not claimed PASS. Reviewed the corrected final runner unchanged, independently reran all 123 cases normally and with eight switches ON: zero same-input line mismatches/errors/incomplete buys/permissions. Reviewed original log as historical 64-held availability evidence, not current acceptance. No self-review of Codex source."
+}

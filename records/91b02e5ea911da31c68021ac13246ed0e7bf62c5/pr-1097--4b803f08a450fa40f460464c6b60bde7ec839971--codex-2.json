@@ -1,0 +1,9 @@
+{
+  "pr_number": 1097,
+  "range_base": "4b803f08a450fa40f460464c6b60bde7ec839971",
+  "range_head": "91b02e5ea911da31c68021ac13246ed0e7bf62c5",
+  "reviewed_at": "2026-10-06T14:21:31Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Read full runner and corrected diff: oracle uses exact supplied bars, chart comparison separate, explicit incomplete entry-permission counter; bytes equal reviewer ed871725. Independently replayed 123 events through real factory normally and with eight switches ON: zero mismatches/errors/buys or permissions while incomplete, +10 98 MATCH/0 HELD/25 n-a, chart 83 same/15 late-bar differences. Runner exit zero is not treated as PASS without its table; 4-decimal trail comparison and controlled provider attestation disclosed. Only claude-1 runner/evidence segment reviewed, no self-pin of strategy/source."
+}
