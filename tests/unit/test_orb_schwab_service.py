@@ -57,6 +57,7 @@ def test_live_service_emits_one_open_two_reprices_and_no_paper_order(monkeypatch
         settings=Settings(
             orb_enabled=True,
             orb_live_schwab_orders_enabled=True,
+            orb_schwab_atr_entry_gate_enabled=False,
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
             strategy_schwab_1m_v2_broker_provider="schwab",
         ),
@@ -100,6 +101,7 @@ def test_live_decision_log_names_negative_macd_at_entry_cutoff(monkeypatch, capl
         settings=Settings(
             orb_enabled=True,
             orb_live_schwab_orders_enabled=True,
+            orb_schwab_atr_entry_gate_enabled=False,
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
             strategy_schwab_1m_v2_broker_provider="schwab",
         ),
@@ -126,6 +128,7 @@ def test_negative_completed_schwab_bar_requests_cancel_not_reprice(monkeypatch) 
         settings=Settings(
             orb_enabled=True,
             orb_live_schwab_orders_enabled=True,
+            orb_schwab_atr_entry_gate_enabled=False,
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
             strategy_schwab_1m_v2_broker_provider="schwab",
         ),
@@ -167,6 +170,7 @@ def test_late_macd_write_waits_without_weakening_live_bar_age(
         settings=Settings(
             orb_enabled=True,
             orb_live_schwab_orders_enabled=True,
+            orb_schwab_atr_entry_gate_enabled=False,
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
             strategy_schwab_1m_v2_broker_provider="schwab",
         ),
@@ -220,6 +224,7 @@ def test_on_time_market_timestamp_does_not_hide_late_processing(monkeypatch) -> 
         settings=Settings(
             orb_enabled=True,
             orb_live_schwab_orders_enabled=True,
+            orb_schwab_atr_entry_gate_enabled=False,
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
             strategy_schwab_1m_v2_broker_provider="schwab",
         ),
@@ -259,7 +264,8 @@ class _ReadOnlyRedis:
 
 def _observer(monkeypatch):
     service = OrbSchwabService(
-        settings=Settings(orb_enabled=True, orb_schwab_observe_enabled=True),
+        settings=Settings(orb_enabled=True, orb_schwab_observe_enabled=True,
+                          orb_schwab_atr_entry_gate_enabled=False),
         redis_client=_ReadOnlyRedis(),
         session_factory=lambda: None,
     )
@@ -392,6 +398,7 @@ def test_live_and_observation_flags_cannot_be_combined():
         OrbSchwabService(settings=Settings(
             orb_enabled=True, orb_schwab_observe_enabled=True,
             orb_live_schwab_orders_enabled=True,
+            orb_schwab_atr_entry_gate_enabled=False,
         ))
 
 
@@ -464,7 +471,8 @@ def test_sept30_eight_decisions_wait_for_actual_schwab_write(
     saved = datetime.fromisoformat(session + saved_at + "+00:00")
     opening = datetime(2026, 9, 30, 13, 30, tzinfo=UTC)
     service = OrbSchwabService(
-        settings=Settings(orb_enabled=True, orb_schwab_observe_enabled=True),
+        settings=Settings(orb_enabled=True, orb_schwab_observe_enabled=True,
+                          orb_schwab_atr_entry_gate_enabled=False),
         redis_client=_ReadOnlyRedis(), session_factory=lambda: None,
     )
     service._universe = {symbol}

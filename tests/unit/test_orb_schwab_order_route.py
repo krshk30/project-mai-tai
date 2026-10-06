@@ -56,6 +56,7 @@ def _settings(*, enabled: bool = True) -> Settings:
     return Settings(
         orb_enabled=True,
         orb_live_schwab_orders_enabled=enabled,
+        orb_schwab_atr_entry_gate_enabled=False,
         strategy_schwab_1m_v2_account_name=ACCOUNT,
         strategy_schwab_1m_v2_broker_provider="schwab",
         redis_stream_prefix="test",

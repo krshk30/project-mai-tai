@@ -18,6 +18,7 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.fanout_outcome_consumer import session_anchor
 from project_mai_tai.log import configure_logging
+from project_mai_tai.orb_schwab_atr_entry import schwab_atr_entry_gate
 from project_mai_tai.orb_schwab_macd import (
     BAR_WAIT, MacdVerdict, last_closed_bar_close, schwab_completed_bar_macd_gate,
 )
@@ -411,6 +412,29 @@ class OrbSchwabService(OrbService):
                 now,
             )
             deadline = bar.timestamp + timedelta(minutes=1) + BAR_WAIT
+            if (not order.placed and not order.cancelled
+                    and self.settings.orb_schwab_atr_entry_gate_enabled
+                    and verdict == MacdVerdict.ALLOWED):
+                atr = await asyncio.to_thread(schwab_atr_entry_gate, self.session_factory, symbol, now)
+                logger.info("[ORB-SCHWAB-ATR-ENTRY] symbol=%s enabled=True evidence=%s",
+                            symbol, json.dumps(atr.evidence(), sort_keys=True))
+                if self._observe_only:
+                    self._record_observation("atr_entry_gate", symbol=symbol, **atr.evidence())
+                if atr.verdict == "unknown" and now < deadline:
+                    self._macd_deferred_bars.add(key)
+                    pending.append((symbol, bar, observed_at))
+                    deferred_symbols.add(symbol)
+                    continue
+                if atr.verdict != "allowed":
+                    order.cancelled = True
+                    self._pending_macd_checked_at.pop(key, None)
+                    self._first_macd_processing_at.pop(key, None)
+                    self._macd_deferred_bars.discard(key)
+                    if self._observe_only:
+                        self._record_observation("decision", symbol=symbol,
+                                                 bar_at=bar.timestamp.isoformat(), proposed_action="none",
+                                                 decision_reason=f"atr_{atr.reason}")
+                    continue
             if verdict == MacdVerdict.BAR_NOT_YET and now < deadline:
                 self._macd_deferred_bars.add(key)
                 pending.append((symbol, bar, observed_at))
@@ -525,9 +549,10 @@ class OrbSchwabService(OrbService):
                 self.settings, service="orb-schwab", profile="fast"
             )
         logger.info(
-            "[ORB-SCHWAB] mode=%s live_sending=%s",
+            "[ORB-SCHWAB] mode=%s live_sending=%s atr_entry_gate_enabled=%s",
             "OBSERVE_ONLY" if self._observe_only else "LIVE",
             self.settings.orb_live_schwab_orders_enabled,
+            self.settings.orb_schwab_atr_entry_gate_enabled,
         )
         if self.settings.market_data_subscription_startup_enabled and not self._observe_only:
             # Hydrate ownership before any replacement, including outside RTH.

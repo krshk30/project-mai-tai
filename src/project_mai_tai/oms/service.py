@@ -66,6 +66,7 @@ from project_mai_tai.oms.orb_schwab_eod import close_orb_schwab_before_close, cl
 from project_mai_tai.orb_schwab_macd import (
     BAR_WAIT, MacdVerdict, last_closed_bar_close, schwab_completed_bar_macd_gate,
 )
+from project_mai_tai.orb_schwab_atr_entry import schwab_atr_entry_gate
 from project_mai_tai.orb_schwab_order_route import (
     build_orb_schwab_cancel_intent,
     orb_schwab_intent_refusal,
@@ -1541,6 +1542,12 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 )
                 if verdict != MacdVerdict.ALLOWED:
                     refusal = f"orb_schwab_macd_{macd_reason}"
+                elif self.settings.orb_schwab_atr_entry_gate_enabled:
+                    atr = schwab_atr_entry_gate(self.session_factory, event.payload.symbol, utcnow())
+                    self.logger.info("[OMS-ORB-SCHWAB-ATR-ENTRY] symbol=%s stage=admission evidence=%s",
+                                     event.payload.symbol, atr.evidence())
+                    if atr.verdict != "allowed":
+                        refusal = f"orb_schwab_atr_{atr.reason}"
             if refusal is not None:
                 self.logger.warning(
                     "[OMS-ORB-SCHWAB-REFUSED] symbol=%s account=%s reason=%s",
@@ -2315,6 +2322,12 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 post_preview_refusal = orb_schwab_intent_refusal(
                     event, self.settings, utcnow()
                 )
+                if post_preview_refusal is None and self.settings.orb_schwab_atr_entry_gate_enabled:
+                    atr = schwab_atr_entry_gate(self.session_factory, event.payload.symbol, utcnow())
+                    self.logger.info("[OMS-ORB-SCHWAB-ATR-ENTRY] symbol=%s stage=post_preview evidence=%s",
+                                     event.payload.symbol, atr.evidence())
+                    if atr.verdict != "allowed":
+                        post_preview_refusal = f"orb_schwab_atr_{atr.reason}"
                 if post_preview_refusal is not None:
                     self.store.mark_intent_refused(
                         intent, origin="client_abort", code=post_preview_refusal
