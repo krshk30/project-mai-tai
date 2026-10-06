@@ -7050,3 +7050,27 @@ Deleted only Codex one-shot oct-6-evening-preopen-timer-build-and-install after
 verifiedrefusal as instructed. App deletion confirmed; no rootdailytimer or
 boxjob created/changed and no installCOMPLETE claim. Expanded review remains
 required before any executable census enlargement or ticket clearance.
+
+### 2026-10-06 16:24 ET - codex-2 C88 updated phase gate and retained proof stop
+
+Latest human ruling replaces the14-ticket/64-row semantic gate. Own read
+16:13:31ET captures103 rows:80refused,11expired,10filled,2held_unknown; zero
+requested/price_wait/submitting. Full payload/phase evidence is on sourceplan
+327a2faef665cfe42094cbd6833499cb27ce5746. Two unknowns remain unknown; no
+ticket row is edited. New capture validates bytes/count/IDs and rejects an
+immutable binding/replacement change or terminal revival while allowing existing
+accounting transitions. No new buy activity after install start is permitted.
+Job693PASS46.62s; exactAPP4805 combined allON+ORBPURPLE72PASS4.16s under tested
+retryenabledtrue/max0. Both raw restart gates GO16:18; v2 uses the already
+reviewed clock-only override, armed0, managed0. Own strict-flat16:15 both
+direct accounts empty, all managed/virtual/account books empty, exactMI/NXL
+allowances unchanged. Expanded SQL95linked parents/170intents/nonterminal0.
+Direct historical parent audit stops after24proofs: OLOXb95fc559 and MOBX07bc532a
+rejected rows lack brokerid. They are not called terminal-proven. Asked for
+exact-item disposition with fresh complete working-order/zero-fill/open-row
+proofs; no answer assumed. Local27-artifact manifestc2463262798d3817e4dc9c9654bf33db225dd7747f5b4c5a4ab5249eafd39e95,
+no production stage/approval/source/env/service/timer/ledger action.
+Schema0022 unchanged; literal collector/daily command now explicitly declares
+no-schema-change. Historical Webull read budget600s/2sspacing; fresh direct
+flatness repeated last before actions. This is not an install-start orCOMPLETE
+receipt. EarlierC87 refusal remains historical evidence, not currentphase rule.
