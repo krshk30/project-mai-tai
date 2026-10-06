@@ -1,0 +1,9 @@
+{
+  "pr_number": 1089,
+  "range_base": "a78f0fd4307dd59a9b216fb09155e1a1514918f2",
+  "range_head": "561b585bc568c82dfa0c6bc16e612fd58dfec5d2",
+  "reviewed_at": "2026-10-06T01:36:55Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed this Claude-only docs range against the shared day record and operator rulings. Verified docs-only scope, one agent trailer per commit, chronological evidence and limits; Board B rows 46/47/49 and prior F-table are preserved. Close-out issues in M87, M98 and the final production summary are explicitly withheld in separate ranges pending correction. Current manifest is byte-identical, BALANCED 138/138, SHA256 763f0daa0242fa7642c5aea152cbb933b3481a7e261fb5d3dbbba7e65488a955. No production action or self-review."
+}
