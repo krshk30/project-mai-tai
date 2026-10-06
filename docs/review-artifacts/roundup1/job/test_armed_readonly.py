@@ -70,3 +70,60 @@ def test_unsupported_or_failed_readonly_query_propagates_not_clear():
             raise OSError("controlled query failure")
     with pytest.raises(OSError):
         armed.collect(Client(), "mai_tai:strategy-state-isolated", NOW)
+
+
+def foreign_reply(index=0):
+    # Actual 17:41 read: isolated_bot_state/source orb/strategy orb/paper:orb.
+    value = event()
+    value.update(source_service="orb", produced_at=(NOW - timedelta(milliseconds=index)).isoformat())
+    value["payload"].update(strategy_code="orb", account_name="paper:orb")
+    return [str(int(NOW.timestamp() * 1000) - index) + "-0", json.dumps(value)]
+
+
+def test_recorded_orb_newest_shared_state_selects_older_v2_not_foreign_empty_armed():
+    calls = []
+    rows = [foreign_reply(), [str(int(NOW.timestamp() * 1000) - 1) + "-0", reply()[1]]]
+    class Client:
+        def execute_command(self, *args):
+            calls.append(args)
+            return rows[len(calls) - 1]
+    result = armed.collect(Client(), "mai_tai:strategy-state-isolated", NOW)
+    assert result["event"]["source_service"] == "schwab-1m-v2"
+    assert result["entries_examined"] == 2
+    assert result["discarded_other_producers"] == [dict(entry_id=rows[0][0], source_service="orb")]
+    assert calls[1][-1] == "(" + rows[0][0]
+
+
+@pytest.mark.parametrize("change", [lambda e: e["payload"].pop("cw_armed_segments"),
+    lambda e: e["payload"].update(cw_armed_segments=[{"symbol": "IPDN"}]),
+    lambda e: e["payload"].update(account_name="paper:schwab_1m_v2"),
+    lambda e: e.update(produced_at=(NOW - timedelta(seconds=61)).isoformat())])
+def test_foreign_zero_never_masks_invalid_or_armed_v2(change):
+    own = event()
+    change(own)
+    rows = iter([foreign_reply(), [str(int(NOW.timestamp() * 1000) - 1) + "-0", json.dumps(own)]])
+    class Client:
+        def execute_command(self, *args):
+            return next(rows)
+    with pytest.raises((policy.Stop, KeyError, ValueError)):
+        armed.collect(Client(), "mai_tai:strategy-state-isolated", NOW)
+
+
+def test_shared_state_scan_is_bounded_and_never_defaults_missing_v2_to_zero():
+    calls = []
+    class Client:
+        def execute_command(self, *args):
+            calls.append(args)
+            return foreign_reply(len(calls) - 1)
+    with pytest.raises(policy.Stop, match="bounded shared-stream scan"):
+        armed.collect(Client(), "mai_tai:strategy-state-isolated", NOW)
+    assert len(calls) == 25
+    assert all(args[:4] == ("EVAL_RO", armed.READ, 1, "mai_tai:strategy-state-isolated") for args in calls)
+
+
+def test_shared_state_nonadvancing_cursor_blocks():
+    class Client:
+        def execute_command(self, *args):
+            return foreign_reply()
+    with pytest.raises(policy.Stop, match="cursor did not advance"):
+        armed.collect(Client(), "mai_tai:strategy-state-isolated", NOW)
