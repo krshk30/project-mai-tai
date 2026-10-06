@@ -7199,3 +7199,17 @@ write/action; oldidentities/env retained. Only boundedhelper selection changed,
 35focused/full744PASS; exactb763/manifest2bd128 staged27hashverified and new
 exclusiveattended attempt begun. PriorSTOP preserved, no COMPLETEclaim.
 #1102b67 bothValidategreen; reviewerfreshpin awaited; mainhold duringInstall1.
+
+### 2026-10-06 18:36 ET - codex-2 C101 bounded control proof mechanics
+
+b763attempt stopped17:48 initial0actions; originalPIDs/7823clean/envretained.
+Controlproof concealed Stopmessage; no recovery/action occurred. Ownhealth
+read proves DB/Redis connected/errorsnone/control-plane, solecontrol2916 and
+OMSrefreshdisabled. BoundedoverviewHTTP2001538579B17.84s/healthyrefresher makes
+old512KB/10s read envelope invalid. 465c0a76 onlyraises overview to2MB/30s,
+preserves otherendpoint512KB/10s and everyhealth/identity/freshnesscheck,
+distinguishes measuredStop1 fromunreadable2 anduses3reads60s on2only.
+Freshread-onlycontrolrehearsalPASS/f67b1b15, focused105PASS. Fullharnessstill
+running controlledfailure60s pauses; no staging/executionclaim beforePASS.
+Manifest0b7238c1/approvalf391dc3d exactcommittedblobs regenerated locally;
+same4805candidate/env/sequence, no application/MI-NXL changes.
