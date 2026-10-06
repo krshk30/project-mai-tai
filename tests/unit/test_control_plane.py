@@ -83,6 +83,138 @@ class FakeRedis:
         return "config-1"
 
 
+def _orbpage_app(monkeypatch: pytest.MonkeyPatch):
+    now = datetime(2026, 10, 6, 15, 52, tzinfo=UTC)
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: now)
+    monkeypatch.setattr(
+        control_plane_module, "current_eastern_day_start_utc",
+        lambda now=None: datetime(2026, 10, 6, 8, tzinfo=UTC),
+    )
+    settings = Settings(
+        redis_stream_prefix="test", orb_enabled=True,
+        orb_live_schwab_orders_enabled=True, trade_coach_enabled=False,
+        schwab_token_refresher_enabled=False,
+        strategy_schwab_1m_v2_enabled=True,
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+    )
+    factory = build_test_session_factory()
+    with factory() as session:
+        account = BrokerAccount(name="live:schwab_1m_v2", provider="schwab", environment="test", is_active=True)
+        live = Strategy(code="orb_schwab", name="ORB live", is_enabled=True, metadata_json={})
+        atr = Strategy(code="schwab_1m_v2", name="ATR", is_enabled=True, metadata_json={})
+        session.add_all([account, live, atr])
+        session.flush()
+        # Recorded live ORB fills, read directly from the box on 2026-10-06.
+        _seed_completed_cycle(session, strategy=live, account=account, symbol="JAGX", quantity="2", entry_price="6.67", exit_price="6.6001", entry_time=datetime(2026, 10, 6, 13, 30, 14, tzinfo=UTC), exit_time=datetime(2026, 10, 6, 13, 31, 7, tzinfo=UTC), path="ORB", exit_reason="BREAK_BAR_BODY_UNDER_45_PCT")
+        _seed_completed_cycle(session, strategy=atr, account=account, symbol="ATR_ONLY", quantity="100", entry_price="10", exit_price="11", entry_time=datetime(2026, 10, 6, 13, 32, tzinfo=UTC), exit_time=datetime(2026, 10, 6, 13, 33, tzinfo=UTC), path="ATR", exit_reason="target")
+        session.commit()
+    from project_mai_tai.events import IsolatedBotStateEvent
+    # The five recorded paper results are unchanged and never become broker fills.
+    closed = [
+        {"ticker": symbol, "quantity": 2, "entry_price": entry, "exit_price": exit_, "pnl": pnl, "entry_time": f"2026-10-06T13:{minute}:00+00:00", "exit_time": f"2026-10-06T13:{minute}:30+00:00"}
+        for symbol, entry, exit_, pnl, minute in [
+            ("OLOX", 1.50, 1.38, -0.24, "34"), ("AIXI", 3.16, 2.90, -0.52, "32"),
+            ("JAGX", 6.66, 6.12, -1.08, "30"), ("IPDN", 6.51, 5.98, -1.06, "31"),
+            ("XHG", 3.26, 3.48, 0.44, "33"),
+        ]
+    ]
+    paper = IsolatedBotStateEvent(source_service="orb", payload=StrategyBotStatePayload(strategy_code="orb", account_name="paper:orb", interval_secs=60, watchlist=[], positions=[], closed_today=closed, daily_pnl=-2.46))
+    redis = FakeRedis({"test:strategy-state-isolated": [("1", {"data": paper.model_dump_json()})]})
+    return build_app(settings=settings, session_factory=factory, redis_client=redis), factory
+
+
+def test_orbpage_live_jagx_strategy_attribution_labels_and_session_freeze(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _ = _orbpage_app(monkeypatch)
+    with TestClient(app) as client:
+        page = client.get("/bot/orb").text
+        live = client.get("/api/bot/orb-schwab").json()
+        assert "ORB Schwab Live" in page
+        assert "live:schwab_1m_v2" in page
+        assert "LIVE/SCHWAB" in page
+        assert "<strong>Mode:</strong> LIVE" in page
+        assert "<strong>Provider:</strong> SCHWAB" in page
+        assert "SESSION COMPLETE" in page
+        assert 'http-equiv="refresh"' not in page
+        assert "6.6700" in page and "6.6001" in page and "$-0.14" in page
+        assert "ATR_ONLY" not in page
+        assert '<span>Trades</span>\n                        <strong>1</strong>' in page
+        assert len(live["recent_orders"]) == 2
+        assert len(live["recent_fills"]) == 2
+        assert live["daily_pnl"] == pytest.approx(-0.1398)
+        assert len(live["closed_today"]) == 1
+        assert "ORB paper (observer)" in page
+
+
+def test_orbpage_observer_keeps_five_paper_rows_and_api_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _ = _orbpage_app(monkeypatch)
+    with TestClient(app) as client:
+        paper_page = client.get("/bot/orb-paper").text
+        bots = client.get("/api/bots").json()["bots"]
+        paper = next(bot for bot in bots if bot["strategy_code"] == "orb")
+        assert "ORB paper (observer)" in paper_page
+        assert "<strong>Mode:</strong> PAPER" in paper_page
+        assert paper["account_name"] == "paper:orb"
+        assert paper["daily_pnl"] == -2.46
+        assert len(paper["closed_today"]) == 5
+        assert paper["recent_orders"] == [] and paper["recent_fills"] == []
+        assert "ATR_ONLY" in client.get("/bot/1m-schwab-v2").text
+
+
+@pytest.mark.parametrize("decisions", [[], [{"last_bar_at": "2026-10-06 09:25:00 AM ET"}]])
+def test_orbpage_fresh_own_tick_is_activity_without_decisions(monkeypatch: pytest.MonkeyPatch, decisions) -> None:
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime(2026, 10, 6, 13, 45, tzinfo=UTC))
+    bot = {"strategy_code": "orb_schwab", "provider": "schwab", "watchlist": ["JAGX"], "positions": [], "last_tick_at": {"JAGX": "2026-10-06 09:44:58 AM ET"}}
+    data = {"services": [{"service_name": "strategy-engine", "status": "stopped"}], "market_data": {}}
+    assert _build_bot_listening_status(data, bot, decisions)["state"] == "LISTENING"
+    bot["last_tick_at"] = {}
+    assert _build_bot_listening_status(data, bot, decisions)["state"] == "UNKNOWN"
+    bot["last_tick_at"] = {"JAGX": "2026-10-06 09:44:58 AM ET"}
+    data["services"].append({"service_name": "orb-schwab", "status": "stopped"})
+    assert _build_bot_listening_status(data, bot, decisions)["state"] == "STOPPED"
+
+
+def test_orbpage_session_boundary_filters_only_live_orb(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime(2026, 10, 6, 14, tzinfo=UTC))
+    assert control_plane_module._orb_session_closed()
+    assert control_plane_module._orb_within_display_session("2026-10-06 09:59:59 AM ET")
+    assert not control_plane_module._orb_within_display_session("2026-10-06 10:00:00 AM ET")
+    assert not control_plane_module._orb_within_display_session("2026-10-05 09:59:59 AM ET")
+    assert not control_plane_module._orb_within_display_session("unreadable")
+
+
+def test_orbpage_open_book_excludes_shared_atr_quantity_and_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, factory = _orbpage_app(monkeypatch)
+    with factory() as session:
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == "live:schwab_1m_v2"))
+        live = session.scalar(select(Strategy).where(Strategy.code == "orb_schwab"))
+        atr = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
+        session.add_all([
+            VirtualPosition(strategy_id=live.id, broker_account_id=account.id, symbol="SHARED", quantity=Decimal("2"), average_price=Decimal("6.67")),
+            VirtualPosition(strategy_id=atr.id, broker_account_id=account.id, symbol="SHARED", quantity=Decimal("100"), average_price=Decimal("6.67")),
+            AccountPosition(broker_account_id=account.id, symbol="SHARED", quantity=Decimal("102"), average_price=Decimal("6.67"), market_value=Decimal("680.34")),
+        ])
+        session.commit()
+    with TestClient(app) as client:
+        live = client.get("/api/bot/orb-schwab").json()
+        assert len(live["positions"]) == 1
+        assert live["positions"][0]["quantity"] == 2
+        assert live["account_summary"]["gross_market_value"] == pytest.approx(13.34)
+        page = client.get("/bot/orb").text
+        assert "Shared account" in page
+        assert "ORB strategy book; account quantity not attributed" in page
+
+
+def test_orbpage_before_ten_refreshes_without_claiming_unreported_activity(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _ = _orbpage_app(monkeypatch)
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime(2026, 10, 6, 13, 45, tzinfo=UTC))
+    with TestClient(app) as client:
+        page = client.get("/bot/orb").text
+        assert 'http-equiv="refresh" content="30"' in page
+        assert "<strong>Status:</strong> UNKNOWN" in page
+        assert "ORB-Schwab activity is not reported" in page
+        assert "<strong>Routing:</strong> LIVE/SCHWAB" in page
+
+
 def test_exchange_schwab_authorization_code_uses_url_request(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 

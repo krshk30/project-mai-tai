@@ -829,6 +829,7 @@ class ControlPlaneRepository:
             recent_bar_decisions=db_state["recent_bar_decisions"],
             open_orders=db_state["open_orders"],
             persisted_snapshots=db_state["dashboard_snapshots"],
+            virtual_positions=db_state["virtual_positions"],
         )
 
         overall_status = "healthy"
@@ -948,6 +949,7 @@ class ControlPlaneRepository:
             recent_bar_decisions=db_state["recent_bar_decisions"],
             open_orders=db_state["open_orders"],
             persisted_snapshots=db_state["dashboard_snapshots"],
+            virtual_positions=db_state["virtual_positions"],
         )
         trade_forensics = (
             await asyncio.to_thread(
@@ -1729,6 +1731,7 @@ class ControlPlaneRepository:
         recent_bar_decisions: list[dict[str, Any]],
         open_orders: list[dict[str, Any]],
         persisted_snapshots: dict[str, Any],
+        virtual_positions: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         registrations = configured_strategy_registrations(self.settings)
         ordered_codes = [registration.code for registration in registrations]
@@ -1769,6 +1772,22 @@ class ControlPlaneRepository:
                 for symbol in runtime_bot.get("watchlist", [])
                 if not self._is_ui_hidden_symbol(account_name, symbol)
             ]
+            if code == "orb_schwab":
+                # The account is shared with ATR. Only strategy-owned book rows
+                # establish ORB exposure; account totals never establish ownership.
+                positions = [
+                    {
+                        "ticker": item["symbol"],
+                        "quantity": _as_float(item.get("quantity")),
+                        "entry_price": _as_float(item.get("average_price")),
+                        "entry_time": str(item.get("updated_at") or ""),
+                    }
+                    for item in virtual_positions or []
+                    if item.get("strategy_code") == code
+                    and item.get("broker_account_name") == account_name
+                    and _as_float(item.get("quantity")) != 0
+                    and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
+                ]
             manual_stop_symbols = sorted(
                 {
                     str(symbol).upper()
@@ -1908,6 +1927,8 @@ class ControlPlaneRepository:
             )
             market_data_source = self._market_data_source_label(runtime_provider)
             data_health = dict(runtime_bot.get("data_health", {}) or {})
+            if code == "orb_schwab" and not runtime_bot:
+                data_health["status"] = "unknown"
             halted_symbols = [
                 str(symbol).upper()
                 for symbol in list(data_health.get("halted_symbols", []) or [])
@@ -2052,6 +2073,31 @@ class ControlPlaneRepository:
                     ][:25],
                 }
             )
+            if code == "orb_schwab":
+                live_view = bot_views[-1]
+                for key, timestamp in (("recent_orders", "updated_at"), ("recent_fills", "filled_at"), ("recent_intents", "updated_at")):
+                    live_view[key] = [
+                        item for item in live_view[key]
+                        if _orb_within_display_session(item.get(timestamp))
+                    ]
+                cycles = collect_completed_trade_cycles(
+                    strategy_code=code,
+                    broker_account_name=account_name,
+                    recent_orders=live_view["recent_orders"],
+                    recent_fills=live_view["recent_fills"],
+                    closed_today=[],
+                )
+                live_view["daily_pnl"] = sum(cycle.pnl for cycle in cycles)
+                live_view["closed_today"] = [
+                    {
+                        "ticker": cycle.symbol, "quantity": cycle.quantity,
+                        "entry_price": cycle.entry_price, "exit_price": cycle.exit_price,
+                        "entry_time": cycle.entry_time, "exit_time": cycle.exit_time,
+                        "pnl": cycle.pnl, "pnl_pct": cycle.pnl_pct,
+                        "exit_summary": cycle.summary,
+                    }
+                    for cycle in cycles
+                ]
         return bot_views
 
     @staticmethod
@@ -4155,7 +4201,16 @@ def build_app(
 
     @app.get("/bot/orb", response_class=HTMLResponse)
     async def bot_orb_page() -> str:
+        return await _render_bot_page_with_trade_coach("orb_schwab")
+
+    @app.get("/bot/orb-paper", response_class=HTMLResponse)
+    async def bot_orb_paper_page() -> str:
         return await _render_bot_page_with_trade_coach("orb")
+
+    @app.get("/api/bot/orb-schwab")
+    async def bot_orb_schwab_status() -> dict[str, Any]:
+        data = await app.state.repository.load_bot_dashboard_data()
+        return _build_bot_api_payload(data, "orb_schwab")
 
     @app.get("/bot/momentum-30", response_class=HTMLResponse)
     async def bot_momentum_30_page() -> str:
@@ -4262,6 +4317,7 @@ CONTROL_PLANE_ACTIVE_BOT_CODES = (
     "momentum_60s",
     "polygon_30s",
     "orb",
+    "orb_schwab",
 )
 CONTROL_PLANE_DOCK_SERVICES = (
     "market-data-gateway",
@@ -4542,7 +4598,8 @@ def _compact_bot_page_url(code: str) -> str:
         "momentum_30s": "/bot/momentum-30",
         "momentum_60s": "/bot/momentum-60",
         "polygon_30s": "/bot/30s-polygon",
-        "orb": "/bot/orb",
+        "orb": "/bot/orb-paper",
+        "orb_schwab": "/bot/orb",
     }.get(code, "/")
 
 
@@ -4614,6 +4671,8 @@ def _compact_bot_card(
     exceptions = str(details.get("loop_exceptions_total") or details.get("exceptions_total") or "0")
     exception_tone = "warn" if exceptions not in {"", "0"} else ""
     name = str(bot.get("display_name") or code.replace("_", " ").title())
+    if code == "orb":
+        name = "ORB paper (observer)"
     route = _compact_bot_route_line(code, bot)
     bot_page_url = _compact_bot_page_url(code)
     # Paper vs live badge — paper-routed accounts (e.g. "paper:orb") must not read as LIVE.
@@ -4946,10 +5005,17 @@ BOT_PAGE_META = {
         "path": "/bot/runner",
     },
     "orb": {
-        "title": "ORB Bot",
-        "nav_title": "ORB Bot",
+        "title": "ORB paper (observer)",
+        "nav_title": "ORB paper (observer)",
         "badge": "ORB",
         "color": "#8e44ad",
+        "path": "/bot/orb-paper",
+    },
+    "orb_schwab": {
+        "title": "ORB Schwab Live",
+        "nav_title": "ORB Live",
+        "badge": "ORB",
+        "color": "#00897b",
         "path": "/bot/orb",
     },
 }
@@ -5053,6 +5119,46 @@ def _seconds_since_eastern_label(value: str | None) -> float | None:
     return (utcnow().astimezone(EASTERN_TZ) - parsed).total_seconds()
 
 
+def _orb_session_closed() -> bool:
+    now_et = utcnow().astimezone(EASTERN_TZ)
+    return now_et.weekday() >= 5 or now_et.hour >= 10
+
+
+def _orb_within_display_session(timestamp: str | None) -> bool:
+    observed = _parse_eastern_label(timestamp)
+    if observed is None:
+        return False
+    today = utcnow().astimezone(EASTERN_TZ).date()
+    return observed.date() == today and observed.hour < 10
+
+
+def _build_orb_live_listening_status(
+    data: dict[str, Any], bot: dict[str, Any], latest_tick: str
+) -> dict[str, Any]:
+    service = _service_by_name(data, "orb-schwab") or {}
+    heartbeat_at = str(service.get("observed_at") or "")
+    tick_age = _seconds_since_eastern_label(latest_tick)
+    state, detail, color = "UNKNOWN", "ORB-Schwab activity is not reported by the installed service.", "#ffcc5b"
+    if _orb_session_closed():
+        date_label = utcnow().astimezone(EASTERN_TZ).strftime("%Y-%m-%d")
+        state, detail, color = "SESSION COMPLETE", f"{date_label} ORB session through 10:00 AM ET. Auto-refresh is paused; these are live broker results, not paper trades.", "#98a6c8"
+    elif str(service.get("effective_status", service.get("status", ""))).lower() in {"inactive", "stopped", "stopping", "failed"}:
+        state, detail, color = "STOPPED", "ORB-Schwab service is not running.", "#ff6b6b"
+    elif tick_age is not None and 0 <= tick_age <= 90:
+        state, detail, color = "LISTENING", "Fresh ticks reached ORB-Schwab.", "#5fff8d"
+    elif latest_tick:
+        state, detail = "STALE", "No fresh ORB-Schwab tick activity."
+    return {
+        "state": state, "detail": detail, "color": color,
+        "latest_decision_at": "", "latest_bot_tick_at": latest_tick,
+        "latest_market_data_at": "", "latest_heartbeat_at": heartbeat_at,
+        "watchlist_count": len(bot.get("watchlist", [])),
+        "position_count": len(bot.get("positions", [])),
+        "tracked_bar_count": sum(int(value or 0) for value in bot.get("bar_counts", {}).values()),
+        "data_health": dict(bot.get("data_health", {}) or {}),
+    }
+
+
 def _is_regular_session_now() -> bool:
     now_et = utcnow().astimezone(EASTERN_TZ)
     minutes = now_et.hour * 60 + now_et.minute
@@ -5080,6 +5186,9 @@ def _build_bot_listening_status(
         default="",
     )
     latest_heartbeat_at = str(strategy_service.get("observed_at") or "")
+
+    if bot.get("strategy_code") == "orb_schwab":
+        return _build_orb_live_listening_status(data, bot, latest_bot_tick_at)
 
     decision_age_seconds = _seconds_since_eastern_label(latest_decision_at)
     bot_tick_age_seconds = _seconds_since_eastern_label(latest_bot_tick_at)
@@ -5771,10 +5880,16 @@ def _render_bot_detail_page(
 
     meta = BOT_PAGE_META[strategy_code]
     refresh_seconds = 30
+    refresh_meta = f'<meta http-equiv="refresh" content="{refresh_seconds}">'
+    if strategy_code == "orb_schwab" and _orb_session_closed():
+        refresh_meta = ""
     recent_decisions = _resolved_bot_recent_decisions(data, bot)
     listening_status = _build_bot_listening_status(data, bot, recent_decisions)
     recent_fills = [item for item in data["recent_fills"] if item["strategy_code"] == strategy_code]
     recent_orders = [item for item in data["recent_orders"] if item["strategy_code"] == strategy_code]
+    if strategy_code == "orb_schwab":
+        recent_fills = list(bot.get("recent_fills", []))
+        recent_orders = list(bot.get("recent_orders", []))
     position_rows = _build_bot_position_rows(data, bot)
     completed_rows, completed_count, completed_pnl = _build_completed_position_rows(bot, recent_orders, recent_fills)
     trade_coach_rows = ""
@@ -5816,6 +5931,8 @@ def _render_bot_detail_page(
     overview_trades_value = (
         int(paper_acceptance.get("live", 0) or 0) if is_paper_exit else recent_fill_count
     )
+    if strategy_code == "orb_schwab":
+        overview_trades_value = completed_count + int(bot.get("position_count", 0))
     retention_rows = list(bot.get("retention_states", []))
     active_symbols: list[str] = []
     for item in bot["positions"]:
@@ -5890,6 +6007,11 @@ def _render_bot_detail_page(
         manual_stop_symbols,
         redirect_to=meta["path"],
     )
+    if strategy_code == "orb_schwab":
+        live_symbol_html = " ".join(
+            f'<span class="pill-chip">{escape(symbol)}</span>' for symbol in active_symbols
+        ) or "No ORB symbols reported"
+        manual_stop_html = "Display only; no trading controls on this page."
     retention_html = _build_retention_status_html(
         retention_rows,
         tracked_symbols=tracked_retention_symbols,
@@ -6171,7 +6293,7 @@ def _render_bot_detail_page(
                     <div class="hero-card"><span>Last Decision</span><strong>{escape(listening_status["latest_decision_at"] or "-")}</strong><small>{len(recent_decisions)} rows visible</small></div>
                     <div class="hero-card"><span>Last Bot Tick</span><strong>{escape(listening_status["latest_bot_tick_at"] or "-")}</strong><small>Latest tick that reached this bot</small></div>
                     <div class="hero-card"><span>Last Market Data</span><strong>{escape(listening_status["latest_market_data_at"] or "-")}</strong><small>Snapshot / subscription freshness</small></div>
-                    <div class="hero-card"><span>Last Strategy Heartbeat</span><strong>{escape(listening_status["latest_heartbeat_at"] or "-")}</strong><small>strategy-engine heartbeat</small></div>
+                    <div class="hero-card"><span>Last Strategy Heartbeat</span><strong>{escape(listening_status["latest_heartbeat_at"] or "-")}</strong><small>{'orb-schwab' if strategy_code == 'orb_schwab' else 'strategy-engine'} heartbeat</small></div>
                     <div class="hero-card"><span>{escape(data_health_card_label)}</span><strong style="color:{data_health_color}">{escape(data_health_status.upper())}</strong><small>{escape(", ".join(halted_symbols or warning_symbols) or "no halted symbols")}</small></div>
                     <div class="hero-card"><span>Tracked Symbols</span><strong>{listening_status["watchlist_count"]}</strong><small>Open positions: {listening_status["position_count"]} · Bars cached: {listening_status["tracked_bar_count"]}</small></div>
                 </div>
@@ -6211,7 +6333,7 @@ def _render_bot_detail_page(
 <head>
     <title>{meta["title"]}</title>
     <meta charset="utf-8">
-    <meta http-equiv="refresh" content="{refresh_seconds}">
+    {refresh_meta}
     <style>
         :root {{
             --bg: #131a2b;
@@ -6646,7 +6768,8 @@ def _render_bot_detail_page(
 
             <div class="side-section">
                 <div class="stack">
-                    <div class="line-item"><strong>Status:</strong> {escape(bot["wiring_status"].upper())}</div>
+                    <div class="line-item"><strong>Status:</strong> {escape(listening_status['state'] if strategy_code == 'orb_schwab' else bot["wiring_status"].upper())}</div>
+                    {f'<div class="line-item"><strong>Routing:</strong> {escape(bot["wiring_status"].upper())}</div>' if strategy_code == 'orb_schwab' else ''}
                     <div class="line-item"><strong>Account:</strong> {escape(bot["account_display_name"])}</div>
                     <div class="line-item"><strong>Mode:</strong> {escape(bot["execution_mode"].upper())}</div>
                     <div class="line-item"><strong>Provider:</strong> {escape(bot["provider"].upper())}</div>
@@ -9535,9 +9658,9 @@ def _collect_completed_position_rows(
             "path": cycle.path,
             "quantity": _fmt_qty(cycle.quantity),
             "entry_time": cycle.entry_time,
-            "entry_price": _fmt_money(cycle.entry_price),
+            "entry_price": f"{cycle.entry_price:.4f}" if strategy_code == "orb_schwab" else _fmt_money(cycle.entry_price),
             "exit_time": cycle.exit_time,
-            "exit_price": _fmt_money(cycle.exit_price),
+            "exit_price": f"{cycle.exit_price:.4f}" if strategy_code == "orb_schwab" else _fmt_money(cycle.exit_price),
             "pnl": cycle.pnl,
             "pnl_pct": cycle.pnl_pct,
             "summary": cycle.summary,
@@ -9763,6 +9886,12 @@ def _build_bot_account_summary(data: dict[str, Any], bot: dict[str, Any]) -> dic
         if str(item.get("symbol", "")).upper() in strategy_symbols
     ]
     gross_market_value = sum(_as_float(item.get("market_value")) for item in strategy_account_rows)
+    if bot.get("strategy_code") == "orb_schwab":
+        owned_quantity = {str(item.get("symbol", "")).upper(): _as_float(item.get("quantity")) for item in virtual_rows}
+        gross_market_value = sum(
+            _as_float(item.get("market_value")) * owned_quantity.get(str(item.get("symbol", "")).upper(), 0) / _as_float(item.get("quantity"))
+            for item in strategy_account_rows if _as_float(item.get("quantity")) > 0
+        )
     latest_updated_at = max((str(item.get("updated_at", "")) for item in account_rows), default="")
     return {
         "account_position_count": len(strategy_account_rows),
@@ -9909,6 +10038,10 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
             status_html = '<span style="color:#40c4ff">PAPER MODEL / NO BROKER</span>'
         else:
             status_html = '<span style="color:#888">-</span>'
+        broker_qty_label = _fmt_qty(account_qty)
+        if strategy_code == "orb_schwab":
+            broker_qty_label = "Shared account"
+            status_html = '<span>ORB strategy book; account quantity not attributed</span>'
 
         pnl_amount = 0.0
         pnl_pct = 0.0
@@ -9924,7 +10057,7 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
             <td style="text-align:right">{_fmt_qty(runtime_qty)}<br><span style="font-size:10px;color:#888;">{time_text}</span></td>
             <td style="text-align:right">{_fmt_money(runtime_entry)}</td>
             <td style="text-align:right">{_fmt_qty(virtual_qty)}<br><span style="font-size:10px;color:#888;">{_fmt_money(virtual_avg)}</span></td>
-            <td style="text-align:right">{_fmt_qty(account_qty)}<br><span style="font-size:10px;color:#888;">{_fmt_money(current_price)}</span></td>
+            <td style="text-align:right">{broker_qty_label}<br><span style="font-size:10px;color:#888;">{_fmt_money(current_price)}</span></td>
             <td style="text-align:right;color:{pnl_color}"><strong>${pnl_amount:+.2f}</strong><br><strong>{pnl_pct:+.1f}%</strong></td>
             <td>{status_html}</td>
         </tr>"""
