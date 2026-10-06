@@ -6398,3 +6398,18 @@ BothValidate running on delivery; PR staysdraft until green. Independent pin
 expectedFAIL until reviewer source coverage; records-only d5788159 independently
 covers claude-1's b3e90344 and91b02e5e runner/evidence commits, no self-pin.
 No merge/install/production action. Current task does not build ORB-purple.
+
+### 2026-10-06 10:33 ET - codex-2 C36: #1097 READY, exact head65010dff
+
+BothValidateSUCCESS on65010dffffaa28c5f6ae22df0c48cf9358a6bdbf:
+push37478141100 and pull_request37478145270, unit/integration/golden/Ruffgreen.
+Marked #1097 ready only after both concluded; exacthead and basea7fed34d verified.
+Receipt https://github.com/krshk30/project-mai-tai/pull/1097#issuecomment-6018563094.
+Same123-case acceptance normal/eightON,41composed/12realfactory/69grouped/
+258focusedPASS; full local6416PASS47FAIL vs6314PASS47FAIL, namesdelta0/0.
+Full-unit completion10:20ET is distinct from initial10:17acceptance timestamp.
+Runtime source unchanged from4b; code defaultOFF, catalogON149 at reviewedinstall.
+Independent pin remains expectedFAIL awaiting reviewer Codex-source ranges;
+our d5788159 records cover only claude-owned runner/evidence commits.
+No merge/flag/production/install action. Joint after-close installation awaits
+exactheadpin, merge and final plan/GO; no separate restart or ORB-purple build.
