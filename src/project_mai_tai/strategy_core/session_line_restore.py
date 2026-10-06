@@ -26,6 +26,7 @@ class SessionCoverage:
     closed_ids: tuple[int, ...]
     complete: bool
     bars_sha256: str
+    prefix_complete: bool = False
 
 
 @dataclass(frozen=True)
@@ -165,12 +166,21 @@ class SessionLineRestoration:
                 or ids[0] < self.anchor_ms or ids[-1] != self.current_bar_ms):
             self.incomplete_reason = "coverage_ids_unproven"
             return None
+        if ids[0] != self.anchor_ms and not proof.prefix_complete:
+            self.incomplete_reason = "session_prefix_unproven"
+            return None
         if set(ids) != set(self._bars):
             self.incomplete_reason = "history_missing_or_conflicting"
             return None
         bars = tuple(self._bars[ts] for ts in ids)
         if proof.bars_sha256 != history_fingerprint(bars):
             self.incomplete_reason = "source_values_unproven"
+            return None
+        # Until the separate two-input Pause lane proves silence, an omitted
+        # minute is unknown coverage, even in a successful provider response.
+        if any(right.timestamp_ms - left.timestamp_ms > 90_000
+               for left, right in zip(bars, bars[1:])):
+            self.incomplete_reason = "interior_gap_unproven"
             return None
         return RebuildInput(
             self.symbol, self.epoch, self.revision, self.anchor_ms,

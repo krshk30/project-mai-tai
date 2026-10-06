@@ -4731,19 +4731,39 @@ class SchwabV2BotService:
         state = self.strategy._symbol_states.get(symbol)
         if state is None or not state.bars:
             return False
-        reset_after = state.line_restore_reset_after_ms
+        reset_fence = state.line_restore_reset_after_ms
+        source_revision = ledger.revision
+        source_proof = ledger._coverage
+        if self.session_factory is not None and source_proof is not None:
+            try:
+                stored = await asyncio.to_thread(
+                    self._read_line_session_bars, symbol, ledger.anchor_ms, ledger.current_bar_ms,
+                )
+            except Exception:
+                ledger.invalidate_coverage()
+                logger.exception("[V2-LINE-RESTORE] sym=%s outcome=stored_history_unreadable "
+                                 "entry_allowed=0", symbol)
+                return False
+            if (self._line_sessions.get(symbol) is not ledger or ledger.revision != source_revision
+                    or self.strategy._symbol_states.get(symbol) is not state
+                    or state.line_restore_reset_after_ms != reset_fence):
+                return False
+            for bar in stored:
+                ledger.observe(bar)
+            # Do not rewrite the provider's IDs/value fingerprint to certify
+            # DB additions or corrections. Unreconciled sources remain held.
         previous = self._line_published.get(symbol)
         if self._line_snapshot_current(symbol):
             return True
         period, factor = self.strategy._atr_period, self.strategy._atr_factor
         result = await ledger.rebuild(
-            lambda request: build_session_line(request, period, factor, reset_after)
+            lambda request: build_session_line(request, period, factor),
         )
         if (result is None or self._line_sessions.get(symbol) is not ledger
                 or self.strategy._symbol_states.get(symbol) is not state
                 or session_start_ts_ms(self.strategy._now_ms()) != ledger.anchor_ms
                 or state.bars[-1].timestamp_ms != result.request.current_bar_ms
-                or state.line_restore_reset_after_ms != reset_after):
+                or state.line_restore_reset_after_ms != reset_fence):
             return False
         snapshot = ledger.admit(result)
         if snapshot is None:
@@ -4756,7 +4776,7 @@ class SchwabV2BotService:
         confirmations = {key: value for key, value in self._confirmation_bar_states.items()
                          if key[0] != symbol}
         confirmations.update({(symbol, ts): value for ts, value in snapshot.confirmation if ts in live})
-        changed_history = bool(previous is None or previous.snapshot.reset_after_ms != reset_after
+        changed_history = bool(previous is None or previous.snapshot.reset_after_ms != reset_fence
                                or result.request.bars[:len(previous.request.bars)] != previous.request.bars)
         if changed_history:
             # A corrected line revokes permission from the old line; it cannot
@@ -4772,6 +4792,9 @@ class SchwabV2BotService:
             current_bar.low, current_bar.close, current_bar.volume,
         )
         self.strategy._restore_atr_indicator_snapshot(state, indicator)
+        # The hold/cancellation and ten clean-bar wait remain intact. Only
+        # complete-session publication replaces the reseeded mathematics.
+        state.line_restore_reset_after_ms = 0
         self._confirmation_bar_states = confirmations
         self._line_published[symbol] = result
 
@@ -4779,7 +4802,7 @@ class SchwabV2BotService:
         # admission, restart, re-add, corrections and backfill never replay flips.
         adjacent_live = bool(
             previous is not None and previous.request.epoch == result.request.epoch
-            and previous.snapshot.reset_after_ms == reset_after
+            and previous.snapshot.reset_after_ms == reset_fence
             and previous.request.bars == result.request.bars[:-1]
             and previous.request.current_bar_ms + 60_000 == result.request.current_bar_ms
             and result.request.current_bar_ms in live
@@ -4840,6 +4863,25 @@ class SchwabV2BotService:
         await self._drain_direct_strategy_intents()
         await self._emit_webull_fanout_legs()
         return True
+
+    def _read_line_session_bars(self, symbol: str, anchor_ms: int, current_bar_ms: int):
+        """Bounded full-session SELECT; never called by a trading callback."""
+        with self.session_factory() as session:
+            rows = session.scalars(select(StrategyBarHistory).where(
+                StrategyBarHistory.strategy_code == STRATEGY_CODE,
+                StrategyBarHistory.symbol == symbol,
+                StrategyBarHistory.interval_secs == INTERVAL_SECS,
+                StrategyBarHistory.bar_time >= datetime.fromtimestamp(anchor_ms / 1000, UTC),
+                StrategyBarHistory.bar_time <= datetime.fromtimestamp(current_bar_ms / 1000, UTC),
+            ).order_by(StrategyBarHistory.bar_time).limit(961)).all()
+            if len(rows) > 960:
+                raise ValueError("session history exceeds 04:00-20:00 minute bound")
+            return [ChartBar(
+                row.symbol, float(row.open_price), float(row.high_price), float(row.low_price),
+                float(row.close_price), int(row.volume),
+                int((row.bar_time if row.bar_time.tzinfo else row.bar_time.replace(tzinfo=UTC))
+                    .timestamp() * 1000),
+            ) for row in rows]
 
     def _strategy_on_bar(
         self,

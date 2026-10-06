@@ -2,6 +2,12 @@
 
 **DRAFT CHECKPOINT ONLY. NOT READY FOR REVIEW/PIN/INSTALL.**
 
+October6 steering supersedes the coverage/reset-cutoff claims below:
+[new source measurements and acceptance limits](STEERING_2026-10-06.md).
+The full stored-session read, prefix/interior admission and complete-history
+rebuild are now wired, but today's JAGX0400 prefix is proven traded and absent
+from both stored and Schwab candle series. Do not activate or claim chart parity.
+
 ## 2026-10-06 Frozen Integration Milestone
 
 Sole writer in the operator-released `line-chart-restoration-1006` checkout.
