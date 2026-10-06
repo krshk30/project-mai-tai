@@ -1,0 +1,9 @@
+{
+  "pr_number": 1095,
+  "range_base": "03b26293624f87e43eb167431fc308b1aec309b3",
+  "range_head": "fa54579b4794d5fc6b275ab3233c0161d51110c7",
+  "reviewed_at": "2026-10-06T12:19:05Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "ROUNDUP1 re-pin after docs-only rebase onto 03b26293: src/ops/scripts byte-identical to the reviewed 6727fff5 (diff empty); tests delta = ALL-ON fixture adds ROUND_UP + two PMREST assertions pin the ceilinged trigger 8.28/8.01 exactly. Composed+focused 568 pass; mutations M1/M2/M5 RED again. Prior review stands: 7/8 mutations RED, suite pair 48/48 identical names, CI validate x2 pass on 6727fff5. Flag ON at deploy (v2 + OMS)."
+}
