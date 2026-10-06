@@ -1118,10 +1118,6 @@ class WebullBrokerAdapter:
         )
         terminal_partial = (getattr(self, "_list_primary_enabled", False)
                             and event_type in {"cancelled", "rejected"} and filled_quantity > 0)
-        if terminal_partial:
-            # Account cumulative executions before retiring the remaining ownership.
-            # Keep the order in the open/partial path; never drop an unrecorded fill.
-            event_type = "partially_filled"
         # filled_price = the CONFIRMED real fill-price field (was the naked-position bug:
         # a wrong field -> fill_price None -> OMS arms NO trailing stop).
         fill_price = self._decimal_or_none(
@@ -1157,8 +1153,10 @@ class WebullBrokerAdapter:
                 logger.exception("Webull bracket realign raised for %s", request.symbol)
 
         metadata = dict(request.metadata)
+        metadata.pop("webull_terminal_with_partial_fill", None)
         if terminal_partial:
-            metadata["webull_terminal_with_partial_fill"] = str(item.get("order_status") or item.get("status") or "")
+            # Execution accounting is separate from the terminal, unfilled remainder.
+            metadata["webull_terminal_with_partial_fill"] = event_type
         for key in ("_webull_list_evidence", "_webull_terminal_proof"):
             if key in body:
                 metadata[key] = json.dumps(body[key], sort_keys=True)
@@ -1184,7 +1182,10 @@ class WebullBrokerAdapter:
             origin="broker",
             client_order_id=request.client_order_id,
             broker_order_id=broker_order_id,
-            broker_fill_id=self._fill_id(broker_order_id, filled_quantity, event_type),
+            broker_fill_id=self._fill_id(
+                broker_order_id, filled_quantity,
+                "partially_filled" if terminal_partial else event_type,
+            ),
             symbol=request.symbol,
             side=request.side,
             intent_type=request.intent_type,

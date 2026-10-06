@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
@@ -18,8 +19,15 @@ from project_mai_tai.broker_adapters.webull_order_reads import (
     TerminalProofStore,
     TodayOrderReader,
 )
-from project_mai_tai.db.models import DashboardSnapshot
+from project_mai_tai.db.models import (
+    AccountPosition, BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition, TradeIntent,
+    VirtualPosition,
+)
+from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.settings import Settings
+from tests.unit.test_oms_store import build_test_session_factory
 from tests.unit.test_webull_adapter import (
     _FakeClient,
     _HttpResp,
@@ -153,14 +161,175 @@ def test_partial_fill_is_accounted_without_terminal_probe(fake_sdk):
 
 
 @pytest.mark.parametrize("status", ["CANCELLED", "REJECTED"])
-def test_terminal_with_partial_execution_keeps_fill_accounting_and_ownership(fake_sdk, status):
+def test_terminal_with_partial_execution_keeps_fill_and_terminal_remainder(fake_sdk, status):
     raw = row(status=status, qty="1", price="1.11")
     client = _FakeClient({"today": listed(raw), "detail": raw})
     report = read(primary(client))
-    assert report.event_type == "partially_filled"
+    assert report.event_type == status.lower()
     assert report.filled_quantity == 1
     assert report.broker_fill_id == "broker-owned:1"
-    assert report.metadata["webull_terminal_with_partial_fill"] == status
+    assert report.metadata["webull_terminal_with_partial_fill"] == status.lower()
+
+
+@pytest.mark.parametrize("status", ["CANCELLED", "REJECTED"])
+def test_zero_execution_does_not_inherit_terminal_execution_marker(fake_sdk, status):
+    raw = row(status=status)
+    adapter = primary(_FakeClient({"today": listed(raw), "detail": raw}))
+    report = adapter._fetch_order_blocking(
+        adapter.accounts_by_name["live:orb"],
+        _order(client_order_id="owned", symbol="AIFA", metadata={
+            "webull_terminal_with_partial_fill": status.lower(),
+        }),
+    )
+    assert report.event_type == status.lower()
+    assert report.filled_quantity == 0
+    assert report.broker_fill_id is None
+    assert "webull_terminal_with_partial_fill" not in report.metadata
+
+
+@pytest.mark.parametrize("invalid", ["client", "unknown", "provider", "missing", "mismatch"])
+def test_terminal_execution_admission_is_webull_broker_scoped(fake_sdk, invalid):
+    raw = row(status="CANCELLED", qty="1", price="1.11")
+    report = read(primary(_FakeClient({"today": listed(raw), "detail": raw})))
+    if invalid in {"client", "unknown"}:
+        report = replace(report, origin=invalid)
+    elif invalid == "missing":
+        report = replace(report, metadata={})
+    elif invalid == "mismatch":
+        report = replace(report, metadata={"webull_terminal_with_partial_fill": "rejected"})
+    sf = build_test_session_factory()
+    store = OmsStore()
+    with sf() as session:
+        account = store.ensure_broker_account(
+            session, "live:orb", provider="schwab" if invalid == "provider" else "webull",
+            environment="test",
+        )
+        strategy = store.ensure_strategy(session, "schwab_1m_v2", name="v2")
+        order = BrokerOrder(
+            strategy_id=strategy.id, broker_account_id=account.id,
+            client_order_id="owned", symbol="AIFA", side="buy", quantity=Decimal("5"),
+            order_type="limit", time_in_force="day", status="accepted",
+        )
+        session.add(order)
+        session.flush()
+        assert store.record_fill_if_needed(
+            session, order=order, strategy_id=strategy.id,
+            broker_account_id=account.id, report=report, payload={},
+        ) is None
+        assert session.scalar(select(func.count()).select_from(Fill)) == 0
+
+
+class LocalEventSink:
+    async def xadd(self, *args, **kwargs):
+        return "1-0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["CANCELLED", "REJECTED"])
+@pytest.mark.parametrize("previous_quantity", [0, 1, 2])
+async def test_terminal_partial_real_oms_lifecycle(fake_sdk, status, previous_quantity):
+    coid = "schwab_1m_v2-AIFA-open-621d8b9aeb95"
+    raw = row(coid, status, qty="2", price="1.11")
+    client = _FakeClient({"today": listed(raw), "detail": raw})
+    clock = Clock()
+    adapter = primary(client, clock)
+    sf = build_test_session_factory()
+    service = OmsRiskService(
+        Settings(_env_file=None, oms_adapter="simulated", oms_v2_exit_management_enabled=True),
+        redis_client=LocalEventSink(), session_factory=sf, broker_adapter=adapter,
+    )
+    with sf() as session:
+        strategy = service.store.ensure_strategy(session, "schwab_1m_v2", name="v2")
+        account = service.store.ensure_broker_account(
+            session, "live:orb", provider="webull", environment="test"
+        )
+        intent = service.store.create_trade_intent(
+            session, strategy=strategy, broker_account=account,
+            event=TradeIntentEvent(source_service="test", payload=TradeIntentPayload(
+                strategy_code=strategy.code, broker_account_name=account.name, symbol="AIFA",
+                side="buy", quantity=Decimal("5"), intent_type="open", reason="ENTRY", metadata={},
+            )),
+        )
+        order = service.store.get_or_create_order(
+            session, intent=intent, strategy_id=strategy.id, broker_account_id=account.id,
+            client_order_id=coid, symbol="AIFA", side="buy", quantity=Decimal("5"),
+            metadata={}, broker_order_id=f"broker-{coid}", status="accepted",
+        )
+        intent_id, order_id = intent.id, order.id
+        session.commit()
+
+    if previous_quantity:
+        client._bodies["today"] = listed(row(
+            coid, "PARTIAL_FILLED", qty=str(previous_quantity), price="1.11"
+        ))
+        await service.sync_broker_orders(account_names=["live:orb"])
+        clock.now += 16
+        client._bodies["today"] = listed(raw)
+    result = await service.sync_broker_orders(account_names=["live:orb"])
+    with sf() as session:
+        assert session.get(BrokerOrder, order_id).status == status.lower()
+        assert session.get(TradeIntent, intent_id).status == status.lower()
+        assert service.store.list_open_orders(session) == []
+        fills = session.scalars(select(Fill)).all()
+        assert len(fills) == (2 if previous_quantity == 1 else 1)
+        assert sum(fill.quantity for fill in fills) == 2
+        assert session.scalar(select(VirtualPosition)).quantity == 2
+        assert session.scalar(select(AccountPosition)).quantity == 2
+        managed = session.scalar(select(OmsManagedPosition))
+        assert managed.current_quantity == 2
+        assert managed.entry_order_id == order_id
+    assert result["terminal_orders"] == 1
+    calls = dict(client.calls)
+    assert await service.sync_broker_orders(account_names=["live:orb"]) == {
+        "orders": 0, "terminal_orders": 0,
+    }
+    assert client.calls == calls
+    with sf() as session:
+        assert session.scalar(select(func.count()).select_from(Fill)) == (2 if previous_quantity == 1 else 1)
+        assert session.get(BrokerOrder, order_id).status == status.lower()
+        assert session.scalar(select(VirtualPosition)).quantity == 2
+
+    sell_coid = "schwab_1m_v2-AIFA-close-terminal-partial-control"
+    sold = row(sell_coid, "FILLED", qty="2", price="1.20")
+    sold["items"][0]["side"] = "SELL"
+    clock.now += 16
+    client._bodies.update(today=listed(sold), detail=sold)
+    with sf() as session:
+        strategy = service.store.ensure_strategy(session, "schwab_1m_v2", name="v2")
+        account = service.store.ensure_broker_account(
+            session, "live:orb", provider="webull", environment="test"
+        )
+        sell_intent = service.store.create_trade_intent(
+            session, strategy=strategy, broker_account=account,
+            event=TradeIntentEvent(source_service="test", payload=TradeIntentPayload(
+                strategy_code=strategy.code, broker_account_name=account.name, symbol="AIFA",
+                side="sell", quantity=Decimal("2"), intent_type="close", reason="EXIT", metadata={},
+            )),
+        )
+        service.store.get_or_create_order(
+            session, intent=sell_intent, strategy_id=strategy.id, broker_account_id=account.id,
+            client_order_id=sell_coid, symbol="AIFA", side="sell", quantity=Decimal("2"),
+            metadata={}, broker_order_id=f"broker-{sell_coid}", status="accepted",
+        )
+        session.commit()
+    await service.sync_broker_orders(account_names=["live:orb"])
+    client._bodies.update(today=listed(raw), detail=raw)
+    calls = dict(client.calls)
+    assert await service.sync_broker_orders(account_names=["live:orb"]) == {
+        "orders": 0, "terminal_orders": 0,
+    }
+    assert client.calls == calls
+    assert "place" not in client.calls and "cancel" not in client.calls
+    with sf() as session:
+        assert session.get(BrokerOrder, order_id).status == status.lower()
+        assert session.get(TradeIntent, intent_id).status == status.lower()
+        assert service.store.list_open_orders(session) == []
+        assert session.scalar(select(VirtualPosition)).quantity == 0
+        assert session.scalar(select(AccountPosition)).quantity == 0
+        assert session.scalar(select(OmsManagedPosition)).status == "closed"
+        fills = session.scalars(select(Fill)).all()
+        assert sum(fill.quantity for fill in fills if fill.side == "buy") == 2
+        assert sum(fill.quantity for fill in fills if fill.side == "sell") == 2
 
 
 def test_recorded_sep21_execution_survives_optional_detail_429(fake_sdk):
