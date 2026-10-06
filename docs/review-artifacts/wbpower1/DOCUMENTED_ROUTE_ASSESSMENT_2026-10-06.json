@@ -1,0 +1,87 @@
+{
+  "agent": "codex",
+  "lane": "WBPOWER1",
+  "branch": "codex/wbpower1",
+  "base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "asof_utc": "2026-10-06T19:57:20.639730+00:00",
+  "status": "DOCUMENTED_ROUTE_HTTP200_FIELD_OBSERVED_BUILD_STILL_BLOCKED",
+  "supersedes": "OWNERSHIP_ADDENDUM_2026-10-06.json route/access uncertainty and pending Sagan import-path confirmation; original evidence remains historical",
+  "authorization": {
+    "parent_confirmed_previous_GET_completed": "2026-10-06T19:27:20+00:00; no longer in flight",
+    "new_authorized_scope": "One serialized exact-configured-account documented-route balance GET, read only, no auth refresh, retries, orders, production file, service, DB, Redis or environment writes",
+    "no_second_documented_route_GET": true
+  },
+  "outcome": {
+    "route": "GET /trading/assets/balances/get",
+    "version": "v3, exact default of pinned official AccountBalanceRequest",
+    "currency_request": "total_asset_currency=USD, via official SDK setter",
+    "http_status": 200,
+    "http_start_utc": "2026-10-06T19:57:20.369496+00:00",
+    "http_end_utc": "2026-10-06T19:57:20.637870+00:00",
+    "actual_HTTP_attempts": 1,
+    "SDK_single_attempts": 1,
+    "account_binding": "Prepared account_id query verified against exact current OMS process configuration; response has no account identity field. No account ID, key, secret, signature, access token or raw request/response persisted.",
+    "observed_field": "$.account_currency_assets[0].day_buying_power",
+    "observed_currency": "USD",
+    "observed_raw_value": "750.93",
+    "observed_total_asset_currency": "USD",
+    "USD_currency_rows": 1,
+    "selected_USD_row_used_margin_for_open_order_present": false,
+    "reservation_scope_limit": "Root reservation fields were not selected by this probe; no statement that the entire response lacks reservations is made. No complete raw response is retained.",
+    "interpretation": "The documented day_buying_power field is actually returned and authentication is accepted for this exact read. This proves the field name, route and USD scope at15:57:20ET; it does not prove available-funds or reservation subtraction semantics."
+  },
+  "SDK_and_transport_review": {
+    "installed_version": "2.0.11",
+    "installed_route_class_limitation": "Installed balance classes name older routes. Probe evaluated the unmodified, pinned current official SDK request class in memory against the installed request/client. No SDK package upgrade, route setter rewrite or custom HTTP/signing implementation.",
+    "official_source": "https://github.com/webull-inc/webull-openapi-python-sdk/blob/abe5668ce4bc11dd1e8a1aad944d9dbb239bf12d/webull/trade/request/v2/get_account_balance_request.py",
+    "official_request_sha256": "8269b4da7a4ccc09e4787f78a56152b7edf989b3fb2eeb8d1358b9862d053511",
+    "compatibility": "Installed core/request.py, core/client.py, core/http/response.py, core/retry/retry_policy.py and AppKeySigner hashes match pinned current SDK. Source hashes were checked again before any request.",
+    "signing_distinction": "Installed composer selects HMAC-SHA1 for api.webull.com; current official SDK composer selects SHA256 unconditionally. Installed SHA1 behavior matches official signature documentation and was used unchanged; actual response200 proves acceptance for this request.",
+    "official_signature_reference": "https://developer.webull.com/apis/docs/authentication/signature.md",
+    "retry_proof": "ApiClient(auto_retry=False,max_retry_num=0) identity checked against NO_RETRY_POLICY. Default Requests transport max_retries.total=0 checked at actual send. SDK attempt guard and prepared-send guard reject a second attempt. allow_redirects=False verified at actual send.",
+    "auth_proof": "Direct SDK get_response signs the official request with existing app credentials; no high-level token API or refresh path invoked. access_token_header_present=false; server200 accepted HMAC-SHA1/v3.",
+    "preflight_control": "Initial preflight stopped with0 SDK/HTTP attempts before budget construction because configured base URL was bare api.webull.com. Read-only presence diagnostic confirmed exact host; probe then adopted the existing adapter's host normalization. This was not an HTTP retry.",
+    "remote_safety": "Python -B and write-denying audit hook; credentials read only into local variables from current OMS process environment. No os.environ mutation.5s overall GET alarm,2s connect/read timeout; source read64KiB and environment read128KiB bounds; response64KiB check. Raw credentials and financial response never printed."
+  },
+  "shared_budget": {
+    "Sagan_confirmed_module": "project_mai_tai.broker_adapters.webull_order_reads.shared_budget",
+    "confirmed_contract_head": "78ee3503783d59267423e2e7abc21c10cc68ba85",
+    "contract_url": "https://github.com/krshk30/project-mai-tai/pull/1101#issuecomment-6024249049",
+    "source_sha256": "3e802143b8bfa68fcbf3926883a9c92efd0093177a3caff16e0eef06ed208738",
+    "claim": "shared_budget(host,app_key).claim('account-balance',exact_account_id,strict=False), immediately before Requests send",
+    "permits": 1,
+    "cache_hits": 0,
+    "scope": "Exact reviewed shared registry definitions loaded under the confirmed module name into the separate SSH probe process; repeated shared_budget returns the same object. Not shared with the running production OMS process and not distributed enforcement.",
+    "provider_quota": "UNMEASURED;2 starts per rolling2s per endpoint is the application policy"
+  },
+  "remaining_blockers": [
+    "Available-day-power reservation semantics: whether pending/working orders are already deducted, and safe reuse/invalidation/debit during concurrent placements; no subtraction or alias interpretation is authorized by this read.",
+    "MARKET comparison basis at final dispatch remains unproven. Do not add a slippage threshold, substitute the exit anchor, alter prices or sizing, or invent a quote."
+  ],
+  "verdict": {
+    "AGREE": "Documented route, existing signing path and explicit USD request work for the configured account; exact named day_buying_power field is observed. Webull-only insufficiency skip remains the card; Schwab must remain independent.",
+    "DISAGREE": "Field presence alone establishes safe available funds, or used_margin_for_open_order should automatically be subtracted. No new risk threshold, trading-price change or legacy alias fallback.",
+    "UNMEASURED": "Reservation-adjusted availability, MARKET comparison bound and historical MOBX14:47/IPDN14:32 numerical power. This current after-the-fact balance is not historical replay acceptance."
+  },
+  "evidence": {
+    "receipt_file": "DOCUMENTED_BALANCE_RECEIPT_2026-10-06.json",
+    "receipt_sha256": "51f6a3a7f9ceb75ddf79dcfbe70ef50f2ed8b73d3b01db090835dcacc10d6a0b",
+    "probe_file": "DOCUMENTED_BALANCE_PROBE_2026-10-06.py",
+    "probe_sha256": "b2778d0ccb2cb2780b4b28b13fd45dc6b37d53ccda1012ff5dc113ffd89ad386",
+    "request_body_bytes": 0,
+    "prepared_request_serialization_bytes": 560,
+    "prepared_request_serialization_sha256": "afa499bd81e7edb91c553ff25b1db29ab169ea5ee3615a033c7bb76b42adc74e",
+    "response_content_bytes": 595,
+    "response_content_sha256": "ad68dd28e3325e5db9bf435be9983215e77d1c20f21636cb67383b5fc5c7ba80",
+    "byte_scope": "Prepared request serialization excludes transport-added headers/TLS; response.content is actual decoded body. These are not full TCP wire capture counts."
+  },
+  "verification": {
+    "evidence_only": true,
+    "runtime_changes": 0,
+    "order_service_DB_Redis_environment_writes": 0,
+    "full_unit_pair_CI_ALL_ON_mutations": "NOT RUN; no implementation candidate or PR-ready claim",
+    "historical_power_replay_pass": false,
+    "code_PR": null,
+    "merge_pin_deploy": false
+  }
+}
