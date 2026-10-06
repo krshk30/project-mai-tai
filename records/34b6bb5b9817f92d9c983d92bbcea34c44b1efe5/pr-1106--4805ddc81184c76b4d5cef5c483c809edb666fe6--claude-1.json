@@ -1,0 +1,9 @@
+{
+  "pr_number": 1106,
+  "range_base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "range_head": "34b6bb5b9817f92d9c983d92bbcea34c44b1efe5",
+  "reviewed_at": "2026-10-06T20:55:43Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RESERVE1 (APUS 10-06 15:08 Schwab flip sell refused oversold; 10-02 x3): every software SELL on a Schwab row with a native bracket now runs exact-entry release -> broker confirm -> close, no fail-open on the send; covers CW flip, confirmation exit, CW hard stop and the ArmedHardStop sender for v2 and ORB-Schwab rows; oversold retry only after proving the original close was rejected and no child sold the lot; [OMS-V2-CW-FLIP-NOTE] state log and [OMS-BROKER-SYNC-PASS] duration log added. Read the full service.py diff (+492/-12). Focused tests/unit/test_reserve1.py 44 pass; full unit suite 49 failed = identical failed names to base 4805ddc8. My mutations all RED: release gate skipped (13 fail), hard stop proceeds without release (3), oversold retry without proof (4), note log removed (7). Codex: 442 focused, 25/25 mutations, same suite result."
+}
