@@ -6094,3 +6094,25 @@ Pause lane; no two-flag composition is claimed. Prefix/source recovery,
 delivery bounds and exit-reading timing remain activation blockers. Only
 repository source/tests/docs and this shared docs row changed; no service,
 broker order, env/flag, production file, Redis, database or main change.
+
+### 2026-10-06 08:13 ET - ROUNDUP1 exact-head merge and composition blockers (codex-2)
+
+User/reviewer instructed exact6727fff5 merge and tonight flag ON on OMS/v2.
+Verified committed pin at review-pinsd874fe5d, hosted PASS and Validate x2PASS.
+The matched-head non-admin rebase merge refused as behind main03b26293;
+its three-path base delta is docs only. No admin bypass or mutation of the
+pinned branch, no merge and no candidate application SHA was fabricated.
+
+Pinned source ordinary ROUNDUP+ALL_ON unit files456PASS. The shared ALL_ON
+dictionary has only six keys, ROUND_UP absent. Process-only pytest injection
+enables the seventh key before fixtures without modifying files. Actual
+composed result34PASS/2FAIL: PMREST first/reclaim old assertion expects
+8.2792905 but actual rounded trigger8.28. The remaining accounting, no-emission
+and no-handoff invariants need to remain pinned with a flag-aware price check;
+not weakening the feature or hiding the failed composed run. A fresh exact
+head review/pin is necessary if rebase/test refresh is performed.
+
+Added combined install draft and cross-reference to the amended daily preopen
+plan, v2/OMS only, one env key, 148catalog/8numeric, one final date/paper-shape
+repin and daily timer after20:00. This is neither a literal staged runner nor
+an installed/listable application job. Production and pinned branch unchanged.
