@@ -10144,7 +10144,7 @@ def _decision_reason_with_details(item: dict[str, Any]) -> str:
 
 
 def _build_failed_action_rows(bot: dict[str, Any]) -> tuple[str, int]:
-    failed_statuses = {"rejected", "canceled", "cancelled", "failed", "expired", "error"}
+    failed_statuses = {"rejected", "canceled", "cancelled", "aborted", "failed", "expired", "error"}
     failures: list[dict[str, str]] = []
 
     for item in bot.get("recent_orders", []):

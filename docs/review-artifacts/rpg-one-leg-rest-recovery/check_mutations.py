@@ -9,7 +9,11 @@ import textwrap
 
 import pytest
 
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+
 TEST = "tests/unit/test_t43_one_leg_recovery.py"
+CHAIN_TEST = "tests/unit/test_t43_olox_cancel_chain.py"
 MUTATIONS = {
     "missing_leg_not_replaced": (
         "project_mai_tai.strategy_core.schwab_1m_v2", "SchwabV2Strategy", "_cw_v2_resting_track",
@@ -80,7 +84,7 @@ MUTATIONS = {
     "abort_origin_not_proven": (
         "project_mai_tai.oms.atr_reprice_handoff", None, "local_rpg_abort_proof",
         'or md.get("refusal_origin") != "client_abort"', "",
-        TEST + "::test_t43_committed_abort_recovers_interrupted_dispatch_only_with_exact_no_wire_proof[unknown_origin]",
+        TEST + "::test_t43_committed_abort_recovers_interrupted_dispatch_only_with_exact_no_wire_proof[unknown_order_and_audit_origin]",
     ),
     "abort_still_counted_inflight": (
         "project_mai_tai.services.schwab_1m_v2_bot", "SchwabV2BotService", "_fetch_position_maps",
@@ -114,6 +118,160 @@ MUTATIONS = {
         'or any(not md.get(key)', 'or False and any(not md.get(key)',
         TEST + "::test_t43_committed_broker_rejection_repairs_only_absent_leg_after_crash[foreign_generation-schwab]",
     ),
+    "aborted_dashboard_reader_removed": (
+        "project_mai_tai.services.control_plane", None, "_build_failed_action_rows",
+        '"aborted", ', "",
+        "tests/unit/test_control_plane.py::test_failed_action_rows_show_audited_local_abort",
+    ),
+    "aborted_acceptance_reader_removed": (
+        "tests.unit.test_fanout_identity_acceptance", "tool", "evaluate",
+        "item.status in TERMINAL_STATUSES", 'item.status in (TERMINAL_STATUSES - {"aborted"})',
+        "tests/unit/test_fanout_identity_acceptance.py::test_audited_aborted_attempt_counts_as_terminal_without_a_fill",
+    ),
+    "proven_generation_latch_not_retired": (
+        "project_mai_tai.strategy_core.schwab_1m_v2", "SchwabV2Strategy", "rpg_handoff_authorization",
+        'state.resting_schwab_generation = ""', "pass",
+        CHAIN_TEST + "::test_recorded_1013_placed_1015_cancel_refusal_releases_only_primary_1016",
+    ),
+    "cancel_status_alone_releases": (
+        "project_mai_tai.oms.atr_reprice_handoff", "HandoffJournal", "reconcile_feedback",
+        "if at is None:", "if False:",
+        CHAIN_TEST + "::test_cancel_transition_requires_exact_durable_zero_proof[missing_successor]",
+    ),
+    "cancel_generation_proof_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "cancelled_rpg_replacement_proof",
+        'and all(old.get("metadata", {}).get(key) == md[key] for key in keys)', "",
+        CHAIN_TEST + "::test_cancel_transition_requires_exact_durable_zero_proof[generation]",
+    ),
+    "cancel_recorded_zero_proof_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "cancelled_rpg_replacement_proof",
+        'and proof.get("clear_recorded") is True', "",
+        CHAIN_TEST + "::test_cancel_transition_requires_exact_durable_zero_proof[unrecorded]",
+    ),
+    "cancel_quantity_identity_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "cancelled_rpg_replacement_proof",
+        "and old_quantity.is_finite() and old_quantity == quantity", "",
+        CHAIN_TEST + "::test_cancel_transition_requires_exact_durable_zero_proof[quantity]",
+    ),
+    "cancel_old_clear_proof_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "cancelled_rpg_replacement_proof",
+        "old_buy_proven_clear(proof)", "True",
+        CHAIN_TEST + "::test_cancel_transition_requires_exact_durable_zero_proof[no_rebuy]",
+    ),
+    "placed_inactive_buy_owner_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "rpg_buy_owned",
+        'return include_placed', 'return False',
+        CHAIN_TEST + "::test_unproven_replacement_cannot_buy_with_inactive_or_different_generation[cancelled-]",
+    ),
+    "placed_foreign_generation_buy_owner_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "rpg_buy_owned",
+        'return include_placed', 'return False',
+        CHAIN_TEST + "::test_unproven_replacement_cannot_buy_with_inactive_or_different_generation[cancelled-CONTROLLED-newer-generation]",
+    ),
+    "terminal_projection_proof_gate_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "rpg_buy_owned",
+        '(job.get("replacement") and not replacement_terminal_zero(job))', "False",
+        CHAIN_TEST + "::test_status_only_terminal_projection_without_proof_still_owns_buy",
+    ),
+    "unproven_terminal_latch_cleared": (
+        "project_mai_tai.strategy_core.schwab_1m_v2", "SchwabV2Strategy", "rpg_handoff_authorization",
+        'and not replacement_terminal_zero(job)', "and False",
+        CHAIN_TEST + "::test_status_only_terminal_projection_without_proof_still_owns_buy",
+    ),
+    "healthy_placed_cancel_blocked": (
+        "project_mai_tai.strategy_core.schwab_1m_v2", "SchwabV2Strategy", "_rpg_leg_owned",
+        "include_placed=False", "include_placed=True",
+        CHAIN_TEST + "::test_placed_buy_ownership_does_not_prevent_serial_reprice_cancel",
+    ),
+    "filled_same_slot_buy_owner_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "rpg_buy_owned",
+        '(slot is None or slot == job["slot"])', "False",
+        CHAIN_TEST + "::test_unproven_replacement_cannot_buy_with_inactive_or_different_generation[partially_filled-]",
+    ),
+    "filled_first_incorrectly_consumes_reclaim": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "rpg_buy_owned",
+        'and (slot is None or slot == job["slot"])', "",
+        CHAIN_TEST + "::test_filled_first_slot_does_not_consume_the_independent_reclaim_slot",
+    ),
+    "feedback_same_phase_proof_revision_lost": (
+        "project_mai_tai.strategy_core.schwab_1m_v2", "SchwabV2Strategy", "rpg_handoff_authorization",
+        '(token, job["phase"], job.get("revision", 0), replacement_generation,\n'
+        '                    json.dumps(job.get("replacement_terminal_report", {}), sort_keys=True),\n'
+        '                    job.get("no_rebuy"), job.get("replacement_filled"))',
+        '(token, job["phase"])',
+        CHAIN_TEST + "::test_same_phase_new_revision_zero_proof_retires_latch_once",
+    ),
+    "filled_identity_check_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", "HandoffJournal", "reconcile_feedback",
+        'if not replacement_order_matches(session, order, job["replacement"]):', 'if False:',
+        CHAIN_TEST + "::test_invalid_filled_identity_cannot_adopt_or_consume[generation]",
+    ),
+    "zero_commit_proof_recheck_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", "HandoffJournal", "change",
+        'if changes.get("replacement_terminal_report"):', 'if False:',
+        CHAIN_TEST + "::test_zero_proof_cas_rechecks_fill_and_identity_at_commit",
+    ),
+    "zero_commit_report_fill_check_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", "HandoffJournal", "change",
+        'if replacement_has_fills(session, order) or replacement_unknown_fill_report(session, order):',
+        'if replacement_unknown_fill_report(session, order):',
+        CHAIN_TEST + "::test_zero_proof_cas_rechecks_fill_and_identity_at_commit[fill_report]",
+    ),
+    "legacy_commit_identity_recheck_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", "HandoffJournal", "change",
+        'if _expected_intent is not None:', 'if False:',
+        CHAIN_TEST + "::test_legacy_zero_publication_revalidates_audit_under_cas[generation]",
+    ),
+    "legacy_abort_origin_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "legacy_prewire_abort_report",
+        'or not ((payload.get("refusal_origin")', 'or False and not ((payload.get("refusal_origin")',
+        CHAIN_TEST + "::test_legacy_audit_requires_exact_identity_and_positive_no_wire[origin]",
+    ),
+    "legacy_abort_quantity_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "legacy_prewire_abort_report",
+        'or intent.quantity != quantity', '',
+        CHAIN_TEST + "::test_legacy_audit_requires_exact_identity_and_positive_no_wire[quantity]",
+    ),
+    "legacy_abort_generation_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "legacy_prewire_abort_report",
+        'or any(not request.get("metadata", {}).get(key)', 'or False and any(not request.get("metadata", {}).get(key)',
+        CHAIN_TEST + "::test_legacy_audit_requires_exact_identity_and_positive_no_wire[generation]",
+    ),
+    "legacy_dispatch_absence_only_gate_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "legacy_prewire_abort_report",
+        'or session.scalar(select(BrokerOrder.id)', 'or False and session.scalar(select(BrokerOrder.id)',
+        CHAIN_TEST + "::test_legacy_zero_publication_revalidates_audit_under_cas[order_exists]",
+    ),
+    "expired_explicit_zero_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "cancelled_rpg_replacement_proof",
+        'evidence.get("rpg_terminal_filled_quantity") == "0"', 'True',
+        CHAIN_TEST + "::test_expired_exact_broker_report_requires_explicit_zero[None]",
+    ),
+    "proof_edge_dedup_removed": (
+        "project_mai_tai.oms.atr_reprice_runtime", "AtrRepriceRuntimeMixin", "_rpg_advance",
+        'and proof_edge and job.get("replacement_proof_edge") != proof_edge', 'and proof_edge',
+        CHAIN_TEST + "::test_proof_only_replacement_read_is_bounded_by_evidence_edge_and_never_submits[unknown]",
+    ),
+    "legacy_refused_reconciliation_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "replacement_needs_reconciliation",
+        ', "refused", "expired"', '',
+        'tests/unit/test_rpgstuck1_later_startup.py::test_sckt_legacy_same_phase_later_exact_proof_releases_only_zero_not_filled',
+    ),
+    "canonical_report_positive_quantity_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "replacement_has_fills",
+        'payload.get("filled_quantity")', 'None',
+        CHAIN_TEST + "::test_canonical_report_quantity_cannot_be_hidden_by_later_zero[1]",
+    ),
+    "canonical_unknown_initial_gate_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", "HandoffJournal", "reconcile_feedback",
+        'elif replacement_unknown_fill_report(session, order):', 'elif False:',
+        CHAIN_TEST + "::test_canonical_report_quantity_cannot_be_hidden_by_later_zero[NaN]",
+    ),
+    "canonical_unknown_commit_gate_removed": (
+        "project_mai_tai.oms.atr_reprice_handoff", "HandoffJournal", "change",
+        ' or replacement_unknown_fill_report(session, order)', '',
+        CHAIN_TEST + "::test_zero_proof_cas_rechecks_fill_and_identity_at_commit[canonical_unknown]",
+    ),
 }
 
 
@@ -125,11 +283,29 @@ def mutated_run(name):
     source = textwrap.dedent(inspect.getsource(original))
     if old not in source:
         raise ValueError(f"mutation target missing: {name}")
+    if class_name == "tool":
+        class ReaderBinding:
+            def pytest_collection_modifyitems(self, items):
+                bound = set()
+                for item in items:
+                    reader = getattr(item.module, "tool", None)
+                    if reader is None or reader in bound or Path(reader.__file__) != Path(owner.__file__):
+                        continue
+                    bound.add(reader)
+                    namespace = {}
+                    actual = getattr(reader, function)
+                    exec(compile(source.replace(old, new, 1), f"<mutation:{name}>", "exec"),
+                         actual.__globals__, namespace)
+                    setattr(reader, function, namespace[function])
+                assert bound, "mutation did not bind the collected test's actual file reader"
+
+        return pytest.main(["-q", selector], plugins=[ReaderBinding()])
     namespace = {}
     exec(compile(source.replace(old, new, 1), f"<mutation:{name}>", "exec"), original.__globals__, namespace)
     setattr(owner, function, namespace[function])
     if class_name is None:
-        for reference in ("project_mai_tai.services.schwab_1m_v2_bot", "project_mai_tai.oms.mirror_fresh_price"):
+        for reference in ("project_mai_tai.services.schwab_1m_v2_bot", "project_mai_tai.oms.mirror_fresh_price",
+                          "project_mai_tai.strategy_core.schwab_1m_v2", "project_mai_tai.oms.atr_reprice_runtime"):
             reader = importlib.import_module(reference)
             if getattr(reader, function, None) is original:
                 setattr(reader, function, namespace[function])

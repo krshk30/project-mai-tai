@@ -29,11 +29,171 @@ SNAPSHOT_TYPE = "atr_reprice_handoff"
 READ_INTERVAL_SECONDS = 1.0
 READ_TIMEOUT_SECONDS = 2.0
 MAX_READS = 30
+PREWIRE_ABORT_CODES = {"rpg_stale_strategy_authorization", "rpg_current_price_size_or_identity_changed",
+                      "rpg_strategy_reauthorization_unreadable", "rpg_old_buy_still_owned"}
+PREWIRE_NO_WIRE_CODES = PREWIRE_ABORT_CODES | {"webull_mirror_precheck_deferred"}
 
 
 def old_buy_proven_clear(job: dict) -> bool:
     return bool((job.get("local_no_wire") or job.get("cleared_at") is not None)
                 and not job.get("no_rebuy"))
+
+
+def replacement_terminal_zero(job: dict) -> bool:
+    """Validate identity-bearing journal evidence, never a phase/status marker."""
+    report, request = job.get("replacement_terminal_report", {}), job.get("replacement", {})
+    try:
+        quantity = Decimal(request.get("quantity", "0"))
+        zero = Decimal(report.get("filled_quantity", "NaN"))
+        reported_quantity = Decimal(report.get("quantity", "NaN"))
+    except (TypeError, ValueError, InvalidOperation):
+        return False
+    return bool(request and quantity.is_finite() and quantity > 0
+        and zero.is_finite() and zero == 0 and reported_quantity.is_finite() and reported_quantity == quantity
+        and not job.get("replacement_filled") and not job.get("no_rebuy")
+        and report.get("source") in {"broker", "client_audit"}
+        and report.get("status") in {"cancelled", "canceled", "rejected", "aborted", "expired"}
+        and (report.get("order_id") or (report.get("source") == "client_audit"
+             and report.get("intent_id") and report.get("refusal_code") in PREWIRE_NO_WIRE_CODES))
+        and (report.get("broker_order_id") or report.get("status") in {"aborted", "rejected"})
+        and all(report.get(key) == request.get(key) for key in
+                ("client_order_id", "broker_account_name", "strategy_code", "symbol", "side"))
+        and all(request.get(key) == job.get("old", {}).get(key) for key in
+                ("broker_account_name", "strategy_code", "symbol", "side"))
+        and request.get("side") == "buy"
+        and request.get("metadata", {}).get("fanout_segment_id") == str(job.get("segment_id"))
+        and request.get("metadata", {}).get("cw_entry_slot") == job.get("slot")
+        and all(request.get("metadata", {}).get(key) and
+                report.get("metadata", {}).get(key) == request["metadata"][key] for key in
+                ("rpg_resting_generation", "fanout_segment_id", "cw_entry_slot")))
+
+
+def replacement_needs_reconciliation(job: dict) -> bool:
+    return bool(job.get("replacement") and not job.get("replacement_filled") and not job.get("no_rebuy")
+        and job["phase"] in {"placed", "submitting", "submit_unknown", "refused", "expired"})
+
+
+def rpg_buy_owned(job: dict, *, include_placed: bool = True,
+                  slot: str | None = None, segment_id: int | None = None) -> bool:
+    """Shared OMS/v2 policy. Known fills consume their opportunity, not a later flip."""
+    if job.get("no_rebuy") or job.get("replacement_filled") or job["phase"] == "filled":
+        return ((segment_id is None or segment_id == job["segment_id"])
+                and (slot is None or slot == job["slot"]))
+    if job["phase"] == "placed":
+        return include_placed
+    if job["phase"] not in {"expired", "refused"}:
+        return True
+    return bool(not old_buy_proven_clear(job) or
+                (job.get("replacement") and not replacement_terminal_zero(job)))
+
+
+def replacement_order_matches(session, order: BrokerOrder, request: dict, *, require_generation=True) -> bool:
+    account = session.get(BrokerAccount, order.broker_account_id)
+    strategy = session.get(Strategy, order.strategy_id)
+    try:
+        quantity = Decimal(request.get("quantity", "0"))
+    except (TypeError, ValueError, InvalidOperation):
+        return False
+    return bool(account and strategy and quantity.is_finite() and quantity > 0
+        and account.name == request.get("broker_account_name")
+        and strategy.code == request.get("strategy_code") == "schwab_1m_v2"
+        and order.client_order_id == request.get("client_order_id")
+        and order.symbol == request.get("symbol") and order.side == request.get("side") == "buy"
+        and order.quantity == quantity and all(
+                (key == "rpg_resting_generation" and not require_generation
+                 and not request.get("metadata", {}).get(key) and not (order.payload or {}).get(key))
+                or (request.get("metadata", {}).get(key)
+                    and (order.payload or {}).get(key) == request["metadata"][key]) for key in
+                ("rpg_resting_generation", "fanout_segment_id", "cw_entry_slot")))
+
+
+def _replacement_terminal_report(order, request, *, source, status, at):
+    return {**{key: request[key] for key in
+               ("client_order_id", "broker_account_name", "strategy_code", "symbol", "side", "quantity")},
+            "order_id": str(order.id), "broker_order_id": order.broker_order_id or "",
+            "metadata": {key: request["metadata"][key] for key in
+                         ("rpg_resting_generation", "fanout_segment_id", "cw_entry_slot")},
+            "source": source, "status": status, "filled_quantity": "0", "reported_at": at}
+
+
+def replacement_has_fills(session, order):
+    if (order.status in {"filled", "partially_filled"}
+            or session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1)) is not None):
+        return True
+    for event in session.scalars(select(BrokerOrderEvent).where(
+            BrokerOrderEvent.order_id == order.id, BrokerOrderEvent.event_source == "broker")):
+        if event.event_type in {"filled", "partially_filled"}:
+            return True
+        payload = event.payload or {}
+        for value in (payload.get("filled_quantity"), payload.get("metadata", {}).get("rpg_terminal_filled_quantity")):
+            try:
+                quantity = Decimal(value) if value is not None else Decimal(0)
+            except (TypeError, ValueError, InvalidOperation):
+                continue
+            if quantity.is_finite() and quantity > 0:
+                return True
+    return False
+
+
+def replacement_unknown_fill_report(session, order):
+    """Malformed quantity evidence blocks zero proof without inventing a fill."""
+    for event in session.scalars(select(BrokerOrderEvent).where(
+            BrokerOrderEvent.order_id == order.id, BrokerOrderEvent.event_source == "broker")):
+        payload = event.payload or {}
+        for value in (payload.get("filled_quantity"), payload.get("metadata", {}).get("rpg_terminal_filled_quantity")):
+            if value is None:
+                continue
+            try:
+                quantity = Decimal(value)
+            except (TypeError, ValueError, InvalidOperation):
+                return True
+            if not quantity.is_finite() or quantity < 0:
+                return True
+    return False
+
+
+def legacy_prewire_abort_report(session, job, *, intent_id=None):
+    """Exact durable pre-wire audit from the legacy OMS rejection path."""
+    request = job.get("replacement", {})
+    event_id = request.get("metadata", {}).get("rpg_event_id")
+    try:
+        client = f"{request['strategy_code']}-{request['symbol']}-open-{UUID(event_id).hex[:12]}"
+        quantity = Decimal(request["quantity"])
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return None
+    if (client != request.get("client_order_id") or not old_buy_proven_clear(job)
+            or not quantity.is_finite() or quantity <= 0):
+        return None
+    statement = select(TradeIntent).where(TradeIntent.payload["event_id"].as_string() == event_id)
+    if intent_id is not None:
+        statement = statement.where(TradeIntent.id == UUID(intent_id)).with_for_update()
+    intent = session.scalar(statement)
+    if intent is None:
+        return None
+    payload = intent.payload or {}
+    md = payload.get("metadata", {})
+    account, strategy = session.get(BrokerAccount, intent.broker_account_id), session.get(Strategy, intent.strategy_id)
+    if (intent.status != "rejected" or intent.intent_type != "open" or intent.side != "buy"
+            or intent.symbol != request.get("symbol") or intent.quantity != quantity
+            or not account or account.name != request.get("broker_account_name")
+            or not strategy or strategy.code != request.get("strategy_code") or strategy.code != "schwab_1m_v2"
+            or not ((payload.get("refusal_origin") == "client_abort"
+                     and payload.get("refusal_code") in PREWIRE_ABORT_CODES)
+                    or (payload.get("refusal_origin") == "skipped_before_submit"
+                        and payload.get("refusal_code") == "webull_mirror_precheck_deferred"))
+            or any(not request.get("metadata", {}).get(key) or md.get(key) != request["metadata"][key]
+                   for key in ("rpg_handoff_token", "rpg_resting_generation", "fanout_segment_id", "cw_entry_slot"))
+            or session.scalar(select(BrokerOrder.id).where(BrokerOrder.client_order_id == client).limit(1)) is not None):
+        return None
+    at = intent.updated_at.replace(tzinfo=UTC) if intent.updated_at.tzinfo is None else intent.updated_at
+    return {**{key: request[key] for key in
+               ("client_order_id", "broker_account_name", "strategy_code", "symbol", "side", "quantity")},
+            "order_id": "", "intent_id": str(intent.id), "broker_order_id": "",
+            "metadata": {key: request["metadata"][key] for key in
+                         ("rpg_resting_generation", "fanout_segment_id", "cw_entry_slot")},
+            "source": "client_audit", "status": "aborted" if payload["refusal_origin"] == "client_abort" else "rejected",
+            "filled_quantity": "0",
+            "refusal_code": payload["refusal_code"], "reported_at": at.timestamp()}
 
 
 def local_rpg_abort_proof(session, order: BrokerOrder, *, job: dict | None = None):
@@ -138,6 +298,68 @@ def broker_rpg_rejection_proof(session, order: BrokerOrder, job: dict):
     return code, at.timestamp()
 
 
+def cancelled_rpg_replacement_proof(session, order: BrokerOrder, job: dict):
+    """An exact successor ticket's recorded terminal-zero read, not an order status."""
+    replacement = job.get("replacement", {})
+    account = session.get(BrokerAccount, order.broker_account_id)
+    strategy = session.get(Strategy, order.strategy_id)
+    try:
+        quantity = Decimal(replacement.get("quantity", "0"))
+        if not quantity.is_finite() or quantity <= 0:
+            return None
+    except (TypeError, ValueError, InvalidOperation):
+        return None
+    if (order.status not in {"cancelled", "canceled", "expired"} or not old_buy_proven_clear(job)
+            or account is None or account.name != replacement.get("broker_account_name")
+            or strategy is None or strategy.code != replacement.get("strategy_code")
+            or strategy.code != "schwab_1m_v2" or order.side != "buy"
+            or not order.broker_order_id
+            or order.symbol != replacement.get("symbol") or order.quantity != quantity
+            or order.client_order_id != replacement.get("client_order_id")
+            or session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1)) is not None):
+        return None
+    keys = ("rpg_resting_generation", "fanout_segment_id", "cw_entry_slot")
+    md = replacement.get("metadata", {})
+    if any(not md.get(key) or (order.payload or {}).get(key) != md[key] for key in keys):
+        return None
+    for event in session.scalars(select(BrokerOrderEvent).where(
+            BrokerOrderEvent.order_id == order.id,
+            BrokerOrderEvent.event_source == "broker",
+            BrokerOrderEvent.event_type.in_({"cancelled", "canceled", "expired"}))):
+        payload = event.payload or {}
+        evidence = payload.get("metadata", {})
+        if (payload.get("client_order_id") == order.client_order_id
+                and payload.get("broker_order_id") == order.broker_order_id
+                and evidence.get("rpg_terminal_filled_quantity") == "0"
+                and evidence.get("atr_reprice_terminal_cancel") == "true"
+                and all(evidence.get(key) == md[key] for key in keys)):
+            at = event.event_at.replace(tzinfo=UTC) if event.event_at.tzinfo is None else event.event_at
+            return at.timestamp()
+    if order.status == "expired":
+        return None
+    successors = session.scalars(select(DashboardSnapshot).where(
+        DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+        DashboardSnapshot.payload["original_order_id"].as_string() == str(order.id)))
+    for row in successors:
+        proof, old = row.payload, row.payload.get("old", {})
+        try:
+            old_quantity = Decimal(old.get("quantity", "0"))
+        except (TypeError, ValueError, InvalidOperation):
+            continue
+        if (old_buy_proven_clear(proof) and proof.get("cleared_at") is not None
+                and proof.get("clear_recorded") is True
+                and proof.get("broker_status") in {"CANCELED", "CANCELLED"}
+                and old.get("client_order_id") == order.client_order_id
+                and old.get("broker_account_name") == account.name
+                and old.get("strategy_code") == strategy.code and old.get("symbol") == order.symbol
+                and old.get("side") == "buy" and old.get("intent_type") == "cancel"
+                and str(old.get("metadata", {}).get("broker_order_id", "")) == str(order.broker_order_id or "")
+                and all(old.get("metadata", {}).get(key) == md[key] for key in keys)
+                and old_quantity.is_finite() and old_quantity == quantity):
+            return proof["cleared_at"]
+    return None
+
+
 def _request_dict(request: OrderRequest) -> dict:
     return {
         "client_order_id": request.client_order_id,
@@ -230,16 +452,29 @@ class HandoffJournal:
         This never sends or repeats an order. A pre-wire pending row cannot prove
         acceptance, whereas a committed broker report can resolve submit-unknown.
         """
-        if job["phase"] not in {"placed", "submitting", "submit_unknown"} or not job.get("replacement"):
+        if not replacement_needs_reconciliation(job):
             return job
         with self.session_factory() as session:
             order = session.scalar(select(BrokerOrder).where(
                 BrokerOrder.client_order_id == job["replacement"]["client_order_id"]))
-            if order is None or order.status == "pending":
+            if order is None:
+                proof = legacy_prewire_abort_report(session, job)
+                if proof is None:
+                    return job
+                if (job["phase"] == "refused" and job.get("reason") == "replacement_refused"
+                        and job.get("replacement_terminal_report") == proof):
+                    return job
+                return self.change(token, job["revision"], _expected_replacement=job["replacement"],
+                    _expected_intent=proof["intent_id"], phase="refused", reason="replacement_refused",
+                    replacement_terminal_report=proof) or self.read(token)
+            if not replacement_order_matches(session, order, job["replacement"]):
                 return job
-            filled = session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1))
-            if filled is not None or order.status in {"filled", "partially_filled"}:
-                updates = dict(phase="filled", replacement_filled=True, reason="replacement_fill_accounted")
+            guard = (str(order.id), order.broker_order_id)
+            if replacement_has_fills(session, order):
+                updates = dict(phase="filled", replacement_filled=True, no_rebuy=True,
+                               reason="replacement_fill_accounted")
+            elif replacement_unknown_fill_report(session, order):
+                return job
             elif order.status == "aborted":
                 if (order.payload or {}).get("rpg_handoff_token") != str(token):
                     return job
@@ -247,12 +482,23 @@ class HandoffJournal:
                 if proof is None:
                     return job
                 updates = dict(phase="refused", reason="replacement_refused",
-                               replacement_reasons=[proof[0]], completed_at=proof[1])
+                               replacement_reasons=[proof[0]], completed_at=proof[1],
+                               replacement_terminal_report=_replacement_terminal_report(order, job["replacement"],
+                                   source="client_audit", status="aborted", at=proof[1]))
             elif order.status == "rejected" and (proof := broker_rpg_rejection_proof(session, order, job)):
                 updates = dict(phase="refused", reason="replacement_refused",
-                               replacement_reasons=[proof[0]], completed_at=proof[1])
+                               replacement_reasons=[proof[0]], completed_at=proof[1],
+                               replacement_terminal_report=_replacement_terminal_report(order, job["replacement"],
+                                   source="broker", status="rejected", at=proof[1]))
+            elif order.status in {"cancelled", "canceled", "expired"}:
+                at = cancelled_rpg_replacement_proof(session, order, job)
+                if at is None:
+                    return job
+                updates = dict(phase="refused", reason="replacement_terminal_accounted",
+                               replacement_terminal_report=_replacement_terminal_report(order, job["replacement"],
+                                   source="broker", status=order.status, at=at))
             elif order.status in {"cancelled", "canceled", "expired", "rejected"}:
-                updates = dict(phase="refused", reason="replacement_terminal_accounted")
+                return job  # A status alone cannot retire ownership of a possibly sent BUY.
             elif order.broker_order_id and order.status in {"accepted", "working", "open"}:
                 updates = dict(phase="placed", reason="replacement_accepted_accounted")
                 if include_wire_prices:
@@ -276,11 +522,14 @@ class HandoffJournal:
                             updates["replacement_wire_prices"] = wire
             else:
                 return job
-        if updates["phase"] == job["phase"] and "replacement_wire_prices" not in updates:
+        if updates["phase"] == job["phase"] and all(job.get(key) == value for key, value in updates.items()):
             return job
-        return self.change(token, job["revision"], **updates) or self.read(token)
+        return self.change(token, job["revision"], _expected_replacement=job["replacement"],
+                           _expected_order=guard, **updates) or self.read(token)
 
-    def change(self, token: UUID, revision: int, **changes: object) -> dict | None:
+    def change(self, token: UUID, revision: int, *, _expected_replacement: dict | None = None,
+               _expected_order: tuple | None = None, _expected_intent: str | None = None,
+               **changes: object) -> dict | None:
         with self.session_factory() as session:
             row = session.scalar(select(DashboardSnapshot).where(
                 DashboardSnapshot.id == token,
@@ -290,6 +539,33 @@ class HandoffJournal:
                 raise ValueError("reprice ownership unreadable")
             if row.payload["revision"] != revision:
                 return None
+            if _expected_replacement is not None and row.payload.get("replacement") != _expected_replacement:
+                return None
+            if _expected_intent is not None:
+                report = legacy_prewire_abort_report(session, row.payload, intent_id=_expected_intent)
+                if report is None or report != changes.get("replacement_terminal_report"):
+                    return None
+            if _expected_order is not None:
+                order = session.scalar(select(BrokerOrder).where(
+                    BrokerOrder.id == UUID(_expected_order[0])).with_for_update())
+                if (order is None or order.broker_order_id != _expected_order[1]
+                        or not replacement_order_matches(session, order, _expected_replacement)):
+                    return None
+                if changes.get("replacement_terminal_report"):
+                    if replacement_has_fills(session, order) or replacement_unknown_fill_report(session, order):
+                        return None
+                    proof_job = dict(row.payload)
+                    report = changes["replacement_terminal_report"]
+                    if report["status"] in {"cancelled", "canceled", "expired"}:
+                        valid = cancelled_rpg_replacement_proof(session, order, proof_job)
+                    elif report["status"] == "aborted":
+                        valid = local_rpg_abort_proof(session, order, job=proof_job)
+                    elif report["status"] == "rejected":
+                        valid = broker_rpg_rejection_proof(session, order, proof_job)
+                    else:
+                        valid = None
+                    if valid is None:
+                        return None
             row.payload = {**row.payload, **changes, "revision": revision + 1}
             result = dict(row.payload)
             session.commit()

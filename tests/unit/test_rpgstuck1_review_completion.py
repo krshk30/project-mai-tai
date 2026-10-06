@@ -130,7 +130,10 @@ async def test_b5_held_unknown_startup_has_no_one_hz_xadd_or_evidence_queries(mo
         await asyncio.wait_for(h.service._rpg_retry_started().wait(), timeout=5)
         rows, h.service.redis.entries = h.service.redis.entries, []
         initial = [data for _, data in rows if data.get("event_type") == "atr_reprice_tick"]
-        assert len(initial) == 4  # Three exact-old Webull tickets and the strict RETO probe.
+        # Four old-order probes plus four potentially submitted replacements:
+        # the latter get one startup proof edge, never a periodic status waiver.
+        assert len(initial) == 8
+        assert sum(bool(data.get("proof_edge")) for data in initial) == 4
         for data in initial:
             await h.service._handle_stream_message({"data": json.dumps(data)})
         quiet_queries = len(statements)

@@ -4786,3 +4786,13 @@ def test_completed_positions_leave_display_et_and_placeholder_times_untouched() 
     # Already display-ET: rendered verbatim, never shifted a second time.
     assert html.count("2026-09-14 09:30:10 AM ET") == 1
     assert html.count("2026-09-14 09:30:28 AM ET") == 1
+
+
+def test_failed_action_rows_show_audited_local_abort() -> None:
+    html, count = control_plane_module._build_failed_action_rows({"recent_orders": [{
+        "status": "aborted", "symbol": "OLOX", "side": "buy", "intent_type": "open",
+        "quantity": 408, "reason": "rpg_strategy_reauthorization_unreadable",
+    }]})
+    assert count == 1
+    assert "ABORTED" in html and "OLOX" in html
+    assert "rpg_strategy_reauthorization_unreadable" in html

@@ -20,6 +20,7 @@ from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYP
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
 from project_mai_tai.strategy_core.schwab_1m_v2 import logger as v2_logger
 from tests.unit.test_rpg1_runtime import runtime, begin, feedback, tick_clock, _session_factory
+from tests.unit.t43_recorded_audit_support import seed_recorded_abort, seed_recorded_intent
 
 RECORDED = json.loads((Path(__file__).parents[1] / "fixtures/rpgstuck1_recorded.json").read_text())
 PRIMARY = [row for row in RECORDED["tickets"] if row["payload"]["old"]["broker_account_name"] == "live:schwab_1m_v2"]
@@ -46,6 +47,18 @@ async def recorded_state(monkeypatch, symbol):
         for row in jobs:
             session.add(DashboardSnapshot(id=UUID(row["id"]), snapshot_type=SNAPSHOT_TYPE, payload=row["payload"]))
         session.commit()
+    for row in jobs:
+        job = row["payload"]
+        if not job.get("replacement"):
+            continue
+        if job["replacement"]["broker_account_name"] == "live:schwab_1m_v2":
+            seed_recorded_abort(h, job)
+        else:
+            audit = next(item for item in RECORDED["intents"]
+                         if item["payload"].get("event_id") == job["replacement"]["metadata"]["rpg_event_id"])
+            seed_recorded_intent(h, {**audit, "strategy": "schwab_1m_v2", "symbol": symbol,
+                                    "side": "buy", "intent_type": "open"})
+    await h.bot._rpg_handoff_pass()
     return h
 
 
