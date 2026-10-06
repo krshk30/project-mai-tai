@@ -78,3 +78,29 @@ read-only sudo. Neither absence nor access error was treated as proof.
 No PR or "built" head is claimed. Branch: codex/rpg-one-leg-rest-recovery.
 Await the cause correction before implementation; no change to any live flag,
 the 0.5% band/reprice threshold, sizing, exits, or tonight's install candidate.
+
+## Correction accepted and race assessment, 2026-10-06 11:05 ET
+
+The corrected operator relay accepts the local-abort cause and releases both
+halves. Own exact-intent pull reproduces TWO stale-authorization client aborts:
+AIXI/Webull09:45 and OLOX/Schwab10:15. Own as-of11:05 count is 2/78 token-bearing
+OPEN intents, not the reviewer's earlier approximate72 denominator.
+Raw: /tmp/codex-t43-age-refusals-20261006.jsonl. A separate bounded120-row
+handoff pull returned40 durable current tickets;35 have authorization and submit
+timestamps. Authorization is mutable, so negative differences occur after later
+feedback; completed_at is NOT the second-check timestamp. Exact p99
+authorization-to-check is UNMEASURED; the1.380382s largest completion proxy is
+not an acceptable safety-window calibration.
+
+AGREE with inline reauthorization, not a blind age-window increase. On a stale
+check, OMS requests an exact nonce from the existing v2 callback and waits only
+the existing two-second read timeout. v2 evaluates all current gates, then
+acknowledges that nonce. OMS retains the one-second age, canonical price,
+quantity, account, slot, segment, dispatch-token and fill checks. A changed
+price or missing acknowledgement aborts before wire; it never refreshes a
+timestamp without asking the strategy. The serial lane remains the only
+dispatcher. This also covers an initial-risk check that ages before pre-wire.
+
+Local RPG aborts need a distinct stored status and client-origin audit with the
+code. Historical rows are not edited. Controlled future broker acknowledgements
+will remain explicitly simulated in the recorded OLOX/AIXI replay.
