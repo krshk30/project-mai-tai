@@ -1,0 +1,135 @@
+{
+  "agent": "codex",
+  "lane": "WBPOWER1",
+  "asof_et": "2026-10-06T15:22:07-04:00",
+  "branch": "codex/wbpower1",
+  "base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "status": "STOPPED_BEFORE_RUNTIME_EDITS_UNSAFE_CARD_GAPS",
+  "verdict": {
+    "AGREE": "A scoped Webull BUY placement preflight against verified fresh available day buying power can avoid the recorded broker refusal without suppressing Schwab. Check final Webull wire quantity and price, not pre-sizing metadata; preserve PA1, dollar sizing and sub-dollar share rules.",
+    "DISAGREE": "Historical refusal text, successful fills, generic cash or guessed schema fields cannot establish available day buying power. MARKET orders do not have a wire limit price and cannot silently use a guessed proxy.",
+    "UNMEASURED": "Historical available day buying power for the exact MOBX and IPDN orders; no retained power response found in the captured exact DB order metadata or prior sanitized log receipts. No after-the-fact current balance was substituted."
+  },
+  "blocker_count": 3,
+  "blockers": [
+    {
+      "id": "verified_US_day_power_schema",
+      "needed": "Exact public US SDK response field and nesting, USD currency/account binding, and confirmation that it represents available day buying power including reservations rather than cash, total power or a different currency. Installed SDK request source does not decode or document this response."
+    },
+    {
+      "id": "unknown_and_freshness_policy",
+      "needed": "Authorized behavior on timeout, missing/malformed/negative/conflicting power, currency mismatch, budget denial or stale cache, plus a maximum cache age. Neither implicit permission to place nor treating UNKNOWN as zero is safe to invent. Clarify whether Webull-only unknown skip uses a separate reason from proven buying_power insufficiency."
+    },
+    {
+      "id": "MARKET_notional_basis",
+      "needed": "Authorized comparison basis for PM/RTH reactive MARKET and native bracket MARKET masters. Final MARKET payload has no limit price; choose a verified fresh quote/risk bound with defined slippage policy, or explicitly narrow the gate. Do not substitute historical fill, target, or reference as a wire price."
+    }
+  ],
+  "ready_for_review_eta": "UNMEASURED until three safety decisions resolve; no speculative ready hour",
+  "accepted_census": {
+    "receipt": "/tmp/bracket-step0-all-symbols-bp-census-20261006.json",
+    "sha256": "13287aa559d95c15bdc6435492bbe0ec16d684d441ccf658ae1a2e7357885dfc",
+    "asof_end_et": "2026-10-06T15:08:19.359780-04:00",
+    "coverage": "31/31 retained OMS files, 117930344 decompressed bytes, 6.1158 seconds, within 128MiB/15s; observed ET dates Sep05-Oct06 with partial retention edges",
+    "today_unique_client_order_ids": 3,
+    "today_symbols": {"MOBX": 1, "OLOX": 2},
+    "prior_observed_days_unique_ids": 0,
+    "caveat": "Six timestamp/identity-free matching lines remain unattributed; never count those as additional orders. Human accepted the three-order count and the prior four as double counting."
+  },
+  "own_recorded_orders": {
+    "asof_utc": "2026-10-06T19:21:25.849156+00:00",
+    "method": "Exact two coids, READ ONLY DB transaction, 2000ms statement timeout, LIMIT4, rollback; two returned rows",
+    "MOBX": {
+      "coid": "schwab_1m_v2-MOBX-open-07bc532a7fdc",
+      "account_alias": "live:orb",
+      "provider": "webull",
+      "quantity": "248.00000000",
+      "order_type": "STOP_LIMIT",
+      "status": "rejected",
+      "submitted_at_utc": "2026-10-06 18:47:01.703021+00:00",
+      "stored_raw_limit_metadata": "1.2065",
+      "stored_raw_stop_metadata": "1.2005",
+      "stored_reference": "1.2005",
+      "fanout_source": "rth_resting_mirror",
+      "retained_power_field_names": [],
+      "power": "UNMEASURED",
+      "actual_wire_price": "UNMEASURED in this DB receipt; raw metadata is not proof of adapter-rounded wire",
+      "recorded_log_refusal": "2026-10-06 18:47:01,713 UTC OMS-BROKER-REJECT DAY_BUYING_POWER_INSUFFICIENT http417; same coid repeated in OMS-NFQ1 retirement at18:47:01,764"
+    },
+    "IPDN": {
+      "coid": "schwab_1m_v2-IPDN-open-c2dbfc226b06",
+      "account_alias": "live:orb",
+      "provider": "webull",
+      "quantity": "68.00000000",
+      "order_type": "STOP_LIMIT",
+      "status": "filled",
+      "stored_raw_limit_metadata": "4.4322",
+      "stored_raw_stop_metadata": "4.4101",
+      "fanout_source": "rth_resting_mirror",
+      "fill_price": "4.42000000",
+      "fill_quantity": "68.00000000",
+      "filled_at_utc": "2026-10-06 18:32:18.905000+00:00",
+      "retained_power_field_names": [],
+      "power": "UNMEASURED; successful fill is not a balance response"
+    }
+  },
+  "source_assessment_at_base": {
+    "webull_py_sha256": "c2155cac52d1ecd215cca0222acc6a89ee745c7c45ec3c3bea4b2106390aba92",
+    "oms_service_py_sha256": "0b9ceea2652d917a8bae4f05b7cf800a79596de5c162f9e568562eb040b85359",
+    "submit_dispatch": "broker_adapters/webull.py:195 routes cancels and sell-only protective pairs independently, then bracket or single-leg placement. Do not add a power gate to cancels, exits or protection attaches.",
+    "single_leg_boundary": "webull.py:616 _submit_blocking calls _prepare_single_leg_prices:1575, then _apply_resting_mirror_market_shape:1631, builds exact quantity and payload, and submits at the existing client.get_response(po). A future gate must use final wire values after these transformations.",
+    "bracket_boundary": "webull.py:759 _submit_bracket_blocking builds _build_combo_payload:2012 then calls v3 place_order. LIMIT and MARKET masters are supported; only LIMIT masters carry a limit price. Count one placement, not each SELL child.",
+    "main_oms_path": "oms/service.py:12871 _finalize_v2_entry_quantity runs before PA1 _defer_webull_resting_mirror_before_submit:13220; process_intent constructs the request and dispatches submit_order around2353. Existing PA1 distance hold must finish before any power API cost.",
+    "reactive_path": "oms/service.py:2433 _mirror_v2_fill_to_webull separately dispatches Webull submit_order around2633; EH route builds a LIMIT while RTH may use a native MARKET master. An adapter-boundary gate covers both without editing strategy sizing.",
+    "power_preflight_at_base": "No public day-power read method or buying-power gate exists in Webull adapter/OMS placement paths.",
+    "ordinary_response_decoder": "Existing _response_status defaults to200 when transport status is absent; this must not certify financial power evidence. Existing _decimal_or_none accepts candidate aliases; no undocumented alias fishing for day power."
+  },
+  "installed_public_sdk": {
+    "asof_utc": "2026-10-06T19:21:24.519299+00:00",
+    "version": "2.0.11",
+    "legacy_public_api": "webull.trade.trade.account_info.Account.get_account_balance(account_id,total_asset_currency)",
+    "legacy_request": "GET /account/balance, version v2; account_id and explicit total_asset_currency. Setter default HKD is not safe for a USD comparison.",
+    "new_public_api": "webull.trade.trade.v2.account_info_v2.AccountV2.get_account_balance(account_id)",
+    "new_request": "GET /openapi/assets/balance, version v2; account_id",
+    "official_reference_urls": [
+      "https://developer.webull.com/apis/docs/trade-api/account/",
+      "https://developer.webull.com/apis/docs/reference/account-balance/"
+    ],
+    "reference_limitation": "Current reference shows GET /trading/assets/balances/get; not identical to installed2.0.11 paths. Official source verifies GET/public method, not a US available-day-power field to guess.",
+    "source_sha256": {
+      "webull/trade/trade/account_info.py": "0b761c04365f60e7b94122446f2b1b9727be5bdd116d0ef13629e0e602ec2278",
+      "webull/trade/request/get_account_balance_request.py": "4bd335af3e8716523046959f9102957d1a3df7afc3585f107ba6c68ab4a7915d",
+      "webull/trade/trade/v2/account_info_v2.py": "7ecdbe5dac64948b6e85ab29ccf92d8570394a06e721f7cbe8d4f22984776c3c",
+      "webull/trade/request/v2/get_account_balance_request.py": "a3e562eb44f0ecc759ee81a6ffc1ee59adf805693f9f8858e095fdabd8b73a13"
+    }
+  },
+  "coordinated_WEBULL429_contract": {
+    "other_lane": "Sagan WEBULL429, own PR1101, no cross-branch writes",
+    "received_head": "c7f1ceb9d740547b58fcc342bf4639eb5d1b55ca",
+    "stable_public_api": "project_mai_tai.broker_adapters.webull_order_reads.shared_budget(host,app_key) -> QueryBudget; claim(endpoint,owner,strict=False); QueryBudgetUnavailable",
+    "power_contract": "Use the SAME process-local object; endpoint account-balance, exact real account_id owner, strict=False, immediately before EACH HTTP attempt. Failed attempts cost permits. Pure cache hits cost0. No list/detail permits, hidden retries or borrowed strict capacity.",
+    "budget_policy": "Existing conservative max2 attempts per rolling2s per endpoint; shared across accounts/aliases/threads/adapters in this process. Not a measured legacy endpoint quota or distributed guarantee.",
+    "UNKNOWN": "Budget denial is UNKNOWN, never zero funds or permission to place. Order-reader freshness and durable terminal proof are not balance evidence.",
+    "dependency_status": "API contract accepted and explicitly messaged back under human authorization. Source absent at main4805; no cherry-pick or cross-branch edits performed."
+  },
+  "raw_receipts_sha256": {
+    "/tmp/wbpower1-exact-orders-20261006.jsonl": "bc0389e05a279e806c7f87e4f126e8b7a0539c9807f15e774ea3d00345a38b26",
+    "/tmp/wbpower1-sdk-source-20261006.jsonl": "91f00a25d43e61a9537de1251ad68b2395d9dfe0ff2a3b39c7576c3bcf093da3",
+    "/tmp/wbpower1_step0_reader_20261006.py": "4975a5fe8f5b56df1e5754975deb13261f6e3c2f3a294c27fd70d4aa71e6b47f"
+  },
+  "verification_and_cost": {
+    "new_broker_API_calls": 0,
+    "new_balance_API_calls": 0,
+    "production_DB": "One bounded READ ONLY transaction; no writes",
+    "source_reads": "Installed SDK source/metadata only; no SDK client instantiated or authenticated",
+    "runtime_or_test_source_changes": 0,
+    "focused_tests": "NOT RUN; no runtime implementation authorized past unresolved safety gaps",
+    "full_unit_pair": "NOT RUN",
+    "mutations": "NOT RUN",
+    "CI": "NOT RUN; no build PR or ready claim",
+    "all_on_nine_and_effective_zero": "Required implementation proof, not claimed. Base ALL_ON has eight controls; WEBULL429 owns the ninth list-primary control. No new boolean invented.",
+    "production_service_env_auth_redis_ledger_writes": false,
+    "production_orders_or_restarts": false,
+    "main_or_shared_handoff_edits": false
+  }
+}
