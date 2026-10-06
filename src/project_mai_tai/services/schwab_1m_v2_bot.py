@@ -4870,7 +4870,7 @@ class SchwabV2BotService:
         drain = getattr(self.strategy, "drain_pending_intents", None)
         if callable(drain) and self.intent_emitter is not None:
             for d in drain():
-                if not self._line_draft_allowed(d):
+                if getattr(self, "_line_restoration_enabled", False) and not self._line_draft_allowed(d):
                     continue
                 try:
                     await self.intent_emitter.emit(d)
@@ -4886,7 +4886,7 @@ class SchwabV2BotService:
         wdrain = getattr(self.strategy, "drain_webull_direct_intents", None)
         if callable(wdrain):
             for d in wdrain():
-                if not self._line_draft_allowed(d):
+                if getattr(self, "_line_restoration_enabled", False) and not self._line_draft_allowed(d):
                     continue
                 if self.webull_intent_emitter is None:
                     logger.warning(
@@ -5430,7 +5430,7 @@ class SchwabV2BotService:
         # and would silently change five existing entry paths. With `_exit_coverage` empty — every
         # pre-change state, and every existing test — this guard is INERT and byte-neutral.
         _sym = str(getattr(draft, "symbol", "")).upper()
-        if not self._line_draft_allowed(draft):
+        if getattr(self, "_line_restoration_enabled", False) and not self._line_draft_allowed(draft):
             await self._record_local_fanout_outcome(
                 draft, outcome="dropped_routing", reason="session_line_unproven_or_stale",
             )
@@ -5538,7 +5538,7 @@ class SchwabV2BotService:
             )
             return "dropped_routing"
         try:
-            if not self._line_draft_allowed(draft):
+            if getattr(self, "_line_restoration_enabled", False) and not self._line_draft_allowed(draft):
                 return "dropped_routing"
             await target_emitter.emit(draft)
         except Exception:
