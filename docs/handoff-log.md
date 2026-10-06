@@ -6725,3 +6725,16 @@ production write or trading-source workaround. Separate reviewed fix question
 asked. CLEARWAIT widened own Step0/build, WEBULL429 readonly Step0 and #1100
 display correction proceed under distinct sole writers. #1099/MIRROR blockers
 remain; no T rows, Boards or open decisions changed.
+
+### 2026-10-06 13:41 ET - codex-2 C61 widened CLEARWAIT1 evidence
+
+Released Step0 a2de4ec0 on its own branch: six removal markers today belong to
+three episodes; full retained63markers/11sessions/43episodes versus requested62.
+Raw bounded capture13:30:13.519782ET/hash09de1528 verified. XHG's one rejected
+row does not settle its exact_old_order_unproven ticket. AIFA later cancel
+generations end11:22:09, so11:22:11 is not a settled15second proof. Card agrees
+when unknown remains blocked; six clean re-adds are not promised by hiding
+these controls. Solewriter now proceeds safe implementation, target17:00
+conditional on immutable baseline/fullpair/CI; evidence-only head is not PR
+ready. Parent corrects RETRYOFF report method name to
+_apply_flip_position_evidence; result unchanged. No production write.
