@@ -9,10 +9,11 @@ import subprocess
 import sys
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from release_policy import DAY, canonical, digest, moment, need
+from release_policy import DAY, Stop, canonical, digest, moment, need
 from retry_zero_readonly import FIELDS, identity
 
 MAX = 524288
+OVERVIEW_MAX = 2_000_000
 PATHS = ("/health", "/api/overview", "/bot/orb", "/api/bot/orb-schwab")
 
 
@@ -106,14 +107,16 @@ def get(path):
     need(path in PATHS, "unapproved control URL")
     url = "http://127.0.0.1:8100" + path
     opener = build_opener(ProxyHandler({}), NoRedirect())
-    with opener.open(Request(url, method="GET", headers={"Cache-Control": "no-cache"}), timeout=10) as reply:
+    limit = OVERVIEW_MAX if path == "/api/overview" else MAX
+    timeout = 30 if path == "/api/overview" else 10
+    with opener.open(Request(url, method="GET", headers={"Cache-Control": "no-cache"}), timeout=timeout) as reply:
         need(reply.status == 200 and reply.url == url, "control HTTP status/redirect differs")
         need(reply.headers.get("Content-Encoding", "identity") == "identity", "encoded control response unsupported")
         expected = "text/html" if path == "/bot/orb" else "application/json"
         need(reply.headers.get("Content-Type", "").split(";")[0] == expected, "control response content-type differs")
         need("no-store" in reply.headers.get("Cache-Control", ""), "control response caching not disabled")
-        raw = reply.read(MAX + 1)
-    need(0 < len(raw) <= MAX, "control HTTP response missing/overflow")
+        raw = reply.read(limit + 1)
+    need(0 < len(raw) <= limit, "control HTTP response missing/overflow")
     return raw
 
 
@@ -190,8 +193,11 @@ def main():
         result = collect(args.phase, args.pid, args.old_pid)
         print(canonical(validate(result, args.phase, args.pid, args.old_pid, since, datetime.now(timezone.utc))).decode(), end="")
         return 0
+    except Stop as exc:
+        print("STOP control proof: " + str(exc), file=sys.stderr)
+        return 1
     except Exception as exc:
-        print("STOP control proof error_type=" + type(exc).__name__, file=sys.stderr)
+        print("UNKNOWN control proof error_type=" + type(exc).__name__, file=sys.stderr)
         return 2
 
 

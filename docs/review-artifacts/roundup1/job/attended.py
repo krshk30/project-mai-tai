@@ -176,11 +176,12 @@ class Real:
             need(result.returncode == 0, "command failed: " + args[0])
         return result
 
-    def reader(self, name, *args):
+    def reader(self, name, *args, clean_stderr=False):
         for count in range(3):
             result = self.command(["nice", "-n", "19", PY, self.job / name, *args], check=False,
                                   timeout=660 if name == "census_readonly.py" else 210, limit=8_000_000)
             if result.returncode == 0:
+                need(not clean_stderr or not result.stderr.strip(), "read-only success has unexpected stderr")
                 return result.stdout.decode()
             need(result.returncode == 2 and count < 2, "read-only blocker or exhausted UNKNOWN: " + name)
             time.sleep(60)
@@ -478,13 +479,12 @@ class Real:
 
     def control_proof(self, phase, pid, old_pid=None):
         from control_display_proof import validate
-        args = [PY, self.job / "control_display_proof.py", "--phase", phase, "--pid", str(pid)]
+        args = ["--phase", phase, "--pid", str(pid)]
         if old_pid is not None:
             args += ["--old-pid", str(old_pid)]
         since = self.now()
-        result = self.command(args, check=False, timeout=60, limit=2_000_000)
-        need(result.returncode == 0 and not result.stderr.strip(), "control owner/page proof blocked")
-        value = validate(json.loads(result.stdout), phase, pid, old_pid, since, self.now())
+        output = self.reader("control_display_proof.py", *args, clean_stderr=True)
+        value = validate(json.loads(output), phase, pid, old_pid, since, self.now())
         oms = self.started.get("oms", self.before["oms"])
         need(value["adapter"]["pid"] == oms["MainPID"], "control proof not bound to phase-specific OMS identity")
         self.latest_control = value

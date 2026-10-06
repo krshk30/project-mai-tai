@@ -62,7 +62,8 @@ def test_actual_receipts_create_the_install_records_append_only_source_journal(t
 
 
 @pytest.mark.parametrize("codes,sleeps,stops", [([2, 0], 1, False), ([2, 2, 2], 2, True), ([1], 0, True)])
-def test_real_reader_retains_stdout_stderr_and_rc_for_every_attempt(monkeypatch, tmp_path, codes, sleeps, stops):
+@pytest.mark.parametrize("helper", ["strict_flat_readonly.py", "control_display_proof.py"])
+def test_real_reader_retains_stdout_stderr_and_rc_for_every_attempt(monkeypatch, tmp_path, codes, sleeps, stops, helper):
     effects = attended.Real(tmp_path, {}, tmp_path)
     calls = []
     pauses = []
@@ -78,9 +79,9 @@ def test_real_reader_retains_stdout_stderr_and_rc_for_every_attempt(monkeypatch,
     monkeypatch.setattr(attended.time, "sleep", pauses.append)
     if stops:
         with pytest.raises(attended.Stop, match="blocker or exhausted UNKNOWN"):
-            effects.reader("strict_flat_readonly.py", "--service", "strategy")
+            effects.reader(helper, "--service", "strategy")
     else:
-        assert effects.reader("strict_flat_readonly.py", "--service", "strategy") == "stdout-1"
+        assert effects.reader(helper, "--service", "strategy") == "stdout-1"
     assert len(calls) == len(codes)
     assert pauses == [60] * sleeps
     for index, rc in enumerate(codes):
@@ -91,3 +92,11 @@ def test_real_reader_retains_stdout_stderr_and_rc_for_every_attempt(monkeypatch,
         assert (tmp_path / f"{number + 2:03d}-stderr.txt").read_bytes() == f"stderr-{index}".encode()
     rows = [json.loads(line) for line in (tmp_path / "runner-journal.jsonl").read_text().splitlines()]
     assert len(rows) == len(codes) * 3
+
+
+def test_control_success_with_unexpected_stderr_still_blocks(monkeypatch, tmp_path):
+    effects = attended.Real(tmp_path, {}, tmp_path)
+    monkeypatch.setattr(attended.subprocess, "run", lambda *args, **kwargs:
+                        SimpleNamespace(returncode=0, stdout=b"{}", stderr=b"unreadable warning"))
+    with pytest.raises(attended.Stop, match="unexpected stderr"):
+        effects.reader("control_display_proof.py", clean_stderr=True)

@@ -346,3 +346,39 @@ def test_literal_control_wrong_oms_token_owner_binding_stops_before_restart(monk
         attended.Sequence(fx).run()
     assert not any(args[:2] == ["systemctl", "restart"] for args in fx.calls)
     assert (fx.attempt / "STOP.json").exists() and not (fx.attempt / "COMPLETE.json").exists()
+
+
+@pytest.mark.parametrize("size,allowed", [(1538579, True), (2000001, False)])
+def test_recorded_overview_size_uses_two_mb_thirty_second_bound(monkeypatch, size, allowed):
+    url = "http://127.0.0.1:8100/api/overview"
+    class Reply:
+        status = 200
+        headers = {"Content-Type": "application/json", "Cache-Control": "no-store"}
+        def __enter__(self):
+            self.url = url
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, count):
+            assert count == 2000001
+            return b"x" * size
+    def open_request(request, timeout):
+        assert request.full_url == url and timeout == 30
+        return Reply()
+    monkeypatch.setattr(control, "build_opener", lambda *handlers: SimpleNamespace(open=open_request))
+    if allowed:
+        assert len(control.get("/api/overview")) == size
+    else:
+        with pytest.raises(policy.Stop, match="missing/overflow"):
+            control.get("/api/overview")
+
+
+@pytest.mark.parametrize("fault,rc,label", [(policy.Stop("control sole process owner unproven"), 1, "STOP"),
+                                          (TimeoutError("controlled timeout"), 2, "UNKNOWN")])
+def test_control_cli_distinguishes_measured_blocker_from_unreadable(monkeypatch, capsys, fault, rc, label):
+    monkeypatch.setattr(control.sys, "argv", ["control_display_proof.py", "--phase", "before", "--pid", "2916"])
+    def collect(*args):
+        raise fault
+    monkeypatch.setattr(control, "collect", collect)
+    assert control.main() == rc
+    assert capsys.readouterr().err.startswith(label + " control proof")
