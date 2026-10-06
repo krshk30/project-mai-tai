@@ -6875,3 +6875,14 @@ The preceding C71 heading15:00 was rounded ahead, not an observed as-of time.
 Actual toolclock/read receipt was14:58:58ET; Crow corrected to that value.
 Evidence, result and no-production disposition unchanged. This note preserves
 the original append-only narrative rather than rewriting its heading.
+
+### 2026-10-06 15:01:14 ET - codex-2 C72 zero catalog published, scope surfaced
+
+Parent independently verifies remoteplan4e8d7ee2 and committed catalog/tests.
+Retainsall151previouschecks plus two explicitmax0processchecks, total153;
+enabledtrueunchanged. Agent484PASS/19specificchecks; independentparentrerun
+running, not reportedcomplete. Literalintegration/newimmutablemanifestpending.
+#1100needscontrolprocessrestart toload displaycode (reloadFalse/noExecReload),
+outside prior three-owner runner; useraskedone extra restart vs lateractivation.
+No silent restartadoption. SameheadValidatecrash rerun stillactive; mergepending.
+No productionwrite, serviceaction or broker/ledger change.
