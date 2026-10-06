@@ -5968,3 +5968,19 @@ retain each receipt/report, refuse stale/date/hash/identity drift; Claude verifi
 at06:22. Root invocation preserves isolated helper permissions, not a chmod
 workaround. No timer installed today; today's gate ownership remains Claude.
 Both agents retain09:42guard next-elapse verification after the09:40normalstop.
+
+## 2026-10-06 07:08 ET - Daily preopen timer accepted, design only in session
+
+Reviewer GO accepted dailyroot06:20Mon..Fri/checks-only/ntfy nonzero adapter,
+Codex reviewed install-closeout pins and Claude06:22verification. Literal
+service/timer/failure-unit text plus mock-test/installation/Wednesday rehearsal
+recipe added in docs/review-artifacts/preopen-daily/PLAN_2026-10-06.md.
+Build and box installation deferred until after20:00tonight as explicitly ruled;
+no generated wrapper/unit installed or built during this session. Ownread07:08
+no preopenunits; gate8cdafcde; existingadaptera9f24076 at repo ops/health/preopen_alert.sh.
+Independent dependency found: paper366242/date10-06 hard-pinned, dailyguard
+stops09:40/restarts03:40tomorrow. TomorrowPID cannot be pinned tonight; date
+does not roll automatically. Requested explicit verified03:50repin ownership
+versus Claude manual pre06:20repin; no automatic live identity adoption/bypass.
+First realWed06:20run remains rehearsal, hand06:22retained untilgreen.
+No application, flag, gatepolicy, process, database or box file action.
