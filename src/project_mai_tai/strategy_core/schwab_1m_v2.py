@@ -175,6 +175,7 @@ class OHLCVBar:
 @dataclass
 class SymbolState:
     symbol: str
+    line_restore_reset_after_ms: int = 0
     bars: Deque[OHLCVBar] = field(default_factory=lambda: deque(maxlen=300))
     last_quote: Quote | None = None
     position_qty: int = 0
@@ -636,6 +637,10 @@ class SchwabV2Strategy:
         self._atr_period = max(
             1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_period", 5))
         )
+        self._line_restoration_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_line_chart_restoration_enabled", False)
+        )
+        self._line_readiness = None
         self._gap_hold_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_gap_hold_enabled", False)
         )
@@ -2717,6 +2722,18 @@ class SchwabV2Strategy:
         if state is None:
             return False
         self._finish_first_rest_quote_wait(state, action="gave_up", reason=reason)
+        if getattr(self, "_line_restoration_enabled", False):
+            # Removal revokes permission and cancels both legs. Retain the owner,
+            # consumed slots and retry budget for a same-session re-add.
+            if state.resting_active or state.webull_resting_active:
+                self._queue_resting_cancel(state, reason=reason)
+            released = state.cw_armed
+            if released:
+                logger.info("[V2-CW-DISARM] %s reason=%s", state.symbol, reason)
+            state.cw_armed = False
+            state.cw_arm_bar_ts = 0
+            state.atr_hold_pending = None
+            return released
         if self._flip_owned_first_entry_enabled and (
             state.flip_owner_phase != "idle" or state.fanout_segment_id
         ):
@@ -3297,6 +3314,8 @@ class SchwabV2Strategy:
         # touch). See docs/intrabar-hold-confirmation-design.md.
         state = self.watchlist_state(symbol)
         state.last_quote = quote
+        if not self.line_buy_ready(state.symbol):
+            return None
         if self._first_rest_quote_wait_valid(state):
             self._cw_v2_resting_track(state, None)
         if self._gap_hold_enabled and state.gap_hold_active:
@@ -3539,6 +3558,12 @@ class SchwabV2Strategy:
         state = self._symbol_states.get(symbol.upper())
         return bool(state is not None and state.gap_hold_active)
 
+    def line_buy_ready(self, symbol: str) -> bool:
+        if not getattr(self, "_line_restoration_enabled", False):
+            return True
+        reader = getattr(self, "_line_readiness", None)
+        return bool(reader is not None and reader(symbol.upper()))
+
     @staticmethod
     def _gap_hold_has_resting_order(state: SymbolState) -> bool:
         return bool(state.resting_active or state.webull_resting_active)
@@ -3575,6 +3600,8 @@ class SchwabV2Strategy:
         )
 
         state.gap_hold_active = True
+        if getattr(self, "_line_restoration_enabled", False):
+            state.line_restore_reset_after_ms = int(detected_at_ms)
         state.gap_hold_detected_at_ms = int(detected_at_ms)
         state.gap_hold_last_live_bar_ms = 0
         state.gap_hold_contiguous_bars = 0
@@ -3600,6 +3627,8 @@ class SchwabV2Strategy:
         previous = int(state.gap_hold_last_live_bar_ms or 0)
         gap_ms = int(bar.timestamp_ms) - previous if previous else 0
         if previous and gap_ms > self._gap_hold_detect_ms:
+            if getattr(self, "_line_restoration_enabled", False):
+                state.line_restore_reset_after_ms = int(bar.timestamp_ms) - 1
             self._reset_atr_indicator_state(
                 state, session_start_ts_ms(int(bar.timestamp_ms))
             )
@@ -3682,6 +3711,7 @@ class SchwabV2Strategy:
 
         self._finish_first_rest_quote_wait(state, action="gave_up", reason="session_reset")
         self._reset_atr_indicator_state(state, anchor)
+        state.line_restore_reset_after_ms = 0
         state.atr_fired_in_short_seg = False
         if self._atr_rearm_enabled:
             self._set_atr_guard(state, "UNCLAIMED")
@@ -4555,6 +4585,8 @@ class SchwabV2Strategy:
         return float(state.bars[-1].volume) > float(self._atr_vol_floor)
 
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
+        if not self.line_buy_ready(state.symbol):
+            return None
         """CW-v2 intrabar entry: enter the instant a quote price breaks the frozen trigger, gated
         by rule 7 (whole forming bar above the flip level), the 09:30-10:00 ORB skip, the flat gate,
         and the per-flip entry cap (`_cw_v2_max_entries_per_flip`: 1 when reclaim is off — the
@@ -4871,6 +4903,14 @@ class SchwabV2Strategy:
         self, symbol: str, *, leg: Literal["schwab", "webull"],
         price: float | Decimal | None, basis: str,
     ) -> tuple[Decimal, dict[str, str]] | None:
+        version = {}
+        if getattr(self, "_line_restoration_enabled", False):
+            if not self.line_buy_ready(symbol):
+                return None
+            reader = getattr(self, "_line_version_reader", None)
+            if reader is None:
+                return None
+            version = {"line_restore_version": reader(symbol.upper())}
         notional = Decimal(str(getattr(self, f"_entry_notional_{leg}", 0)))
         legacy = self._atr_qty if leg == "schwab" else self._webull_fanout_qty
         try:
@@ -4885,8 +4925,9 @@ class SchwabV2Strategy:
             )
             return None
         if notional == 0:
-            return Decimal(quantity), {}
+            return Decimal(quantity), version
         return Decimal(quantity), {
+            **version,
             "entry_notional_target_usd": str(notional),
             "entry_size_price_basis": basis,
             "entry_size_price": str(price_decimal) if price_decimal is not None else "",
@@ -4977,6 +5018,8 @@ class SchwabV2Strategy:
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
     def _queue_resting_place(self, state: SymbolState, line: float, *, slot: str = "first") -> None:
+        if not self.line_buy_ready(state.symbol):
+            return
         settings = getattr(self, "settings", None)
         primary_account = str(getattr(settings, "strategy_schwab_1m_v2_account_name", ""))
         webull_account = str(getattr(settings, "strategy_schwab_1m_v2_webull_account_name", ""))
@@ -5215,6 +5258,8 @@ class SchwabV2Strategy:
                 )
 
     def _reprice_resting(self, state: SymbolState, line: float) -> None:
+        if not self.line_buy_ready(state.symbol):
+            return
         if self._resting_round_up_enabled() and state.resting_active and state.resting_is_broker_order:
             trigger = self._resting_trigger_for_line(line)
             pairs = []
@@ -5554,6 +5599,8 @@ class SchwabV2Strategy:
                     state.resting_is_broker_order = False
             self._rpg_feedback_applied.add(feedback_key)
         reason = ""
+        if not self.line_buy_ready(state.symbol):
+            return {**result, "verdict": "wait", "reason": "session_line_unproven"}
         if not same_segment:
             reason = "segment_ended"
         elif not within_rth_entry_window(now, self.settings):
@@ -5708,6 +5755,8 @@ class SchwabV2Strategy:
         fails any of those remains silent. The line means "would have rested but for the slot",
         not "every short bar"."""
         self._first_rest_quote_wait_valid(state, atr_signal)
+        if not self.line_buy_ready(state.symbol):
+            return
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
             return
         if self.gap_hold_active(state.symbol):
@@ -5895,6 +5944,8 @@ class SchwabV2Strategy:
         return
 
     def _cw_v2_reclaim_resting_track(self, state: SymbolState) -> None:
+        if not self.line_buy_ready(state.symbol):
+            return
         """RESTED RECLAIM ENTRY — rest at `cw_segment_high` instead of chasing the break with a MARKET.
 
         ⭐⭐ WHY (execution only). The reactive path chases a price it already knew: the level is
@@ -6208,6 +6259,8 @@ class SchwabV2Strategy:
         flag-off is byte-identical (the RTH broker stop owns the cross there). The up-cross emits EXACTLY
         ONCE: it enters the silence-on-fill grace (`resting_flip_ms`) before returning, mirroring the RTH
         broker fill (once triggered, stop re-arming and wait for the position to confirm)."""
+        if not self.line_buy_ready(state.symbol):
+            return None
         if not (self._eh_resting_enabled and self._cw_v2_enabled):
             return None
         if self._entries_held:                        # boot-hold suppresses all entries
@@ -6580,6 +6633,8 @@ class SchwabV2Strategy:
         RTH resting order is live AND flat AND not already claimed this flip."""
         if not self._dual_broker_fanout_enabled:
             return
+        if not self.line_buy_ready(state.symbol):
+            return
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
             return
         if self._entries_held:                              # boot-hold suppresses all entries
@@ -6803,11 +6858,24 @@ class SchwabV2Strategy:
         state: SymbolState,
         *,
         is_new_bar: bool,
+        restored_signal: dict | None = None,
+        restored: bool = False,
     ) -> TradeIntentDraft | None:
         # Only re-evaluate when a NEW minute lands; bar revisions of the
         # same timestamp are a noop for signaling (the cross-detection
         # state would double-fire otherwise).
         if not is_new_bar:
+            return None
+
+        if getattr(self, "_line_restoration_enabled", False) and not restored:
+            # Only the ordered worker publishes ATR mathematics. The callback
+            # still advances normal bar/VWAP and GAPHOLD wait bookkeeping.
+            anchor = session_start_ts_ms(state.bars[-1].timestamp_ms)
+            if (0 < state.atr_session_anchor_ms < anchor
+                    and anchor == session_start_ts_ms(self._now_ms())):
+                self._apply_session_anchor_reset(state, anchor)
+            if self._gap_hold_enabled and state.gap_hold_active:
+                self._maybe_resume_gap_hold(state)
             return None
 
         # Track 1: update the ATR-Flip indicator state on EVERY new bar, BEFORE
@@ -6818,7 +6886,7 @@ class SchwabV2Strategy:
         # write-disjoint atr_* fields (no effect on Paths 1/2); the resulting
         # touch/flip signal is consumed in the emit region below, and only when
         # the enable flag is on. Returns the per-bar signal (or None).
-        atr_signal = self._update_atr_state(state, state.bars[-1])
+        atr_signal = restored_signal if restored else self._update_atr_state(state, state.bars[-1])
 
         if self._gap_hold_enabled and state.gap_hold_active:
             resumed = self._maybe_resume_gap_hold(state)

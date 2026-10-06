@@ -1,6 +1,102 @@
 # LINE=CHART restoration build checkpoint
 
-**NOT READY FOR REVIEW/PIN/INSTALL. No service integration or active flag.**
+**DRAFT CHECKPOINT ONLY. NOT READY FOR REVIEW/PIN/INSTALL.**
+
+## 2026-10-06 Frozen Integration Milestone
+
+Sole writer in the operator-released `line-chart-restoration-1006` checkout.
+The five earlier primitive commits were rebased without conflicts onto exact
+main `03b26293624f87e43eb167431fc308b1aec309b3`; merge-base verifies that
+identity. Main's service blob is `b5ff34f3`, which is a FILE identity, not the
+branch base. Installed #1093/#1094 are ancestors; OMS recovery/ownership files
+have zero diff against that main. Own worktree Codex commit marker is installed.
+No ROUNDUP/shared-handoff write, production action, push, merge or PR.
+
+Provider/service integration is implemented as an OFF draft. Catalog entry:
+`strategy_schwab_1m_v2_line_chart_restoration_enabled=false`. The bar poll uses
+a strict 04:00-anchored response with no cursor/250-bar truncation. It rejects
+foreign symbols/windows, malformed/duplicate candles, pagination/truncation,
+missing current closed candle and unknown/empty payloads. The manifest records
+IDs and a fingerprint computed from the provider response, not DB success/count.
+
+The source batch retains older/backfilled values even when C3 skips their
+normal callback. Rebuilds run in an independent event-driven task on frozen
+inputs, ordered per symbol and coalesced by revision. Publication checks the
+active ledger, fresh process/re-add epoch, session, revision, current bar,
+coverage fingerprint and GAPHOLD reset boundary. Math, corrected confirmation
+cache and readiness publish without an await. Initial/re-add/restart/revision
+repair never emits historical flips. Only an unchanged adjacent current live
+append can reach the ordinary signal readers. Recorded RETO remains long at
+11:18/11:21, line2.0639, without the false SELL/rest.
+
+First/resting/reprice/reclaim, quote/stream crosses, RPG replacement admission
+and direct/main/fanout order drains use readiness/version fences. Cancels and
+exits retain their delivery paths. Publication does not replay order state,
+ownership, consumed slots or retry budgets. Same-session removal retains these
+fields while revoking arms and cancelling both legs. Pending confirmation uses
+the corrected same snapshot; issued one-shot evaluations are not repeated.
+DB session-skip, boot hold, sparse-bar TR clamp and GAPHOLD reset/clean2xperiod
+wait are retained. Restoration does not implement the independent pause lane.
+
+### Fixed Replay Failure
+
+The parent's 107PASS/1FAIL working focus exposed the provider/service test
+feeding through11:27 but asserting11:21's2.0639. Full recorded11:27 produces
+2.22998328139567. The service test is now pinned explicitly through11:21 and
+still asserts2.0639. A separate11:27 control asserts2.2300. No candle value or
+recorded11:18/11:21 expectation was weakened.
+
+### Measured Focus And Refresh Policy
+
+127PASS focused:44 integration +12 primitive + existing flag/gap/sparse controls.
+Earlier broad service/boot/resting/EH/RPG/confirmation focus:237PASS.
+Scoped Ruff and diff-whitespace checks PASS. All tests explicitly use this
+checkout's `PYTHONPATH=src`. Recorded fixtures retain source/created_at;
+13 actual entry-line controls are committed with raw provenance and pass.
+
+Removed the second serial full-REST-fetch/sleep-per-symbol lane after parent
+review. Anchored history now REUSES the normal bar request, with at most four
+concurrent source fetches. The configured15s interval is a full-cycle cadence
+in the ON lane; bar requests are capped at90RPM, reserving30RPM. At16 symbols,
+configured source demand is64RPM before errors/slow responses, plus the
+existing default12RPM quote poll. Worker has no per-symbol cadence sleep and
+source-fetch slots are released before ordinary persistence callbacks wait.
+
+Controlled16-symbol test uses sixteen named copies of recorded RETO prices,
+10ms simulated source delay and blocked ordinary callbacks. All16 publish
+before those callbacks release: latest run0.176s, fetch concurrency<=4.
+Actual late-REST callback -> ordered worker -> publication test:0.008s after
+the final recorded missing RETO row. These are LOCAL CONTROLLED measurements,
+not real provider network, runtime DB, broker or historical chart coverage.
+
+### Outstanding Safety/Readiness Evidence
+
+Exact-head full unit pair is outstanding. First attempts omitted venv from
+PATH and were stopped; no PASS/delta is claimed from them. Restart the pair
+with PATH + PYTHONPATH identical on base03b and the clean checkpoint. Parent
+7823 control changed from56 failures without PATH to47 with PATH; neither is
+silently substituted for this branch's exact03b base.
+
+Live provider full-window delivery/omission behavior and shared REST quota
+composition remain UNMEASURED. Structurally valid full response is the adapter
+contract, not proof that the historical feed served every traded candle.
+No DB count, successful read or recent bar certifies missing interior history.
+The seven September first-rest decision-time/source-coverage controls remain
+UNMEASURED; retained retrospective prices do not supply their provider manifests.
+
+Real network and confirmation/intent delivery tail latency are UNMEASURED.
+With16 symbols, four concurrent requests and a10s socket timeout, the SOURCE
+budget model is four waves/40s; this is not a hard end-to-end wall-clock bound.
+Socket/read behavior, worker/post-publication delivery and other REST consumers
+require measured composition before activation. New bars revoke readiness;
+failed/stale source requests or worker results cannot authorize buys. No claim
+of instantaneous restoration or guaranteed live flip recovery is made.
+
+Parent review, full paired failure-node comparison, broader ON composition and
+live source/quota/latency evidence remain required. Default OFF draft is coherent
+for a local commit; it is not complete, review-ready, installable or push-approved.
+
+## Historical 2026-10-05 Primitive Checkpoint
 
 Branch codex/line-chart-restoration starts from main
 7e10baf0319da796b84934fe38994f6db4fcfc0b. Accepted independent assessment
