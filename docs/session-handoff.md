@@ -59,6 +59,8 @@
 
 | C17 | Evening preopen build/install follow-up active | Codex one-time20:05ET wake-up ACTIVE, not an installed box job. Bound to literal design commit8361b095; build/tests/box writes prohibited before20:00. Box recurring units only installed/listable tonight after tested release. Paper/date repin dependency still awaiting explicit owner disposition | 07:11 ET 10-06 automation tool returned ACTIVE id `oct-6-evening-preopen-timer-build-and-install`; expires tonight, timer-only activation, no early real gate or automatic identity adoption; no existing preopen unit changed | codex-2 | Tonight report actual unit hashes/list-timers NEXTWed06:20; first real run rehearsal and Claude06:22hand check retained. No production schedule/install claim during session;09:42guard follow-up unchanged |
 
+| C18 | Daily preopen date/paper disposition incorporated | Design amended: today's ET clock/report date; paper active/NRestarts=0/start >= today03:40 and >= active daily guard start; failed shape FAIL inside gate, no wrapper waiver. App SHA and all non-paper pins remain constants. Supersedes C16/C17 manual-repin dependency, no operator question | 07:16 ET 10-06 own docs edit of [plan and literal units](review-artifacts/preopen-daily/PLAN_2026-10-06.md), implementing reviewer T10/current block; no build, test, box edit or service action during session | codex-2 | Update existing20:05 wake-up to these bytes; after20:00 build/test controlled gate edit plus timer, report hashes and actual NEXTWed06:20. Wed06:20first real rehearsal, Claude06:22hand verification retained;09:42guard check unchanged |
+
 ### What to READ Tuesday 10-06 — claude-1, UNPROMPTED (scheduled in the claude-1 session, CronList)
 | Time ET | Read | Pass looks like |
 |---|---|---|

@@ -5997,3 +5997,20 @@ disposition still needed. Installation receipt will name actual systemd units
 and hashes, and read-only Wednesday first-run verification follows success.
 No frozen/promoted handoff edit is authorized by that later wake-up.09:42guard
 check unchanged. #1095 remains DRAFT, no review request while C8/C12 unresolved.
+
+## 2026-10-06 07:16 ET - Daily gate date/paper disposition resolved
+
+Reviewer T10/current block resolves the earlier manual paper/date re-pin
+dependency under mechanics authority, without another operator question.
+PLAN_2026-10-06.md now specifies today's ET clock and report date plus paper
+active/NRestarts0/start at or after today's03:40ET and the active daily guard's
+own start. Missing or malformed identity evidence and any failed shape is FAIL.
+This check belongs in preopen.sh, including the hand invocation, not a wrapper
+waiver; no observed PID becomes a new pin. Application SHA and every non-paper
+PID/start remain fixed install-closeout pins. Literal unit descriptions and
+mock test/backup/hash recipe updated accordingly. Build/test/install remains
+after20:00tonight only; no in-session box or source action. Existing20:05wake-up
+will be updated to this design; actual recurring box timer NEXTWed06:20 and
+hashes are installation evidence still owed, not claimed now. First real
+Wednesday run remains rehearsal with Claude's06:22check.09:42guard follow-up
+unchanged; #1095 blockers and Restoration priority unchanged.
