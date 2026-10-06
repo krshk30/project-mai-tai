@@ -59,3 +59,35 @@ def test_actual_receipts_create_the_install_records_append_only_source_journal(t
     assert rows[0]["sha256"] == attended.digest(b"private body")
     assert "private body" not in journal.read_text()
     assert journal.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("codes,sleeps,stops", [([2, 0], 1, False), ([2, 2, 2], 2, True), ([1], 0, True)])
+def test_real_reader_retains_stdout_stderr_and_rc_for_every_attempt(monkeypatch, tmp_path, codes, sleeps, stops):
+    effects = attended.Real(tmp_path, {}, tmp_path)
+    calls = []
+    pauses = []
+
+    def run(args, **kwargs):
+        index = len(calls)
+        calls.append(args)
+        assert kwargs["capture_output"] is True
+        return SimpleNamespace(returncode=codes[index], stdout=f"stdout-{index}".encode(),
+                               stderr=f"stderr-{index}".encode())
+
+    monkeypatch.setattr(attended.subprocess, "run", run)
+    monkeypatch.setattr(attended.time, "sleep", pauses.append)
+    if stops:
+        with pytest.raises(attended.Stop, match="blocker or exhausted UNKNOWN"):
+            effects.reader("strict_flat_readonly.py", "--service", "strategy")
+    else:
+        assert effects.reader("strict_flat_readonly.py", "--service", "strategy") == "stdout-1"
+    assert len(calls) == len(codes)
+    assert pauses == [60] * sleeps
+    for index, rc in enumerate(codes):
+        number = index * 3 + 1
+        command = json.loads((tmp_path / f"{number:03d}-command.json").read_text())
+        assert command["rc"] == rc
+        assert (tmp_path / f"{number + 1:03d}-stdout.txt").read_bytes() == f"stdout-{index}".encode()
+        assert (tmp_path / f"{number + 2:03d}-stderr.txt").read_bytes() == f"stderr-{index}".encode()
+    rows = [json.loads(line) for line in (tmp_path / "runner-journal.jsonl").read_text().splitlines()]
+    assert len(rows) == len(codes) * 3
