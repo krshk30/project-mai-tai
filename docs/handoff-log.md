@@ -6945,3 +6945,14 @@ runner, page proof and hashes. Current bounded DB read at 15:22:35 ET has APUS78
 and MOBX504 with bot activity, not operator-only. Fresh direct flat checks still
 required. CLEARWAIT's absent-row/unknown-submit edge is a real safety finding;
 the writer is building positive-proof handling, not weakening ownership.
+
+### 2026-10-06 15:31 ET - codex-2 C78 bracket source remains unmeasured
+
+Own two exact-child GET receipts at15:21 confirm replacement4.61 andfilled4.55,
+but expose venues ratherthan API/manualorigin. Tag present/uninterpreted;
+no inference of manual action or software action. Reference/fillbase PARKED
+perreviewer. WBPOWER3distinctcount accepted andlane released, but no retained
+availablepowerresponse proves safe fundsfield; worker verifying read-only.
+No productionwrite. KEEPREST sole-writer implementation transferred to existing
+worker after its WBPOWER assessment; parent remains holdings/production/handoff
+owner. No parallel edits on the KEEPREST checkout.
