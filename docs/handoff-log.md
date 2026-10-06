@@ -6997,3 +6997,17 @@ repeatable-read SQL; all-datecount103; rc2 with exact line
 staging/approval/service/source/env/ledger/token writes. Keep UNKNOWN/bound
 disposition rather than label ownership or individual tickets measured clear.
 Expanded population requires review; no live-state adoption or omitted phases.
+
+### 2026-10-06 15:49 ET - codex-2 C83/C84 exact heads and semantic proof
+
+1099 source-review ready atf4e2d4ed, pure8commit rebase onto4805, bothCIgreen.
+Own current50raw mutation log audit: each named assertion/FAILED test, no
+runtime/setup errors. Same-environment currentunitpair47failednames identical;
+do not call an earlier56baseline resolved. Two mark-ready GraphQL calls failed
+server-side; reread confirmsdrafttrue. No branch write or pin bypass to fix it.
+
+1102 e1cf2164 independently reproduced11semantic assertion kills with GREEN
+controls, no harness/runtime errors. Only harness/report changed over107252ac;
+the original __class__ closure retained so super calls are real. Exacthead
+hostedValidatex2 green, pin absent. This restores semantic evidence, not live
+counterfactual IPDN fill or combinedT43 source proof. No production action.

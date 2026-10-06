@@ -1,0 +1,110 @@
+{
+  "pr": "https://github.com/krshk30/project-mai-tai/pull/1099",
+  "branch": "codex/rpg-one-leg-rest-recovery",
+  "head": "f4e2d4ed100d361c1dfcd48ecc1231f42d2c932a",
+  "base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "worktree": "/Users/velkris/.codex/worktrees/rpg-one-leg-rest-recovery/project-mai-tai",
+  "status": "READY_FOR_INDEPENDENT_SOURCE_REVIEW_DRAFT_NOT_INSTALL_READY",
+  "verified_at_utc": "2026-10-06T19:44:53Z",
+  "rebase": {
+    "previous_head": "dcb88a159e2de0ac9cf1830eba4896f0f20517d0",
+    "previous_base": "c21d8274fcd1d3129d61207a33dd7b002a7c9e8c",
+    "conflicts": 0,
+    "range_diff_equal_commits": 8,
+    "raw": "/tmp/codex-t43-rebased-4805-range-diff-20261006.txt",
+    "source_or_fixture_edits": 0,
+    "publication": "draft_only_exact_remote_lease"
+  },
+  "focus": {
+    "passed": 1246,
+    "failed": 0,
+    "warnings": 454,
+    "seconds": 150.16,
+    "includes": "RPG/T43, ALL_ON, ROUNDUP, PMPRINT, control plane, abort acceptance, catalog, runtime registry and new main ORB display controls",
+    "all_on_limit": "Controlled completed-line and ownership inputs; not provider-history completeness attestation",
+    "raw": "/tmp/codex-t43-rebased-4805-focus-20261006.log",
+    "sha256": "39323661c0aefdba6668c9964ff6b1008ae072484c4a57337b09beed62ffbe84"
+  },
+  "mutations": {
+    "operators": 50,
+    "assertion_red": 50,
+    "survivors": 0,
+    "setup_import_compile_errors_in_current_logs": 0,
+    "raw_audit": "Each of the 50 current logs contains a pytest FAILED test and AssertionError; no __class__, RuntimeError, import, syntax, setup or internal pytest errors",
+    "excluded_obsolete_raw_files": ["abort_audit_not_required.log", "abort_token_not_bound.log"],
+    "excluded_limit": "Two obsolete files retained in the reused directory are not entries in the current 50-row JSON and do not count as current RED proof",
+    "current_raw_directory": "/tmp/codex-t43-rebased-4805-mutation-current-20261006",
+    "raw": "/tmp/codex-t43-rebased-4805-mutations-20261006.json",
+    "sha256": "b141ec83418e44981de086e304b42eed0cfc887688e9222ee502102917c072a1"
+  },
+  "unit_pair": {
+    "main": {
+      "head": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+      "passed": 6478,
+      "failed": 47,
+      "total": 6525,
+      "warnings": 454,
+      "seconds": 309.94,
+      "raw": "/tmp/codex-t43-rebased-4805-full-main-20261006.log",
+      "sha256": "7ce7f2d462ef04b1d2735b9c83017b5668a48f490c03ed45e4cfe7a25b76a646",
+      "failed_names": "/tmp/codex-t43-rebased-4805-main-failed-names-20261006.txt"
+    },
+    "head": {
+      "head": "f4e2d4ed100d361c1dfcd48ecc1231f42d2c932a",
+      "passed": 6622,
+      "failed": 47,
+      "total": 6669,
+      "warnings": 455,
+      "seconds": 343.90,
+      "raw": "/tmp/codex-t43-rebased-4805-full-head-20261006.log",
+      "sha256": "5304a234fcb378e09b17d4898a7576946ce9cb30767f97b6988add1bbaabf187",
+      "failed_names": "/tmp/codex-t43-rebased-4805-head-failed-names-20261006.txt"
+    },
+    "command": "env PATH=/Users/velkris/Projects/project-mai-tai/.venv/bin:$PATH PYTHONPATH=src:. PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider -q tests/unit --tb=short",
+    "sequential_same_environment": true,
+    "failed_names_equal": true,
+    "failed_name_count_each": 47,
+    "failed_name_diff_exit": 0,
+    "failed_name_sha256_each": "fe24b2de3074d47d6104576c5d4392a4ac85e0fda55b246755703dc903859c50",
+    "name_extraction_limit": "Only remove an interleaved /Users/... teardown-warning suffix during extraction; original raw output preserved",
+    "new_failure_names": 0
+  },
+  "source_integrity": {
+    "manifest": "/tmp/codex-t43-rebased-4805-source-manifest-20261006.txt",
+    "sha256": "43cd58ed1ee1d7dfd7e4de9c0cd3d74f0654284166827b99cc5a1cd8291ceb44",
+    "verified_unchanged_after_runs": true,
+    "ruff": "PASS",
+    "diff_check": "PASS",
+    "marker_isolation": "PASS: 77 literal consumers, 382 emitted markers, 979 logging formats",
+    "worktree_clean": true
+  },
+  "ci": {
+    "head": "f4e2d4ed100d361c1dfcd48ecc1231f42d2c932a",
+    "push": {"run": 37519873130, "status": "SUCCESS", "unit_passed": 6669, "golden_passed": 86, "golden_expected_xfail": 1, "raw": "/tmp/codex-t43-rebased-4805-ci-push-20261006.log", "sha256": "f1ee381b7bfbd9e70d223e602b2bf52428d973bddddfb01291794e78a341e009", "url": "https://github.com/krshk30/project-mai-tai/actions/runs/37519873130"},
+    "pull_request": {"run": 37519877085, "status": "SUCCESS", "unit_passed": 6669, "golden_passed": 86, "golden_expected_xfail": 1, "raw": "/tmp/codex-t43-rebased-4805-ci-pr-20261006.log", "sha256": "6a25f970b763732bef7eaab5297a2a2129fffc04d4c72acef7840c10d687be4a", "url": "https://github.com/krshk30/project-mai-tai/actions/runs/37519877085"},
+    "independent_pin": {"run": 37519873246, "status": "REFUSED_NO_COMMITTED_REVIEW_PIN", "ancestry_blocker_resolved": true}
+  },
+  "blockers": {
+    "B1": "RESOLVED_LOCAL_FOCUS_AND_RECORDED_PROOF",
+    "B2": "RESOLVED_50_CURRENT_ASSERTION_MUTATIONS",
+    "B3": "FRESH_VALIDATE_RESULTS_COMPLETE_INDEPENDENT_SOURCE_REVIEW_PIN_PENDING"
+  },
+  "install_admission": {
+    "status": "STOP_OPERATOR_REPORTED_EXPANDED_CENSUS_UNREVIEWED",
+    "operator_census_at_et": "2026-10-06 15:42",
+    "operator_reported_jobs": 102,
+    "coverage": "UNMEASURED for these new live rows; current proof is recorded fixtures and controlled tests, not a 102-ticket census attestation",
+    "operator_reported_unknowns": ["AIXI 4e16a30c held_unknown exact_old_order_unproven", "XHG b725a133 held_unknown exact_old_order_unproven"],
+    "operator_reported_new_placed": "OLOX 48499460 generated 15:40",
+    "policy": "Unknown old order remains owned. Placed newer generation remains owned. No purge, age/status release, or cross-generation proof reuse",
+    "old_proof_controls": "Readback can_replace requires terminal cancellation and explicit cumulative zero; exact successor proof checks recorded broker terminal status, account/client/order/broker/generation/slot/segment and no fills; tests and assertion mutations cover missing/foreign/unknown proof",
+    "helper_limit": "old_buy_proven_clear trusts the durable journal clearance produced by proof paths; it is not an independent broker attestation for arbitrary imported payloads"
+  },
+  "limits": [
+    "Actual live-cache causation UNMEASURED; recorded-job replay and equality counter-control reconstruct cache inputs",
+    "Real PostgreSQL lock interleaving UNMEASURED; SQLite commit-boundary race tests are not that measurement",
+    "Recorded live expired-report shape UNMEASURED; explicit-zero expiry controls are synthetic",
+    "No additional held-mirror/MIRRORHOLD scope",
+    "No production action, database write, broker submit, merge, deploy, restart, label or pin bypass"
+  ]
+}
