@@ -6270,3 +6270,38 @@ independent clamp-aware oracle for sparseR6, exact oracle for repairedseries,
 retain#620andcontiguoushold. No trading source, allowance, flag, runner or
 oracle edited to hide failure. R6 admission stopped pending that comparison
 disposition, B1-B5 remain,21:00targetnotmoved. T rows/Boards/readstable intact.
+
+### 2026-10-06 09:41 ET - Codex R6 spanning ruling checkpoint
+
+C31 supersedes C30's open comparison request without changing that historical
+row or any Claude row. #1097 draft now80c633c965bbf6294b7cac3994b3223ee7f1cbcb,
+rebased on a7fed34d. Source conflict at _reprice_resting resolved by keeping
+the completeness guard BEFORE ROUNDUP's unchanged-wire shortcut. Two catalog
+test conflicts keep both live ROUNDUP and default-OFF restoration. The dark
+restoration check adds one catalog row:149 including8numeric, not148.
+
+New R6 private reconstruction spans only immutable full-provider authorized
+pairs; positive tape inside a missing minute holds until candles arrive.
+No bulk tape payload read: at most480 EXISTS-result pairs, SQL5s/lock500ms,
+caller6s; math3s fails closed. Ten consecutive fresh live closes, not ten
+arrivals; first fresh streamer warm-up bar counts, duplicates do not shorten.
+PMI17:15 SHORT/trail5.8432 restored, held with zero buys due sparse live suffix.
+
+195 focusedPASS at rebased bytes, six targeted assertionmutationsRED/reverted.
+Own identical-input spanning math audit90symbol-days/19,175bars/0mismatch is
+NOT the real-service acceptance. Unchanged reviewer runner64b00b9d:123cases,
+0error,0incompletebuys; first48MATCH42MISMATCH33HELD,+10=83MATCH15MISMATCH25n/a.
+Measured availability diagnostic57/57mismatches equal the oracle on the exact
+supplied prefix, while57/57full-runner comparisons include unarrived candles.
+Do not edit/waive the reviewer runner or call this green.
+
+Inflation source population mapped27permanent re-adds, vs reviewer28;18full
+post-resume ten-bar windows,9UNMEASURED. Six>0.5% flagged for individual
+disposition:CLRO09-28/14:22:42=1.8710%;CMCT09-30/12:26:45and13:28:35=.7766%;
+SORA10-01/17:14:29=.7759%;ZNB10-02/14:13:54and14:59:01=.6525%. Complete
+per-bar states/trails/counterfactual implied rests in R6_INFLATION JSON/MD.
+No waiver or fabricated28th case. Full suites on exact maina7and head80 are
+RUNNING; pending B1-B5/exit/composition receipts not declared passed. Target
+21:00 tonight retained; no production writes, source merge, pin or activation.
+Noon/16:00 checkpoint automation updated to accepted SPANNING disposition;
+it no longer treats the resolved clamp comparison as a standing block.
