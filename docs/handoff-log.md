@@ -7127,3 +7127,11 @@ source, not a broker holding. Clarification requested before admitting it;
 no fabricated event or status-only waiver. Install1 not started; production
 unchanged. Install2 merges held until completion. MIRRORHOLD1 catalog-only
 expectedtrue change delegated to its solewriter under latest condition.
+
+### 2026-10-06 17:09 ET - codex-2 C93 MIRRORHOLD1 requested catalog delta
+
+Solewriter pushed63ae33d009fd6e29b862667e4142bf4e31b33a93 atopreviewede1cf2164,
+onlyexpected_flags.json expectedtrue and operatorruling. Parent verifiedstat.
+Catalogvalidation/ON-OFF checks pass; test_expected_flags_check.py:60 still
+expectsfalse, so catalogsuite55PASS/1FAIL, not greenCI. One-change-only request
+preserved; no source/rebase/production write. Exacthead sent for disposition.
