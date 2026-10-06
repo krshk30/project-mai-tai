@@ -5806,3 +5806,13 @@ Blocked-leg generation and quantities remain unchanged. This is a working-tree
 milestone on base 6b47c461, not a new reviewed head. Generic no-ticket startup
 restoration and the full-suite pair are still required before review readiness.
 No production touch.
+
+## 2026-10-06 06:29 ET - ROUNDUP1 mutation controls refreshed
+
+All nine existing in-memory mutation probes are RED against the clean403test
+control: nearest106fail, floor202fail, wrong-subdollar-tick1fail, raw-limit
+sizing2fail, pair-lift removal2fail, PM raw-trigger8fail, restored-price
+recalculation2fail, legacy-exit-reference1fail, unproven-restore-release8fail.
+Raw logs /tmp/roundup1-20261006-mutation-*.log; pytest rc1 for each. No on-disk
+source mutation. This verifies the existing ROUNDUP behavior only, not the
+in-progress generic no-ticket restoration or full-suite pair.
