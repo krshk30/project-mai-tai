@@ -27,7 +27,7 @@ Actual composed run **36/36 PASS**,2.45s. Composed plus ROUNDUP **456/456 PASS**
 5.31s. Ruff/diff-whitespace PASS. These supersede the prior34/36 composition
 failure below; source was not changed to satisfy the tests. CI on the new head
 was subsequently green on both runs. Fresh pin record `a024c810` covers the
-exact refreshed head; the stale record was retired. Merge completed at08:25ET
+exact refreshed head; the stale record was retired. Merge completed at08:26ET
 on October6 and the exact application/tree binding above was independently
 read from Git. This is a repository merge, not an installed application claim.
 
