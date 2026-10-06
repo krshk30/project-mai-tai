@@ -5707,3 +5707,23 @@ rc0, zero armed and no override. v2 stopped 20:51:09 ET, strategy stopped
 Fresh flat before OMS stop underway. Raw source: new standing job's
 attempt-1730-go/runner.log, mirrored /tmp/oct5-standing-run-client.log.
 Not COMPLETE; no migration/start claim yet, no recovery authorization.
+
+2026-10-05 20:58 ET codex-2 C96: attempt4 ran migration0022 and the exact
+three-service sequence once. OMS362892/start00:53:08Z, v2362945/start00:53:31Z,
+strategy363061/start00:53:53Z active/NRestarts0. Fourtruekeys on BOTH OMS/v2.
+Runner stopped20:54:02.956ET rc2 closeout-no-extra-restarts: bar proof UNKNOWN
+live_at_stop0 after20:00 cutoff, no actual missed-bar duration proven.
+Trap pageHTTP200, no recovery. Diagnostic census additionally refuses old
+ticket identity changed4be7cb2d: four local-no-wire recovered old envelopes
+now reference original open intents per approved runtime237-240, not waived.
+Read-only SQL20:55:45 zero new buys/open intents/fills; all14tokens remain.
+Read-only hash-verified checkout FLAGGATE145/147 UNKNOWN2 inactivepaper,
+numeric8/8; isolated catalogs not installed. Redis0->0,806948736->806871648B
+at00:56:15Z; fiveowners+marker/union5; observed ORBsets now VEEA, not a claim
+all sets unchanged. Strategy prefill12000:55:32.733Z; boot HELD, pending5.
+Preopen unchanged2ef22340; catalog/install-record/re-pin/COMPLETE not reached.
+Receipt cf74e2767046d58de1c1defbd75236ce036ca47f on plan branch; actualruntime
+490e098c / manifest53bc8873 / helper658ca1c0. Runner remote/local sha
+0c6f6f746e77659d476ad28f8e948598747ed5b0c53ab1a0b38e8add1eb9239d.
+STOP_DETAIL appended deployments-20261005.md, not COMPLETE. No rollback,
+extra restart, ledger/ticket edit or gate waiver; continuation needed.
