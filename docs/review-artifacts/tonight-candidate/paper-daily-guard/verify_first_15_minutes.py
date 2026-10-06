@@ -45,7 +45,7 @@ try:
     status, age, heartbeat = guard.LiveSignals(client, settings.redis_stream_prefix).heartbeat(now)
     assert status=='healthy' and age<=guard.HEARTBEAT_AGE_BOUND
     union = set().union(*owners.values())
-    assert heartbeat['payload']['details']['active_symbols']==len(union)
+    assert int(heartbeat['payload']['details']['active_symbols'])==len(union)
 finally:
     client.close()
 result = {'as_of_utc': now.isoformat(), 'verdict': 'PASS', 'observed_seconds': (times[-1]-times[0]).total_seconds(),
