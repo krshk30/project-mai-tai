@@ -51,6 +51,23 @@ mutations = {
         "response = self._budgeted_detail(account, detail, client_order_id, strict=True)",
         "return 200, self._today_order_detail_blocking(account, client_order_id)",
     ),
+    "quantity_alias_conflict_accepted": (
+        WebullBrokerAdapter, "_validated_list_execution",
+        "value is None or not value.is_finite() or value != qty", "False",
+    ),
+    "price_alias_conflict_accepted": (
+        WebullBrokerAdapter, "_validated_list_execution",
+        "value is None or not value.is_finite() or value != price", "False",
+    ),
+    "unknown_status_alias_accepted": (
+        WebullBrokerAdapter, "_validated_list_execution",
+        "any(value not in known for value in status_aliases)", "False",
+    ),
+    "list_not_found_swallowed": (
+        WebullBrokerAdapter, "_exit_fill_blocking",
+        'self._is_order_not_found(exc) and not getattr(self, "_list_primary_enabled", False)',
+        "self._is_order_not_found(exc)",
+    ),
 }
 name = sys.argv[1]
 owner, method, before, after = mutations[name]

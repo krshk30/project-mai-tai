@@ -497,7 +497,7 @@ class WebullBrokerAdapter:
             try:
                 _, body = self._ordinary_order_body(account, od, client_order_id, symbol=symbol, side="sell")
             except Exception as exc:  # noqa: BLE001
-                if self._is_order_not_found(exc):
+                if self._is_order_not_found(exc) and not getattr(self, "_list_primary_enabled", False):
                     continue                            # leg never existed -> not an error
                 raise
             if not isinstance(body, dict):
@@ -514,6 +514,8 @@ class WebullBrokerAdapter:
                 item, "filled_price", "filledPrice", "avg_fill_price", "avgFillPrice"
             )
             if qty is None or price is None or qty <= 0 or price <= 0:
+                if getattr(self, "_list_primary_enabled", False):
+                    unknown_child = True
                 continue
             broker_order_id = self._first_str(body, "order_id", "orderId") or self._first_str(
                 item, "order_id", "orderId"
@@ -936,15 +938,20 @@ class WebullBrokerAdapter:
                 if raw.get(key) is not None and str(raw[key]) != client_id:
                     return None
         status = str(item.get("status") or item.get("order_status") or item.get("orderStatus") or "").upper()
-        if len({self._map_status({"status": str(item[k]).upper()}) for k in
-                ("status", "order_status", "orderStatus") if item.get(k)}) > 1:
-            return None
         known = _FILLED_STATUSES | _PARTIAL_STATUSES | _CANCELLED_STATUSES | _REJECTED_STATUSES | _ACCEPTED_STATUSES
-        if status not in known:
+        status_aliases = [str(item[k]).upper() for k in
+                          ("status", "order_status", "orderStatus") if item.get(k)]
+        if (status not in known or any(value not in known for value in status_aliases)
+                or len({self._map_status({"status": value}) for value in status_aliases}) > 1):
             return None
         qty = self._decimal_or_none(item, "filled_qty", "filledQty", "filled_quantity", "filledQuantity")
         if qty is None or not qty.is_finite() or qty < 0:
             return None
+        for key in ("filled_qty", "filledQty", "filled_quantity", "filledQuantity"):
+            if item.get(key) is not None:
+                value = self._decimal_or_none({key: item[key]}, key)
+                if value is None or not value.is_finite() or value != qty:
+                    return None
         broker_id = self._first_str(body, "order_id", "orderId")
         if any(str(raw[k]) != broker_id for raw in (body, item) for k in
                ("order_id", "orderId") if raw.get(k)):
@@ -953,6 +960,14 @@ class WebullBrokerAdapter:
         filled_time = self._parse_broker_time(item.get("last_filled_time") or item.get("lastFilledTime"))
         if qty > 0 or status in _FILLED_STATUSES | _PARTIAL_STATUSES:
             if qty <= 0 or price is None or not price.is_finite() or price <= 0 or not broker_id or filled_time is None:
+                return None
+            for key in ("filled_price", "filledPrice", "avg_fill_price", "avgFillPrice", "avg_price"):
+                if item.get(key) is not None:
+                    value = self._decimal_or_none({key: item[key]}, key)
+                    if value is None or not value.is_finite() or value != price:
+                        return None
+            if any(self._parse_broker_time(item[key]) != filled_time for key in
+                   ("last_filled_time", "lastFilledTime") if item.get(key) is not None):
                 return None
         if status in _FILLED_STATUSES | _CANCELLED_STATUSES | _REJECTED_STATUSES and not broker_id:
             return None
