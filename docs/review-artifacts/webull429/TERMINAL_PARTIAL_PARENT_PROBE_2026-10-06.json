@@ -1,0 +1,11 @@
+{
+  "scope": "local existing synthetic adapter control through real OMS store functions; no production/broker calls",
+  "broker_status": "CANCELLED",
+  "report_event_type": "partially_filled",
+  "terminal_metadata": "CANCELLED",
+  "fill_quantity": "1",
+  "order_status": "partially_filled",
+  "intent_status": "partially_filled",
+  "open_order_count": 1,
+  "false_live_remainder_confirmed": true
+}
