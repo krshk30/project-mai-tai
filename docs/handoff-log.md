@@ -6817,3 +6817,19 @@ readonly #1099 draft review requires exact identity, same-phase/new-revision
 callback and terminal-proof/current-fill atomicity tests; filling between proof
 read and CAS must not release a buy. These are development controls, not a
 finding about an already frozen ready head or installed code.
+
+### 2026-10-06 14:09 ET - codex-2 C67 strict proof checkpoint, no ready head
+
+Parent independently verifies completed strict-focus log12FAIL/160PASS54.32s,
+sha3a155fab09d6d1e2a37a4a61b3e398b08f0a41d75ba519006040f250ee2b7f77.
+The12 failed cases include OLOX chain/same-phase receipt, first-slot/sibling
+ROUNDUP isolation, bounded replacement read, four AIXI/OLOX absent-leg replays
+and both all14 startup windows. Writer recovered exact c9/AIXI audits via
+bounded read-only reads, but their new integration is not yet rerun. Three
+validation groups remain: B1 coherent focused/census proof; B2 current-source
+assertion mutations and safety controls; B3 frozen full pair/failed names/new
+CI. Prior119PASS/35RED do not validate this newer source. No defensible ready
+ETA or new head is claimed. Writer resumed released work after checkpoint,
+sole branch owner; parent will not overwrite or weaken its tests. Live-cache
+causation and PostgreSQL concurrency remain UNMEASURED. Production untouched;
+no source merge or install is authorized by this checkpoint.
