@@ -41,6 +41,8 @@ MUTATIONS = {
     "pa1_copies_nearest": (OmsRiskService._evaluate_webull_mirror_deferred_resubmits,
         'if (getattr(self.settings, "strategy_schwab_1m_v2_resting_buy_round_up_enabled", False)',
         'if (False'),
+    "pm_reference_uses_trigger": (OmsRiskService._apply_v2_eh_resting_entry,
+        'md["reference_price"] = limit_s', 'md["reference_price"] = md["entry_price"]'),
 }
 
 
