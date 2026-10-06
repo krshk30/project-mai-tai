@@ -6911,3 +6911,13 @@ Three serialized2s exactGETs, readonlyboundedDB and lowpriorityboundedlogs;
 no broker order/token/service/env/Redis/ledger write or exitbuild. Preserved
 sanitizedrawfiles and Step0 in docs/review-artifacts/bracket-target-parity.
 MOBX-only powercount one dedupattempt is not globalfour; allsymbolcensusrequested.
+
+### 2026-10-06 15:08:52 ET - codex-2 C75 all-symbol buying-power count
+
+AllsymbolreadonlyretainedOMSscan completed15:08:19ET,31files117930344B,
+6.12seconds within128MiB/15s. Threeuniqueclientids todayMOBX1/OLOX2;
+zeroearlierretainedmatches. Sixunidentifiedtracebacklines remainunattributed,
+not a fourthorder; user'sfourglobal isUNMEASURED, not disproven. Parent source
+sweep finds no live buying-power reader; proposes onlyfreshaccountread/serial
+pendingreservation shape. No buildlane/sizingchange/releaseinclusion authorized.
+Rawscan preserved with sanitizedlines/hash besidebracketassessment.
