@@ -1,0 +1,9 @@
+{
+  "pr_number": 1095,
+  "range_base": "7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf",
+  "range_head": "6727fff57fa00cf2d8a7194097f3b2fd5fc024d7",
+  "reviewed_at": "2026-10-06T12:01:45Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "ROUNDUP1 rounding-only: card match (4-dp canonical buy price ceilinged to broker tick at Schwab bracket wire, Webull wire+sizing, PM compare+cap, RTH mirror cross, reprice, #1093 ticket auth, PA1 resubmit; one entry reference; restore reads recorded wire; legacy scan removed; shared helpers untouched). Focused 528 pass; my mutations 7/8 RED (survivor = dead re-tick branch); full suite head 48 failed/6313 passed vs main 7823a6fa 48/5893, failed names identical; CI validate x2 pass. Flag ON at deploy per catalog."
+}
