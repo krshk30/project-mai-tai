@@ -36,7 +36,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -115,7 +115,7 @@ from project_mai_tai.strategy_core.session_line_restore import (
     SessionLineSnapshot,
     build_session_line,
 )
-from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
+from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, local_rpg_abort_proof
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     FLIP_OWNER_ROW_SETTLE_MS,
     MAX_BAR_AGE_SECONDS_FOR_EMIT,
@@ -293,7 +293,7 @@ BOOT_RESTORE_WARMUP_TIMEOUT_SECONDS = (
 # returns no fresh candles); on overflow the oldest pending bar is
 # dropped.
 STREAMER_PENDING_BARS_MAX_PER_SYMBOL = 500
-INFLIGHT_INTENT_STATUSES_TERMINAL = ("filled", "rejected", "cancelled")
+INFLIGHT_INTENT_STATUSES_TERMINAL = ("filled", "rejected", "aborted", "cancelled")
 EASTERN_TZ = ZoneInfo("America/New_York")
 
 # --- Data-flow watchdog thresholds ---
@@ -1420,6 +1420,8 @@ class SchwabV2BotService:
                     "strategy_schwab_1m_v2_resting_buy_round_up_enabled", False)),
             )
             auth = self.strategy.rpg_handoff_authorization(str(token), job)
+            if job.get("pre_wire_authorization_nonce"):
+                auth["pre_wire_authorization_nonce"] = job["pre_wire_authorization_nonce"]
             if job["phase"] not in {"clear", "price_wait", "submitting"}:
                 continue
             updated = await asyncio.to_thread(journal.change, token, job["revision"], authorization=auth)
@@ -2419,11 +2421,14 @@ class SchwabV2BotService:
                             TradeIntent.strategy_id == strategy.id,
                             TradeIntent.broker_account_id == broker.id,
                             TradeIntent.intent_type == "open",
-                            TradeIntent.status.notin_(
-                                INFLIGHT_INTENT_STATUSES_TERMINAL
-                            ),
+                            or_(TradeIntent.status.notin_(INFLIGHT_INTENT_STATUSES_TERMINAL),
+                                TradeIntent.status == "aborted"),
                         )
                     ).all():
+                        if ti.status == "aborted":
+                            orders = session.scalars(select(BrokerOrder).where(BrokerOrder.intent_id == ti.id)).all()
+                            if orders and all(local_rpg_abort_proof(session, order) for order in orders):
+                                continue
                         symbol = str(ti.symbol or "").upper()
                         if symbol:
                             qty = int(ti.quantity or 0) or 1
@@ -2813,7 +2818,7 @@ class SchwabV2BotService:
                     ).all()
                 )
 
-        terminal_order_statuses = {"cancelled", "canceled", "rejected", "expired"}
+        terminal_order_statuses = {"cancelled", "canceled", "rejected", "aborted", "expired"}
         terminal_cutoff = datetime.now(UTC) - timedelta(
             milliseconds=FLIP_OWNER_ROW_SETTLE_MS
         )
@@ -2830,12 +2835,16 @@ class SchwabV2BotService:
             related_orders = orders_by_intent.get(intent.id, [])
             if any(order.id in filled_order_ids for order in related_orders):
                 return False
+            if intent_status == "aborted":
+                return bool(related_orders and _settled_before_cutoff(intent.updated_at)
+                            and all(_settled_before_cutoff(order.updated_at)
+                                    and local_rpg_abort_proof(session, order) for order in related_orders))
             if not related_orders:
                 return intent_status == "rejected" and _settled_before_cutoff(
                     intent.updated_at
                 )
             return bool(
-                intent_status in {"cancelled", "canceled", "rejected"}
+                intent_status in {"cancelled", "canceled", "rejected", "aborted"}
                 and _settled_before_cutoff(intent.updated_at)
                 and all(
                     str(order.status or "").strip().lower()

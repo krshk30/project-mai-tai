@@ -290,7 +290,7 @@ class OrderEventPayload(BaseModel):
     symbol: str
     side: Literal["buy", "sell"]
     intent_type: Literal["open", "scale", "close", "cancel"]
-    status: Literal["accepted", "rejected", "filled", "partially_filled", "cancelled"]
+    status: Literal["accepted", "rejected", "aborted", "filled", "partially_filled", "cancelled"]
     quantity: Decimal
     filled_quantity: Decimal = Decimal("0")
     fill_price: Decimal | None = None

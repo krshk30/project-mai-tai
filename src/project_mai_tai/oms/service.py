@@ -512,7 +512,7 @@ class _DriftCancelCandidate:
 
 # A trade intent is DONE at these statuses; anything else keeps it in the reconciler's
 # stuck-intent sweep. Mirrors `INFLIGHT_INTENT_STATUSES_TERMINAL` in schwab_1m_v2_bot.
-_TERMINAL_INTENT_STATUSES = ("filled", "rejected", "cancelled")
+_TERMINAL_INTENT_STATUSES = ("filled", "rejected", "aborted", "cancelled")
 
 # ⛔⭐ The states in which a cancel TARGET is provably no longer working at the broker.
 #
@@ -1656,7 +1656,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             )
 
             passed, risk_reason = self._evaluate_risk(event)
-            rpg_refusal = self._rpg_open_refusal(event, session=session)
+            rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
             if rpg_refusal:
                 passed, risk_reason = False, rpg_refusal
             outcome = "pass" if passed else "reject"
@@ -1671,6 +1671,11 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             )
 
             if not passed:
+                if rpg_refusal:
+                    order_event = self._rpg_abort_open(session, event, intent, rpg_refusal)
+                    session.commit()
+                    await self._publish_order_event(order_event)
+                    return [order_event]
                 self.store.mark_intent_refused(
                     intent,
                     origin="client_abort",
@@ -2338,11 +2343,11 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                     session.commit()
                     await self._publish_order_event(order_event)
                     return [order_event]
-            rpg_refusal = self._rpg_open_refusal(event, session=session)
+            rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
             if rpg_refusal:
-                self.store.mark_intent_refused(intent, origin="client_abort", code=rpg_refusal)
+                result = self._rpg_abort_open(session, event, intent, rpg_refusal)
                 session.commit()
-                return [self._build_rejected_event(event, intent.id, reason=rpg_refusal)]
+                return [result]
             if (event.payload.metadata.get("rpg_handoff_token") or event.payload.metadata.get("nfq_retry_token")
                     or self._is_webull_mirror_deferred_resubmit(event)):
                 # Both durable lanes must record the exact client id before wire.
@@ -2354,12 +2359,11 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                     time_in_force=request.time_in_force, status="pending",
                 )
                 session.commit()
-                rpg_refusal = self._rpg_open_refusal(event, session=session)
+                rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                 if rpg_refusal:
-                    pending_order.status = "rejected"
-                    self.store.mark_intent_refused(intent, origin="client_abort", code=rpg_refusal)
+                    result = self._rpg_abort_open(session, event, intent, rpg_refusal, order=pending_order)
                     session.commit()
-                    return [self._build_rejected_event(event, intent.id, reason=rpg_refusal)]
+                    return [result]
             deferred = self.__dict__.get("_webull_mirror_deferred_by_slot", {}).get(
                 request.metadata.get("fanout_slot_id"))
             if (deferred is not None and deferred.event.payload.broker_account_name == request.broker_account_name

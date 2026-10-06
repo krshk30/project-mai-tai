@@ -10,9 +10,9 @@ from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 import hashlib
 import json
-from uuid import UUID, uuid5, NAMESPACE_URL
+from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
@@ -160,7 +160,7 @@ class AtrRepriceRuntimeMixin:
                 except (KeyError, InvalidOperation):
                     candidates = []
                 live = [order for order in candidates if order.status not in
-                        {"cancelled", "canceled", "rejected", "expired"}]
+                        {"cancelled", "canceled", "rejected", "aborted", "expired"}]
                 candidates = live or candidates[:1]
             target = candidates[0] if candidates else None
             client_identity = self.settings.provider_for_account(event.payload.broker_account_name) == "webull"
@@ -365,6 +365,9 @@ class AtrRepriceRuntimeMixin:
 
     async def _rpg_reconcile_dispatch(self, token, job):
         """Read the claimed replacement identity; never replay an uncertain submit."""
+        accounted = self._rpg_journal().reconcile_feedback(token, job)
+        if accounted["phase"] != job["phase"]:
+            return accounted
         if (not job.get("replacement") or job.get("dispatch_reads", 0) >= MAX_READS
                 or self._rpg_now().timestamp() < job.get("dispatch_next_read_at", 0)):
             return job
@@ -565,6 +568,100 @@ class AtrRepriceRuntimeMixin:
                     and old["broker_account_name"] == event.payload.broker_account_name):
                 return "rpg_old_buy_still_owned"
         return None
+
+    async def _rpg_fresh_open_refusal(self, event, *, session):
+        refusal = self._rpg_open_refusal(event, session=session)
+        if refusal != "rpg_stale_strategy_authorization":
+            return refusal
+        # Release the serial writer's transaction before v2's separate DB
+        # connection acknowledges. The intent is durable, still never wired.
+        session.commit()
+        token = UUID(event.payload.metadata["rpg_handoff_token"])
+        journal = self._rpg_journal()
+        job = journal.read(token, session=session)
+        nonce = str(uuid4())
+        changed = await asyncio.to_thread(
+            journal.change, token, job["revision"], pre_wire_authorization_nonce=nonce,
+        )
+        if changed is None:
+            return refusal
+        # v2, not OMS, reevaluates the current bars, holds, slot and price. Never
+        # make an old decision fresh by changing its timestamp here.
+        async def acknowledged():
+            while True:
+                current = await asyncio.to_thread(journal.read, token)
+                if current.get("authorization", {}).get("pre_wire_authorization_nonce") == nonce:
+                    return
+                if current["phase"] != "submitting":
+                    return
+                await asyncio.sleep(READ_INTERVAL_SECONDS)
+        try:
+            await asyncio.wait_for(acknowledged(), timeout=READ_TIMEOUT_SECONDS)
+        except TimeoutError:
+            return "rpg_strategy_reauthorization_unreadable"
+        session.expire_all()
+        if (getattr(self.settings, "orb_live_schwab_orders_enabled", False)
+                and event.payload.broker_account_name == self.settings.strategy_schwab_1m_v2_account_name
+                and session.get_bind().dialect.name == "postgresql"):
+            session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {
+                "key": f"orb-v2:{event.payload.broker_account_name}:{event.payload.symbol.upper()}",
+            })
+        # Awaiting v2 released the original transaction and shared-account lock.
+        # Recheck admission on committed state, not just the refreshed ATR price.
+        if (getattr(self.settings, "orb_live_schwab_orders_enabled", False)
+                and event.payload.broker_account_name == self.settings.strategy_schwab_1m_v2_account_name):
+            account = session.scalar(select(BrokerAccount).where(
+                BrokerAccount.name == event.payload.broker_account_name))
+            if account is None:
+                return "rpg_account_unreadable"
+            collision = self._orb_schwab_collision_reason(
+                session=session, account_id=account.id, symbol=event.payload.symbol,
+                incoming_strategy=event.payload.strategy_code,
+            )
+            if collision:
+                return collision
+        passed, reason = self._evaluate_risk(event)
+        if not passed:
+            return reason or "risk_rejected"
+        return self._rpg_open_refusal(event, session=session)
+
+    def _rpg_abort_open(self, session, event, intent, reason, *, order=None):
+        if order is None:
+            existing = session.scalar(select(BrokerOrder).where(
+                BrokerOrder.client_order_id == self._build_client_order_id(event),
+            ))
+            if existing is not None:
+                raise ValueError("rpg_abort_cannot_relabel_existing_dispatch")
+        elif order.broker_order_id or order.status != "pending":
+            raise ValueError("rpg_abort_cannot_relabel_existing_dispatch")
+        self.store.mark_intent_refused(intent, origin="client_abort", code=reason)
+        intent.status = "aborted"
+        metadata = {**event.payload.metadata, "refusal_origin": "client_abort", "refusal_code": reason}
+        if order is None:
+            order = self.store.get_or_create_order(
+                session, intent=intent, strategy_id=intent.strategy_id,
+                broker_account_id=intent.broker_account_id,
+                client_order_id=self._build_client_order_id(event), symbol=event.payload.symbol,
+                side="buy", quantity=event.payload.quantity, metadata=metadata,
+                status="aborted", reject_reason=reason,
+            )
+        order.status = "aborted"
+        order.payload = {**dict(order.payload or {}), **metadata, "reject_reason": reason}
+        report = ExecutionReport(
+            "aborted", order.client_order_id, symbol=order.symbol, side="buy",
+            intent_type="open", quantity=order.quantity, reason=reason, origin="client", metadata=metadata,
+            reported_at=self._rpg_now(),
+        )
+        self.store.append_order_event(
+            session, order=order, report=report, payload={"metadata": metadata, "reason": reason},
+        )
+        self._nfq_observe_reports(session, event, [report])
+        result = self._build_rejected_event(event, intent.id, reason=reason)
+        result.payload.status, result.payload.order_db_id = "aborted", order.id
+        result.payload.metadata = metadata
+        self.logger.warning("[OMS-RPG1-ABORT] account=%s symbol=%s client_order_id=%s code=%s no_wire=1",
+                            event.payload.broker_account_name, order.symbol, order.client_order_id, reason)
+        return result
 
     def _rpg_canonical_prices(self, md, account):
         stop, limit = Decimal(md["stop_price"]), Decimal(md["limit_price"])

@@ -447,7 +447,7 @@ class RunnerStrategyRuntime:
         self._roll_day_if_needed()
         del level
         normalized = symbol.upper()
-        if status not in {"rejected", "cancelled"}:
+        if status not in {"rejected", "aborted", "cancelled"}:
             return
 
         if intent_type == "open" and normalized in self._pending_open_symbols:

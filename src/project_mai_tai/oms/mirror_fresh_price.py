@@ -18,6 +18,7 @@ from project_mai_tai.fanout_outcome_consumer import (
 from project_mai_tai.fanout_segment_store import (
     SNAPSHOT_TYPE as SEGMENT_SNAPSHOT, current_session_anchor,
 )
+from project_mai_tai.oms.atr_reprice_handoff import local_rpg_abort_proof
 from project_mai_tai.strategy_core.entry_gate import resolve_entry_window, within_entry_window
 
 
@@ -281,7 +282,7 @@ class MirrorFreshPriceMixin:
             self._nfq_retire(session, hold, "broker_pipeline_completed", gave_up=False)
         if reports:
             report = reports[-1]
-            if report.event_type in {"rejected", "cancelled", "expired"}:
+            if report.event_type in {"rejected", "aborted", "cancelled", "expired"}:
                 if slot in self.__dict__.get("_webull_mirror_deferred_by_slot", {}):
                     self._nfq_outcome(session, event, "held_no_fresh_quote", "nfq1_PRICE_AGGRESSIVE_wait")
                     self._nfq_log(event, "held", "PRICE_AGGRESSIVE", report=report)
@@ -330,9 +331,13 @@ class MirrorFreshPriceMixin:
             filled = session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1))
             if filled is not None or order.status in {"filled", "partially_filled"}:
                 return "slot_filled"
+            if order.status == "aborted":
+                if local_rpg_abort_proof(session, order) is None:
+                    return "dispatch_uncertain"
+                continue
             account = session.get(BrokerAccount, order.broker_account_id)
             if account is not None and account.name == event.payload.broker_account_name and order.status not in {
-                "rejected", "cancelled", "canceled", "expired", "filled",
+                "rejected", "aborted", "cancelled", "canceled", "expired", "filled",
             }:
                 if order.status == "pending" and (order.payload or {}).get("nfq_retry_token"):
                     return "dispatch_uncertain"

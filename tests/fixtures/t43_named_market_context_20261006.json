@@ -1,0 +1,13 @@
+{
+  "source": "read-only strategy_bar_history and market_capture_quotes pull 2026-10-06; capture is not proof of the OMS cache",
+  "OLOX": {
+    "bar_time": "2026-10-06T14:14:00+00:00",
+    "open": 1.372, "high": 1.375, "low": 1.35, "close": 1.36, "volume": 125824, "trail": 1.456585,
+    "quote_time": "2026-10-06T14:15:06.134568+00:00", "bid": 1.36, "ask": 1.37
+  },
+  "AIXI": {
+    "bar_time": "2026-10-06T13:44:00+00:00",
+    "open": 2.555, "high": 2.6099, "low": 2.50, "close": 2.51, "volume": 196656, "trail": 2.944435,
+    "quote_time": "2026-10-06T13:45:06.390311+00:00", "bid": 2.50, "ask": 2.53
+  }
+}
