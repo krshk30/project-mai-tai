@@ -103,7 +103,9 @@ Same interpreter, virtualenv first on PATH, each checkout's PYTHONPATH=src:
 | Final default-OFF working checkpoint | 47 | 6384 | 258.23 s | bea9a56429580aafeaa4535fd4ea12fb7e8b75b4966d8e985aba4cd19bdd5d2a |
 
 Raw `/tmp/roundup1-main-7823-unit-20261006-path.log` and
-`/tmp/roundup1-head-final-unit-20261006-path.log`. Failed node sets are identical,
+`/tmp/roundup1-head-final-unit-20261006-path.log`; byte-identical copies retained
+as [main raw output](MAIN_7823_UNIT_20261006_PATH.txt) and
+[head raw output](HEAD_UNIT_20261006_PATH.txt). Failed node sets are identical,
 zero additions/removals. One head summary line has interleaved stderr appended
 after its parameter closing bracket; comparison strips that absolute-path
 warning suffix, not the test identity. The 47 are 44 fanout-installer tests,
