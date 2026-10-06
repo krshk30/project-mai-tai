@@ -5033,7 +5033,10 @@ class SchwabV2Strategy:
         minutes = et.hour * 60 + et.minute
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
-    def _queue_resting_place(self, state: SymbolState, line: float, *, slot: str = "first") -> None:
+    def _queue_resting_place(
+        self, state: SymbolState, line: float, *, slot: str = "first",
+        recover_accounts: set[str] | None = None,
+    ) -> None:
         if not self.line_buy_ready(state.symbol):
             return
         settings = getattr(self, "settings", None)
@@ -5041,6 +5044,9 @@ class SchwabV2Strategy:
         webull_account = str(getattr(settings, "strategy_schwab_1m_v2_webull_account_name", ""))
         primary_blocked = self._rpg_entry_owned(state, account=primary_account)
         webull_blocked = self._rpg_entry_owned(state, account=webull_account)
+        if recover_accounts is not None:
+            primary_blocked |= primary_account not in recover_accounts
+            webull_blocked |= webull_account not in recover_accounts
         for job in getattr(self, "_rpg_handoffs", {}).values():
             if job["old"]["symbol"] != state.symbol or job["phase"] != "placed" or job.get("replacement_filled"):
                 continue
@@ -5100,8 +5106,9 @@ class SchwabV2Strategy:
         state.resting_frozen_floor_bar_ms = 0
         state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel
         state.last_resting_placed_slot = slot
-        state.resting_level = line
-        state.resting_trigger = trigger
+        if recover_accounts is None:
+            state.resting_level = line
+            state.resting_trigger = trigger
         if not primary_blocked:
             state.resting_schwab_wire_stop = trigger if self._resting_round_up_enabled() else 0.0
             state.resting_wire_cap = limit if self._resting_round_up_enabled() else 0.0
@@ -5517,6 +5524,33 @@ class SchwabV2Strategy:
     def _rpg_leg_owned(self, state: SymbolState, account: str) -> bool:
         return self._rpg_entry_owned(state, account=account)
 
+    def _rpg_refused_legs(self, state: SymbolState, *, slot: str) -> set[str]:
+        settings = self.settings
+        accounts = {
+            settings.strategy_schwab_1m_v2_account_name: ("schwab", state.resting_schwab_quantity),
+            settings.strategy_schwab_1m_v2_webull_account_name: ("webull", state.resting_webull_quantity),
+        }
+        result = set()
+        for job in getattr(self, "_rpg_handoffs", {}).values():
+            old = job["old"]
+            account = old.get("broker_account_name")
+            if account not in accounts:
+                continue
+            leg, quantity = accounts[account]
+            generation = getattr(state, f"resting_{leg}_generation")
+            replacement_generation = job.get("replacement", {}).get("metadata", {}).get("rpg_resting_generation")
+            if (old["symbol"] == state.symbol and job["phase"] == "refused"
+                    and job.get("reason") == "replacement_refused"
+                    and job["slot"] == slot and job["segment_id"] == state.fanout_segment_id
+                    and state.bars and state.bars[-1].timestamp_ms + 60000 > job.get("completed_at", float("inf")) * 1000
+                    and old_buy_proven_clear(job) and not job.get("replacement_filled")
+                    and quantity == 0 and generation and generation in {
+                        old.get("metadata", {}).get("rpg_resting_generation"), replacement_generation,
+                    }
+                    and not self._rpg_entry_owned(state, account=account)):
+                result.add(account)
+        return result
+
     def _rpg_entry_owned(self, state: SymbolState, *, account: str | None = None) -> bool:
         jobs = getattr(self, "_rpg_handoffs", {})
         if account is not None and not any(job["old"]["symbol"] == state.symbol
@@ -5882,7 +5916,10 @@ class SchwabV2Strategy:
             if evidence != "fresh_quote" or ask is None or not math.isfinite(ask) or ask <= 0:
                 return
         if st == "short" and trail > 0.0:
-            if not state.resting_active:
+            recover_accounts = self._rpg_refused_legs(state, slot="first") if state.resting_active else None
+            if recover_accounts and not self._liquidity_floor_ok(state):
+                recover_accounts = set()  # The standing leg still receives its normal thin-bar count.
+            if not state.resting_active or recover_accounts:
                 # LIQUIDITY FLOOR (2026-07-28). ⛔ Gates the initial ARM only, never a reprice or a
                 # cancel: an order already working must keep being managed even if the tape thins,
                 # or we recreate the #580 orphan (a live buy-stop nobody reprices). Live CNET was
@@ -5944,7 +5981,10 @@ class SchwabV2Strategy:
                         state.cw_resting_suppressed_bars,
                     )
                     return
-                self._queue_resting_place(state, trail)
+                if recover_accounts:
+                    self._queue_resting_place(state, trail, recover_accounts=recover_accounts)
+                else:
+                    self._queue_resting_place(state, trail)
                 if state.resting_active:
                     self._finish_first_rest_quote_wait(
                         state, action="queued", reason="price_revalidated"
