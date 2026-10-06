@@ -43,6 +43,7 @@ def _ledger(symbol="RETO", epoch=1):
         "schwab_rest_full_session", ledger.anchor_ms, ledger.current_bar_ms + 60_000,
         tuple(bar.timestamp_ms for _, bar in pairs), True,
         history_fingerprint(bar for _, bar in pairs),
+        prefix_complete=True,  # Controlled admission proof, not historical silence.
     ))
     return ledger
 
@@ -62,6 +63,7 @@ def test_recorded_reto_late_111019_bars_are_required_before_admission():
         "schwab_rest_full_session", ledger.anchor_ms, ledger.current_bar_ms + 60_000,
         tuple(bar.timestamp_ms for _, bar in pairs), True,
         history_fingerprint(bar for _, bar in pairs),
+        prefix_complete=True,
     ))
     assert ledger.prepare() is None
     assert ledger.incomplete_reason == "history_missing_or_conflicting"
@@ -89,6 +91,7 @@ def test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill():
         "schwab_rest_full_session", ledger.anchor_ms, ledger.current_bar_ms + 60_000,
         tuple(bar.timestamp_ms for _, bar in pairs), True,
         history_fingerprint(bar for _, bar in pairs),
+        prefix_complete=True,
     ))
     assert ledger.prepare() is None
     assert ledger.incomplete_reason == "history_missing_or_conflicting"
@@ -96,7 +99,9 @@ def test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill():
                for row, bar in pairs if bar in late)
     for bar in late:
         ledger.observe(bar)
-    assert ledger.prepare() is not None
+    # Repairing the re-add hole does not prove the three earlier sparse gaps.
+    assert ledger.prepare() is None
+    assert ledger.incomplete_reason == "interior_gap_unproven"
 
 
 @pytest.mark.parametrize("source,complete,start_shift,end_shift", [
@@ -121,9 +126,9 @@ def test_recorded_reto_session_history_is_not_truncated_to_250_bars():
 
 
 def test_readd_epoch_refuses_an_earlier_episode_worker_result():
-    old = _ledger("JAGX", epoch=1)
+    old = _ledger("RETO", epoch=1)
     result = asyncio.run(old.rebuild(lambda request: {"bars": len(request.bars)}))
-    new = _ledger("JAGX", epoch=2)
+    new = _ledger("RETO", epoch=2)
     assert new.admit(result) is None
     assert new.incomplete_reason == "stale_rebuild"
 
@@ -164,7 +169,8 @@ def test_recorded_ids_without_matching_source_values_cannot_admit_a_line():
     proof = ledger._coverage
     other = _ledger("JAGX")
     ledger.attest(SessionCoverage(proof.source, proof.start_ms, proof.end_ms,
-                                  proof.closed_ids, True, other._coverage.bars_sha256))
+                                  proof.closed_ids, True, other._coverage.bars_sha256,
+                                  prefix_complete=True))
     assert ledger.prepare() is None
     assert ledger.incomplete_reason == "source_values_unproven"
 
