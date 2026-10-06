@@ -31,7 +31,8 @@ def test_the_service_actually_CALLS_the_resolver() -> None:
 
 def test_the_terminal_set_is_pinned() -> None:
     """Pin the VALUES. A status quietly dropped from this set silently re-opens the leak."""
-    assert set(svc._TERMINAL_INTENT_STATUSES) == {"filled", "rejected", "cancelled"}
+    # T43 records a proven pre-wire client refusal separately from a venue reject.
+    assert set(svc._TERMINAL_INTENT_STATUSES) == {"filled", "rejected", "cancelled", "aborted"}
 
 
 def test_pending_cancel_is_NOT_terminal_which_is_why_it_leaked() -> None:

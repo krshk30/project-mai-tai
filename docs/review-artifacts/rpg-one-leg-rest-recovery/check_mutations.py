@@ -88,6 +88,32 @@ MUTATIONS = {
         'if False:',
         TEST + "::test_t43_unreadable_reauthorization_is_audited_client_abort_never_venue_reject",
     ),
+    "ordinary_abort_no_wire_marker_ignored": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "local_rpg_abort_proof",
+        'or md.get("rpg_local_abort_no_wire") != "true"', "",
+        TEST + "::test_t43_ordinary_open_local_abort_is_terminal_only_for_its_new_audited_intent[False]",
+    ),
+    "ordinary_abort_event_id_missing": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "local_rpg_abort_proof",
+        'or not md.get("rpg_abort_event_id")', "",
+        TEST + "::test_t43_ordinary_open_local_abort_is_terminal_only_for_its_new_audited_intent[no_event_id]",
+    ),
+    "broker_refusal_crash_not_repairable": (
+        "project_mai_tai.oms.atr_reprice_handoff", "HandoffJournal", "reconcile_feedback",
+        'elif order.status == "rejected" and (proof := broker_rpg_rejection_proof(session, order, job)):',
+        'elif False:',
+        TEST + "::test_t43_committed_broker_rejection_repairs_only_absent_leg_after_crash[complete-schwab]",
+    ),
+    "broker_audit_origin_not_required": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "broker_rpg_rejection_proof",
+        'BrokerOrderEvent.event_source == "broker",', "",
+        TEST + "::test_t43_committed_broker_rejection_repairs_only_absent_leg_after_crash[audit_source-schwab]",
+    ),
+    "broker_refusal_generation_not_bound": (
+        "project_mai_tai.oms.atr_reprice_handoff", None, "broker_rpg_rejection_proof",
+        'or any(not md.get(key)', 'or False and any(not md.get(key)',
+        TEST + "::test_t43_committed_broker_rejection_repairs_only_absent_leg_after_crash[foreign_generation-schwab]",
+    ),
 }
 
 

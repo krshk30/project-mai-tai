@@ -31,6 +31,13 @@ The same read-only proof is used by v2's in-flight-position and unknown-owner
 readers and by NFQ retirement. An unproven aborted row remains blocking; it is
 not treated as a flat or cleared broker order. Companion pending-latch readers
 understand the new local terminal status. Broker cancel-proof rules are unchanged.
+An ordinary OPEN refused because an old ticket still owns the buy can also be
+audited aborted: exact event id, affirmative no-wire marker and matching client
+audit terminalize only that NEW intent. They never clear the separately owned
+old ticket. Missing event id or non-affirmative marker remains in-flight/blocked.
+Interrupted broker-rejection completion is separately repairable only with a
+positive broker audit, exact replacement identity and intent, no fill and old
+order proven clear. Cancel/expiry or status-only evidence cannot retry a leg.
 
 ## Recorded acceptance and disclosed controls
 
@@ -39,6 +46,7 @@ understand the new local terminal status. Broker cancel-proof rules are unchange
 | OLOX Schwab10:15 ->10:16 | Ticket c9b13cc4; auth age0.822015 at submit,1.085075 at completion; trail1.456585, bar14:14Z, capture bid1.36/ask1.37 | Named timing replay obtains a new nonce and retains identity; ordinary later-bar replay emits primary only. Later acceptance is simulated, not proof of a fill or profit. |
 | AIXI Webull09:45 -> next bar | Ticket a5b034cb; auth age0.913296 at submit,1.340543 at completion; trail2.944435, bar13:44Z, capture bid2.50/ask2.53 | Named timing replay obtains a new nonce with unchanged identity; later-bar replay emits mirror only. Capture ask2.53 is outside the unchanged Webull distance rule versus stop2.9592, so live placement/acceptance is NOT claimed. |
 | Interrupted committed client abort | Existing real runtime submit path, controlled interruption after its durable abort audit | Exact audited no-wire replacement releases; missing audit, wrong audit source/token, broker id or unknown origin stays blocked. |
+| Interrupted broker rejection | Real OMS submit/report path, simulated venue refusal, controlled interrupted coordinator completion | Positive bound broker audit supplies completion time; next bar emits failed leg once, sibling unchanged. No audit, client audit, foreign generation, Fill, cancel or expiry emits no repair. |
 | Concurrent ORB admission during nonce wait | Explicit controlled competing accepted ORB order, same account/symbol | v2 aborts, no second broker open; the ORB order remains accepted and unchanged. |
 | All-on / flip owner | Eight candidate switches true plus controlled restored owner/position evidence | Either absent account may be repaired once; sibling remains unchanged, no bypass of first-slot ownership. |
 
@@ -56,17 +64,23 @@ capture quotes do not attest what was in the OMS decision cache.
 
 ## Verification
 
-As of 2026-10-06 11:35 ET, target review-ready:2026-10-06 15:00 ET. Not ready until
+As of 2026-10-06 11:45 ET, target review-ready:2026-10-06 15:00 ET. Not ready until
 final suite and CI receipts. Early focused runtime/composition:272 PASS;
 expanded PM/NFQ/fanout set545 PASS before the last abort-reader proof refinement.
-Final new tests26 PASS, including named races, both legs, all-on/flip owner,
-positive exact abort recovery and negative reader cases. The final frozen full
-unit suite and15-mutation run are running; no final suite PASS claimed yet.
-The preceding pre-reader14-mutation run was assertion-RED; refreshed targets cover:
+New tests43 PASS in28.62s, including named races, both legs, all-on/flip owner,
+positive exact abort recovery, ordinary-abort negative proofs and14 broker-crash
+controls. The preceding frozen full run (before broker-crash follow-up) had
+47 FAIL/6444 PASS, identical failed names to main; focused953 PASS. The final
+post-follow-up full and focused suites and20-mutation run are running; these
+earlier receipts are NOT claimed as the final head's full suite.
+The preceding16-mutation run had15 assertion-RED; removing the order-origin
+check alone survived because the linked intent and matching audit independently
+enforce it (not counted RED). Refreshed targets cover:
 missing-leg branch, sibling scope, generation, refresh request, age guard,
 canonical price, order/intent abort classification, post-wait ORB collision,
 abort crash recovery, client audit source, generation, broker id, origin and
-in-flight reader. Initial
+in-flight reader, affirmative ordinary no-wire/event id and broker-crash audit
+classification/identity. Initial
 mutation target/None-audit errors were NOT counted RED; corrected targets require
 AssertionError, not an import/compile exception.
 
@@ -76,6 +90,11 @@ with the final T43 run, not with an assumed 56-failure historical baseline.
 Linux CI remains authoritative for its own environment; both Validate runs must
 be green before ready. PostgreSQL advisory-lock operation is UNEXERCISED locally
 (SQLite race simulation only); no live broker dispatch or live latency claim.
+Initial draft053a7179 CI failed only the old terminal-intent set assertion,
+which expected three statuses; follow-up pins the four-status set including
+audited aborted. No failing assertion is dropped. Independent read-only audit
+reproduced the broker-crash omission before this fix and found no remaining
+material safety finding in the final source review. It is not a review pin.
 
 ## Own raw paths
 

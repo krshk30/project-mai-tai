@@ -39,22 +39,6 @@ def old_buy_proven_clear(job: dict) -> bool:
 def local_rpg_abort_proof(session, order: BrokerOrder, *, job: dict | None = None):
     """Read-only exact no-wire evidence, shared by dispatch and position readers."""
     md = order.payload or {}
-    try:
-        token = UUID(md.get("rpg_handoff_token", ""))
-    except (ValueError, TypeError, AttributeError):
-        return None
-    if job is None:
-        row = session.get(DashboardSnapshot, token)
-        if row is None or row.snapshot_type != SNAPSHOT_TYPE:
-            return None
-        job = row.payload
-    replacement = job.get("replacement", {})
-    try:
-        quantity = Decimal(replacement.get("quantity", "0"))
-        if not quantity.is_finite() or quantity <= 0:
-            return None
-    except (InvalidOperation, TypeError, ValueError):
-        return None
     account = session.get(BrokerAccount, order.broker_account_id)
     strategy = session.get(Strategy, order.strategy_id)
     intent = session.get(TradeIntent, order.intent_id)
@@ -66,20 +50,89 @@ def local_rpg_abort_proof(session, order: BrokerOrder, *, job: dict | None = Non
     filled = session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1))
     code = md.get("refusal_code")
     if (order.status != "aborted" or order.broker_order_id or filled is not None
-            or not old_buy_proven_clear(job)
-            or account is None or account.name != replacement.get("broker_account_name")
-            or strategy is None or strategy.code != replacement.get("strategy_code")
-            or order.symbol != replacement.get("symbol") or order.side != "buy"
-            or order.quantity != quantity
-            or order.client_order_id != replacement.get("client_order_id")
+            or account is None or strategy is None or strategy.code != "schwab_1m_v2"
+            or order.side != "buy"
             or md.get("refusal_origin") != "client_abort" or not code
-            or md.get("rpg_handoff_token") != replacement.get("metadata", {}).get("rpg_handoff_token")
-            or any(md.get(key) != replacement.get("metadata", {}).get(key) for key in
-                   ("rpg_resting_generation", "fanout_segment_id", "cw_entry_slot"))
             or intent is None or intent.status != "aborted"
+            or intent.strategy_id != order.strategy_id or intent.broker_account_id != order.broker_account_id
+            or intent.symbol != order.symbol or intent.quantity != order.quantity
+            or intent.side != "buy" or intent.intent_type != "open"
             or (intent.payload or {}).get("refusal_origin") != "client_abort"
             or (intent.payload or {}).get("refusal_code") != code
-            or audit is None or (audit.payload or {}).get("reason") != code):
+            or md.get("rpg_local_abort_no_wire") != "true"
+            or not md.get("rpg_abort_event_id")
+            or md.get("rpg_abort_event_id") != (intent.payload or {}).get("event_id")
+            or audit is None or (audit.payload or {}).get("reason") != code
+            or any((audit.payload or {}).get("metadata", {}).get(key) != md.get(key) for key in
+                   ("rpg_local_abort_no_wire", "rpg_abort_event_id", "refusal_origin", "refusal_code"))):
+        return None
+    if not md.get("rpg_handoff_token"):
+        # This NEW ordinary intent was refused before wire. It proves nothing
+        # about the separately owned old order, whose ticket still blocks it.
+        if code != "rpg_old_buy_still_owned" or job is not None:
+            return None
+    else:
+        try:
+            token = UUID(md["rpg_handoff_token"])
+            if job is None:
+                row = session.get(DashboardSnapshot, token)
+                if row is None or row.snapshot_type != SNAPSHOT_TYPE:
+                    return None
+                job = row.payload
+            replacement = job.get("replacement", {})
+            quantity = Decimal(replacement.get("quantity", "0"))
+            if not quantity.is_finite() or quantity <= 0:
+                return None
+        except (ValueError, TypeError, InvalidOperation, AttributeError):
+            return None
+        if (not old_buy_proven_clear(job)
+                or account.name != replacement.get("broker_account_name")
+                or strategy.code != replacement.get("strategy_code")
+                or order.symbol != replacement.get("symbol") or order.quantity != quantity
+                or order.client_order_id != replacement.get("client_order_id")
+                or md.get("rpg_handoff_token") != replacement.get("metadata", {}).get("rpg_handoff_token")
+                or any(md.get(key) != replacement.get("metadata", {}).get(key) for key in
+                       ("rpg_resting_generation", "fanout_segment_id", "cw_entry_slot"))):
+            return None
+    at = audit.event_at.replace(tzinfo=UTC) if audit.event_at.tzinfo is None else audit.event_at
+    return code, at.timestamp()
+
+
+def broker_rpg_rejection_proof(session, order: BrokerOrder, job: dict):
+    """A persisted venue refusal, not a cancel/expiry or status-only assertion."""
+    md = order.payload or {}
+    replacement = job.get("replacement", {})
+    account = session.get(BrokerAccount, order.broker_account_id)
+    strategy = session.get(Strategy, order.strategy_id)
+    intent = session.get(TradeIntent, order.intent_id)
+    audit = session.scalar(select(BrokerOrderEvent).where(
+        BrokerOrderEvent.order_id == order.id,
+        BrokerOrderEvent.event_type == "rejected",
+        BrokerOrderEvent.event_source == "broker",
+    ).order_by(BrokerOrderEvent.event_at.desc()).limit(1))
+    try:
+        quantity = Decimal(replacement.get("quantity", "0"))
+        if not quantity.is_finite() or quantity <= 0:
+            return None
+    except (TypeError, ValueError, InvalidOperation):
+        return None
+    code = (intent.payload or {}).get("refusal_code") if intent is not None else None
+    if (order.status != "rejected" or not old_buy_proven_clear(job)
+            or session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1)) is not None
+            or account is None or account.name != replacement.get("broker_account_name")
+            or strategy is None or strategy.code != "schwab_1m_v2"
+            or strategy.code != replacement.get("strategy_code")
+            or order.symbol != replacement.get("symbol") or order.quantity != quantity
+            or order.side != "buy" or order.client_order_id != replacement.get("client_order_id")
+            or intent is None or intent.status != "rejected" or intent.intent_type != "open"
+            or intent.strategy_id != order.strategy_id or intent.broker_account_id != order.broker_account_id
+            or intent.symbol != order.symbol or intent.side != "buy" or intent.quantity != order.quantity
+            or (intent.payload or {}).get("refusal_origin") != "broker_reject" or not code
+            or md.get("reject_reason") != code
+            or any(not md.get(key) or md.get(key) != replacement.get("metadata", {}).get(key) for key in
+                   ("rpg_handoff_token", "rpg_resting_generation", "fanout_segment_id", "cw_entry_slot"))
+            or audit is None or (audit.payload or {}).get("client_order_id") != order.client_order_id
+            or (audit.payload or {}).get("reason") != code):
         return None
     at = audit.event_at.replace(tzinfo=UTC) if audit.event_at.tzinfo is None else audit.event_at
     return code, at.timestamp()
@@ -193,6 +246,9 @@ class HandoffJournal:
                 proof = local_rpg_abort_proof(session, order, job=job)
                 if proof is None:
                     return job
+                updates = dict(phase="refused", reason="replacement_refused",
+                               replacement_reasons=[proof[0]], completed_at=proof[1])
+            elif order.status == "rejected" and (proof := broker_rpg_rejection_proof(session, order, job)):
                 updates = dict(phase="refused", reason="replacement_refused",
                                replacement_reasons=[proof[0]], completed_at=proof[1])
             elif order.status in {"cancelled", "canceled", "expired", "rejected"}:

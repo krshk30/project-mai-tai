@@ -638,7 +638,8 @@ class AtrRepriceRuntimeMixin:
             raise ValueError("rpg_abort_cannot_relabel_existing_dispatch")
         self.store.mark_intent_refused(intent, origin="client_abort", code=reason)
         intent.status = "aborted"
-        metadata = {**event.payload.metadata, "refusal_origin": "client_abort", "refusal_code": reason}
+        metadata = {**event.payload.metadata, "refusal_origin": "client_abort", "refusal_code": reason,
+                    "rpg_local_abort_no_wire": "true", "rpg_abort_event_id": str(event.event_id)}
         if order is None:
             order = self.store.get_or_create_order(
                 session, intent=intent, strategy_id=intent.strategy_id,
