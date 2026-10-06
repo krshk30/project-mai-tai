@@ -6,7 +6,7 @@ export PYTHONDONTWRITEBYTECODE=1
 JOB=$(cd -- "$(dirname -- "$0")" && pwd)
 PY=/home/trader/project-mai-tai/.venv/bin/python
 ORIGINAL=/home/trader/after-hours/2026-10-05/owned-entry-rpg-all-on-2045-standing-job/attempt-1730-go
-ATTEMPT=$JOB/closeout-2107
+ATTEMPT=$JOB/closeout-2119
 [[ $EUID == 0 && $# == 1 ]]
 [[ $(sha256sum "$JOB/release.json" | cut -d' ' -f1) == "$1" ]]
 "$PY" - "$JOB" <<'PY'
@@ -36,7 +36,7 @@ abort() {
 trap abort EXIT
 run() { printf '\nUTC=%s CALL' "$(date -u --iso-8601=ns)"; printf ' %q' "$@"; printf '\n'; "$@"; }
 receipt() { local name=$1; shift; printf 'RECEIPT=%s\n' "$name"; (set -C; "$@" > "$ATTEMPT/$name"); cat "$ATTEMPT/$name"; }
-for name in before.json before-restart.json v2-stopped.json; do cp --no-clobber "$ORIGINAL/$name" "$ATTEMPT/$name"; done
+for name in before.json before-restart.json v2-stopped.json redis-baseline.json; do cp --no-clobber "$ORIGINAL/$name" "$ATTEMPT/$name"; done
 cp --no-clobber "$ORIGINAL/before.json" "$ATTEMPT/proof-before.json"
 receipt final.json "$PY" "$JOB/proof.py" checkpoint --before "$ATTEMPT/before.json" --phase final
 receipt redis-after.json "$PY" "$JOB/proof.py" redis "$ATTEMPT"

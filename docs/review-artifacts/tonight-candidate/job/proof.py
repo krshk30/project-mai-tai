@@ -638,7 +638,7 @@ def runner_mode(command, arguments):
         return result
     before = load(attempt / "proof-before.json")
     if command == "redis":
-        return redis_proof(before)
+        return redis_proof(before if "redis" in before else {"redis": load(attempt / "redis-baseline.json")})
     wall(action=command == "verify-source")
     if command == "verify-source":
         release = load(attempt.parent / "release.json")
