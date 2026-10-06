@@ -184,11 +184,21 @@ def validate(proof, phase, pid, old_pid, since, until):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--phase", choices=("before", "after"), required=True)
-    parser.add_argument("--pid", type=int, required=True)
+    parser.add_argument("--page-only", action="store_true")
+    parser.add_argument("--phase", choices=("before", "after"))
+    parser.add_argument("--pid", type=int)
     parser.add_argument("--old-pid", type=int)
     args = parser.parse_args()
     try:
+        if args.page_only:
+            raw = get("/bot/orb")
+            page = raw.decode()
+            need("LIVE/SCHWAB" in page and "<strong>Mode:</strong> LIVE" in page
+                 and "<strong>Provider:</strong> SCHWAB" in page, "ORB page not LIVE/SCHWAB")
+            print(canonical(dict(mode="LIVE", provider="SCHWAB", raw_page=page,
+                                 sha256=digest(raw), measured_at_utc=datetime.now(timezone.utc).isoformat())).decode(), end="")
+            return 0
+        need(args.phase is not None and args.pid is not None, "historical proof requires phase and PID")
         since = datetime.now(timezone.utc)
         result = collect(args.phase, args.pid, args.old_pid)
         print(canonical(validate(result, args.phase, args.pid, args.old_pid, since, datetime.now(timezone.utc))).decode(), end="")

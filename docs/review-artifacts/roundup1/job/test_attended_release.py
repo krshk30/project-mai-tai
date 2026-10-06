@@ -133,6 +133,7 @@ def test_full_sequence_exact_three_owners_once_timer_only_no_late_clock_abort(mi
     sequence.run()
     assert fx.actions == list(policy.PHASES)
     assert fx.calls[-1] == "complete"
+    assert fx.calls.index("checkpoint6") < fx.calls.index("proof") < fx.calls.index("restart-control")
     assert sequence.first_stopped
     for name in set(policy.SERVICES) - set(policy.CHANGED):
         assert fx.current[name] == fx.before[name]

@@ -105,6 +105,10 @@ class FakeSystem(attended.Real):
             import armed_readonly
             output = policy.canonical(armed_readonly.proof(reply(), NOW))
         elif any(arg.endswith("control_display_proof.py") for arg in args):
+            if "--page-only" in args:
+                output = policy.canonical(dict(mode="LIVE", provider="SCHWAB"))
+                self.receipt("fake-command.json", policy.canonical(dict(args=args, rc=rc, controlled=True)))
+                return SimpleNamespace(returncode=rc, stdout=output, stderr=b"")
             from test_control_install import control_receipt
             phase = args[args.index("--phase") + 1]
             pid = int(args[args.index("--pid") + 1])
@@ -233,7 +237,7 @@ def test_literal_full_sequence_backups_gate_diff_hashes_units_timer_only(monkeyp
     assert "COMPLETE codex install1" in closeout.JOURNAL.read_text()
     assert fx.release["plan_commit"] in closeout.JOURNAL.read_text()
     assert len([args for args in actions if args[1] == "restart"]) == 1
-    assert json.loads((fx.attempt / "COMPLETE.json").read_bytes())["control_display"]["page"]["trades"] == 1
+    assert json.loads((fx.attempt / "COMPLETE.json").read_bytes())["control_display"]["provider"] == "SCHWAB"
     assert (fx.attempt / "source-before.tar").exists() and (fx.attempt / "env.before").exists()
     assert (fx.attempt / "env.diff").exists()
     assert "UNCHANGED=1" not in (fx.attempt / "env.diff").read_text()

@@ -51,11 +51,11 @@ def logs(baseline):
     return result
 
 
-def process_flags(effects):
+def process_flags(effects, owners=CHANGED):
     from attended import REPO
     current = effects.fleet()
     values = {}
-    for name in CHANGED:
+    for name in owners:
         need(current[name] == effects.started[name], "PID moved before process flag proof")
         path = Path(f"/proc/{current[name]['MainPID']}/environ")
         need(path.stat().st_size <= MAX, "process environment bound")
@@ -88,9 +88,9 @@ def process_flags(effects):
     return values
 
 
-def grade_logs(found, started):
+def grade_logs(found, started, owners=CHANGED):
     receipts = {}
-    for name in CHANGED:
+    for name in owners:
         if name == "control":
             receipts[name] = control_logs(found[name], started[name])
             continue
@@ -142,14 +142,14 @@ def control_logs(found, state):
     return dict(lines=new, ranges=found["ranges"], pid=state["MainPID"], token_owner_started_at_utc=stamp.isoformat())
 
 
-def collect(effects, baseline, started):
-    flags = process_flags(effects)
+def collect(effects, baseline, started, owners=CHANGED):
+    flags = process_flags(effects, owners)
     deadline = time.monotonic() + 180
     while True:
         effects.redis()
         found = logs(baseline)
         try:
-            graded = grade_logs(found, started)
+            graded = grade_logs(found, started, owners)
             fresh = effects.flat()
             stamps = {row["account"]: row["updated_at"] for row in fresh["account_stamps"]}
             need(set(stamps) == {"live:schwab_1m_v2", "live:orb"}, "post-start account stamp census incomplete")
@@ -165,13 +165,13 @@ def collect(effects, baseline, started):
     # It is NOT the preopen gate, and it is not invoked with a fabricated future date.
     from attended import PY, REPO
     from closeout import install_record
-    record = install_record(effects)
+    record = install_record(effects, owners)
     output = effects.attempt / "restart-evidence-current.md"
     args = [PY, REPO / "ops/health/v2_restart_evidence.py", "report", "--snapshot", effects.attempt / "before-restart.json",
             "--install-record", record, "--no-schema-change", "--expected-alembic-head", "20261005_0022",
             "--schema-column", "oms_managed_positions.entry_order_id", "--schema-column", "oms_managed_positions.entry_client_order_id",
             "--output", output]
-    for name in CHANGED:
+    for name in owners:
         args += ["--restarted", name]
     for name in ("oms", "schwab-1m-v2"):
         for key in PM:

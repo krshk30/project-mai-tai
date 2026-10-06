@@ -17,15 +17,15 @@ UNIT_DIRECTORY = Path("/etc/systemd/system")
 JOURNAL = Path("/home/trader/fleet_health/deployments-20261006.md")
 
 
-def install_record(effects):
-    path = effects.attempt / "install-record.json"
+def install_record(effects, owners=CHANGED):
+    path = effects.attempt / ("install-record.json" if owners == CHANGED else "application-install-record.json")
     if path.exists():
         return path
     snapshot = json.loads((effects.attempt / "before-restart.json").read_bytes())
-    need(set(CHANGED).issubset(snapshot["services"]), "official snapshot lacks scoped owners")
+    need(set(owners).issubset(snapshot["services"]), "official snapshot lacks scoped owners")
     exclusive(path, canonical(dict(schema_version=1, snapshot_captured_at_utc=snapshot["captured_at_utc"],
         source_journal=str(effects.attempt / "runner-journal.jsonl"),
-        service_actions={name: "restarted" if name in CHANGED else "deliberately_untouched" for name in snapshot["services"]})))
+        service_actions={name: "restarted" if name in owners else "deliberately_untouched" for name in snapshot["services"]})))
     return path
 
 

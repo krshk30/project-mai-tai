@@ -442,34 +442,18 @@ At that head, build_app3559 compiles /bot/orb, /bot/orb-paper and
 /api/bot/orb-schwab at4202/4206/4210. run4331 uses uvicorn reload=False at4338;
 the current systemd control unit ExecStart is mai-tai-control and has no
 ExecReload. A checkout or browser refresh cannot activate these new handlers.
-The control lifespan also owns SchwabTokenRefresher at3580; control activation
-therefore has explicit operator YES for one atomic restart in Install1, not a
-reload or quiet unapproved extra action. It runs last after the six trading-owner
-phases with fresh phase-aware gates. Initial token-owner proof runs before any
-source/env write against the old OMS PID, then repeats immediately before the
-control restart against the new OMS PID. Before: unchanged old control identity,
-sole control process census, healthy enabled refresher with zero dead retries/
-no last error, OMS incidental refresh false on the exact new OMS PID and a
-nonempty token store with access expiry at least180s ahead. No forced grant,
-token-store edit or alternate writer. Restart rc0/stderr empty and duration<=120s;
-after: old PID absent, unique new active/running/NRestarts0 PID, later start and
-new invocation, unchanged three trading-owner identities. Read-only proof is
-bounded60s, metadata process inventory4096/cmdlines4096bytes, /proc env262144,
-token JSON65536 and each local HTTP response524288bytes/10s. Failure stops;
-no retry/recovery control action. Nothing is run on the box by this lane.
-
-Use only GET127.0.0.1:8100 health/overview/ORB page/ORB API, no proxies,
-redirects, mutations or auth endpoints. Preserve original page/API raw bodies
-and hashes (token/overview raw credentials never output). Require LIVE/SCHWAB,
-live:schwab_1m_v2, Mode LIVE, Provider SCHWAB, exactly one JAGX closed trade,
-quantity2, recorded6.6700->6.6001, PNL-0.1398/display-0.14, no managed/pending
-book and after-close SESSION COMPLETE/no auto-refresh. New-process log range
-must contain exactly the new PID Uvicorn marker, startup complete, one dedicated
-refresher-start line timestamped after the new start and binding8100; no new
-traceback/error/dead-token/idle. A plain untimestamped Uvicorn header is supported
-only under that exact PID marker, not attributed by old file/status alone.
-Fresh owner/page proof repeats at post-start and final closeout, and final pins
-and official restart set now include control. Runtime checker153 remains intact.
+Reviewer disposition 2026-10-06 18:47 ET supersedes the control proof gate:
+there is NO control owner/token/overview/API/JAGX-count admission before any
+write, and no such gate at closeout. Complete the six application actions and
+their existing process-key, log, Redis, ticket and official bar-evidence reads
+FIRST. Then run exactly one `systemctl restart project-mai-tai-control.service`
+and read `/bot/orb` to check LIVE/SCHWAB (Mode LIVE, Provider SCHWAB).
+This is the whole control step. Preserve its raw page/hash and final PID/start;
+no forced refresh, token edit, reload, second restart or recovery. The final
+preopen identity and restart group include control; the application-only proof
+uses its own three-service install record before control is restarted.
+The previously tested owner/token/JAGX proof functions are historical utilities,
+not executed install gates. Runtime checker153 remains intact.
 
 Standing mechanics authority permits local assembly/tests without a new design
 review per attempt. Latest operator instruction permits tested local generation

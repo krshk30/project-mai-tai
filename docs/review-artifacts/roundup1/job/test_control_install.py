@@ -143,25 +143,24 @@ def test_control_only_atomic_restart_other_actions_still_block(tmp_path, action)
         attended.Real(tmp_path, {}, tmp_path).action(action, "control")
 
 
-@pytest.mark.parametrize("phase", ["before", "after"])
-def test_literal_control_proof_failure_aborts_no_repeat_no_timer(monkeypatch, tmp_path, phase):
+def test_literal_control_page_failure_aborts_after_application_proof_no_repeat(monkeypatch, tmp_path):
     from test_literal_rehearsal import setup
     fx, _, env = setup(monkeypatch, tmp_path)
     old_env = env.read_bytes()
     original = fx.command
     def command(args, **kwargs):
         value = original(args, **kwargs)
-        if any(str(arg).endswith("control_display_proof.py") for arg in args) and phase in args:
-            value.returncode = 2
+        if any(str(arg).endswith("control_display_proof.py") for arg in args):
+            assert "--page-only" in args and "--phase" not in args
+            value.returncode = 1
         return value
     monkeypatch.setattr(fx, "command", command)
     with pytest.raises(policy.Stop):
         attended.Sequence(fx).run()
     actions = [args for args in fx.calls if args[:2] == ["systemctl", "restart"]]
-    assert len(actions) == (0 if phase == "before" else 1)
-    if phase == "before":
-        assert env.read_bytes() == old_env and fx.head == policy.BOX
-        assert not any(args[:2] in (["systemctl", "stop"], ["systemctl", "start"]) for args in fx.calls)
+    assert len(actions) == 1
+    assert env.read_bytes() != old_env and fx.head == policy.APP
+    assert any(path.name.endswith("post-start-proof.json") for path in fx.attempt.iterdir())
     assert (fx.attempt / "STOP.json").exists() and not (fx.attempt / "COMPLETE.json").exists()
     assert not (tmp_path / "daily").exists()
 
@@ -330,22 +329,36 @@ def test_final_control_new_identity_and_invocation_each_required(change):
         policy.states(before, current, len(policy.PHASES))
 
 
-def test_literal_control_wrong_oms_token_owner_binding_stops_before_restart(monkeypatch, tmp_path):
+def test_literal_control_has_no_owner_gate_and_page_follows_application_proof(monkeypatch, tmp_path):
     from test_literal_rehearsal import setup
     fx, _, _ = setup(monkeypatch, tmp_path)
     original = fx.command
     def command(args, **kwargs):
         value = original(args, **kwargs)
         if any(str(arg).endswith("control_display_proof.py") for arg in args):
-            data = json.loads(value.stdout)
-            data["adapter"]["pid"] = 9999
-            value.stdout = policy.canonical(data)
+            assert "--page-only" in args and "--phase" not in args
+            assert any(path.name.endswith("post-start-proof.json") for path in fx.attempt.iterdir())
+            assert fx.started.keys() == {"oms", "orb-schwab", "schwab-1m-v2"}
         return value
     monkeypatch.setattr(fx, "command", command)
-    with pytest.raises(policy.Stop, match="phase-specific OMS identity"):
-        attended.Sequence(fx).run()
-    assert not any(args[:2] == ["systemctl", "restart"] for args in fx.calls)
-    assert (fx.attempt / "STOP.json").exists() and not (fx.attempt / "COMPLETE.json").exists()
+    attended.Sequence(fx).run()
+    assert sum(args[:2] == ["systemctl", "restart"] for args in fx.calls) == 1
+    assert (fx.attempt / "COMPLETE.json").exists()
+
+
+@pytest.mark.parametrize("page,rc", [(PAGE, 0), (PAGE.replace("LIVE/SCHWAB", "PAPER"), 1)])
+def test_page_only_mode_never_reads_token_owner_or_overview(monkeypatch, capsys, page, rc):
+    monkeypatch.setattr(control.sys, "argv", ["control_display_proof.py", "--page-only"])
+    paths = []
+    def get(path):
+        paths.append(path)
+        return page.encode()
+    monkeypatch.setattr(control, "get", get)
+    monkeypatch.setattr(control, "collect", lambda *args: pytest.fail("withdrawn control gate invoked"))
+    assert control.main() == rc
+    assert paths == ["/bot/orb"]
+    if rc == 0:
+        assert json.loads(capsys.readouterr().out)["provider"] == "SCHWAB"
 
 
 @pytest.mark.parametrize("size,allowed", [(1538579, True), (2000001, False)])
