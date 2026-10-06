@@ -18,6 +18,24 @@
 | Open PRs | #1095 ROUNDUP1 draft `6b47c461` (rebased on `7823a6fa`, NOT ready: 8 legacy-restart failures + 5 integration assertions) · #1089 this handoff · #1062 study draft | `gh pr list` 21:13 ET |
 | Tomorrow first | v2 BOOT-HOLD already RELEASED at 20:59:44 ET (`restoration_complete=1`, superseding the 20:59:15 'held' read); tomorrow = first-live-bar and readiness verification at 07:00–07:10 (claude-1); scanner validation 07:00–07:15 and 09:30–09:45; first live reprice with the hand-off ON and the Webull mirror; paper window; #1095 rebase / review; LINE=CHART build (Restoration lane first) | — |
 
+## 2026-10-06 (Tue) — LIVE DAY NOTES (shared: both agents add rows as things happen; full sweep at close-out)
+
+| # | Item | Status | Evidence (as-of, source) | Owner | Next action |
+|---|---|---|---|---|---|
+| T1 | Start ritual | DONE 06:14 ET — checksums green, not frozen, box `7823a6fa` = main minus 3 docs-only files (`handoff-log.md`, manifest, `session-handoff.md`); open PRs #1095 ROUNDUP1 draft, #1062 study draft; no codex refs newer than the 10-05 close-out | fleet board; `git diff --name-only 7823a6fa origin/main`; `gh pr list` 06:14 ET | claude-1 | — |
+
+### What to READ Tuesday 10-06 — claude-1, UNPROMPTED (scheduled in the claude-1 session, CronList)
+| Time ET | Read | Pass looks like |
+|---|---|---|
+| 03:40 (read late, at ritual) | daily guard timer `project-mai-tai-option-a-daily-guard.timer` fired; paper under guard | guard active, paper up, 0 gateway 1008 |
+| 06:22 | FLAGGATE + restart-evidence gate (`/home/trader/preopen.sh` pinned for 10-06 at the install) | flags 147/147; ORB UNKNOWN (row 47) by design; report file for 10-06 exists |
+| 07:11 | first live bars + readiness after the 10-05 install (first day with PMREST1 / PMPRINT1 / PMFLIP1 / RPGSTUCK1 / OWNMIX1 live) | first bar 07:00 on every watched name, 0 gaps, first ATR reading 07:09; boot hold released; 0 ERROR / 0 Traceback |
+| 07:16 | SCANNER VALIDATION 07:00–07:15 (operator 10-03: critical; strategy restarted 20:53 ET 10-05) | 5-/10-min squeeze alerts present; watchlist adds in line with the prior 5 sessions; prefill line ≥ 120; 0 errors |
+| 09:42 | momentum paper guard stop at 09:40 (by design) | `stop_paper` at 09:40:0x with a full sample count; stop page delivered; no live-money effect |
+| 09:46 | SCANNER VALIDATION 09:30–09:45 | same pass marks as 07:16 |
+| 07:13 → 16:13, every 30 min | FULL VALIDATION (`mai-tai-fullscan/run.sh`): every bot, every trade, every buy flip on a watched name (traded / skipped by rule / missed and why), anything short with no buy order, new errors; **first live reprice with the hand-off ON** (cancel→place seconds per broker, no stuck ticket); first OWNMIX1 fill binding | each new line explained before it is reported |
+| 15:55 | ORB Schwab position (Board A row 46) | flat or an explained partial |
+
 ## 2026-10-05 (Mon) — LIVE DAY NOTES (shared: both agents add rows as things happen; full sweep at close-out)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
