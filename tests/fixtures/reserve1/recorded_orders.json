@@ -1,0 +1,59 @@
+{
+  "source": "Read-only Schwab exact-parent GETs and PostgreSQL broker_orders/managed rows, 2026-10-06; only fields used by the release/rejection parser retained.",
+  "apus": {
+    "entry_coid": "schwab_1m_v2-APUS-open-0a774155d5e5",
+    "entry_time": "2026-10-06T18:49:56.916246+00:00",
+    "entry_price": "7.62",
+    "decision_time": "2026-10-06T19:08:03.641+00:00",
+    "bid": "7.15",
+    "tree": {
+      "orderId": 1008196163482, "status": "FILLED", "orderStrategyType": "TRIGGER",
+      "quantity": 78, "filledQuantity": 78, "remainingQuantity": 0,
+      "orderLegCollection": [{"instruction": "BUY", "quantity": 78, "instrument": {"symbol": "APUS"}}],
+      "childOrderStrategies": [{
+        "orderId": 1008196163483, "status": "WORKING", "orderStrategyType": "OCO",
+        "childOrderStrategies": [
+          {"orderId": 1008196163484, "status": "WORKING", "orderType": "LIMIT", "price": 8.01,
+           "quantity": 78, "filledQuantity": 0, "remainingQuantity": 78,
+           "orderLegCollection": [{"instruction": "SELL", "quantity": 78, "instrument": {"symbol": "APUS"}}]},
+          {"orderId": 1008196163485, "status": "WORKING", "orderType": "STOP", "stopPrice": 7.01,
+           "quantity": 78, "filledQuantity": 0, "remainingQuantity": 78,
+           "orderLegCollection": [{"instruction": "SELL", "quantity": 78, "instrument": {"symbol": "APUS"}}]}
+        ]
+      }]
+    }
+  },
+  "ipdn": {
+    "entry_coid": "schwab_1m_v2-IPDN-open-e241b65d3727",
+    "entry_time": "2026-10-06T16:42:12.603502+00:00",
+    "entry_price": "4.54",
+    "decision_time": "2026-10-06T18:03:04.276+00:00",
+    "bid": "4.24",
+    "tree": {
+      "orderId": 1008191994240, "status": "FILLED", "orderStrategyType": "TRIGGER",
+      "quantity": 132, "filledQuantity": 132, "remainingQuantity": 0,
+      "orderLegCollection": [{"instruction": "BUY", "quantity": 132, "instrument": {"symbol": "IPDN"}}],
+      "childOrderStrategies": [{
+        "orderId": 1008191994241, "status": "CANCELED", "orderStrategyType": "OCO",
+        "childOrderStrategies": [
+          {"orderId": 1008191994242, "status": "CANCELED", "orderType": "LIMIT", "price": 4.77,
+           "quantity": 132, "filledQuantity": 0, "remainingQuantity": 0,
+           "orderLegCollection": [{"instruction": "SELL", "quantity": 132, "instrument": {"symbol": "IPDN"}}]},
+          {"orderId": 1008191994243, "status": "CANCELED", "orderType": "STOP", "stopPrice": 4.18,
+           "quantity": 132, "filledQuantity": 0, "remainingQuantity": 0,
+           "orderLegCollection": [{"instruction": "SELL", "quantity": 132, "instrument": {"symbol": "IPDN"}}]}
+        ]
+      }]
+    }
+  },
+  "nxl_rejected_closes": [
+    {"coid": "schwab_1m_v2-NXL-close-3f475e56afb1", "orderId": 1008144935878,
+     "enteredTime": "2026-10-01T21:08:06+0000", "status": "REJECTED", "quantity": 2, "filledQuantity": 0, "price": 7.46},
+    {"coid": "schwab_1m_v2-NXL-close-54e91e6490f0", "orderId": 1008144935921,
+     "enteredTime": "2026-10-01T21:39:03+0000", "status": "REJECTED", "quantity": 2, "filledQuantity": 0, "price": 7.33},
+    {"coid": "schwab_1m_v2-NXL-close-fbd2be85d1d1", "orderId": 1008145794009,
+     "enteredTime": "2026-10-01T22:36:55+0000", "status": "REJECTED", "quantity": 2, "filledQuantity": 0, "price": 6.97}
+  ],
+  "oversold_reason": "This order may result in an oversold/overbought position in your account.  Please check your position quantity and/or open orders.",
+  "apus_rejected_close": {"coid": "schwab_1m_v2-APUS-close-fd495d45ead0", "orderId": 1008196843931, "quantity": 78, "status": "REJECTED", "filledQuantity": 0}
+}

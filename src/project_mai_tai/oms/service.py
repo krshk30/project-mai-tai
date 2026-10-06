@@ -139,10 +139,12 @@ class _ManagedSellEvents(list):
         *,
         reservation: ExitPairReleaseResult | None = None,
         terminal_events=None,
+        native_fill_row_id: str = "",
     ) -> None:
         materialized = list(events)
         super().__init__(materialized)
         self.reservation = reservation
+        self.native_fill_row_id = native_fill_row_id
         self.terminal_events = list(
             materialized if terminal_events is None else terminal_events
         )
@@ -1391,6 +1393,8 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                             self._clear_cw_flip_pending((arm_acct, sym))
                             continue
                         owned += 1
+                        if not self._is_v2_webull_account(arm_acct):
+                            self._log_native_oco_note(arm_acct, sym)
                         if binding.entry_time is None or binding.entry_time > bar_close:
                             refused += 1
                             self.logger.error(
@@ -1466,6 +1470,9 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 source_fill_id=source_fill_id,
                 accounts=accounts,
             )
+            for note_acct in accounts:
+                if not self._is_v2_webull_account(note_acct):
+                    self._log_native_oco_note(note_acct, symbol)
             if str(payload.get("atr_state", "unknown")).lower() == "long":
                 self.logger.info(
                     "[OMS-V2-CONFIRMATION-EXIT-STATE-LONG] sym=%s acct=%s fill_id=%s",
@@ -6378,6 +6385,10 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         protection = ""
         bound_row_id = ""
         native_oco_stand_down = False
+        if not self._is_v2_webull_account(acct) and (
+            confirmation is not None or key in self.__dict__.get("_cw_flip_pending", set())
+        ):
+            self._log_native_oco_note(acct, symbol)
         quote = self._latest_quotes_by_symbol.get(symbol)
         if confirmation is not None:
             fanout_decision = self._confirmation_fanout_decision(confirmation)
@@ -6788,6 +6799,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                     reason="oms_v2_managed_exit:CONFIRMATION_EXIT",
                     bid=bid,
                     close_on_fill=close_on_fill,
+                    native_release_row_id=bound_row_id if protection == "released" else "",
                     confirmation_context={
                         "flip_owner_confirmation_exit": "true",
                         "confirmation_fanout_slot_id": str(
@@ -6940,6 +6952,9 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                         reference_price=ref, reason=f"oms_v2_managed_exit:{tag}",
                         bid=bid, close_on_fill=close_on_fill,
                         expected_managed_row_id=(
+                            snapshot.managed_row_id if native_oco_stand_down else ""
+                        ),
+                        native_release_row_id=(
                             snapshot.managed_row_id if native_oco_stand_down else ""
                         ),
                     )
@@ -9079,6 +9094,122 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         expected_managed_row_id: str = "",
         confirmation_context: dict[str, str] | None = None,
         allow_unconfirmed_overnight: bool = False,
+        native_release_row_id: str = "",
+    ) -> str:
+        """A fail-open ladder decision is not permission to sell reserved Schwab shares."""
+        protected_reasons = {
+            "oms_v2_managed_exit:CW_FLIP", "oms_v2_managed_exit:CONFIRMATION_EXIT",
+            "oms_v2_managed_exit:CW_HARD_STOP",
+        }
+        provider_for = getattr(getattr(self, "settings", None), "provider_for_account", None)
+        webull = callable(provider_for) and provider_for(acct) == "webull"
+        if reason not in protected_reasons or webull:
+            return await self._emit_v2_exit_on_loop_claimed(
+                acct, symbol, position, entry_price, kind=kind, reference_price=reference_price,
+                reason=reason, bid=bid, close_on_fill=close_on_fill, sell_qty=sell_qty, level=level,
+                expected_managed_row_id=expected_managed_row_id,
+                confirmation_context=confirmation_context,
+                allow_unconfirmed_overnight=allow_unconfirmed_overnight,
+            )
+        if allow_unconfirmed_overnight and (
+            reason != "V2_OVERNIGHT_FLATTEN" or not self._v2_overnight_flatten_due()
+        ):
+            return "refused"
+        if not allow_unconfirmed_overnight and not await self._v2_eod_handover_ready(
+            acct, symbol, expected_managed_row_id
+        ):
+            return "eod_handover_unconfirmed"
+        snapshot = await self._run_db(
+            lambda session: self._read_v2_managed_snapshot(session, acct, symbol, close_on_fill),
+            commit=False,
+        )
+        if snapshot is None:
+            return "no_open_row"
+        if expected_managed_row_id and snapshot.managed_row_id != expected_managed_row_id:
+            return "refused"
+        schwab = snapshot.broker_provider == "schwab"
+        claim = (acct, symbol, snapshot.managed_row_id)
+        inflight = self.__dict__.setdefault("_reserve1_sell_inflight", set())
+        if schwab and (claim in inflight or snapshot.dedup_active):
+            self.logger.info(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=DEFERRED "
+                "reason=close_inflight_or_working row=%s", symbol, acct, snapshot.managed_row_id,
+            )
+            return "refused"
+        if schwab and kind != "SCALE" and reason != "V2_OVERNIGHT_FLATTEN" and (
+            self._a2_should_defer(acct, symbol) or (acct, symbol) in self._v2_exit_stood_down
+        ):
+            self.logger.info(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=DEFERRED "
+                "reason=existing_exit_backoff_or_stand_down row=%s",
+                symbol, acct, snapshot.managed_row_id,
+            )
+            return "refused"
+        if schwab:
+            inflight.add(claim)
+        try:
+            if schwab and native_release_row_id != snapshot.managed_row_id:
+                result = await self._release_native_oco_for_cw_flip(
+                    acct, symbol, expected_row_id=snapshot.managed_row_id,
+                )
+                if result == "resolved_by_fill":
+                    closed = await self._close_resolved_oco_managed_row(
+                        acct, symbol, expected_row_id=snapshot.managed_row_id,
+                    )
+                    return "closed" if closed else "refused"
+                if result != "released":
+                    return "refused"
+            elif schwab:
+                self.logger.info(
+                    "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=RELEASED "
+                    "reason=caller_exact_episode_release row=%s",
+                    symbol, acct, snapshot.managed_row_id,
+                )
+            if schwab:
+                current = await self._run_db(
+                    lambda session: self._read_v2_managed_snapshot(
+                        session, acct, symbol, close_on_fill
+                    ),
+                    commit=False,
+                )
+                if (current is None or current.managed_row_id != snapshot.managed_row_id
+                        or current.current_quantity != snapshot.current_quantity
+                        or current.current_quantity != int(position.quantity)
+                        or current.dedup_active):
+                    self.logger.error(
+                        "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                        "reason=episode_or_quantity_changed_after_release row=%s",
+                        symbol, acct, snapshot.managed_row_id,
+                    )
+                    return "refused"
+            return await self._emit_v2_exit_on_loop_claimed(
+                acct, symbol, position, entry_price, kind=kind, reference_price=reference_price,
+                reason=reason, bid=bid, close_on_fill=close_on_fill, sell_qty=sell_qty, level=level,
+                expected_managed_row_id=snapshot.managed_row_id,
+                confirmation_context=confirmation_context,
+                allow_unconfirmed_overnight=allow_unconfirmed_overnight,
+            )
+        finally:
+            if schwab:
+                inflight.discard(claim)
+
+    async def _emit_v2_exit_on_loop_claimed(
+        self,
+        acct: str,
+        symbol: str,
+        position: Position,
+        entry_price: float,
+        *,
+        kind: str,
+        reference_price: float,
+        reason: str,
+        bid: float,
+        close_on_fill: bool,
+        sell_qty: int | None = None,
+        level: str | None = None,
+        expected_managed_row_id: str = "",
+        confirmation_context: dict[str, str] | None = None,
+        allow_unconfirmed_overnight: bool = False,
     ) -> str:
         """The RARE v2 exit-emit, kept ON-LOOP (single session, one commit) exactly as
         before PR-A: it reaches the shared ``_record_order_reports``, which mutates
@@ -9198,6 +9329,14 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                     )
                     events = managed_sell
                     key = (acct, symbol)
+                    if getattr(managed_sell, "native_fill_row_id", ""):
+                        session.commit()
+                        closed = await self._close_resolved_oco_managed_row(
+                            acct, symbol, expected_row_id=managed_sell.native_fill_row_id,
+                        )
+                        for event in events:
+                            await self._publish_order_event(event)
+                        return "closed" if closed else "refused"
                     reservation = getattr(managed_sell, "reservation", None)
                     if reservation is not None and reservation.outcome == "resolved_by_fill":
                         detail = self._exit_pair_fill_detail(reservation)
@@ -9441,6 +9580,42 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             time_in_force="day",
         )
 
+    async def _reserve1_original_close_rejected(
+        self, request: OrderRequest, reports: list[ExecutionReport]
+    ) -> bool:
+        """A transport/client error or a partially filled close never permits a second sell."""
+        if not reports or not all(
+            report.event_type == "rejected" and report.origin == "broker"
+            and report.client_order_id == request.client_order_id
+            and report.symbol == request.symbol and report.side == "sell"
+            and report.intent_type == "close" and report.filled_quantity == 0
+            and "oversold" in report.reason.lower()
+            for report in reports
+        ):
+            return False
+        ids = {str(report.broker_order_id) for report in reports if report.broker_order_id}
+        if not ids:
+            # An explicit broker HTTP rejection with no order id proves the POST was refused.
+            return True
+        if len(ids) != 1:
+            return False
+        broker_id = next(iter(ids))
+        read_request = replace(request, metadata={**request.metadata, "broker_order_id": broker_id})
+        try:
+            proof = await self.broker_adapter.fetch_order_update(read_request)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
+        return bool(
+            proof is not None and proof.event_type == "rejected"
+            and proof.origin == "broker" and proof.filled_quantity == 0
+            and proof.broker_order_id == broker_id
+            and proof.client_order_id == request.client_order_id
+            and proof.symbol == request.symbol and proof.side == "sell"
+            and proof.intent_type == "close"
+        )
+
     async def _emit_v2_managed_sell(
         self,
         session: Session,
@@ -9585,6 +9760,58 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             request=request, reports=reports,
         )
         terminal_events = events
+        retry_key = (row.broker_account_name, row.symbol, str(row.id))
+        retry_used = self.__dict__.setdefault("_reserve1_retry_used", set())
+        if (
+            broker_account.provider == "schwab" and intent_type == "close"
+            and retry_key not in retry_used
+            and any(report.event_type == "rejected" and "oversold" in report.reason.lower()
+                    for report in reports)
+        ):
+            # Claim before any read: at most one recovery attempt per managed episode.
+            retry_used.add(retry_key)
+            # Preserve the refused attempt before an independent readback/recovery transaction.
+            session.commit()
+            if await self._reserve1_original_close_rejected(request, reports):
+                release = await self._release_native_oco_for_cw_flip(
+                    row.broker_account_name, row.symbol, expected_row_id=str(row.id),
+                )
+                if release == "resolved_by_fill":
+                    return _ManagedSellEvents(events, native_fill_row_id=str(row.id))
+                current = await self._run_db(
+                    lambda read_session: self._read_v2_managed_snapshot(
+                        read_session, row.broker_account_name, row.symbol, True
+                    ),
+                    commit=False,
+                )
+                if (release == "released" and current is not None
+                        and current.managed_row_id == str(row.id)
+                        and current.current_quantity == quantity and not current.dedup_active):
+                    retry_request = replace(
+                        request, client_order_id=self._replacement_client_order_id(
+                            request.client_order_id
+                        ), metadata={**request.metadata, "reserve1_retry": "1",
+                                     "reserve1_retry_of": request.client_order_id},
+                    )
+                    self.logger.info(
+                        "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=RETRY "
+                        "original_close=%s retry_close=%s attempt=1/1",
+                        row.symbol, row.broker_account_name, request.client_order_id,
+                        retry_request.client_order_id,
+                    )
+                    retry_reports = await self.broker_adapter.submit_order(retry_request)
+                    terminal_events = await self._record_order_reports(
+                        session=session, intent=intent, strategy_id=strategy.id,
+                        broker_account_id=broker_account.id, intent_event=event,
+                        request=retry_request, reports=retry_reports,
+                    )
+                    events.extend(terminal_events)
+            else:
+                self.logger.error(
+                    "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                    "reason=original_close_rejection_unproven original_close=%s retry=0",
+                    row.symbol, row.broker_account_name, request.client_order_id,
+                )
         if (
             confirmation_context
             and self._is_v2_webull_account(row.broker_account_name)
@@ -9680,6 +9907,16 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             peaks = self.__dict__.setdefault("_v2_native_oco_high_bid", {})
             peaks[key] = max(peaks.get(key, 0.0), bid)
 
+    def _log_native_oco_note(self, acct: str, symbol: str) -> None:
+        confirmed = self.__dict__.get("_native_oco_armed_confirmed_at", {}).get((acct, symbol))
+        age = (utcnow() - confirmed).total_seconds() if confirmed is not None else None
+        bound = float(getattr(self.settings, "oms_native_oco_confirmation_max_age_seconds", 30))
+        state = "absent" if age is None else "fresh" if 0 <= age <= bound else "stale"
+        self.logger.info(
+            "[OMS-V2-CW-FLIP-NOTE] sym=%s acct=%s state=%s age_s=%s",
+            symbol, acct, state, "unknown" if age is None else f"{age:.3f}",
+        )
+
     def _native_oco_stand_down_active(self, broker_account_name: str, symbol: str) -> bool:
         """True only when a broker-native OCO bracket is CONFIRMED armed for this position.
 
@@ -9690,8 +9927,8 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         When it returns True the OMS does NOT run its exit ladder: the broker OCO owns the
         exit. That makes a WRONG True the worst failure in this system -- the software ladder
         stands down while no broker bracket is actually working, and the position has no exit
-        at all (the ERNA shape). A wrong False merely risks an oversell, which is loud, logged
-        and reconcilable (the NXTC class we already know how to recover).
+        at all (the ERNA shape). A False resumes the ladder's decision only; RESERVE1 independently
+        requires an exact-entry release before a Schwab flip, confirmation, or CW hard-stop sell.
 
         So the asymmetry is deliberate: stand-down requires positive, FRESH confirmation.
         Anything else -- no entry, a stale entry, a sync that stopped running -- resumes the
@@ -9944,6 +10181,34 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             )
 
     async def sync_broker_state(self, *, account_names: list[str] | None = None) -> dict[str, int]:
+        pass_id = self.__dict__.get("_reserve1_sync_pass_id", 0) + 1
+        self._reserve1_sync_pass_id = pass_id
+        started = time.monotonic()
+        outcome = "failed"
+        self.logger.info(
+            "[OMS-BROKER-SYNC-PASS] id=%d phase=start accounts=%s",
+            pass_id, ",".join(account_names) if account_names is not None else "all",
+        )
+        try:
+            result = await self._sync_broker_state_pass(account_names=account_names)
+            outcome = "ok"
+            return result
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            duration_ms = (time.monotonic() - started) * 1000.0
+            bound_ms = float(
+                getattr(self.settings, "oms_native_oco_confirmation_max_age_seconds", 30)
+            ) * 1000.0
+            self.logger.info(
+                "[OMS-BROKER-SYNC-PASS] id=%d phase=end outcome=%s duration_ms=%.3f "
+                "exceeds_note_age=%s", pass_id, outcome, duration_ms, duration_ms > bound_ms,
+            )
+
+    async def _sync_broker_state_pass(
+        self, *, account_names: list[str] | None = None
+    ) -> dict[str, int]:
         order_summary = await self.sync_broker_orders(account_names=account_names)
         if bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False)):
             try:
