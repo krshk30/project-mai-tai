@@ -88,8 +88,12 @@ The isolated guard now drains it; internal missing rows still fail. No count or
 load threshold is relaxed. Fifty-four close-out tests passed.
 
 Initial sampler baseline01:11:01.348097Z, first following row01:11:02.348313Z,
-both OK/kicks0. First15minute observation completes21:26ET; final result will
-be appended once actually measured, not inferred from an active service.
+baseline/OK respectively, kicks0. At21:26:38ET the measured first15minute
+receipt PASSED:936.000158seconds,937rows including baseline, intervals
+0.994400..1.005630s, zero kicks, no guard stop, stable guard/paper/gateway PIDs,
+Redis806893768B/evictions0, fullfiveowners/healthyunion5/heartbeatage2.810746s.
+Load1/5/15=0.855/0.945/1.015; existing warning-only3.5 threshold unchanged.
+Exclusive receipt: `/home/trader/after-hours/2026-10-06/option-a-daily/run-20261006T011059600358Z/first-15-minutes.json`.
 
 Mechanics-only stops retained in the journal: separate Redis baseline omitted
 from the first close-out copy; official snapshot does not track paper. Both
