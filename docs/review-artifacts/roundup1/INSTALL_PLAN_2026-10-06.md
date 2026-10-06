@@ -1,10 +1,36 @@
-# ROUNDUP1 And Daily Preopen - October 6 Window
+# ROUNDUP1, LINE=CHART And Daily Preopen - October 6 Window
 
 **Application bound; literal release not yet staged.** APPROVED_SHA is
-`a7fed34d97732e1c1379ec77d89fd83f886ce2d8`, tree
-`7ff6dcce8d225bdf45e87a9eeb8bcd3042573117`. Its whole tree equals pinned
-`fa54579b4794d5fc6b275ab3233c0161d51110c7`; independent-review-pin and both
-Validate runs passed before the non-admin matched-head rebase merge.
+`3ebde364d4634fdad45992e2ab1cbdf43ffeb221`, tree
+`972271218693e095f99257e0e39ab525090fd0ef`. Its whole tree equals pinned
+LINE=CHART head `65010dffffaa28c5f6ae22df0c48cf9358a6bdbf`.
+ROUNDUP1 is already merged as `a7fed34d97732e1c1379ec77d89fd83f886ce2d8`;
+#1097 merged after it at 10:53:42 ET October 6. Hosted independent-review-pin
+and both Validate runs were PASS on that exact head before the non-admin
+matched-head rebase merge. Five committed pin records independently cover all
+reviewer/Codex segments. Whole-tree equality is verified; production remains
+`7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf`, not this new main.
+
+## Three-Item Set - October 6 Merge Receipt
+
+Only ROUNDUP1, LINE=CHART Restoration and daily preopen mechanics are in the
+current candidate. Reviewer-approved latest set: all eight installed switches
+ON, FLAGGATE149. The pre-install composed run is
+`tests/unit/test_all_on_pm.py`: **41/41 PASS**, 2.53s, on the identical
+pinned/merged tree. Raw `/tmp/codex-1097-merged-eight-switch-20261006.log`,
+SHA256 `d37059c4e19a2869c60bb805af9d662a743e11956149e0ecc885bcb245c24eb4`.
+This is a controlled completed-worker composition, not a substitute for the
+real-factory historical proof. The unchanged reviewer acceptance also passes
+123 cases on eight switches, 0 line mismatches/errors/incomplete buys or
+permissions; +10=98 MATCH,25 n/a,0 HELD. Full source/evidence scope is recorded in
+`../line-chart-restoration/REVIEW_DELIVERY_2026-10-06.md`.
+
+T43 one-leg recovery/reject-text is NOT in this SHA. If independently pinned
+and merged before the window, bind a new exact application SHA/tree, update
+scope/restart list, rerun its composition and regenerate the literal release
+before staging. Do not silently substitute moving main. Otherwise T43 waits
+for the next reviewed window. Issue3 is assessment only. Pause classification
+and ORB-purple rule are excluded.
 
 The operator's October 6 after-close ruling supersedes the fixed evening window.
 First stop is **strictly after 16:00 ET October 6, whenever ready and all gates
@@ -13,7 +39,7 @@ a scheduled clock time. Log rotation is not an admission gate. No production
 write or application restart during the session. The Codex readiness wake-up is
 not a staged/listable box job; name any eventual box unit and publish its bytes.
 
-## Current Refresh - 08:16 ET
+## Earlier ROUNDUP1 Refresh - 08:16 ET
 
 Reviewer-authorized rebase/test refresh is pushed as
 `fa54579b4794d5fc6b275ab3233c0161d51110c7`, based on exact main03b26293.
@@ -29,7 +55,9 @@ failure below; source was not changed to satisfy the tests. CI on the new head
 was subsequently green on both runs. Fresh pin record `a024c810` covers the
 exact refreshed head; the stale record was retired. Merge completed at08:26ET
 on October6 and the exact application/tree binding above was independently
-read from Git. This is a repository merge, not an installed application claim.
+read from Git. The ROUNDUP1 SHA/tree in that earlier receipt is now an ancestor
+of the three-item application above. This is a repository merge, not an
+installed application claim.
 
 ## Historical Preparation Blockers - Superseded By The Refresh
 
@@ -64,18 +92,20 @@ assertions; source must not be changed to satisfy the obsolete price expectation
 ## Binding And Scope
 
 Before execution, verify the literal release binds the actual merge SHA/tree
-above and rerun the seven-key composition on that tree. No unreviewed source or default-OFF
-LINE=CHART draft is included. No file is staged on the box by this draft.
+above and rerun the eight-key composition on that tree. No unreviewed source
+is included. LINE=CHART source default remains OFF; this reviewed install turns
+it ON alongside ROUNDUP1. No file is staged on the box by this draft.
 
 - Application processes changed: **v2 and OMS only**. Strategy, gateway, ORB,
   orb-schwab, paper, daily guard, control, capture, reconciler, Redis and PostgreSQL
   are not restarted. OMS needs the flag for PA1 resubmit rounding and wire cap.
-- One env key changes to true:
-  `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RESTING_BUY_ROUND_UP_ENABLED`.
+- Exactly two env keys change to true:
+  `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RESTING_BUY_ROUND_UP_ENABLED` and
+  `MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED`.
   Retain all four October 5 switches, NFQ, GAP_HOLD, sizing600/300/1000,
   target5/stop8 and existing ORB flags. No other switch or trading rule edit.
 - Schema0022 is already installed: verify it; do not rerun a migration.
-- Catalog expectation is FLAGGATE148; numeric remains8. Verify the real measured
+- Catalog expectation is FLAGGATE149 (141 boolean +8 numeric); numeric remains8. Verify the real measured
   denominator/result, including UNKNOWN rows; never start paper to force green.
 
 ## Literal Runner Requirements Before Staging
@@ -97,6 +127,8 @@ runner-component hash
 These are local committed inputs, not on-box staged/rehearsal receipts. Shell
 syntax and whitespace PASS. Seven-key composed rerun on the identical pinned/
 merged application tree:36/36PASS,2.41s. Production remains7823a6fa.
+That is the earlier seven-switch receipt; the new eight-switch proof is the
+41/41 receipt above. Full literal runner/gate/timer release is still not staged.
 
 Use the October 5 tested discipline: release bound to plan/app SHA and every
 artifact hash; named one-shot/timer if scheduled, approval gate, exclusive
@@ -112,7 +144,7 @@ three reads60s apart; a measured blocker stops immediately. No bulk Redis stream
 reads or unbounded broker histories.
 
 Back up source/env/catalogs/gate with hashes and duplicate-key refusal, advance
-only to APPROVED_SHA, edit the one env key, take old log offsets and restart
+only to APPROVED_SHA, edit the two named env keys with duplicate refusal, take old log offsets and restart
 snapshot. Fresh flat and working-order proof before every stop/start; require
 the unmodified v2 gate immediately before stop and zero armed. Its existing
 18:00 clock proxy cannot enforce the new operator window. Only before18:00,
@@ -126,8 +158,11 @@ No clock abort after the first stop. Abort trap pages actual states and starts
 nothing; no rollback/recovery/extra restart is pre-authorized.
 
 Verify new identities/starts, active/NRestarts0, no new-process tracebacks and
-no startup buy. Read ROUND_UP and all retained switches by key from both new
-OMS/v2 `/proc`; verify all untouched identities. Redis evictions unchanged,
+no startup buy. Read ROUND_UP, LINE_CHART_RESTORATION and all retained switches
+by key from both new OMS/v2 `/proc`; all eight must be true in their shared env.
+OMS uses ROUND_UP for PA1/wire prices; Restoration is enforced by v2's worker,
+line admission and draft-version gates, not by inventing an OMS line reader.
+Verify all untouched identities. Redis evictions unchanged,
 memory within bound and owners five consumers plus migration marker. Re-read
 ticket dispositions and preserve proof-dependent unknown ownership. Run pinned
 isolated FLAGGATE/numeric catalogs and record their actual outcomes.
@@ -141,7 +176,13 @@ source path and byte range; rotation itself never delays admission. Report liter
 and warm-up population/release evidence, with next-session07:00 verification
 owned by Codex and bar continuity independently checked by claude-1. No strategy
 restart means no fabricated scanner-restart validation requirement; scanner
-health is observed without restarting it.
+health is observed without restarting it. Claude owns tomorrow's07:00-07:15
+scanner validation. Record Restoration's provider/read/worker completion,
+per-symbol proof/version and entry_allowed literally; an incomplete rebuild
+remains entry_allowed=0 with protective exits unchanged, never forced green.
+Next-session live re-add/backfill delivery is future proof, not historical
+replay PASS. Preserve no late historical flip, no resurrected canceled order,
+no unconsumed consumed slot and existing missing-data hold behavior.
 
 ## Single Close-Out And Daily Gate
 
@@ -164,6 +205,9 @@ hash, flags/numeric, Redis, gate diff/hash and final identities before COMPLETE.
 
 Rollback, if later authorized: ROUND_UP=false requires coordinated OMS/v2
 restart and a matching catalog. This line is not rollback authorization.
+Restoration=false requires a v2 restart and matching catalog; retain every
+other key and read the actual resulting identities/line state. No rollback,
+extra restart, ticket purge or recovery action is pre-authorized.
 
 ## Exact After-Hours Admission
 

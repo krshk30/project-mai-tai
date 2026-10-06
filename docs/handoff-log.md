@@ -6439,3 +6439,24 @@ Next-bar one-leg-only card remains sound with exact terminal/no-wire generation
 proof and current gates; venue acceptance/profit remains counterfactual.
 Report contains own raw paths/hashes, bounds and pre-market scope distinction.
 No PR/build/pin/merge/install claimed; no production action or ledger edit.
+
+### 2026-10-06 10:55 ET - codex-2 C39 #1097 merged / three-item plan
+
+Merged #1097 without admin bypass or head edits at exact65010dffffaa28c5f6ae22df0c48cf9358a6bdbf
+under standing yes. Hosted pin37482211551 and push/PR Validate37478141100/
+37478145270 wereSUCCESS before merge. Initial local pin attempts used an
+archived non-Git ledger and could not verify record-commit provenance; this
+was a local verifier invocation issue, NOT missing hosted coverage. Re-read
+actual committed ledger93988101 in the existing own detached pin checkout:
+PASS five committed records. Application main3ebde364d4634fdad45992e2ab1cbdf43ffeb221,
+tree972271218693e095f99257e0e39ab525090fd0ef exactly equals pinnedwhole tree.
+No production action. Reran eight-ON composition41PASS2.53s on same tree;
+raw /tmp/codex-1097-merged-eight-switch-20261006.log,
+SHAd37059c4e19a2869c60bb805af9d662a743e11956149e0ecc885bcb245c24eb4.
+Amended combined plan to ROUNDUP1+LINE=CHART+daily preopen,149catalog,
+two named true env edits, OMS/v2 only, no migration/extra service action;
+first stop after16:00 when fresh flat/orders/rows/armed gates clear.
+Literal release/gate/timer still requires assembly/testing; NOT staged/listable
+yet. Current production7823 unchanged. No false COMPLETE receipt.
+T43excluded until its own exact pin and reviewed release rebind. T47 accepts
+client-abort correction; its assigned next-bar/reason lane remains separate.
