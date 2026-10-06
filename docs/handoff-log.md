@@ -5915,3 +5915,17 @@ delivery can delay later symbols: concrete activation blockers. Live provider
 completeness/quota/latency and seven September decision-time coverage controls
 remain UNMEASURED. Thirteen recorded entry-line controls prove math/state, not
 full order lifecycle. No PR, push, readyclaim, merge or production action.
+
+## 2026-10-06 06:53 ET - ROUNDUP1 raw proof and prerequisite recommendation
+
+Evidence-only headb198689683b623ae9caf9a06aa647f0555ff599b retains byte-identical
+full-suite main/head logs; source unchanged from980a65a5. #1095 stays DRAFT,
+defaultOFF. Read-only independent review recommends separate safety prerequisites:
+bounded candidate discovery plus complete persistent archive resolution, and
+authoritative exact-target cancellation. Filtering active statuses alone cannot
+hide an incorrectly terminal row; old-schema closed episodes need exact lifecycle
+proof, not modern metadata or age. Deterministic pages/overflow/read failures keep
+an account unproven; submitted orders clear only on exact zero-fill terminal proof.
+Explicit client/broker cancel ids must not fall through to a newer same-symbol
+order. No code written for these prerequisites pending scope clarification.
+Two validate jobs pending; draft has no independent pin. No production action.
