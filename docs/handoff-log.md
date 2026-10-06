@@ -6305,3 +6305,30 @@ RUNNING; pending B1-B5/exit/composition receipts not declared passed. Target
 21:00 tonight retained; no production writes, source merge, pin or activation.
 Noon/16:00 checkpoint automation updated to accepted SPANNING disposition;
 it no longer treats the resolved clamp comparison as a standing block.
+
+### 2026-10-06 09:52 ET - codex-2 R6 final paired receipt, still DRAFT
+
+#1097 head4b803f08a450fa40f460464c6b60bde7ec839971 pushed; source defaultOFF,
+production untouched. Full normal-PATH pair: maina7fed34d 6314pass/47fail,
+draft6409pass/47fail, exact failed-name diff added0/removed0. This is baseline
+parity, not an all-green suite. Initial shortened-PATH pair54/56failed exposed
+missing sha256sum plus two stale draft fixtures. Catalog count129 and real
+default-OFF quote-observer binding corrected without weakening both-leg emits.
+Old-head hosted failure is exactly those two; new-head CI pending.
+
+Final focused287/287PASS in8.79s. All six R6 assertionmutations repeated after
+rebase, RED, reverted individually; ledger ee6adf94... and bot12be0b4e...
+SHA256 identical before/after. Receipt includes exact commands, full raw-log
+hashes, failed IDs, mutation assertions, and unchanged acceptance runner64b00.
+Runner rerun still123events/0errors/0incompletebuys/57input-mismatches; every
+one matches oracle on suppliedprefix, not the future late bars in comparison.
+This is NOT a waived acceptance or permission to edit the reviewer runner.
+
+Inflation clarification: every sample >0.5% is LONG in both spanning/clamp
+lines. Six flagged cases are counterfactual trail/price comparisons, not live
+resting-price moves. Across six SHORT/SHORT samples observedmax0.1859%; nine
+incomplete ten-bar windows remain UNMEASURED, denominator27vs28 unresolved.
+Next ten stored bars can contain a later hole (CLRO); per-bar interval and
+post-resume contiguous metadata now recorded, never asserted entry-eligible.
+Target21:00review remains contingent on acceptance/lifecycle/exit evidence;
+no pin, merge, activation, production write or install.
