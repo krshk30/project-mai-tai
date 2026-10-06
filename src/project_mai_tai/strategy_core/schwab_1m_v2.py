@@ -3934,6 +3934,8 @@ class SchwabV2Strategy:
             # ⚠️ Gaps are NOT restart-only. Same day, no outage: CRWU 25 min, AXTU 2-13 min,
             # SNDG 3 min. This guard covers all of them.
             gap_ms = decision_gap_ms
+            # R6 may authorize a specific complete-provider pair in the private
+            # state-only rebuild; live/unknown/outage pairs keep the clamp.
             if gap_ms > _ATR_MAX_BAR_GAP_MS and not (state_only and span_gap):
                 tr = hilo
                 self._atr_gaps_observed[phase] += 1
