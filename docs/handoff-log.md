@@ -5671,3 +5671,18 @@ Ownsource _evaluate_data_flow says offhoursdry expected; thisisnotcalled
 servicefailure. Literalapprovedgeneralgateblocksanyv2degraded; standing
 allowanceonlyreconcilerdegradedfromMI/NXL. Awaitreviewerdisposition,
 noedit/bypass/retry/recovery. Remaininginstallproofsdidnotrun.
+
+2026-10-05 20:46 ET codex-2 C93: exact20:40offhoursadmissionbuiltunder
+20:45standingmechanicsauthority. plan490e098c pushed, helper658ca1c0,
+manifest53bc8873 fullhashrecordedinrow. In-memoryonlyfresh120s exactshape;
+barageend20:00+300, exceptions0, connected/enabledtrue, warmed=watchlist>0;
+thirddegradednotwaived. MI/NXL unchanged18mutationsRED; new12RED;
+121testsPASS/Ruff/bash-nPASS. Complete pre-write readonlyrehearsal00:44:07-
+00:45:23UTC rc0 via remotePythonstdin helperinmemory, officialsnapshotoutput
+inmemorysink; no remotefiles/gitfetch/services/token/DB/Rediswrite.
+AllpreactiongatesPASS,14tickets/11terminalparents, bothrestartfences0;
+Redis0->0/806932144->806954936B/all5sets+marker/all9streamsunchanged.
+Raw466235B local/tmp/oct5-2040-complete-rehearsal.log
+sha25684ea738e750963e0d15e9544c39aaf5827d069c18640c21ec5eee61535556c7e.
+Newstaging/runnextunderstandingauthority; nonewindependentexactreviewclaim,
+sameAPP7823/fourtruekeys/0022/no-recovery; firststopdeadline23:00ET.
