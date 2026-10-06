@@ -6363,3 +6363,21 @@ C3closed, independently agrees T35without editing any reviewer row. The
 Wednesday03:40fresh unattended run remains future proof. Retire only Codex
 automation oct-6-daily-guard-next-elapse-check after this completion receipt;
 existing box daily timer remains enabled and unchanged.
+
+### 2026-10-06 10:17 ET - codex-2 C34: corrected acceptance and eight-switch controls
+
+Reviewer acknowledged the corrected runner was previously uncommitted; exact
+ed871725 taken unchanged as91b02e5e, sole claude-1 marker retained. Own normal
+and eight-ON real-factory replays:123 cases,0 wrong lines/errors,0 incomplete
+buys/permissions,+10=98 MATCH0 HELD25 n/a; chart83 same15 late-input differences.
+Restoration catalog true under exact operator10-06 ruling,149 denominator;
+runtime default remains false until reviewed install. Legacy composition uses
+explicit controlled completed-worker output, not fabricated history proof;
+the population replay uses the actual service/factory without readiness patches.
+Composed41/real factory12/current catalog group69 PASS; focused258 PASS.
+Always-ready mutation4 RED; missing draft-version comparison1 RED.
+
+Full unit is RUNNING; ready and CI claims withheld. Prior4b pushValidategreen,
+PRValidateexit139 with SQLite/SQLAlchemy worker stack, not an assertion failure
+and not proved infrastructure. Final exact head still needs bothValidategreen.
+No production write/restart/flag/merge; scope is only reviewer blockers.
