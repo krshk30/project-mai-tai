@@ -7179,3 +7179,12 @@ states TimeoutError, not the source of that timeout. No diagnosis substituted.
 #1102 solewriter now pins inherited SCKT replay clock to recordedRTH per user;
 no source change, no rebase, no main merge during Install1. After COMPLETE,
 reviewer pins#1102 first, then three other pinned patches rebase for freshpins.
+
+### 2026-10-06 17:38 ET - codex-2 C99 clock fix and raw receipt tests
+
+#1102 b67ca775257604f670c19164476c1afcccc81283 pushed directly atop97e2ba74,
+test-only recordedSCKT RTH clock420PASS; both Validate running/freshpin owed.
+Parent actualReal.reader receipt tests cover rc2then0, rc2three times and rc1
+immediate refusal, retaining every stdout/stderr/exitcode. Full runner737PASS
+41.30s; plan4c4faf13 tests-only, staged2012runtime unchanged. Currentattended
+attempt OMS/strategy rc0, census pending, no service action/COMPLETE claim.
