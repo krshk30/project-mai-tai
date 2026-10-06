@@ -1,6 +1,7 @@
 """Recorded local-refusal tickets; later broker acknowledgements are simulated."""
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json
@@ -10,7 +11,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, TradeIntent
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYPE
@@ -199,6 +200,46 @@ async def test_t43_unreadable_reauthorization_is_audited_client_abort_never_venu
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("marker", [True, False, "no_event_id"])
+async def test_t43_ordinary_open_local_abort_is_terminal_only_for_its_new_audited_intent(monkeypatch, marker):
+    h = await runtime(monkeypatch, "schwab")
+    token, _ = await begin(h, "schwab")
+    event = TradeIntentEvent(source_service="schwab-1m-v2", payload=TradeIntentPayload(
+        strategy_code="schwab_1m_v2", broker_account_name=h.old.broker_account_name,
+        symbol=h.old.symbol, side="buy", intent_type="open", quantity=Decimal(2),
+        reason="CONTROLLED ordinary placement while RPG owns old buy"))
+    result = await h.service.process_trade_intent(event)
+    assert result[0].payload.status == "aborted"
+    assert result[0].payload.reason == "rpg_old_buy_still_owned"
+    assert not h.adapter.opens
+    with h.factory() as session:
+        order = session.get(BrokerOrder, result[0].payload.order_db_id)
+        assert not order.broker_order_id and not order.payload.get("rpg_handoff_token")
+        if marker is False:
+            order.payload = {**order.payload, "rpg_local_abort_no_wire": "false"}
+            audit = session.scalar(select(BrokerOrderEvent).where(
+                BrokerOrderEvent.order_id == order.id, BrokerOrderEvent.event_type == "aborted"))
+            audit.payload = {**audit.payload, "metadata": {
+                **audit.payload["metadata"], "rpg_local_abort_no_wire": "false"}}
+        elif marker == "no_event_id":
+            order.payload = {key: value for key, value in order.payload.items() if key != "rpg_abort_event_id"}
+            intent = session.get(TradeIntent, order.intent_id)
+            intent.payload = {key: value for key, value in intent.payload.items() if key != "event_id"}
+            audit = session.scalar(select(BrokerOrderEvent).where(
+                BrokerOrderEvent.order_id == order.id, BrokerOrderEvent.event_type == "aborted"))
+            audit.payload = {**audit.payload, "metadata": {
+                key: value for key, value in audit.payload["metadata"].items() if key != "rpg_abort_event_id"}}
+        old_order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == h.old.client_order_id))
+        session.get(TradeIntent, old_order.intent_id).status = "cancelled"
+        session.commit()
+    maps = h.bot._fetch_position_maps()
+    assert maps == (({}, {}) if marker is True else ({h.old.symbol: 2}, {}))
+    # Terminal truth for the NEW never-sent intent cannot clear the OLD ticket.
+    assert HandoffJournal(h.factory).read(token)["phase"] == "clear"
+    assert h.strategy._rpg_entry_owned(h.state, account=h.old.broker_account_name)
+
+
+@pytest.mark.asyncio
 async def test_t43_fresh_reauthorization_still_refuses_a_changed_canonical_price(monkeypatch):
     h = await runtime(monkeypatch, "schwab")
     token, _ = await begin(h, "schwab")
@@ -238,6 +279,78 @@ async def test_t43_real_broker_refusal_is_not_relabelled_as_a_local_abort(monkey
         assert order is not None and order.payload["reject_reason"] == "SIMULATOR CONTROLLED venue refusal"
         intent = session.get(TradeIntent, order.intent_id)
         assert intent.status == "rejected" and intent.payload["refusal_origin"] == "broker_reject"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("broker", ["schwab", "webull"])
+@pytest.mark.parametrize("proof", ["complete", "no_audit", "audit_source", "foreign_generation", "filled", "cancelled", "expired"])
+async def test_t43_committed_broker_rejection_repairs_only_absent_leg_after_crash(monkeypatch, broker, proof):
+    h = await runtime(monkeypatch, broker)
+    token, _ = await begin(h, broker)
+    h.adapter.refusal = "CONTROLLED venue refusal"
+    submit = h.adapter.submit_order
+
+    async def at_test_clock(request):
+        return [replace(report, reported_at=h.clock[0]) for report in await submit(request)]
+
+    monkeypatch.setattr(h.adapter, "submit_order", at_test_clock)
+    await feedback(h)
+    journal = HandoffJournal(h.factory)
+    job = journal.read(token)
+    assert job["phase"] == "refused" and len(h.adapter.opens) == 1
+    job = journal.change(token, job["revision"], phase="submit_unknown", reason="CONTROLLED interrupted completion",
+                         completed_at=None, dispatch_reads=30)
+    with h.factory() as session:
+        order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == job["replacement"]["client_order_id"]))
+        audit = session.scalar(select(BrokerOrderEvent).where(
+            BrokerOrderEvent.order_id == order.id, BrokerOrderEvent.event_type == "rejected"))
+        if proof == "no_audit":
+            session.delete(audit)
+        elif proof == "audit_source":
+            audit.event_source = "client"
+        elif proof == "foreign_generation":
+            order.payload = {**order.payload, "rpg_resting_generation": "CONTROLLED foreign generation"}
+        elif proof == "filled":
+            session.add(Fill(order_id=order.id, strategy_id=order.strategy_id, broker_account_id=order.broker_account_id,
+                             symbol=order.symbol, side="buy", quantity=Decimal(1), price=Decimal("3.10"), payload={}))
+        elif proof in {"cancelled", "expired"}:
+            order.status = proof
+        session.commit()
+    reads = len(h.adapter.reads)
+    recovered = await h.service._rpg_reconcile_dispatch(token, job)
+    assert len(h.adapter.reads) == reads and len(h.adapter.opens) == 1
+    if proof == "complete":
+        assert recovered["reason"] == "replacement_refused"
+        assert recovered["completed_at"] == h.clock[0].timestamp()
+    else:
+        assert recovered.get("reason") != "replacement_refused"
+    h.strategy.rpg_handoff_authorization(str(token), recovered)
+    failed = "schwab" if broker == "schwab" else "webull"
+    surviving = "webull" if broker == "schwab" else "schwab"
+    # Controlled next bar/sibling state; only the refused broker leg is absent.
+    h.state.resting_active = h.state.resting_is_broker_order = True
+    h.state.resting_level = h.state.atr_trail
+    h.state.resting_trigger = h.state.atr_trail * 1.005
+    setattr(h.state, f"resting_{failed}_quantity", 0)
+    setattr(h.state, f"resting_{failed}_generation", job["replacement"]["metadata"]["rpg_resting_generation"])
+    setattr(h.state, f"resting_{surviving}_quantity", 1)
+    setattr(h.state, f"resting_{surviving}_generation", "CONTROLLED working sibling")
+    setattr(h.state, f"resting_{surviving}_wire_stop", 3.07)
+    setattr(h.state, f"resting_{surviving}_wire_limit", 3.09)
+    h.state.webull_resting_active = surviving == "webull"
+    before = tuple(getattr(h.state, f"resting_{surviving}_{field}") for field in
+                   ("generation", "quantity", "wire_stop", "wire_limit"))
+    h.clock[0] += timedelta(seconds=60)
+    h.state.bars.append(OHLCVBar(h.strategy._now_ms() - 60000, 2.9, 3.0, 2.9, 2.95, 40151))
+    h.state.last_quote = replace(h.state.last_quote, quote_time_ms=h.strategy._now_ms())
+    h.strategy._cw_v2_resting_track(h.state, None)
+    primary, mirror = h.strategy.drain_pending_intents(), h.strategy.drain_webull_direct_intents()
+    assert len(primary) == (1 if proof == "complete" and broker == "schwab" else 0)
+    assert len(mirror) == (1 if proof == "complete" and broker == "webull" else 0)
+    assert tuple(getattr(h.state, f"resting_{surviving}_{field}") for field in
+                 ("generation", "quantity", "wire_stop", "wire_limit")) == before
+    h.strategy._cw_v2_resting_track(h.state, None)
+    assert not h.strategy.drain_pending_intents() and not h.strategy.drain_webull_direct_intents()
 
 
 @pytest.mark.asyncio
