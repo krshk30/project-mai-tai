@@ -5850,3 +5850,18 @@ and completed same-environment main/head pair remain required. Initial full-main
 run56fail/5885pass included the systemPython subprocess mismatch;16sync tests
 pass with the virtualenv on PATH, so the controlled full pair uses that PATH.
 Nothing merged or installed.
+
+## 2026-10-06 06:37 ET - ROUNDUP1 readiness held on two safety findings
+
+Source review found the generic book scans all historical STOP_LIMIT rows,
+their events and all open intents each position poll: seven SELECTs with rows,
+five without, unbounded row/cache volume and unmeasured latency. Missing exact
+terminal proof can keep old episodes unknown indefinitely on a re-add. No
+clearance by age/status/latest-buy is substituted. Separately, actual
+OmsStore.find_open_order_for_cancel falls through to the latest updated open
+strategy/account/symbol order if an exact target is no longer open; actual
+_process_cancel_intent uses that lookup. Exact target metadata on hydrated
+cancels alone does not prevent a wrong-target race. No OMS change was silently
+folded into rounding, and no broker cancel was sent. Report keeps #1095DRAFT,
+defaultOFF, not pin-ready. Corrected-PATH full-main control47fail/5894pass,
+238.49s is complete; full-head pair remains running, no equivalence claim yet.
