@@ -7037,3 +7037,16 @@ and finalMARKETbasis; building a permit from those guesses is unsafe.
 Parent authorized one bounded documented-route assessment only after previous
 GETcomplete, if SDK/signing supported, no authrefresh/hiddenretry. No codebuild,
 unitpair, CI, ALLON or mutation receipt claimed for this evidence-only lane.
+
+### 2026-10-06 16:00 ET - codex-2 C87 after-close wake-up refusal
+
+Exact121f frozen census helper run read-only afterclose: completed16:00:45ET,
+source7823 verified, count103, rc2 with "all-date journal exceeds 64-row bound".
+No broker calls reached, no production staging/source/env/service/ledger write.
+Saved wake-up names an older c21 three-service scope and forbids the later
+explicit control/retry-zero additions; neither version bypasses this real
+population blocker. No conflicting-scope deployment or moving-main adoption.
+Deleted only Codex one-shot oct-6-evening-preopen-timer-build-and-install after
+verifiedrefusal as instructed. App deletion confirmed; no rootdailytimer or
+boxjob created/changed and no installCOMPLETE claim. Expanded review remains
+required before any executable census enlargement or ticket clearance.
