@@ -6967,3 +6967,23 @@ withouttradingcodechange. Fullpair/Validate evidence remainsseparate.
 Clock clarification: preceding C78 narrative heading15:31 was a display-label
 error; the original broker receiptas-of15:21:25-28 and its hash are authoritative.
 No productionwrite; holds/incompleteproof remainblocking.
+
+### 2026-10-06 15:46 ET - codex-2 C80/C81 real admission and lifecycle blockers
+
+Install1 source121f8e09 binds application4805ddc8 and its exact tree; parent
+committed-blob package regeneration matches manifestb36f1238, all26 artifact
+and20 app hashes, and672 job tests pass. This is local mechanics evidence,
+not runtime admission. Read-only PG census15:42ET has102 tickets, not the
+reviewed14, and exceedsMAX_ROWS64. No phase/date filter may hide them.
+Correct15:44 projection uses old.broker_account_name and old.metadata for
+generation/target identity; the earlier projection's null old.account fields
+are NOT evidence of malformed live tickets. Payload footprint551968bytes.
+Unknown AIXI/XHG and placed OLOX require proof, not age or journal edits.
+STOP before staging/approval/production writes; expanded census review needed.
+
+Independent WEBULL429 fakeSDK/SQLite integration probe drives existing adapter
+report through real OMS store functions: cancelled partial-fill report records
+fill1 but retains an open partially_filled order and intent. The terminal
+metadata is not consumed by OMS. PRcomment6024079645 records this real blocker;
+worker owns a source correction and end-to-end idempotence tests before ready.
+No live broker submit, service action, persistence write or ledger adjustment.
