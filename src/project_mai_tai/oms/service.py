@@ -4280,6 +4280,17 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 session, broker_account_name=broker_account_name, symbol=symbol
             )
             if existing is not None:
+                if (
+                    metadata.get("webull_terminal_with_partial_fill") in {"cancelled", "rejected"}
+                    and entry_order_id is not None
+                    and existing.entry_order_id == entry_order_id
+                    and existing.entry_client_order_id == entry_client_order_id
+                ):
+                    # Only a newly recorded execution delta from this exact entry
+                    # may grow its held quantity; terminal status never reopens it.
+                    existing.original_quantity += int(quantity)
+                    existing.current_quantity += int(quantity)
+                    session.flush()
                 return  # idempotent: already managing this symbol
             entry_path = str(metadata.get("path", "")).strip()
             self.store.create_managed_position(
