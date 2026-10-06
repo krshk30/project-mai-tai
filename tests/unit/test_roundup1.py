@@ -258,7 +258,13 @@ def test_restart_restores_recorded_accepted_wire_not_new_calculation_and_never_d
     else:
         assert result["reason"] == "placed_wire_price_unproven"
         assert strategy._rpg_entry_owned(state) and strategy._rpg_leg_owned(state, row["account"])
+        assert not strategy._rpg_leg_owned(state, "live:schwab_1m_v2")
         strategy._queue_resting_place(state, float(md["cw_flip_level"]))
+        primary, = strategy.drain_pending_intents()
+        assert primary.side == "buy" and primary.intent_type == "open"
+        assert state.resting_webull_quantity == 0
+        assert not strategy.drain_webull_direct_intents()
+        return
     assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
 
 
@@ -273,7 +279,7 @@ def test_subdollar_default_dollars_still_meet_webull_hundred_share_minimum():
 
 @pytest.mark.parametrize("wire", [None, {}, {"stop_price": "NaN", "limit_price": "1.07"},
     {"stop_price": "1.07", "limit_price": "1.07"}])
-def test_unproven_or_malformed_placed_price_keeps_both_admission_guards_closed(wire):
+def test_unproven_webull_wire_blocks_only_its_leg_and_preserves_primary_admission(wire):
     strategy, state = strategy_for()
     account = "live:orb"
     strategy._rpg_handoffs["recorded-sckt-restart"] = {
@@ -281,8 +287,33 @@ def test_unproven_or_malformed_placed_price_keeps_both_admission_guards_closed(w
         "replacement_wire_prices": wire,
     }
     assert strategy._rpg_entry_owned(state) and strategy._rpg_leg_owned(state, account)
+    assert not strategy._rpg_leg_owned(state, "live:schwab_1m_v2")
+    webull_generation = state.resting_webull_generation
     strategy._queue_resting_place(state, 1.0583)
-    assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
+    primary, = strategy.drain_pending_intents()
+    assert primary.side == "buy" and primary.intent_type == "open"
+    assert state.resting_webull_generation == webull_generation
+    assert state.resting_webull_quantity == 0
+    assert not strategy.drain_webull_direct_intents()
+
+
+@pytest.mark.parametrize("wire", [None, {}, {"stop_price": "NaN", "limit_price": "3.79"}])
+def test_unproven_primary_wire_blocks_only_its_leg_and_preserves_webull_admission(wire):
+    strategy, state = strategy_for()
+    account = "live:schwab_1m_v2"
+    strategy._rpg_handoffs["recorded-pfsa-restart"] = {
+        "phase": "placed", "old": {"symbol": state.symbol, "broker_account_name": account},
+        "replacement_wire_prices": wire,
+    }
+    assert strategy._rpg_entry_owned(state, account=account)
+    assert not strategy._rpg_entry_owned(state, account="live:orb")
+    primary_generation = state.resting_schwab_generation
+    strategy._queue_resting_place(state, 1.0583)
+    assert not strategy.drain_pending_intents()
+    mirror, = strategy.drain_webull_direct_intents()
+    assert mirror.side == "buy" and mirror.intent_type == "open"
+    assert state.resting_schwab_generation == primary_generation
+    assert state.resting_schwab_quantity == 0
 
 
 @pytest.mark.parametrize("webull", [True, False])

@@ -1,21 +1,123 @@
 # ROUNDUP1 Build Evidence
 
-October 5, 2026. Current merged/rebased base:
+October 6, 2026. Current merged/rebased base:
 `7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf`, tree
 `ee6f058c248eeebf475fd392845eadfef7af59eb`.
 Historical pre-rebase evidence below used base
 `7e10baf0319da796b84934fe38994f6db4fcfc0b`.
 
-**Assessment AGREE: the old nearest-tick entry rounding can buy below the
-four-decimal rule price. The default-OFF implementation is built on an isolated
-branch, not merged or installed. This is a DRAFT, not a pin request. #1093 is
-merged and the authorized rebase is complete, but current-tree diagnostics
-prove a real generic no-ticket restart gap (8 FAIL), and ROUNDUP unit focus has
-five additional integration failures (395 PASS / 5 FAIL). The prior 400 PASS
-is historical only. No generic ownership protocol was added. Nothing in this
-report authorizes an install, pin, or flag activation.**
+**Assessment AGREE on rounding. This remains a default-OFF DRAFT, not a pin
+request or install candidate. The eight restart diagnostics and five integration
+assertions now pass in a 543-case local focus. Generic recovery is a tested
+checkpoint, NOT safe to enable yet: bounded archival discovery/clearance and
+exact-target cancel dispatch remain unresolved. Nothing here authorizes an
+install, pin, merge or flag activation.**
 
-## Current Rebase And Blockers
+## October 6 Checkpoint - Not Ready
+
+Own explicit diagnostic + new discovery tests + ROUNDUP focus: **496 passed in
+6.62 s**, raw `/tmp/roundup1-legacy-working-20261006.log`. This includes eight
+previously failing startup cases, 85 new recovery cases and 403 ROUNDUP cases.
+Five obsolete assertions now follow installed RPGSTUCK1 account-local ownership;
+three mirror controls preserve primary generation/quantity when only Schwab is
+blocked. This does not weaken the blocked leg or permit a second same-slot buy.
+
+The new recovery book runs before service entry callbacks and refreshes during
+position polling, off the quote callback. It joins exact strategy/account/order/
+intent identities; Schwab request prices and explicit broker-origin Webull
+accepted reports prove wire pairs. Missing/conflicting evidence remains owned;
+partial/fill consumption does not become reusable after a terminal refresh.
+Flag OFF performs zero recovery reads. Cached admission performs no DB queries.
+
+Fixture correction is disclosed: the retained SCKT/PFSA prices are permuted into
+accepted/unfilled, no-ticket scenarios. Segment comes from the persisted record,
+not the replay clock; TradeIntent payload has the production metadata wrapper.
+The retained Webull event has unknown origin; the controlled test explicitly
+supplies broker origin and exact matching IDs/slot metadata. Those controls are
+NOT proof of a historical accepted-order restart or historical duplicate.
+
+**Readiness blockers found by source review:**
+
+- ON adds a startup refresh and one per position poll: seven SELECTs with matching
+  orders, five without. All historical STOP_LIMITs/events/open intents are scanned;
+  row volume and cache growth are unbounded, latency is unmeasured. A terminal row
+  missing exact broker zero-fill proof becomes unknown and may block a future
+  re-add indefinitely. No status-only, latest-buy, or age-based clearance is allowed.
+  A bounded archival/clearance design is still owed, not hidden by controlled tests.
+- `_process_cancel_intent` calls `OmsStore.find_open_order_for_cancel`. If the exact
+  client/broker target is no longer open, that method falls through to the most
+  recently updated open order for the strategy/account/symbol. Hydrated cancels
+  carry exact IDs, but those IDs alone do not prevent this fallback. A race with a
+  newer order can therefore target the wrong entry. OMS code is unchanged here;
+  fixing that dispatch safely requires explicit scope/review, not an implicit
+  rounding-only claim. No production cancel or ledger write was performed.
+
+Existing nine in-memory mutations revalidated **9/9 RED** against the clean
+403-case control; `/tmp/roundup1-20261006-mutation-*.log`. They cover existing
+rounding/wire-sizing/RPG-restore behavior only, NOT new generic recovery.
+New recovery mutation controls are **7/7 RED**; raw
+`/tmp/roundup1-20261006-legacy-mutation-*.log`. The terminal source-site probe
+initially missed the guard's indentation and returned UNMEASURED; the corrected
+in-memory terminal-status mutation is RED (8 failed / 79 passed).
+No unexplained non-test failure or on-disk source mutation counts as RED.
+Initial full-main run **56 failed / 5885 passed**, 246.06 s, included system-Python
+subprocess mismatches; correcting PATH makes all 16 sync-checkout tests pass.
+A complete corrected-PATH pair is recorded below, not conflated with that run.
+
+Own low-priority, read-only aggregate on the box at **06:40:43 ET 10-06** used
+`LIMIT 20`, READ ONLY transaction and a five-second statement timeout:
+
+| Historical STOP_LIMIT status | Rows | Missing linked intent | Missing segment / attempt / slot identity |
+| --- | ---: | ---: | ---: |
+| cancelled | 3864 | 0 | 3846 |
+| filled | 622 | 0 | 270 |
+| rejected | 1492 | 0 | 1041 |
+
+Range starts July 23 and ends October 5. Total **5978 rows**, 5157 missing at
+least one newer identity field. This is a bounded aggregate, not a new read of
+all payloads or an assertion that historical orders are live. It proves the
+draft discovery query would encounter a large legacy archive, not merely the
+two controlled restart rows. The initial trader query was refused on the
+root-only env file before SQL; the root read performed no writes.
+
+First complete same-PATH head check was **50 failed / 6379 passed**, 259.05 s,
+versus main **47 failed / 5894 passed**. Three added names: two ALL_ON catalog
+checks still expected147 instead of148, and the default-OFF exit-coverage
+harness lacked the new refresh method. Catalog counts are corrected without
+changing the live ALL_ON values; default-OFF position polling now omits the
+recovery call altogether. The head run also preceded two additional cold-start
+unreadable tests. A fresh frozen-head run is recorded below, not this provisional pair.
+
+### Final October 6 Local Checkpoint
+
+Focused controls: **543 passed / 8.75 s** in
+`/tmp/roundup1-final-focus-20261006.log`, including 87 new recovery tests,
+403 ROUNDUP cases, eight explicit startup diagnostics and ALL_ON/default-OFF
+exit-coverage regression controls. Scoped Ruff and `git diff --check` PASS.
+
+Same interpreter, virtualenv first on PATH, each checkout's PYTHONPATH=src:
+
+| Checkout | Failed | Passed | Duration | Raw log SHA256 |
+| --- | ---: | ---: | ---: | --- |
+| Main application base 7823a6fa | 47 | 5894 | 238.49 s | e2ec7223de97e8047441b551017c401850ce364d17f787ae77d970067c2c22d8 |
+| Final default-OFF working checkpoint | 47 | 6384 | 258.23 s | bea9a56429580aafeaa4535fd4ea12fb7e8b75b4966d8e985aba4cd19bdd5d2a |
+
+Raw `/tmp/roundup1-main-7823-unit-20261006-path.log` and
+`/tmp/roundup1-head-final-unit-20261006-path.log`. Failed node sets are identical,
+zero additions/removals. One head summary line has interleaved stderr appended
+after its parameter closing bracket; comparison strips that absolute-path
+warning suffix, not the test identity. The 47 are 44 fanout-installer tests,
+one log-retention installer, one unattended-upgrade installer and one real
+dead-consumer throughput test. This is the actual local baseline, not a claim
+that Claude's earlier 48 or pre-PATH 56 failed-name sets were reproduced.
+
+No CI-green, historical accepted-wire restart, complete simultaneous ROUNDUP-ON
+composition, activation safety or review-readiness claim follows. #1095 stays
+DRAFT. Parent requested a scope ruling: bounded archival/clearance plus exact
+target dispatch in a separate prerequisite PR versus an explicitly widened
+#1095. No OMS change, merge, flag edit, service action or ledger write.
+
+## October 5 Rebase And Blockers - Historical Evidence
 
 Tested rebased source/test head: `c29db1165c24796adf0e7fad5a320edcbc56e383`.
 Rebase is **not patch-identical**. All six conflict hunks in two files were
