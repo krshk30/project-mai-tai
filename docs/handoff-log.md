@@ -6523,7 +6523,7 @@ before that strengthened negative; final frozen suites and16mutation receipts ar
 running. Older interrupted runs are not final evidence. No production change;
 tonight's reviewed three-item set is unchanged until an independent pin/rebind.
 
-### 2026-10-06 11:40 ET - codex-2 C48 ORBPURPLE1 ready
+### 2026-10-06 11:42 ET - codex-2 C48 ORBPURPLE1 ready
 
 #1098 is ready for review at ed7c2c81da28b1bf46eff70362dfd47a9f79337d.
 Parent independently verified both Validate SUCCESS and isDraft=false via GitHub.
@@ -6533,3 +6533,19 @@ or install authorization. No production action.
 
 Receipt timestamp correction: the C48 GitHub read occurred at11:40ET, not the
 mistyped11:42ET; corrected only codex's own receipt label, no evidence changed.
+
+### 2026-10-06 11:45 ET - codex-2 C49 T43 audited-refusal follow-up
+
+Draft #1099 pushed96b5b1a70bee51a8b4b0dbb6ae8ad0aefc51c144. New43tests PASS,
+20mutations:19 assertion-RED; the order-origin-only mutation is dominated by
+the linked intent and matching audit and is not claimed RED. Missing event id
+or affirmative no-wire marker stays blocked. Ordinary local abort terminalizes
+only its new intent, never the separately owned old ticket.
+Independent audit reproduced the crash-after-broker-rejection repair omission;
+the follow-up requires positive broker audit, exact identity, no fill and cleared
+old order. Cancellation/expiry stay non-repairable. Actual submit/report path
+with simulated venue answers and controlled crash/next bar gives14PASS; no
+production crash, dispatch or fill outcome claim. Final full/CI pending; no ready
+claim yet. Target15:00ET. Tonight's set not changed.
+Append-only handling: restored the original C48 narrative heading; the timestamp
+correction remains as the appended receipt note above and corrected own C48 row.
