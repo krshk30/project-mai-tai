@@ -296,6 +296,7 @@ async def test_quote_callback_emits_both_legs_without_waiting_for_bar(monkeypatc
         webull_intent_emitter=SimpleNamespace(emit=AsyncMock()),
     )
     bot._drain_direct_strategy_intents = lambda: SchwabV2BotService._drain_direct_strategy_intents(bot)
+    bot._observe_line_trade = lambda *args: SchwabV2BotService._observe_line_trade(bot, *args)
     clock[0] += 1000
     quote = Quote("AMOD", 3.25, 3.26, 3.26, clock[0])
     await SchwabV2BotService._handle_quote(bot, "AMOD", quote)

@@ -92,8 +92,11 @@ def measure(bars, baseline):
         after = [r for r in rows if resumed is not None and r["ts"] > resumed][:10]
         math = lines(rows)
         samples = []
+        previous_sample = resumed
         for row in after:
             value = dict(math[row["ts"]], bar=et(row["ts"]))
+            value["seconds_since_previous_stored_bar"] = (row["ts"] - previous_sample) / 1000
+            previous_sample = row["ts"]
             clamp, span = value["clamp_trail"], value["span_trail"]
             value["absolute_difference_pct"] = (
                 abs(span - clamp) / clamp * 100 if clamp and span else None)
@@ -109,6 +112,8 @@ def measure(bars, baseline):
             "bars_measured": len(measured), "maximum_difference_pct": maximum,
             "exceeds_0_5_buffer": maximum is not None and maximum > .5,
             "colour_differs": any(s["span_state"] != s["clamp_state"] for s in samples),
+            "post_resume_series_contiguous": (all(
+                s["seconds_since_previous_stored_bar"] == 60 for s in samples) if samples else None),
             "coverage": "MEASURED" if len(measured) == 10 else "UNMEASURED: fewer than ten bars after resume",
             "samples": samples,
         })
@@ -170,11 +175,21 @@ def main():
         lines(rows)
         audited_bars += len(rows)
     results = measure(population, json.loads(Path(args.baseline).read_text()))
+    short_samples = [s for row in results for s in row["samples"]
+                     if s["span_state"] == s["clamp_state"] == "short"
+                     and s["absolute_difference_pct"] is not None]
+    above_buffer_samples = [s for row in results for s in row["samples"]
+                            if (s["absolute_difference_pct"] or 0) > .5]
+    maximum_short = max((s["absolute_difference_pct"] for s in short_samples), default=None)
     output = Path(args.output)
     output.write_text(json.dumps(results, indent=2) + "\n")
     output.with_suffix(".audit.json").write_text(json.dumps({
         "symbol_days": len(population), "stored_bars": audited_bars,
         "mathematical_mismatches_on_identical_inputs": 0,
+        "short_in_both_lines_samples": len(short_samples),
+        "maximum_short_difference_pct": maximum_short,
+        "above_buffer_samples_long_in_both_lines": all(
+            s["span_state"] == s["clamp_state"] == "long" for s in above_buffer_samples),
         "scope": "counterfactual mathematics only; NOT service population acceptance",
     }, indent=2) + "\n")
     if args.acceptance:
@@ -193,7 +208,14 @@ def main():
         "positive traded-hole evidence still blocks production admission. First resume requires ten",
         "consecutive live closes. Samples are the next ten stored bars AFTER that resume, not ten arrivals.",
         "Rest prices are counterfactual trail x 1.005, including long states where no rest is issued.",
+        "Later gaps may occur in the next ten stored bars: these are not ten continuously entry-eligible bars.",
         "The percentage uses clamped trail as denominator; the same percentage applies before wire rounding.",
+        (f"SHORT in both lines: {len(short_samples)} samples; maximum difference {maximum_short:.4f}%."
+         if maximum_short is not None else "SHORT in both lines: no measured samples."),
+        "All >0.5% samples are LONG in both lines: counterfactual trail comparisons, NOT actual resting-order moves."
+        if above_buffer_samples and all(s["span_state"] == s["clamp_state"] == "long"
+                                        for s in above_buffer_samples)
+        else "See per-bar colours before interpreting >0.5% differences as resting-order moves.",
         "", f"Population independently mapped: {len(results)} permanent re-add cases, versus the reviewer's stated 28.",
         "The remaining case is UNMEASURED until its identity is reconciled; this is not a completed 28-case receipt.", "",
         "| Symbol / event ET | Resume bar ET | Bars after resume | Max difference | >0.5% | Colour differs | Coverage |",

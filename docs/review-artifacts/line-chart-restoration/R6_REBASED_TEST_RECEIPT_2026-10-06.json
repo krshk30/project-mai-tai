@@ -1,0 +1,184 @@
+{
+  "as_of_et": "2026-10-06 09:51",
+  "base": "a7fed34d97732e1c1379ec77d89fd83f886ce2d8",
+  "tested_parent": "80c633c965bbf6294b7cac3994b3223ee7f1cbcb",
+  "working_tree_fixture_changes": [
+    "test_expected_flags_check: bool catalog count 128 -> 129",
+    "test_rpg1_pending_first_quote: bind real default-OFF _observe_line_trade in mock bot"
+  ],
+  "production_changed": false,
+  "focused": {
+    "restoration_composition_catalog_quote": 247,
+    "boot_restoration": 40,
+    "total": 287
+  },
+  "full_unit": {
+    "main": {
+      "passed": 6314,
+      "failed": 47,
+      "seconds": 262.49,
+      "log": "/tmp/codex-r6-main-a7-native-full-unit-20261006.log",
+      "sha256": "a834f282ba73b9468be6a2af9b1180ba592b39f7c77f306ce7eb84fff7ad9124"
+    },
+    "draft": {
+      "passed": 6409,
+      "failed": 47,
+      "seconds": 267.05,
+      "log": "/tmp/codex-r6-head-native-full-unit-20261006.log",
+      "sha256": "43f563a5b3855d92aea111668e7719ad3dd0c3c54158e3c68d9b6f10f097a2eb"
+    },
+    "failed_names_added": [],
+    "failed_names_removed": [],
+    "all_green": false,
+    "command": "env PATH=/Users/velkris/Projects/project-mai-tai/.venv/bin:$PATH PYTHONPATH=src:. /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -q tests/unit --tb=short",
+    "failed_names": [
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_succeeds_with_one_managed_schedule",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_differing_reinstall_preserves_a_pre_versioned_copy[check.py-fanout_outcome_acceptance.py]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_differing_reinstall_preserves_a_pre_versioned_copy[cron.py-fanout_outcome_acceptance_cron.py]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance.py-check.py]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance_cron.py-cron.py]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_runtime_failure_rolls_back_every_target_mutation[new-install]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_runtime_failure_rolls_back_every_target_mutation[reinstall]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_post_write_confirmation_failure_restores_root_cron_and_prior_artifacts",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[insert-set-plus-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_lossy_successful_awk_is_refused_before_root_crontab_is_written",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[normal]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[without-set-e]",
+      "tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[insert-set-plus-e]",
+      "tests/unit/test_log_retention_policy.py::test_installer_shell_fault_controls",
+      "tests/unit/test_momentum_gateway_throughput.py::test_real_dead_consumer_cannot_block_the_paced_producer",
+      "tests/unit/test_unattended_upgrade_policy.py::test_installer_and_notifier_fault_controls"
+    ]
+  },
+  "source_hashes": {
+    "src/project_mai_tai/strategy_core/session_line_restore.py": "ee6adf94f571fb07ce2e4a7dcf2ed9c623e2ff9727b3c158e264a32ce2f6f91f",
+    "src/project_mai_tai/services/schwab_1m_v2_bot.py": "12be0b4ed5f8936b68da20501f0ec8bb5ec747c2eb7213ba1cb21d857c2f8983"
+  },
+  "assertion_mutations_after_rebase": [
+    {
+      "name": "spanning_removed",
+      "test": "tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail",
+      "exit_code": 1,
+      "red": true,
+      "assertion_failures": [
+        "E   assert 5.794 == 5.7027",
+        "E    +  where 5.794 = round(5.794006400000001, 4)",
+        "E   assert 5.794 == 5.7027",
+        "E    +  where 5.794 = round(5.794006400000001, 4)",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[11]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[12]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[13]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[14]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[15]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[16]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[17]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[18]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[19]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[20]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[21]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[22]",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[23]"
+      ]
+    },
+    {
+      "name": "full_query_check_removed",
+      "test": "tests/unit/test_line_restore_r6_spanning.py::test_complete_provider_read_not_candle_count_authorizes_r6",
+      "exit_code": 1,
+      "red": true,
+      "assertion_failures": [
+        "E   AssertionError: assert RebuildInput(symbol='PMI', epoch=1, revision=25, anchor_ms=1790928000000, current_bar_ms=1790975700000, bars=(HistoryB...00000, 1790974560000), (1790974560000, 1790975160000), (1790975160000, 1790975400000), (1790975400000, 1790975700000))) is None",
+        "E    +  where RebuildInput(symbol='PMI', epoch=1, revision=25, anchor_ms=1790928000000, current_bar_ms=1790975700000, bars=(HistoryB...00000, 1790974560000), (1790974560000, 1790975160000), (1790975160000, 1790975400000), (1790975400000, 1790975700000))) = prepare()",
+        "E    +    where prepare = <project_mai_tai.strategy_core.session_line_restore.SessionLineRestoration object at 0x10d7f9310>.prepare",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_complete_provider_read_not_candle_count_authorizes_r6"
+      ]
+    },
+    {
+      "name": "positive_tape_ignored",
+      "test": "tests/unit/test_line_restore_r6_spanning.py::test_recorded_jagx_withheld_traded_candle_cannot_be_spanned_as_unfillable",
+      "exit_code": 1,
+      "red": true,
+      "assertion_failures": [
+        "E   AssertionError: assert RebuildInput(symbol='JAGX', epoch=1, revision=190, anchor_ms=1791187200000, current_bar_ms=1791220320000, bars=(Histor...000)), spanning_pairs=((1791208320000, 1791208620000), (1791208680000, 1791209040000), (1791209340000, 1791209640000))) is None",
+        "E    +  where RebuildInput(symbol='JAGX', epoch=1, revision=190, anchor_ms=1791187200000, current_bar_ms=1791220320000, bars=(Histor...000)), spanning_pairs=((1791208320000, 1791208620000), (1791208680000, 1791209040000), (1791209340000, 1791209640000))) = prepare()",
+        "E    +    where prepare = <project_mai_tai.strategy_core.session_line_restore.SessionLineRestoration object at 0x107a372c0>.prepare",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_jagx_withheld_traded_candle_cannot_be_spanned_as_unfillable"
+      ]
+    },
+    {
+      "name": "ten_clean_bars_shortened",
+      "test": "tests/unit/test_line_restore_r6_spanning.py::test_recorded_jagx_sparse_session_requires_ten_consecutive_live_closes",
+      "exit_code": 1,
+      "red": true,
+      "assertion_failures": [
+        "E   assert True == (5 == 10)",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_jagx_sparse_session_requires_ten_consecutive_live_closes"
+      ]
+    },
+    {
+      "name": "prefix_attestation_removed",
+      "test": "tests/unit/test_line_restore_r6_spanning.py::test_complete_provider_read_not_candle_count_authorizes_r6",
+      "exit_code": 1,
+      "red": true,
+      "assertion_failures": [
+        "E   AssertionError: assert RebuildInput(symbol='PMI', epoch=1, revision=26, anchor_ms=1790928000000, current_bar_ms=1790975700000, bars=(HistoryB...00000, 1790974560000), (1790974560000, 1790975160000), (1790975160000, 1790975400000), (1790975400000, 1790975700000))) is None",
+        "E    +  where RebuildInput(symbol='PMI', epoch=1, revision=26, anchor_ms=1790928000000, current_bar_ms=1790975700000, bars=(HistoryB...00000, 1790974560000), (1790974560000, 1790975160000), (1790975160000, 1790975400000), (1790975400000, 1790975700000))) = prepare()",
+        "E    +    where prepare = <project_mai_tai.strategy_core.session_line_restore.SessionLineRestoration object at 0x10aa819a0>.prepare",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_complete_provider_read_not_candle_count_authorizes_r6"
+      ]
+    },
+    {
+      "name": "live_wait_removed",
+      "test": "tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_eleven_arrivals_do_not_release_ten_clean_live_bar_hold",
+      "exit_code": 1,
+      "red": true,
+      "assertion_failures": [
+        "E   assert (not True)",
+        "FAILED tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_eleven_arrivals_do_not_release_ten_clean_live_bar_hold"
+      ]
+    }
+  ],
+  "acceptance": {
+    "reviewer_version": "64b00b9db31f21ce974b2b5a7870de13f7dd2704",
+    "not_pass": true,
+    "events": 123,
+    "errors": 0,
+    "buys_while_incomplete": 0,
+    "mismatches": 57,
+    "code_matches_exact_supplied_prefix": 57,
+    "oracle_includes_not_yet_supplied_bars": 57,
+    "log": "/tmp/codex-r6-rebased-acceptance-20261006.log",
+    "json": "/tmp/codex-r6-rebased-acceptance-20261006.json",
+    "json_sha256": "b7d62ad08c9fa882582ec8ae6db1676659c537a23e36b8bd3d78f57533a24f01"
+  }
+}

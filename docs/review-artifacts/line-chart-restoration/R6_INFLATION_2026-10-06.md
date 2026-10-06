@@ -6,7 +6,10 @@ No tape absence or hypothetical broker fill is asserted. All-series spanning is 
 positive traded-hole evidence still blocks production admission. First resume requires ten
 consecutive live closes. Samples are the next ten stored bars AFTER that resume, not ten arrivals.
 Rest prices are counterfactual trail x 1.005, including long states where no rest is issued.
+Later gaps may occur in the next ten stored bars: these are not ten continuously entry-eligible bars.
 The percentage uses clamped trail as denominator; the same percentage applies before wire rounding.
+SHORT in both lines: 6 samples; maximum difference 0.1859%.
+All >0.5% samples are LONG in both lines: counterfactual trail comparisons, NOT actual resting-order moves.
 
 Population independently mapped: 27 permanent re-add cases, versus the reviewer's stated 28.
 The remaining case is UNMEASURED until its identity is reconciled; this is not a completed 28-case receipt.
