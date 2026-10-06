@@ -1,0 +1,9 @@
+{
+  "pr_number": 1089,
+  "range_base": "cf87900e8b373b8304d2019119d9ba78ee8598f6",
+  "range_head": "03b26293624f87e43eb167431fc308b1aec309b3",
+  "reviewed_at": "2026-10-06T01:43:52Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed final Claude close-out span including 0554ba24 M99, current summary, narrative, manifest and 03b26293 corrections. Both review findings resolved; COMPLETE receipt and daily guarded paper evidence checked; manifest BALANCED 138/138 byte-identical to frozen journals. Docs-only with Claude-only markers."
+}

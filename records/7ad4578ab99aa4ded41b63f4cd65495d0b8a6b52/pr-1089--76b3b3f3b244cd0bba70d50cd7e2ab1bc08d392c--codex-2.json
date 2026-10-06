@@ -1,0 +1,9 @@
+{
+  "pr_number": 1089,
+  "range_base": "76b3b3f3b244cd0bba70d50cd7e2ab1bc08d392c",
+  "range_head": "7ad4578ab99aa4ded41b63f4cd65495d0b8a6b52",
+  "reviewed_at": "2026-10-06T01:43:52Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed M98 against final install receipt and literal BOOT-HOLD release at 00:59:44.146Z; correction at 03b26293 supersedes historical held read and names tomorrow first-live-bar readiness checks. No production action."
+}
