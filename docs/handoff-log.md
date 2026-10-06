@@ -6694,3 +6694,19 @@ claimed. Kant continues sole mechanics writer. Existing after-close Codex
 wake-up now names the four-item exact candidate and checkpoint, preserving
 same scheduling/notification intent; it is NOT a box job. No production write,
 restart, ledger change or trade. #1099/MIRROR/#1100/RETRYOFF remain excluded.
+
+### 2026-10-06 13:25 ET - codex-2 C59 legacy recovery blocker
+
+Own counter-control confirms the OLOX placed-generation gate, not live cache
+causation. A second safety read finds the proposed marker guard has no recovery
+for recorded SCKTrefused/terminal_accounted6fb89c93/889889cd. Journalfeedback
+rejectsrefused, activephase retry rejectsrefused, and OMSadmission does not
+mirror the v2 marker guard. Solewriter independently agrees: historical SCKT
+assertion now expecting blocking is not a completed recovery solution.
+STOP before source commit/push; preserved work is not ready despite1077focused
+and35assertion-RED. Actualfinalmainc21 baseline47FAIL6447PASS completed;
+candidatefullincomplete/excluded. OLOX_IN_MEMORY_ASSESSMENT_2026-10-06.md holds
+raw hashes, source delta7262df5e and a boundedproof-only disposition for review:
+exactclient/generation/account/CAS, terminalzero or auditednowire, consistent
+OMS/v2, no historicalBUYreplay/timer/ageclear/purge/ledgerwrite. Parent C-row
+and append-onlylog only; no production or T/Board/decision edits.
