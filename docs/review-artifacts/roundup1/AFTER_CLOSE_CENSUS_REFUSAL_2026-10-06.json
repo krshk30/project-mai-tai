@@ -1,0 +1,22 @@
+{
+  "started_at": "2026-10-06T20:00:43.952201+00:00",
+  "readonly": true,
+  "rc": 2,
+  "install_authority": false,
+  "require_reviewed": true,
+  "source": {
+    "box_sha": "7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf",
+    "module": "/home/trader/project-mai-tai/src/project_mai_tai/oms/atr_reprice_handoff.py",
+    "module_sha256": "08bf0e12bfe331e6bd4b7f527f38aceeecfaa40348586426e0af775da686886c"
+  },
+  "transaction": [
+    {
+      "readonly": "on",
+      "isolation": "repeatable read",
+      "captured_at": "2026-10-06 20:00:45.219195+00:00"
+    }
+  ],
+  "all_date_ticket_count": 103,
+  "stop": "all-date journal exceeds 64-row bound",
+  "completed_at": "2026-10-06T20:00:45.267359+00:00"
+}
