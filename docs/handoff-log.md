@@ -7167,3 +7167,15 @@ no deployedsourcechange. Earlier terminal-reject/fullbroker proof not reused
 as currentflatness. #1102 exact97e2ba74 authorizedassertions97PASS but both
 ValidateFAIL on same inheritedSCKT wallclockcase as pinned#1106. No bypass,
 branchrewrite or Install2merge. Receipt lists fullpaths andhashes.
+
+### 2026-10-06 17:36 ET - codex-2 C98 authorized attended rerun
+
+Reviewer17:32 fresh strategy/OMS rc0 reads authorize a new exclusive attempt.
+Started17:35ET at roundup1-install1-20261006-2012b090-retry1736 after all27
+artifact hashes matched unchanged2012 manifest09dae897. Initial gates only,
+not a completion claim. Previous STOP remains preserved. Real.command already
+captures stdout/stderr independently on every helper attempt; prior stderr
+states TimeoutError, not the source of that timeout. No diagnosis substituted.
+#1102 solewriter now pins inherited SCKT replay clock to recordedRTH per user;
+no source change, no rebase, no main merge during Install1. After COMPLETE,
+reviewer pins#1102 first, then three other pinned patches rebase for freshpins.
